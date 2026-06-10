@@ -89,8 +89,12 @@ namespace sogen
         void destroy_fence(uint64_t device, uint64_t fence);
         int32_t reset_fence(uint64_t device, uint64_t fence);
 
-        int32_t create_semaphore(uint64_t device, uint32_t flags, uint64_t& out_semaphore);
+        int32_t create_semaphore(uint64_t device, uint32_t flags, uint32_t semaphore_type, uint64_t initial_value, uint64_t& out_semaphore);
         void destroy_semaphore(uint64_t device, uint64_t semaphore);
+        int32_t get_semaphore_counter_value(uint64_t device, uint64_t semaphore, uint64_t& out_value);
+        int32_t signal_semaphore(uint64_t device, uint64_t semaphore, uint64_t value);
+        int32_t wait_semaphores(uint64_t device, uint32_t flags, const void* entries, uint32_t count, uint64_t timeout);
+        uint64_t get_buffer_device_address(uint64_t device, uint64_t buffer);
 
         // Non-blocking: returns VK_SUCCESS if signaled, VK_NOT_READY otherwise. Never waits.
         int32_t get_fence_status(uint64_t fence);

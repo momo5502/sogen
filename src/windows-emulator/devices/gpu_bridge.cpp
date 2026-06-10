@@ -44,6 +44,14 @@ namespace sogen
                     return handle_create_semaphore(win_emu, context);
                 case gpu_bridge::ioctl_destroy_semaphore:
                     return handle_destroy_semaphore(win_emu, context);
+                case gpu_bridge::ioctl_get_semaphore_counter_value:
+                    return handle_get_semaphore_counter_value(win_emu, context);
+                case gpu_bridge::ioctl_signal_semaphore:
+                    return handle_signal_semaphore(win_emu, context);
+                case gpu_bridge::ioctl_wait_semaphores:
+                    return handle_wait_semaphores(win_emu, context);
+                case gpu_bridge::ioctl_get_buffer_device_address:
+                    return handle_get_buffer_device_address(win_emu, context);
                 case gpu_bridge::ioctl_create_compute_pipeline:
                     return handle_create_compute_pipeline(win_emu, context);
                 case gpu_bridge::ioctl_create_device:
@@ -696,7 +704,8 @@ namespace sogen
                 }
 
                 uint64_t semaphore = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_semaphore(request.device, request.flags, semaphore);
+                const int32_t result =
+                    this->vulkan_.create_semaphore(request.device, request.flags, request.semaphore_type, request.initial_value, semaphore);
                 return write_output(win_emu, context,
                                     gpu_bridge::create_semaphore_response{.vk_result = result, .reserved = 0, .semaphore = semaphore});
             }
@@ -711,6 +720,63 @@ namespace sogen
 
                 this->vulkan_.destroy_semaphore(request.device, request.semaphore);
                 return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_semaphore_counter_value(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_semaphore_counter_value_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t value = 0;
+                const int32_t result = this->vulkan_.get_semaphore_counter_value(request.device, request.semaphore, value);
+                return write_output(win_emu, context,
+                                    gpu_bridge::get_semaphore_counter_value_response{.vk_result = result, .reserved = 0, .value = value});
+            }
+
+            NTSTATUS handle_signal_semaphore(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::signal_semaphore_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.signal_semaphore(request.device, request.semaphore, request.value);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_wait_semaphores(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::wait_semaphores_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<gpu_bridge::wait_semaphore_entry> entries;
+                if (!read_trailing_array(win_emu, context, sizeof(request), request.semaphore_count, entries))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result =
+                    this->vulkan_.wait_semaphores(request.device, request.flags, entries.data(), request.semaphore_count, request.timeout);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_get_buffer_device_address(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_buffer_device_address_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const uint64_t address = this->vulkan_.get_buffer_device_address(request.device, request.buffer);
+                return write_output(win_emu, context, gpu_bridge::get_buffer_device_address_response{.address = address});
             }
 
             NTSTATUS handle_create_compute_pipeline(windows_emulator& win_emu, const io_device_context& context)

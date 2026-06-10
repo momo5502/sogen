@@ -572,6 +572,24 @@ extern "C"
         gb::create_semaphore_request request{};
         request.device = to_object_id(device);
         request.flags = pCreateInfo ? pCreateInfo->flags : 0;
+        request.semaphore_type = VK_SEMAPHORE_TYPE_BINARY;
+        request.initial_value = 0;
+
+        // DXVK creates timeline semaphores via a VkSemaphoreTypeCreateInfo on pNext; forward the type and
+        // initial value so the host creates a real timeline semaphore (otherwise counter/signal/wait fail).
+        if (pCreateInfo)
+        {
+            for (const auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
+            {
+                if (next->sType == VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO)
+                {
+                    const auto* type_info = reinterpret_cast<const VkSemaphoreTypeCreateInfo*>(next);
+                    request.semaphore_type = static_cast<uint32_t>(type_info->semaphoreType);
+                    request.initial_value = type_info->initialValue;
+                    break;
+                }
+            }
+        }
 
         gb::create_semaphore_response response{};
         if (!bridge_call(gb::ioctl_create_semaphore, &request, sizeof(request), &response, sizeof(response)))
@@ -585,6 +603,93 @@ extern "C"
 
         *pSemaphore = to_handle<VkSemaphore>(response.semaphore);
         return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetSemaphoreCounterValue(VkDevice device, VkSemaphore semaphore,
+                                                                                    uint64_t* pValue)
+    {
+        gb::get_semaphore_counter_value_request request{};
+        request.device = to_object_id(device);
+        request.semaphore = to_object_id(semaphore);
+
+        gb::get_semaphore_counter_value_response response{};
+        if (!bridge_call(gb::ioctl_get_semaphore_counter_value, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (pValue)
+        {
+            *pValue = response.value;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkSignalSemaphore(VkDevice device, const VkSemaphoreSignalInfo* pSignalInfo)
+    {
+        if (!pSignalInfo)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        gb::signal_semaphore_request request{};
+        request.device = to_object_id(device);
+        request.semaphore = to_object_id(pSignalInfo->semaphore);
+        request.value = pSignalInfo->value;
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_signal_semaphore, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkWaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo* pWaitInfo,
+                                                                          uint64_t timeout)
+    {
+        if (!pWaitInfo)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const uint32_t count = pWaitInfo->semaphoreCount;
+        std::vector<uint8_t> message(sizeof(gb::wait_semaphores_request) + static_cast<size_t>(count) * sizeof(gb::wait_semaphore_entry));
+        auto* header = reinterpret_cast<gb::wait_semaphores_request*>(message.data());
+        header->device = to_object_id(device);
+        header->flags = pWaitInfo->flags;
+        header->semaphore_count = count;
+        header->timeout = timeout;
+        auto* entries = reinterpret_cast<gb::wait_semaphore_entry*>(message.data() + sizeof(gb::wait_semaphores_request));
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            entries[i].semaphore = to_object_id(pWaitInfo->pSemaphores[i]);
+            entries[i].value = pWaitInfo->pValues[i];
+        }
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_wait_semaphores, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkDeviceAddress VKAPI_CALL vkGetBufferDeviceAddress(VkDevice device,
+                                                                                         const VkBufferDeviceAddressInfo* pInfo)
+    {
+        if (!pInfo)
+        {
+            return 0;
+        }
+        gb::get_buffer_device_address_request request{};
+        request.device = to_object_id(device);
+        request.buffer = to_object_id(pInfo->buffer);
+
+        gb::get_buffer_device_address_response response{};
+        if (!bridge_call(gb::ioctl_get_buffer_device_address, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return 0;
+        }
+        return response.address;
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroySemaphore(VkDevice device, VkSemaphore semaphore,
@@ -2788,6 +2893,15 @@ extern "C"
             {.name = "vkCreateFence", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateFence)},
             {.name = "vkCreateSemaphore", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateSemaphore)},
             {.name = "vkDestroySemaphore", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySemaphore)},
+            {.name = "vkGetSemaphoreCounterValue", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetSemaphoreCounterValue)},
+            {.name = "vkGetSemaphoreCounterValueKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetSemaphoreCounterValue)},
+            {.name = "vkSignalSemaphore", .func = reinterpret_cast<PFN_vkVoidFunction>(vkSignalSemaphore)},
+            {.name = "vkSignalSemaphoreKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkSignalSemaphore)},
+            {.name = "vkWaitSemaphores", .func = reinterpret_cast<PFN_vkVoidFunction>(vkWaitSemaphores)},
+            {.name = "vkWaitSemaphoresKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkWaitSemaphores)},
+            {.name = "vkGetBufferDeviceAddress", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferDeviceAddress)},
+            {.name = "vkGetBufferDeviceAddressKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferDeviceAddress)},
+            {.name = "vkGetBufferDeviceAddressEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferDeviceAddress)},
             {.name = "vkDestroyFence", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyFence)},
             {.name = "vkResetFences", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetFences)},
             {.name = "vkGetFenceStatus", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetFenceStatus)},

@@ -122,6 +122,10 @@ namespace sogen
             PFN_vkGetFenceStatus get_fence_status{};
             PFN_vkCreateSemaphore create_semaphore{};
             PFN_vkDestroySemaphore destroy_semaphore{};
+            PFN_vkGetSemaphoreCounterValue get_semaphore_counter_value{};
+            PFN_vkSignalSemaphore signal_semaphore{};
+            PFN_vkWaitSemaphores wait_semaphores{};
+            PFN_vkGetBufferDeviceAddress get_buffer_device_address{};
             PFN_vkQueueSubmit queue_submit{};
             PFN_vkAllocateMemory allocate_memory{};
             PFN_vkFreeMemory free_memory{};
@@ -1218,6 +1222,10 @@ namespace sogen
             data.reset_fences = reinterpret_cast<PFN_vkResetFences>(resolve("vkResetFences"));
             data.create_semaphore = reinterpret_cast<PFN_vkCreateSemaphore>(resolve("vkCreateSemaphore"));
             data.destroy_semaphore = reinterpret_cast<PFN_vkDestroySemaphore>(resolve("vkDestroySemaphore"));
+            data.get_semaphore_counter_value = reinterpret_cast<PFN_vkGetSemaphoreCounterValue>(resolve("vkGetSemaphoreCounterValue"));
+            data.signal_semaphore = reinterpret_cast<PFN_vkSignalSemaphore>(resolve("vkSignalSemaphore"));
+            data.wait_semaphores = reinterpret_cast<PFN_vkWaitSemaphores>(resolve("vkWaitSemaphores"));
+            data.get_buffer_device_address = reinterpret_cast<PFN_vkGetBufferDeviceAddress>(resolve("vkGetBufferDeviceAddress"));
             data.get_fence_status = reinterpret_cast<PFN_vkGetFenceStatus>(resolve("vkGetFenceStatus"));
             data.queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(resolve("vkQueueSubmit"));
             data.allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(resolve("vkAllocateMemory"));
@@ -1484,7 +1492,8 @@ namespace sogen
         this->impl_->fences.erase(it);
     }
 
-    int32_t vulkan_host::create_semaphore(uint64_t device, uint32_t flags, uint64_t& out_semaphore)
+    int32_t vulkan_host::create_semaphore(uint64_t device, uint32_t flags, uint32_t semaphore_type, uint64_t initial_value,
+                                          uint64_t& out_semaphore)
     {
         out_semaphore = 0;
 
@@ -1494,9 +1503,18 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        VkSemaphoreTypeCreateInfo type_info{};
+        type_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO;
+        type_info.semaphoreType = static_cast<VkSemaphoreType>(semaphore_type);
+        type_info.initialValue = initial_value;
+
         VkSemaphoreCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
         info.flags = flags;
+        if (semaphore_type == VK_SEMAPHORE_TYPE_TIMELINE)
+        {
+            info.pNext = &type_info;
+        }
 
         VkSemaphore semaphore{};
         const VkResult result = dev->second.create_semaphore(dev->second.handle, &info, nullptr, &semaphore);
@@ -1509,6 +1527,80 @@ namespace sogen
         this->impl_->semaphores.emplace(id, impl::semaphore_data{.handle = semaphore, .device_id = device});
         out_semaphore = id;
         return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::get_semaphore_counter_value(uint64_t device, uint64_t semaphore, uint64_t& out_value)
+    {
+        out_value = 0;
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->semaphores.find(semaphore);
+        if (dev == this->impl_->devices.end() || it == this->impl_->semaphores.end() || !dev->second.get_semaphore_counter_value)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return dev->second.get_semaphore_counter_value(dev->second.handle, it->second.handle, &out_value);
+    }
+
+    int32_t vulkan_host::signal_semaphore(uint64_t device, uint64_t semaphore, uint64_t value)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->semaphores.find(semaphore);
+        if (dev == this->impl_->devices.end() || it == this->impl_->semaphores.end() || !dev->second.signal_semaphore)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        VkSemaphoreSignalInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO;
+        info.semaphore = it->second.handle;
+        info.value = value;
+        return dev->second.signal_semaphore(dev->second.handle, &info);
+    }
+
+    int32_t vulkan_host::wait_semaphores(uint64_t device, uint32_t flags, const void* entries, uint32_t count, uint64_t timeout)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.wait_semaphores)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto* records = static_cast<const gpu_bridge::wait_semaphore_entry*>(entries);
+        std::vector<VkSemaphore> handles;
+        std::vector<uint64_t> values;
+        handles.reserve(count);
+        values.reserve(count);
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const auto it = this->impl_->semaphores.find(records[i].semaphore);
+            if (it == this->impl_->semaphores.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            handles.push_back(it->second.handle);
+            values.push_back(records[i].value);
+        }
+
+        VkSemaphoreWaitInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
+        info.flags = flags;
+        info.semaphoreCount = count;
+        info.pSemaphores = handles.data();
+        info.pValues = values.data();
+        return dev->second.wait_semaphores(dev->second.handle, &info, timeout);
+    }
+
+    uint64_t vulkan_host::get_buffer_device_address(uint64_t device, uint64_t buffer)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->buffers.find(buffer);
+        if (dev == this->impl_->devices.end() || it == this->impl_->buffers.end() || !dev->second.get_buffer_device_address)
+        {
+            return 0;
+        }
+        VkBufferDeviceAddressInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+        info.buffer = it->second.handle;
+        return dev->second.get_buffer_device_address(dev->second.handle, &info);
     }
 
     void vulkan_host::destroy_semaphore(uint64_t device, uint64_t semaphore)

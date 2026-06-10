@@ -115,6 +115,10 @@ namespace sogen::gpu_bridge
         destroy_semaphore = 0x84F,
         create_compute_pipeline = 0x850,
         get_physical_device_properties2 = 0x851,
+        get_semaphore_counter_value = 0x852,
+        signal_semaphore = 0x853,
+        wait_semaphores = 0x854,
+        get_buffer_device_address = 0x855,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -191,6 +195,10 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_create_compute_pipeline = make_ioctl(static_cast<uint32_t>(command::create_compute_pipeline));
     inline constexpr uint32_t ioctl_get_physical_device_properties2 =
         make_ioctl(static_cast<uint32_t>(command::get_physical_device_properties2));
+    inline constexpr uint32_t ioctl_get_semaphore_counter_value = make_ioctl(static_cast<uint32_t>(command::get_semaphore_counter_value));
+    inline constexpr uint32_t ioctl_signal_semaphore = make_ioctl(static_cast<uint32_t>(command::signal_semaphore));
+    inline constexpr uint32_t ioctl_wait_semaphores = make_ioctl(static_cast<uint32_t>(command::wait_semaphores));
+    inline constexpr uint32_t ioctl_get_buffer_device_address = make_ioctl(static_cast<uint32_t>(command::get_buffer_device_address));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -434,7 +442,8 @@ namespace sogen::gpu_bridge
     {
         object_id device;
         uint32_t flags;
-        uint32_t reserved;
+        uint32_t semaphore_type; // VkSemaphoreType: 0 = binary, 1 = timeline
+        uint64_t initial_value;  // timeline initial value (ignored for binary)
     };
 
     struct create_semaphore_response
@@ -448,6 +457,52 @@ namespace sogen::gpu_bridge
     {
         object_id device;
         object_id semaphore;
+    };
+
+    struct get_semaphore_counter_value_request
+    {
+        object_id device;
+        object_id semaphore;
+    };
+
+    struct get_semaphore_counter_value_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        uint64_t value;
+    };
+
+    struct signal_semaphore_request
+    {
+        object_id device;
+        object_id semaphore;
+        uint64_t value;
+    };
+
+    // wait_semaphores: header followed by `semaphore_count` { object_id semaphore; uint64_t value; } pairs.
+    struct wait_semaphores_request
+    {
+        object_id device;
+        uint32_t flags; // VkSemaphoreWaitFlags
+        uint32_t semaphore_count;
+        uint64_t timeout;
+    };
+
+    struct wait_semaphore_entry
+    {
+        object_id semaphore;
+        uint64_t value;
+    };
+
+    struct get_buffer_device_address_request
+    {
+        object_id device;
+        object_id buffer;
+    };
+
+    struct get_buffer_device_address_response
+    {
+        uint64_t address;
     };
 
     struct reset_fence_request
