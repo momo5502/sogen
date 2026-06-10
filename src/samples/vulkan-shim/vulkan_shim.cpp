@@ -866,6 +866,17 @@ extern "C"
         pMemoryRequirements->memoryTypeBits = response.memory_type_bits;
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetBufferMemoryRequirements2(VkDevice device,
+                                                                                    const VkBufferMemoryRequirementsInfo2* pInfo,
+                                                                                    VkMemoryRequirements2* pMemoryRequirements)
+    {
+        if (!pInfo || !pMemoryRequirements)
+        {
+            return;
+        }
+        vkGetBufferMemoryRequirements(device, pInfo->buffer, &pMemoryRequirements->memoryRequirements);
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory memory,
                                                                             VkDeviceSize memoryOffset)
     {
@@ -954,6 +965,54 @@ extern "C"
         pMemoryRequirements->size = response.size;
         pMemoryRequirements->alignment = response.alignment;
         pMemoryRequirements->memoryTypeBits = response.memory_type_bits;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetImageMemoryRequirements2(VkDevice device,
+                                                                                   const VkImageMemoryRequirementsInfo2* pInfo,
+                                                                                   VkMemoryRequirements2* pMemoryRequirements)
+    {
+        if (!pInfo || !pMemoryRequirements)
+        {
+            return;
+        }
+        vkGetImageMemoryRequirements(device, pInfo->image, &pMemoryRequirements->memoryRequirements);
+    }
+
+    // Vulkan 1.3 (maintenance4) lets callers query memory requirements without a live object. The bridge
+    // has no equivalent query, so probe a throwaway object created from the supplied create-info. DXVK's
+    // memory allocator relies on these during device construction.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceBufferMemoryRequirements(VkDevice device,
+                                                                                         const VkDeviceBufferMemoryRequirements* pInfo,
+                                                                                         VkMemoryRequirements2* pMemoryRequirements)
+    {
+        if (!pInfo || !pInfo->pCreateInfo || !pMemoryRequirements)
+        {
+            return;
+        }
+        VkBuffer buffer = VK_NULL_HANDLE;
+        if (vkCreateBuffer(device, pInfo->pCreateInfo, nullptr, &buffer) != VK_SUCCESS)
+        {
+            return;
+        }
+        vkGetBufferMemoryRequirements(device, buffer, &pMemoryRequirements->memoryRequirements);
+        vkDestroyBuffer(device, buffer, nullptr);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceImageMemoryRequirements(VkDevice device,
+                                                                                        const VkDeviceImageMemoryRequirements* pInfo,
+                                                                                        VkMemoryRequirements2* pMemoryRequirements)
+    {
+        if (!pInfo || !pInfo->pCreateInfo || !pMemoryRequirements)
+        {
+            return;
+        }
+        VkImage image = VK_NULL_HANDLE;
+        if (vkCreateImage(device, pInfo->pCreateInfo, nullptr, &image) != VK_SUCCESS)
+        {
+            return;
+        }
+        vkGetImageMemoryRequirements(device, image, &pMemoryRequirements->memoryRequirements);
+        vkDestroyImage(device, image, nullptr);
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBindImageMemory(VkDevice device, VkImage image, VkDeviceMemory memory,
@@ -2431,11 +2490,23 @@ extern "C"
             {.name = "vkCreateBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateBuffer)},
             {.name = "vkDestroyBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyBuffer)},
             {.name = "vkGetBufferMemoryRequirements", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements)},
+            {.name = "vkGetBufferMemoryRequirements2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements2)},
+            {.name = "vkGetBufferMemoryRequirements2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements2)},
             {.name = "vkBindBufferMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindBufferMemory)},
             {.name = "vkCmdFillBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdFillBuffer)},
             {.name = "vkCreateImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateImage)},
             {.name = "vkDestroyImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyImage)},
             {.name = "vkGetImageMemoryRequirements", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements)},
+            {.name = "vkGetImageMemoryRequirements2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements2)},
+            {.name = "vkGetImageMemoryRequirements2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements2)},
+            {.name = "vkGetDeviceBufferMemoryRequirements",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceBufferMemoryRequirements)},
+            {.name = "vkGetDeviceBufferMemoryRequirementsKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceBufferMemoryRequirements)},
+            {.name = "vkGetDeviceImageMemoryRequirements",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceImageMemoryRequirements)},
+            {.name = "vkGetDeviceImageMemoryRequirementsKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceImageMemoryRequirements)},
             {.name = "vkBindImageMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindImageMemory)},
             {.name = "vkCmdPipelineBarrier", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier)},
             {.name = "vkCmdClearColorImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdClearColorImage)},
