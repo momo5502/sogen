@@ -168,3 +168,9 @@ page/public/64/linux-analyzer.wasm
 __pycache__/
 devdocs/
 dist_local/
+
+# Local analysis tooling, roots, and IDE config (do not publish)
+tools/
+root/
+root.zip
+.claude/

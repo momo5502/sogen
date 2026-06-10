@@ -138,9 +138,9 @@ namespace sogen::linux_test
 
         linux_emulator_result result{};
 
-        linux_emu.on_stdout = [&result](const std::string_view data) { result.captured_stdout += data; };
+        linux_emu.callbacks.on_stdout = [&result](const std::string_view data) { result.captured_stdout += data; };
 
-        linux_emu.on_stderr = [&result](const std::string_view data) { result.captured_stderr += data; };
+        linux_emu.callbacks.on_stderr = [&result](const std::string_view data) { result.captured_stderr += data; };
 
         if (!enable_verbose_logging())
         {

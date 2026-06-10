@@ -15,6 +15,10 @@ namespace sogen::py
 
             auto windows = m.def_submodule("windows", "Windows emulator bindings");
             register_windows_runtime_bindings(windows);
+
+            auto linux_mod = m.def_submodule("linux", "Linux emulator bindings");
+            register_linux_runtime_bindings(linux_mod);
+
             register_runtime_bindings(m);
         }
     }

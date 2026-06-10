@@ -5,6 +5,7 @@
 #include <arch_emulator.hpp>
 #include <platform/compiler.hpp>
 
+#include "linux_emulator_callbacks.hpp"
 #include "linux_logger.hpp"
 #include "linux_file_system.hpp"
 #include "linux_memory_manager.hpp"
@@ -14,6 +15,7 @@
 #include "procfs.hpp"
 #include "vdso.hpp"
 #include "module/linux_module_manager.hpp"
+#include "linux_socket.hpp"
 
 namespace sogen
 {
@@ -55,9 +57,7 @@ namespace sogen
             return *this->emu_;
         }
 
-        // Callbacks for emulated stdout/stderr output
-        std::function<void(std::string_view data)> on_stdout{};
-        std::function<void(std::string_view data)> on_stderr{};
+        linux_emulator_callbacks callbacks{};
 
         // Callback invoked periodically during emulation (every 0x20000 instructions).
         // Used by the web debugger for ASYNCIFY yield and event handling.
@@ -71,8 +71,55 @@ namespace sogen
             return this->executed_instructions_;
         }
 
+        uint16_t get_host_port(const uint16_t emulator_port) const
+        {
+            const auto entry = this->port_mappings_.find(emulator_port);
+            if (entry == this->port_mappings_.end())
+            {
+                return emulator_port;
+            }
+
+            return entry->second;
+        }
+
+        uint16_t get_emulator_port(const uint16_t host_port) const
+        {
+            for (const auto& mapping : this->port_mappings_)
+            {
+                if (mapping.second == host_port)
+                {
+                    return mapping.first;
+                }
+            }
+
+            return host_port;
+        }
+
+        void map_port(const uint16_t emulator_port, const uint16_t host_port)
+        {
+            if (emulator_port != host_port)
+            {
+                this->port_mappings_[emulator_port] = host_port;
+                return;
+            }
+
+            const auto entry = this->port_mappings_.find(emulator_port);
+            if (entry != this->port_mappings_.end())
+            {
+                this->port_mappings_.erase(entry);
+            }
+        }
+
+        void close_socket(const int fd)
+        {
+            this->sockets_.erase(fd);
+        }
+
+        linux_socket_table sockets_{};
+
       private:
         std::atomic_bool should_stop{false};
+        std::unordered_map<uint16_t, uint16_t> port_mappings_{};
 
         void setup_hooks();
         void on_instruction_execution(uint64_t address);

@@ -19,7 +19,13 @@ namespace sogen
             throw std::runtime_error("Module already mapped at base 0x" + std::to_string(base));
         }
 
-        return &it->second;
+        auto* module = &it->second;
+        if (this->on_module_loaded)
+        {
+            this->on_module_loaded(*module);
+        }
+
+        return module;
     }
 
     void linux_module_manager::map_main_modules(const std::filesystem::path& executable_path)

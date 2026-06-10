@@ -15,11 +15,27 @@ namespace sogen
         {
         }
 
+        void map(std::string guest_path, std::filesystem::path host_path)
+        {
+            guest_path = normalize_guest_path(guest_path);
+            if (guest_path.empty())
+            {
+                return;
+            }
+
+            this->path_mappings_[std::move(guest_path)] = std::move(host_path);
+        }
+
         std::filesystem::path translate(const std::string_view guest_path) const
         {
             if (guest_path.empty())
             {
                 return this->root_;
+            }
+
+            if (const auto mapped = this->resolve_path_mapping(guest_path); mapped.has_value())
+            {
+                return *mapped;
             }
 
             // Handle special paths that should not be translated
@@ -173,6 +189,64 @@ namespace sogen
       private:
         std::filesystem::path root_{};
         std::vector<std::filesystem::path> passthrough_prefixes_{};
+        std::map<std::string, std::filesystem::path, std::less<>> path_mappings_{};
+
+        static std::string normalize_guest_path(std::string_view guest_path)
+        {
+            if (guest_path.empty())
+            {
+                return {};
+            }
+
+            auto normalized = std::filesystem::path{guest_path}.lexically_normal().string();
+            if (!normalized.empty() && normalized.front() != '/')
+            {
+                normalized.insert(normalized.begin(), '/');
+            }
+
+            return normalized;
+        }
+
+        std::optional<std::filesystem::path> resolve_path_mapping(const std::string_view guest_path) const
+        {
+            const auto normalized = normalize_guest_path(guest_path);
+            if (normalized.empty())
+            {
+                return std::nullopt;
+            }
+
+            if (const auto exact = this->path_mappings_.find(normalized); exact != this->path_mappings_.end())
+            {
+                return exact->second;
+            }
+
+            std::string best_prefix{};
+            std::filesystem::path best_host{};
+            for (const auto& [guest, host] : this->path_mappings_)
+            {
+                if (normalized == guest || normalized.starts_with(guest + "/"))
+                {
+                    if (guest.size() > best_prefix.size())
+                    {
+                        best_prefix = guest;
+                        best_host = host;
+                    }
+                }
+            }
+
+            if (best_prefix.empty())
+            {
+                return std::nullopt;
+            }
+
+            if (normalized == best_prefix)
+            {
+                return best_host;
+            }
+
+            const auto suffix = normalized.substr(best_prefix.size() + 1);
+            return (best_host / suffix).lexically_normal();
+        }
 
         static bool is_within(const std::filesystem::path& path, const std::filesystem::path& prefix)
         {

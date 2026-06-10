@@ -611,7 +611,7 @@ namespace sogen
         {
             // stdout / stderr: invoke callback if set, otherwise write to host
             const auto sv = std::string_view(reinterpret_cast<const char*>(buffer.data()), count);
-            auto& callback = (fd == 1) ? c.emu_ref.on_stdout : c.emu_ref.on_stderr;
+            auto& callback = (fd == 1) ? c.emu_ref.callbacks.on_stdout : c.emu_ref.callbacks.on_stderr;
 
             if (callback)
             {
@@ -740,6 +740,12 @@ namespace sogen
 
         // Tear down any per-fd directory iteration state.
         cleanup_directory_fd_state(fd);
+
+        auto* fd_entry = c.proc.fds.get(fd);
+        if (fd_entry && fd_entry->type == fd_type::socket)
+        {
+            c.emu_ref.close_socket(fd);
+        }
 
         if (!c.proc.fds.close(fd))
         {
@@ -1059,7 +1065,7 @@ namespace sogen
             if (fd == 1 || fd == 2)
             {
                 const auto sv = std::string_view(reinterpret_cast<const char*>(buffer.data()), static_cast<size_t>(iov_len));
-                auto& callback = (fd == 1) ? c.emu_ref.on_stdout : c.emu_ref.on_stderr;
+                auto& callback = (fd == 1) ? c.emu_ref.callbacks.on_stdout : c.emu_ref.callbacks.on_stderr;
 
                 if (callback)
                 {

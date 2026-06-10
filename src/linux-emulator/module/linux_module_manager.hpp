@@ -4,6 +4,8 @@
 #include "../linux_memory_manager.hpp"
 #include "elf_mapping.hpp"
 
+#include <utils/function.hpp>
+
 #include <utils/io.hpp>
 
 namespace sogen
@@ -37,6 +39,8 @@ namespace sogen
 
         // Add an additional library search directory
         void add_library_path(const std::filesystem::path& path);
+
+        utils::optional_function<void(linux_mapped_module&)> on_module_loaded{};
 
         // Resolve a library name (e.g., "libm.so.6") to a host filesystem path using the
         // standard search order: DT_RPATH, LD_LIBRARY_PATH (configured paths), DT_RUNPATH,

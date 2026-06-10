@@ -83,6 +83,8 @@ namespace sogen
           memory(*this->emu_),
           mod_manager(this->memory)
     {
+        this->mod_manager.on_module_loaded = [this](linux_mapped_module& module) { this->callbacks.on_module_load(module); };
+
         // Set up GDT for 64-bit long mode
         setup_gdt(*this->emu_, this->memory);
 
@@ -217,6 +219,21 @@ namespace sogen
         // Hook memory violations — try to deliver as SIGSEGV to user handler
         this->emu().hook_memory_violation(
             [this](const uint64_t address, const size_t size, const memory_operation operation, const memory_violation_type type) {
+                if (this->callbacks.on_memory_violate)
+                {
+                    const auto cont = this->callbacks.on_memory_violate(address, size, operation, type);
+                    if (cont == memory_violation_continuation::stop)
+                    {
+                        this->stop();
+                        return memory_violation_continuation::stop;
+                    }
+
+                    if (cont != memory_violation_continuation::resume)
+                    {
+                        return cont;
+                    }
+                }
+
                 const char* type_str = (type == memory_violation_type::unmapped) ? "unmapped" : "protection";
                 const char* op_str = "unknown";
 
@@ -270,7 +287,10 @@ namespace sogen
             ++this->process.active_thread->executed_instructions;
         }
 
-        (void)address;
+        if (this->callbacks.on_instruction)
+        {
+            this->callbacks.on_instruction(address);
+        }
 
         if (this->on_periodic_event && (this->executed_instructions_ % 0x20000) == 0)
         {

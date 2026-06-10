@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 #include "linux_syscall_dispatcher.hpp"
 #include "linux_emulator.hpp"
+#include "linux_emulator_callbacks.hpp"
 
 // NOLINTBEGIN(google-build-using-namespace)
 namespace sogen
@@ -171,6 +172,35 @@ namespace sogen
         auto& e = emu_ref.emu();
         const auto syscall_id = e.reg(x86_register::rax);
 
+        const linux_syscall_handler_entry* entry = nullptr;
+        std::string_view syscall_name{};
+
+        if (syscall_id >= this->handlers_.size())
+        {
+            syscall_name = "unknown";
+        }
+        else
+        {
+            entry = &this->handlers_[static_cast<size_t>(syscall_id)];
+            syscall_name = entry->name.empty() ? "unknown" : std::string_view{entry->name};
+        }
+
+        if (emu_ref.callbacks.on_syscall)
+        {
+            const auto info = make_linux_syscall_info(e, syscall_id, syscall_name);
+            const auto cont = emu_ref.callbacks.on_syscall(info);
+            if (cont == linux_syscall_hook_continuation::stop)
+            {
+                emu_ref.stop();
+                return;
+            }
+
+            if (cont == linux_syscall_hook_continuation::skip_handler)
+            {
+                return;
+            }
+        }
+
         if (syscall_id >= this->handlers_.size())
         {
             emu_ref.log.warn("Unimplemented syscall: %" PRIu64 "\n", syscall_id);
@@ -178,16 +208,15 @@ namespace sogen
             return;
         }
 
-        const auto& entry = this->handlers_[static_cast<size_t>(syscall_id)];
-        if (!entry.handler)
+        if (!entry->handler)
         {
-            emu_ref.log.warn("Unimplemented syscall: %" PRIu64 " (%s)\n", syscall_id, entry.name.empty() ? "unknown" : entry.name.c_str());
+            emu_ref.log.warn("Unimplemented syscall: %" PRIu64 " (%s)\n", syscall_id, entry->name.empty() ? "unknown" : entry->name.c_str());
             e.reg(x86_register::rax, static_cast<uint64_t>(-LINUX_ENOSYS));
             return;
         }
 
         linux_syscall_context ctx{.emu_ref = emu_ref, .emu = e, .proc = emu_ref.process};
-        entry.handler(ctx);
+        entry->handler(ctx);
     }
 
     void linux_syscall_dispatcher::add_handlers()

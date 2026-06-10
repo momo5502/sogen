@@ -245,9 +245,9 @@ namespace sogen
         constexpr uint32_t EPOLLOUT = 0x004;
 
         // Poll event flags
-        constexpr int16_t POLLIN = 0x0001;
-        constexpr int16_t POLLOUT = 0x0004;
-        constexpr int16_t POLLNVAL = 0x0020;
+        constexpr int16_t LINUX_POLLIN = 0x0001;
+        constexpr int16_t LINUX_POLLOUT = 0x0004;
+        constexpr int16_t LINUX_POLLNVAL = 0x0020;
 
 #pragma pack(push, 1)
         struct linux_epoll_event
@@ -459,14 +459,14 @@ namespace sogen
             auto* fd_entry = c.proc.fds.get(pfd.fd);
             if (!fd_entry)
             {
-                pfd.revents = POLLNVAL;
+                pfd.revents = LINUX_POLLNVAL;
                 c.emu.write_memory(entry_addr, &pfd, sizeof(pfd));
                 ++ready_count;
                 continue;
             }
 
             // Check readiness
-            if (pfd.events & POLLIN)
+            if (pfd.events & LINUX_POLLIN)
             {
                 if (fd_entry->type == fd_type::file && fd_entry->handle)
                 {
@@ -476,19 +476,19 @@ namespace sogen
                     fseek(fd_entry->handle, pos, SEEK_SET);
                     if (pos < end)
                     {
-                        pfd.revents |= POLLIN;
+                        pfd.revents |= LINUX_POLLIN;
                     }
                 }
                 // stdin: report not ready (would block)
                 // pipes: could check but simplified for now
             }
 
-            if (pfd.events & POLLOUT)
+            if (pfd.events & LINUX_POLLOUT)
             {
                 // Most fds are writable
                 if (fd_entry->type == fd_type::file || fd_entry->type == fd_type::pipe_write || fd_entry->type == fd_type::socket)
                 {
-                    pfd.revents |= POLLOUT;
+                    pfd.revents |= LINUX_POLLOUT;
                 }
             }
 
