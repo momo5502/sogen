@@ -2597,22 +2597,57 @@ namespace sogen
                                                   const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
                                                   const DWORD mode_num, const emulator_object<EMU_DEVMODEW> dev_mode, const DWORD /*flags*/)
         {
-            if (dev_mode && (mode_num == ENUM_CURRENT_SETTINGS || mode_num == 0))
+            if (!dev_mode)
             {
-                const auto dev_name = device_name ? read_unicode_string(c.emu, device_name) : u"";
+                return STATUS_UNSUCCESSFUL;
+            }
 
-                if (dev_name.empty() || dev_name == u"\\\\.\\DISPLAY1")
-                {
-                    dev_mode.access([](EMU_DEVMODEW& dm) {
-                        dm.dmFields = 0x5C0000; // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
-                        dm.dmPelsWidth = 1920;
-                        dm.dmPelsHeight = 1080;
-                        dm.dmBitsPerPel = 32;
-                        dm.dmDisplayFrequency = 60;
-                    });
+            const auto dev_name = device_name ? read_unicode_string(c.emu, device_name) : u"";
 
-                    return STATUS_SUCCESS;
-                }
+            if (!dev_name.empty() && dev_name != u"\\\\.\\DISPLAY1")
+            {
+                return STATUS_UNSUCCESSFUL;
+            }
+
+            // The single virtual display advertises a list of common modes so callers (e.g. DXVK's
+            // mode enumeration, which the game uses to validate available resolutions) see real entries.
+            struct display_mode
+            {
+                uint32_t width;
+                uint32_t height;
+            };
+            static constexpr std::array<display_mode, 8> modes = {{
+                {.width = 640, .height = 480},
+                {.width = 800, .height = 600},
+                {.width = 1024, .height = 768},
+                {.width = 1280, .height = 720},
+                {.width = 1280, .height = 1024},
+                {.width = 1600, .height = 900},
+                {.width = 1680, .height = 1050},
+                {.width = 1920, .height = 1080},
+            }};
+
+            const auto fill_mode = [&](const uint32_t width, const uint32_t height) {
+                dev_mode.access([&](EMU_DEVMODEW& dm) {
+                    dm.dmSize = sizeof(EMU_DEVMODEW);
+                    dm.dmFields = 0x5C0000; // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
+                    dm.dmPelsWidth = width;
+                    dm.dmPelsHeight = height;
+                    dm.dmBitsPerPel = 32;
+                    dm.dmDisplayFrequency = 60;
+                });
+            };
+
+            if (mode_num == ENUM_CURRENT_SETTINGS || mode_num == ENUM_REGISTRY_SETTINGS)
+            {
+                fill_mode(1920, 1080);
+                return STATUS_SUCCESS;
+            }
+
+            if (mode_num < modes.size())
+            {
+                fill_mode(modes[mode_num].width, modes[mode_num].height);
+                return STATUS_SUCCESS;
             }
 
             return STATUS_UNSUCCESSFUL;

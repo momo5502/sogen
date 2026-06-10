@@ -237,6 +237,10 @@ namespace sogen
 #define ENUM_CURRENT_SETTINGS ((DWORD) - 1)
 #endif
 
+#ifndef ENUM_REGISTRY_SETTINGS
+#define ENUM_REGISTRY_SETTINGS ((DWORD) - 2)
+#endif
+
     struct EMU_DEVMODEW
     {
         char16_t dmDeviceName[32];
@@ -291,6 +295,12 @@ namespace sogen
         DWORD dmPanningWidth;
         DWORD dmPanningHeight;
     };
+
+    static_assert(offsetof(EMU_DEVMODEW, dmFields) == 0x48);
+    static_assert(offsetof(EMU_DEVMODEW, dmBitsPerPel) == 0xA8);
+    static_assert(offsetof(EMU_DEVMODEW, dmPelsWidth) == 0xAC);
+    static_assert(offsetof(EMU_DEVMODEW, dmPelsHeight) == 0xB0);
+    static_assert(offsetof(EMU_DEVMODEW, dmDisplayFrequency) == 0xB8);
 
     // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 } // namespace sogen
