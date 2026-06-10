@@ -1134,6 +1134,9 @@ namespace sogen
                     .apc_argument1 = apc_context,
                     .apc_argument2 = io_status_block.value(),
                     .apc_argument3 = 0,
+                    .restamp_io_status_block = c.proc.is_wow64_process && io_status_block,
+                    .io_status = static_cast<int32_t>(static_cast<ULONG>(status)),
+                    .io_information = static_cast<uint32_t>(information),
                 });
             }
         }

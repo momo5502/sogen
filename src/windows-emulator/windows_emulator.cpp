@@ -257,6 +257,17 @@ namespace sogen
             const auto next_apx = apcs.front();
             apcs.erase(apcs.begin());
 
+            if (next_apx.restamp_io_status_block && next_apx.apc_argument2)
+            {
+                // Re-stamp the WoW64 32-bit I/O status block (Status @0, Information @4) just before the
+                // completion routine reads it, undoing any clobber by an intervening syscall that reused
+                // the shared scratch block.
+                const auto status32 = static_cast<uint32_t>(next_apx.io_status);
+                emu.write_memory(next_apx.apc_argument2, &status32, sizeof(status32));
+                emu.write_memory(next_apx.apc_argument2 + sizeof(status32), &next_apx.io_information,
+                                 sizeof(next_apx.io_information));
+            }
+
             struct
             {
                 CONTEXT64 context{};

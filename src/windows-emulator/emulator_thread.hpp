@@ -20,6 +20,14 @@ namespace sogen
         uint64_t apc_argument2{};
         uint64_t apc_argument3{};
 
+        // For a WoW64 I/O completion APC: the WoW64 layer's 64-bit I/O status block (apc_argument2) is a
+        // reused per-thread scratch buffer. A syscall issued between this APC being queued and dispatched
+        // overwrites it, so the completion routine would read a stale byte count. Re-stamp the 32-bit status
+        // block right before the APC runs to guarantee the correct result reaches the guest.
+        bool restamp_io_status_block{false};
+        int32_t io_status{};
+        uint32_t io_information{};
+
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->flags);
@@ -27,6 +35,9 @@ namespace sogen
             buffer.write(this->apc_argument1);
             buffer.write(this->apc_argument2);
             buffer.write(this->apc_argument3);
+            buffer.write(this->restamp_io_status_block);
+            buffer.write(this->io_status);
+            buffer.write(this->io_information);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -36,6 +47,9 @@ namespace sogen
             buffer.read(this->apc_argument1);
             buffer.read(this->apc_argument2);
             buffer.read(this->apc_argument3);
+            buffer.read(this->restamp_io_status_block);
+            buffer.read(this->io_status);
+            buffer.read(this->io_information);
         }
     };
 
