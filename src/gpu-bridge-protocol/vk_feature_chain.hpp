@@ -48,4 +48,37 @@ namespace sogen::gpu_bridge
         const size_t total = feature_struct_size(type);
         return total > feature_chain_header_size ? total - feature_chain_header_size : 0;
     }
+
+    // sizeof the named VkPhysicalDevice*Properties struct on THIS architecture, or 0 if unknown. These
+    // chain onto VkPhysicalDeviceProperties2; unlike the base properties (which contains a size_t and is
+    // not ABI-identical), the bodies of these structs are runs of uint32/uint64/arrays that lay out the
+    // same on x86 and x64, so the body bytes cross the wire directly. Extend when a new one is needed.
+    inline size_t property_struct_size(const VkStructureType type)
+    {
+        switch (type)
+        {
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_PROPERTIES:
+            return sizeof(VkPhysicalDeviceVulkan11Properties);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES:
+            return sizeof(VkPhysicalDeviceVulkan12Properties);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_PROPERTIES:
+            return sizeof(VkPhysicalDeviceVulkan13Properties);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_PROPERTIES_EXT:
+            return sizeof(VkPhysicalDeviceRobustness2PropertiesEXT);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES:
+            return sizeof(VkPhysicalDeviceDescriptorIndexingProperties);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES:
+            return sizeof(VkPhysicalDeviceMaintenance3Properties);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_PROPERTIES:
+            return sizeof(VkPhysicalDeviceMaintenance4Properties);
+        default:
+            return 0;
+        }
+    }
+
+    inline size_t property_body_size(const VkStructureType type)
+    {
+        const size_t total = property_struct_size(type);
+        return total > feature_chain_header_size ? total - feature_chain_header_size : 0;
+    }
 }

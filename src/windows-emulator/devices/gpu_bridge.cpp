@@ -38,6 +38,8 @@ namespace sogen
                     return handle_enumerate_device_extension_properties(win_emu, context);
                 case gpu_bridge::ioctl_get_physical_device_features2:
                     return handle_get_physical_device_features2(win_emu, context);
+                case gpu_bridge::ioctl_get_physical_device_properties2:
+                    return handle_get_physical_device_properties2(win_emu, context);
                 case gpu_bridge::ioctl_create_semaphore:
                     return handle_create_semaphore(win_emu, context);
                 case gpu_bridge::ioctl_destroy_semaphore:
@@ -454,6 +456,48 @@ namespace sogen
                 std::vector<std::byte> blob;
                 const int32_t result = this->vulkan_.get_physical_device_features2(request.physical_device, records.data(), records.size(),
                                                                                    request.struct_count, blob);
+
+                const response_t response{.vk_result = result, .struct_count = request.struct_count};
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response);
+
+                const auto avail = context.output_buffer_length - static_cast<uint32_t>(sizeof(response_t));
+                const auto to_write = static_cast<uint32_t>(blob.size() < avail ? blob.size() : avail);
+                if (to_write > 0)
+                {
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), blob.data(), to_write);
+                }
+
+                set_information(context, static_cast<ULONG>(sizeof(response_t) + to_write));
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_physical_device_properties2(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::get_physical_device_properties2_request;
+                using response_t = gpu_bridge::get_physical_device_properties2_response;
+
+                if (!context.input_buffer || context.input_buffer_length < sizeof(request_t))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
+
+                const auto records_bytes = context.input_buffer_length - static_cast<uint32_t>(sizeof(request_t));
+                std::vector<std::byte> records(records_bytes);
+                if (records_bytes > 0)
+                {
+                    win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), records.data(), records_bytes);
+                }
+
+                std::vector<std::byte> blob;
+                const int32_t result = this->vulkan_.get_physical_device_properties2(request.physical_device, records.data(),
+                                                                                     records.size(), request.struct_count, blob);
 
                 const response_t response{.vk_result = result, .struct_count = request.struct_count};
                 emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response);

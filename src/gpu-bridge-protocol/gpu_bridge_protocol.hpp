@@ -114,6 +114,7 @@ namespace sogen::gpu_bridge
         create_semaphore = 0x84E,
         destroy_semaphore = 0x84F,
         create_compute_pipeline = 0x850,
+        get_physical_device_properties2 = 0x851,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -188,6 +189,8 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_create_semaphore = make_ioctl(static_cast<uint32_t>(command::create_semaphore));
     inline constexpr uint32_t ioctl_destroy_semaphore = make_ioctl(static_cast<uint32_t>(command::destroy_semaphore));
     inline constexpr uint32_t ioctl_create_compute_pipeline = make_ioctl(static_cast<uint32_t>(command::create_compute_pipeline));
+    inline constexpr uint32_t ioctl_get_physical_device_properties2 =
+        make_ioctl(static_cast<uint32_t>(command::get_physical_device_properties2));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -287,6 +290,22 @@ namespace sogen::gpu_bridge
     // ioctl_get_physical_device_features2: out header, followed by `struct_count` records, each a
     // feature_chain_record + body_size bytes, in the same order as the requested sTypes.
     struct get_physical_device_features2_response
+    {
+        int32_t vk_result;
+        uint32_t struct_count;
+    };
+
+    // ioctl_get_physical_device_properties2: same chain convention as features2, but for the property
+    // structs chained onto VkPhysicalDeviceProperties2 (the base VkPhysicalDeviceProperties is fetched
+    // separately via ioctl_get_physical_device_properties; only the pNext structs travel here).
+    struct get_physical_device_properties2_request
+    {
+        object_id physical_device;
+        uint32_t struct_count;
+        uint32_t reserved;
+    };
+
+    struct get_physical_device_properties2_response
     {
         int32_t vk_result;
         uint32_t struct_count;
@@ -1081,5 +1100,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(feature_chain_record) == 8, "wire layout drift");
     static_assert(sizeof(get_physical_device_features2_request) == 16, "wire layout drift");
     static_assert(sizeof(get_physical_device_features2_response) == 8, "wire layout drift");
+    static_assert(sizeof(get_physical_device_properties2_request) == 16, "wire layout drift");
+    static_assert(sizeof(get_physical_device_properties2_response) == 8, "wire layout drift");
     static_assert(sizeof(create_device_request) == 32, "wire layout drift");
 }

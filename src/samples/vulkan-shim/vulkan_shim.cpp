@@ -1322,9 +1322,85 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice,
                                                                                     VkPhysicalDeviceProperties2* pProperties)
     {
-        if (pProperties)
+        if (!pProperties)
         {
-            vkGetPhysicalDeviceProperties(physicalDevice, &pProperties->properties);
+            return;
+        }
+
+        // Base VkPhysicalDeviceProperties goes through the already-remoted base query.
+        vkGetPhysicalDeviceProperties(physicalDevice, &pProperties->properties);
+
+        // Remote the chained property structs (e.g. VkPhysicalDeviceRobustness2PropertiesEXT, whose
+        // alignment fields DXVK divides by). Same chain convention as vkGetPhysicalDeviceFeatures2.
+        struct dest
+        {
+            uint8_t* body;
+            uint32_t body_size;
+        };
+        std::vector<dest> dests;
+        std::vector<gb::feature_chain_record> records;
+        for (auto* next = static_cast<VkBaseOutStructure*>(pProperties->pNext); next; next = next->pNext)
+        {
+            const auto body_size = static_cast<uint32_t>(gb::property_body_size(next->sType));
+            if (body_size == 0)
+            {
+                continue; // struct the host does not know; left as the caller initialized it
+            }
+            dests.push_back({.body = reinterpret_cast<uint8_t*>(next) + gb::feature_chain_header_size, .body_size = body_size});
+            records.push_back({.s_type = static_cast<uint32_t>(next->sType), .body_size = body_size});
+        }
+
+        if (records.empty())
+        {
+            return;
+        }
+
+        std::vector<std::byte> in(sizeof(gb::get_physical_device_properties2_request) + records.size() * sizeof(gb::feature_chain_record));
+        auto* request = reinterpret_cast<gb::get_physical_device_properties2_request*>(in.data());
+        request->physical_device = to_object_id(physicalDevice);
+        request->struct_count = static_cast<uint32_t>(records.size());
+        request->reserved = 0;
+        std::memcpy(in.data() + sizeof(*request), records.data(), records.size() * sizeof(gb::feature_chain_record));
+
+        size_t out_capacity = sizeof(gb::get_physical_device_properties2_response);
+        for (const auto& d : dests)
+        {
+            out_capacity += sizeof(gb::feature_chain_record) + d.body_size;
+        }
+        std::vector<std::byte> out(out_capacity);
+
+        if (!bridge_call(gb::ioctl_get_physical_device_properties2, in.data(), static_cast<DWORD>(in.size()), out.data(),
+                         static_cast<DWORD>(out.size())))
+        {
+            return;
+        }
+
+        const auto* response = reinterpret_cast<const gb::get_physical_device_properties2_response*>(out.data());
+        if (response->vk_result != VK_SUCCESS)
+        {
+            return;
+        }
+
+        size_t offset = sizeof(gb::get_physical_device_properties2_response);
+        for (uint32_t i = 0; i < response->struct_count && i < dests.size(); ++i)
+        {
+            if (offset + sizeof(gb::feature_chain_record) > out.size())
+            {
+                break;
+            }
+            const auto* record = reinterpret_cast<const gb::feature_chain_record*>(out.data() + offset);
+            offset += sizeof(gb::feature_chain_record);
+            if (offset + record->body_size > out.size())
+            {
+                break;
+            }
+
+            const uint32_t copy = record->body_size < dests[i].body_size ? record->body_size : dests[i].body_size;
+            if (copy > 0)
+            {
+                std::memcpy(dests[i].body, out.data() + offset, copy);
+            }
+            offset += record->body_size;
         }
     }
 

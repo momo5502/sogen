@@ -57,6 +57,12 @@ namespace sogen
         int32_t get_physical_device_features2(uint64_t physical_device, const void* in_records, size_t in_records_size,
                                               uint32_t struct_count, std::vector<std::byte>& out_blob);
 
+        // Same chain convention as get_physical_device_features2, but for the property structs chained on
+        // VkPhysicalDeviceProperties2 (e.g. VkPhysicalDeviceRobustness2PropertiesEXT). The base
+        // VkPhysicalDeviceProperties is not included here (fetched via get_physical_device_properties).
+        int32_t get_physical_device_properties2(uint64_t physical_device, const void* in_records, size_t in_records_size,
+                                                uint32_t struct_count, std::vector<std::byte>& out_blob);
+
         // Creates a logical device with a single queue family (queue_count queues, default priority),
         // enabling the given device extensions (extension_blob = `extension_count` NUL-terminated names)
         // and features (feature_blob = `feature_struct_count` feature_chain_record + body entries, same

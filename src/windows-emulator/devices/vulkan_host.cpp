@@ -88,6 +88,7 @@ namespace sogen
             PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queue_family_properties{};
             PFN_vkGetPhysicalDeviceMemoryProperties get_physical_device_memory_properties{};
             PFN_vkGetPhysicalDeviceFeatures2 get_physical_device_features2{};
+            PFN_vkGetPhysicalDeviceProperties2 get_physical_device_properties2{};
             PFN_vkEnumerateDeviceExtensionProperties enumerate_device_extension_properties{};
             PFN_vkCreateDevice create_device{};
             PFN_vkGetDeviceProcAddr get_device_proc_addr{};
@@ -695,6 +696,8 @@ namespace sogen
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceMemoryProperties>(instance, "vkGetPhysicalDeviceMemoryProperties");
         data.get_physical_device_features2 =
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceFeatures2>(instance, "vkGetPhysicalDeviceFeatures2");
+        data.get_physical_device_properties2 =
+            this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceProperties2>(instance, "vkGetPhysicalDeviceProperties2");
         data.enumerate_device_extension_properties =
             this->impl_->load_instance_proc<PFN_vkEnumerateDeviceExtensionProperties>(instance, "vkEnumerateDeviceExtensionProperties");
         data.create_device = this->impl_->load_instance_proc<PFN_vkCreateDevice>(instance, "vkCreateDevice");
@@ -977,6 +980,88 @@ namespace sogen
             if (body)
             {
                 const size_t host_capacity = gpu_bridge::feature_struct_size(type) - gpu_bridge::feature_chain_header_size;
+                body_size = static_cast<uint32_t>(std::min<size_t>(records[i].body_size, host_capacity));
+            }
+
+            const gpu_bridge::feature_chain_record out_record{.s_type = records[i].s_type, .body_size = body_size};
+            const auto* record_bytes = reinterpret_cast<const std::byte*>(&out_record);
+            out_blob.insert(out_blob.end(), record_bytes, record_bytes + sizeof(out_record));
+            if (body_size > 0)
+            {
+                out_blob.insert(out_blob.end(), body, body + body_size);
+            }
+        }
+
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::get_physical_device_properties2(uint64_t physical_device, const void* in_records, size_t in_records_size,
+                                                         uint32_t struct_count, std::vector<std::byte>& out_blob)
+    {
+        out_blob.clear();
+
+        const auto pd = this->impl_->physical_devices.find(physical_device);
+        if (pd == this->impl_->physical_devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto instance = this->impl_->instances.find(pd->second.instance_id);
+        if (instance == this->impl_->instances.end() || !instance->second.get_physical_device_properties2)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (in_records_size < static_cast<size_t>(struct_count) * sizeof(gpu_bridge::feature_chain_record))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto* records = static_cast<const gpu_bridge::feature_chain_record*>(in_records);
+
+        // Build a VkPhysicalDeviceProperties2 with one allocated, zeroed struct per known requested sType
+        // chained on pNext. Only the chained property structs are serialized back; the base properties go
+        // through get_physical_device_properties.
+        VkPhysicalDeviceProperties2 properties2{};
+        properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+
+        std::vector<std::vector<std::byte>> chained;
+        auto* tail = reinterpret_cast<VkBaseOutStructure*>(&properties2);
+        for (uint32_t i = 0; i < struct_count; ++i)
+        {
+            const auto type = static_cast<VkStructureType>(records[i].s_type);
+            const size_t size = gpu_bridge::property_struct_size(type);
+            if (size == 0)
+            {
+                continue; // unknown struct: not queried, reported empty below
+            }
+            auto& buffer = chained.emplace_back(size, std::byte{});
+            auto* base = reinterpret_cast<VkBaseOutStructure*>(buffer.data());
+            base->sType = type;
+            base->pNext = nullptr;
+            tail->pNext = base;
+            tail = base;
+        }
+
+        instance->second.get_physical_device_properties2(pd->second.handle, &properties2);
+
+        for (uint32_t i = 0; i < struct_count; ++i)
+        {
+            const auto type = static_cast<VkStructureType>(records[i].s_type);
+
+            const std::byte* body = nullptr;
+            for (const auto& buffer : chained)
+            {
+                if (reinterpret_cast<const VkBaseOutStructure*>(buffer.data())->sType == type)
+                {
+                    body = buffer.data() + gpu_bridge::feature_chain_header_size;
+                    break;
+                }
+            }
+
+            uint32_t body_size = 0;
+            if (body)
+            {
+                const size_t host_capacity = gpu_bridge::property_struct_size(type) - gpu_bridge::feature_chain_header_size;
                 body_size = static_cast<uint32_t>(std::min<size_t>(records[i].body_size, host_capacity));
             }
 
