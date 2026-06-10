@@ -2629,6 +2629,11 @@ namespace sogen
 
             const auto fill_mode = [&](const uint32_t width, const uint32_t height) {
                 dev_mode.access([&](EMU_DEVMODEW& dm) {
+                    // Real EnumDisplaySettings fills the whole structure. Clear it first so fields the
+                    // caller did not initialize (notably dmDisplayFlags, which holds DM_INTERLACED) do
+                    // not leak stale stack data; DXVK rejects every mode whose dmDisplayFlags reports
+                    // an interlaced mode.
+                    dm = EMU_DEVMODEW{};
                     dm.dmSize = sizeof(EMU_DEVMODEW);
                     dm.dmFields = 0x5C0000; // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
                     dm.dmPelsWidth = width;
