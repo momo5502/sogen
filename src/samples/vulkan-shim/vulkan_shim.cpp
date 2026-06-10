@@ -2148,6 +2148,124 @@ extern "C"
         bridge_call(gb::ioctl_update_descriptor_sets, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response));
     }
 
+    // Descriptor update templates are lowered entirely inside the shim: the template definition is kept
+    // host-side (guest-side, in the shim) and vkUpdateDescriptorSetWithTemplate gathers the strided
+    // caller data into ordinary VkWriteDescriptorSet records, reusing vkUpdateDescriptorSets. This avoids
+    // a dedicated bridge command for an otherwise pure convenience API.
+    namespace
+    {
+        struct shim_descriptor_update_template
+        {
+            std::vector<VkDescriptorUpdateTemplateEntry> entries;
+        };
+
+        bool is_image_descriptor(VkDescriptorType type)
+        {
+            return type == VK_DESCRIPTOR_TYPE_SAMPLER || type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
+                   type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE || type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ||
+                   type == VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT;
+        }
+
+        bool is_texel_buffer_descriptor(VkDescriptorType type)
+        {
+            return type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER || type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+    vkCreateDescriptorUpdateTemplate(VkDevice, const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo, const VkAllocationCallbacks*,
+                                     VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate)
+    {
+        if (!pCreateInfo || !pDescriptorUpdateTemplate)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        auto* tmpl = new (std::nothrow) shim_descriptor_update_template{};
+        if (!tmpl)
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        tmpl->entries.assign(pCreateInfo->pDescriptorUpdateEntries,
+                             pCreateInfo->pDescriptorUpdateEntries + pCreateInfo->descriptorUpdateEntryCount);
+        *pDescriptorUpdateTemplate = reinterpret_cast<VkDescriptorUpdateTemplate>(tmpl);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyDescriptorUpdateTemplate(VkDevice,
+                                                                                       VkDescriptorUpdateTemplate descriptorUpdateTemplate,
+                                                                                       const VkAllocationCallbacks*)
+    {
+        delete reinterpret_cast<shim_descriptor_update_template*>(descriptorUpdateTemplate);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkUpdateDescriptorSetWithTemplate(VkDevice device, VkDescriptorSet descriptorSet,
+                                                                                       VkDescriptorUpdateTemplate descriptorUpdateTemplate,
+                                                                                       const void* pData)
+    {
+        const auto* tmpl = reinterpret_cast<const shim_descriptor_update_template*>(descriptorUpdateTemplate);
+        if (!tmpl || !pData)
+        {
+            return;
+        }
+
+        std::vector<VkWriteDescriptorSet> writes;
+        std::vector<std::vector<VkDescriptorImageInfo>> image_infos;
+        std::vector<std::vector<VkDescriptorBufferInfo>> buffer_infos;
+        std::vector<std::vector<VkBufferView>> texel_views;
+        writes.reserve(tmpl->entries.size());
+        image_infos.reserve(tmpl->entries.size());
+        buffer_infos.reserve(tmpl->entries.size());
+        texel_views.reserve(tmpl->entries.size());
+
+        const auto* base = static_cast<const uint8_t*>(pData);
+        for (const auto& entry : tmpl->entries)
+        {
+            VkWriteDescriptorSet write{};
+            write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write.dstSet = descriptorSet;
+            write.dstBinding = entry.dstBinding;
+            write.dstArrayElement = entry.dstArrayElement;
+            write.descriptorCount = entry.descriptorCount;
+            write.descriptorType = entry.descriptorType;
+
+            if (is_image_descriptor(entry.descriptorType))
+            {
+                auto& arr = image_infos.emplace_back();
+                arr.reserve(entry.descriptorCount);
+                for (uint32_t e = 0; e < entry.descriptorCount; ++e)
+                {
+                    arr.push_back(*reinterpret_cast<const VkDescriptorImageInfo*>(base + entry.offset + e * entry.stride));
+                }
+                write.pImageInfo = arr.data();
+            }
+            else if (is_texel_buffer_descriptor(entry.descriptorType))
+            {
+                auto& arr = texel_views.emplace_back();
+                arr.reserve(entry.descriptorCount);
+                for (uint32_t e = 0; e < entry.descriptorCount; ++e)
+                {
+                    arr.push_back(*reinterpret_cast<const VkBufferView*>(base + entry.offset + e * entry.stride));
+                }
+                write.pTexelBufferView = arr.data();
+            }
+            else
+            {
+                auto& arr = buffer_infos.emplace_back();
+                arr.reserve(entry.descriptorCount);
+                for (uint32_t e = 0; e < entry.descriptorCount; ++e)
+                {
+                    arr.push_back(*reinterpret_cast<const VkDescriptorBufferInfo*>(base + entry.offset + e * entry.stride));
+                }
+                write.pBufferInfo = arr.data();
+            }
+
+            writes.push_back(write);
+        }
+
+        vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSampler(VkDevice device, const VkSamplerCreateInfo* pCreateInfo,
                                                                          const VkAllocationCallbacks*, VkSampler* pSampler)
     {
@@ -2575,6 +2693,14 @@ extern "C"
             {.name = "vkDestroyDescriptorPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorPool)},
             {.name = "vkAllocateDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkAllocateDescriptorSets)},
             {.name = "vkUpdateDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkUpdateDescriptorSets)},
+            {.name = "vkCreateDescriptorUpdateTemplate", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDescriptorUpdateTemplate)},
+            {.name = "vkCreateDescriptorUpdateTemplateKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDescriptorUpdateTemplate)},
+            {.name = "vkDestroyDescriptorUpdateTemplate", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorUpdateTemplate)},
+            {.name = "vkDestroyDescriptorUpdateTemplateKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorUpdateTemplate)},
+            {.name = "vkUpdateDescriptorSetWithTemplate", .func = reinterpret_cast<PFN_vkVoidFunction>(vkUpdateDescriptorSetWithTemplate)},
+            {.name = "vkUpdateDescriptorSetWithTemplateKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkUpdateDescriptorSetWithTemplate)},
             {.name = "vkCmdBindDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindDescriptorSets)},
             {.name = "vkCreateGraphicsPipelines", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateGraphicsPipelines)},
             {.name = "vkDestroyPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipeline)},
