@@ -42,6 +42,8 @@ namespace sogen
                     return handle_create_semaphore(win_emu, context);
                 case gpu_bridge::ioctl_destroy_semaphore:
                     return handle_destroy_semaphore(win_emu, context);
+                case gpu_bridge::ioctl_create_compute_pipeline:
+                    return handle_create_compute_pipeline(win_emu, context);
                 case gpu_bridge::ioctl_create_device:
                     return handle_create_device(win_emu, context);
                 case gpu_bridge::ioctl_get_device_queue:
@@ -665,6 +667,21 @@ namespace sogen
 
                 this->vulkan_.destroy_semaphore(request.device, request.semaphore);
                 return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_compute_pipeline(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_compute_pipeline_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t pipeline = gpu_bridge::null_object;
+                const int32_t result =
+                    this->vulkan_.create_compute_pipeline(request.device, request.pipeline_layout, request.shader_module, pipeline);
+                return write_output(win_emu, context,
+                                    gpu_bridge::create_compute_pipeline_response{.vk_result = result, .reserved = 0, .pipeline = pipeline});
             }
 
             NTSTATUS handle_reset_fence(windows_emulator& win_emu, const io_device_context& context)

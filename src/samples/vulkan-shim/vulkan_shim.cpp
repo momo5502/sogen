@@ -2398,6 +2398,36 @@ extern "C"
         return overall;
     }
 
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateComputePipelines(VkDevice device, VkPipelineCache,
+                                                                                  uint32_t createInfoCount,
+                                                                                  const VkComputePipelineCreateInfo* pCreateInfos,
+                                                                                  const VkAllocationCallbacks*, VkPipeline* pPipelines)
+    {
+        VkResult overall = VK_SUCCESS;
+        for (uint32_t i = 0; i < createInfoCount; ++i)
+        {
+            const VkComputePipelineCreateInfo& ci = pCreateInfos[i];
+
+            gb::create_compute_pipeline_request request{};
+            request.device = to_object_id(device);
+            request.pipeline_layout = to_object_id(ci.layout);
+            request.shader_module = to_object_id(ci.stage.module);
+
+            gb::create_compute_pipeline_response response{};
+            const bool ok = bridge_call(gb::ioctl_create_compute_pipeline, &request, sizeof(request), &response, sizeof(response));
+            if (!ok || response.vk_result != VK_SUCCESS)
+            {
+                pPipelines[i] = VK_NULL_HANDLE;
+                overall = ok ? static_cast<VkResult>(response.vk_result) : VK_ERROR_INITIALIZATION_FAILED;
+            }
+            else
+            {
+                pPipelines[i] = to_handle<VkPipeline>(response.pipeline);
+            }
+        }
+        return overall;
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyPipeline(VkDevice device, VkPipeline pipeline, const VkAllocationCallbacks*)
     {
         destroy_device_child(gb::ioctl_destroy_pipeline, device, pipeline);
@@ -2703,6 +2733,7 @@ extern "C"
              .func = reinterpret_cast<PFN_vkVoidFunction>(vkUpdateDescriptorSetWithTemplate)},
             {.name = "vkCmdBindDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindDescriptorSets)},
             {.name = "vkCreateGraphicsPipelines", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateGraphicsPipelines)},
+            {.name = "vkCreateComputePipelines", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateComputePipelines)},
             {.name = "vkDestroyPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipeline)},
             {.name = "vkCmdBeginRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRenderPass)},
             {.name = "vkCmdBindPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindPipeline)},

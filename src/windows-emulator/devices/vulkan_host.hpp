@@ -279,6 +279,7 @@ namespace sogen
                                          uint64_t fragment_shader, uint32_t width, uint32_t height,
                                          std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
                                          const depth_state& depth, uint64_t& out_pipeline);
+        int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, uint64_t shader_module, uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 
         // clear_depth is used only when the render pass has a depth attachment.

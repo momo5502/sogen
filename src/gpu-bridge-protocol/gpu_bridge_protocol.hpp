@@ -113,6 +113,7 @@ namespace sogen::gpu_bridge
         get_physical_device_features2 = 0x84D,
         create_semaphore = 0x84E,
         destroy_semaphore = 0x84F,
+        create_compute_pipeline = 0x850,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -186,6 +187,7 @@ namespace sogen::gpu_bridge
         make_ioctl(static_cast<uint32_t>(command::get_physical_device_features2));
     inline constexpr uint32_t ioctl_create_semaphore = make_ioctl(static_cast<uint32_t>(command::create_semaphore));
     inline constexpr uint32_t ioctl_destroy_semaphore = make_ioctl(static_cast<uint32_t>(command::destroy_semaphore));
+    inline constexpr uint32_t ioctl_create_compute_pipeline = make_ioctl(static_cast<uint32_t>(command::create_compute_pipeline));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -841,6 +843,20 @@ namespace sogen::gpu_bridge
         uint32_t attribute_count;    // number of vertex_input_attribute entries that follow the bindings
         // vertex_input_binding bindings[binding_count];
         // vertex_input_attribute attributes[attribute_count];
+    };
+
+    struct create_compute_pipeline_request
+    {
+        object_id device;
+        object_id pipeline_layout;
+        object_id shader_module;
+    };
+
+    struct create_compute_pipeline_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        object_id pipeline;
     };
 
     // plus a depth clear used only when the render pass has a depth attachment).

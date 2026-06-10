@@ -159,6 +159,7 @@ namespace sogen
             PFN_vkUpdateDescriptorSets update_descriptor_sets{};
             PFN_vkCmdBindDescriptorSets cmd_bind_descriptor_sets{};
             PFN_vkCreateGraphicsPipelines create_graphics_pipelines{};
+            PFN_vkCreateComputePipelines create_compute_pipelines{};
             PFN_vkDestroyPipeline destroy_pipeline{};
             PFN_vkCmdBeginRenderPass cmd_begin_render_pass{};
             PFN_vkCmdBindPipeline cmd_bind_pipeline{};
@@ -1174,6 +1175,7 @@ namespace sogen
             data.update_descriptor_sets = reinterpret_cast<PFN_vkUpdateDescriptorSets>(resolve("vkUpdateDescriptorSets"));
             data.cmd_bind_descriptor_sets = reinterpret_cast<PFN_vkCmdBindDescriptorSets>(resolve("vkCmdBindDescriptorSets"));
             data.create_graphics_pipelines = reinterpret_cast<PFN_vkCreateGraphicsPipelines>(resolve("vkCreateGraphicsPipelines"));
+            data.create_compute_pipelines = reinterpret_cast<PFN_vkCreateComputePipelines>(resolve("vkCreateComputePipelines"));
             data.destroy_pipeline = reinterpret_cast<PFN_vkDestroyPipeline>(resolve("vkDestroyPipeline"));
             data.cmd_begin_render_pass = reinterpret_cast<PFN_vkCmdBeginRenderPass>(resolve("vkCmdBeginRenderPass"));
             data.cmd_bind_pipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(resolve("vkCmdBindPipeline"));
@@ -3030,6 +3032,40 @@ namespace sogen
 
         VkPipeline pipeline{};
         const VkResult result = dev->second.create_graphics_pipelines(dev->second.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->pipelines.emplace(id, impl::pipeline_data{.handle = pipeline, .device_id = device});
+        out_pipeline = id;
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, uint64_t shader_module, uint64_t& out_pipeline)
+    {
+        out_pipeline = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        const auto layout = this->impl_->pipeline_layouts.find(pipeline_layout);
+        const auto shader = this->impl_->shader_modules.find(shader_module);
+        if (dev == this->impl_->devices.end() || layout == this->impl_->pipeline_layouts.end() ||
+            shader == this->impl_->shader_modules.end() || !dev->second.create_compute_pipelines)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkComputePipelineCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        info.layout = layout->second.handle;
+        info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        info.stage.module = shader->second.handle;
+        info.stage.pName = "main";
+
+        VkPipeline pipeline{};
+        const VkResult result = dev->second.create_compute_pipelines(dev->second.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
         if (result != VK_SUCCESS)
         {
             return result;
