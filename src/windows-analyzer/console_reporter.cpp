@@ -142,9 +142,9 @@ namespace sogen
                         [&](const thread_set_name_event& e) {
                             this->log_.print(color::blue, "Setting thread (%u) name: %s\n", e.renamed_thread_id, e.name.c_str());
                         },
-                        [&](const thread_switch_event& e) {
-                            this->log_.print(color::dark_gray, "Performing thread switch: %X -> %X\n", e.previous_thread_id,
-                                             e.next_thread_id);
+                        [&](const thread_switch_event&) {
+                            // this->log_.print(color::dark_gray, "Performing thread switch: %X -> %X\n", e.previous_thread_id,
+                            //                  e.next_thread_id);
                         },
                         [&](const module_load_event& e) { this->log_.log("Mapped %s at 0x%" PRIx64 "\n", e.path.c_str(), e.image_base); },
                         [&](const module_unload_event& e) {
