@@ -39,8 +39,9 @@ namespace sogen
         // device count; up to out_devices.size() ids are written. Ids are stable across calls.
         int32_t enumerate_physical_devices(uint64_t instance, std::span<uint64_t> out_devices, uint32_t& out_count);
 
-        // Writes up to out_size bytes of the device's VkPhysicalDeviceProperties into out.
-        int32_t get_physical_device_properties(uint64_t physical_device, void* out, size_t out_size);
+        // Writes up to out_size bytes of the device's VkPhysicalDeviceProperties into out. When
+        // guest_is_32bit is set, the struct is repacked into the guest's 32-bit (WoW64) ABI layout.
+        int32_t get_physical_device_properties(uint64_t physical_device, void* out, size_t out_size, bool guest_is_32bit);
 
         // Real VkFormatProperties feature flags for the given VkFormat.
         int32_t get_physical_device_format_properties(uint64_t physical_device, uint32_t format, uint32_t& out_linear,

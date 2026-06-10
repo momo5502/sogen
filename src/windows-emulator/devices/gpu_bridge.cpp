@@ -355,8 +355,8 @@ namespace sogen
                 const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
 
                 std::vector<std::byte> properties(context.output_buffer_length);
-                const int32_t result =
-                    this->vulkan_.get_physical_device_properties(request.physical_device, properties.data(), properties.size());
+                const int32_t result = this->vulkan_.get_physical_device_properties(
+                    request.physical_device, properties.data(), properties.size(), win_emu.process.is_wow64_process);
                 if (result != 0)
                 {
                     return STATUS_INVALID_PARAMETER;

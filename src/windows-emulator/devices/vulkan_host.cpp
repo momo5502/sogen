@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstring>
 #include <unordered_map>
 #include <vector>
@@ -71,6 +72,50 @@ namespace sogen
         constexpr std::array<const char*, 2> vulkan_loader_names{"libvulkan.so.1", "libvulkan.so"};
 #endif
 #endif
+
+        // VkPhysicalDeviceProperties crosses the 32/64-bit ABI boundary unchanged except for
+        // VkPhysicalDeviceLimits::minMemoryMapAlignment, the struct's only size_t (8 bytes on the
+        // 64-bit host, 4 bytes on the 32-bit WoW64 guest). Members before it are ABI-identical;
+        // members after it keep the same bytes but sit at lower offsets on the guest. Repack the
+        // host struct into the guest's 32-bit layout so DXVK reads e.g. framebuffer*SampleCounts
+        // from the right offset.
+        size_t repack_properties_for_wow64(const VkPhysicalDeviceProperties& src, void* out, size_t out_size)
+        {
+            static_assert(sizeof(size_t) == 8, "host is expected to be 64-bit");
+
+            constexpr size_t guest_size_t = sizeof(uint32_t);
+            // Guest offset where minMemoryMapAlignment begins: it follows viewportSubPixelBits and,
+            // being a 4-byte size_t on the guest, needs no 8-byte padding (unlike on the host, where
+            // offsetof(minMemoryMapAlignment) is rounded up). Anchor on the preceding field's end.
+            constexpr size_t limits_head = offsetof(VkPhysicalDeviceLimits, viewportSubPixelBits) + sizeof(uint32_t);
+            constexpr size_t host_limits_tail = offsetof(VkPhysicalDeviceLimits, minTexelBufferOffsetAlignment);
+            constexpr size_t guest_limits_tail = (limits_head + guest_size_t + 7) & ~static_cast<size_t>(7);
+            constexpr size_t limits_tail_size = sizeof(VkPhysicalDeviceLimits) - host_limits_tail;
+            constexpr size_t guest_limits_size = guest_limits_tail + limits_tail_size;
+
+            constexpr size_t props_head = offsetof(VkPhysicalDeviceProperties, limits);
+            constexpr size_t sparse_size = sizeof(VkPhysicalDeviceSparseProperties);
+            constexpr size_t guest_props_size = props_head + guest_limits_size + sparse_size;
+
+            std::array<std::byte, sizeof(VkPhysicalDeviceProperties)> buffer{};
+            const auto* src_bytes = reinterpret_cast<const std::byte*>(&src);
+            std::byte* dst = buffer.data();
+
+            // header + limits up to (but not including) minMemoryMapAlignment
+            std::memcpy(dst, src_bytes, props_head + limits_head);
+
+            const auto map_alignment = static_cast<uint32_t>(src.limits.minMemoryMapAlignment);
+            std::memcpy(dst + props_head + limits_head, &map_alignment, sizeof(map_alignment));
+
+            // limits tail (minTexelBufferOffsetAlignment .. end) then sparseProperties
+            std::memcpy(dst + props_head + guest_limits_tail, src_bytes + props_head + host_limits_tail, limits_tail_size);
+            std::memcpy(dst + props_head + guest_limits_size, src_bytes + props_head + sizeof(VkPhysicalDeviceLimits),
+                        sparse_size);
+
+            const size_t copy_size = std::min(out_size, guest_props_size);
+            std::memcpy(out, buffer.data(), copy_size);
+            return copy_size;
+        }
     }
 
     struct vulkan_host::impl
@@ -808,7 +853,7 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::get_physical_device_properties(uint64_t physical_device, void* out, size_t out_size)
+    int32_t vulkan_host::get_physical_device_properties(uint64_t physical_device, void* out, size_t out_size, bool guest_is_32bit)
     {
         const auto pd = this->impl_->physical_devices.find(physical_device);
         if (pd == this->impl_->physical_devices.end())
@@ -825,7 +870,14 @@ namespace sogen
         VkPhysicalDeviceProperties properties{};
         instance->second.get_physical_device_properties(pd->second.handle, &properties);
 
-        std::memcpy(out, &properties, std::min(out_size, sizeof(properties)));
+        if (guest_is_32bit)
+        {
+            repack_properties_for_wow64(properties, out, out_size);
+        }
+        else
+        {
+            std::memcpy(out, &properties, std::min(out_size, sizeof(properties)));
+        }
         return VK_SUCCESS;
     }
 
