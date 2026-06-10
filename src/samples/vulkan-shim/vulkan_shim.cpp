@@ -1291,9 +1291,26 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice, VkFormat format,
                                                                                           VkFormatProperties2* pFormatProperties)
     {
-        if (pFormatProperties)
+        if (!pFormatProperties)
         {
-            vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &pFormatProperties->formatProperties);
+            return;
+        }
+
+        vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &pFormatProperties->formatProperties);
+
+        // DXVK reads format features through VkFormatProperties3 (VkFormatFeatureFlags2) chained on
+        // pNext, not the legacy VkFormatProperties. Mirror the feature bits there as well; the flag bit
+        // values are identical between the legacy and the 64-bit flags. Without this DXVK observes no
+        // format support and rejects every render-target format.
+        for (auto* next = static_cast<VkBaseOutStructure*>(pFormatProperties->pNext); next != nullptr; next = next->pNext)
+        {
+            if (next->sType == VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3)
+            {
+                auto* properties3 = reinterpret_cast<VkFormatProperties3*>(next);
+                properties3->linearTilingFeatures = pFormatProperties->formatProperties.linearTilingFeatures;
+                properties3->optimalTilingFeatures = pFormatProperties->formatProperties.optimalTilingFeatures;
+                properties3->bufferFeatures = pFormatProperties->formatProperties.bufferFeatures;
+            }
         }
     }
 
