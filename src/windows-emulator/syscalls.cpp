@@ -357,6 +357,7 @@ namespace sogen
                                                   emulator_object<EMU_RTL_SRWLOCK<EmulatorTraits<Emu64>>> lock);
         NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, uint64_t, emulator_object<LARGE_INTEGER> timeout);
         NTSTATUS handle_NtYieldExecution(const syscall_context& c);
+        NTSTATUS handle_NtSetThreadExecutionState(const syscall_context& c, ULONG new_flags, emulator_object<ULONG> previous_flags);
         NTSTATUS handle_NtSuspendThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
         NTSTATUS handle_NtResumeThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
         NTSTATUS handle_NtContinue(const syscall_context& c, emulator_object<CONTEXT64> thread_context, BOOLEAN raise_alert);
@@ -940,6 +941,7 @@ namespace sogen
     } while (0)
 
         add_handler(NtSetInformationThread);
+        add_handler(NtSetThreadExecutionState);
         add_handler(NtSetEvent);
         add_handler(NtClose);
         add_handler(NtOpenKey);

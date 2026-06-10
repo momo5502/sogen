@@ -577,6 +577,15 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtSetThreadExecutionState(const syscall_context& /*c*/, const ULONG /*new_flags*/,
+                                                  const emulator_object<ULONG> previous_flags)
+        {
+            // The emulator never sleeps the system; report the prior continuous state and accept the request.
+            constexpr ULONG es_continuous = 0x80000000;
+            previous_flags.write_if_valid(es_continuous);
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtSuspendThread(const syscall_context& c, const handle thread_handle,
                                         const emulator_object<ULONG> previous_suspend_count)
         {
