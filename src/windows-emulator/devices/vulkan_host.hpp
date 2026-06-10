@@ -89,6 +89,8 @@ namespace sogen
 
         int32_t begin_command_buffer(uint64_t command_buffer, uint32_t flags);
         int32_t end_command_buffer(uint64_t command_buffer);
+        int32_t reset_command_pool(uint64_t device, uint64_t pool, uint32_t flags);
+        int32_t reset_command_buffer(uint64_t command_buffer, uint32_t flags);
 
         int32_t create_fence(uint64_t device, uint32_t flags, uint64_t& out_fence);
         void destroy_fence(uint64_t device, uint64_t fence);
@@ -103,6 +105,9 @@ namespace sogen
 
         // Non-blocking: returns VK_SUCCESS if signaled, VK_NOT_READY otherwise. Never waits.
         int32_t get_fence_status(uint64_t fence);
+
+        int32_t queue_wait_idle(uint64_t queue);
+        int32_t device_wait_idle(uint64_t device);
 
         // Submits a single command buffer to the queue, optionally signaling the fence (0 = none).
         int32_t queue_submit(uint64_t queue, uint64_t command_buffer, uint64_t fence);

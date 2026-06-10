@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 4;
+    inline constexpr uint32_t protocol_version = 5;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -121,6 +121,10 @@ namespace sogen::gpu_bridge
         get_buffer_device_address = 0x855,
         queue_submit2 = 0x856,
         get_physical_device_format_properties = 0x857,
+        queue_wait_idle = 0x858,
+        device_wait_idle = 0x859,
+        reset_command_pool = 0x85A,
+        reset_command_buffer = 0x85B,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -204,6 +208,10 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_queue_submit2 = make_ioctl(static_cast<uint32_t>(command::queue_submit2));
     inline constexpr uint32_t ioctl_get_physical_device_format_properties =
         make_ioctl(static_cast<uint32_t>(command::get_physical_device_format_properties));
+    inline constexpr uint32_t ioctl_queue_wait_idle = make_ioctl(static_cast<uint32_t>(command::queue_wait_idle));
+    inline constexpr uint32_t ioctl_device_wait_idle = make_ioctl(static_cast<uint32_t>(command::device_wait_idle));
+    inline constexpr uint32_t ioctl_reset_command_pool = make_ioctl(static_cast<uint32_t>(command::reset_command_pool));
+    inline constexpr uint32_t ioctl_reset_command_buffer = make_ioctl(static_cast<uint32_t>(command::reset_command_buffer));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -563,6 +571,31 @@ namespace sogen::gpu_bridge
         object_id queue;
         object_id command_buffer;
         object_id fence; // null_object for no fence
+    };
+
+    struct queue_wait_idle_request
+    {
+        object_id queue;
+    };
+
+    struct device_wait_idle_request
+    {
+        object_id device;
+    };
+
+    struct reset_command_pool_request
+    {
+        object_id device;
+        object_id command_pool;
+        uint32_t flags; // VkCommandPoolResetFlags
+        uint32_t reserved;
+    };
+
+    struct reset_command_buffer_request
+    {
+        object_id command_buffer;
+        uint32_t flags; // VkCommandBufferResetFlags
+        uint32_t reserved;
     };
 
     // ioctl_get_physical_device_memory_properties: in (out = raw VkPhysicalDeviceMemoryProperties bytes)
@@ -1198,4 +1231,8 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(get_physical_device_properties2_request) == 16, "wire layout drift");
     static_assert(sizeof(get_physical_device_properties2_response) == 8, "wire layout drift");
     static_assert(sizeof(create_device_request) == 32, "wire layout drift");
+    static_assert(sizeof(queue_wait_idle_request) == 8, "wire layout drift");
+    static_assert(sizeof(device_wait_idle_request) == 8, "wire layout drift");
+    static_assert(sizeof(reset_command_pool_request) == 24, "wire layout drift");
+    static_assert(sizeof(reset_command_buffer_request) == 16, "wire layout drift");
 }

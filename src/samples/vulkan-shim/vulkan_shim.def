@@ -66,6 +66,7 @@ EXPORTS
     vkDestroyShaderModule
     vkDestroySurfaceKHR
     vkDestroySwapchainKHR
+    vkDeviceWaitIdle
     vkEndCommandBuffer
     vkEnumerateDeviceExtensionProperties
     vkEnumerateInstanceExtensionProperties
@@ -107,7 +108,10 @@ EXPORTS
     vkMapMemory
     vkQueuePresentKHR
     vkQueueSubmit
+    vkQueueWaitIdle
     vkReleaseSwapchainImagesEXT
+    vkResetCommandBuffer
+    vkResetCommandPool
     vkResetFences
     vkSubmitDebugUtilsMessageEXT
     vkUnmapMemory

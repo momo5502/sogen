@@ -82,6 +82,14 @@ namespace sogen
                     return handle_get_fence_status(win_emu, context);
                 case gpu_bridge::ioctl_queue_submit:
                     return handle_queue_submit(win_emu, context);
+                case gpu_bridge::ioctl_queue_wait_idle:
+                    return handle_queue_wait_idle(win_emu, context);
+                case gpu_bridge::ioctl_device_wait_idle:
+                    return handle_device_wait_idle(win_emu, context);
+                case gpu_bridge::ioctl_reset_command_pool:
+                    return handle_reset_command_pool(win_emu, context);
+                case gpu_bridge::ioctl_reset_command_buffer:
+                    return handle_reset_command_buffer(win_emu, context);
                 case gpu_bridge::ioctl_get_physical_device_memory_properties:
                     return handle_get_physical_device_memory_properties(win_emu, context);
                 case gpu_bridge::ioctl_allocate_memory:
@@ -878,6 +886,54 @@ namespace sogen
                 }
 
                 const int32_t result = this->vulkan_.queue_submit(request.queue, request.command_buffer, request.fence);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_queue_wait_idle(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::queue_wait_idle_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.queue_wait_idle(request.queue);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_device_wait_idle(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_wait_idle_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.device_wait_idle(request.device);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_reset_command_pool(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::reset_command_pool_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.reset_command_pool(request.device, request.command_pool, request.flags);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_reset_command_buffer(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::reset_command_buffer_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.reset_command_buffer(request.command_buffer, request.flags);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 

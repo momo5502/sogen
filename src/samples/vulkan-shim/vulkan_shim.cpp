@@ -537,6 +537,66 @@ extern "C"
         return static_cast<VkResult>(response.vk_result);
     }
 
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkResetCommandPool(VkDevice device, VkCommandPool commandPool,
+                                                                            VkCommandPoolResetFlags flags)
+    {
+        gb::reset_command_pool_request request{};
+        request.device = to_object_id(device);
+        request.command_pool = to_object_id(commandPool);
+        request.flags = flags;
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_reset_command_pool, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkResetCommandBuffer(VkCommandBuffer commandBuffer,
+                                                                              VkCommandBufferResetFlags flags)
+    {
+        // Drop any half-recorded local stream; recording only reaches the bridge at vkEndCommandBuffer.
+        g_command_streams.erase(to_object_id(commandBuffer));
+
+        gb::reset_command_buffer_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.flags = flags;
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_reset_command_buffer, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkQueueWaitIdle(VkQueue queue)
+    {
+        gb::queue_wait_idle_request request{};
+        request.queue = to_object_id(queue);
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_queue_wait_idle, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkDeviceWaitIdle(VkDevice device)
+    {
+        gb::device_wait_idle_request request{};
+        request.device = to_object_id(device);
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_device_wait_idle, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateFence(VkDevice device, const VkFenceCreateInfo* pCreateInfo,
                                                                        const VkAllocationCallbacks*, VkFence* pFence)
     {
@@ -2993,6 +3053,10 @@ extern "C"
             {.name = "vkFreeCommandBuffers", .func = reinterpret_cast<PFN_vkVoidFunction>(vkFreeCommandBuffers)},
             {.name = "vkBeginCommandBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBeginCommandBuffer)},
             {.name = "vkEndCommandBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkEndCommandBuffer)},
+            {.name = "vkResetCommandPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetCommandPool)},
+            {.name = "vkResetCommandBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetCommandBuffer)},
+            {.name = "vkQueueWaitIdle", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueueWaitIdle)},
+            {.name = "vkDeviceWaitIdle", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDeviceWaitIdle)},
             {.name = "vkCreateFence", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateFence)},
             {.name = "vkCreateSemaphore", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateSemaphore)},
             {.name = "vkDestroySemaphore", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySemaphore)},
