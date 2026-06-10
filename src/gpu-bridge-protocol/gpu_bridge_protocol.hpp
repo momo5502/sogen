@@ -120,6 +120,7 @@ namespace sogen::gpu_bridge
         wait_semaphores = 0x854,
         get_buffer_device_address = 0x855,
         queue_submit2 = 0x856,
+        get_physical_device_format_properties = 0x857,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -201,6 +202,8 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_wait_semaphores = make_ioctl(static_cast<uint32_t>(command::wait_semaphores));
     inline constexpr uint32_t ioctl_get_buffer_device_address = make_ioctl(static_cast<uint32_t>(command::get_buffer_device_address));
     inline constexpr uint32_t ioctl_queue_submit2 = make_ioctl(static_cast<uint32_t>(command::queue_submit2));
+    inline constexpr uint32_t ioctl_get_physical_device_format_properties =
+        make_ioctl(static_cast<uint32_t>(command::get_physical_device_format_properties));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -524,6 +527,22 @@ namespace sogen::gpu_bridge
         object_id semaphore;
         uint64_t value;      // timeline value (ignored for binary semaphores)
         uint64_t stage_mask; // VkPipelineStageFlags2
+    };
+
+    struct get_physical_device_format_properties_request
+    {
+        object_id physical_device;
+        uint32_t format; // VkFormat
+        uint32_t reserved;
+    };
+
+    // Real VkFormatProperties feature flags for the queried format.
+    struct get_physical_device_format_properties_response
+    {
+        uint32_t linear_tiling_features;
+        uint32_t optimal_tiling_features;
+        uint32_t buffer_features;
+        uint32_t reserved;
     };
 
     struct reset_fence_request

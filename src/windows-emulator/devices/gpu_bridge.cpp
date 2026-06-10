@@ -54,6 +54,8 @@ namespace sogen
                     return handle_get_buffer_device_address(win_emu, context);
                 case gpu_bridge::ioctl_queue_submit2:
                     return handle_queue_submit2(win_emu, context);
+                case gpu_bridge::ioctl_get_physical_device_format_properties:
+                    return handle_get_physical_device_format_properties(win_emu, context);
                 case gpu_bridge::ioctl_create_compute_pipeline:
                     return handle_create_compute_pipeline(win_emu, context);
                 case gpu_bridge::ioctl_create_device:
@@ -779,6 +781,24 @@ namespace sogen
 
                 const uint64_t address = this->vulkan_.get_buffer_device_address(request.device, request.buffer);
                 return write_output(win_emu, context, gpu_bridge::get_buffer_device_address_response{.address = address});
+            }
+
+            NTSTATUS handle_get_physical_device_format_properties(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_physical_device_format_properties_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint32_t linear = 0;
+                uint32_t optimal = 0;
+                uint32_t buffer = 0;
+                this->vulkan_.get_physical_device_format_properties(request.physical_device, request.format, linear, optimal, buffer);
+                return write_output(
+                    win_emu, context,
+                    gpu_bridge::get_physical_device_format_properties_response{
+                        .linear_tiling_features = linear, .optimal_tiling_features = optimal, .buffer_features = buffer, .reserved = 0});
             }
 
             NTSTATUS handle_queue_submit2(windows_emulator& win_emu, const io_device_context& context)

@@ -1639,23 +1639,30 @@ extern "C"
         *pCount = count;
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFormatProperties(VkPhysicalDevice, VkFormat,
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFormatProperties(VkPhysicalDevice physicalDevice, VkFormat format,
                                                                                          VkFormatProperties* pFormatProperties)
     {
         if (!pFormatProperties)
         {
             return;
         }
-        constexpr VkFormatFeatureFlags image_features =
-            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
-            VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT |
-            VK_FORMAT_FEATURE_BLIT_DST_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
-            VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-        constexpr VkFormatFeatureFlags buffer_features =
-            VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT | VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT | VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT;
-        pFormatProperties->linearTilingFeatures = image_features;
-        pFormatProperties->optimalTilingFeatures = image_features;
-        pFormatProperties->bufferFeatures = buffer_features;
+        *pFormatProperties = {};
+
+        // Remote the device's real per-format support. The previous format-agnostic stub reported every
+        // format as supporting everything, which made DXVK's format table accept invalid mappings (e.g. a
+        // compressed format as a render target) and then reject resources that should succeed.
+        gb::get_physical_device_format_properties_request request{};
+        request.physical_device = to_object_id(physicalDevice);
+        request.format = static_cast<uint32_t>(format);
+
+        gb::get_physical_device_format_properties_response response{};
+        if (!bridge_call(gb::ioctl_get_physical_device_format_properties, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return;
+        }
+        pFormatProperties->linearTilingFeatures = response.linear_tiling_features;
+        pFormatProperties->optimalTilingFeatures = response.optimal_tiling_features;
+        pFormatProperties->bufferFeatures = response.buffer_features;
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice, VkFormat format,

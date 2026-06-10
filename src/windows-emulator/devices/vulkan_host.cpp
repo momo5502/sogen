@@ -85,6 +85,7 @@ namespace sogen
             PFN_vkDestroyInstance destroy_instance{};
             PFN_vkEnumeratePhysicalDevices enumerate_physical_devices{};
             PFN_vkGetPhysicalDeviceProperties get_physical_device_properties{};
+            PFN_vkGetPhysicalDeviceFormatProperties get_physical_device_format_properties{};
             PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queue_family_properties{};
             PFN_vkGetPhysicalDeviceMemoryProperties get_physical_device_memory_properties{};
             PFN_vkGetPhysicalDeviceFeatures2 get_physical_device_features2{};
@@ -695,6 +696,8 @@ namespace sogen
             this->impl_->load_instance_proc<PFN_vkEnumeratePhysicalDevices>(instance, "vkEnumeratePhysicalDevices");
         data.get_physical_device_properties =
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceProperties>(instance, "vkGetPhysicalDeviceProperties");
+        data.get_physical_device_format_properties =
+            this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceFormatProperties>(instance, "vkGetPhysicalDeviceFormatProperties");
         data.get_queue_family_properties = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
             instance, "vkGetPhysicalDeviceQueueFamilyProperties");
         data.get_physical_device_memory_properties =
@@ -823,6 +826,33 @@ namespace sogen
         instance->second.get_physical_device_properties(pd->second.handle, &properties);
 
         std::memcpy(out, &properties, std::min(out_size, sizeof(properties)));
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::get_physical_device_format_properties(uint64_t physical_device, uint32_t format, uint32_t& out_linear,
+                                                               uint32_t& out_optimal, uint32_t& out_buffer)
+    {
+        out_linear = 0;
+        out_optimal = 0;
+        out_buffer = 0;
+
+        const auto pd = this->impl_->physical_devices.find(physical_device);
+        if (pd == this->impl_->physical_devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto instance = this->impl_->instances.find(pd->second.instance_id);
+        if (instance == this->impl_->instances.end() || !instance->second.get_physical_device_format_properties)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkFormatProperties properties{};
+        instance->second.get_physical_device_format_properties(pd->second.handle, static_cast<VkFormat>(format), &properties);
+        out_linear = properties.linearTilingFeatures;
+        out_optimal = properties.optimalTilingFeatures;
+        out_buffer = properties.bufferFeatures;
         return VK_SUCCESS;
     }
 
