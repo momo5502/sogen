@@ -3595,7 +3595,7 @@ namespace sogen
 
         uint32_t handle_NtUserGetQueueStatusReadonly(const syscall_context& c, const UINT flags)
         {
-            const auto thread = c.proc.active_thread;
+            auto* thread = c.proc.active_thread;
             const auto current_bits = thread->get_message_queue_status(c.win_emu.clock()) & flags;
             const auto changed_bits = thread->queue_status_changed_bits & flags;
             return current_bits | (changed_bits << 16);

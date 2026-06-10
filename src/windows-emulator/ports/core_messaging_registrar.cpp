@@ -12,7 +12,7 @@ namespace sogen
         constexpr uint32_t k_sync_flags = 0x00010000;
         constexpr ULONG k_min_request_size = 0x30;
 
-        enum registrar_method : uint32_t
+        enum class registrar_method : uint32_t
         {
             register_thread = 0x00010001,
             register_port = 0x000E0001,
@@ -24,7 +24,7 @@ namespace sogen
             bind_service = 0x00180001,
         };
 
-        enum registrar_reply : uint32_t
+        enum class registrar_reply : uint32_t
         {
             reply_bootstrap = 0x00040000,
             reply_register_port = 0x00110000,
@@ -63,7 +63,7 @@ namespace sogen
             uint32_t flags{};
             uint32_t nested_size{};
             uint32_t body0{};
-            uint32_t body1{};
+            registrar_method body1{};
 
             bool common_shape() const
             {
@@ -75,14 +75,14 @@ namespace sogen
                 return nested_size >= 0x08 && length >= 0x30;
             }
 
-            bool matches(const uint32_t method, const uint32_t min_nested, const ULONG min_length) const
+            bool matches(const registrar_method method, const uint32_t min_nested, const ULONG min_length) const
             {
                 return body1 == method && nested_size >= min_nested && length >= min_length;
             }
 
             bool bootstrap() const
             {
-                return length == 0x30 && nested_size == 0x08 && body0 == 0x02 && body1 == register_thread;
+                return length == 0x30 && nested_size == 0x08 && body0 == 0x02 && body1 == registrar_method::register_thread;
             }
         };
 
@@ -193,7 +193,7 @@ namespace sogen
                 .flags = win_emu.emu().read_memory<uint32_t>(c.send_buffer + o_flags),
                 .nested_size = win_emu.emu().read_memory<uint32_t>(c.send_buffer + o_nested),
                 .body0 = win_emu.emu().read_memory<uint32_t>(c.send_buffer + o_body0),
-                .body1 = win_emu.emu().read_memory<uint32_t>(c.send_buffer + o_body1),
+                .body1 = win_emu.emu().read_memory<registrar_method>(c.send_buffer + o_body1),
             };
         }
 
@@ -207,21 +207,22 @@ namespace sogen
         std::vector<uint8_t> make_bootstrap_reply(const uint32_t request_id)
         {
             packet out(0x60, request_id, 0x38);
-            out.u32s(o_body0, {0x0E, reply_bootstrap, 0x04, 0x00, 0x08, 0x7B, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x04, 0x01});
+            out.u32s(o_body0, {0x0E, static_cast<unsigned>(registrar_reply::reply_bootstrap), 0x04, 0x00, 0x08, 0x7B, 0x00, 0x10, 0x00,
+                               0x00, 0x00, 0x00, 0x04, 0x01});
             return out.finish();
         }
 
         std::vector<uint8_t> make_open_endpoint_reply(const uint32_t request_id)
         {
             packet out(0x4C, request_id, 0x24);
-            out.u32s(o_body0, {0x09, reply_open_endpoint, 0x04, 0x00, 0x10});
+            out.u32s(o_body0, {0x09, static_cast<unsigned>(registrar_reply::reply_open_endpoint), 0x04, 0x00, 0x10});
             return out.finish();
         }
 
         std::vector<uint8_t> make_identity_reply(const uint32_t request_id)
         {
             packet out(0x44, request_id, 0x1C);
-            out.u32s(o_body0, {0x07, reply_make_identity, 0x10});
+            out.u32s(o_body0, {0x07, static_cast<unsigned>(registrar_reply::reply_make_identity), 0x10});
             out.guid(0x34, guid_generated_identity);
             return out.finish();
         }
@@ -229,7 +230,7 @@ namespace sogen
         std::vector<uint8_t> make_bind_service_reply(const uint32_t request_id)
         {
             packet out(0x38, request_id, 0x10);
-            out.u32s(o_body0, {0x04, reply_bind_service, 0x04, 0x00});
+            out.u32s(o_body0, {0x04, static_cast<unsigned>(registrar_reply::reply_bind_service), 0x04, 0x00});
             return out.finish();
         }
 
@@ -251,7 +252,7 @@ namespace sogen
         std::vector<uint8_t> make_resolve_service_reply(const request& req)
         {
             packet out(0x9C, req.id, 0x74);
-            out.u32s(o_body0, {0x1D, reply_resolve_service, 0x04, 0x00, 0x04});
+            out.u32s(o_body0, {0x1D, static_cast<unsigned>(registrar_reply::reply_resolve_service), 0x04, 0x00, 0x04});
             append_resolve_payload(out, req.body0 >= 0x35);
             return out.finish();
         }
@@ -278,7 +279,7 @@ namespace sogen
             const auto data_size = static_cast<uint32_t>(0x3C + name_size + tail_size);
 
             packet out(data_size, req.id, data_size - o_body0);
-            out.u32s(o_body0, {0x48, reply_coreui_port, 0x04, 0x00, name_size});
+            out.u32s(o_body0, {0x48, static_cast<unsigned>(registrar_reply::reply_coreui_port), 0x04, 0x00, name_size});
             out.utf16z(0x3C, name);
 
             auto tail_offset = 0x3C + name_size;
@@ -312,75 +313,73 @@ namespace sogen
                 if (!req.has_body())
                 {
                     win_emu.log.error("Unsupported CoreMessagingRegistrar nested body: len=0x%X nested=0x%X body=[0x%X, 0x%X]\n",
-                                      static_cast<uint32_t>(req.length), req.nested_size, req.body0, req.body1);
+                                      static_cast<uint32_t>(req.length), req.nested_size, req.body0, static_cast<uint32_t>(req.body1));
                     return STATUS_NOT_SUPPORTED;
                 }
 
                 switch (req.body1)
                 {
-                case register_thread:
+                case registrar_method::register_thread:
                     if (req.bootstrap())
                     {
                         return {STATUS_SUCCESS, make_bootstrap_reply(req.id)};
                     }
                     break;
 
-                case register_port:
-                    if (req.matches(register_port, 0x1C, 0x44))
+                case registrar_method::register_port:
+                    if (req.matches(registrar_method::register_port, 0x1C, 0x44))
                     {
-                        return {STATUS_SUCCESS, make_simple_reply(req.id, reply_register_port)};
+                        return {STATUS_SUCCESS, make_simple_reply(req.id, static_cast<uint32_t>(registrar_reply::reply_register_port))};
                     }
                     break;
 
-                case resolve_service:
-                    if (req.matches(resolve_service, 0x40, 0x68))
+                case registrar_method::resolve_service:
+                    if (req.matches(registrar_method::resolve_service, 0x40, 0x68))
                     {
                         return {STATUS_SUCCESS, make_resolve_service_reply(req)};
                     }
                     break;
 
-                case open_endpoint:
-                    if (req.matches(open_endpoint, 0x24, 0x5C))
+                case registrar_method::open_endpoint:
+                    if (req.matches(registrar_method::open_endpoint, 0x24, 0x5C))
                     {
                         return {STATUS_SUCCESS, make_open_endpoint_reply(req.id)};
                     }
                     break;
 
-                case query_coreui_port:
-                    if (req.matches(query_coreui_port, 0x44, 0x6C))
+                case registrar_method::query_coreui_port:
+                    if (req.matches(registrar_method::query_coreui_port, 0x44, 0x6C))
                     {
                         return {STATUS_SUCCESS, make_coreui_port_reply(win_emu, c, req)};
                     }
                     break;
 
-                case make_identity:
-                    if (req.matches(make_identity, 0x1C, 0x44))
+                case registrar_method::make_identity:
+                    if (req.matches(registrar_method::make_identity, 0x1C, 0x44))
                     {
                         return {STATUS_SUCCESS, make_identity_reply(req.id)};
                     }
                     break;
 
-                case bind_service:
-                    if (req.matches(bind_service, 0x10, 0x38))
+                case registrar_method::bind_service:
+                    if (req.matches(registrar_method::bind_service, 0x10, 0x38))
                     {
                         return {STATUS_SUCCESS, make_bind_service_reply(req.id)};
                     }
                     break;
 
-                case unregister_port:
-                    if (req.matches(unregister_port, 0x1C, 0x44))
+                case registrar_method::unregister_port:
+                    if (req.matches(registrar_method::unregister_port, 0x1C, 0x44))
                     {
-                        return {STATUS_SUCCESS, make_simple_reply(req.id, reply_unregister_port)};
+                        return {STATUS_SUCCESS, make_simple_reply(req.id, static_cast<uint32_t>(registrar_reply::reply_unregister_port))};
                     }
-                    break;
-
-                default:
                     break;
                 }
 
                 win_emu.log.error("Unsupported CoreMessagingRegistrar request: len=0x%X kind=0x%X id=0x%X flags=0x%X "
                                   "nested=0x%X body=[0x%X, 0x%X]\n",
-                                  static_cast<uint32_t>(req.length), req.kind, req.id, req.flags, req.nested_size, req.body0, req.body1);
+                                  static_cast<uint32_t>(req.length), req.kind, req.id, req.flags, req.nested_size, req.body0,
+                                  static_cast<uint32_t>(req.body1));
                 return STATUS_NOT_SUPPORTED;
             }
         };

@@ -1463,6 +1463,66 @@ namespace
 
         return t1 != t0;
     }
+
+    bool test_settimer()
+    {
+        MSG msg = {};
+        while (PeekMessageA(&msg, nullptr, WM_TIMER, WM_TIMER, PM_REMOVE))
+        {
+        }
+
+        HANDLE dummy_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!dummy_event)
+        {
+            puts("CreateEventW failed");
+            return false;
+        }
+
+        const auto cleanup_event = sogen::utils::finally([&] { CloseHandle(dummy_event); });
+
+        const UINT_PTR timer_id = SetTimer(nullptr, 0, 10, nullptr);
+        if (!timer_id)
+        {
+            puts("SetTimer failed");
+            return false;
+        }
+
+        const auto cleanup_timer = sogen::utils::finally([&] { KillTimer(nullptr, timer_id); });
+
+        const DWORD wait_result = MsgWaitForMultipleObjects(1, &dummy_event, FALSE, 1000, QS_TIMER);
+
+        if (wait_result != WAIT_OBJECT_0 + 1)
+        {
+            printf("MsgWaitForMultipleObjects returned unexpected result: %lu\n", wait_result);
+            return false;
+        }
+
+        if (!PeekMessageA(&msg, nullptr, WM_TIMER, WM_TIMER, PM_REMOVE))
+        {
+            puts("Expected WM_TIMER message was not available");
+            return false;
+        }
+
+        if (msg.message != WM_TIMER)
+        {
+            puts("Received message was not WM_TIMER");
+            return false;
+        }
+
+        if (msg.hwnd != nullptr)
+        {
+            puts("Expected a thread timer, but WM_TIMER had a window handle");
+            return false;
+        }
+
+        if (msg.wParam != timer_id)
+        {
+            puts("WM_TIMER timer id mismatch");
+            return false;
+        }
+
+        return true;
+    }
 }
 
 #define RUN_TEST(func, name)                 \
@@ -1516,6 +1576,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_apc, "APC")
     RUN_TEST(test_user_callback, "User Callback")
     RUN_TEST(test_message_queue, "Message Queue")
+    RUN_TEST(test_settimer, "User Timer")
     RUN_TEST(test_private_namespace, "Private Namespace")
     RUN_TEST(test_actctx, "Activation Context")
     RUN_TEST(test_mmio, "MMIO")

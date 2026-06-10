@@ -997,11 +997,10 @@ namespace sogen
                 memory_reserve_handle.write(c.proc.wait_completion_packets.store(std::move(packet)));
                 return STATUS_SUCCESS;
             }
-            case 0: // MemoryReserveUserApc
-            default:
-                c.win_emu.log.error("Not supported NtAllocateReserveObject type %d", type);
-                c.emu.stop();
+            case 0:
+            default: { // MemoryReserveUserApc
                 return STATUS_NOT_SUPPORTED;
+            }
             }
         }
     }

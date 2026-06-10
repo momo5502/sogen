@@ -672,7 +672,7 @@ namespace sogen
 
     uint32_t emulator_thread::get_message_queue_status(utils::clock& clock)
     {
-        if ((*this->await_msg_mask & QS_TIMER) != 0)
+        if (this->await_msg_mask && (*this->await_msg_mask & QS_TIMER) != 0)
         {
             (void)this->synthesize_due_user_timer(clock);
         }
