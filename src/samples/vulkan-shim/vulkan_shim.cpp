@@ -1210,6 +1210,35 @@ extern "C"
         }
     }
 
+    // synchronization2 barrier: DXVK uses this exclusively. Lower its image barriers to the v1
+    // cmd_pipeline_barrier records. The VkPipelineStageFlags2/VkAccessFlags2 (64-bit) don't map cleanly to
+    // the v1 32-bit flags and a 0 stage mask is invalid in v1, so use ALL_COMMANDS stages (the bridge
+    // executes submissions synchronously, so over-synchronizing is harmless). Layout transitions -- the
+    // part DXVK actually relies on -- are preserved. Global/buffer memory barriers are no-ops here.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPipelineBarrier2(VkCommandBuffer commandBuffer,
+                                                                           const VkDependencyInfo* pDependencyInfo)
+    {
+        if (!pDependencyInfo)
+        {
+            return;
+        }
+        for (uint32_t i = 0; i < pDependencyInfo->imageMemoryBarrierCount; ++i)
+        {
+            const VkImageMemoryBarrier2& b = pDependencyInfo->pImageMemoryBarriers[i];
+            gb::cmd_pipeline_barrier_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.image = to_object_id(b.image);
+            request.subresource = to_wire_range(b.subresourceRange);
+            request.src_stage_mask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            request.dst_stage_mask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            request.src_access_mask = static_cast<uint32_t>(b.srcAccessMask);
+            request.dst_access_mask = static_cast<uint32_t>(b.dstAccessMask);
+            request.old_layout = static_cast<uint32_t>(b.oldLayout);
+            request.new_layout = static_cast<uint32_t>(b.newLayout);
+            record_command(request.command_buffer, gb::command::cmd_pipeline_barrier, &request, sizeof(request));
+        }
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdClearColorImage(VkCommandBuffer commandBuffer, VkImage image,
                                                                           VkImageLayout imageLayout, const VkClearColorValue* pColor,
                                                                           uint32_t rangeCount, const VkImageSubresourceRange* pRanges)
@@ -2935,6 +2964,8 @@ extern "C"
              .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceImageMemoryRequirements)},
             {.name = "vkBindImageMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindImageMemory)},
             {.name = "vkCmdPipelineBarrier", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier)},
+            {.name = "vkCmdPipelineBarrier2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier2)},
+            {.name = "vkCmdPipelineBarrier2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier2)},
             {.name = "vkCmdClearColorImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdClearColorImage)},
             {.name = "vkCmdCopyImageToBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImageToBuffer)},
             {.name = "vkCmdCopyBufferToImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage)},
