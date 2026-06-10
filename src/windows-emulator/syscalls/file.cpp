@@ -1103,7 +1103,8 @@ namespace sogen
         // delivered the next time the thread enters an alertable wait.
         void deliver_file_io_completion(const syscall_context& c, const uint64_t event, const uint64_t apc_routine,
                                         const uint64_t apc_context,
-                                        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block)
+                                        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
+                                        const NTSTATUS status, const uint64_t information)
         {
             if (event)
             {
@@ -1115,6 +1116,18 @@ namespace sogen
 
             if (apc_routine)
             {
+                // A WoW64 completion routine (kernel32!BasepIoCompletion) reads the I/O status block with the
+                // 32-bit layout (NTSTATUS Status @0, ULONG Information @4). Our 64-bit block keeps Information at
+                // @8, so the 32-bit reader would see 0 bytes transferred. Mirror Status/Information into the
+                // 32-bit slots so the completion routine reports the correct byte count.
+                if (c.proc.is_wow64_process && io_status_block)
+                {
+                    const auto status32 = static_cast<uint32_t>(static_cast<ULONG>(status));
+                    const auto information32 = static_cast<uint32_t>(information);
+                    c.emu.write_memory(io_status_block.value(), &status32, sizeof(status32));
+                    c.emu.write_memory(io_status_block.value() + sizeof(status32), &information32, sizeof(information32));
+                }
+
                 c.win_emu.current_thread().pending_apcs.push_back({
                     .flags = 0,
                     .apc_routine = apc_routine,
@@ -1231,7 +1244,7 @@ namespace sogen
             if (bytes_read > 0)
             {
                 commit_file_data(std::string_view(temp_buffer.data(), bytes_read), c.emu, io_status_block, buffer);
-                deliver_file_io_completion(c, event, apc_routine, apc_context, io_status_block);
+                deliver_file_io_completion(c, event, apc_routine, apc_context, io_status_block, STATUS_SUCCESS, bytes_read);
                 return STATUS_SUCCESS;
             }
 
@@ -1245,7 +1258,7 @@ namespace sogen
                 io_status_block.write(block);
             }
 
-            deliver_file_io_completion(c, event, apc_routine, apc_context, io_status_block);
+            deliver_file_io_completion(c, event, apc_routine, apc_context, io_status_block, status, 0);
             return status;
         }
 
