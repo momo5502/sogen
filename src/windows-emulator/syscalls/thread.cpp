@@ -60,7 +60,8 @@ namespace sogen
                         merged_context.Dr7 = new_wow64_context.Dr7;
                     }
 
-                    if ((new_wow64_context.ContextFlags & CONTEXT_FLOATING_POINT_32) == CONTEXT_FLOATING_POINT_32)
+                    if ((new_wow64_context.ContextFlags & CONTEXT_FLOATING_POINT_32) == CONTEXT_FLOATING_POINT_32 &&
+                        (new_wow64_context.FloatSave.ControlWord & 0x3F) == 0x3F)
                     {
                         merged_context.FloatSave = new_wow64_context.FloatSave;
                     }
@@ -95,8 +96,13 @@ namespace sogen
 
                     if ((new_wow64_context.ContextFlags & CONTEXT_EXTENDED_REGISTERS_32) == CONTEXT_EXTENDED_REGISTERS_32)
                     {
-                        memcpy(merged_context.ExtendedRegisters, new_wow64_context.ExtendedRegisters,
-                               sizeof(merged_context.ExtendedRegisters));
+                        const uint16_t incoming_ext_cw = static_cast<uint16_t>(new_wow64_context.ExtendedRegisters[0]) |
+                                                         (static_cast<uint16_t>(new_wow64_context.ExtendedRegisters[1]) << 8);
+                        if ((incoming_ext_cw & 0x3F) == 0x3F)
+                        {
+                            memcpy(merged_context.ExtendedRegisters, new_wow64_context.ExtendedRegisters,
+                                   sizeof(merged_context.ExtendedRegisters));
+                        }
                     }
 
                     ctx.Context = merged_context;

@@ -1809,9 +1809,9 @@ namespace sogen::whp
                 if (enabled_exits.ExceptionExit)
                 {
                     WHV_PARTITION_PROPERTY exception_exit_bitmap{};
-                    exception_exit_bitmap.ExceptionExitBitmap = (1ull << WHvX64ExceptionTypeDebugTrapOrFault) |
-                                                                (1ull << WHvX64ExceptionTypeBreakpointTrap) |
-                                                                (1ull << WHvX64ExceptionTypeInvalidOpcodeFault);
+                    exception_exit_bitmap.ExceptionExitBitmap =
+                        (1ull << WHvX64ExceptionTypeDebugTrapOrFault) | (1ull << WHvX64ExceptionTypeBreakpointTrap) |
+                        (1ull << WHvX64ExceptionTypeInvalidOpcodeFault) | (1ull << WHvX64ExceptionTypePageFault);
 
                     WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExceptionExitBitmap,
                                                          &exception_exit_bitmap, sizeof(exception_exit_bitmap)));
@@ -3227,6 +3227,32 @@ namespace sogen::whp
             bool handle_exception(const WHV_RUN_VP_EXIT_CONTEXT& exit_context)
             {
                 const auto& exception = exit_context.VpException;
+
+                if (exception.ExceptionType == WHvX64ExceptionTypePageFault)
+                {
+                    const auto fault_address = exception.ExceptionParameter;
+                    const bool is_write = (exception.ErrorCode & 0x2u) != 0;
+                    const bool is_present = (exception.ErrorCode & 0x1u) != 0;
+                    const auto operation = is_write ? memory_operation::write : memory_operation::read;
+                    const auto type = is_present ? memory_violation_type::protection : memory_violation_type::unmapped;
+
+                    for (auto& [_, hook] : this->memory_violation_hooks_)
+                    {
+                        const auto result = hook(fault_address, 1, operation, type);
+                        if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
+                        {
+                            return true;
+                        }
+                    }
+
+                    for (auto& [_, hook] : this->interrupt_hooks_)
+                    {
+                        hook(14);
+                        return true;
+                    }
+
+                    return false;
+                }
 
                 if (exception.ExceptionType == WHvX64ExceptionTypeDebugTrapOrFault)
                 {
