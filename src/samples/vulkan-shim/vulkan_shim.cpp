@@ -2295,6 +2295,37 @@ extern "C"
         destroy_device_child(gb::ioctl_destroy_sampler, device, sampler);
     }
 
+    namespace
+    {
+        // DXVK (VK_KHR_maintenance5) chains the SPIR-V inline through a VkShaderModuleCreateInfo on the
+        // stage's pNext instead of passing a VkShaderModule. The bridge models explicit shader modules,
+        // so materialize a temporary one from the inline code. Returns the module to use (and sets
+        // `owned` when the caller must destroy it after pipeline creation).
+        VkShaderModule resolve_stage_module(VkDevice device, const VkPipelineShaderStageCreateInfo& stage, bool& owned)
+        {
+            owned = false;
+            if (stage.module != VK_NULL_HANDLE)
+            {
+                return stage.module;
+            }
+            for (const auto* next = static_cast<const VkBaseInStructure*>(stage.pNext); next != nullptr; next = next->pNext)
+            {
+                if (next->sType == VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO)
+                {
+                    const auto* info = reinterpret_cast<const VkShaderModuleCreateInfo*>(next);
+                    VkShaderModule module = VK_NULL_HANDLE;
+                    if (vkCreateShaderModule(device, info, nullptr, &module) == VK_SUCCESS)
+                    {
+                        owned = true;
+                        return module;
+                    }
+                    break;
+                }
+            }
+            return VK_NULL_HANDLE;
+        }
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache,
                                                                                    uint32_t createInfoCount,
                                                                                    const VkGraphicsPipelineCreateInfo* pCreateInfos,
@@ -2307,15 +2338,23 @@ extern "C"
 
             gb::object_id vertex_shader = gb::null_object;
             gb::object_id fragment_shader = gb::null_object;
+            VkShaderModule owned_modules[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+            uint32_t owned_count = 0;
             for (uint32_t s = 0; s < ci.stageCount; ++s)
             {
+                bool owned = false;
+                const VkShaderModule module = resolve_stage_module(device, ci.pStages[s], owned);
+                if (owned && owned_count < 2)
+                {
+                    owned_modules[owned_count++] = module;
+                }
                 if (ci.pStages[s].stage == VK_SHADER_STAGE_VERTEX_BIT)
                 {
-                    vertex_shader = to_object_id(ci.pStages[s].module);
+                    vertex_shader = to_object_id(module);
                 }
                 else if (ci.pStages[s].stage == VK_SHADER_STAGE_FRAGMENT_BIT)
                 {
-                    fragment_shader = to_object_id(ci.pStages[s].module);
+                    fragment_shader = to_object_id(module);
                 }
             }
 
@@ -2394,6 +2433,11 @@ extern "C"
             {
                 pPipelines[i] = to_handle<VkPipeline>(response.object);
             }
+
+            for (uint32_t m = 0; m < owned_count; ++m)
+            {
+                vkDestroyShaderModule(device, owned_modules[m], nullptr);
+            }
         }
         return overall;
     }
@@ -2408,10 +2452,13 @@ extern "C"
         {
             const VkComputePipelineCreateInfo& ci = pCreateInfos[i];
 
+            bool owned = false;
+            const VkShaderModule module = resolve_stage_module(device, ci.stage, owned);
+
             gb::create_compute_pipeline_request request{};
             request.device = to_object_id(device);
             request.pipeline_layout = to_object_id(ci.layout);
-            request.shader_module = to_object_id(ci.stage.module);
+            request.shader_module = to_object_id(module);
 
             gb::create_compute_pipeline_response response{};
             const bool ok = bridge_call(gb::ioctl_create_compute_pipeline, &request, sizeof(request), &response, sizeof(response));
@@ -2423,6 +2470,11 @@ extern "C"
             else
             {
                 pPipelines[i] = to_handle<VkPipeline>(response.pipeline);
+            }
+
+            if (owned)
+            {
+                vkDestroyShaderModule(device, module, nullptr);
             }
         }
         return overall;
