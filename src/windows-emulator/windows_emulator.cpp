@@ -385,9 +385,9 @@ namespace sogen
                     reason = t.await_any ? "wait-any" : "wait-all";
                     for (const auto& obj : t.await_objects)
                     {
-                        char buffer[24];
-                        (void)std::snprintf(buffer, sizeof(buffer), " 0x%llX", static_cast<unsigned long long>(obj.bits));
-                        reason += buffer;
+                        std::array<char, 24> buffer{};
+                        (void)std::snprintf(buffer.data(), buffer.size(), " 0x%llX", static_cast<unsigned long long>(obj.bits));
+                        reason += buffer.data();
                     }
                 }
                 else if (t.await_msg.has_value())
