@@ -47,6 +47,21 @@ namespace sogen
         int32_t get_physical_device_format_properties(uint64_t physical_device, uint32_t format, uint32_t& out_linear,
                                                       uint32_t& out_optimal, uint32_t& out_buffer);
 
+        // Real VkImageFormatProperties (incl. supported sampleCounts) for the image config.
+        struct image_format_properties
+        {
+            uint32_t max_mip_levels;
+            uint32_t max_array_layers;
+            uint32_t sample_counts;
+            uint32_t max_extent_width;
+            uint32_t max_extent_height;
+            uint32_t max_extent_depth;
+            uint64_t max_resource_size;
+        };
+        int32_t get_physical_device_image_format_properties(uint64_t physical_device, uint32_t format, uint32_t type,
+                                                            uint32_t tiling, uint32_t usage, uint32_t flags,
+                                                            image_format_properties& out);
+
         // Writes the device's queue families as raw VkQueueFamilyProperties into out (sized in
         // bytes). out_count always receives the true family count.
         int32_t get_queue_family_properties(uint64_t physical_device, void* out, size_t out_size, uint32_t& out_count);
@@ -151,9 +166,10 @@ namespace sogen
             uint32_t layer_count;
         };
 
-        // Creates a 2D, single-mip, single-layer image (samples = 1, initial layout UNDEFINED).
+        // Creates a 2D, single-mip, single-layer image (initial layout UNDEFINED). samples selects the
+        // multisample count (1 = no MSAA).
         int32_t create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,
-                             uint64_t& out_image);
+                             uint32_t samples, uint64_t& out_image);
         void destroy_image(uint64_t device, uint64_t image);
         int32_t get_image_memory_requirements(uint64_t device, uint64_t image, uint64_t& out_size, uint64_t& out_alignment,
                                               uint32_t& out_memory_type_bits);

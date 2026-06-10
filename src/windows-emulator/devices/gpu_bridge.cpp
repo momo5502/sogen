@@ -110,6 +110,8 @@ namespace sogen
                     return handle_upload_memory(win_emu, context);
                 case gpu_bridge::ioctl_create_image:
                     return handle_create_image(win_emu, context);
+                case gpu_bridge::ioctl_get_physical_device_image_format_properties:
+                    return handle_get_physical_device_image_format_properties(win_emu, context);
                 case gpu_bridge::ioctl_destroy_image:
                     return handle_destroy_image(win_emu, context);
                 case gpu_bridge::ioctl_get_image_memory_requirements:
@@ -1120,9 +1122,33 @@ namespace sogen
 
                 uint64_t image = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_image(request.device, request.format, request.width, request.height,
-                                                                  request.usage, request.tiling, image);
+                                                                  request.usage, request.tiling, request.samples, image);
                 return write_output(win_emu, context,
                                     gpu_bridge::create_image_response{.vk_result = result, .reserved = 0, .image = image});
+            }
+
+            NTSTATUS handle_get_physical_device_image_format_properties(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_physical_device_image_format_properties_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                vulkan_host::image_format_properties props{};
+                const int32_t result = this->vulkan_.get_physical_device_image_format_properties(
+                    request.physical_device, request.format, request.type, request.tiling, request.usage, request.flags, props);
+                return write_output(win_emu, context,
+                                    gpu_bridge::get_physical_device_image_format_properties_response{
+                                        .vk_result = result,
+                                        .max_mip_levels = props.max_mip_levels,
+                                        .max_array_layers = props.max_array_layers,
+                                        .sample_counts = props.sample_counts,
+                                        .max_extent_width = props.max_extent_width,
+                                        .max_extent_height = props.max_extent_height,
+                                        .max_extent_depth = props.max_extent_depth,
+                                        .reserved = 0,
+                                        .max_resource_size = props.max_resource_size});
             }
 
             NTSTATUS handle_destroy_image(windows_emulator& win_emu, const io_device_context& context)

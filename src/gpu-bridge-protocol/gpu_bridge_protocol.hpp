@@ -125,6 +125,7 @@ namespace sogen::gpu_bridge
         device_wait_idle = 0x859,
         reset_command_pool = 0x85A,
         reset_command_buffer = 0x85B,
+        get_physical_device_image_format_properties = 0x85C,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -212,6 +213,8 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_device_wait_idle = make_ioctl(static_cast<uint32_t>(command::device_wait_idle));
     inline constexpr uint32_t ioctl_reset_command_pool = make_ioctl(static_cast<uint32_t>(command::reset_command_pool));
     inline constexpr uint32_t ioctl_reset_command_buffer = make_ioctl(static_cast<uint32_t>(command::reset_command_buffer));
+    inline constexpr uint32_t ioctl_get_physical_device_image_format_properties =
+        make_ioctl(static_cast<uint32_t>(command::get_physical_device_image_format_properties));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -598,6 +601,31 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
+    struct get_physical_device_image_format_properties_request
+    {
+        object_id physical_device;
+        uint32_t format; // VkFormat
+        uint32_t type;   // VkImageType
+        uint32_t tiling; // VkImageTiling
+        uint32_t usage;  // VkImageUsageFlags
+        uint32_t flags;  // VkImageCreateFlags
+        uint32_t reserved;
+    };
+
+    // Mirrors VkImageFormatProperties with a fixed cross-bitness layout (maxResourceSize 8-byte aligned).
+    struct get_physical_device_image_format_properties_response
+    {
+        int32_t vk_result;
+        uint32_t max_mip_levels;
+        uint32_t max_array_layers;
+        uint32_t sample_counts; // VkSampleCountFlags
+        uint32_t max_extent_width;
+        uint32_t max_extent_height;
+        uint32_t max_extent_depth;
+        uint32_t reserved;
+        uint64_t max_resource_size; // VkDeviceSize
+    };
+
     // ioctl_get_physical_device_memory_properties: in (out = raw VkPhysicalDeviceMemoryProperties bytes)
     struct get_physical_device_memory_properties_request
     {
@@ -714,9 +742,9 @@ namespace sogen::gpu_bridge
         uint32_t format; // VkFormat
         uint32_t width;
         uint32_t height;
-        uint32_t usage;  // VkImageUsageFlags
-        uint32_t tiling; // VkImageTiling
-        uint32_t reserved;
+        uint32_t usage;   // VkImageUsageFlags
+        uint32_t tiling;  // VkImageTiling
+        uint32_t samples; // VkSampleCountFlagBits (1 = no MSAA)
     };
 
     struct create_image_response
@@ -1235,4 +1263,6 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(device_wait_idle_request) == 8, "wire layout drift");
     static_assert(sizeof(reset_command_pool_request) == 24, "wire layout drift");
     static_assert(sizeof(reset_command_buffer_request) == 16, "wire layout drift");
+    static_assert(sizeof(get_physical_device_image_format_properties_request) == 32, "wire layout drift");
+    static_assert(sizeof(get_physical_device_image_format_properties_response) == 40, "wire layout drift");
 }

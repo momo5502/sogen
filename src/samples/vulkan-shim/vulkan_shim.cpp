@@ -1182,6 +1182,7 @@ extern "C"
         request.height = pCreateInfo->extent.height;
         request.usage = pCreateInfo->usage;
         request.tiling = static_cast<uint32_t>(pCreateInfo->tiling);
+        request.samples = static_cast<uint32_t>(pCreateInfo->samples);
 
         gb::create_image_response response{};
         if (!bridge_call(gb::ioctl_create_image, &request, sizeof(request), &response, sizeof(response)))
@@ -1752,19 +1753,41 @@ extern "C"
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
-    vkGetPhysicalDeviceImageFormatProperties(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags, VkImageCreateFlags,
+    vkGetPhysicalDeviceImageFormatProperties(VkPhysicalDevice physicalDevice, VkFormat format, VkImageType type, VkImageTiling tiling,
+                                             VkImageUsageFlags usage, VkImageCreateFlags flags,
                                              VkImageFormatProperties* pImageFormatProperties)
     {
         if (!pImageFormatProperties)
         {
             return VK_ERROR_FORMAT_NOT_SUPPORTED;
         }
+
+        gb::get_physical_device_image_format_properties_request request{};
+        request.physical_device = to_object_id(physicalDevice);
+        request.format = static_cast<uint32_t>(format);
+        request.type = static_cast<uint32_t>(type);
+        request.tiling = static_cast<uint32_t>(tiling);
+        request.usage = usage;
+        request.flags = flags;
+
+        gb::get_physical_device_image_format_properties_response response{};
+        if (!bridge_call(gb::ioctl_get_physical_device_image_format_properties, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_FORMAT_NOT_SUPPORTED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
         *pImageFormatProperties = {};
-        pImageFormatProperties->maxExtent = {.width = 16384, .height = 16384, .depth = 16384};
-        pImageFormatProperties->maxMipLevels = 14;
-        pImageFormatProperties->maxArrayLayers = 2048;
-        pImageFormatProperties->sampleCounts = VK_SAMPLE_COUNT_1_BIT;
-        pImageFormatProperties->maxResourceSize = static_cast<VkDeviceSize>(1) << 31;
+        pImageFormatProperties->maxExtent = {.width = response.max_extent_width,
+                                             .height = response.max_extent_height,
+                                             .depth = response.max_extent_depth};
+        pImageFormatProperties->maxMipLevels = response.max_mip_levels;
+        pImageFormatProperties->maxArrayLayers = response.max_array_layers;
+        pImageFormatProperties->sampleCounts = response.sample_counts;
+        pImageFormatProperties->maxResourceSize = response.max_resource_size;
         return VK_SUCCESS;
     }
 

@@ -131,6 +131,7 @@ namespace sogen
             PFN_vkEnumeratePhysicalDevices enumerate_physical_devices{};
             PFN_vkGetPhysicalDeviceProperties get_physical_device_properties{};
             PFN_vkGetPhysicalDeviceFormatProperties get_physical_device_format_properties{};
+            PFN_vkGetPhysicalDeviceImageFormatProperties get_physical_device_image_format_properties{};
             PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queue_family_properties{};
             PFN_vkGetPhysicalDeviceMemoryProperties get_physical_device_memory_properties{};
             PFN_vkGetPhysicalDeviceFeatures2 get_physical_device_features2{};
@@ -749,6 +750,9 @@ namespace sogen
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceProperties>(instance, "vkGetPhysicalDeviceProperties");
         data.get_physical_device_format_properties =
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceFormatProperties>(instance, "vkGetPhysicalDeviceFormatProperties");
+        data.get_physical_device_image_format_properties =
+            this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceImageFormatProperties>(instance,
+                                                                                          "vkGetPhysicalDeviceImageFormatProperties");
         data.get_queue_family_properties = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
             instance, "vkGetPhysicalDeviceQueueFamilyProperties");
         data.get_physical_device_memory_properties =
@@ -911,6 +915,43 @@ namespace sogen
         out_linear = properties.linearTilingFeatures;
         out_optimal = properties.optimalTilingFeatures;
         out_buffer = properties.bufferFeatures;
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::get_physical_device_image_format_properties(uint64_t physical_device, uint32_t format, uint32_t type,
+                                                                     uint32_t tiling, uint32_t usage, uint32_t flags,
+                                                                     image_format_properties& out)
+    {
+        out = {};
+
+        const auto pd = this->impl_->physical_devices.find(physical_device);
+        if (pd == this->impl_->physical_devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto instance = this->impl_->instances.find(pd->second.instance_id);
+        if (instance == this->impl_->instances.end() || !instance->second.get_physical_device_image_format_properties)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkImageFormatProperties properties{};
+        const VkResult result = instance->second.get_physical_device_image_format_properties(
+            pd->second.handle, static_cast<VkFormat>(format), static_cast<VkImageType>(type), static_cast<VkImageTiling>(tiling),
+            usage, flags, &properties);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        out.max_mip_levels = properties.maxMipLevels;
+        out.max_array_layers = properties.maxArrayLayers;
+        out.sample_counts = properties.sampleCounts;
+        out.max_extent_width = properties.maxExtent.width;
+        out.max_extent_height = properties.maxExtent.height;
+        out.max_extent_depth = properties.maxExtent.depth;
+        out.max_resource_size = properties.maxResourceSize;
         return VK_SUCCESS;
     }
 
@@ -2145,7 +2186,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,
-                                      uint64_t& out_image)
+                                      uint32_t samples, uint64_t& out_image)
     {
         out_image = 0;
 
@@ -2162,7 +2203,7 @@ namespace sogen
         info.extent = {.width = width, .height = height, .depth = 1};
         info.mipLevels = 1;
         info.arrayLayers = 1;
-        info.samples = VK_SAMPLE_COUNT_1_BIT;
+        info.samples = static_cast<VkSampleCountFlagBits>(samples ? samples : VK_SAMPLE_COUNT_1_BIT);
         info.tiling = static_cast<VkImageTiling>(tiling);
         info.usage = usage;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
