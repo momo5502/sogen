@@ -531,10 +531,10 @@ namespace sogen
             {
                 if (t.id == thread_id)
                 {
-                    if (t.waiting_for_alert)
-                    {
-                        t.alerted = true;
-                    }
+                    // The alert is sticky: it must be remembered even if the target is not waiting yet, so a
+                    // subsequent NtWaitForAlertByThreadId consumes it instead of blocking forever. This race-free
+                    // delivery is what ntdll's critical sections and SRW locks rely on.
+                    t.alerted = true;
                     return STATUS_SUCCESS;
                 }
             }
@@ -559,6 +559,14 @@ namespace sogen
         NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, const uint64_t, const emulator_object<LARGE_INTEGER> timeout)
         {
             auto& t = c.win_emu.current_thread();
+
+            if (t.alerted)
+            {
+                // A pending alert was delivered before we started waiting; consume it without blocking.
+                t.alerted = false;
+                return STATUS_ALERTED;
+            }
+
             t.waiting_for_alert = true;
 
             if (timeout.value() && !t.await_time.has_value())
