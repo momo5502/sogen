@@ -20,8 +20,13 @@ EXPORTS
     vkCmdBeginDebugUtilsLabelEXT
     vkCmdBindVertexBuffers
     vkCmdClearColorImage
+    vkCmdClearDepthStencilImage
     vkCmdCopyBufferToImage
+    vkCmdCopyBufferToImage2
     vkCmdCopyImageToBuffer
+    vkCmdCopyImageToBuffer2
+    vkCmdDispatch
+    vkCmdDispatchIndirect
     vkCmdDraw
     vkCmdDrawIndexed
     vkCmdEndDebugUtilsLabelEXT

@@ -1386,6 +1386,25 @@ extern "C"
         }
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdClearDepthStencilImage(VkCommandBuffer commandBuffer, VkImage image,
+                                                                                 VkImageLayout imageLayout,
+                                                                                 const VkClearDepthStencilValue* pDepthStencil,
+                                                                                 uint32_t rangeCount,
+                                                                                 const VkImageSubresourceRange* pRanges)
+    {
+        for (uint32_t i = 0; i < rangeCount; ++i)
+        {
+            gb::cmd_clear_depth_stencil_image_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.image = to_object_id(image);
+            request.subresource = to_wire_range(pRanges[i]);
+            request.image_layout = static_cast<uint32_t>(imageLayout);
+            request.depth = pDepthStencil->depth;
+            request.stencil = pDepthStencil->stencil;
+            record_command(request.command_buffer, gb::command::cmd_clear_depth_stencil_image, &request, sizeof(request));
+        }
+    }
+
     // Copies are remoted assuming tight packing of mip 0 / layer 0 at image offset 0 to buffer offset 0
     // (bufferRowLength/bufferImageHeight/imageOffset are not yet honored).
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyImageToBuffer(VkCommandBuffer commandBuffer, VkImage srcImage,
@@ -1425,6 +1444,44 @@ extern "C"
             request.height = r.imageExtent.height;
             request.aspect_mask = r.imageSubresource.aspectMask;
             record_command(request.command_buffer, gb::command::cmd_copy_buffer_to_image, &request, sizeof(request));
+        }
+    }
+
+    // DXVK on a Vulkan 1.3 device issues the KHR_copy_commands2 / core-1.3 variants. They carry the
+    // same per-region data as the legacy entry points, so they reuse the existing copy commands.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
+                                                                             const VkCopyBufferToImageInfo2* pCopyBufferToImageInfo)
+    {
+        for (uint32_t i = 0; i < pCopyBufferToImageInfo->regionCount; ++i)
+        {
+            const VkBufferImageCopy2& r = pCopyBufferToImageInfo->pRegions[i];
+            gb::cmd_copy_buffer_to_image_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.buffer = to_object_id(pCopyBufferToImageInfo->srcBuffer);
+            request.image = to_object_id(pCopyBufferToImageInfo->dstImage);
+            request.image_layout = static_cast<uint32_t>(pCopyBufferToImageInfo->dstImageLayout);
+            request.width = r.imageExtent.width;
+            request.height = r.imageExtent.height;
+            request.aspect_mask = r.imageSubresource.aspectMask;
+            record_command(request.command_buffer, gb::command::cmd_copy_buffer_to_image, &request, sizeof(request));
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyImageToBuffer2(VkCommandBuffer commandBuffer,
+                                                                             const VkCopyImageToBufferInfo2* pCopyImageToBufferInfo)
+    {
+        for (uint32_t i = 0; i < pCopyImageToBufferInfo->regionCount; ++i)
+        {
+            const VkBufferImageCopy2& r = pCopyImageToBufferInfo->pRegions[i];
+            gb::cmd_copy_image_to_buffer_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.image = to_object_id(pCopyImageToBufferInfo->srcImage);
+            request.buffer = to_object_id(pCopyImageToBufferInfo->dstBuffer);
+            request.image_layout = static_cast<uint32_t>(pCopyImageToBufferInfo->srcImageLayout);
+            request.width = r.imageExtent.width;
+            request.height = r.imageExtent.height;
+            request.aspect_mask = r.imageSubresource.aspectMask;
+            record_command(request.command_buffer, gb::command::cmd_copy_image_to_buffer, &request, sizeof(request));
         }
     }
 
@@ -1752,10 +1809,9 @@ extern "C"
         }
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
-    vkGetPhysicalDeviceImageFormatProperties(VkPhysicalDevice physicalDevice, VkFormat format, VkImageType type, VkImageTiling tiling,
-                                             VkImageUsageFlags usage, VkImageCreateFlags flags,
-                                             VkImageFormatProperties* pImageFormatProperties)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceImageFormatProperties(
+        VkPhysicalDevice physicalDevice, VkFormat format, VkImageType type, VkImageTiling tiling, VkImageUsageFlags usage,
+        VkImageCreateFlags flags, VkImageFormatProperties* pImageFormatProperties)
     {
         if (!pImageFormatProperties)
         {
@@ -1781,9 +1837,8 @@ extern "C"
         }
 
         *pImageFormatProperties = {};
-        pImageFormatProperties->maxExtent = {.width = response.max_extent_width,
-                                             .height = response.max_extent_height,
-                                             .depth = response.max_extent_depth};
+        pImageFormatProperties->maxExtent = {
+            .width = response.max_extent_width, .height = response.max_extent_height, .depth = response.max_extent_depth};
         pImageFormatProperties->maxMipLevels = response.max_mip_levels;
         pImageFormatProperties->maxArrayLayers = response.max_array_layers;
         pImageFormatProperties->sampleCounts = response.sample_counts;
@@ -2876,13 +2931,35 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_begin_render_pass, &request, sizeof(request));
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer commandBuffer, VkPipelineBindPoint,
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindPipeline(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint,
                                                                        VkPipeline pipeline)
     {
         gb::cmd_bind_pipeline_request request{};
         request.command_buffer = to_object_id(commandBuffer);
         request.pipeline = to_object_id(pipeline);
+        request.bind_point = static_cast<uint32_t>(pipelineBindPoint);
         record_command(request.command_buffer, gb::command::cmd_bind_pipeline, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDispatch(VkCommandBuffer commandBuffer, uint32_t groupCountX,
+                                                                   uint32_t groupCountY, uint32_t groupCountZ)
+    {
+        gb::cmd_dispatch_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.group_count_x = groupCountX;
+        request.group_count_y = groupCountY;
+        request.group_count_z = groupCountZ;
+        record_command(request.command_buffer, gb::command::cmd_dispatch, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDispatchIndirect(VkCommandBuffer commandBuffer, VkBuffer buffer,
+                                                                           VkDeviceSize offset)
+    {
+        gb::cmd_dispatch_indirect_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.buffer = to_object_id(buffer);
+        request.offset = offset;
+        record_command(request.command_buffer, gb::command::cmd_dispatch_indirect, &request, sizeof(request));
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount, uint32_t instanceCount,
@@ -2944,9 +3021,9 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_draw_indexed, &request, sizeof(request));
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer, VkPipelineBindPoint,
-                                                                             VkPipelineLayout layout, uint32_t firstSet,
-                                                                             uint32_t descriptorSetCount,
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer,
+                                                                             VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout,
+                                                                             uint32_t firstSet, uint32_t descriptorSetCount,
                                                                              const VkDescriptorSet* pDescriptorSets, uint32_t,
                                                                              const uint32_t*)
     {
@@ -2959,6 +3036,7 @@ extern "C"
         header.pipeline_layout = to_object_id(layout);
         header.first_set = firstSet;
         header.set_count = descriptorSetCount;
+        header.bind_point = static_cast<uint32_t>(pipelineBindPoint);
         std::memcpy(message.data(), &header, sizeof(header));
         for (uint32_t i = 0; i < descriptorSetCount; ++i)
         {
@@ -3130,8 +3208,13 @@ extern "C"
             {.name = "vkCmdPipelineBarrier2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier2)},
             {.name = "vkCmdPipelineBarrier2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier2)},
             {.name = "vkCmdClearColorImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdClearColorImage)},
+            {.name = "vkCmdClearDepthStencilImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdClearDepthStencilImage)},
             {.name = "vkCmdCopyImageToBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImageToBuffer)},
+            {.name = "vkCmdCopyImageToBuffer2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImageToBuffer2)},
+            {.name = "vkCmdCopyImageToBuffer2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImageToBuffer2)},
             {.name = "vkCmdCopyBufferToImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage)},
+            {.name = "vkCmdCopyBufferToImage2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage2)},
+            {.name = "vkCmdCopyBufferToImage2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage2)},
             {.name = "vkCreateSampler", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateSampler)},
             {.name = "vkDestroySampler", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySampler)},
             {.name = "vkCreateWin32SurfaceKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateWin32SurfaceKHR)},
@@ -3174,6 +3257,8 @@ extern "C"
             {.name = "vkCmdBeginRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRenderPass)},
             {.name = "vkCmdBindPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindPipeline)},
             {.name = "vkCmdDraw", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDraw)},
+            {.name = "vkCmdDispatch", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDispatch)},
+            {.name = "vkCmdDispatchIndirect", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDispatchIndirect)},
             {.name = "vkCmdBindVertexBuffers", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindVertexBuffers)},
             {.name = "vkCmdBindIndexBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindIndexBuffer)},
             {.name = "vkCmdDrawIndexed", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndexed)},

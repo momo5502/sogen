@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 5;
+    inline constexpr uint32_t protocol_version = 6;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -126,6 +126,9 @@ namespace sogen::gpu_bridge
         reset_command_pool = 0x85A,
         reset_command_buffer = 0x85B,
         get_physical_device_image_format_properties = 0x85C,
+        cmd_dispatch = 0x85D,
+        cmd_dispatch_indirect = 0x85E,
+        cmd_clear_depth_stencil_image = 0x85F,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -800,6 +803,18 @@ namespace sogen::gpu_bridge
         float color_a;
     };
 
+    struct cmd_clear_depth_stencil_image_request
+    {
+        object_id command_buffer;
+        object_id image;
+        image_subresource_range subresource;
+        uint32_t image_layout; // VkImageLayout (current layout of the image)
+        uint32_t stencil;      // VkClearDepthStencilValue::stencil
+        float depth;           // VkClearDepthStencilValue::depth
+        uint32_t reserved;
+        uint32_t reserved2;
+    };
+
     // the buffer at offset 0;
     struct cmd_copy_image_to_buffer_request
     {
@@ -1054,6 +1069,24 @@ namespace sogen::gpu_bridge
     {
         object_id command_buffer;
         object_id pipeline;
+        uint32_t bind_point; // VkPipelineBindPoint (0 = graphics, 1 = compute)
+        uint32_t reserved;
+    };
+
+    struct cmd_dispatch_request
+    {
+        object_id command_buffer;
+        uint32_t group_count_x;
+        uint32_t group_count_y;
+        uint32_t group_count_z;
+        uint32_t reserved;
+    };
+
+    struct cmd_dispatch_indirect_request
+    {
+        object_id command_buffer;
+        object_id buffer;
+        uint64_t offset; // VkDeviceSize
     };
 
     struct cmd_draw_request
@@ -1209,6 +1242,8 @@ namespace sogen::gpu_bridge
         object_id pipeline_layout;
         uint32_t first_set;
         uint32_t set_count;
+        uint32_t bind_point; // VkPipelineBindPoint (0 = graphics, 1 = compute)
+        uint32_t reserved;
         // object_id sets[set_count];
     };
 
@@ -1247,9 +1282,13 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(allocate_memory_request) == 24, "wire layout drift");
     static_assert(sizeof(bind_buffer_memory_request) == 32, "wire layout drift");
     static_assert(sizeof(cmd_draw_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_bind_pipeline_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_dispatch_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_dispatch_indirect_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_clear_depth_stencil_image_request) == 56, "wire layout drift");
     static_assert(sizeof(vertex_buffer_binding) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
-    static_assert(sizeof(cmd_bind_descriptor_sets_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");
     static_assert(sizeof(create_sampler_request) == 32, "wire layout drift");
     static_assert(sizeof(enumerate_device_extension_properties_request) == 16, "wire layout drift");
     static_assert(sizeof(enumerate_device_extension_properties_response) == 8, "wire layout drift");

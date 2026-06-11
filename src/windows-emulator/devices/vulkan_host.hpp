@@ -58,9 +58,8 @@ namespace sogen
             uint32_t max_extent_depth;
             uint64_t max_resource_size;
         };
-        int32_t get_physical_device_image_format_properties(uint64_t physical_device, uint32_t format, uint32_t type,
-                                                            uint32_t tiling, uint32_t usage, uint32_t flags,
-                                                            image_format_properties& out);
+        int32_t get_physical_device_image_format_properties(uint64_t physical_device, uint32_t format, uint32_t type, uint32_t tiling,
+                                                            uint32_t usage, uint32_t flags, image_format_properties& out);
 
         // Writes the device's queue families as raw VkQueueFamilyProperties into out (sized in
         // bytes). out_count always receives the true family count.
@@ -182,6 +181,8 @@ namespace sogen
         // Records vkCmdClearColorImage with an RGBA float clear color.
         int32_t cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r, float g, float b, float a,
                                       const subresource_range& range);
+        int32_t cmd_clear_depth_stencil_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float depth, uint32_t stencil,
+                                              const subresource_range& range);
         // Copies mip 0 / layer 0 of the image (tightly packed) into the buffer at offset 0.
         int32_t cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer, uint32_t width,
                                          uint32_t height, uint32_t aspect_mask);
@@ -326,7 +327,9 @@ namespace sogen
         // clear_depth is used only when the render pass has a depth attachment.
         int32_t cmd_begin_render_pass(uint64_t command_buffer, uint64_t render_pass, uint64_t framebuffer, uint32_t width, uint32_t height,
                                       float r, float g, float b, float a, float clear_depth);
-        int32_t cmd_bind_pipeline(uint64_t command_buffer, uint64_t pipeline);
+        int32_t cmd_bind_pipeline(uint64_t command_buffer, uint64_t pipeline, uint32_t bind_point);
+        int32_t cmd_dispatch(uint64_t command_buffer, uint32_t group_count_x, uint32_t group_count_y, uint32_t group_count_z);
+        int32_t cmd_dispatch_indirect(uint64_t command_buffer, uint64_t buffer, uint64_t offset);
         int32_t cmd_draw(uint64_t command_buffer, uint32_t vertex_count, uint32_t instance_count, uint32_t first_vertex,
                          uint32_t first_instance);
         // Binds `count` vertex buffers (parallel buffer-id / offset arrays) starting at first_binding.
@@ -336,7 +339,7 @@ namespace sogen
         int32_t cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count, uint32_t first_index,
                                  int32_t vertex_offset, uint32_t first_instance);
         int32_t cmd_bind_descriptor_sets(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t first_set,
-                                         std::span<const uint64_t> sets);
+                                         std::span<const uint64_t> sets, uint32_t bind_point);
         int32_t cmd_end_render_pass(uint64_t command_buffer);
         int32_t cmd_push_constants(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t stage_flags, uint32_t offset, uint32_t size,
                                    const void* data);

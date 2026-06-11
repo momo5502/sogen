@@ -109,8 +109,7 @@ namespace sogen
 
             // limits tail (minTexelBufferOffsetAlignment .. end) then sparseProperties
             std::memcpy(dst + props_head + guest_limits_tail, src_bytes + props_head + host_limits_tail, limits_tail_size);
-            std::memcpy(dst + props_head + guest_limits_size, src_bytes + props_head + sizeof(VkPhysicalDeviceLimits),
-                        sparse_size);
+            std::memcpy(dst + props_head + guest_limits_size, src_bytes + props_head + sizeof(VkPhysicalDeviceLimits), sparse_size);
 
             const size_t copy_size = std::min(out_size, guest_props_size);
             std::memcpy(out, buffer.data(), copy_size);
@@ -192,6 +191,7 @@ namespace sogen
             PFN_vkBindImageMemory bind_image_memory{};
             PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
             PFN_vkCmdClearColorImage cmd_clear_color_image{};
+            PFN_vkCmdClearDepthStencilImage cmd_clear_depth_stencil_image{};
             PFN_vkCmdCopyImageToBuffer cmd_copy_image_to_buffer{};
             PFN_vkCmdCopyBufferToImage cmd_copy_buffer_to_image{};
             PFN_vkCreateSampler create_sampler{};
@@ -218,6 +218,8 @@ namespace sogen
             PFN_vkDestroyPipeline destroy_pipeline{};
             PFN_vkCmdBeginRenderPass cmd_begin_render_pass{};
             PFN_vkCmdBindPipeline cmd_bind_pipeline{};
+            PFN_vkCmdDispatch cmd_dispatch{};
+            PFN_vkCmdDispatchIndirect cmd_dispatch_indirect{};
             PFN_vkCmdDraw cmd_draw{};
             PFN_vkCmdBindVertexBuffers cmd_bind_vertex_buffers{};
             PFN_vkCmdBindIndexBuffer cmd_bind_index_buffer{};
@@ -750,9 +752,8 @@ namespace sogen
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceProperties>(instance, "vkGetPhysicalDeviceProperties");
         data.get_physical_device_format_properties =
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceFormatProperties>(instance, "vkGetPhysicalDeviceFormatProperties");
-        data.get_physical_device_image_format_properties =
-            this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceImageFormatProperties>(instance,
-                                                                                          "vkGetPhysicalDeviceImageFormatProperties");
+        data.get_physical_device_image_format_properties = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceImageFormatProperties>(
+            instance, "vkGetPhysicalDeviceImageFormatProperties");
         data.get_queue_family_properties = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
             instance, "vkGetPhysicalDeviceQueueFamilyProperties");
         data.get_physical_device_memory_properties =
@@ -938,8 +939,8 @@ namespace sogen
 
         VkImageFormatProperties properties{};
         const VkResult result = instance->second.get_physical_device_image_format_properties(
-            pd->second.handle, static_cast<VkFormat>(format), static_cast<VkImageType>(type), static_cast<VkImageTiling>(tiling),
-            usage, flags, &properties);
+            pd->second.handle, static_cast<VkFormat>(format), static_cast<VkImageType>(type), static_cast<VkImageTiling>(tiling), usage,
+            flags, &properties);
         if (result != VK_SUCCESS)
         {
             return result;
@@ -1378,6 +1379,7 @@ namespace sogen
             data.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(resolve("vkBindImageMemory"));
             data.cmd_pipeline_barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(resolve("vkCmdPipelineBarrier"));
             data.cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(resolve("vkCmdClearColorImage"));
+            data.cmd_clear_depth_stencil_image = reinterpret_cast<PFN_vkCmdClearDepthStencilImage>(resolve("vkCmdClearDepthStencilImage"));
             data.cmd_copy_image_to_buffer = reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(resolve("vkCmdCopyImageToBuffer"));
             data.cmd_copy_buffer_to_image = reinterpret_cast<PFN_vkCmdCopyBufferToImage>(resolve("vkCmdCopyBufferToImage"));
             data.create_sampler = reinterpret_cast<PFN_vkCreateSampler>(resolve("vkCreateSampler"));
@@ -1405,6 +1407,8 @@ namespace sogen
             data.destroy_pipeline = reinterpret_cast<PFN_vkDestroyPipeline>(resolve("vkDestroyPipeline"));
             data.cmd_begin_render_pass = reinterpret_cast<PFN_vkCmdBeginRenderPass>(resolve("vkCmdBeginRenderPass"));
             data.cmd_bind_pipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(resolve("vkCmdBindPipeline"));
+            data.cmd_dispatch = reinterpret_cast<PFN_vkCmdDispatch>(resolve("vkCmdDispatch"));
+            data.cmd_dispatch_indirect = reinterpret_cast<PFN_vkCmdDispatchIndirect>(resolve("vkCmdDispatchIndirect"));
             data.cmd_draw = reinterpret_cast<PFN_vkCmdDraw>(resolve("vkCmdDraw"));
             data.cmd_bind_vertex_buffers = reinterpret_cast<PFN_vkCmdBindVertexBuffers>(resolve("vkCmdBindVertexBuffers"));
             data.cmd_bind_index_buffer = reinterpret_cast<PFN_vkCmdBindIndexBuffer>(resolve("vkCmdBindIndexBuffer"));
@@ -2359,6 +2363,32 @@ namespace sogen
 
         const VkImageSubresourceRange vk_range = to_vk_range(range);
         dev->second.cmd_clear_color_image(cb->second.handle, img->second.handle, translate_layout(image_layout), &clear, 1, &vk_range);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_clear_depth_stencil_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float depth,
+                                                       uint32_t stencil, const subresource_range& range)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto img = this->impl_->images.find(image);
+        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_clear_depth_stencil_image)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkClearDepthStencilValue clear{};
+        clear.depth = depth;
+        clear.stencil = stencil;
+
+        const VkImageSubresourceRange vk_range = to_vk_range(range);
+        dev->second.cmd_clear_depth_stencil_image(cb->second.handle, img->second.handle, translate_layout(image_layout), &clear, 1,
+                                                  &vk_range);
         return VK_SUCCESS;
     }
 
@@ -3583,7 +3613,7 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::cmd_bind_pipeline(uint64_t command_buffer, uint64_t pipeline)
+    int32_t vulkan_host::cmd_bind_pipeline(uint64_t command_buffer, uint64_t pipeline, uint32_t bind_point)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto pipe = this->impl_->pipelines.find(pipeline);
@@ -3596,7 +3626,40 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        dev->second.cmd_bind_pipeline(cb->second.handle, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe->second.handle);
+        dev->second.cmd_bind_pipeline(cb->second.handle, static_cast<VkPipelineBindPoint>(bind_point), pipe->second.handle);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_dispatch(uint64_t command_buffer, uint32_t group_count_x, uint32_t group_count_y, uint32_t group_count_z)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_dispatch)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_dispatch(cb->second.handle, group_count_x, group_count_y, group_count_z);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_dispatch_indirect(uint64_t command_buffer, uint64_t buffer, uint64_t offset)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto buf = this->impl_->buffers.find(buffer);
+        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_dispatch_indirect)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_dispatch_indirect(cb->second.handle, buf->second.handle, offset);
         return VK_SUCCESS;
     }
 
@@ -3683,7 +3746,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::cmd_bind_descriptor_sets(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t first_set,
-                                                  std::span<const uint64_t> sets)
+                                                  std::span<const uint64_t> sets, uint32_t bind_point)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto layout = this->impl_->pipeline_layouts.find(pipeline_layout);
@@ -3709,8 +3772,8 @@ namespace sogen
             handles.push_back(set->second.handle);
         }
 
-        dev->second.cmd_bind_descriptor_sets(cb->second.handle, VK_PIPELINE_BIND_POINT_GRAPHICS, layout->second.handle, first_set,
-                                             static_cast<uint32_t>(handles.size()), handles.data(), 0, nullptr);
+        dev->second.cmd_bind_descriptor_sets(cb->second.handle, static_cast<VkPipelineBindPoint>(bind_point), layout->second.handle,
+                                             first_set, static_cast<uint32_t>(handles.size()), handles.data(), 0, nullptr);
         return VK_SUCCESS;
     }
 

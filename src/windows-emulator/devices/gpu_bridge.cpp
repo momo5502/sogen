@@ -365,8 +365,8 @@ namespace sogen
                 const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
 
                 std::vector<std::byte> properties(context.output_buffer_length);
-                const int32_t result = this->vulkan_.get_physical_device_properties(
-                    request.physical_device, properties.data(), properties.size(), win_emu.process.is_wow64_process);
+                const int32_t result = this->vulkan_.get_physical_device_properties(request.physical_device, properties.data(),
+                                                                                    properties.size(), win_emu.process.is_wow64_process);
                 if (result != 0)
                 {
                     return STATUS_INVALID_PARAMETER;
@@ -1138,17 +1138,17 @@ namespace sogen
                 vulkan_host::image_format_properties props{};
                 const int32_t result = this->vulkan_.get_physical_device_image_format_properties(
                     request.physical_device, request.format, request.type, request.tiling, request.usage, request.flags, props);
-                return write_output(win_emu, context,
-                                    gpu_bridge::get_physical_device_image_format_properties_response{
-                                        .vk_result = result,
-                                        .max_mip_levels = props.max_mip_levels,
-                                        .max_array_layers = props.max_array_layers,
-                                        .sample_counts = props.sample_counts,
-                                        .max_extent_width = props.max_extent_width,
-                                        .max_extent_height = props.max_extent_height,
-                                        .max_extent_depth = props.max_extent_depth,
-                                        .reserved = 0,
-                                        .max_resource_size = props.max_resource_size});
+                return write_output(
+                    win_emu, context,
+                    gpu_bridge::get_physical_device_image_format_properties_response{.vk_result = result,
+                                                                                     .max_mip_levels = props.max_mip_levels,
+                                                                                     .max_array_layers = props.max_array_layers,
+                                                                                     .sample_counts = props.sample_counts,
+                                                                                     .max_extent_width = props.max_extent_width,
+                                                                                     .max_extent_height = props.max_extent_height,
+                                                                                     .max_extent_depth = props.max_extent_depth,
+                                                                                     .reserved = 0,
+                                                                                     .max_resource_size = props.max_resource_size});
             }
 
             NTSTATUS handle_destroy_image(windows_emulator& win_emu, const io_device_context& context)
@@ -1763,7 +1763,23 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    return this->vulkan_.cmd_bind_pipeline(req.command_buffer, req.pipeline);
+                    return this->vulkan_.cmd_bind_pipeline(req.command_buffer, req.pipeline, req.bind_point);
+                }
+                case gpu_bridge::command::cmd_dispatch: {
+                    gpu_bridge::cmd_dispatch_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_dispatch(req.command_buffer, req.group_count_x, req.group_count_y, req.group_count_z);
+                }
+                case gpu_bridge::command::cmd_dispatch_indirect: {
+                    gpu_bridge::cmd_dispatch_indirect_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_dispatch_indirect(req.command_buffer, req.buffer, req.offset);
                 }
                 case gpu_bridge::command::cmd_push_constants: {
                     gpu_bridge::cmd_push_constants_request req{};
@@ -1840,7 +1856,8 @@ namespace sogen
                     {
                         std::memcpy(sets.data(), payload + sizeof(req), ids_bytes);
                     }
-                    return this->vulkan_.cmd_bind_descriptor_sets(req.command_buffer, req.pipeline_layout, req.first_set, sets);
+                    return this->vulkan_.cmd_bind_descriptor_sets(req.command_buffer, req.pipeline_layout, req.first_set, sets,
+                                                                  req.bind_point);
                 }
                 case gpu_bridge::command::cmd_end_render_pass: {
                     gpu_bridge::cmd_end_render_pass_request req{};
@@ -1876,6 +1893,15 @@ namespace sogen
                     }
                     return this->vulkan_.cmd_clear_color_image(req.command_buffer, req.image, req.image_layout, req.color_r, req.color_g,
                                                                req.color_b, req.color_a, to_host_range(req.subresource));
+                }
+                case gpu_bridge::command::cmd_clear_depth_stencil_image: {
+                    gpu_bridge::cmd_clear_depth_stencil_image_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_clear_depth_stencil_image(req.command_buffer, req.image, req.image_layout, req.depth,
+                                                                       req.stencil, to_host_range(req.subresource));
                 }
                 case gpu_bridge::command::cmd_copy_image_to_buffer: {
                     gpu_bridge::cmd_copy_image_to_buffer_request req{};
