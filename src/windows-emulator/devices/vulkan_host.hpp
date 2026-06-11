@@ -173,6 +173,20 @@ namespace sogen
             uint64_t size;
         };
 
+        // One VkRenderingAttachmentInfo (dynamic rendering) as plain integers. image_view is an object id
+        // (0 = unused). clear_value holds the 16-byte VkClearValue union.
+        struct rendering_attachment
+        {
+            uint64_t image_view;
+            uint64_t resolve_image_view;
+            uint32_t image_layout;
+            uint32_t resolve_image_layout;
+            uint32_t resolve_mode;
+            uint32_t load_op;
+            uint32_t store_op;
+            uint32_t clear_value[4];
+        };
+
         // Creates a 2D, single-mip, single-layer image (initial layout UNDEFINED). samples selects the
         // multisample count (1 = no MSAA).
         int32_t create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,
@@ -367,6 +381,11 @@ namespace sogen
         int32_t cmd_bind_descriptor_sets(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t first_set,
                                          std::span<const uint64_t> sets, uint32_t bind_point);
         int32_t cmd_end_render_pass(uint64_t command_buffer);
+        // Dynamic rendering (VK_KHR_dynamic_rendering / core 1.3). depth/stencil are null when absent.
+        int32_t cmd_begin_rendering(uint64_t command_buffer, int32_t area_x, int32_t area_y, uint32_t area_w, uint32_t area_h,
+                                    uint32_t layer_count, uint32_t view_mask, uint32_t flags, std::span<const rendering_attachment> color,
+                                    const rendering_attachment* depth, const rendering_attachment* stencil);
+        int32_t cmd_end_rendering(uint64_t command_buffer);
         int32_t cmd_push_constants(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t stage_flags, uint32_t offset, uint32_t size,
                                    const void* data);
 

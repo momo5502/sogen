@@ -3396,6 +3396,77 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_end_render_pass, &request, sizeof(request));
     }
 
+    // Dynamic rendering (VK_KHR_dynamic_rendering / core 1.3): DXVK 2.x records draws inside this instead of
+    // a render pass + framebuffer. Marshal the VkRenderingInfo and its attachment arrays across the bridge.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBeginRendering(VkCommandBuffer commandBuffer,
+                                                                         const VkRenderingInfo* pRenderingInfo)
+    {
+        const auto to_wire = [](const VkRenderingAttachmentInfo& a) {
+            gb::rendering_attachment w{};
+            w.image_view = to_object_id(a.imageView);
+            w.resolve_image_view = to_object_id(a.resolveImageView);
+            w.image_layout = static_cast<uint32_t>(a.imageLayout);
+            w.resolve_image_layout = static_cast<uint32_t>(a.resolveImageLayout);
+            w.resolve_mode = static_cast<uint32_t>(a.resolveMode);
+            w.load_op = static_cast<uint32_t>(a.loadOp);
+            w.store_op = static_cast<uint32_t>(a.storeOp);
+            std::memcpy(w.clear_value, &a.clearValue, sizeof(w.clear_value));
+            return w;
+        };
+
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
+        const uint32_t color_count = pRenderingInfo->colorAttachmentCount;
+        const bool has_depth = pRenderingInfo->pDepthAttachment != nullptr && pRenderingInfo->pDepthAttachment->imageView != VK_NULL_HANDLE;
+        const bool has_stencil =
+            pRenderingInfo->pStencilAttachment != nullptr && pRenderingInfo->pStencilAttachment->imageView != VK_NULL_HANDLE;
+        const uint32_t total = color_count + (has_depth ? 1u : 0u) + (has_stencil ? 1u : 0u);
+
+        std::vector<uint8_t> message(sizeof(gb::cmd_begin_rendering_request) +
+                                     static_cast<size_t>(total) * sizeof(gb::rendering_attachment));
+        gb::cmd_begin_rendering_request header{};
+        header.command_buffer = command_buffer;
+        header.render_area_x = pRenderingInfo->renderArea.offset.x;
+        header.render_area_y = pRenderingInfo->renderArea.offset.y;
+        header.render_area_width = pRenderingInfo->renderArea.extent.width;
+        header.render_area_height = pRenderingInfo->renderArea.extent.height;
+        header.layer_count = pRenderingInfo->layerCount;
+        header.view_mask = pRenderingInfo->viewMask;
+        header.color_attachment_count = color_count;
+        header.has_depth = has_depth ? 1u : 0u;
+        header.has_stencil = has_stencil ? 1u : 0u;
+        header.flags = static_cast<uint32_t>(pRenderingInfo->flags);
+        std::memcpy(message.data(), &header, sizeof(header));
+
+        size_t offset = sizeof(header);
+        for (uint32_t i = 0; i < color_count; ++i)
+        {
+            const auto w = to_wire(pRenderingInfo->pColorAttachments[i]);
+            std::memcpy(message.data() + offset, &w, sizeof(w));
+            offset += sizeof(w);
+        }
+        if (has_depth)
+        {
+            const auto w = to_wire(*pRenderingInfo->pDepthAttachment);
+            std::memcpy(message.data() + offset, &w, sizeof(w));
+            offset += sizeof(w);
+        }
+        if (has_stencil)
+        {
+            const auto w = to_wire(*pRenderingInfo->pStencilAttachment);
+            std::memcpy(message.data() + offset, &w, sizeof(w));
+            offset += sizeof(w);
+        }
+
+        record_command(command_buffer, gb::command::cmd_begin_rendering, message.data(), message.size());
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdEndRendering(VkCommandBuffer commandBuffer)
+    {
+        gb::cmd_end_rendering_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        record_command(request.command_buffer, gb::command::cmd_end_rendering, &request, sizeof(request));
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPushConstants(VkCommandBuffer commandBuffer, VkPipelineLayout layout,
                                                                         VkShaderStageFlags stageFlags, uint32_t offset, uint32_t size,
                                                                         const void* pValues)
@@ -3617,6 +3688,10 @@ extern "C"
             {.name = "vkCreateComputePipelines", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateComputePipelines)},
             {.name = "vkDestroyPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipeline)},
             {.name = "vkCmdBeginRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRenderPass)},
+            {.name = "vkCmdBeginRendering", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRendering)},
+            {.name = "vkCmdBeginRenderingKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRendering)},
+            {.name = "vkCmdEndRendering", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRendering)},
+            {.name = "vkCmdEndRenderingKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRendering)},
             {.name = "vkCmdBindPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindPipeline)},
             {.name = "vkCmdDraw", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDraw)},
             {.name = "vkCmdDispatch", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDispatch)},

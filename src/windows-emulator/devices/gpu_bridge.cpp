@@ -2073,6 +2073,63 @@ namespace sogen
                     }
                     return this->vulkan_.cmd_end_render_pass(req.command_buffer);
                 }
+                case gpu_bridge::command::cmd_begin_rendering: {
+                    gpu_bridge::cmd_begin_rendering_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const uint32_t total = req.color_attachment_count + (req.has_depth ? 1u : 0u) + (req.has_stencil ? 1u : 0u);
+                    if (static_cast<size_t>(total) * sizeof(gpu_bridge::rendering_attachment) > size - sizeof(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+
+                    const auto convert = [&](size_t index) {
+                        gpu_bridge::rendering_attachment w{};
+                        std::memcpy(&w, payload + sizeof(req) + index * sizeof(w), sizeof(w));
+                        vulkan_host::rendering_attachment a{};
+                        a.image_view = w.image_view;
+                        a.resolve_image_view = w.resolve_image_view;
+                        a.image_layout = w.image_layout;
+                        a.resolve_image_layout = w.resolve_image_layout;
+                        a.resolve_mode = w.resolve_mode;
+                        a.load_op = w.load_op;
+                        a.store_op = w.store_op;
+                        std::memcpy(a.clear_value, w.clear_value, sizeof(a.clear_value));
+                        return a;
+                    };
+
+                    std::vector<vulkan_host::rendering_attachment> color(req.color_attachment_count);
+                    for (uint32_t i = 0; i < req.color_attachment_count; ++i)
+                    {
+                        color[i] = convert(i);
+                    }
+                    size_t next = req.color_attachment_count;
+                    vulkan_host::rendering_attachment depth{};
+                    vulkan_host::rendering_attachment stencil{};
+                    if (req.has_depth)
+                    {
+                        depth = convert(next++);
+                    }
+                    if (req.has_stencil)
+                    {
+                        stencil = convert(next++);
+                    }
+
+                    return this->vulkan_.cmd_begin_rendering(req.command_buffer, req.render_area_x, req.render_area_y,
+                                                             req.render_area_width, req.render_area_height, req.layer_count, req.view_mask,
+                                                             req.flags, color, req.has_depth ? &depth : nullptr,
+                                                             req.has_stencil ? &stencil : nullptr);
+                }
+                case gpu_bridge::command::cmd_end_rendering: {
+                    gpu_bridge::cmd_end_rendering_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_end_rendering(req.command_buffer);
+                }
                 case gpu_bridge::command::cmd_fill_buffer: {
                     gpu_bridge::cmd_fill_buffer_request req{};
                     if (!read(req))

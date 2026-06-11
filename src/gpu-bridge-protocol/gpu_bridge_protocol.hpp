@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 11;
+    inline constexpr uint32_t protocol_version = 12;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -142,6 +142,8 @@ namespace sogen::gpu_bridge
         cmd_write_timestamp = 0x86A,
         reset_query_pool = 0x86B,
         cmd_bind_vertex_buffers2 = 0x86C,
+        cmd_begin_rendering = 0x86D,
+        cmd_end_rendering = 0x86E,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -1275,6 +1277,43 @@ namespace sogen::gpu_bridge
         uint32_t has_strides; // 1 if the stride field is meaningful
     };
 
+    // One VkRenderingAttachmentInfo (dynamic rendering). image_view 0 = unused (e.g. absent depth/stencil).
+    struct rendering_attachment
+    {
+        object_id image_view;         // VkImageView
+        object_id resolve_image_view; // 0 = no resolve
+        uint32_t image_layout;        // VkImageLayout
+        uint32_t resolve_image_layout;
+        uint32_t resolve_mode; // VkResolveModeFlagBits
+        uint32_t load_op;      // VkAttachmentLoadOp
+        uint32_t store_op;     // VkAttachmentStoreOp
+        uint32_t reserved;
+        uint32_t clear_value[4]; // VkClearValue (16 bytes; color float/int/uint, or {depth(float bits), stencil})
+    };
+
+    // record payload (command::cmd_begin_rendering): header followed by `color_attachment_count` color
+    // rendering_attachment entries, then (if has_depth) one depth entry, then (if has_stencil) one stencil entry.
+    struct cmd_begin_rendering_request
+    {
+        object_id command_buffer;
+        int32_t render_area_x;
+        int32_t render_area_y;
+        uint32_t render_area_width;
+        uint32_t render_area_height;
+        uint32_t layer_count;
+        uint32_t view_mask;
+        uint32_t color_attachment_count;
+        uint32_t has_depth;
+        uint32_t has_stencil;
+        uint32_t flags; // VkRenderingFlags
+        // rendering_attachment color[color_attachment_count]; [depth]; [stencil];
+    };
+
+    struct cmd_end_rendering_request
+    {
+        object_id command_buffer;
+    };
+
     struct cmd_bind_index_buffer_request
     {
         object_id command_buffer;
@@ -1463,6 +1502,9 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(vertex_buffer_binding) == 16, "wire layout drift");
     static_assert(sizeof(vertex_buffer_binding2) == 32, "wire layout drift");
     static_assert(sizeof(cmd_bind_vertex_buffers2_request) == 24, "wire layout drift");
+    static_assert(sizeof(rendering_attachment) == 56, "wire layout drift");
+    static_assert(sizeof(cmd_begin_rendering_request) == 48, "wire layout drift");
+    static_assert(sizeof(cmd_end_rendering_request) == 8, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");
     static_assert(sizeof(create_sampler_request) == 32, "wire layout drift");

@@ -229,6 +229,8 @@ namespace sogen
             PFN_vkCreateComputePipelines create_compute_pipelines{};
             PFN_vkDestroyPipeline destroy_pipeline{};
             PFN_vkCmdBeginRenderPass cmd_begin_render_pass{};
+            PFN_vkCmdBeginRendering cmd_begin_rendering{};
+            PFN_vkCmdEndRendering cmd_end_rendering{};
             PFN_vkCmdBindPipeline cmd_bind_pipeline{};
             PFN_vkCmdDispatch cmd_dispatch{};
             PFN_vkCmdDispatchIndirect cmd_dispatch_indirect{};
@@ -1459,6 +1461,8 @@ namespace sogen
             data.create_compute_pipelines = reinterpret_cast<PFN_vkCreateComputePipelines>(resolve("vkCreateComputePipelines"));
             data.destroy_pipeline = reinterpret_cast<PFN_vkDestroyPipeline>(resolve("vkDestroyPipeline"));
             data.cmd_begin_render_pass = reinterpret_cast<PFN_vkCmdBeginRenderPass>(resolve("vkCmdBeginRenderPass"));
+            data.cmd_begin_rendering = reinterpret_cast<PFN_vkCmdBeginRendering>(resolve("vkCmdBeginRendering"));
+            data.cmd_end_rendering = reinterpret_cast<PFN_vkCmdEndRendering>(resolve("vkCmdEndRendering"));
             data.cmd_bind_pipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(resolve("vkCmdBindPipeline"));
             data.cmd_dispatch = reinterpret_cast<PFN_vkCmdDispatch>(resolve("vkCmdDispatch"));
             data.cmd_dispatch_indirect = reinterpret_cast<PFN_vkCmdDispatchIndirect>(resolve("vkCmdDispatchIndirect"));
@@ -4133,6 +4137,94 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         dev->second.cmd_end_render_pass(cb->second.handle);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_begin_rendering(uint64_t command_buffer, int32_t area_x, int32_t area_y, uint32_t area_w, uint32_t area_h,
+                                             uint32_t layer_count, uint32_t view_mask, uint32_t flags,
+                                             std::span<const rendering_attachment> color, const rendering_attachment* depth,
+                                             const rendering_attachment* stencil)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_begin_rendering)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto view_handle = [&](uint64_t id) -> VkImageView {
+            if (id == 0)
+            {
+                return VK_NULL_HANDLE;
+            }
+            const auto it = this->impl_->image_views.find(id);
+            return it != this->impl_->image_views.end() ? it->second.handle : VK_NULL_HANDLE;
+        };
+        const auto build = [&](const rendering_attachment& a) {
+            VkRenderingAttachmentInfo info{};
+            info.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            info.imageView = view_handle(a.image_view);
+            info.imageLayout = static_cast<VkImageLayout>(a.image_layout);
+            info.resolveMode = static_cast<VkResolveModeFlagBits>(a.resolve_mode);
+            info.resolveImageView = view_handle(a.resolve_image_view);
+            info.resolveImageLayout = static_cast<VkImageLayout>(a.resolve_image_layout);
+            info.loadOp = static_cast<VkAttachmentLoadOp>(a.load_op);
+            info.storeOp = static_cast<VkAttachmentStoreOp>(a.store_op);
+            static_assert(sizeof(info.clearValue) == sizeof(a.clear_value));
+            std::memcpy(&info.clearValue, a.clear_value, sizeof(info.clearValue));
+            return info;
+        };
+
+        std::vector<VkRenderingAttachmentInfo> color_infos;
+        color_infos.reserve(color.size());
+        for (const auto& a : color)
+        {
+            color_infos.push_back(build(a));
+        }
+        VkRenderingAttachmentInfo depth_info{};
+        VkRenderingAttachmentInfo stencil_info{};
+        if (depth)
+        {
+            depth_info = build(*depth);
+        }
+        if (stencil)
+        {
+            stencil_info = build(*stencil);
+        }
+
+        VkRenderingInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        info.flags = flags;
+        info.renderArea.offset = {.x = area_x, .y = area_y};
+        info.renderArea.extent = {.width = area_w, .height = area_h};
+        info.layerCount = layer_count;
+        info.viewMask = view_mask;
+        info.colorAttachmentCount = static_cast<uint32_t>(color_infos.size());
+        info.pColorAttachments = color_infos.empty() ? nullptr : color_infos.data();
+        info.pDepthAttachment = depth ? &depth_info : nullptr;
+        info.pStencilAttachment = stencil ? &stencil_info : nullptr;
+
+        dev->second.cmd_begin_rendering(cb->second.handle, &info);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_end_rendering(uint64_t command_buffer)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_end_rendering)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_end_rendering(cb->second.handle);
         return VK_SUCCESS;
     }
 
