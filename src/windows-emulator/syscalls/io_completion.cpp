@@ -145,31 +145,18 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            static const bool io_log = std::getenv("EMULATOR_LOG_IO") != nullptr;
-
             io_completion_message message{};
             if (io_completion_wait::dequeue_io_completion_message(c.proc, io_completion_handle, message))
             {
                 key_context.write_if_valid(message.key_context);
                 apc_context.write_if_valid(message.apc_context);
                 io_status_block.write_if_valid(message.io_status_block);
-                if (io_log)
-                {
-                    c.win_emu.log.print(color::pink, "[io] RemoveIoCompletion port=0x%llX -> dequeued tid=%u\n",
-                                        static_cast<unsigned long long>(io_completion_handle.bits), c.win_emu.current_thread().id);
-                }
                 return STATUS_SUCCESS;
             }
 
             if (timeout && timeout.read().QuadPart == 0)
             {
                 return STATUS_TIMEOUT;
-            }
-
-            if (io_log)
-            {
-                c.win_emu.log.print(color::pink, "[io] RemoveIoCompletion port=0x%llX -> WAIT (empty) tid=%u\n",
-                                    static_cast<unsigned long long>(io_completion_handle.bits), c.win_emu.current_thread().id);
             }
 
             auto& t = c.win_emu.current_thread();
@@ -378,16 +365,6 @@ namespace sogen
 
             io_completion_wait::materialize_signaled_wait_packets(c.proc, io_completion_handle);
             already_signaled.write_if_valid(wait_packet->queued_completion ? TRUE : FALSE);
-
-            static const bool io_log = std::getenv("EMULATOR_LOG_IO") != nullptr;
-            if (io_log)
-            {
-                c.win_emu.log.print(
-                    color::pink, "[io] AssociateWaitCompletionPacket port=0x%llX target=0x%llX type=%u signaled=%d tid=%u\n",
-                    static_cast<unsigned long long>(io_completion_handle.bits),
-                    static_cast<unsigned long long>(resolved_target_handle.bits), static_cast<unsigned>(resolved_target_handle.value.type),
-                    wait_packet->queued_completion ? 1 : 0, c.win_emu.current_thread().id);
-            }
 
             return STATUS_SUCCESS;
         }
