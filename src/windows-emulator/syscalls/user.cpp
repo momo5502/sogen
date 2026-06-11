@@ -3310,7 +3310,7 @@ namespace sogen
             return result;
         }
 
-        NTSTATUS handle_NtUserGetDisplayConfigBufferSizes(const syscall_context& /*c*/, const UINT32 /*flags*/,
+        NTSTATUS handle_NtUserGetDisplayConfigBufferSizes(const syscall_context& c, const UINT32 /*flags*/,
                                                           const emulator_object<UINT32> num_path_array_elements,
                                                           const emulator_object<UINT32> num_mode_info_array_elements)
         {
@@ -3319,8 +3319,16 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            num_path_array_elements.write(1);
-            num_mode_info_array_elements.write(2);
+            // Use non-throwing writes: a failed guest write (e.g. a caller passing a bogus output pointer)
+            // must surface as an error to the caller, not abort the whole emulator with an unhandled
+            // host-side memory exception.
+            const UINT32 path_count = 1;
+            const UINT32 mode_count = 2;
+            if (!c.win_emu.memory.try_write_memory(num_path_array_elements.value(), &path_count, sizeof(path_count)) ||
+                !c.win_emu.memory.try_write_memory(num_mode_info_array_elements.value(), &mode_count, sizeof(mode_count)))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
 
             return STATUS_SUCCESS;
         }
