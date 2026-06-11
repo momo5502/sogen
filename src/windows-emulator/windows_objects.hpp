@@ -501,12 +501,17 @@ namespace sogen
         IO_STATUS_BLOCK<EmulatorTraits<Emu64>> io_status_block{};
         handle wait_packet_handle{};
 
+        handle worker_factory_handle{};
+        bool worker_factory_release{};
+
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->key_context);
             buffer.write(this->apc_context);
             buffer.write(this->io_status_block);
             buffer.write(this->wait_packet_handle);
+            buffer.write(this->worker_factory_handle);
+            buffer.write(this->worker_factory_release);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -515,6 +520,8 @@ namespace sogen
             buffer.read(this->apc_context);
             buffer.read(this->io_status_block);
             buffer.read(this->wait_packet_handle);
+            buffer.read(this->worker_factory_handle);
+            buffer.read(this->worker_factory_release);
         }
     };
 
@@ -637,6 +644,8 @@ namespace sogen
         uint32_t last_info_class{};
         uint32_t last_info_length{};
         uint64_t last_info_value{};
+        uint32_t pending_release_count{};
+        bool release_pending{};
         std::vector<handle> worker_threads{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -664,6 +673,8 @@ namespace sogen
             buffer.write(this->last_info_class);
             buffer.write(this->last_info_length);
             buffer.write(this->last_info_value);
+            buffer.write(this->pending_release_count);
+            buffer.write(this->release_pending);
             buffer.write_vector(this->worker_threads);
         }
 
@@ -692,6 +703,8 @@ namespace sogen
             buffer.read(this->last_info_class);
             buffer.read(this->last_info_length);
             buffer.read(this->last_info_value);
+            buffer.read(this->pending_release_count);
+            buffer.read(this->release_pending);
             buffer.read_vector(this->worker_threads);
         }
     };

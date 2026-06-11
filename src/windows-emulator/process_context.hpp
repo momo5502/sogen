@@ -173,6 +173,126 @@ namespace sogen
             }
         };
 
+        struct dxgk_state
+        {
+            struct dxgk_allocation
+            {
+                uint32_t resource_handle{};
+                uint64_t backing_memory{};
+                uint64_t backing_size{};
+
+                void serialize(utils::buffer_serializer& buffer) const
+                {
+                    buffer.write(this->resource_handle);
+                    buffer.write(this->backing_memory);
+                    buffer.write(this->backing_size);
+                }
+
+                void deserialize(utils::buffer_deserializer& buffer)
+                {
+                    buffer.read(this->resource_handle);
+                    buffer.read(this->backing_memory);
+                    buffer.read(this->backing_size);
+                }
+            };
+
+            uint32_t next_resource_handle{0x8000};
+            uint32_t next_allocation_handle{0x9000};
+            std::map<uint32_t, dxgk_allocation> allocations{};
+
+            uint32_t create_resource()
+            {
+                return ++this->next_resource_handle;
+            }
+
+            uint32_t create_allocation(memory_manager& memory, const uint32_t resource_handle, uint64_t backing_size)
+            {
+                if (backing_size == 0)
+                {
+                    backing_size = 0x1000; // fallback size
+                }
+
+                const auto aligned_size = static_cast<uint64_t>(page_align_up(backing_size));
+                const auto backing_memory = memory.allocate_memory(static_cast<size_t>(aligned_size), memory_permission::read_write);
+
+                const uint32_t handle = ++this->next_allocation_handle;
+
+                this->allocations[handle] = {
+                    .resource_handle = resource_handle,
+                    .backing_memory = backing_memory,
+                    .backing_size = aligned_size,
+                };
+
+                return handle;
+            }
+
+            const dxgk_allocation* get_allocation(const uint32_t handle) const
+            {
+                const auto it = this->allocations.find(handle);
+                if (it == this->allocations.end())
+                {
+                    return nullptr;
+                }
+
+                return &it->second;
+            }
+
+            bool destroy_allocation(memory_manager& memory, const uint32_t handle)
+            {
+                const auto it = this->allocations.find(handle);
+                if (it == this->allocations.end())
+                {
+                    return false;
+                }
+
+                if (it->second.backing_memory != 0)
+                {
+                    memory.release_memory(it->second.backing_memory, 0);
+                }
+
+                this->allocations.erase(it);
+                return true;
+            }
+
+            size_t destroy_resource_allocations(memory_manager& memory, const uint32_t resource_handle)
+            {
+                size_t destroy_count = 0;
+
+                for (auto it = this->allocations.begin(); it != this->allocations.end();)
+                {
+                    if (it->second.resource_handle != resource_handle)
+                    {
+                        ++it;
+                        continue;
+                    }
+
+                    if (it->second.backing_memory != 0)
+                    {
+                        memory.release_memory(it->second.backing_memory, 0);
+                    }
+
+                    it = this->allocations.erase(it);
+                    ++destroy_count;
+                }
+
+                return destroy_count;
+            }
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->next_resource_handle);
+                buffer.write(this->next_allocation_handle);
+                buffer.write_map(this->allocations);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->next_resource_handle);
+                buffer.read(this->next_allocation_handle);
+                buffer.read_map(this->allocations);
+            }
+        };
+
         process_context(x86_64_emulator& emu, memory_manager& memory, utils::clock& clock, callbacks& cb)
             : callbacks_(&cb),
               base_allocator(emu),
@@ -253,6 +373,7 @@ namespace sogen
         std::map<uint32_t, gdi_bitmap_surface> gdi_bitmap_surfaces{};
         // Persistent per-top-level-window paint surface; child controls composite into it at their offset.
         std::map<uint32_t, gdi_bitmap_surface> gdi_window_surfaces{};
+        dxgk_state dxgk{};
         std::optional<handle> etw_notification_event{};
         hwnd mouse_capture_window{};
 
@@ -299,6 +420,8 @@ namespace sogen
         uint64_t last_extended_params_numa_node{0};
         uint32_t last_extended_params_attributes{0};
         uint16_t last_extended_params_image_machine{IMAGE_FILE_MACHINE_UNKNOWN};
+
+        uint64_t next_luid{0x1001};
     };
 
 } // namespace sogen

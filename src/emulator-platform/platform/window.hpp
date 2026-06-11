@@ -302,5 +302,290 @@ namespace sogen
     static_assert(offsetof(EMU_DEVMODEW, dmPelsHeight) == 0xB0);
     static_assert(offsetof(EMU_DEVMODEW, dmDisplayFrequency) == 0xB8);
 
+#ifndef OS_WINDOWS
+    struct RECTL
+    {
+        LONG left;
+        LONG top;
+        LONG right;
+        LONG bottom;
+    };
+
+    struct DISPLAYCONFIG_PATH_SOURCE_INFO
+    {
+        LUID adapterId;
+        UINT32 id;
+        union
+        {
+            UINT32 modeInfoIdx;
+            struct
+            {
+                UINT32 cloneGroupId : 16;
+                UINT32 sourceModeInfoIdx : 16;
+            } s;
+        } u;
+        UINT32 statusFlags;
+    };
+
+    struct DISPLAYCONFIG_RATIONAL
+    {
+        UINT32 Numerator;
+        UINT32 Denominator;
+    };
+
+    struct DISPLAYCONFIG_2DREGION
+    {
+        UINT32 cx;
+        UINT32 cy;
+    };
+
+    struct DISPLAYCONFIG_DESKTOP_IMAGE_INFO
+    {
+        POINTL PathSourceSize;
+        RECTL DesktopImageRegion;
+        RECTL DesktopImageClip;
+    };
+#endif
+
+    struct EMU_DISPLAYCONFIG_PATH_TARGET_INFO
+    {
+        LUID adapterId;
+        UINT32 id;
+        union
+        {
+            UINT32 modeInfoIdx;
+            struct
+            {
+                UINT32 desktopModeInfoIdx : 16;
+                UINT32 targetModeInfoIdx : 16;
+            } s;
+        } u;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY) outputTechnology;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_ROTATION) rotation;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_SCALING) scaling;
+        DISPLAYCONFIG_RATIONAL refreshRate;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_SCANLINE_ORDERING) scanLineOrdering;
+        BOOL targetAvailable;
+        UINT32 statusFlags;
+    };
+
+    struct EMU_DISPLAYCONFIG_PATH_INFO
+    {
+        DISPLAYCONFIG_PATH_SOURCE_INFO sourceInfo;
+        EMU_DISPLAYCONFIG_PATH_TARGET_INFO targetInfo;
+        UINT32 flags;
+    };
+
+    struct EMU_DISPLAYCONFIG_VIDEO_SIGNAL_INFO
+    {
+        UINT64 pixelRate;
+        DISPLAYCONFIG_RATIONAL hSyncFreq;
+        DISPLAYCONFIG_RATIONAL vSyncFreq;
+        DISPLAYCONFIG_2DREGION activeSize;
+        DISPLAYCONFIG_2DREGION totalSize;
+        union
+        {
+            struct
+            {
+                UINT32 videoStandard : 16;
+                UINT32 vSyncFreqDivider : 6;
+                UINT32 reserved : 10;
+            } AdditionalSignalInfo;
+            UINT32 videoStandard;
+        } u;
+        uint32_t scanLineOrdering;
+    };
+
+    struct EMU_DISPLAYCONFIG_TARGET_MODE
+    {
+        EMU_DISPLAYCONFIG_VIDEO_SIGNAL_INFO targetVideoSignalInfo;
+    };
+
+    struct EMU_DISPLAYCONFIG_SOURCE_MODE
+    {
+        UINT32 width;
+        UINT32 height;
+        uint32_t pixelFormat;
+        POINTL position;
+    };
+
+    struct EMU_DISPLAYCONFIG_MODE_INFO
+    {
+        uint32_t infoType;
+        UINT32 id;
+        LUID adapterId;
+        union
+        {
+            EMU_DISPLAYCONFIG_TARGET_MODE targetMode;
+            EMU_DISPLAYCONFIG_SOURCE_MODE sourceMode;
+            DISPLAYCONFIG_DESKTOP_IMAGE_INFO desktopImageInfo;
+        } u;
+    };
+
+    enum class EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE : UINT32
+    {
+        GET_SOURCE_NAME = 1,
+        GET_TARGET_NAME = 2,
+        GET_TARGET_PREFERRED_MODE = 3,
+        GET_ADAPTER_NAME = 4,
+        SET_TARGET_PERSISTENCE = 5,
+        GET_TARGET_BASE_TYPE = 6,
+        GET_SUPPORT_VIRTUAL_RESOLUTION = 7,
+        SET_SUPPORT_VIRTUAL_RESOLUTION = 8,
+        GET_ADVANCED_COLOR_INFO = 9,
+        SET_ADVANCED_COLOR_STATE = 10,
+        GET_SDR_WHITE_LEVEL = 11,
+        GET_MONITOR_SPECIALIZATION = 12,
+        SET_MONITOR_SPECIALIZATION = 13,
+        SET_RESERVED1 = 14,
+        GET_ADVANCED_COLOR_INFO_2 = 15,
+        SET_HDR_STATE = 16,
+        SET_WCG_STATE = 17,
+
+        GET_DISPLAY_INFO = static_cast<uint32_t>(-2),
+        GET_SOURCE_FROM_HASH = static_cast<uint32_t>(-14),
+        GET_DISPLAY_INFO_EX = static_cast<uint32_t>(-21),
+    };
+
+    struct EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER
+    {
+        EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE type;
+        UINT32 size;
+        LUID adapterId;
+        UINT32 id;
+    };
+
+    struct EMU_DISPLAYCONFIG_SOURCE_DEVICE_NAME
+    {
+        EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+        char16_t viewGdiDeviceName[32];
+    };
+
+    struct EMU_DISPLAYCONFIG_TARGET_DEVICE_NAME
+    {
+        EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_TARGET_DEVICE_NAME_FLAGS) flags;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY) outputTechnology;
+        UINT16 edidManufactureId;
+        UINT16 edidProductCodeId;
+        UINT32 connectorInstance;
+        char16_t monitorFriendlyDeviceName[64];
+        char16_t monitorDevicePath[128];
+    };
+
+    struct EMU_DISPLAYCONFIG_ADAPTER_NAME
+    {
+        EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+        char16_t adapterDevicePath[128];
+    };
+
+    struct EMU_DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
+    {
+        EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+        union
+        {
+            struct
+            {
+                UINT32 advancedColorSupported : 1;     // A type of advanced color is supported
+                UINT32 advancedColorEnabled : 1;       // A type of advanced color is enabled
+                UINT32 wideColorEnforced : 1;          // Wide color gamut is enabled
+                UINT32 advancedColorForceDisabled : 1; // Advanced color is force disabled due to system/OS policy
+                UINT32 reserved : 28;
+            } s;
+            UINT32 value;
+        } u;
+        EMULATOR_CAST(uint32_t, DISPLAYCONFIG_COLOR_ENCODING) colorEncoding;
+        UINT32 bitsPerColorChannel;
+    };
+
+    struct EMU_DISPLAYCONFIG_GET_SOURCE_FROM_HASH
+    {
+        UINT32 type;
+        UINT32 size;
+        LUID adapterId;
+        UINT32 sourceId;
+        UINT32 hash;
+        UINT32 reserved[4];
+    };
+
+    struct EMU_DISPLAY_INFO_DEVICE_BLOCK
+    {
+        UINT32 Valid;
+        UINT32 VendorID;
+        UINT32 DeviceID;
+        UINT32 SubSystemVendorID;
+        UINT32 SubSystemID;
+        UINT32 RevisionID;
+        UINT32 WddmVersion;
+        char16_t AdapterDesc[128];
+        char16_t AdapterDevicePath[260];
+    };
+
+    struct EMU_GET_DISPLAY_INFO
+    {
+        UINT32 type;
+        UINT32 size;
+        LUID adapterId;
+        UINT32 id;
+        EMU_DISPLAY_INFO_DEVICE_BLOCK DisplayAdapter;
+        UINT8 padding_0338[0x340 - 0x338];
+        EMU_DISPLAY_INFO_DEVICE_BLOCK RenderAdapter;
+        UINT8 padding_0664[2056 - 0x664];
+    };
+
+    static_assert(sizeof(EMU_DISPLAY_INFO_DEVICE_BLOCK) == 0x324);
+    static_assert(sizeof(EMU_GET_DISPLAY_INFO) == 2056);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO, adapterId) == 8);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO, id) == 16);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO, DisplayAdapter) == 0x14);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO, RenderAdapter) == 0x340);
+
+    struct EMU_GET_DISPLAY_INFO_EX
+    {
+        UINT32 type;
+        UINT32 size;
+        LUID adapterId;
+        UINT32 sourceId;
+
+        uint8_t padding_0014[836 - 20];
+
+        UINT32 VendorID;
+        UINT32 DeviceID;
+        UINT32 SubSysID0;
+        UINT32 SubSysID1;
+        UINT32 RevisionID;
+        UINT32 WddmVersion;
+        char16_t AdapterDesc[128];
+
+        uint8_t padding_045C[1644 - 1116];
+
+        INT32 DisplayLeft;
+        INT32 DisplayTop;
+        INT32 DisplayWidth;
+        INT32 DisplayHeight;
+        char16_t DeviceName[32];
+
+        uint8_t padding_06BC[2024 - 1724];
+
+        UINT32 FailurePoint;
+
+        uint8_t padding_07EC[2044 - 2028];
+
+        UINT32 ReservedQwordLow;
+        UINT32 ReservedQwordHigh;
+
+        uint8_t padding_0804[2056 - 2052];
+    };
+
+    static_assert(sizeof(EMU_GET_DISPLAY_INFO_EX) == 2056);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, adapterId) == 8);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, sourceId) == 16);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, VendorID) == 836);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, AdapterDesc) == 860);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, DisplayLeft) == 1644);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, DeviceName) == 1660);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, FailurePoint) == 2024);
+    static_assert(offsetof(EMU_GET_DISPLAY_INFO_EX, ReservedQwordLow) == 2044);
+
     // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 } // namespace sogen

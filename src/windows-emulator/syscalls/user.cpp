@@ -1102,11 +1102,6 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo()
-        {
-            return STATUS_NOT_SUPPORTED;
-        }
-
         NTSTATUS handle_NtUserRegisterWindowMessage()
         {
             return STATUS_NOT_SUPPORTED;
@@ -2668,40 +2663,6 @@ namespace sogen
             return 0; // DISP_CHANGE_SUCCESSFUL
         }
 
-        // GetDisplayConfigBufferSizes: reports how many path/mode entries QueryDisplayConfig would return.
-        // The emulator exposes no CCD (Connecting-and-Configuring-Displays) topology, so report zero entries
-        // and success; callers fall back to the GDI display APIs (EnumDisplayDevices/EnumDisplaySettings)
-        // that the emulator does implement.
-        // The win32u syscall packs both out-counts into a single 2-DWORD buffer (the user32 wrapper splits
-        // them back into the caller's numPathArrayElements/numModeInfoArrayElements). out_sizes[0] =
-        // numPathArrayElements, out_sizes[1] = numModeInfoArrayElements. The emulator exposes no CCD topology,
-        // so report zero entries; callers fall back to the GDI display APIs the emulator implements.
-        LONG handle_NtUserGetDisplayConfigBufferSizes(const syscall_context& /*c*/, const uint32_t /*flags*/,
-                                                      const emulator_object<uint32_t> out_sizes)
-        {
-            if (out_sizes)
-            {
-                out_sizes.write(0, 0); // numPathArrayElements
-                out_sizes.write(0, 1); // numModeInfoArrayElements
-            }
-
-            return 0; // ERROR_SUCCESS
-        }
-
-        // QueryDisplayConfig: with no CCD topology, report zero active paths/modes and success. The path/mode
-        // arrays are caller-sized from GetDisplayConfigBufferSizes (zero here), so nothing is written into them.
-        LONG handle_NtUserQueryDisplayConfig(const syscall_context& c, const uint32_t /*flags*/,
-                                             const emulator_object<uint32_t> num_path_array_elements,
-                                             const emulator_pointer /*path_info_array*/,
-                                             const emulator_object<uint32_t> num_mode_info_array_elements,
-                                             const emulator_pointer /*mode_info_array*/)
-        {
-            const uint32_t zero = 0;
-            c.win_emu.memory.try_write_memory(num_path_array_elements.value(), &zero, sizeof(zero));
-            c.win_emu.memory.try_write_memory(num_mode_info_array_elements.value(), &zero, sizeof(zero));
-            return 0; // ERROR_SUCCESS
-        }
-
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, const hdc hdc_in, const uint64_t clip_rect_ptr,
                                               const uint64_t callback, const uint64_t param)
         {
@@ -3257,6 +3218,242 @@ namespace sogen
             }
 
             return result;
+        }
+
+        NTSTATUS handle_NtUserGetDisplayConfigBufferSizes(const syscall_context& /*c*/, const UINT32 /*flags*/,
+                                                          const emulator_object<UINT32> num_path_array_elements,
+                                                          const emulator_object<UINT32> num_mode_info_array_elements)
+        {
+            if (!num_path_array_elements || !num_mode_info_array_elements)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            num_path_array_elements.write(1);
+            num_mode_info_array_elements.write(2);
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtUserQueryDisplayConfig(const syscall_context& c, const UINT32 /*flags*/,
+                                                 const emulator_object<UINT32> num_path_array_elements, const emulator_pointer path_array,
+                                                 const emulator_object<UINT32> current_topology_id, const emulator_pointer /*reserved*/)
+        {
+            if (!num_path_array_elements)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto num_paths = num_path_array_elements.read();
+
+            num_path_array_elements.write(1);
+
+            if (current_topology_id)
+            {
+                current_topology_id.write(0x1); // DISPLAYCONFIG_TOPOLOGY_INTERNAL
+            }
+
+            if (path_array && num_paths >= 1)
+            {
+                struct EMU_CCD_PATH_INFO
+                {
+                    UINT64 flags;
+                    UINT64 padding1;
+                    LUID adapterId;
+                    UINT32 sourceId;
+                    UINT32 targetId;
+                    EMU_DISPLAYCONFIG_VIDEO_SIGNAL_INFO targetSignalInfo;
+                    UINT32 outputTechnology;
+                    UINT8 padding2[40]; // NOLINT
+                    UINT32 sourceWidth;
+                    UINT32 sourceHeight;
+                    UINT8 padding3[84]; // NOLINT
+                } internal_path{};
+
+                internal_path.flags = 0x2000000000020003ULL;
+                internal_path.adapterId = {.LowPart = 0x1000, .HighPart = 0};
+                internal_path.sourceId = 0;
+                internal_path.targetId = 0;
+                internal_path.targetSignalInfo.pixelRate = 148500000;
+                internal_path.targetSignalInfo.hSyncFreq = {.Numerator = 67500, .Denominator = 1};
+                internal_path.targetSignalInfo.vSyncFreq = {.Numerator = 60, .Denominator = 1};
+                internal_path.targetSignalInfo.activeSize = {.cx = 1920, .cy = 1080};
+                internal_path.targetSignalInfo.totalSize = {.cx = 2200, .cy = 1125};
+                internal_path.targetSignalInfo.scanLineOrdering = 1; // PROGRESSIVE
+                internal_path.targetSignalInfo.u.videoStandard = 0;
+                internal_path.outputTechnology = 5; // HDMI
+                internal_path.padding2[17] = 1;
+                internal_path.sourceWidth = 1920;
+                internal_path.sourceHeight = 1080;
+
+                c.emu.write_memory(path_array, &internal_path, sizeof(internal_path));
+            }
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtUserDisplayConfigGetDeviceInfo(const syscall_context& c, const emulator_pointer packet)
+        {
+            if (!packet)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            auto header = c.emu.read_memory<EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER>(packet);
+
+            switch (header.type)
+            {
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_SOURCE_NAME: {
+                const emulator_object<EMU_DISPLAYCONFIG_SOURCE_DEVICE_NAME> source_name{c.emu, packet};
+
+                source_name.access([&](EMU_DISPLAYCONFIG_SOURCE_DEVICE_NAME& sourceName) {
+                    sourceName.header = header;
+                    utils::string::copy(sourceName.viewGdiDeviceName, u"\\\\.\\DISPLAY1");
+                });
+
+                return STATUS_SUCCESS;
+            }
+
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_TARGET_NAME: {
+                const emulator_object<EMU_DISPLAYCONFIG_TARGET_DEVICE_NAME> target_name{c.emu, packet};
+
+                target_name.access([&](EMU_DISPLAYCONFIG_TARGET_DEVICE_NAME& targetName) {
+                    targetName.header = header;
+                    targetName.flags = 0x1;
+                    targetName.outputTechnology = 5;
+                    targetName.edidManufactureId = 0xABCD;
+                    targetName.edidProductCodeId = 0x1234;
+                    targetName.connectorInstance = 1;
+                    utils::string::copy(targetName.monitorFriendlyDeviceName, u"Generic PnP Monitor");
+                    utils::string::copy(targetName.monitorDevicePath,
+                                        u"\\\\?\\DISPLAY#GSM0001#4&1234567&0&UID0#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}");
+                });
+
+                return STATUS_SUCCESS;
+            }
+
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_ADAPTER_NAME: {
+                const emulator_object<EMU_DISPLAYCONFIG_ADAPTER_NAME> adapter_name{c.emu, packet};
+
+                adapter_name.access([&](EMU_DISPLAYCONFIG_ADAPTER_NAME& adapterName) {
+                    adapterName.header = header;
+                    utils::string::copy(
+                        adapterName.adapterDevicePath,
+                        u"\\\\?\\PCI#VEN_10DE&DEV_1C03&SUBSYS_00000000&REV_A1#4&1234567&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}");
+                });
+
+                return STATUS_SUCCESS;
+            }
+
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_ADVANCED_COLOR_INFO: {
+                const emulator_object<EMU_DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO> color_info{c.emu, packet};
+
+                color_info.access([&](EMU_DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO& colorInfo) {
+                    colorInfo.header = header;
+                    colorInfo.u.value = 0;
+                    colorInfo.colorEncoding = 0;
+                    colorInfo.bitsPerColorChannel = 8;
+                });
+
+                return STATUS_SUCCESS;
+            }
+
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_SOURCE_FROM_HASH: {
+                const emulator_object<EMU_DISPLAYCONFIG_GET_SOURCE_FROM_HASH> source_from_hash{c.emu, packet};
+
+                source_from_hash.access([](EMU_DISPLAYCONFIG_GET_SOURCE_FROM_HASH& req) {
+                    req.adapterId = {.LowPart = 0x1000, .HighPart = 0}; // Must match k_dxgk_adapter_luid!
+                    req.sourceId = 0;
+                });
+
+                return STATUS_SUCCESS;
+            }
+
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_DISPLAY_INFO: {
+                if (header.size < sizeof(EMU_GET_DISPLAY_INFO))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const emulator_object<EMU_GET_DISPLAY_INFO> display_info{c.emu, packet};
+
+                display_info.access([](EMU_GET_DISPLAY_INFO& info) {
+                    const bool known_adapter =
+                        info.adapterId.LowPart == 0x1000 && info.adapterId.HighPart == 0; // Must match k_dxgk_adapter_luid!
+
+                    if (!known_adapter)
+                    {
+                        return;
+                    }
+
+                    const auto fill_block = [](EMU_DISPLAY_INFO_DEVICE_BLOCK& block) {
+                        block.Valid = 1;
+                        block.VendorID = 0x10DE;
+                        block.DeviceID = 0x1C03;
+                        block.SubSystemVendorID = 0x10DE;
+                        block.SubSystemID = 0;
+                        block.RevisionID = 0xA1;
+                        block.WddmVersion = 3200;
+
+                        utils::string::copy(block.AdapterDesc, u"NVIDIA GeForce GTX 1060 6GB");
+                        utils::string::copy(
+                            block.AdapterDevicePath,
+                            u"\\\\?\\PCI#VEN_10DE&DEV_1C03&SUBSYS_00000000&REV_A1#4&1234567&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}");
+                    };
+
+                    fill_block(info.DisplayAdapter);
+                    fill_block(info.RenderAdapter);
+                });
+
+                return STATUS_SUCCESS;
+            }
+
+            case EMU_DISPLAYCONFIG_DEVICE_INFO_TYPE::GET_DISPLAY_INFO_EX: {
+                if (header.size < sizeof(EMU_GET_DISPLAY_INFO_EX))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const emulator_object<EMU_GET_DISPLAY_INFO_EX> display_info{c.emu, packet};
+
+                display_info.access([](EMU_GET_DISPLAY_INFO_EX& info) {
+                    const bool known_adapter =
+                        info.adapterId.LowPart == 0x1000 && info.adapterId.HighPart == 0; // Must match k_dxgk_adapter_luid!
+                    const bool known_source = info.sourceId == 0;
+
+                    info.FailurePoint = 0;
+
+                    if (!known_adapter || !known_source)
+                    {
+                        return;
+                    }
+
+                    info.VendorID = 0x10DE;
+                    info.DeviceID = 0x1C03;
+                    info.SubSysID0 = 0;
+                    info.SubSysID1 = 0;
+                    info.RevisionID = 0xA1;
+                    info.WddmVersion = 2700;
+
+                    utils::string::copy(info.AdapterDesc, u"NVIDIA GeForce GTX 1060 6GB");
+
+                    info.DisplayLeft = 0;
+                    info.DisplayTop = 0;
+                    info.DisplayWidth = 1920;
+                    info.DisplayHeight = 1080;
+
+                    utils::string::copy(info.DeviceName, u"\\\\.\\DISPLAY1");
+
+                    info.ReservedQwordLow = 0;
+                    info.ReservedQwordHigh = 0;
+                });
+
+                return STATUS_SUCCESS;
+            }
+
+            default:
+                return STATUS_SUCCESS;
+            }
         }
     }
 
