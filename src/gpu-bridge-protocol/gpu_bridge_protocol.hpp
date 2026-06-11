@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 6;
+    inline constexpr uint32_t protocol_version = 7;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -129,6 +129,7 @@ namespace sogen::gpu_bridge
         cmd_dispatch = 0x85D,
         cmd_dispatch_indirect = 0x85E,
         cmd_clear_depth_stencil_image = 0x85F,
+        get_image_subresource_layout = 0x860,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -165,6 +166,8 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_destroy_image = make_ioctl(static_cast<uint32_t>(command::destroy_image));
     inline constexpr uint32_t ioctl_get_image_memory_requirements =
         make_ioctl(static_cast<uint32_t>(command::get_image_memory_requirements));
+    inline constexpr uint32_t ioctl_get_image_subresource_layout =
+        make_ioctl(static_cast<uint32_t>(command::get_image_subresource_layout));
     inline constexpr uint32_t ioctl_bind_image_memory = make_ioctl(static_cast<uint32_t>(command::bind_image_memory));
     inline constexpr uint32_t ioctl_create_surface = make_ioctl(static_cast<uint32_t>(command::create_surface));
     inline constexpr uint32_t ioctl_destroy_surface = make_ioctl(static_cast<uint32_t>(command::destroy_surface));
@@ -769,6 +772,27 @@ namespace sogen::gpu_bridge
         object_id image;
     };
 
+    struct get_image_subresource_layout_request
+    {
+        object_id device;
+        object_id image;
+        uint32_t aspect_mask; // VkImageAspectFlags
+        uint32_t mip_level;
+        uint32_t array_layer;
+        uint32_t reserved;
+    };
+
+    struct get_image_subresource_layout_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        uint64_t offset;       // VkSubresourceLayout::offset (all VkDeviceSize, ABI-identical)
+        uint64_t size;         // VkSubresourceLayout::size
+        uint64_t row_pitch;    // VkSubresourceLayout::rowPitch
+        uint64_t array_pitch;  // VkSubresourceLayout::arrayPitch
+        uint64_t depth_pitch;  // VkSubresourceLayout::depthPitch
+    };
+
     struct bind_image_memory_request
     {
         object_id device;
@@ -1286,6 +1310,8 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_dispatch_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_dispatch_indirect_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_clear_depth_stencil_image_request) == 56, "wire layout drift");
+    static_assert(sizeof(get_image_subresource_layout_request) == 32, "wire layout drift");
+    static_assert(sizeof(get_image_subresource_layout_response) == 48, "wire layout drift");
     static_assert(sizeof(vertex_buffer_binding) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");

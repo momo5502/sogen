@@ -188,6 +188,7 @@ namespace sogen
             PFN_vkCreateImage create_image{};
             PFN_vkDestroyImage destroy_image{};
             PFN_vkGetImageMemoryRequirements get_image_memory_requirements{};
+            PFN_vkGetImageSubresourceLayout get_image_subresource_layout{};
             PFN_vkBindImageMemory bind_image_memory{};
             PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
             PFN_vkCmdClearColorImage cmd_clear_color_image{};
@@ -1376,6 +1377,8 @@ namespace sogen
             data.destroy_image = reinterpret_cast<PFN_vkDestroyImage>(resolve("vkDestroyImage"));
             data.get_image_memory_requirements =
                 reinterpret_cast<PFN_vkGetImageMemoryRequirements>(resolve("vkGetImageMemoryRequirements"));
+            data.get_image_subresource_layout =
+                reinterpret_cast<PFN_vkGetImageSubresourceLayout>(resolve("vkGetImageSubresourceLayout"));
             data.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(resolve("vkBindImageMemory"));
             data.cmd_pipeline_barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(resolve("vkCmdPipelineBarrier"));
             data.cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(resolve("vkCmdClearColorImage"));
@@ -2263,6 +2266,39 @@ namespace sogen
         out_size = requirements.size;
         out_alignment = requirements.alignment;
         out_memory_type_bits = requirements.memoryTypeBits;
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::get_image_subresource_layout(uint64_t device, uint64_t image, uint32_t aspect_mask, uint32_t mip_level,
+                                                      uint32_t array_layer, uint64_t& out_offset, uint64_t& out_size,
+                                                      uint64_t& out_row_pitch, uint64_t& out_array_pitch, uint64_t& out_depth_pitch)
+    {
+        out_offset = 0;
+        out_size = 0;
+        out_row_pitch = 0;
+        out_array_pitch = 0;
+        out_depth_pitch = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        const auto img = this->impl_->images.find(image);
+        if (dev == this->impl_->devices.end() || img == this->impl_->images.end() || !dev->second.get_image_subresource_layout)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkImageSubresource subresource{};
+        subresource.aspectMask = aspect_mask ? aspect_mask : VK_IMAGE_ASPECT_COLOR_BIT;
+        subresource.mipLevel = mip_level;
+        subresource.arrayLayer = array_layer;
+
+        VkSubresourceLayout layout{};
+        dev->second.get_image_subresource_layout(dev->second.handle, img->second.handle, &subresource, &layout);
+
+        out_offset = layout.offset;
+        out_size = layout.size;
+        out_row_pitch = layout.rowPitch;
+        out_array_pitch = layout.arrayPitch;
+        out_depth_pitch = layout.depthPitch;
         return VK_SUCCESS;
     }
 

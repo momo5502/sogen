@@ -85,6 +85,7 @@ EXPORTS
     vkGetDeviceQueue
     vkGetFenceStatus
     vkGetImageMemoryRequirements
+    vkGetImageSubresourceLayout
     vkGetInstanceProcAddr
     vkGetPhysicalDeviceExternalSemaphoreProperties
     vkGetPhysicalDeviceFeatures

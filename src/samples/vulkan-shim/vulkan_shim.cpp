@@ -1234,6 +1234,50 @@ extern "C"
         pMemoryRequirements->memoryTypeBits = response.memory_type_bits;
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetImageSubresourceLayout(VkDevice device, VkImage image,
+                                                                                 const VkImageSubresource* pSubresource,
+                                                                                 VkSubresourceLayout* pLayout)
+    {
+        if (!pLayout)
+        {
+            return;
+        }
+        *pLayout = {};
+
+        gb::get_image_subresource_layout_request request{};
+        request.device = to_object_id(device);
+        request.image = to_object_id(image);
+        if (pSubresource)
+        {
+            request.aspect_mask = pSubresource->aspectMask;
+            request.mip_level = pSubresource->mipLevel;
+            request.array_layer = pSubresource->arrayLayer;
+        }
+
+        gb::get_image_subresource_layout_response response{};
+        if (!bridge_call(gb::ioctl_get_image_subresource_layout, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return;
+        }
+
+        pLayout->offset = response.offset;
+        pLayout->size = response.size;
+        pLayout->rowPitch = response.row_pitch;
+        pLayout->arrayPitch = response.array_pitch;
+        pLayout->depthPitch = response.depth_pitch;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetImageSubresourceLayout2KHR(VkDevice device, VkImage image,
+                                                                                     const VkImageSubresource2KHR* pSubresource,
+                                                                                     VkSubresourceLayout2KHR* pLayout)
+    {
+        if (!pSubresource || !pLayout)
+        {
+            return;
+        }
+        vkGetImageSubresourceLayout(device, image, &pSubresource->imageSubresource, &pLayout->subresourceLayout);
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetImageMemoryRequirements2(VkDevice device,
                                                                                    const VkImageMemoryRequirementsInfo2* pInfo,
                                                                                    VkMemoryRequirements2* pMemoryRequirements)
@@ -3193,6 +3237,9 @@ extern "C"
             {.name = "vkCreateImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateImage)},
             {.name = "vkDestroyImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyImage)},
             {.name = "vkGetImageMemoryRequirements", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements)},
+            {.name = "vkGetImageSubresourceLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageSubresourceLayout)},
+            {.name = "vkGetImageSubresourceLayout2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageSubresourceLayout2KHR)},
+            {.name = "vkGetImageSubresourceLayout2EXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageSubresourceLayout2KHR)},
             {.name = "vkGetImageMemoryRequirements2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements2)},
             {.name = "vkGetImageMemoryRequirements2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements2)},
             {.name = "vkGetDeviceBufferMemoryRequirements",

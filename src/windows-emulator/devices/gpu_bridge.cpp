@@ -116,6 +116,8 @@ namespace sogen
                     return handle_destroy_image(win_emu, context);
                 case gpu_bridge::ioctl_get_image_memory_requirements:
                     return handle_get_image_memory_requirements(win_emu, context);
+                case gpu_bridge::ioctl_get_image_subresource_layout:
+                    return handle_get_image_subresource_layout(win_emu, context);
                 case gpu_bridge::ioctl_bind_image_memory:
                     return handle_bind_image_memory(win_emu, context);
                 case gpu_bridge::ioctl_create_surface:
@@ -1179,6 +1181,32 @@ namespace sogen
                 return write_output(win_emu, context,
                                     gpu_bridge::memory_requirements_response{
                                         .vk_result = result, .memory_type_bits = memory_type_bits, .size = size, .alignment = alignment});
+            }
+
+            NTSTATUS handle_get_image_subresource_layout(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_image_subresource_layout_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t offset = 0;
+                uint64_t size = 0;
+                uint64_t row_pitch = 0;
+                uint64_t array_pitch = 0;
+                uint64_t depth_pitch = 0;
+                const int32_t result =
+                    this->vulkan_.get_image_subresource_layout(request.device, request.image, request.aspect_mask, request.mip_level,
+                                                               request.array_layer, offset, size, row_pitch, array_pitch, depth_pitch);
+                return write_output(win_emu, context,
+                                    gpu_bridge::get_image_subresource_layout_response{.vk_result = result,
+                                                                                      .reserved = 0,
+                                                                                      .offset = offset,
+                                                                                      .size = size,
+                                                                                      .row_pitch = row_pitch,
+                                                                                      .array_pitch = array_pitch,
+                                                                                      .depth_pitch = depth_pitch});
             }
 
             NTSTATUS handle_bind_image_memory(windows_emulator& win_emu, const io_device_context& context)

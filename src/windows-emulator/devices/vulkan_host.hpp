@@ -170,6 +170,9 @@ namespace sogen
         int32_t create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,
                              uint32_t samples, uint64_t& out_image);
         void destroy_image(uint64_t device, uint64_t image);
+        int32_t get_image_subresource_layout(uint64_t device, uint64_t image, uint32_t aspect_mask, uint32_t mip_level,
+                                             uint32_t array_layer, uint64_t& out_offset, uint64_t& out_size, uint64_t& out_row_pitch,
+                                             uint64_t& out_array_pitch, uint64_t& out_depth_pitch);
         int32_t get_image_memory_requirements(uint64_t device, uint64_t image, uint64_t& out_size, uint64_t& out_alignment,
                                               uint32_t& out_memory_type_bits);
         int32_t bind_image_memory(uint64_t device, uint64_t image, uint64_t memory, uint64_t offset);
