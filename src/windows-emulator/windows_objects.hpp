@@ -380,6 +380,10 @@ namespace sogen
         uint64_t maximum_size{};
         uint32_t section_page_protection{};
         uint32_t allocation_attributes{};
+        // Shared backing for a pagefile-backed section: allocated once (lazily, on first map) and reused by
+        // every view, so all views of the section see the same memory and section offsets resolve correctly.
+        // 0 until allocated. Freed when the section object is destroyed.
+        uint64_t backing_address{};
         std::optional<winpe::pe_image_basic_info> cached_image_info{};
 
         bool is_image() const
@@ -428,6 +432,7 @@ namespace sogen
             buffer.write(this->maximum_size);
             buffer.write(this->section_page_protection);
             buffer.write(this->allocation_attributes);
+            buffer.write(this->backing_address);
             buffer.write_optional<winpe::pe_image_basic_info>(this->cached_image_info);
         }
 
@@ -438,6 +443,7 @@ namespace sogen
             buffer.read(this->maximum_size);
             buffer.read(this->section_page_protection);
             buffer.read(this->allocation_attributes);
+            buffer.read(this->backing_address);
             buffer.read_optional(this->cached_image_info);
         }
     };

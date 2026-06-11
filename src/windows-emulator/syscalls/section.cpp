@@ -370,9 +370,6 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            auto size = static_cast<size_t>(section_entry->maximum_size);
-            std::vector<std::byte> file_data{};
-
             int64_t offset = 0;
             if (section_offset)
             {
@@ -380,22 +377,58 @@ namespace sogen
                 offset = std::max<int64_t>(offset, 0);
             }
 
-            if (!section_entry->file_name.empty())
+            const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
+
+            // Pagefile-backed section: keep ONE persistent backing per section and hand out views into it
+            // (view = backing + offset). Real Windows shares the section's pages across every view; allocating
+            // a fresh region per map (the old behavior) broke view coherency and exhausted the 32-bit address
+            // space for callers like DXVK's D3D9 memory allocator, which maps one large section at many offsets.
+            if (section_entry->file_name.empty())
             {
-                if (!utils::io::read_file(c.win_emu.file_sys.translate(section_entry->file_name), &file_data))
+                const auto backing_size = static_cast<size_t>(page_align_up(section_entry->maximum_size));
+                if (backing_size == 0)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                size = static_cast<size_t>(file_data.size() - offset);
+                if (section_entry->backing_address == 0)
+                {
+                    const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
+                    const auto backing = c.win_emu.memory.allocate_memory(backing_size, protection, reserve_only, 0,
+                                                                          memory_region_kind::pagefile_section_view);
+                    if (!backing)
+                    {
+                        return STATUS_NO_MEMORY;
+                    }
+                    section_entry->backing_address = backing;
+                }
+
+                const auto aligned_offset = page_align_down(static_cast<uint64_t>(offset));
+                if (aligned_offset >= backing_size)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (view_size)
+                {
+                    view_size.write(backing_size - aligned_offset);
+                }
+                base_address.write(section_entry->backing_address + aligned_offset);
+                return STATUS_SUCCESS;
             }
 
+            // File-backed section: map a fresh copy of the file contents.
+            std::vector<std::byte> file_data{};
+            if (!utils::io::read_file(c.win_emu.file_sys.translate(section_entry->file_name), &file_data))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto size = static_cast<size_t>(file_data.size() - offset);
             const auto aligned_size = static_cast<size_t>(page_align_up(size));
             const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
-            const auto protection = map_nt_to_emulator_protection(section_entry->section_page_protection);
-            const auto region_kind =
-                section_entry->file_name.empty() ? memory_region_kind::pagefile_section_view : memory_region_kind::file_section_view;
-            const auto address = c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only, 0, region_kind);
+            const auto address =
+                c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only, 0, memory_region_kind::file_section_view);
 
             if (!reserve_only && !file_data.empty())
             {
@@ -564,10 +597,20 @@ namespace sogen
             }
 
             const auto region_info = c.win_emu.memory.get_region_info(base_address);
-            if (region_info.is_reserved && memory_region_policy::is_section_kind(region_info.kind) &&
-                c.win_emu.memory.release_memory(region_info.allocation_base, 0))
+            if (region_info.is_reserved && memory_region_policy::is_section_kind(region_info.kind))
             {
-                return STATUS_SUCCESS;
+                // A pagefile section keeps one persistent backing shared by every view, so unmapping a view
+                // must not free it (other views and the section object still reference it); it is released when
+                // the section object is destroyed.
+                if (region_info.kind == memory_region_kind::pagefile_section_view)
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                if (c.win_emu.memory.release_memory(region_info.allocation_base, 0))
+                {
+                    return STATUS_SUCCESS;
+                }
             }
 
             return STATUS_NOT_MAPPED_VIEW;
