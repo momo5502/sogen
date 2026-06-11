@@ -986,44 +986,6 @@ namespace sogen
 #define BACKUP_SECURITY_INFORMATION              0x00010000L
 #endif
 
-    struct GDI_HANDLE_ENTRY64
-    {
-        union
-        {
-            EmulatorTraits<Emu64>::PVOID Object;
-            EmulatorTraits<Emu64>::PVOID NextFree;
-        };
-
-        union
-        {
-            struct
-            {
-                USHORT ProcessId;
-                USHORT Lock : 1;
-                USHORT Count : 15;
-            };
-
-            ULONG Value;
-        } Owner;
-
-        USHORT Unique;
-        UCHAR Type;
-        UCHAR Flags;
-        EmulatorTraits<Emu64>::PVOID UserPointer;
-    };
-
-#define GDI_MAX_HANDLE_COUNT 0xFFFF // 0x4000
-
-    struct GDI_SHARED_MEMORY64
-    {
-        GDI_HANDLE_ENTRY64 Handles[GDI_MAX_HANDLE_COUNT];
-        char pad[0xC8];
-        uint64_t Objects[0x20];
-        uint64_t Data[0x200]; // ?
-    };
-
-    static_assert(offsetof(GDI_SHARED_MEMORY64, Objects) == 0x1800B0);
-
     struct CLIENT_ID32
     {
         ULONG UniqueProcess;

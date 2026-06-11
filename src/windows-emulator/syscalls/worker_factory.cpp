@@ -2,11 +2,67 @@
 #include "../emulator_utils.hpp"
 #include "../io_completion_wait.hpp"
 #include "../syscall_utils.hpp"
+#include "../worker_factory_support.hpp"
 
 #include <limits>
 
 namespace sogen
 {
+    namespace worker_factory_support
+    {
+        bool enqueue_release_completion(process_context& process, const handle worker_factory_handle)
+        {
+            auto* factory = process.worker_factories.get(worker_factory_handle);
+            if (!factory)
+            {
+                return false;
+            }
+
+            auto* completion = process.io_completions.get(factory->io_completion_handle);
+            if (!completion)
+            {
+                return false;
+            }
+
+            io_completion_message message{};
+            message.io_status_block.Status = STATUS_SUCCESS;
+            message.io_status_block.Information = 0;
+            message.worker_factory_handle = worker_factory_handle;
+            message.worker_factory_release = true;
+            completion->enqueue(message);
+            return true;
+        }
+
+        void on_io_completion_message_dequeued(process_context& process, const io_completion_message& message)
+        {
+            if (!message.worker_factory_release || message.worker_factory_handle.bits == 0)
+            {
+                return;
+            }
+
+            auto* factory = process.worker_factories.get(message.worker_factory_handle);
+            if (!factory)
+            {
+                return;
+            }
+
+            if (factory->pending_release_count > 0)
+            {
+                --factory->pending_release_count;
+            }
+
+            if (factory->shutdown || factory->pending_release_count == 0)
+            {
+                factory->release_pending = false;
+                return;
+            }
+
+            if (!enqueue_release_completion(process, message.worker_factory_handle))
+            {
+                factory->release_pending = false;
+            }
+        }
+    }
 
     namespace syscalls
     {
@@ -75,6 +131,11 @@ namespace sogen
                 }
 
                 auto desired = std::max(factory.thread_minimum, factory.binding_count);
+                if (factory.release_pending || factory.pending_release_count != 0)
+                {
+                    desired = std::max(desired, 1u);
+                }
+
                 desired = std::min(desired, limit);
 
                 while (factory.worker_threads.size() < desired)
@@ -87,6 +148,7 @@ namespace sogen
                     factory.worker_threads.push_back(thread_handle);
                 }
             }
+
         }
 
         NTSTATUS handle_NtCreateWorkerFactory(const syscall_context& c, const emulator_object<handle> worker_factory_handle,
@@ -339,6 +401,24 @@ namespace sogen
             if (!factory)
             {
                 return STATUS_INVALID_HANDLE;
+            }
+
+            if (factory->pending_release_count == std::numeric_limits<uint32_t>::max())
+            {
+                return STATUS_UNSUCCESSFUL;
+            }
+
+            ++factory->pending_release_count;
+            if (!factory->release_pending)
+            {
+                factory->release_pending = true;
+
+                if (!worker_factory_support::enqueue_release_completion(c.proc, worker_factory_handle))
+                {
+                    factory->release_pending = false;
+                    --factory->pending_release_count;
+                    return STATUS_INVALID_HANDLE;
+                }
             }
 
             ensure_worker_factory_threads(c, *factory);

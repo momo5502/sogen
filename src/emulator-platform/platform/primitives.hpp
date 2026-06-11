@@ -28,6 +28,11 @@ namespace sogen
     using ULONGLONG = DWORD64;
     using LONGLONG = std::int64_t;
     using UINT = std::uint32_t;
+    using UINT8 = std::uint8_t;
+    using UINT16 = std::uint16_t;
+    using UINT32 = std::uint32_t;
+    using UINT64 = std::uint64_t;
+    using INT32 = std::int32_t;
     using BOOL = std::int32_t;
 
     typedef union _ULARGE_INTEGER
