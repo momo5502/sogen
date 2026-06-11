@@ -86,7 +86,7 @@ namespace sogen
         // enabling the given device extensions (extension_blob = `extension_count` NUL-terminated names)
         // and features (feature_blob = `feature_struct_count` feature_chain_record + body entries, same
         // format as get_physical_device_features2). out_device receives a fresh object id, or 0 on failure.
-        int32_t create_device(uint64_t physical_device, uint32_t queue_family_index, uint32_t queue_count, const void* extension_blob,
+        int32_t create_device(uint64_t physical_device, const void* queue_entries, size_t queue_entry_count, const void* extension_blob,
                               size_t extension_blob_size, uint32_t extension_count, const void* feature_blob, size_t feature_blob_size,
                               uint32_t feature_struct_count, uint64_t& out_device);
         void destroy_device(uint64_t device);

@@ -314,15 +314,24 @@ extern "C"
         gb::create_device_request request{};
         request.physical_device = to_object_id(physicalDevice);
 
+        // Marshal every requested queue family (DXVK asks for a graphics queue plus a separate
+        // transfer/compute family); the host must create a queue for each so later vkGetDeviceQueue
+        // calls for those families succeed.
+        std::vector<gb::device_queue_create_entry> queue_entries;
         if (pCreateInfo && pCreateInfo->queueCreateInfoCount > 0 && pCreateInfo->pQueueCreateInfos)
         {
-            request.queue_family_index = pCreateInfo->pQueueCreateInfos[0].queueFamilyIndex;
-            request.queue_count = pCreateInfo->pQueueCreateInfos[0].queueCount;
+            queue_entries.reserve(pCreateInfo->queueCreateInfoCount);
+            for (uint32_t i = 0; i < pCreateInfo->queueCreateInfoCount; ++i)
+            {
+                queue_entries.push_back({.queue_family_index = pCreateInfo->pQueueCreateInfos[i].queueFamilyIndex,
+                                         .queue_count = pCreateInfo->pQueueCreateInfos[i].queueCount});
+            }
         }
         else
         {
-            request.queue_count = 1;
+            queue_entries.push_back({.queue_family_index = 0, .queue_count = 1});
         }
+        request.queue_create_count = static_cast<uint32_t>(queue_entries.size());
 
         // Marshal the enabled device-extension names (NUL-terminated, concatenated).
         std::vector<std::byte> extension_blob;
@@ -383,15 +392,21 @@ extern "C"
         request.feature_struct_count = feature_struct_count;
         request.feature_blob_size = static_cast<uint32_t>(feature_blob.size());
 
-        std::vector<std::byte> in(sizeof(request) + extension_blob.size() + feature_blob.size());
-        std::memcpy(in.data(), &request, sizeof(request));
+        const size_t queue_bytes = queue_entries.size() * sizeof(gb::device_queue_create_entry);
+        std::vector<std::byte> in(sizeof(request) + queue_bytes + extension_blob.size() + feature_blob.size());
+        size_t offset = 0;
+        std::memcpy(in.data() + offset, &request, sizeof(request));
+        offset += sizeof(request);
+        std::memcpy(in.data() + offset, queue_entries.data(), queue_bytes);
+        offset += queue_bytes;
         if (!extension_blob.empty())
         {
-            std::memcpy(in.data() + sizeof(request), extension_blob.data(), extension_blob.size());
+            std::memcpy(in.data() + offset, extension_blob.data(), extension_blob.size());
+            offset += extension_blob.size();
         }
         if (!feature_blob.empty())
         {
-            std::memcpy(in.data() + sizeof(request) + extension_blob.size(), feature_blob.data(), feature_blob.size());
+            std::memcpy(in.data() + offset, feature_blob.data(), feature_blob.size());
         }
 
         gb::create_device_response response{};

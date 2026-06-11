@@ -566,7 +566,7 @@ namespace sogen
 
                 const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
 
-                // Read the trailing [extension names][feature records] blobs.
+                // Read the trailing [queue entries][extension names][feature records] blobs.
                 const auto trailing = context.input_buffer_length - static_cast<uint32_t>(sizeof(request_t));
                 std::vector<std::byte> blob(trailing);
                 if (trailing > 0)
@@ -574,24 +574,33 @@ namespace sogen
                     win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), blob.data(), trailing);
                 }
 
+                const size_t queue_bytes =
+                    static_cast<size_t>(request.queue_create_count) * sizeof(gpu_bridge::device_queue_create_entry);
+
+                std::vector<gpu_bridge::device_queue_create_entry> queue_entries;
                 const std::byte* extension_blob = nullptr;
                 const std::byte* feature_blob = nullptr;
                 uint32_t extension_count = 0;
                 uint32_t feature_struct_count = 0;
                 size_t extension_blob_size = 0;
                 size_t feature_blob_size = 0;
-                if (static_cast<size_t>(request.extension_blob_size) + request.feature_blob_size <= blob.size())
+                if (queue_bytes + static_cast<size_t>(request.extension_blob_size) + request.feature_blob_size <= blob.size())
                 {
-                    extension_blob = blob.data();
+                    queue_entries.resize(request.queue_create_count);
+                    if (queue_bytes > 0)
+                    {
+                        std::memcpy(queue_entries.data(), blob.data(), queue_bytes);
+                    }
+                    extension_blob = blob.data() + queue_bytes;
                     extension_blob_size = request.extension_blob_size;
                     extension_count = request.extension_count;
-                    feature_blob = blob.data() + request.extension_blob_size;
+                    feature_blob = blob.data() + queue_bytes + request.extension_blob_size;
                     feature_blob_size = request.feature_blob_size;
                     feature_struct_count = request.feature_struct_count;
                 }
 
                 uint64_t device = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_device(request.physical_device, request.queue_family_index, request.queue_count,
+                const int32_t result = this->vulkan_.create_device(request.physical_device, queue_entries.data(), queue_entries.size(),
                                                                    extension_blob, extension_blob_size, extension_count, feature_blob,
                                                                    feature_blob_size, feature_struct_count, device);
 

@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 13;
+    inline constexpr uint32_t protocol_version = 14;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -366,15 +366,23 @@ namespace sogen::gpu_bridge
     //   (b) `feature_struct_count` feature_chain_record + body entries (feature_blob_size bytes) -- the
     //       same chain format as get_physical_device_features2, carrying the features to enable
     //       (a VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 record holds the base VkPhysicalDeviceFeatures).
+    // One requested queue family in a vkCreateDevice call. The wire carries `queue_create_count` of these
+    // immediately after create_device_request, before the extension and feature blobs.
+    struct device_queue_create_entry
+    {
+        uint32_t queue_family_index;
+        uint32_t queue_count;
+    };
+
     struct create_device_request
     {
         object_id physical_device;
-        uint32_t queue_family_index;
-        uint32_t queue_count;
+        uint32_t queue_create_count;
         uint32_t extension_count;
         uint32_t extension_blob_size;
         uint32_t feature_struct_count;
         uint32_t feature_blob_size;
+        uint32_t reserved;
     };
 
     struct create_device_response
@@ -1540,6 +1548,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(get_physical_device_properties2_request) == 16, "wire layout drift");
     static_assert(sizeof(get_physical_device_properties2_response) == 8, "wire layout drift");
     static_assert(sizeof(create_device_request) == 32, "wire layout drift");
+    static_assert(sizeof(device_queue_create_entry) == 8, "wire layout drift");
     static_assert(sizeof(queue_wait_idle_request) == 8, "wire layout drift");
     static_assert(sizeof(device_wait_idle_request) == 8, "wire layout drift");
     static_assert(sizeof(reset_command_pool_request) == 24, "wire layout drift");

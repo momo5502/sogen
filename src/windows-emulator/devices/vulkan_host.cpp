@@ -1256,7 +1256,7 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::create_device(uint64_t physical_device, uint32_t queue_family_index, uint32_t queue_count,
+    int32_t vulkan_host::create_device(uint64_t physical_device, const void* queue_entries, size_t queue_entry_count,
                                        const void* extension_blob, size_t extension_blob_size, uint32_t extension_count,
                                        const void* feature_blob, size_t feature_blob_size, uint32_t feature_struct_count,
                                        uint64_t& out_device)
@@ -1275,14 +1275,31 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        const uint32_t queues = (queue_count == 0) ? 1 : queue_count;
-        const std::vector<float> priorities(queues, 1.0f);
+        // Build one VkDeviceQueueCreateInfo per requested family so vkGetDeviceQueue later succeeds for
+        // each (DXVK retrieves a graphics queue plus a separate transfer/compute family). Each family's
+        // priorities array must outlive the create call, so the priority buffers are kept alongside.
+        const auto* entries = static_cast<const gpu_bridge::device_queue_create_entry*>(queue_entries);
+        const size_t entry_count = (queue_entry_count == 0) ? 1 : queue_entry_count;
 
-        VkDeviceQueueCreateInfo queue_info{};
-        queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        queue_info.queueFamilyIndex = queue_family_index;
-        queue_info.queueCount = queues;
-        queue_info.pQueuePriorities = priorities.data();
+        std::vector<VkDeviceQueueCreateInfo> queue_infos;
+        std::vector<std::vector<float>> priorities_store;
+        queue_infos.reserve(entry_count);
+        priorities_store.reserve(entry_count);
+        for (size_t i = 0; i < entry_count; ++i)
+        {
+            const uint32_t family = entries ? entries[i].queue_family_index : 0;
+            const uint32_t requested = entries ? entries[i].queue_count : 1;
+            const uint32_t queues = (requested == 0) ? 1 : requested;
+
+            auto& priorities = priorities_store.emplace_back(queues, 1.0f);
+            VkDeviceQueueCreateInfo queue_info{};
+            queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queue_info.queueFamilyIndex = family;
+            queue_info.queueCount = queues;
+            queue_info.pQueuePriorities = priorities.data();
+            queue_infos.push_back(queue_info);
+        }
+        const uint32_t primary_family = queue_infos.front().queueFamilyIndex;
 
         // Rebuild the enabled-extension name list from the blob (count NUL-terminated strings).
         std::vector<const char*> extensions;
@@ -1354,8 +1371,8 @@ namespace sogen
 
         VkDeviceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        create_info.queueCreateInfoCount = 1;
-        create_info.pQueueCreateInfos = &queue_info;
+        create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_infos.size());
+        create_info.pQueueCreateInfos = queue_infos.data();
         create_info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
         create_info.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
         // Enabled features ride the pNext chain (VkPhysicalDeviceFeatures2 + the chained structs); a
@@ -1376,7 +1393,7 @@ namespace sogen
         data.handle = device;
         data.instance_id = pd->second.instance_id;
         data.physical_device = pd->second.handle;
-        data.queue_family_index = queue_family_index;
+        data.queue_family_index = primary_family;
 
         if (const auto gdpa = instance->second.get_device_proc_addr)
         {
