@@ -1198,6 +1198,113 @@ extern "C"
         bridge_call(gb::ioctl_destroy_buffer_view, &request, sizeof(request), nullptr, 0);
     }
 
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateQueryPool(VkDevice device, const VkQueryPoolCreateInfo* pCreateInfo,
+                                                                           const VkAllocationCallbacks*, VkQueryPool* pQueryPool)
+    {
+        gb::create_query_pool_request request{};
+        request.device = to_object_id(device);
+        request.query_type = static_cast<uint32_t>(pCreateInfo->queryType);
+        request.query_count = pCreateInfo->queryCount;
+        request.pipeline_statistics = static_cast<uint32_t>(pCreateInfo->pipelineStatistics);
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_query_pool, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        *pQueryPool = to_handle<VkQueryPool>(response.object);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyQueryPool(VkDevice device, VkQueryPool queryPool,
+                                                                        const VkAllocationCallbacks*)
+    {
+        if (!queryPool)
+        {
+            return;
+        }
+        gb::device_child_request request{};
+        request.device = to_object_id(device);
+        request.object = to_object_id(queryPool);
+        bridge_call(gb::ioctl_destroy_query_pool, &request, sizeof(request), nullptr, 0);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetQueryPoolResults(VkDevice device, VkQueryPool queryPool, uint32_t firstQuery,
+                                                                               uint32_t queryCount, size_t dataSize, void* pData,
+                                                                               VkDeviceSize stride, VkQueryResultFlags flags)
+    {
+        gb::get_query_pool_results_request request{};
+        request.device = to_object_id(device);
+        request.query_pool = to_object_id(queryPool);
+        request.first_query = firstQuery;
+        request.query_count = queryCount;
+        request.data_size = static_cast<uint32_t>(dataSize);
+        request.stride = static_cast<uint32_t>(stride);
+        request.flags = static_cast<uint32_t>(flags);
+
+        std::vector<uint8_t> out(sizeof(gb::get_query_pool_results_response) + dataSize);
+        if (!bridge_call(gb::ioctl_get_query_pool_results, &request, sizeof(request), out.data(), static_cast<DWORD>(out.size())))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        gb::get_query_pool_results_response response{};
+        std::memcpy(&response, out.data(), sizeof(response));
+        if (pData && dataSize > 0 && response.data_size > 0)
+        {
+            std::memcpy(pData, out.data() + sizeof(response), std::min<size_t>(dataSize, response.data_size));
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdResetQueryPool(VkCommandBuffer commandBuffer, VkQueryPool queryPool,
+                                                                         uint32_t firstQuery, uint32_t queryCount)
+    {
+        gb::cmd_reset_query_pool_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.query_pool = to_object_id(queryPool);
+        request.first_query = firstQuery;
+        request.query_count = queryCount;
+        record_command(request.command_buffer, gb::command::cmd_reset_query_pool, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBeginQuery(VkCommandBuffer commandBuffer, VkQueryPool queryPool, uint32_t query,
+                                                                     VkQueryControlFlags flags)
+    {
+        gb::cmd_begin_query_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.query_pool = to_object_id(queryPool);
+        request.query = query;
+        request.flags = static_cast<uint32_t>(flags);
+        record_command(request.command_buffer, gb::command::cmd_begin_query, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdEndQuery(VkCommandBuffer commandBuffer, VkQueryPool queryPool, uint32_t query)
+    {
+        gb::cmd_end_query_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.query_pool = to_object_id(queryPool);
+        request.query = query;
+        record_command(request.command_buffer, gb::command::cmd_end_query, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdWriteTimestamp(VkCommandBuffer commandBuffer,
+                                                                         VkPipelineStageFlagBits pipelineStage, VkQueryPool queryPool,
+                                                                         uint32_t query)
+    {
+        gb::cmd_write_timestamp_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.query_pool = to_object_id(queryPool);
+        request.query = query;
+        request.pipeline_stage = static_cast<uint32_t>(pipelineStage);
+        record_command(request.command_buffer, gb::command::cmd_write_timestamp, &request, sizeof(request));
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyBuffer(VkCommandBuffer commandBuffer, VkBuffer srcBuffer, VkBuffer dstBuffer,
                                                                      uint32_t regionCount, const VkBufferCopy* pRegions)
     {
@@ -3371,6 +3478,13 @@ extern "C"
             {.name = "vkCmdCopyBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBuffer)},
             {.name = "vkCmdCopyBuffer2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBuffer2)},
             {.name = "vkCmdCopyBuffer2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBuffer2)},
+            {.name = "vkCreateQueryPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateQueryPool)},
+            {.name = "vkDestroyQueryPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyQueryPool)},
+            {.name = "vkGetQueryPoolResults", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetQueryPoolResults)},
+            {.name = "vkCmdResetQueryPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResetQueryPool)},
+            {.name = "vkCmdBeginQuery", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginQuery)},
+            {.name = "vkCmdEndQuery", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndQuery)},
+            {.name = "vkCmdWriteTimestamp", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdWriteTimestamp)},
             {.name = "vkFlushMappedMemoryRanges", .func = reinterpret_cast<PFN_vkVoidFunction>(vkFlushMappedMemoryRanges)},
             {.name = "vkInvalidateMappedMemoryRanges", .func = reinterpret_cast<PFN_vkVoidFunction>(vkInvalidateMappedMemoryRanges)},
             {.name = "vkGetBufferMemoryRequirements", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements)},

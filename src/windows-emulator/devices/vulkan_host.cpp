@@ -204,6 +204,13 @@ namespace sogen
             PFN_vkDestroyImageView destroy_image_view{};
             PFN_vkCreateBufferView create_buffer_view{};
             PFN_vkDestroyBufferView destroy_buffer_view{};
+            PFN_vkCreateQueryPool create_query_pool{};
+            PFN_vkDestroyQueryPool destroy_query_pool{};
+            PFN_vkGetQueryPoolResults get_query_pool_results{};
+            PFN_vkCmdResetQueryPool cmd_reset_query_pool{};
+            PFN_vkCmdBeginQuery cmd_begin_query{};
+            PFN_vkCmdEndQuery cmd_end_query{};
+            PFN_vkCmdWriteTimestamp cmd_write_timestamp{};
             PFN_vkCreateRenderPass create_render_pass{};
             PFN_vkDestroyRenderPass destroy_render_pass{};
             PFN_vkCreateFramebuffer create_framebuffer{};
@@ -350,6 +357,11 @@ namespace sogen
             VkBufferView handle{};
             uint64_t device_id{};
         };
+        struct query_pool_data
+        {
+            VkQueryPool handle{};
+            uint64_t device_id{};
+        };
         struct render_pass_data
         {
             VkRenderPass handle{};
@@ -391,6 +403,7 @@ namespace sogen
         std::unordered_map<uint64_t, shader_module_data> shader_modules;
         std::unordered_map<uint64_t, image_view_data> image_views;
         std::unordered_map<uint64_t, buffer_view_data> buffer_views;
+        std::unordered_map<uint64_t, query_pool_data> query_pools;
         std::unordered_map<uint64_t, render_pass_data> render_passes;
         std::unordered_map<uint64_t, framebuffer_data> framebuffers;
         std::unordered_map<uint64_t, pipeline_layout_data> pipeline_layouts;
@@ -579,6 +592,13 @@ namespace sogen
                     it->second.destroy_buffer_view(it->second.handle, view.handle, nullptr);
                 }
             }
+            for (auto& [id, qp] : this->query_pools)
+            {
+                if (qp.device_id == device_id && qp.handle && it->second.destroy_query_pool)
+                {
+                    it->second.destroy_query_pool(it->second.handle, qp.handle, nullptr);
+                }
+            }
             for (auto& [id, sm] : this->shader_modules)
             {
                 if (sm.device_id == device_id && sm.handle && it->second.destroy_shader_module)
@@ -592,6 +612,7 @@ namespace sogen
             this->erase_owned(this->render_passes, [&](const render_pass_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->image_views, [&](const image_view_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->buffer_views, [&](const buffer_view_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->query_pools, [&](const query_pool_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->shader_modules, [&](const shader_module_data& d) { return d.device_id == device_id; });
 
             // Destroy GPU-owned children (pools free their command buffers; fences are freed) before
@@ -1394,8 +1415,7 @@ namespace sogen
             data.destroy_image = reinterpret_cast<PFN_vkDestroyImage>(resolve("vkDestroyImage"));
             data.get_image_memory_requirements =
                 reinterpret_cast<PFN_vkGetImageMemoryRequirements>(resolve("vkGetImageMemoryRequirements"));
-            data.get_image_subresource_layout =
-                reinterpret_cast<PFN_vkGetImageSubresourceLayout>(resolve("vkGetImageSubresourceLayout"));
+            data.get_image_subresource_layout = reinterpret_cast<PFN_vkGetImageSubresourceLayout>(resolve("vkGetImageSubresourceLayout"));
             data.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(resolve("vkBindImageMemory"));
             data.cmd_pipeline_barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(resolve("vkCmdPipelineBarrier"));
             data.cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(resolve("vkCmdClearColorImage"));
@@ -1411,6 +1431,13 @@ namespace sogen
             data.destroy_image_view = reinterpret_cast<PFN_vkDestroyImageView>(resolve("vkDestroyImageView"));
             data.create_buffer_view = reinterpret_cast<PFN_vkCreateBufferView>(resolve("vkCreateBufferView"));
             data.destroy_buffer_view = reinterpret_cast<PFN_vkDestroyBufferView>(resolve("vkDestroyBufferView"));
+            data.create_query_pool = reinterpret_cast<PFN_vkCreateQueryPool>(resolve("vkCreateQueryPool"));
+            data.destroy_query_pool = reinterpret_cast<PFN_vkDestroyQueryPool>(resolve("vkDestroyQueryPool"));
+            data.get_query_pool_results = reinterpret_cast<PFN_vkGetQueryPoolResults>(resolve("vkGetQueryPoolResults"));
+            data.cmd_reset_query_pool = reinterpret_cast<PFN_vkCmdResetQueryPool>(resolve("vkCmdResetQueryPool"));
+            data.cmd_begin_query = reinterpret_cast<PFN_vkCmdBeginQuery>(resolve("vkCmdBeginQuery"));
+            data.cmd_end_query = reinterpret_cast<PFN_vkCmdEndQuery>(resolve("vkCmdEndQuery"));
+            data.cmd_write_timestamp = reinterpret_cast<PFN_vkCmdWriteTimestamp>(resolve("vkCmdWriteTimestamp"));
             data.create_render_pass = reinterpret_cast<PFN_vkCreateRenderPass>(resolve("vkCreateRenderPass"));
             data.destroy_render_pass = reinterpret_cast<PFN_vkDestroyRenderPass>(resolve("vkDestroyRenderPass"));
             data.create_framebuffer = reinterpret_cast<PFN_vkCreateFramebuffer>(resolve("vkCreateFramebuffer"));
@@ -3074,8 +3101,140 @@ namespace sogen
             vk_regions.push_back(VkBufferCopy{.srcOffset = r.src_offset, .dstOffset = r.dst_offset, .size = r.size});
         }
 
-        dev->second.cmd_copy_buffer(cb->second.handle, src->second.handle, dst->second.handle,
-                                    static_cast<uint32_t>(vk_regions.size()), vk_regions.data());
+        dev->second.cmd_copy_buffer(cb->second.handle, src->second.handle, dst->second.handle, static_cast<uint32_t>(vk_regions.size()),
+                                    vk_regions.data());
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::create_query_pool(uint64_t device, uint32_t query_type, uint32_t query_count, uint32_t pipeline_statistics,
+                                           uint64_t& out_pool)
+    {
+        out_pool = 0;
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_query_pool)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkQueryPoolCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        info.queryType = static_cast<VkQueryType>(query_type);
+        info.queryCount = query_count;
+        info.pipelineStatistics = pipeline_statistics;
+
+        VkQueryPool pool{};
+        const VkResult result = dev->second.create_query_pool(dev->second.handle, &info, nullptr, &pool);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->query_pools.emplace(id, impl::query_pool_data{.handle = pool, .device_id = device});
+        out_pool = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_query_pool(uint64_t device, uint64_t query_pool)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->query_pools.find(query_pool);
+        if (it == this->impl_->query_pools.end())
+        {
+            return;
+        }
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_query_pool)
+        {
+            dev->second.destroy_query_pool(dev->second.handle, it->second.handle, nullptr);
+        }
+        this->impl_->query_pools.erase(it);
+    }
+
+    int32_t vulkan_host::get_query_pool_results(uint64_t device, uint64_t query_pool, uint32_t first_query, uint32_t query_count,
+                                                uint32_t flags, void* out, size_t out_size, size_t stride, size_t& out_written)
+    {
+        out_written = 0;
+        const auto dev = this->impl_->devices.find(device);
+        const auto qp = this->impl_->query_pools.find(query_pool);
+        if (dev == this->impl_->devices.end() || qp == this->impl_->query_pools.end() || !dev->second.get_query_pool_results)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const VkResult result = dev->second.get_query_pool_results(dev->second.handle, qp->second.handle, first_query, query_count,
+                                                                   out_size, out, stride, static_cast<VkQueryResultFlags>(flags));
+        if (result == VK_SUCCESS)
+        {
+            out_written = out_size;
+        }
+        return result;
+    }
+
+    int32_t vulkan_host::cmd_reset_query_pool(uint64_t command_buffer, uint64_t query_pool, uint32_t first_query, uint32_t query_count)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto qp = this->impl_->query_pools.find(query_pool);
+        if (cb == this->impl_->command_buffers.end() || qp == this->impl_->query_pools.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_reset_query_pool)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_reset_query_pool(cb->second.handle, qp->second.handle, first_query, query_count);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_begin_query(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t flags)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto qp = this->impl_->query_pools.find(query_pool);
+        if (cb == this->impl_->command_buffers.end() || qp == this->impl_->query_pools.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_begin_query)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_begin_query(cb->second.handle, qp->second.handle, query, static_cast<VkQueryControlFlags>(flags));
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_end_query(uint64_t command_buffer, uint64_t query_pool, uint32_t query)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto qp = this->impl_->query_pools.find(query_pool);
+        if (cb == this->impl_->command_buffers.end() || qp == this->impl_->query_pools.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_end_query)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_end_query(cb->second.handle, qp->second.handle, query);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_write_timestamp(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t pipeline_stage)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto qp = this->impl_->query_pools.find(query_pool);
+        if (cb == this->impl_->command_buffers.end() || qp == this->impl_->query_pools.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_write_timestamp)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_write_timestamp(cb->second.handle, static_cast<VkPipelineStageFlagBits>(pipeline_stage), qp->second.handle, query);
         return VK_SUCCESS;
     }
 

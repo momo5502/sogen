@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 8;
+    inline constexpr uint32_t protocol_version = 9;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -133,6 +133,13 @@ namespace sogen::gpu_bridge
         cmd_copy_buffer = 0x861,
         create_buffer_view = 0x862,
         destroy_buffer_view = 0x863,
+        create_query_pool = 0x864,
+        destroy_query_pool = 0x865,
+        get_query_pool_results = 0x866,
+        cmd_reset_query_pool = 0x867,
+        cmd_begin_query = 0x868,
+        cmd_end_query = 0x869,
+        cmd_write_timestamp = 0x86A,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -169,8 +176,7 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_destroy_image = make_ioctl(static_cast<uint32_t>(command::destroy_image));
     inline constexpr uint32_t ioctl_get_image_memory_requirements =
         make_ioctl(static_cast<uint32_t>(command::get_image_memory_requirements));
-    inline constexpr uint32_t ioctl_get_image_subresource_layout =
-        make_ioctl(static_cast<uint32_t>(command::get_image_subresource_layout));
+    inline constexpr uint32_t ioctl_get_image_subresource_layout = make_ioctl(static_cast<uint32_t>(command::get_image_subresource_layout));
     inline constexpr uint32_t ioctl_bind_image_memory = make_ioctl(static_cast<uint32_t>(command::bind_image_memory));
     inline constexpr uint32_t ioctl_create_surface = make_ioctl(static_cast<uint32_t>(command::create_surface));
     inline constexpr uint32_t ioctl_destroy_surface = make_ioctl(static_cast<uint32_t>(command::destroy_surface));
@@ -185,6 +191,9 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_destroy_image_view = make_ioctl(static_cast<uint32_t>(command::destroy_image_view));
     inline constexpr uint32_t ioctl_create_buffer_view = make_ioctl(static_cast<uint32_t>(command::create_buffer_view));
     inline constexpr uint32_t ioctl_destroy_buffer_view = make_ioctl(static_cast<uint32_t>(command::destroy_buffer_view));
+    inline constexpr uint32_t ioctl_create_query_pool = make_ioctl(static_cast<uint32_t>(command::create_query_pool));
+    inline constexpr uint32_t ioctl_destroy_query_pool = make_ioctl(static_cast<uint32_t>(command::destroy_query_pool));
+    inline constexpr uint32_t ioctl_get_query_pool_results = make_ioctl(static_cast<uint32_t>(command::get_query_pool_results));
     inline constexpr uint32_t ioctl_create_render_pass = make_ioctl(static_cast<uint32_t>(command::create_render_pass));
     inline constexpr uint32_t ioctl_destroy_render_pass = make_ioctl(static_cast<uint32_t>(command::destroy_render_pass));
     inline constexpr uint32_t ioctl_create_framebuffer = make_ioctl(static_cast<uint32_t>(command::create_framebuffer));
@@ -791,11 +800,11 @@ namespace sogen::gpu_bridge
     {
         int32_t vk_result;
         uint32_t reserved;
-        uint64_t offset;       // VkSubresourceLayout::offset (all VkDeviceSize, ABI-identical)
-        uint64_t size;         // VkSubresourceLayout::size
-        uint64_t row_pitch;    // VkSubresourceLayout::rowPitch
-        uint64_t array_pitch;  // VkSubresourceLayout::arrayPitch
-        uint64_t depth_pitch;  // VkSubresourceLayout::depthPitch
+        uint64_t offset;      // VkSubresourceLayout::offset (all VkDeviceSize, ABI-identical)
+        uint64_t size;        // VkSubresourceLayout::size
+        uint64_t row_pitch;   // VkSubresourceLayout::rowPitch
+        uint64_t array_pitch; // VkSubresourceLayout::arrayPitch
+        uint64_t depth_pitch; // VkSubresourceLayout::depthPitch
     };
 
     struct bind_image_memory_request
@@ -1016,6 +1025,68 @@ namespace sogen::gpu_bridge
         object_id dst_buffer;
         uint32_t region_count;
         uint32_t reserved;
+    };
+
+    // out = object_response (a VkQueryPool)
+    struct create_query_pool_request
+    {
+        object_id device;
+        uint32_t query_type;          // VkQueryType
+        uint32_t query_count;         // number of queries in the pool
+        uint32_t pipeline_statistics; // VkQueryPipelineStatisticFlags (for PIPELINE_STATISTICS pools)
+        uint32_t reserved;
+    };
+
+    // ioctl_get_query_pool_results: out = get_query_pool_results_response header followed by `data_size` result bytes.
+    struct get_query_pool_results_request
+    {
+        object_id device;
+        object_id query_pool;
+        uint32_t first_query;
+        uint32_t query_count;
+        uint32_t data_size; // bytes of result buffer the caller provided
+        uint32_t stride;    // VkDeviceSize stride between results (fits 32-bit for query results)
+        uint32_t flags;     // VkQueryResultFlags
+        uint32_t reserved;
+    };
+
+    struct get_query_pool_results_response
+    {
+        int32_t vk_result;
+        uint32_t data_size; // bytes actually written
+        // uint8_t data[data_size];
+    };
+
+    struct cmd_reset_query_pool_request
+    {
+        object_id command_buffer;
+        object_id query_pool;
+        uint32_t first_query;
+        uint32_t query_count;
+    };
+
+    struct cmd_begin_query_request
+    {
+        object_id command_buffer;
+        object_id query_pool;
+        uint32_t query;
+        uint32_t flags; // VkQueryControlFlags
+    };
+
+    struct cmd_end_query_request
+    {
+        object_id command_buffer;
+        object_id query_pool;
+        uint32_t query;
+        uint32_t reserved;
+    };
+
+    struct cmd_write_timestamp_request
+    {
+        object_id command_buffer;
+        object_id query_pool;
+        uint32_t query;
+        uint32_t pipeline_stage; // VkPipelineStageFlagBits
     };
 
     // out = object_response
@@ -1349,6 +1420,13 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(create_buffer_view_request) == 40, "wire layout drift");
     static_assert(sizeof(buffer_copy_region) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_buffer_request) == 32, "wire layout drift");
+    static_assert(sizeof(create_query_pool_request) == 24, "wire layout drift");
+    static_assert(sizeof(get_query_pool_results_request) == 40, "wire layout drift");
+    static_assert(sizeof(get_query_pool_results_response) == 8, "wire layout drift");
+    static_assert(sizeof(cmd_reset_query_pool_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_begin_query_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_end_query_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_write_timestamp_request) == 24, "wire layout drift");
     static_assert(sizeof(vertex_buffer_binding) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");

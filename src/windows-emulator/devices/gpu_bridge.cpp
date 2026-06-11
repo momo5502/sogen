@@ -146,6 +146,12 @@ namespace sogen
                     return handle_create_buffer_view(win_emu, context);
                 case gpu_bridge::ioctl_destroy_buffer_view:
                     return handle_destroy_buffer_view(win_emu, context);
+                case gpu_bridge::ioctl_create_query_pool:
+                    return handle_create_query_pool(win_emu, context);
+                case gpu_bridge::ioctl_destroy_query_pool:
+                    return handle_destroy_query_pool(win_emu, context);
+                case gpu_bridge::ioctl_get_query_pool_results:
+                    return handle_get_query_pool_results(win_emu, context);
                 case gpu_bridge::ioctl_create_render_pass:
                     return handle_create_render_pass(win_emu, context);
                 case gpu_bridge::ioctl_destroy_render_pass:
@@ -1440,6 +1446,59 @@ namespace sogen
                 this->vulkan_.destroy_buffer_view(request.device, request.object);
                 return STATUS_SUCCESS;
             }
+            NTSTATUS handle_create_query_pool(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_query_pool_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                uint64_t pool = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_query_pool(request.device, request.query_type, request.query_count,
+                                                                       request.pipeline_statistics, pool);
+                return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = pool});
+            }
+            NTSTATUS handle_destroy_query_pool(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                this->vulkan_.destroy_query_pool(request.device, request.object);
+                return STATUS_SUCCESS;
+            }
+            NTSTATUS handle_get_query_pool_results(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::get_query_pool_results_request;
+                using response_t = gpu_bridge::get_query_pool_results_response;
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto avail = static_cast<uint32_t>(context.output_buffer_length - sizeof(response_t));
+                const auto data_size = std::min<uint32_t>(request.data_size, avail);
+                std::vector<std::byte> data(data_size);
+                size_t written = 0;
+                const int32_t result =
+                    this->vulkan_.get_query_pool_results(request.device, request.query_pool, request.first_query, request.query_count,
+                                                         request.flags, data.data(), data.size(), request.stride, written);
+
+                const response_t response{.vk_result = result, .data_size = static_cast<uint32_t>(written)};
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response);
+                if (written > 0)
+                {
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), data.data(), written);
+                }
+                set_information(context, static_cast<ULONG>(sizeof(response_t) + written));
+                return STATUS_SUCCESS;
+            }
 
             NTSTATUS handle_create_render_pass(windows_emulator& win_emu, const io_device_context& context)
             {
@@ -1838,6 +1897,38 @@ namespace sogen
                         regions[i] = vulkan_host::buffer_copy{.src_offset = r.src_offset, .dst_offset = r.dst_offset, .size = r.size};
                     }
                     return this->vulkan_.cmd_copy_buffer(req.command_buffer, req.src_buffer, req.dst_buffer, regions);
+                }
+                case gpu_bridge::command::cmd_reset_query_pool: {
+                    gpu_bridge::cmd_reset_query_pool_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_reset_query_pool(req.command_buffer, req.query_pool, req.first_query, req.query_count);
+                }
+                case gpu_bridge::command::cmd_begin_query: {
+                    gpu_bridge::cmd_begin_query_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_begin_query(req.command_buffer, req.query_pool, req.query, req.flags);
+                }
+                case gpu_bridge::command::cmd_end_query: {
+                    gpu_bridge::cmd_end_query_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_end_query(req.command_buffer, req.query_pool, req.query);
+                }
+                case gpu_bridge::command::cmd_write_timestamp: {
+                    gpu_bridge::cmd_write_timestamp_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_write_timestamp(req.command_buffer, req.query_pool, req.query, req.pipeline_stage);
                 }
                 case gpu_bridge::command::cmd_dispatch: {
                     gpu_bridge::cmd_dispatch_request req{};

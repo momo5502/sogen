@@ -245,6 +245,15 @@ namespace sogen
         int32_t create_buffer_view(uint64_t device, uint64_t buffer, uint32_t format, uint64_t offset, uint64_t range, uint64_t& out_view);
         void destroy_buffer_view(uint64_t device, uint64_t buffer_view);
         int32_t cmd_copy_buffer(uint64_t command_buffer, uint64_t src_buffer, uint64_t dst_buffer, std::span<const buffer_copy> regions);
+        int32_t create_query_pool(uint64_t device, uint32_t query_type, uint32_t query_count, uint32_t pipeline_statistics,
+                                  uint64_t& out_pool);
+        void destroy_query_pool(uint64_t device, uint64_t query_pool);
+        int32_t get_query_pool_results(uint64_t device, uint64_t query_pool, uint32_t first_query, uint32_t query_count, uint32_t flags,
+                                       void* out, size_t out_size, size_t stride, size_t& out_written);
+        int32_t cmd_reset_query_pool(uint64_t command_buffer, uint64_t query_pool, uint32_t first_query, uint32_t query_count);
+        int32_t cmd_begin_query(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t flags);
+        int32_t cmd_end_query(uint64_t command_buffer, uint64_t query_pool, uint32_t query);
+        int32_t cmd_write_timestamp(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t pipeline_stage);
 
         // One color attachment + an optional depth attachment (depth_format == 0 => color only), single
         // subpass (initial/final layouts as given; PRESENT_SRC_KHR is mapped to TRANSFER_SRC_OPTIMAL).

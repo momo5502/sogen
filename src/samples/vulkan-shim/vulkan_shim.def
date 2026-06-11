@@ -21,6 +21,7 @@ EXPORTS
     vkCmdBindVertexBuffers
     vkCmdClearColorImage
     vkCmdClearDepthStencilImage
+    vkCmdBeginQuery
     vkCmdCopyBuffer
     vkCmdCopyBufferToImage
     vkCmdCopyBufferToImage2
@@ -30,6 +31,9 @@ EXPORTS
     vkCmdDispatchIndirect
     vkCmdDraw
     vkCmdDrawIndexed
+    vkCmdEndQuery
+    vkCmdResetQueryPool
+    vkCmdWriteTimestamp
     vkCmdEndDebugUtilsLabelEXT
     vkCmdEndRenderPass
     vkCmdFillBuffer
@@ -39,6 +43,7 @@ EXPORTS
     vkCreateBuffer
     vkCreateBufferView
     vkCreateCommandPool
+    vkCreateQueryPool
     vkCreateDebugUtilsMessengerEXT
     vkCreateDescriptorPool
     vkCreateDescriptorSetLayout
@@ -58,6 +63,7 @@ EXPORTS
     vkDestroyBuffer
     vkDestroyBufferView
     vkDestroyCommandPool
+    vkDestroyQueryPool
     vkDestroyDebugUtilsMessengerEXT
     vkDestroyDescriptorPool
     vkDestroyDescriptorSetLayout
@@ -92,6 +98,7 @@ EXPORTS
     vkGetImageMemoryRequirements
     vkGetImageSubresourceLayout
     vkGetInstanceProcAddr
+    vkGetQueryPoolResults
     vkGetPhysicalDeviceExternalSemaphoreProperties
     vkGetPhysicalDeviceFeatures
     vkGetPhysicalDeviceFeatures2
