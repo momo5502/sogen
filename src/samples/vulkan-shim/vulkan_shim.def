@@ -45,6 +45,29 @@ EXPORTS
     vkCmdInsertDebugUtilsLabelEXT
     vkCmdPipelineBarrier
     vkCmdPushConstants
+    vkCmdSetBlendConstants
+    vkCmdSetCullMode
+    vkCmdSetDepthBias
+    vkCmdSetDepthBiasEnable
+    vkCmdSetDepthBounds
+    vkCmdSetDepthBoundsTestEnable
+    vkCmdSetDepthCompareOp
+    vkCmdSetDepthTestEnable
+    vkCmdSetDepthWriteEnable
+    vkCmdSetFrontFace
+    vkCmdSetLineWidth
+    vkCmdSetPrimitiveRestartEnable
+    vkCmdSetPrimitiveTopology
+    vkCmdSetRasterizerDiscardEnable
+    vkCmdSetScissor
+    vkCmdSetScissorWithCount
+    vkCmdSetStencilCompareMask
+    vkCmdSetStencilOp
+    vkCmdSetStencilReference
+    vkCmdSetStencilTestEnable
+    vkCmdSetStencilWriteMask
+    vkCmdSetViewport
+    vkCmdSetViewportWithCount
     vkCreateBuffer
     vkCreateBufferView
     vkCreateCommandPool

@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 14;
+    inline constexpr uint32_t protocol_version = 15;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -145,6 +145,40 @@ namespace sogen::gpu_bridge
         cmd_begin_rendering = 0x86D,
         cmd_end_rendering = 0x86E,
         cmd_execute_commands = 0x86F,
+        cmd_set_viewport = 0x870,
+        cmd_set_scissor = 0x871,
+        cmd_set_depth_bias = 0x872,
+        cmd_set_blend_constants = 0x873,
+        cmd_set_depth_bounds = 0x874,
+        cmd_set_line_width = 0x875,
+        cmd_set_stencil = 0x876,
+        cmd_set_stencil_op = 0x877,
+        cmd_set_dynamic_u32 = 0x878,
+    };
+
+    // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
+    // single uint32 value (VkBool32 / enum). One wire command replaces ~a dozen near-identical vkCmdSet*.
+    enum class dynamic_state_u32 : uint32_t
+    {
+        cull_mode = 0,
+        front_face = 1,
+        primitive_topology = 2,
+        depth_test_enable = 3,
+        depth_write_enable = 4,
+        depth_compare_op = 5,
+        depth_bounds_test_enable = 6,
+        stencil_test_enable = 7,
+        rasterizer_discard_enable = 8,
+        depth_bias_enable = 9,
+        primitive_restart_enable = 10,
+    };
+
+    // Discriminator for cmd_set_stencil: which of the three single-value stencil dynamic states to set.
+    enum class stencil_dynamic_state : uint32_t
+    {
+        compare_mask = 0,
+        write_mask = 1,
+        reference = 2,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -1343,6 +1377,104 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
+    // One VkViewport. Trails cmd_set_viewport_request `count` times.
+    struct viewport_entry
+    {
+        float x;
+        float y;
+        float width;
+        float height;
+        float min_depth;
+        float max_depth;
+    };
+
+    // cmd_set_viewport: with_count!=0 selects vkCmdSetViewportWithCount (first ignored), else vkCmdSetViewport.
+    struct cmd_set_viewport_request
+    {
+        object_id command_buffer;
+        uint32_t first;
+        uint32_t count;
+        uint32_t with_count;
+        uint32_t reserved;
+    };
+
+    // One VkRect2D. Trails cmd_set_scissor_request `count` times.
+    struct scissor_entry
+    {
+        int32_t offset_x;
+        int32_t offset_y;
+        uint32_t width;
+        uint32_t height;
+    };
+
+    // cmd_set_scissor: with_count!=0 selects vkCmdSetScissorWithCount (first ignored), else vkCmdSetScissor.
+    struct cmd_set_scissor_request
+    {
+        object_id command_buffer;
+        uint32_t first;
+        uint32_t count;
+        uint32_t with_count;
+        uint32_t reserved;
+    };
+
+    struct cmd_set_depth_bias_request
+    {
+        object_id command_buffer;
+        float constant_factor;
+        float clamp;
+        float slope_factor;
+        uint32_t reserved;
+    };
+
+    struct cmd_set_blend_constants_request
+    {
+        object_id command_buffer;
+        float constants[4];
+    };
+
+    struct cmd_set_depth_bounds_request
+    {
+        object_id command_buffer;
+        float min_depth_bounds;
+        float max_depth_bounds;
+    };
+
+    struct cmd_set_line_width_request
+    {
+        object_id command_buffer;
+        float line_width;
+        uint32_t reserved;
+    };
+
+    // cmd_set_stencil: `which` is a stencil_dynamic_state value (compare mask / write mask / reference).
+    struct cmd_set_stencil_request
+    {
+        object_id command_buffer;
+        uint32_t which;
+        uint32_t face_mask;
+        uint32_t value;
+        uint32_t reserved;
+    };
+
+    struct cmd_set_stencil_op_request
+    {
+        object_id command_buffer;
+        uint32_t face_mask;
+        uint32_t fail_op;
+        uint32_t pass_op;
+        uint32_t depth_fail_op;
+        uint32_t compare_op;
+        uint32_t reserved;
+    };
+
+    // cmd_set_dynamic_u32: `state` is a dynamic_state_u32 value; `value` is the VkBool32/enum to set.
+    struct cmd_set_dynamic_u32_request
+    {
+        object_id command_buffer;
+        uint32_t state;
+        uint32_t value;
+    };
+
     struct cmd_bind_index_buffer_request
     {
         object_id command_buffer;
@@ -1537,6 +1669,17 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(allocate_command_buffer_request) == 24, "wire layout drift");
     static_assert(sizeof(begin_command_buffer_request) == 40, "wire layout drift");
     static_assert(sizeof(cmd_execute_commands_request) == 16, "wire layout drift");
+    static_assert(sizeof(viewport_entry) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_set_viewport_request) == 24, "wire layout drift");
+    static_assert(sizeof(scissor_entry) == 16, "wire layout drift");
+    static_assert(sizeof(cmd_set_scissor_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_set_depth_bias_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_set_blend_constants_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_set_depth_bounds_request) == 16, "wire layout drift");
+    static_assert(sizeof(cmd_set_line_width_request) == 16, "wire layout drift");
+    static_assert(sizeof(cmd_set_stencil_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_set_stencil_op_request) == 32, "wire layout drift");
+    static_assert(sizeof(cmd_set_dynamic_u32_request) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");
     static_assert(sizeof(create_sampler_request) == 32, "wire layout drift");

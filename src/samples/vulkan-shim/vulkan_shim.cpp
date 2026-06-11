@@ -1390,6 +1390,223 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_write_timestamp, &request, sizeof(request));
     }
 
+    // --- Extended-dynamic-state setters: record into the command stream, replayed on the host. ---
+
+    static void record_set_dynamic_u32(VkCommandBuffer commandBuffer, gb::dynamic_state_u32 state, uint32_t value)
+    {
+        gb::cmd_set_dynamic_u32_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.state = static_cast<uint32_t>(state);
+        request.value = value;
+        record_command(request.command_buffer, gb::command::cmd_set_dynamic_u32, &request, sizeof(request));
+    }
+
+    static void record_set_stencil(VkCommandBuffer commandBuffer, gb::stencil_dynamic_state which, VkStencilFaceFlags faceMask,
+                                   uint32_t value)
+    {
+        gb::cmd_set_stencil_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.which = static_cast<uint32_t>(which);
+        request.face_mask = static_cast<uint32_t>(faceMask);
+        request.value = value;
+        record_command(request.command_buffer, gb::command::cmd_set_stencil, &request, sizeof(request));
+    }
+
+    static void record_set_viewport(VkCommandBuffer commandBuffer, uint32_t first, uint32_t count, const VkViewport* pViewports,
+                                    bool with_count)
+    {
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
+        std::vector<uint8_t> message(sizeof(gb::cmd_set_viewport_request) + static_cast<size_t>(count) * sizeof(gb::viewport_entry));
+        gb::cmd_set_viewport_request header{};
+        header.command_buffer = command_buffer;
+        header.first = first;
+        header.count = count;
+        header.with_count = with_count ? 1u : 0u;
+        std::memcpy(message.data(), &header, sizeof(header));
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const gb::viewport_entry entry{pViewports[i].x,      pViewports[i].y,        pViewports[i].width,
+                                           pViewports[i].height, pViewports[i].minDepth, pViewports[i].maxDepth};
+            std::memcpy(message.data() + sizeof(header) + static_cast<size_t>(i) * sizeof(entry), &entry, sizeof(entry));
+        }
+        record_command(command_buffer, gb::command::cmd_set_viewport, message.data(), message.size());
+    }
+
+    static void record_set_scissor(VkCommandBuffer commandBuffer, uint32_t first, uint32_t count, const VkRect2D* pScissors,
+                                   bool with_count)
+    {
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
+        std::vector<uint8_t> message(sizeof(gb::cmd_set_scissor_request) + static_cast<size_t>(count) * sizeof(gb::scissor_entry));
+        gb::cmd_set_scissor_request header{};
+        header.command_buffer = command_buffer;
+        header.first = first;
+        header.count = count;
+        header.with_count = with_count ? 1u : 0u;
+        std::memcpy(message.data(), &header, sizeof(header));
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const gb::scissor_entry entry{pScissors[i].offset.x, pScissors[i].offset.y, pScissors[i].extent.width,
+                                          pScissors[i].extent.height};
+            std::memcpy(message.data() + sizeof(header) + static_cast<size_t>(i) * sizeof(entry), &entry, sizeof(entry));
+        }
+        record_command(command_buffer, gb::command::cmd_set_scissor, message.data(), message.size());
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetViewport(VkCommandBuffer commandBuffer, uint32_t firstViewport,
+                                                                      uint32_t viewportCount, const VkViewport* pViewports)
+    {
+        record_set_viewport(commandBuffer, firstViewport, viewportCount, pViewports, false);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetViewportWithCount(VkCommandBuffer commandBuffer, uint32_t viewportCount,
+                                                                               const VkViewport* pViewports)
+    {
+        record_set_viewport(commandBuffer, 0, viewportCount, pViewports, true);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetScissor(VkCommandBuffer commandBuffer, uint32_t firstScissor,
+                                                                     uint32_t scissorCount, const VkRect2D* pScissors)
+    {
+        record_set_scissor(commandBuffer, firstScissor, scissorCount, pScissors, false);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetScissorWithCount(VkCommandBuffer commandBuffer, uint32_t scissorCount,
+                                                                              const VkRect2D* pScissors)
+    {
+        record_set_scissor(commandBuffer, 0, scissorCount, pScissors, true);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthBias(VkCommandBuffer commandBuffer, float depthBiasConstantFactor,
+                                                                       float depthBiasClamp, float depthBiasSlopeFactor)
+    {
+        gb::cmd_set_depth_bias_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.constant_factor = depthBiasConstantFactor;
+        request.clamp = depthBiasClamp;
+        request.slope_factor = depthBiasSlopeFactor;
+        record_command(request.command_buffer, gb::command::cmd_set_depth_bias, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetBlendConstants(VkCommandBuffer commandBuffer, const float blendConstants[4])
+    {
+        gb::cmd_set_blend_constants_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.constants[0] = blendConstants[0];
+        request.constants[1] = blendConstants[1];
+        request.constants[2] = blendConstants[2];
+        request.constants[3] = blendConstants[3];
+        record_command(request.command_buffer, gb::command::cmd_set_blend_constants, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthBounds(VkCommandBuffer commandBuffer, float minDepthBounds,
+                                                                         float maxDepthBounds)
+    {
+        gb::cmd_set_depth_bounds_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.min_depth_bounds = minDepthBounds;
+        request.max_depth_bounds = maxDepthBounds;
+        record_command(request.command_buffer, gb::command::cmd_set_depth_bounds, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetLineWidth(VkCommandBuffer commandBuffer, float lineWidth)
+    {
+        gb::cmd_set_line_width_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.line_width = lineWidth;
+        record_command(request.command_buffer, gb::command::cmd_set_line_width, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetStencilCompareMask(VkCommandBuffer commandBuffer, VkStencilFaceFlags faceMask,
+                                                                                uint32_t compareMask)
+    {
+        record_set_stencil(commandBuffer, gb::stencil_dynamic_state::compare_mask, faceMask, compareMask);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetStencilWriteMask(VkCommandBuffer commandBuffer, VkStencilFaceFlags faceMask,
+                                                                              uint32_t writeMask)
+    {
+        record_set_stencil(commandBuffer, gb::stencil_dynamic_state::write_mask, faceMask, writeMask);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetStencilReference(VkCommandBuffer commandBuffer, VkStencilFaceFlags faceMask,
+                                                                              uint32_t reference)
+    {
+        record_set_stencil(commandBuffer, gb::stencil_dynamic_state::reference, faceMask, reference);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetStencilOp(VkCommandBuffer commandBuffer, VkStencilFaceFlags faceMask,
+                                                                       VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp,
+                                                                       VkCompareOp compareOp)
+    {
+        gb::cmd_set_stencil_op_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.face_mask = static_cast<uint32_t>(faceMask);
+        request.fail_op = static_cast<uint32_t>(failOp);
+        request.pass_op = static_cast<uint32_t>(passOp);
+        request.depth_fail_op = static_cast<uint32_t>(depthFailOp);
+        request.compare_op = static_cast<uint32_t>(compareOp);
+        record_command(request.command_buffer, gb::command::cmd_set_stencil_op, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetCullMode(VkCommandBuffer commandBuffer, VkCullModeFlags cullMode)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::cull_mode, static_cast<uint32_t>(cullMode));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetFrontFace(VkCommandBuffer commandBuffer, VkFrontFace frontFace)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::front_face, static_cast<uint32_t>(frontFace));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetPrimitiveTopology(VkCommandBuffer commandBuffer,
+                                                                               VkPrimitiveTopology primitiveTopology)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::primitive_topology, static_cast<uint32_t>(primitiveTopology));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthTestEnable(VkCommandBuffer commandBuffer, VkBool32 depthTestEnable)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::depth_test_enable, depthTestEnable);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthWriteEnable(VkCommandBuffer commandBuffer, VkBool32 depthWriteEnable)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::depth_write_enable, depthWriteEnable);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthCompareOp(VkCommandBuffer commandBuffer, VkCompareOp depthCompareOp)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::depth_compare_op, static_cast<uint32_t>(depthCompareOp));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthBoundsTestEnable(VkCommandBuffer commandBuffer,
+                                                                                   VkBool32 depthBoundsTestEnable)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::depth_bounds_test_enable, depthBoundsTestEnable);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetStencilTestEnable(VkCommandBuffer commandBuffer, VkBool32 stencilTestEnable)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::stencil_test_enable, stencilTestEnable);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetRasterizerDiscardEnable(VkCommandBuffer commandBuffer,
+                                                                                     VkBool32 rasterizerDiscardEnable)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::rasterizer_discard_enable, rasterizerDiscardEnable);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthBiasEnable(VkCommandBuffer commandBuffer, VkBool32 depthBiasEnable)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::depth_bias_enable, depthBiasEnable);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetPrimitiveRestartEnable(VkCommandBuffer commandBuffer,
+                                                                                    VkBool32 primitiveRestartEnable)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::primitive_restart_enable, primitiveRestartEnable);
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyBuffer(VkCommandBuffer commandBuffer, VkBuffer srcBuffer, VkBuffer dstBuffer,
                                                                      uint32_t regionCount, const VkBufferCopy* pRegions)
     {
@@ -3778,6 +3995,45 @@ extern "C"
             {.name = "vkCmdDrawIndexed", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndexed)},
             {.name = "vkCmdEndRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRenderPass)},
             {.name = "vkCmdPushConstants", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPushConstants)},
+            {.name = "vkCmdSetViewport", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetViewport)},
+            {.name = "vkCmdSetViewportWithCount", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetViewportWithCount)},
+            {.name = "vkCmdSetViewportWithCountEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetViewportWithCount)},
+            {.name = "vkCmdSetScissor", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetScissor)},
+            {.name = "vkCmdSetScissorWithCount", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetScissorWithCount)},
+            {.name = "vkCmdSetScissorWithCountEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetScissorWithCount)},
+            {.name = "vkCmdSetDepthBias", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBias)},
+            {.name = "vkCmdSetBlendConstants", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetBlendConstants)},
+            {.name = "vkCmdSetDepthBounds", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBounds)},
+            {.name = "vkCmdSetLineWidth", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetLineWidth)},
+            {.name = "vkCmdSetStencilCompareMask", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilCompareMask)},
+            {.name = "vkCmdSetStencilWriteMask", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilWriteMask)},
+            {.name = "vkCmdSetStencilReference", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilReference)},
+            {.name = "vkCmdSetStencilOp", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilOp)},
+            {.name = "vkCmdSetStencilOpEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilOp)},
+            {.name = "vkCmdSetCullMode", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetCullMode)},
+            {.name = "vkCmdSetCullModeEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetCullMode)},
+            {.name = "vkCmdSetFrontFace", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetFrontFace)},
+            {.name = "vkCmdSetFrontFaceEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetFrontFace)},
+            {.name = "vkCmdSetPrimitiveTopology", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetPrimitiveTopology)},
+            {.name = "vkCmdSetPrimitiveTopologyEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetPrimitiveTopology)},
+            {.name = "vkCmdSetDepthTestEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthTestEnable)},
+            {.name = "vkCmdSetDepthTestEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthTestEnable)},
+            {.name = "vkCmdSetDepthWriteEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthWriteEnable)},
+            {.name = "vkCmdSetDepthWriteEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthWriteEnable)},
+            {.name = "vkCmdSetDepthCompareOp", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthCompareOp)},
+            {.name = "vkCmdSetDepthCompareOpEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthCompareOp)},
+            {.name = "vkCmdSetDepthBoundsTestEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBoundsTestEnable)},
+            {.name = "vkCmdSetDepthBoundsTestEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBoundsTestEnable)},
+            {.name = "vkCmdSetStencilTestEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilTestEnable)},
+            {.name = "vkCmdSetStencilTestEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilTestEnable)},
+            {.name = "vkCmdSetRasterizerDiscardEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetRasterizerDiscardEnable)},
+            {.name = "vkCmdSetRasterizerDiscardEnableEXT",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetRasterizerDiscardEnable)},
+            {.name = "vkCmdSetDepthBiasEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBiasEnable)},
+            {.name = "vkCmdSetDepthBiasEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBiasEnable)},
+            {.name = "vkCmdSetPrimitiveRestartEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetPrimitiveRestartEnable)},
+            {.name = "vkCmdSetPrimitiveRestartEnableEXT",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetPrimitiveRestartEnable)},
         };
 
         for (const auto& e : table)

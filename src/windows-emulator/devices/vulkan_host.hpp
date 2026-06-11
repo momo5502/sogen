@@ -191,6 +191,26 @@ namespace sogen
             uint32_t clear_value[4];
         };
 
+        // One VkViewport as plain floats (dynamic viewport state).
+        struct viewport_entry
+        {
+            float x;
+            float y;
+            float width;
+            float height;
+            float min_depth;
+            float max_depth;
+        };
+
+        // One VkRect2D as plain integers (dynamic scissor state).
+        struct scissor_entry
+        {
+            int32_t offset_x;
+            int32_t offset_y;
+            uint32_t width;
+            uint32_t height;
+        };
+
         // Creates a 2D, single-mip, single-layer image (initial layout UNDEFINED). samples selects the
         // multisample count (1 = no MSAA).
         int32_t create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,
@@ -392,6 +412,17 @@ namespace sogen
         int32_t cmd_end_rendering(uint64_t command_buffer);
         int32_t cmd_push_constants(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t stage_flags, uint32_t offset, uint32_t size,
                                    const void* data);
+        // Extended-dynamic-state setters. with_count selects the *WithCount variant (dynamic count state).
+        int32_t cmd_set_viewport(uint64_t command_buffer, uint32_t first, bool with_count, std::span<const viewport_entry> viewports);
+        int32_t cmd_set_scissor(uint64_t command_buffer, uint32_t first, bool with_count, std::span<const scissor_entry> scissors);
+        int32_t cmd_set_depth_bias(uint64_t command_buffer, float constant_factor, float clamp, float slope_factor);
+        int32_t cmd_set_blend_constants(uint64_t command_buffer, const float constants[4]);
+        int32_t cmd_set_depth_bounds(uint64_t command_buffer, float min_depth_bounds, float max_depth_bounds);
+        int32_t cmd_set_line_width(uint64_t command_buffer, float line_width);
+        int32_t cmd_set_stencil(uint64_t command_buffer, uint32_t which, uint32_t face_mask, uint32_t value);
+        int32_t cmd_set_stencil_op(uint64_t command_buffer, uint32_t face_mask, uint32_t fail_op, uint32_t pass_op, uint32_t depth_fail_op,
+                                   uint32_t compare_op);
+        int32_t cmd_set_dynamic_u32(uint64_t command_buffer, uint32_t state, uint32_t value);
 
       private:
         struct impl;

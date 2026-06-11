@@ -1907,6 +1907,101 @@ namespace sogen
                     }
                     return this->vulkan_.cmd_execute_commands(req.command_buffer, secondaries);
                 }
+                case gpu_bridge::command::cmd_set_viewport: {
+                    gpu_bridge::cmd_set_viewport_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    static_assert(sizeof(vulkan_host::viewport_entry) == sizeof(gpu_bridge::viewport_entry));
+                    const size_t bytes = static_cast<size_t>(req.count) * sizeof(vulkan_host::viewport_entry);
+                    if (bytes > size - sizeof(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::vector<vulkan_host::viewport_entry> entries(req.count);
+                    if (req.count > 0)
+                    {
+                        std::memcpy(entries.data(), payload + sizeof(req), bytes);
+                    }
+                    return this->vulkan_.cmd_set_viewport(req.command_buffer, req.first, req.with_count != 0, entries);
+                }
+                case gpu_bridge::command::cmd_set_scissor: {
+                    gpu_bridge::cmd_set_scissor_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    static_assert(sizeof(vulkan_host::scissor_entry) == sizeof(gpu_bridge::scissor_entry));
+                    const size_t bytes = static_cast<size_t>(req.count) * sizeof(vulkan_host::scissor_entry);
+                    if (bytes > size - sizeof(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::vector<vulkan_host::scissor_entry> entries(req.count);
+                    if (req.count > 0)
+                    {
+                        std::memcpy(entries.data(), payload + sizeof(req), bytes);
+                    }
+                    return this->vulkan_.cmd_set_scissor(req.command_buffer, req.first, req.with_count != 0, entries);
+                }
+                case gpu_bridge::command::cmd_set_depth_bias: {
+                    gpu_bridge::cmd_set_depth_bias_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_set_depth_bias(req.command_buffer, req.constant_factor, req.clamp, req.slope_factor);
+                }
+                case gpu_bridge::command::cmd_set_blend_constants: {
+                    gpu_bridge::cmd_set_blend_constants_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_set_blend_constants(req.command_buffer, req.constants);
+                }
+                case gpu_bridge::command::cmd_set_depth_bounds: {
+                    gpu_bridge::cmd_set_depth_bounds_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_set_depth_bounds(req.command_buffer, req.min_depth_bounds, req.max_depth_bounds);
+                }
+                case gpu_bridge::command::cmd_set_line_width: {
+                    gpu_bridge::cmd_set_line_width_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_set_line_width(req.command_buffer, req.line_width);
+                }
+                case gpu_bridge::command::cmd_set_stencil: {
+                    gpu_bridge::cmd_set_stencil_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_set_stencil(req.command_buffer, req.which, req.face_mask, req.value);
+                }
+                case gpu_bridge::command::cmd_set_stencil_op: {
+                    gpu_bridge::cmd_set_stencil_op_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_set_stencil_op(req.command_buffer, req.face_mask, req.fail_op, req.pass_op, req.depth_fail_op,
+                                                            req.compare_op);
+                }
+                case gpu_bridge::command::cmd_set_dynamic_u32: {
+                    gpu_bridge::cmd_set_dynamic_u32_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_set_dynamic_u32(req.command_buffer, req.state, req.value);
+                }
                 case gpu_bridge::command::end_command_buffer: {
                     gpu_bridge::end_command_buffer_request req{};
                     if (!read(req))

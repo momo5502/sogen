@@ -242,6 +242,29 @@ namespace sogen
             PFN_vkCmdDrawIndexed cmd_draw_indexed{};
             PFN_vkCmdEndRenderPass cmd_end_render_pass{};
             PFN_vkCmdPushConstants cmd_push_constants{};
+            PFN_vkCmdSetViewport cmd_set_viewport{};
+            PFN_vkCmdSetViewportWithCount cmd_set_viewport_with_count{};
+            PFN_vkCmdSetScissor cmd_set_scissor{};
+            PFN_vkCmdSetScissorWithCount cmd_set_scissor_with_count{};
+            PFN_vkCmdSetDepthBias cmd_set_depth_bias{};
+            PFN_vkCmdSetBlendConstants cmd_set_blend_constants{};
+            PFN_vkCmdSetDepthBounds cmd_set_depth_bounds{};
+            PFN_vkCmdSetLineWidth cmd_set_line_width{};
+            PFN_vkCmdSetStencilCompareMask cmd_set_stencil_compare_mask{};
+            PFN_vkCmdSetStencilWriteMask cmd_set_stencil_write_mask{};
+            PFN_vkCmdSetStencilReference cmd_set_stencil_reference{};
+            PFN_vkCmdSetStencilOp cmd_set_stencil_op{};
+            PFN_vkCmdSetCullMode cmd_set_cull_mode{};
+            PFN_vkCmdSetFrontFace cmd_set_front_face{};
+            PFN_vkCmdSetPrimitiveTopology cmd_set_primitive_topology{};
+            PFN_vkCmdSetDepthTestEnable cmd_set_depth_test_enable{};
+            PFN_vkCmdSetDepthWriteEnable cmd_set_depth_write_enable{};
+            PFN_vkCmdSetDepthCompareOp cmd_set_depth_compare_op{};
+            PFN_vkCmdSetDepthBoundsTestEnable cmd_set_depth_bounds_test_enable{};
+            PFN_vkCmdSetStencilTestEnable cmd_set_stencil_test_enable{};
+            PFN_vkCmdSetRasterizerDiscardEnable cmd_set_rasterizer_discard_enable{};
+            PFN_vkCmdSetDepthBiasEnable cmd_set_depth_bias_enable{};
+            PFN_vkCmdSetPrimitiveRestartEnable cmd_set_primitive_restart_enable{};
         };
 
         // A guest-side window-system surface. There is no real host VkSurfaceKHR (the host driver may
@@ -1492,6 +1515,34 @@ namespace sogen
             data.cmd_draw_indexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(resolve("vkCmdDrawIndexed"));
             data.cmd_end_render_pass = reinterpret_cast<PFN_vkCmdEndRenderPass>(resolve("vkCmdEndRenderPass"));
             data.cmd_push_constants = reinterpret_cast<PFN_vkCmdPushConstants>(resolve("vkCmdPushConstants"));
+            data.cmd_set_viewport = reinterpret_cast<PFN_vkCmdSetViewport>(resolve("vkCmdSetViewport"));
+            data.cmd_set_viewport_with_count =
+                reinterpret_cast<PFN_vkCmdSetViewportWithCount>(resolve("vkCmdSetViewportWithCount"));
+            data.cmd_set_scissor = reinterpret_cast<PFN_vkCmdSetScissor>(resolve("vkCmdSetScissor"));
+            data.cmd_set_scissor_with_count = reinterpret_cast<PFN_vkCmdSetScissorWithCount>(resolve("vkCmdSetScissorWithCount"));
+            data.cmd_set_depth_bias = reinterpret_cast<PFN_vkCmdSetDepthBias>(resolve("vkCmdSetDepthBias"));
+            data.cmd_set_blend_constants = reinterpret_cast<PFN_vkCmdSetBlendConstants>(resolve("vkCmdSetBlendConstants"));
+            data.cmd_set_depth_bounds = reinterpret_cast<PFN_vkCmdSetDepthBounds>(resolve("vkCmdSetDepthBounds"));
+            data.cmd_set_line_width = reinterpret_cast<PFN_vkCmdSetLineWidth>(resolve("vkCmdSetLineWidth"));
+            data.cmd_set_stencil_compare_mask =
+                reinterpret_cast<PFN_vkCmdSetStencilCompareMask>(resolve("vkCmdSetStencilCompareMask"));
+            data.cmd_set_stencil_write_mask = reinterpret_cast<PFN_vkCmdSetStencilWriteMask>(resolve("vkCmdSetStencilWriteMask"));
+            data.cmd_set_stencil_reference = reinterpret_cast<PFN_vkCmdSetStencilReference>(resolve("vkCmdSetStencilReference"));
+            data.cmd_set_stencil_op = reinterpret_cast<PFN_vkCmdSetStencilOp>(resolve("vkCmdSetStencilOp"));
+            data.cmd_set_cull_mode = reinterpret_cast<PFN_vkCmdSetCullMode>(resolve("vkCmdSetCullMode"));
+            data.cmd_set_front_face = reinterpret_cast<PFN_vkCmdSetFrontFace>(resolve("vkCmdSetFrontFace"));
+            data.cmd_set_primitive_topology = reinterpret_cast<PFN_vkCmdSetPrimitiveTopology>(resolve("vkCmdSetPrimitiveTopology"));
+            data.cmd_set_depth_test_enable = reinterpret_cast<PFN_vkCmdSetDepthTestEnable>(resolve("vkCmdSetDepthTestEnable"));
+            data.cmd_set_depth_write_enable = reinterpret_cast<PFN_vkCmdSetDepthWriteEnable>(resolve("vkCmdSetDepthWriteEnable"));
+            data.cmd_set_depth_compare_op = reinterpret_cast<PFN_vkCmdSetDepthCompareOp>(resolve("vkCmdSetDepthCompareOp"));
+            data.cmd_set_depth_bounds_test_enable =
+                reinterpret_cast<PFN_vkCmdSetDepthBoundsTestEnable>(resolve("vkCmdSetDepthBoundsTestEnable"));
+            data.cmd_set_stencil_test_enable = reinterpret_cast<PFN_vkCmdSetStencilTestEnable>(resolve("vkCmdSetStencilTestEnable"));
+            data.cmd_set_rasterizer_discard_enable =
+                reinterpret_cast<PFN_vkCmdSetRasterizerDiscardEnable>(resolve("vkCmdSetRasterizerDiscardEnable"));
+            data.cmd_set_depth_bias_enable = reinterpret_cast<PFN_vkCmdSetDepthBiasEnable>(resolve("vkCmdSetDepthBiasEnable"));
+            data.cmd_set_primitive_restart_enable =
+                reinterpret_cast<PFN_vkCmdSetPrimitiveRestartEnable>(resolve("vkCmdSetPrimitiveRestartEnable"));
         }
 
         const uint64_t id = this->impl_->next_id++;
@@ -4321,6 +4372,286 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         dev->second.cmd_push_constants(cb->second.handle, layout->second.handle, stage_flags, offset, size, data);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_set_viewport(uint64_t command_buffer, uint32_t first, bool with_count,
+                                          std::span<const viewport_entry> viewports)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkViewport> entries(viewports.size());
+        for (size_t i = 0; i < viewports.size(); ++i)
+        {
+            entries[i] = {viewports[i].x,         viewports[i].y,         viewports[i].width,
+                          viewports[i].height,    viewports[i].min_depth, viewports[i].max_depth};
+        }
+
+        if (with_count)
+        {
+            if (!dev->second.cmd_set_viewport_with_count)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_viewport_with_count(cb->second.handle, static_cast<uint32_t>(entries.size()), entries.data());
+        }
+        else
+        {
+            if (!dev->second.cmd_set_viewport)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_viewport(cb->second.handle, first, static_cast<uint32_t>(entries.size()), entries.data());
+        }
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_set_scissor(uint64_t command_buffer, uint32_t first, bool with_count,
+                                         std::span<const scissor_entry> scissors)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkRect2D> entries(scissors.size());
+        for (size_t i = 0; i < scissors.size(); ++i)
+        {
+            entries[i] = {{scissors[i].offset_x, scissors[i].offset_y}, {scissors[i].width, scissors[i].height}};
+        }
+
+        if (with_count)
+        {
+            if (!dev->second.cmd_set_scissor_with_count)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_scissor_with_count(cb->second.handle, static_cast<uint32_t>(entries.size()), entries.data());
+        }
+        else
+        {
+            if (!dev->second.cmd_set_scissor)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_scissor(cb->second.handle, first, static_cast<uint32_t>(entries.size()), entries.data());
+        }
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_set_depth_bias(uint64_t command_buffer, float constant_factor, float clamp, float slope_factor)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_set_depth_bias)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_set_depth_bias(cb->second.handle, constant_factor, clamp, slope_factor);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_set_blend_constants(uint64_t command_buffer, const float constants[4])
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_set_blend_constants)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_set_blend_constants(cb->second.handle, constants);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_set_depth_bounds(uint64_t command_buffer, float min_depth_bounds, float max_depth_bounds)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_set_depth_bounds)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_set_depth_bounds(cb->second.handle, min_depth_bounds, max_depth_bounds);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_set_line_width(uint64_t command_buffer, float line_width)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_set_line_width)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_set_line_width(cb->second.handle, line_width);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_set_stencil(uint64_t command_buffer, uint32_t which, uint32_t face_mask, uint32_t value)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto face = static_cast<VkStencilFaceFlags>(face_mask);
+        switch (static_cast<gpu_bridge::stencil_dynamic_state>(which))
+        {
+        case gpu_bridge::stencil_dynamic_state::compare_mask:
+            if (!dev->second.cmd_set_stencil_compare_mask)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_stencil_compare_mask(cb->second.handle, face, value);
+            break;
+        case gpu_bridge::stencil_dynamic_state::write_mask:
+            if (!dev->second.cmd_set_stencil_write_mask)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_stencil_write_mask(cb->second.handle, face, value);
+            break;
+        case gpu_bridge::stencil_dynamic_state::reference:
+            if (!dev->second.cmd_set_stencil_reference)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_stencil_reference(cb->second.handle, face, value);
+            break;
+        default:
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_set_stencil_op(uint64_t command_buffer, uint32_t face_mask, uint32_t fail_op, uint32_t pass_op,
+                                            uint32_t depth_fail_op, uint32_t compare_op)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_set_stencil_op)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.cmd_set_stencil_op(cb->second.handle, static_cast<VkStencilFaceFlags>(face_mask),
+                                       static_cast<VkStencilOp>(fail_op), static_cast<VkStencilOp>(pass_op),
+                                       static_cast<VkStencilOp>(depth_fail_op), static_cast<VkCompareOp>(compare_op));
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_set_dynamic_u32(uint64_t command_buffer, uint32_t state, uint32_t value)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const VkCommandBuffer handle = cb->second.handle;
+        switch (static_cast<gpu_bridge::dynamic_state_u32>(state))
+        {
+        case gpu_bridge::dynamic_state_u32::cull_mode:
+            if (!dev->second.cmd_set_cull_mode)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            dev->second.cmd_set_cull_mode(handle, static_cast<VkCullModeFlags>(value));
+            break;
+        case gpu_bridge::dynamic_state_u32::front_face:
+            if (!dev->second.cmd_set_front_face)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            dev->second.cmd_set_front_face(handle, static_cast<VkFrontFace>(value));
+            break;
+        case gpu_bridge::dynamic_state_u32::primitive_topology:
+            if (!dev->second.cmd_set_primitive_topology)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            dev->second.cmd_set_primitive_topology(handle, static_cast<VkPrimitiveTopology>(value));
+            break;
+        case gpu_bridge::dynamic_state_u32::depth_test_enable:
+            if (!dev->second.cmd_set_depth_test_enable)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            dev->second.cmd_set_depth_test_enable(handle, value);
+            break;
+        case gpu_bridge::dynamic_state_u32::depth_write_enable:
+            if (!dev->second.cmd_set_depth_write_enable)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            dev->second.cmd_set_depth_write_enable(handle, value);
+            break;
+        case gpu_bridge::dynamic_state_u32::depth_compare_op:
+            if (!dev->second.cmd_set_depth_compare_op)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            dev->second.cmd_set_depth_compare_op(handle, static_cast<VkCompareOp>(value));
+            break;
+        case gpu_bridge::dynamic_state_u32::depth_bounds_test_enable:
+            if (!dev->second.cmd_set_depth_bounds_test_enable)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            dev->second.cmd_set_depth_bounds_test_enable(handle, value);
+            break;
+        case gpu_bridge::dynamic_state_u32::stencil_test_enable:
+            if (!dev->second.cmd_set_stencil_test_enable)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            dev->second.cmd_set_stencil_test_enable(handle, value);
+            break;
+        case gpu_bridge::dynamic_state_u32::rasterizer_discard_enable:
+            if (!dev->second.cmd_set_rasterizer_discard_enable)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            dev->second.cmd_set_rasterizer_discard_enable(handle, value);
+            break;
+        case gpu_bridge::dynamic_state_u32::depth_bias_enable:
+            if (!dev->second.cmd_set_depth_bias_enable)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            dev->second.cmd_set_depth_bias_enable(handle, value);
+            break;
+        case gpu_bridge::dynamic_state_u32::primitive_restart_enable:
+            if (!dev->second.cmd_set_primitive_restart_enable)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            dev->second.cmd_set_primitive_restart_enable(handle, value);
+            break;
+        default:
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
         return VK_SUCCESS;
     }
 }
