@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 12;
+    inline constexpr uint32_t protocol_version = 13;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -144,6 +144,7 @@ namespace sogen::gpu_bridge
         cmd_bind_vertex_buffers2 = 0x86C,
         cmd_begin_rendering = 0x86D,
         cmd_end_rendering = 0x86E,
+        cmd_execute_commands = 0x86F,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -431,6 +432,8 @@ namespace sogen::gpu_bridge
     {
         object_id device;
         object_id command_pool;
+        uint32_t level; // VkCommandBufferLevel (0 = primary, 1 = secondary)
+        uint32_t reserved;
     };
 
     struct allocate_command_buffer_response
@@ -447,11 +450,20 @@ namespace sogen::gpu_bridge
         object_id command_buffer;
     };
 
+    // For a secondary command buffer recorded inside dynamic rendering, the begin carries the inheritance
+    // rendering info (immediately followed by `inherit_color_count` uint32 VkFormat color formats).
     struct begin_command_buffer_request
     {
         object_id command_buffer;
         uint32_t flags;
-        uint32_t reserved;
+        uint32_t is_secondary;
+        uint32_t inherit_view_mask;
+        uint32_t inherit_color_count;
+        uint32_t inherit_depth_format;          // VkFormat
+        uint32_t inherit_stencil_format;        // VkFormat
+        uint32_t inherit_rasterization_samples; // VkSampleCountFlagBits
+        uint32_t inherit_rendering_flags;       // VkRenderingFlags
+        // uint32_t inherit_color_formats[inherit_color_count];
     };
 
     struct end_command_buffer_request
@@ -1314,6 +1326,15 @@ namespace sogen::gpu_bridge
         object_id command_buffer;
     };
 
+    // record payload (command::cmd_execute_commands): header followed by `count` object_id secondary
+    // command-buffer ids to execute from this (primary) command buffer.
+    struct cmd_execute_commands_request
+    {
+        object_id command_buffer;
+        uint32_t count;
+        uint32_t reserved;
+    };
+
     struct cmd_bind_index_buffer_request
     {
         object_id command_buffer;
@@ -1505,6 +1526,9 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(rendering_attachment) == 56, "wire layout drift");
     static_assert(sizeof(cmd_begin_rendering_request) == 48, "wire layout drift");
     static_assert(sizeof(cmd_end_rendering_request) == 8, "wire layout drift");
+    static_assert(sizeof(allocate_command_buffer_request) == 24, "wire layout drift");
+    static_assert(sizeof(begin_command_buffer_request) == 40, "wire layout drift");
+    static_assert(sizeof(cmd_execute_commands_request) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");
     static_assert(sizeof(create_sampler_request) == 32, "wire layout drift");

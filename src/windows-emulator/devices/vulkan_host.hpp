@@ -97,11 +97,15 @@ namespace sogen
         int32_t create_command_pool(uint64_t device, uint32_t queue_family_index, uint32_t flags, uint64_t& out_pool);
         void destroy_command_pool(uint64_t device, uint64_t pool);
 
-        // Allocates a single primary command buffer from the pool.
-        int32_t allocate_command_buffer(uint64_t device, uint64_t pool, uint64_t& out_command_buffer);
+        // Allocates a single command buffer from the pool (level 0 = primary, 1 = secondary).
+        int32_t allocate_command_buffer(uint64_t device, uint64_t pool, uint32_t level, uint64_t& out_command_buffer);
         void free_command_buffer(uint64_t device, uint64_t pool, uint64_t command_buffer);
 
-        int32_t begin_command_buffer(uint64_t command_buffer, uint32_t flags);
+        // is_secondary supplies the dynamic-rendering inheritance (attachment formats) the secondary renders to.
+        int32_t begin_command_buffer(uint64_t command_buffer, uint32_t flags, bool is_secondary, uint32_t view_mask,
+                                     std::span<const uint32_t> color_formats, uint32_t depth_format, uint32_t stencil_format,
+                                     uint32_t rasterization_samples, uint32_t rendering_flags);
+        int32_t cmd_execute_commands(uint64_t command_buffer, std::span<const uint64_t> secondaries);
         int32_t end_command_buffer(uint64_t command_buffer);
         int32_t reset_command_pool(uint64_t device, uint64_t pool, uint32_t flags);
         int32_t reset_command_buffer(uint64_t command_buffer, uint32_t flags);

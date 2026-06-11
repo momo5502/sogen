@@ -40,6 +40,7 @@ EXPORTS
     vkCmdEndDebugUtilsLabelEXT
     vkCmdEndRenderPass
     vkCmdEndRendering
+    vkCmdExecuteCommands
     vkCmdFillBuffer
     vkCmdInsertDebugUtilsLabelEXT
     vkCmdPipelineBarrier

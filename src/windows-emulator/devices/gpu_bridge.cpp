@@ -679,7 +679,8 @@ namespace sogen
                 }
 
                 uint64_t command_buffer = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.allocate_command_buffer(request.device, request.command_pool, command_buffer);
+                const int32_t result =
+                    this->vulkan_.allocate_command_buffer(request.device, request.command_pool, request.level, command_buffer);
                 return write_output(
                     win_emu, context,
                     gpu_bridge::allocate_command_buffer_response{.vk_result = result, .reserved = 0, .command_buffer = command_buffer});
@@ -1864,7 +1865,38 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    return this->vulkan_.begin_command_buffer(req.command_buffer, req.flags);
+                    std::vector<uint32_t> color_formats;
+                    if (req.is_secondary && req.inherit_color_count > 0)
+                    {
+                        const size_t formats_bytes = static_cast<size_t>(req.inherit_color_count) * sizeof(uint32_t);
+                        if (formats_bytes > size - sizeof(req))
+                        {
+                            return vk_error_initialization_failed;
+                        }
+                        color_formats.resize(req.inherit_color_count);
+                        std::memcpy(color_formats.data(), payload + sizeof(req), formats_bytes);
+                    }
+                    return this->vulkan_.begin_command_buffer(req.command_buffer, req.flags, req.is_secondary != 0, req.inherit_view_mask,
+                                                              color_formats, req.inherit_depth_format, req.inherit_stencil_format,
+                                                              req.inherit_rasterization_samples, req.inherit_rendering_flags);
+                }
+                case gpu_bridge::command::cmd_execute_commands: {
+                    gpu_bridge::cmd_execute_commands_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const size_t ids_bytes = static_cast<size_t>(req.count) * sizeof(gpu_bridge::object_id);
+                    if (ids_bytes > size - sizeof(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::vector<uint64_t> secondaries(req.count);
+                    if (req.count > 0)
+                    {
+                        std::memcpy(secondaries.data(), payload + sizeof(req), ids_bytes);
+                    }
+                    return this->vulkan_.cmd_execute_commands(req.command_buffer, secondaries);
                 }
                 case gpu_bridge::command::end_command_buffer: {
                     gpu_bridge::end_command_buffer_request req{};

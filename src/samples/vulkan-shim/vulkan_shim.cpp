@@ -474,6 +474,7 @@ extern "C"
             gb::allocate_command_buffer_request request{};
             request.device = to_object_id(device);
             request.command_pool = to_object_id(pAllocateInfo->commandPool);
+            request.level = static_cast<uint32_t>(pAllocateInfo->level);
 
             gb::allocate_command_buffer_response response{};
             if (!bridge_call(gb::ioctl_allocate_command_buffer, &request, sizeof(request), &response, sizeof(response)) ||
@@ -509,9 +510,65 @@ extern "C"
         request.command_buffer = to_object_id(commandBuffer);
         request.flags = pBeginInfo ? pBeginInfo->flags : 0;
 
+        // A secondary command buffer carries inheritance; for dynamic rendering it has a chained
+        // VkCommandBufferInheritanceRenderingInfo describing the attachment formats it renders to.
+        const VkCommandBufferInheritanceRenderingInfo* rendering = nullptr;
+        if (pBeginInfo && pBeginInfo->pInheritanceInfo)
+        {
+            request.is_secondary = 1;
+            for (const auto* next = static_cast<const VkBaseInStructure*>(pBeginInfo->pInheritanceInfo->pNext); next; next = next->pNext)
+            {
+                if (next->sType == VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO)
+                {
+                    rendering = reinterpret_cast<const VkCommandBufferInheritanceRenderingInfo*>(next);
+                    break;
+                }
+            }
+        }
+
+        std::vector<uint8_t> message(sizeof(request));
+        if (rendering)
+        {
+            request.inherit_view_mask = rendering->viewMask;
+            request.inherit_color_count = rendering->colorAttachmentCount;
+            request.inherit_depth_format = static_cast<uint32_t>(rendering->depthAttachmentFormat);
+            request.inherit_stencil_format = static_cast<uint32_t>(rendering->stencilAttachmentFormat);
+            request.inherit_rasterization_samples = static_cast<uint32_t>(rendering->rasterizationSamples);
+            request.inherit_rendering_flags = static_cast<uint32_t>(rendering->flags);
+            message.resize(sizeof(request) + static_cast<size_t>(rendering->colorAttachmentCount) * sizeof(uint32_t));
+            std::memcpy(message.data(), &request, sizeof(request));
+            for (uint32_t i = 0; i < rendering->colorAttachmentCount; ++i)
+            {
+                const uint32_t format = static_cast<uint32_t>(rendering->pColorAttachmentFormats[i]);
+                std::memcpy(message.data() + sizeof(request) + i * sizeof(uint32_t), &format, sizeof(format));
+            }
+        }
+        else
+        {
+            std::memcpy(message.data(), &request, sizeof(request));
+        }
+
         g_command_streams[request.command_buffer].clear();
-        record_command(request.command_buffer, gb::command::begin_command_buffer, &request, sizeof(request));
+        record_command(request.command_buffer, gb::command::begin_command_buffer, message.data(), message.size());
         return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdExecuteCommands(VkCommandBuffer commandBuffer, uint32_t commandBufferCount,
+                                                                          const VkCommandBuffer* pCommandBuffers)
+    {
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
+        std::vector<uint8_t> message(sizeof(gb::cmd_execute_commands_request) +
+                                     static_cast<size_t>(commandBufferCount) * sizeof(gb::object_id));
+        gb::cmd_execute_commands_request header{};
+        header.command_buffer = command_buffer;
+        header.count = commandBufferCount;
+        std::memcpy(message.data(), &header, sizeof(header));
+        for (uint32_t i = 0; i < commandBufferCount; ++i)
+        {
+            const gb::object_id id = to_object_id(pCommandBuffers[i]);
+            std::memcpy(message.data() + sizeof(header) + i * sizeof(id), &id, sizeof(id));
+        }
+        record_command(command_buffer, gb::command::cmd_execute_commands, message.data(), message.size());
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEndCommandBuffer(VkCommandBuffer commandBuffer)
@@ -3692,6 +3749,7 @@ extern "C"
             {.name = "vkCmdBeginRenderingKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginRendering)},
             {.name = "vkCmdEndRendering", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRendering)},
             {.name = "vkCmdEndRenderingKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRendering)},
+            {.name = "vkCmdExecuteCommands", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdExecuteCommands)},
             {.name = "vkCmdBindPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindPipeline)},
             {.name = "vkCmdDraw", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDraw)},
             {.name = "vkCmdDispatch", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDispatch)},

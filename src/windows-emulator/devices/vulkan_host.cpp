@@ -231,6 +231,7 @@ namespace sogen
             PFN_vkCmdBeginRenderPass cmd_begin_render_pass{};
             PFN_vkCmdBeginRendering cmd_begin_rendering{};
             PFN_vkCmdEndRendering cmd_end_rendering{};
+            PFN_vkCmdExecuteCommands cmd_execute_commands{};
             PFN_vkCmdBindPipeline cmd_bind_pipeline{};
             PFN_vkCmdDispatch cmd_dispatch{};
             PFN_vkCmdDispatchIndirect cmd_dispatch_indirect{};
@@ -1463,6 +1464,7 @@ namespace sogen
             data.cmd_begin_render_pass = reinterpret_cast<PFN_vkCmdBeginRenderPass>(resolve("vkCmdBeginRenderPass"));
             data.cmd_begin_rendering = reinterpret_cast<PFN_vkCmdBeginRendering>(resolve("vkCmdBeginRendering"));
             data.cmd_end_rendering = reinterpret_cast<PFN_vkCmdEndRendering>(resolve("vkCmdEndRendering"));
+            data.cmd_execute_commands = reinterpret_cast<PFN_vkCmdExecuteCommands>(resolve("vkCmdExecuteCommands"));
             data.cmd_bind_pipeline = reinterpret_cast<PFN_vkCmdBindPipeline>(resolve("vkCmdBindPipeline"));
             data.cmd_dispatch = reinterpret_cast<PFN_vkCmdDispatch>(resolve("vkCmdDispatch"));
             data.cmd_dispatch_indirect = reinterpret_cast<PFN_vkCmdDispatchIndirect>(resolve("vkCmdDispatchIndirect"));
@@ -1556,7 +1558,7 @@ namespace sogen
         this->impl_->command_pools.erase(it);
     }
 
-    int32_t vulkan_host::allocate_command_buffer(uint64_t device, uint64_t pool, uint64_t& out_command_buffer)
+    int32_t vulkan_host::allocate_command_buffer(uint64_t device, uint64_t pool, uint32_t level, uint64_t& out_command_buffer)
     {
         out_command_buffer = 0;
 
@@ -1570,7 +1572,7 @@ namespace sogen
         VkCommandBufferAllocateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
         info.commandPool = pool_it->second.handle;
-        info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        info.level = (level == 1) ? VK_COMMAND_BUFFER_LEVEL_SECONDARY : VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         info.commandBufferCount = 1;
 
         VkCommandBuffer command_buffer{};
@@ -1605,7 +1607,9 @@ namespace sogen
         this->impl_->command_buffers.erase(cb);
     }
 
-    int32_t vulkan_host::begin_command_buffer(uint64_t command_buffer, uint32_t flags)
+    int32_t vulkan_host::begin_command_buffer(uint64_t command_buffer, uint32_t flags, bool is_secondary, uint32_t view_mask,
+                                              std::span<const uint32_t> color_formats, uint32_t depth_format, uint32_t stencil_format,
+                                              uint32_t rasterization_samples, uint32_t rendering_flags)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         if (cb == this->impl_->command_buffers.end())
@@ -1623,7 +1627,64 @@ namespace sogen
         info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         info.flags = flags;
 
+        // A secondary command buffer recorded inside dynamic rendering needs an inheritance chain describing
+        // the attachment formats it will render to (VkCommandBufferInheritanceRenderingInfo).
+        VkCommandBufferInheritanceInfo inheritance{};
+        VkCommandBufferInheritanceRenderingInfo rendering{};
+        std::vector<VkFormat> color_format_handles;
+        if (is_secondary)
+        {
+            color_format_handles.reserve(color_formats.size());
+            for (const uint32_t f : color_formats)
+            {
+                color_format_handles.push_back(static_cast<VkFormat>(f));
+            }
+
+            rendering.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO;
+            rendering.flags = rendering_flags;
+            rendering.viewMask = view_mask;
+            rendering.colorAttachmentCount = static_cast<uint32_t>(color_format_handles.size());
+            rendering.pColorAttachmentFormats = color_format_handles.empty() ? nullptr : color_format_handles.data();
+            rendering.depthAttachmentFormat = static_cast<VkFormat>(depth_format);
+            rendering.stencilAttachmentFormat = static_cast<VkFormat>(stencil_format);
+            rendering.rasterizationSamples =
+                rasterization_samples ? static_cast<VkSampleCountFlagBits>(rasterization_samples) : VK_SAMPLE_COUNT_1_BIT;
+
+            inheritance.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO;
+            inheritance.pNext = &rendering;
+            info.pInheritanceInfo = &inheritance;
+        }
+
         return dev->second.begin_command_buffer(cb->second.handle, &info);
+    }
+
+    int32_t vulkan_host::cmd_execute_commands(uint64_t command_buffer, std::span<const uint64_t> secondaries)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end() || secondaries.empty())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_execute_commands)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkCommandBuffer> handles;
+        handles.reserve(secondaries.size());
+        for (const uint64_t id : secondaries)
+        {
+            const auto it = this->impl_->command_buffers.find(id);
+            if (it == this->impl_->command_buffers.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            handles.push_back(it->second.handle);
+        }
+
+        dev->second.cmd_execute_commands(cb->second.handle, static_cast<uint32_t>(handles.size()), handles.data());
+        return VK_SUCCESS;
     }
 
     int32_t vulkan_host::end_command_buffer(uint64_t command_buffer)
