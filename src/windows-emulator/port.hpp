@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
+#include <string>
 #include <type_traits>
 #include <vector>
 #include <arch_emulator.hpp>
@@ -20,6 +22,133 @@ namespace sogen
     {
         class aligned_binary_writer;
     }
+
+    struct lpc_port_message
+    {
+        PORT_MESSAGE64 native{};
+        bool is_wow64{};
+
+        [[nodiscard]] ULONG data_length() const
+        {
+            return static_cast<ULONG>(native.u1.s1.DataLength);
+        }
+
+        [[nodiscard]] ULONG total_length() const
+        {
+            return static_cast<ULONG>(native.u1.s1.TotalLength);
+        }
+
+        [[nodiscard]] ULONG header_size() const
+        {
+            return total_length() - data_length();
+        }
+
+        [[nodiscard]] ULONG wire_size() const
+        {
+            return wire_size(this->is_wow64);
+        }
+
+        [[nodiscard]] static ULONG wire_size(const bool is_32_bit)
+        {
+            return is_32_bit ? static_cast<ULONG>(sizeof(PORT_MESSAGE32)) : static_cast<ULONG>(sizeof(PORT_MESSAGE64));
+        }
+
+        void write(const emulator_object<PORT_MESSAGE64>& message) const
+        {
+            if (this->is_wow64)
+            {
+                const auto wow64_message = narrow(native);
+                message.get_memory_interface()->write_memory(message.value(), &wow64_message, sizeof(wow64_message));
+                return;
+            }
+
+            message.write(native);
+        }
+
+        static lpc_port_message read(const emulator_object<PORT_MESSAGE64>& message)
+        {
+            lpc_port_message result{};
+
+            const auto prefix = emulator_object<port_message_prefix>{*message.get_memory_interface(), message.value()}.read();
+            const auto data_length = static_cast<ULONG>(prefix.DataLength);
+            const auto total_length = static_cast<ULONG>(prefix.TotalLength);
+            const auto header_size = total_length >= data_length ? total_length - data_length : 0;
+
+            if (header_size == wire_size(true))
+            {
+                const emulator_object<PORT_MESSAGE32> wow64_message{*message.get_memory_interface(), message.value()};
+                result.native = widen(wow64_message.read());
+                result.is_wow64 = true;
+            }
+            else if (header_size == wire_size(false))
+            {
+                result.native = message.read();
+            }
+            else
+            {
+                throw std::runtime_error("Unexpected LPC header size");
+            }
+
+            return result;
+        }
+
+      private:
+        struct port_message_prefix
+        {
+            CSHORT DataLength;
+            CSHORT TotalLength;
+            CSHORT Type;
+            CSHORT DataInfoOffset;
+        };
+
+        template <typename T, typename U>
+        static T narrow(const U value, const char* field_name)
+        {
+            if constexpr (sizeof(T) < sizeof(U))
+            {
+                if (value > static_cast<U>(std::numeric_limits<T>::max()))
+                {
+                    throw std::runtime_error(std::string(field_name) + " does not fit in WOW64 LPC header");
+                }
+            }
+
+            return static_cast<T>(value);
+        }
+
+        static PORT_MESSAGE32 narrow(const PORT_MESSAGE64& message)
+        {
+            PORT_MESSAGE32 result{};
+
+            result.u1.s1.DataLength = message.u1.s1.DataLength;
+            result.u1.s1.TotalLength = message.u1.s1.TotalLength;
+            result.u2.s2.Type = message.u2.s2.Type;
+            result.u2.s2.DataInfoOffset = message.u2.s2.DataInfoOffset;
+            result.ClientId.UniqueProcess =
+                narrow<EmulatorTraits<Emu32>::HANDLE>(message.ClientId.UniqueProcess, "LPC ClientId.UniqueProcess");
+            result.ClientId.UniqueThread =
+                narrow<EmulatorTraits<Emu32>::HANDLE>(message.ClientId.UniqueThread, "LPC ClientId.UniqueThread");
+            result.MessageId = message.MessageId;
+            result.ClientViewSize = narrow<EmulatorTraits<Emu32>::SIZE_T>(message.ClientViewSize, "LPC ClientViewSize");
+
+            return result;
+        }
+
+        static PORT_MESSAGE64 widen(const PORT_MESSAGE32& message)
+        {
+            PORT_MESSAGE64 result{};
+
+            result.u1.s1.DataLength = message.u1.s1.DataLength;
+            result.u1.s1.TotalLength = message.u1.s1.TotalLength;
+            result.u2.s2.Type = message.u2.s2.Type;
+            result.u2.s2.DataInfoOffset = message.u2.s2.DataInfoOffset;
+            result.ClientId.UniqueProcess = message.ClientId.UniqueProcess;
+            result.ClientId.UniqueThread = message.ClientId.UniqueThread;
+            result.MessageId = message.MessageId;
+            result.ClientViewSize = message.ClientViewSize;
+
+            return result;
+        }
+    };
 
     struct lpc_message_context
     {
@@ -111,17 +240,17 @@ namespace sogen
     struct lpc_message_result
     {
         NTSTATUS status{};
-        PORT_MESSAGE64 message{};
+        lpc_port_message message{};
         std::vector<uint8_t> payload{};
 
         [[nodiscard]] ULONG total_length() const
         {
-            if (message.u1.s1.TotalLength != 0)
+            if (message.native.u1.s1.TotalLength != 0)
             {
-                return static_cast<ULONG>(message.u1.s1.TotalLength);
+                return message.total_length();
             }
 
-            return static_cast<ULONG>(sizeof(message) + payload.size());
+            return static_cast<ULONG>(message.wire_size() + payload.size());
         }
 
         void serialize(utils::buffer_serializer& buffer) const
@@ -247,6 +376,11 @@ namespace sogen
         {
             this->assert_validity();
             return this->port_name_;
+        }
+
+        bool has_pending_reply() const
+        {
+            return !reply_queue_.empty();
         }
 
       private:

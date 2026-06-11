@@ -125,6 +125,16 @@ namespace sogen
                 break;
             }
 
+            case handle_types::port: {
+                const auto* p = c.ports.get(h);
+                if (p && p->has_pending_reply())
+                {
+                    return wait_state::signaled;
+                }
+
+                break;
+            }
+
             case handle_types::thread: {
                 const auto* t = c.threads.get(h);
                 if (t && t->is_terminated())
@@ -201,6 +211,16 @@ namespace sogen
                 return wait_state::signaled;
             }
 
+            case handle_types::port: {
+                auto* port = c.ports.get(h);
+                if (!port || !port->has_pending_reply())
+                {
+                    return std::nullopt;
+                }
+
+                return wait_state::signaled;
+            }
+
             case handle_types::thread: {
                 const auto* thread = c.threads.get(h);
                 if (!thread || !thread->is_terminated())
@@ -213,6 +233,37 @@ namespace sogen
 
             default:
                 throw std::runtime_error("Bad object: " + std::to_string(h.value.type));
+            }
+        }
+
+        uint32_t get_message_queue_status_bits(const msg& queued_message)
+        {
+            switch (queued_message.message)
+            {
+            case WM_TIMER:
+                return QS_TIMER;
+
+            case WM_PAINT:
+                return QS_PAINT;
+
+            case WM_KEYDOWN:
+            case WM_KEYUP:
+                return QS_KEY;
+
+            default:
+                return QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
+            }
+        }
+
+        template <typename F>
+        void for_each_queue_status_bit(uint32_t mask, F&& callback)
+        {
+            while (mask != 0)
+            {
+                const auto bit = mask & (0 - mask);
+                const auto index = std::countr_zero(bit);
+                callback(bit, index);
+                mask &= ~bit;
             }
         }
     }
@@ -485,6 +536,7 @@ namespace sogen
         this->await_time = {};
         this->await_objects = {};
         this->await_msg = {};
+        this->await_msg_mask = {};
         this->await_io_completion = {};
 
         // TODO: Find out if this is correct
@@ -494,6 +546,138 @@ namespace sogen
         }
 
         this->waiting_for_alert = false;
+    }
+
+    user_timer* emulator_thread::find_user_timer(const hwnd hwnd, const uint64_t timer_id)
+    {
+        const auto it = this->user_timers.find(user_timer_key{
+            .hwnd = hwnd,
+            .timer_id = timer_id,
+        });
+
+        if (it == this->user_timers.end())
+        {
+            return nullptr;
+        }
+
+        return &it->second;
+    }
+
+    user_timer& emulator_thread::create_user_timer(process_context& process, const hwnd hwnd, uint64_t timer_id, const uint64_t timer_proc,
+                                                   const std::chrono::milliseconds interval,
+                                                   const std::chrono::steady_clock::time_point now)
+    {
+        if (hwnd == 0)
+        {
+            timer_id = this->next_user_timer_id;
+            while (this->user_timers.contains(user_timer_key{
+                .hwnd = 0,
+                .timer_id = timer_id,
+            }))
+            {
+                ++timer_id;
+                if (timer_id == 0)
+                {
+                    timer_id = 1;
+                }
+            }
+            this->next_user_timer_id = timer_id + 1;
+            if (this->next_user_timer_id == 0)
+            {
+                this->next_user_timer_id = 1;
+            }
+        }
+        else if (const auto* window = process.windows.get(hwnd); window->thread_id != this->id)
+        {
+            throw std::runtime_error("Attempted to create a user timer in a thread that doesn't own the target window");
+        }
+
+        user_timer timer{};
+        timer.hwnd = hwnd;
+        timer.timer_id = timer_id;
+        timer.timer_proc = timer_proc;
+        timer.interval = interval;
+        timer.due_time = now + interval;
+
+        const auto [it, inserted] = this->user_timers.emplace(
+            user_timer_key{
+                .hwnd = hwnd,
+                .timer_id = timer_id,
+            },
+            std::move(timer));
+
+        if (!inserted)
+        {
+            throw std::runtime_error("User timer already exists");
+        }
+
+        return it->second;
+    }
+
+    bool emulator_thread::delete_user_timer(const hwnd hwnd, const uint64_t timer_id)
+    {
+        const auto it = this->user_timers.find(user_timer_key{
+            .hwnd = hwnd,
+            .timer_id = timer_id,
+        });
+
+        if (it == this->user_timers.end())
+        {
+            return false;
+        }
+
+        this->user_timers.erase(it);
+        return true;
+    }
+
+    bool emulator_thread::synthesize_due_user_timer(utils::clock& clock, const hwnd hwnd_filter, const UINT filter_min,
+                                                    const UINT filter_max)
+    {
+        const auto now = clock.steady_now();
+        for (auto& user_timer : this->user_timers | std::views::values)
+        {
+            if (!user_timer.due_time.has_value() || user_timer.due_time.value() > now)
+            {
+                continue;
+            }
+
+            msg timer_message{};
+            timer_message.window = user_timer.hwnd;
+            timer_message.message = WM_TIMER;
+            timer_message.wParam = user_timer.timer_id;
+            timer_message.lParam = user_timer.timer_proc;
+
+            if (hwnd_filter != 0 && hwnd_filter != static_cast<hwnd>(-1) && timer_message.window != hwnd_filter)
+            {
+                continue;
+            }
+
+            if (hwnd_filter == static_cast<hwnd>(-1) && timer_message.window != 0)
+            {
+                continue;
+            }
+
+            if ((filter_min != 0 || filter_max != 0) && (timer_message.message < filter_min || timer_message.message > filter_max))
+            {
+                continue;
+            }
+
+            this->post_message(timer_message);
+            user_timer.due_time = now + user_timer.interval;
+            return true;
+        }
+
+        return false;
+    }
+
+    uint32_t emulator_thread::get_message_queue_status(utils::clock& clock)
+    {
+        if (this->await_msg_mask && (*this->await_msg_mask & QS_TIMER) != 0)
+        {
+            (void)this->synthesize_due_user_timer(clock);
+        }
+
+        return this->message_queue_status_bits;
     }
 
     namespace
@@ -523,9 +707,11 @@ namespace sogen
         }
     }
 
-    std::optional<msg> emulator_thread::peek_pending_message(const process_context& process, hwnd hwnd_filter, UINT filter_min,
-                                                             UINT filter_max, bool remove)
+    std::optional<msg> emulator_thread::peek_pending_message(const process_context& process, utils::clock& clock, hwnd hwnd_filter,
+                                                             UINT filter_min, UINT filter_max, bool remove)
     {
+        (void)this->synthesize_due_user_timer(clock, hwnd_filter, filter_min, filter_max);
+
         for (auto it = message_queue.begin(); it != message_queue.end(); ++it)
         {
             if (hwnd_filter == static_cast<hwnd>(-1))
@@ -548,15 +734,38 @@ namespace sogen
             auto msg = *it;
             if (remove)
             {
+                const auto removed_bits = get_message_queue_status_bits(msg);
+
+                for_each_queue_status_bit(removed_bits, [this](const uint32_t bit, const size_t index) {
+                    if (this->message_queue_status_bit_counts[index] <= 1)
+                    {
+                        this->message_queue_status_bit_counts[index] = 0;
+                        this->message_queue_status_bits &= ~bit;
+                    }
+                    else
+                    {
+                        --this->message_queue_status_bit_counts[index];
+                    }
+                });
+
                 message_queue.erase(it);
             }
             return msg;
         }
+
         return std::nullopt;
     }
 
     void emulator_thread::post_message(const msg& msg)
     {
+        const auto bits = get_message_queue_status_bits(msg);
+
+        for_each_queue_status_bit(bits, [this](const uint32_t /*bit*/, const size_t index) { //
+            ++this->message_queue_status_bit_counts[index];
+        });
+
+        this->message_queue_status_bits |= bits;
+        this->queue_status_changed_bits |= bits;
         message_queue.push_back(msg);
     }
 
@@ -572,6 +781,16 @@ namespace sogen
             return false;
         }
 
+        const auto complete_if_timed_out = [&](const NTSTATUS status) {
+            if (!this->is_await_time_over(clock) || this->has_pending_alertable_apc())
+            {
+                return false;
+            }
+
+            this->mark_as_ready(status);
+            return true;
+        };
+
         if (this->waiting_for_alert)
         {
             if (this->alerted)
@@ -579,46 +798,64 @@ namespace sogen
                 this->mark_as_ready(STATUS_ALERTED);
                 return true;
             }
-            if (this->is_await_time_over(clock))
+
+            return complete_if_timed_out(STATUS_TIMEOUT);
+        }
+
+        if (this->await_msg_mask.has_value() || !this->await_objects.empty())
+        {
+            bool all_signaled = this->await_objects.empty();
+            std::optional<uint32_t> abandoned_index{};
+
+            if (!this->await_objects.empty())
             {
-                this->mark_as_ready(STATUS_TIMEOUT);
+                all_signaled = true;
+                for (uint32_t i = 0; i < this->await_objects.size(); ++i)
+                {
+                    const auto& obj = this->await_objects[i];
+
+                    const auto state = observe_object_signal(process, obj, this->id);
+                    const auto signaled = state != wait_state::not_signaled;
+                    all_signaled &= signaled;
+
+                    if (state == wait_state::abandoned && !abandoned_index.has_value())
+                    {
+                        abandoned_index = i;
+                    }
+
+                    if (signaled && this->await_any)
+                    {
+                        const auto consumed_state = consume_object_signal(process, obj, this->id);
+                        if (!consumed_state.has_value())
+                        {
+                            throw std::runtime_error("Failed to consume object signal!");
+                        }
+
+                        if (this->await_msg_mask.has_value())
+                        {
+                            this->queue_status_changed_bits |= QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
+                        }
+
+                        this->mark_as_ready(*consumed_state == wait_state::abandoned ? (STATUS_ABANDONED_WAIT_0 + i) : (STATUS_WAIT_0 + i));
+                        return true;
+                    }
+                }
+            }
+
+            bool message_ready = false;
+            if (this->await_msg_mask.has_value())
+            {
+                const auto current_message_bits = this->get_message_queue_status(clock);
+                message_ready = (current_message_bits & *this->await_msg_mask) != 0;
+            }
+
+            if (this->await_msg_mask.has_value() && message_ready && (this->await_any || this->await_objects.empty()))
+            {
+                this->mark_as_ready(static_cast<NTSTATUS>(STATUS_WAIT_0 + this->await_objects.size()));
                 return true;
             }
 
-            return false;
-        }
-
-        if (!this->await_objects.empty())
-        {
-            bool all_signaled = true;
-            std::optional<uint32_t> abandoned_index{};
-            for (uint32_t i = 0; i < this->await_objects.size(); ++i)
-            {
-                const auto& obj = this->await_objects[i];
-
-                const auto state = observe_object_signal(process, obj, this->id);
-                const auto signaled = state != wait_state::not_signaled;
-                all_signaled &= signaled;
-
-                if (state == wait_state::abandoned && !abandoned_index.has_value())
-                {
-                    abandoned_index = i;
-                }
-
-                if (signaled && this->await_any)
-                {
-                    const auto consumed_state = consume_object_signal(process, obj, this->id);
-                    if (!consumed_state.has_value())
-                    {
-                        throw std::runtime_error("Failed to consume object signal!");
-                    }
-
-                    this->mark_as_ready(*consumed_state == wait_state::abandoned ? (STATUS_ABANDONED_WAIT_0 + i) : (STATUS_WAIT_0 + i));
-                    return true;
-                }
-            }
-
-            if (!this->await_any && all_signaled)
+            if (!this->await_any && all_signaled && (!this->await_msg_mask.has_value() || message_ready))
             {
                 for (const auto& obj : this->await_objects)
                 {
@@ -633,24 +870,12 @@ namespace sogen
                 return true;
             }
 
-            if (this->is_await_time_over(clock) && !this->has_pending_alertable_apc())
-            {
-                this->mark_as_ready(STATUS_TIMEOUT);
-                return true;
-            }
-
-            return false;
+            return complete_if_timed_out(STATUS_TIMEOUT);
         }
 
         if (this->await_time.has_value())
         {
-            if (this->is_await_time_over(clock) && !this->has_pending_alertable_apc())
-            {
-                this->mark_as_ready(STATUS_SUCCESS);
-                return true;
-            }
-
-            return false;
+            return complete_if_timed_out(STATUS_SUCCESS);
         }
 
         if (this->await_io_completion.has_value())
@@ -720,7 +945,7 @@ namespace sogen
 
         if (this->await_msg.has_value())
         {
-            if (const auto m = this->peek_pending_message(process, this->await_msg->hwnd_filter, this->await_msg->filter_min,
+            if (const auto m = this->peek_pending_message(process, clock, this->await_msg->hwnd_filter, this->await_msg->filter_min,
                                                           this->await_msg->filter_max, true))
             {
                 this->await_msg->message.write(*m);

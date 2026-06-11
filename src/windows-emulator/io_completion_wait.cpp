@@ -30,6 +30,11 @@ namespace sogen
                     return semaphore && semaphore->current_count > 0;
                 }
 
+                case handle_types::port: {
+                    const auto* port = process.ports.get(target_object_handle);
+                    return port != nullptr && port->has_pending_reply();
+                }
+
                 case handle_types::mutant: {
                     const auto* mutant = process.mutants.get(target_object_handle);
                     return mutant && mutant->locked_count == 0;
@@ -79,6 +84,7 @@ namespace sogen
             case handle_types::event:
             case handle_types::thread:
             case handle_types::semaphore:
+            case handle_types::port:
             case handle_types::mutant:
             case handle_types::timer:
                 return true;

@@ -330,6 +330,8 @@ namespace sogen
         void deserialize(utils::buffer_deserializer& buffer);
 
         generic_handle_store* get_handle_store(handle handle);
+        emulator_thread* find_thread_by_id(uint32_t thread_id);
+        const emulator_thread* find_thread_by_id(uint32_t thread_id) const;
         bool is_current_process_handle(handle handle) const;
         bool is_current_thread_handle(handle handle) const;
         bool is_object_pseudo_handle(handle handle) const;
@@ -402,6 +404,7 @@ namespace sogen
         user_handle_store<handle_types::window, window> windows{user_handles};
         handle_store<handle_types::timer, timer> timers{};
         handle_store<handle_types::registry, registry_key, 2> registry_keys{};
+        std::map<uint32_t, handle> thread_handles_by_id{};
         std::map<uint16_t, atom_entry> atoms{};
         utils::insensitive_u16string_map<class_entry> classes{};
 

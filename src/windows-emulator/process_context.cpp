@@ -712,6 +712,11 @@ namespace sogen
         }
 
         buffer.read(this->threads);
+        this->thread_handles_by_id.clear();
+        for (const auto& [index, thread] : this->threads)
+        {
+            this->thread_handles_by_id[thread.id] = this->threads.make_handle(index);
+        }
 
         this->active_thread = this->threads.get(buffer.read<uint64_t>());
     }
@@ -759,6 +764,46 @@ namespace sogen
         }
     }
 
+    emulator_thread* process_context::find_thread_by_id(const uint32_t thread_id)
+    {
+        if (const auto cached = this->thread_handles_by_id.find(thread_id); cached != this->thread_handles_by_id.end())
+        {
+            if (auto* thread = this->threads.get(cached->second))
+            {
+                if (thread->id == thread_id)
+                {
+                    return thread;
+                }
+            }
+
+            this->thread_handles_by_id.erase(cached);
+        }
+
+        for (auto& [index, thread] : this->threads)
+        {
+            if (thread.id == thread_id)
+            {
+                this->thread_handles_by_id[thread_id] = this->threads.make_handle(index);
+                return &thread;
+            }
+        }
+
+        return nullptr;
+    }
+
+    const emulator_thread* process_context::find_thread_by_id(const uint32_t thread_id) const
+    {
+        for (const auto& thread : this->threads | std::views::values)
+        {
+            if (thread.id == thread_id)
+            {
+                return &thread;
+            }
+        }
+
+        return nullptr;
+    }
+
     // NOLINTNEXTLINE(cert-dcl50-cpp,readability-convert-member-functions-to-static)
     bool process_context::is_current_process_handle(const handle handle) const
     {
@@ -802,6 +847,7 @@ namespace sogen
     {
         emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, ++this->spawned_thread_count, initial_thread};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
+        this->thread_handles_by_id[thr->id] = h;
         this->callbacks_->on_thread_create(h, *thr);
         return h;
     }

@@ -308,6 +308,7 @@ namespace sogen
 
             if (!io_completion_wait::is_wait_completion_target_type(resolved_target_handle))
             {
+                c.win_emu.log.error("Wait handle type not supported!\n");
                 return STATUS_OBJECT_TYPE_MISMATCH;
             }
 
@@ -322,6 +323,8 @@ namespace sogen
                     return c.proc.threads.get(resolved_target_handle) != nullptr;
                 case handle_types::semaphore:
                     return c.proc.semaphores.get(resolved_target_handle) != nullptr;
+                case handle_types::port:
+                    return c.proc.ports.get(resolved_target_handle) != nullptr;
                 case handle_types::mutant:
                     return c.proc.mutants.get(resolved_target_handle) != nullptr;
                 case handle_types::timer:
