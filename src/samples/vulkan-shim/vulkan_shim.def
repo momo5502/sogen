@@ -21,6 +21,7 @@ EXPORTS
     vkCmdBindVertexBuffers
     vkCmdClearColorImage
     vkCmdClearDepthStencilImage
+    vkCmdCopyBuffer
     vkCmdCopyBufferToImage
     vkCmdCopyBufferToImage2
     vkCmdCopyImageToBuffer
@@ -36,6 +37,7 @@ EXPORTS
     vkCmdPipelineBarrier
     vkCmdPushConstants
     vkCreateBuffer
+    vkCreateBufferView
     vkCreateCommandPool
     vkCreateDebugUtilsMessengerEXT
     vkCreateDescriptorPool
@@ -54,6 +56,7 @@ EXPORTS
     vkCreateSwapchainKHR
     vkCreateWin32SurfaceKHR
     vkDestroyBuffer
+    vkDestroyBufferView
     vkDestroyCommandPool
     vkDestroyDebugUtilsMessengerEXT
     vkDestroyDescriptorPool
@@ -74,6 +77,8 @@ EXPORTS
     vkDeviceWaitIdle
     vkEndCommandBuffer
     vkEnumerateDeviceExtensionProperties
+    vkFlushMappedMemoryRanges
+    vkInvalidateMappedMemoryRanges
     vkEnumerateInstanceExtensionProperties
     vkEnumerateInstanceLayerProperties
     vkEnumerateInstanceVersion

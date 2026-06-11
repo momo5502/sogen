@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 7;
+    inline constexpr uint32_t protocol_version = 8;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -130,6 +130,9 @@ namespace sogen::gpu_bridge
         cmd_dispatch_indirect = 0x85E,
         cmd_clear_depth_stencil_image = 0x85F,
         get_image_subresource_layout = 0x860,
+        cmd_copy_buffer = 0x861,
+        create_buffer_view = 0x862,
+        destroy_buffer_view = 0x863,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -180,6 +183,8 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_destroy_shader_module = make_ioctl(static_cast<uint32_t>(command::destroy_shader_module));
     inline constexpr uint32_t ioctl_create_image_view = make_ioctl(static_cast<uint32_t>(command::create_image_view));
     inline constexpr uint32_t ioctl_destroy_image_view = make_ioctl(static_cast<uint32_t>(command::destroy_image_view));
+    inline constexpr uint32_t ioctl_create_buffer_view = make_ioctl(static_cast<uint32_t>(command::create_buffer_view));
+    inline constexpr uint32_t ioctl_destroy_buffer_view = make_ioctl(static_cast<uint32_t>(command::destroy_buffer_view));
     inline constexpr uint32_t ioctl_create_render_pass = make_ioctl(static_cast<uint32_t>(command::create_render_pass));
     inline constexpr uint32_t ioctl_destroy_render_pass = make_ioctl(static_cast<uint32_t>(command::destroy_render_pass));
     inline constexpr uint32_t ioctl_create_framebuffer = make_ioctl(static_cast<uint32_t>(command::create_framebuffer));
@@ -984,6 +989,35 @@ namespace sogen::gpu_bridge
         uint32_t aspect_mask; // VkImageAspectFlags (COLOR for color targets, DEPTH for depth); 0 => COLOR
     };
 
+    // out = object_response (a VkBufferView)
+    struct create_buffer_view_request
+    {
+        object_id device;
+        object_id buffer;
+        uint32_t format; // VkFormat
+        uint32_t reserved;
+        uint64_t offset; // VkDeviceSize
+        uint64_t range;  // VkDeviceSize (VK_WHOLE_SIZE allowed)
+    };
+
+    // One source/destination/size triple of a buffer-to-buffer copy (trailing element of cmd_copy_buffer).
+    struct buffer_copy_region
+    {
+        uint64_t src_offset; // VkDeviceSize
+        uint64_t dst_offset; // VkDeviceSize
+        uint64_t size;       // VkDeviceSize
+    };
+
+    // record payload (command::cmd_copy_buffer): header immediately followed by `region_count` buffer_copy_region entries.
+    struct cmd_copy_buffer_request
+    {
+        object_id command_buffer;
+        object_id src_buffer;
+        object_id dst_buffer;
+        uint32_t region_count;
+        uint32_t reserved;
+    };
+
     // out = object_response
     struct create_render_pass_request
     {
@@ -1312,6 +1346,9 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_clear_depth_stencil_image_request) == 56, "wire layout drift");
     static_assert(sizeof(get_image_subresource_layout_request) == 32, "wire layout drift");
     static_assert(sizeof(get_image_subresource_layout_response) == 48, "wire layout drift");
+    static_assert(sizeof(create_buffer_view_request) == 40, "wire layout drift");
+    static_assert(sizeof(buffer_copy_region) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_copy_buffer_request) == 32, "wire layout drift");
     static_assert(sizeof(vertex_buffer_binding) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");

@@ -1074,6 +1074,59 @@ extern "C"
         g_mapped_ranges.erase(it);
     }
 
+    // The bridge models a map as a private staging copy synced by download (map) / upload (unmap). DXVK may
+    // instead keep a persistent mapping and explicitly flush, so honor flush by re-uploading the staging
+    // copy and invalidate by re-downloading it. (Host-coherent memory makes these no-ops on a real driver.)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkFlushMappedMemoryRanges(VkDevice device, uint32_t memoryRangeCount,
+                                                                                   const VkMappedMemoryRange* pMemoryRanges)
+    {
+        for (uint32_t i = 0; i < memoryRangeCount; ++i)
+        {
+            const gb::object_id mem_id = to_object_id(pMemoryRanges[i].memory);
+            const auto it = g_mapped_ranges.find(mem_id);
+            if (it == g_mapped_ranges.end() || it->second.staging.empty())
+            {
+                continue;
+            }
+
+            std::vector<uint8_t> message(sizeof(gb::upload_memory_request) + it->second.staging.size());
+            gb::upload_memory_request header{};
+            header.device = to_object_id(device);
+            header.memory = mem_id;
+            header.offset = it->second.offset;
+            header.size = it->second.size;
+            std::memcpy(message.data(), &header, sizeof(header));
+            std::memcpy(message.data() + sizeof(header), it->second.staging.data(), it->second.staging.size());
+
+            gb::result_response response{};
+            bridge_call(gb::ioctl_upload_memory, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response));
+        }
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkInvalidateMappedMemoryRanges(VkDevice device, uint32_t memoryRangeCount,
+                                                                                        const VkMappedMemoryRange* pMemoryRanges)
+    {
+        for (uint32_t i = 0; i < memoryRangeCount; ++i)
+        {
+            const gb::object_id mem_id = to_object_id(pMemoryRanges[i].memory);
+            const auto it = g_mapped_ranges.find(mem_id);
+            if (it == g_mapped_ranges.end() || it->second.staging.empty())
+            {
+                continue;
+            }
+
+            gb::download_memory_request request{};
+            request.device = to_object_id(device);
+            request.memory = mem_id;
+            request.offset = it->second.offset;
+            request.size = it->second.size;
+            bridge_call(gb::ioctl_download_memory, &request, sizeof(request), it->second.staging.data(),
+                        static_cast<DWORD>(it->second.staging.size()));
+        }
+        return VK_SUCCESS;
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateBuffer(VkDevice device, const VkBufferCreateInfo* pCreateInfo,
                                                                         const VkAllocationCallbacks*, VkBuffer* pBuffer)
     {
@@ -1106,6 +1159,90 @@ extern "C"
         request.device = to_object_id(device);
         request.buffer = to_object_id(buffer);
         bridge_call(gb::ioctl_destroy_buffer, &request, sizeof(request), nullptr, 0);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateBufferView(VkDevice device, const VkBufferViewCreateInfo* pCreateInfo,
+                                                                            const VkAllocationCallbacks*, VkBufferView* pView)
+    {
+        gb::create_buffer_view_request request{};
+        request.device = to_object_id(device);
+        request.buffer = to_object_id(pCreateInfo->buffer);
+        request.format = static_cast<uint32_t>(pCreateInfo->format);
+        request.offset = pCreateInfo->offset;
+        request.range = pCreateInfo->range;
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_buffer_view, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        *pView = to_handle<VkBufferView>(response.object);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyBufferView(VkDevice device, VkBufferView bufferView,
+                                                                         const VkAllocationCallbacks*)
+    {
+        if (!bufferView)
+        {
+            return;
+        }
+        gb::device_child_request request{};
+        request.device = to_object_id(device);
+        request.object = to_object_id(bufferView);
+        bridge_call(gb::ioctl_destroy_buffer_view, &request, sizeof(request), nullptr, 0);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyBuffer(VkCommandBuffer commandBuffer, VkBuffer srcBuffer, VkBuffer dstBuffer,
+                                                                     uint32_t regionCount, const VkBufferCopy* pRegions)
+    {
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
+        std::vector<uint8_t> message(sizeof(gb::cmd_copy_buffer_request) +
+                                     static_cast<size_t>(regionCount) * sizeof(gb::buffer_copy_region));
+        gb::cmd_copy_buffer_request header{};
+        header.command_buffer = command_buffer;
+        header.src_buffer = to_object_id(srcBuffer);
+        header.dst_buffer = to_object_id(dstBuffer);
+        header.region_count = regionCount;
+        std::memcpy(message.data(), &header, sizeof(header));
+        for (uint32_t i = 0; i < regionCount; ++i)
+        {
+            gb::buffer_copy_region region{};
+            region.src_offset = pRegions[i].srcOffset;
+            region.dst_offset = pRegions[i].dstOffset;
+            region.size = pRegions[i].size;
+            std::memcpy(message.data() + sizeof(header) + i * sizeof(region), &region, sizeof(region));
+        }
+        record_command(command_buffer, gb::command::cmd_copy_buffer, message.data(), message.size());
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyBuffer2(VkCommandBuffer commandBuffer,
+                                                                      const VkCopyBufferInfo2* pCopyBufferInfo)
+    {
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
+        const uint32_t regionCount = pCopyBufferInfo->regionCount;
+        std::vector<uint8_t> message(sizeof(gb::cmd_copy_buffer_request) +
+                                     static_cast<size_t>(regionCount) * sizeof(gb::buffer_copy_region));
+        gb::cmd_copy_buffer_request header{};
+        header.command_buffer = command_buffer;
+        header.src_buffer = to_object_id(pCopyBufferInfo->srcBuffer);
+        header.dst_buffer = to_object_id(pCopyBufferInfo->dstBuffer);
+        header.region_count = regionCount;
+        std::memcpy(message.data(), &header, sizeof(header));
+        for (uint32_t i = 0; i < regionCount; ++i)
+        {
+            gb::buffer_copy_region region{};
+            region.src_offset = pCopyBufferInfo->pRegions[i].srcOffset;
+            region.dst_offset = pCopyBufferInfo->pRegions[i].dstOffset;
+            region.size = pCopyBufferInfo->pRegions[i].size;
+            std::memcpy(message.data() + sizeof(header) + i * sizeof(region), &region, sizeof(region));
+        }
+        record_command(command_buffer, gb::command::cmd_copy_buffer, message.data(), message.size());
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetBufferMemoryRequirements(VkDevice device, VkBuffer buffer,
@@ -3229,6 +3366,13 @@ extern "C"
             {.name = "vkUnmapMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkUnmapMemory)},
             {.name = "vkCreateBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateBuffer)},
             {.name = "vkDestroyBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyBuffer)},
+            {.name = "vkCreateBufferView", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateBufferView)},
+            {.name = "vkDestroyBufferView", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyBufferView)},
+            {.name = "vkCmdCopyBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBuffer)},
+            {.name = "vkCmdCopyBuffer2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBuffer2)},
+            {.name = "vkCmdCopyBuffer2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBuffer2)},
+            {.name = "vkFlushMappedMemoryRanges", .func = reinterpret_cast<PFN_vkVoidFunction>(vkFlushMappedMemoryRanges)},
+            {.name = "vkInvalidateMappedMemoryRanges", .func = reinterpret_cast<PFN_vkVoidFunction>(vkInvalidateMappedMemoryRanges)},
             {.name = "vkGetBufferMemoryRequirements", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements)},
             {.name = "vkGetBufferMemoryRequirements2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements2)},
             {.name = "vkGetBufferMemoryRequirements2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements2)},

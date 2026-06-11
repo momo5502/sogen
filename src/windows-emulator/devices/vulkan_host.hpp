@@ -165,6 +165,14 @@ namespace sogen
             uint32_t layer_count;
         };
 
+        // One region of a buffer-to-buffer copy (a VkBufferCopy as plain integers).
+        struct buffer_copy
+        {
+            uint64_t src_offset;
+            uint64_t dst_offset;
+            uint64_t size;
+        };
+
         // Creates a 2D, single-mip, single-layer image (initial layout UNDEFINED). samples selects the
         // multisample count (1 = no MSAA).
         int32_t create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,
@@ -234,6 +242,9 @@ namespace sogen
         // aspect_mask selects COLOR vs DEPTH (0 defaults to COLOR).
         int32_t create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask, uint64_t& out_view);
         void destroy_image_view(uint64_t device, uint64_t image_view);
+        int32_t create_buffer_view(uint64_t device, uint64_t buffer, uint32_t format, uint64_t offset, uint64_t range, uint64_t& out_view);
+        void destroy_buffer_view(uint64_t device, uint64_t buffer_view);
+        int32_t cmd_copy_buffer(uint64_t command_buffer, uint64_t src_buffer, uint64_t dst_buffer, std::span<const buffer_copy> regions);
 
         // One color attachment + an optional depth attachment (depth_format == 0 => color only), single
         // subpass (initial/final layouts as given; PRESENT_SRC_KHR is mapped to TRANSFER_SRC_OPTIMAL).

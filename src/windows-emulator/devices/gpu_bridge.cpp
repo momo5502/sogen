@@ -142,6 +142,10 @@ namespace sogen
                     return handle_create_image_view(win_emu, context);
                 case gpu_bridge::ioctl_destroy_image_view:
                     return handle_destroy_image_view(win_emu, context);
+                case gpu_bridge::ioctl_create_buffer_view:
+                    return handle_create_buffer_view(win_emu, context);
+                case gpu_bridge::ioctl_destroy_buffer_view:
+                    return handle_destroy_buffer_view(win_emu, context);
                 case gpu_bridge::ioctl_create_render_pass:
                     return handle_create_render_pass(win_emu, context);
                 case gpu_bridge::ioctl_destroy_render_pass:
@@ -1414,6 +1418,28 @@ namespace sogen
                 this->vulkan_.destroy_image_view(request.device, request.object);
                 return STATUS_SUCCESS;
             }
+            NTSTATUS handle_create_buffer_view(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_buffer_view_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                uint64_t view = gpu_bridge::null_object;
+                const int32_t result =
+                    this->vulkan_.create_buffer_view(request.device, request.buffer, request.format, request.offset, request.range, view);
+                return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = view});
+            }
+            NTSTATUS handle_destroy_buffer_view(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                this->vulkan_.destroy_buffer_view(request.device, request.object);
+                return STATUS_SUCCESS;
+            }
 
             NTSTATUS handle_create_render_pass(windows_emulator& win_emu, const io_device_context& context)
             {
@@ -1792,6 +1818,26 @@ namespace sogen
                         return vk_error_initialization_failed;
                     }
                     return this->vulkan_.cmd_bind_pipeline(req.command_buffer, req.pipeline, req.bind_point);
+                }
+                case gpu_bridge::command::cmd_copy_buffer: {
+                    gpu_bridge::cmd_copy_buffer_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const size_t regions_bytes = static_cast<size_t>(req.region_count) * sizeof(gpu_bridge::buffer_copy_region);
+                    if (regions_bytes > size - sizeof(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::vector<vulkan_host::buffer_copy> regions(req.region_count);
+                    for (uint32_t i = 0; i < req.region_count; ++i)
+                    {
+                        gpu_bridge::buffer_copy_region r{};
+                        std::memcpy(&r, payload + sizeof(req) + i * sizeof(r), sizeof(r));
+                        regions[i] = vulkan_host::buffer_copy{.src_offset = r.src_offset, .dst_offset = r.dst_offset, .size = r.size};
+                    }
+                    return this->vulkan_.cmd_copy_buffer(req.command_buffer, req.src_buffer, req.dst_buffer, regions);
                 }
                 case gpu_bridge::command::cmd_dispatch: {
                     gpu_bridge::cmd_dispatch_request req{};

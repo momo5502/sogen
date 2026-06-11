@@ -195,12 +195,15 @@ namespace sogen
             PFN_vkCmdClearDepthStencilImage cmd_clear_depth_stencil_image{};
             PFN_vkCmdCopyImageToBuffer cmd_copy_image_to_buffer{};
             PFN_vkCmdCopyBufferToImage cmd_copy_buffer_to_image{};
+            PFN_vkCmdCopyBuffer cmd_copy_buffer{};
             PFN_vkCreateSampler create_sampler{};
             PFN_vkDestroySampler destroy_sampler{};
             PFN_vkCreateShaderModule create_shader_module{};
             PFN_vkDestroyShaderModule destroy_shader_module{};
             PFN_vkCreateImageView create_image_view{};
             PFN_vkDestroyImageView destroy_image_view{};
+            PFN_vkCreateBufferView create_buffer_view{};
+            PFN_vkDestroyBufferView destroy_buffer_view{};
             PFN_vkCreateRenderPass create_render_pass{};
             PFN_vkDestroyRenderPass destroy_render_pass{};
             PFN_vkCreateFramebuffer create_framebuffer{};
@@ -342,6 +345,11 @@ namespace sogen
             VkImageView handle{};
             uint64_t device_id{};
         };
+        struct buffer_view_data
+        {
+            VkBufferView handle{};
+            uint64_t device_id{};
+        };
         struct render_pass_data
         {
             VkRenderPass handle{};
@@ -382,6 +390,7 @@ namespace sogen
 
         std::unordered_map<uint64_t, shader_module_data> shader_modules;
         std::unordered_map<uint64_t, image_view_data> image_views;
+        std::unordered_map<uint64_t, buffer_view_data> buffer_views;
         std::unordered_map<uint64_t, render_pass_data> render_passes;
         std::unordered_map<uint64_t, framebuffer_data> framebuffers;
         std::unordered_map<uint64_t, pipeline_layout_data> pipeline_layouts;
@@ -563,6 +572,13 @@ namespace sogen
                     it->second.destroy_image_view(it->second.handle, view.handle, nullptr);
                 }
             }
+            for (auto& [id, view] : this->buffer_views)
+            {
+                if (view.device_id == device_id && view.handle && it->second.destroy_buffer_view)
+                {
+                    it->second.destroy_buffer_view(it->second.handle, view.handle, nullptr);
+                }
+            }
             for (auto& [id, sm] : this->shader_modules)
             {
                 if (sm.device_id == device_id && sm.handle && it->second.destroy_shader_module)
@@ -575,6 +591,7 @@ namespace sogen
             this->erase_owned(this->pipeline_layouts, [&](const pipeline_layout_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->render_passes, [&](const render_pass_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->image_views, [&](const image_view_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->buffer_views, [&](const buffer_view_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->shader_modules, [&](const shader_module_data& d) { return d.device_id == device_id; });
 
             // Destroy GPU-owned children (pools free their command buffers; fences are freed) before
@@ -1385,12 +1402,15 @@ namespace sogen
             data.cmd_clear_depth_stencil_image = reinterpret_cast<PFN_vkCmdClearDepthStencilImage>(resolve("vkCmdClearDepthStencilImage"));
             data.cmd_copy_image_to_buffer = reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(resolve("vkCmdCopyImageToBuffer"));
             data.cmd_copy_buffer_to_image = reinterpret_cast<PFN_vkCmdCopyBufferToImage>(resolve("vkCmdCopyBufferToImage"));
+            data.cmd_copy_buffer = reinterpret_cast<PFN_vkCmdCopyBuffer>(resolve("vkCmdCopyBuffer"));
             data.create_sampler = reinterpret_cast<PFN_vkCreateSampler>(resolve("vkCreateSampler"));
             data.destroy_sampler = reinterpret_cast<PFN_vkDestroySampler>(resolve("vkDestroySampler"));
             data.create_shader_module = reinterpret_cast<PFN_vkCreateShaderModule>(resolve("vkCreateShaderModule"));
             data.destroy_shader_module = reinterpret_cast<PFN_vkDestroyShaderModule>(resolve("vkDestroyShaderModule"));
             data.create_image_view = reinterpret_cast<PFN_vkCreateImageView>(resolve("vkCreateImageView"));
             data.destroy_image_view = reinterpret_cast<PFN_vkDestroyImageView>(resolve("vkDestroyImageView"));
+            data.create_buffer_view = reinterpret_cast<PFN_vkCreateBufferView>(resolve("vkCreateBufferView"));
+            data.destroy_buffer_view = reinterpret_cast<PFN_vkDestroyBufferView>(resolve("vkDestroyBufferView"));
             data.create_render_pass = reinterpret_cast<PFN_vkCreateRenderPass>(resolve("vkCreateRenderPass"));
             data.destroy_render_pass = reinterpret_cast<PFN_vkDestroyRenderPass>(resolve("vkDestroyRenderPass"));
             data.create_framebuffer = reinterpret_cast<PFN_vkCreateFramebuffer>(resolve("vkCreateFramebuffer"));
@@ -2982,6 +3002,81 @@ namespace sogen
             dev->second.destroy_image_view(dev->second.handle, it->second.handle, nullptr);
         }
         this->impl_->image_views.erase(it);
+    }
+
+    int32_t vulkan_host::create_buffer_view(uint64_t device, uint64_t buffer, uint32_t format, uint64_t offset, uint64_t range,
+                                            uint64_t& out_view)
+    {
+        out_view = 0;
+        const auto dev = this->impl_->devices.find(device);
+        const auto buf = this->impl_->buffers.find(buffer);
+        if (dev == this->impl_->devices.end() || buf == this->impl_->buffers.end() || !dev->second.create_buffer_view)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkBufferViewCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO;
+        info.buffer = buf->second.handle;
+        info.format = static_cast<VkFormat>(format);
+        info.offset = offset;
+        info.range = range ? range : VK_WHOLE_SIZE;
+
+        VkBufferView view{};
+        const VkResult result = dev->second.create_buffer_view(dev->second.handle, &info, nullptr, &view);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->buffer_views.emplace(id, impl::buffer_view_data{.handle = view, .device_id = device});
+        out_view = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_buffer_view(uint64_t device, uint64_t buffer_view)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->buffer_views.find(buffer_view);
+        if (it == this->impl_->buffer_views.end())
+        {
+            return;
+        }
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_buffer_view)
+        {
+            dev->second.destroy_buffer_view(dev->second.handle, it->second.handle, nullptr);
+        }
+        this->impl_->buffer_views.erase(it);
+    }
+
+    int32_t vulkan_host::cmd_copy_buffer(uint64_t command_buffer, uint64_t src_buffer, uint64_t dst_buffer,
+                                         std::span<const buffer_copy> regions)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto src = this->impl_->buffers.find(src_buffer);
+        const auto dst = this->impl_->buffers.find(dst_buffer);
+        if (cb == this->impl_->command_buffers.end() || src == this->impl_->buffers.end() || dst == this->impl_->buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_copy_buffer || regions.empty())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkBufferCopy> vk_regions;
+        vk_regions.reserve(regions.size());
+        for (const auto& r : regions)
+        {
+            vk_regions.push_back(VkBufferCopy{.srcOffset = r.src_offset, .dstOffset = r.dst_offset, .size = r.size});
+        }
+
+        dev->second.cmd_copy_buffer(cb->second.handle, src->second.handle, dst->second.handle,
+                                    static_cast<uint32_t>(vk_regions.size()), vk_regions.data());
+        return VK_SUCCESS;
     }
 
     int32_t vulkan_host::create_render_pass(uint64_t device, uint32_t format, uint32_t load_op, uint32_t store_op, uint32_t initial_layout,
