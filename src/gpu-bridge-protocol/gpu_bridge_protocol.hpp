@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 9;
+    inline constexpr uint32_t protocol_version = 10;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -140,6 +140,7 @@ namespace sogen::gpu_bridge
         cmd_begin_query = 0x868,
         cmd_end_query = 0x869,
         cmd_write_timestamp = 0x86A,
+        reset_query_pool = 0x86B,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -194,6 +195,7 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_create_query_pool = make_ioctl(static_cast<uint32_t>(command::create_query_pool));
     inline constexpr uint32_t ioctl_destroy_query_pool = make_ioctl(static_cast<uint32_t>(command::destroy_query_pool));
     inline constexpr uint32_t ioctl_get_query_pool_results = make_ioctl(static_cast<uint32_t>(command::get_query_pool_results));
+    inline constexpr uint32_t ioctl_reset_query_pool = make_ioctl(static_cast<uint32_t>(command::reset_query_pool));
     inline constexpr uint32_t ioctl_create_render_pass = make_ioctl(static_cast<uint32_t>(command::create_render_pass));
     inline constexpr uint32_t ioctl_destroy_render_pass = make_ioctl(static_cast<uint32_t>(command::destroy_render_pass));
     inline constexpr uint32_t ioctl_create_framebuffer = make_ioctl(static_cast<uint32_t>(command::create_framebuffer));
@@ -1065,6 +1067,15 @@ namespace sogen::gpu_bridge
         uint32_t query_count;
     };
 
+    // ioctl_reset_query_pool: host-side query reset (no command buffer); out = result_response
+    struct reset_query_pool_request
+    {
+        object_id device;
+        object_id query_pool;
+        uint32_t first_query;
+        uint32_t query_count;
+    };
+
     struct cmd_begin_query_request
     {
         object_id command_buffer;
@@ -1427,6 +1438,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_begin_query_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_end_query_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_write_timestamp_request) == 24, "wire layout drift");
+    static_assert(sizeof(reset_query_pool_request) == 24, "wire layout drift");
     static_assert(sizeof(vertex_buffer_binding) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");

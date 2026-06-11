@@ -248,6 +248,7 @@ namespace sogen
         int32_t create_query_pool(uint64_t device, uint32_t query_type, uint32_t query_count, uint32_t pipeline_statistics,
                                   uint64_t& out_pool);
         void destroy_query_pool(uint64_t device, uint64_t query_pool);
+        int32_t reset_query_pool(uint64_t device, uint64_t query_pool, uint32_t first_query, uint32_t query_count);
         int32_t get_query_pool_results(uint64_t device, uint64_t query_pool, uint32_t first_query, uint32_t query_count, uint32_t flags,
                                        void* out, size_t out_size, size_t stride, size_t& out_written);
         int32_t cmd_reset_query_pool(uint64_t command_buffer, uint64_t query_pool, uint32_t first_query, uint32_t query_count);

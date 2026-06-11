@@ -152,6 +152,8 @@ namespace sogen
                     return handle_destroy_query_pool(win_emu, context);
                 case gpu_bridge::ioctl_get_query_pool_results:
                     return handle_get_query_pool_results(win_emu, context);
+                case gpu_bridge::ioctl_reset_query_pool:
+                    return handle_reset_query_pool(win_emu, context);
                 case gpu_bridge::ioctl_create_render_pass:
                     return handle_create_render_pass(win_emu, context);
                 case gpu_bridge::ioctl_destroy_render_pass:
@@ -1467,6 +1469,17 @@ namespace sogen
                 }
                 this->vulkan_.destroy_query_pool(request.device, request.object);
                 return STATUS_SUCCESS;
+            }
+            NTSTATUS handle_reset_query_pool(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::reset_query_pool_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const int32_t result =
+                    this->vulkan_.reset_query_pool(request.device, request.query_pool, request.first_query, request.query_count);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
             NTSTATUS handle_get_query_pool_results(windows_emulator& win_emu, const io_device_context& context)
             {

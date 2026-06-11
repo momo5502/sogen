@@ -206,6 +206,7 @@ namespace sogen
             PFN_vkDestroyBufferView destroy_buffer_view{};
             PFN_vkCreateQueryPool create_query_pool{};
             PFN_vkDestroyQueryPool destroy_query_pool{};
+            PFN_vkResetQueryPool reset_query_pool{};
             PFN_vkGetQueryPoolResults get_query_pool_results{};
             PFN_vkCmdResetQueryPool cmd_reset_query_pool{};
             PFN_vkCmdBeginQuery cmd_begin_query{};
@@ -1433,6 +1434,7 @@ namespace sogen
             data.destroy_buffer_view = reinterpret_cast<PFN_vkDestroyBufferView>(resolve("vkDestroyBufferView"));
             data.create_query_pool = reinterpret_cast<PFN_vkCreateQueryPool>(resolve("vkCreateQueryPool"));
             data.destroy_query_pool = reinterpret_cast<PFN_vkDestroyQueryPool>(resolve("vkDestroyQueryPool"));
+            data.reset_query_pool = reinterpret_cast<PFN_vkResetQueryPool>(resolve("vkResetQueryPool"));
             data.get_query_pool_results = reinterpret_cast<PFN_vkGetQueryPoolResults>(resolve("vkGetQueryPoolResults"));
             data.cmd_reset_query_pool = reinterpret_cast<PFN_vkCmdResetQueryPool>(resolve("vkCmdResetQueryPool"));
             data.cmd_begin_query = reinterpret_cast<PFN_vkCmdBeginQuery>(resolve("vkCmdBeginQuery"));
@@ -3148,6 +3150,18 @@ namespace sogen
             dev->second.destroy_query_pool(dev->second.handle, it->second.handle, nullptr);
         }
         this->impl_->query_pools.erase(it);
+    }
+
+    int32_t vulkan_host::reset_query_pool(uint64_t device, uint64_t query_pool, uint32_t first_query, uint32_t query_count)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto qp = this->impl_->query_pools.find(query_pool);
+        if (dev == this->impl_->devices.end() || qp == this->impl_->query_pools.end() || !dev->second.reset_query_pool)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        dev->second.reset_query_pool(dev->second.handle, qp->second.handle, first_query, query_count);
+        return VK_SUCCESS;
     }
 
     int32_t vulkan_host::get_query_pool_results(uint64_t device, uint64_t query_pool, uint32_t first_query, uint32_t query_count,

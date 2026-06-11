@@ -1234,6 +1234,19 @@ extern "C"
         bridge_call(gb::ioctl_destroy_query_pool, &request, sizeof(request), nullptr, 0);
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkResetQueryPool(VkDevice device, VkQueryPool queryPool, uint32_t firstQuery,
+                                                                      uint32_t queryCount)
+    {
+        gb::reset_query_pool_request request{};
+        request.device = to_object_id(device);
+        request.query_pool = to_object_id(queryPool);
+        request.first_query = firstQuery;
+        request.query_count = queryCount;
+
+        gb::result_response response{};
+        bridge_call(gb::ioctl_reset_query_pool, &request, sizeof(request), &response, sizeof(response));
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetQueryPoolResults(VkDevice device, VkQueryPool queryPool, uint32_t firstQuery,
                                                                                uint32_t queryCount, size_t dataSize, void* pData,
                                                                                VkDeviceSize stride, VkQueryResultFlags flags)
@@ -3480,6 +3493,8 @@ extern "C"
             {.name = "vkCmdCopyBuffer2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBuffer2)},
             {.name = "vkCreateQueryPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateQueryPool)},
             {.name = "vkDestroyQueryPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyQueryPool)},
+            {.name = "vkResetQueryPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetQueryPool)},
+            {.name = "vkResetQueryPoolEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetQueryPool)},
             {.name = "vkGetQueryPoolResults", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetQueryPoolResults)},
             {.name = "vkCmdResetQueryPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResetQueryPool)},
             {.name = "vkCmdBeginQuery", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginQuery)},
