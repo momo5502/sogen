@@ -176,6 +176,7 @@ namespace sogen
 #define WM_RBUTTONDOWN       0x0204
 #define WM_RBUTTONUP         0x0205
 #define WM_COMMAND           0x0111
+#define WM_TIMER             0x0113
 #define WM_WINDOWPOSCHANGING 0x0046
 #define WM_WINDOWPOSCHANGED  0x0047
 #define WM_NCCREATE          0x0081
@@ -201,6 +202,23 @@ namespace sogen
 #define PM_NOREMOVE          0x0000
 #define PM_REMOVE            0x0001
 #define PM_NOYIELD           0x0002
+
+#define QS_KEY               0x0001
+#define QS_MOUSEMOVE         0x0002
+#define QS_MOUSEBUTTON       0x0004
+#define QS_POSTMESSAGE       0x0008
+#define QS_TIMER             0x0010
+#define QS_PAINT             0x0020
+#define QS_SENDMESSAGE       0x0040
+#define QS_HOTKEY            0x0080
+#define QS_ALLPOSTMESSAGE    0x0100
+#define QS_RAWINPUT          0x0400
+#define QS_TOUCH             0x0800
+#define QS_POINTER           0x1000
+#define QS_MOUSE             (QS_MOUSEMOVE | QS_MOUSEBUTTON)
+#define QS_INPUT             (QS_MOUSE | QS_KEY | QS_RAWINPUT | QS_TOUCH | QS_POINTER)
+#define QS_ALLEVENTS         (QS_INPUT | QS_POSTMESSAGE | QS_TIMER | QS_PAINT | QS_HOTKEY)
+#define QS_ALLINPUT          (QS_INPUT | QS_POSTMESSAGE | QS_TIMER | QS_PAINT | QS_HOTKEY | QS_SENDMESSAGE)
 
 #define RDW_INVALIDATE       0x0001
 #define RDW_INTERNALPAINT    0x0002

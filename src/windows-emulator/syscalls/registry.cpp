@@ -57,6 +57,36 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            if (key_information_class == KeyBasicInformation)
+            {
+                auto key_name = std::filesystem::path(key->path.get()).filename().u16string();
+                if (key_name.empty())
+                {
+                    key_name = std::filesystem::path(key->hive.get()).filename().u16string();
+                }
+
+                const auto required_size = offsetof(KEY_BASIC_INFORMATION, Name) + (key_name.size() * 2);
+                result_length.write(static_cast<ULONG>(required_size));
+
+                if (required_size > length)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                KEY_BASIC_INFORMATION info{};
+                info.LastWriteTime.QuadPart = 0;
+                info.TitleIndex = 0;
+                info.NameLength = static_cast<ULONG>(key_name.size() * 2);
+
+                c.emu.write_memory(key_information, &info, offsetof(KEY_BASIC_INFORMATION, Name));
+                if (!key_name.empty())
+                {
+                    c.emu.write_memory(key_information + offsetof(KEY_BASIC_INFORMATION, Name), key_name.data(), info.NameLength);
+                }
+
+                return STATUS_SUCCESS;
+            }
+
             if (key_information_class == KeyNameInformation)
             {
                 auto key_name = (key->hive.get() / key->path.get()).u16string();

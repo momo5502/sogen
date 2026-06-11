@@ -986,17 +986,15 @@ namespace sogen
 #define BACKUP_SECURITY_INFORMATION              0x00010000L
 #endif
 
-    struct CLIENT_ID32
+    template <typename Traits>
+    struct CLIENT_ID
     {
-        ULONG UniqueProcess;
-        ULONG UniqueThread;
+        typename Traits::HANDLE UniqueProcess;
+        typename Traits::HANDLE UniqueThread;
     };
 
-    struct CLIENT_ID64
-    {
-        DWORD64 UniqueProcess;
-        DWORD64 UniqueThread;
-    };
+    using CLIENT_ID32 = CLIENT_ID<EmulatorTraits<Emu32>>;
+    using CLIENT_ID64 = CLIENT_ID<EmulatorTraits<Emu64>>;
 
     template <typename Traits>
     struct EMU_RTL_SRWLOCK

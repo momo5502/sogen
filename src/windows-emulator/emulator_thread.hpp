@@ -12,6 +12,44 @@ namespace sogen
     struct completion_state;
     struct process_context;
 
+    struct user_timer_key
+    {
+        sogen::hwnd hwnd{};
+        uint64_t timer_id{};
+
+        auto operator<=>(const user_timer_key&) const = default;
+    };
+
+    struct user_timer
+    {
+        std::u16string name{};
+        sogen::hwnd hwnd{};
+        uint64_t timer_id{};
+        uint64_t timer_proc{};
+        std::optional<std::chrono::steady_clock::time_point> due_time{};
+        std::chrono::steady_clock::duration interval{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->name);
+            buffer.write(this->hwnd);
+            buffer.write(this->timer_id);
+            buffer.write(this->timer_proc);
+            buffer.write_optional(this->due_time);
+            buffer.write(this->interval);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->name);
+            buffer.read(this->hwnd);
+            buffer.read(this->timer_id);
+            buffer.read(this->timer_proc);
+            buffer.read_optional(this->due_time);
+            buffer.read(this->interval);
+        }
+    };
+
     struct pending_apc
     {
         uint32_t flags{};
@@ -260,6 +298,7 @@ namespace sogen
         uint32_t suspended{0};
         std::optional<std::chrono::steady_clock::time_point> await_time{};
         std::optional<pending_msg> await_msg{};
+        std::optional<DWORD> await_msg_mask{};
         std::optional<pending_io_completion_wait> await_io_completion{};
 
         bool apc_alertable{false};
@@ -287,7 +326,12 @@ namespace sogen
         std::vector<callback_frame> callback_stack;
         std::optional<uint64_t> callback_return_rax{};
 
+        std::map<user_timer_key, user_timer> user_timers{};
+        uint64_t next_user_timer_id{1};
         std::vector<msg> message_queue;
+        std::array<uint32_t, 32> message_queue_status_bit_counts{};
+        uint32_t message_queue_status_bits{};
+        uint32_t queue_status_changed_bits{};
 
         void mark_as_ready(NTSTATUS status);
 
@@ -302,8 +346,15 @@ namespace sogen
             return this->apc_alertable && !this->pending_apcs.empty();
         }
 
-        std::optional<msg> peek_pending_message(const process_context& process, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
-                                                bool remove = false);
+        user_timer* find_user_timer(hwnd hwnd, uint64_t timer_id);
+        user_timer& create_user_timer(process_context& process, hwnd hwnd, uint64_t timer_id, uint64_t timer_proc,
+                                      std::chrono::milliseconds interval, std::chrono::steady_clock::time_point now);
+        bool delete_user_timer(hwnd hwnd, uint64_t timer_id);
+        bool synthesize_due_user_timer(utils::clock& clock, hwnd hwnd_filter = 0, UINT filter_min = 0, UINT filter_max = 0);
+
+        uint32_t get_message_queue_status(utils::clock& clock);
+        std::optional<msg> peek_pending_message(const process_context& process, utils::clock& clock, hwnd hwnd_filter = 0,
+                                                UINT filter_min = 0, UINT filter_max = 0, bool remove = false);
         void post_message(const msg& msg);
 
         bool is_terminated() const;
@@ -368,6 +419,7 @@ namespace sogen
             buffer.write(this->suspended);
             buffer.write_optional(this->await_time);
             buffer.write_optional(this->await_msg);
+            buffer.write_optional(this->await_msg_mask);
             buffer.write_optional(this->await_io_completion);
 
             buffer.write(this->apc_alertable);
@@ -394,7 +446,12 @@ namespace sogen
             buffer.write_vector(this->callback_stack);
             buffer.write_optional(this->callback_return_rax);
 
+            buffer.write_map(this->user_timers);
+            buffer.write(this->next_user_timer_id);
             buffer.write_vector(this->message_queue);
+            buffer.write(this->message_queue_status_bit_counts);
+            buffer.write(this->message_queue_status_bits);
+            buffer.write(this->queue_status_changed_bits);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -429,6 +486,7 @@ namespace sogen
             buffer.read(this->suspended);
             buffer.read_optional(this->await_time);
             buffer.read_optional(this->await_msg, [this] { return pending_msg{*this->memory_ptr}; });
+            buffer.read_optional(this->await_msg_mask);
             buffer.read_optional(this->await_io_completion, [] { return pending_io_completion_wait{}; });
 
             buffer.read(this->apc_alertable);
@@ -455,7 +513,12 @@ namespace sogen
             buffer.read_vector(this->callback_stack);
             buffer.read_optional(this->callback_return_rax);
 
+            buffer.read_map(this->user_timers);
+            buffer.read(this->next_user_timer_id);
             buffer.read_vector(this->message_queue);
+            buffer.read(this->message_queue_status_bit_counts);
+            buffer.read(this->message_queue_status_bits);
+            buffer.read(this->queue_status_changed_bits);
         }
 
         void leak_memory()
