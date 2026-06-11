@@ -16,9 +16,11 @@ EXPORTS
     vkCmdBeginRenderPass
     vkCmdBindDescriptorSets
     vkCmdBindIndexBuffer
+    vkCmdBindIndexBuffer2KHR
     vkCmdBindPipeline
     vkCmdBeginDebugUtilsLabelEXT
     vkCmdBindVertexBuffers
+    vkCmdBindVertexBuffers2
     vkCmdClearColorImage
     vkCmdClearDepthStencilImage
     vkCmdBeginQuery

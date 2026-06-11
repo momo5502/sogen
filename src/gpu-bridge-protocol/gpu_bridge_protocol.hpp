@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 10;
+    inline constexpr uint32_t protocol_version = 11;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -141,6 +141,7 @@ namespace sogen::gpu_bridge
         cmd_end_query = 0x869,
         cmd_write_timestamp = 0x86A,
         reset_query_pool = 0x86B,
+        cmd_bind_vertex_buffers2 = 0x86C,
     };
 
     inline constexpr uint32_t ioctl_get_version = make_ioctl(static_cast<uint32_t>(command::get_version));
@@ -1254,6 +1255,26 @@ namespace sogen::gpu_bridge
         // vertex_buffer_binding bindings[binding_count];
     };
 
+    // One bound vertex buffer for vkCmdBindVertexBuffers2 (carries the dynamic size + stride DXVK sets via
+    // extendedDynamicState). size/stride VK_WHOLE_SIZE/0 mean "use the whole buffer / pipeline stride".
+    struct vertex_buffer_binding2
+    {
+        object_id buffer;
+        uint64_t offset; // VkDeviceSize
+        uint64_t size;   // VkDeviceSize (VK_WHOLE_SIZE if not provided)
+        uint64_t stride; // VkDeviceSize
+    };
+
+    // immediately followed by `binding_count` vertex_buffer_binding2 entries.
+    struct cmd_bind_vertex_buffers2_request
+    {
+        object_id command_buffer;
+        uint32_t first_binding;
+        uint32_t binding_count;
+        uint32_t has_sizes;   // 1 if the size field is meaningful
+        uint32_t has_strides; // 1 if the stride field is meaningful
+    };
+
     struct cmd_bind_index_buffer_request
     {
         object_id command_buffer;
@@ -1440,6 +1461,8 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_write_timestamp_request) == 24, "wire layout drift");
     static_assert(sizeof(reset_query_pool_request) == 24, "wire layout drift");
     static_assert(sizeof(vertex_buffer_binding) == 16, "wire layout drift");
+    static_assert(sizeof(vertex_buffer_binding2) == 32, "wire layout drift");
+    static_assert(sizeof(cmd_bind_vertex_buffers2_request) == 24, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");
     static_assert(sizeof(create_sampler_request) == 32, "wire layout drift");

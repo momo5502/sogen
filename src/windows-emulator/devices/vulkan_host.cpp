@@ -234,6 +234,7 @@ namespace sogen
             PFN_vkCmdDispatchIndirect cmd_dispatch_indirect{};
             PFN_vkCmdDraw cmd_draw{};
             PFN_vkCmdBindVertexBuffers cmd_bind_vertex_buffers{};
+            PFN_vkCmdBindVertexBuffers2 cmd_bind_vertex_buffers2{};
             PFN_vkCmdBindIndexBuffer cmd_bind_index_buffer{};
             PFN_vkCmdDrawIndexed cmd_draw_indexed{};
             PFN_vkCmdEndRenderPass cmd_end_render_pass{};
@@ -1463,6 +1464,7 @@ namespace sogen
             data.cmd_dispatch_indirect = reinterpret_cast<PFN_vkCmdDispatchIndirect>(resolve("vkCmdDispatchIndirect"));
             data.cmd_draw = reinterpret_cast<PFN_vkCmdDraw>(resolve("vkCmdDraw"));
             data.cmd_bind_vertex_buffers = reinterpret_cast<PFN_vkCmdBindVertexBuffers>(resolve("vkCmdBindVertexBuffers"));
+            data.cmd_bind_vertex_buffers2 = reinterpret_cast<PFN_vkCmdBindVertexBuffers2>(resolve("vkCmdBindVertexBuffers2"));
             data.cmd_bind_index_buffer = reinterpret_cast<PFN_vkCmdBindIndexBuffer>(resolve("vkCmdBindIndexBuffer"));
             data.cmd_draw_indexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(resolve("vkCmdDrawIndexed"));
             data.cmd_end_render_pass = reinterpret_cast<PFN_vkCmdEndRenderPass>(resolve("vkCmdEndRenderPass"));
@@ -4012,6 +4014,43 @@ namespace sogen
         }
 
         dev->second.cmd_bind_vertex_buffers(cb->second.handle, first_binding, count, handles.data(), vk_offsets.data());
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_bind_vertex_buffers2(uint64_t command_buffer, uint32_t first_binding, uint32_t count,
+                                                  const uint64_t* buffer_ids, const uint64_t* offsets, const uint64_t* sizes,
+                                                  const uint64_t* strides)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_bind_vertex_buffers2)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkBuffer> handles(count);
+        std::vector<VkDeviceSize> vk_offsets(count);
+        std::vector<VkDeviceSize> vk_sizes(count);
+        std::vector<VkDeviceSize> vk_strides(count);
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const auto buf = this->impl_->buffers.find(buffer_ids[i]);
+            if (buf == this->impl_->buffers.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            handles[i] = buf->second.handle;
+            vk_offsets[i] = offsets[i];
+            vk_sizes[i] = sizes ? sizes[i] : VK_WHOLE_SIZE;
+            vk_strides[i] = strides ? strides[i] : 0;
+        }
+
+        dev->second.cmd_bind_vertex_buffers2(cb->second.handle, first_binding, count, handles.data(), vk_offsets.data(),
+                                             sizes ? vk_sizes.data() : nullptr, strides ? vk_strides.data() : nullptr);
         return VK_SUCCESS;
     }
 

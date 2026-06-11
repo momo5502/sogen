@@ -3297,8 +3297,50 @@ extern "C"
         record_command(command_buffer, gb::command::cmd_bind_vertex_buffers, message.data(), message.size());
     }
 
+    // Core 1.3 / VK_EXT_extended_dynamic_state: vertex binding with dynamic per-binding size and stride.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindVertexBuffers2(VkCommandBuffer commandBuffer, uint32_t firstBinding,
+                                                                             uint32_t bindingCount, const VkBuffer* pBuffers,
+                                                                             const VkDeviceSize* pOffsets, const VkDeviceSize* pSizes,
+                                                                             const VkDeviceSize* pStrides)
+    {
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
+        std::vector<uint8_t> message(sizeof(gb::cmd_bind_vertex_buffers2_request) +
+                                     static_cast<size_t>(bindingCount) * sizeof(gb::vertex_buffer_binding2));
+        gb::cmd_bind_vertex_buffers2_request header{};
+        header.command_buffer = command_buffer;
+        header.first_binding = firstBinding;
+        header.binding_count = bindingCount;
+        header.has_sizes = pSizes ? 1u : 0u;
+        header.has_strides = pStrides ? 1u : 0u;
+        std::memcpy(message.data(), &header, sizeof(header));
+        for (uint32_t i = 0; i < bindingCount; ++i)
+        {
+            gb::vertex_buffer_binding2 vb{};
+            vb.buffer = to_object_id(pBuffers[i]);
+            vb.offset = pOffsets ? pOffsets[i] : 0;
+            vb.size = pSizes ? pSizes[i] : 0;
+            vb.stride = pStrides ? pStrides[i] : 0;
+            std::memcpy(message.data() + sizeof(header) + i * sizeof(vb), &vb, sizeof(vb));
+        }
+        record_command(command_buffer, gb::command::cmd_bind_vertex_buffers2, message.data(), message.size());
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindIndexBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer,
                                                                           VkDeviceSize offset, VkIndexType indexType)
+    {
+        gb::cmd_bind_index_buffer_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.buffer = to_object_id(buffer);
+        request.offset = offset;
+        request.index_type = static_cast<uint32_t>(indexType);
+        record_command(request.command_buffer, gb::command::cmd_bind_index_buffer, &request, sizeof(request));
+    }
+
+    // VK_KHR_maintenance5 / core 1.4: like vkCmdBindIndexBuffer but with an explicit size. The bridge does
+    // not model the size (the base bind covers the buffer from offset, which matches the usual VK_WHOLE_SIZE).
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindIndexBuffer2KHR(VkCommandBuffer commandBuffer, VkBuffer buffer,
+                                                                              VkDeviceSize offset, VkDeviceSize /*size*/,
+                                                                              VkIndexType indexType)
     {
         gb::cmd_bind_index_buffer_request request{};
         request.command_buffer = to_object_id(commandBuffer);
@@ -3580,7 +3622,11 @@ extern "C"
             {.name = "vkCmdDispatch", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDispatch)},
             {.name = "vkCmdDispatchIndirect", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDispatchIndirect)},
             {.name = "vkCmdBindVertexBuffers", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindVertexBuffers)},
+            {.name = "vkCmdBindVertexBuffers2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindVertexBuffers2)},
+            {.name = "vkCmdBindVertexBuffers2EXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindVertexBuffers2)},
             {.name = "vkCmdBindIndexBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindIndexBuffer)},
+            {.name = "vkCmdBindIndexBuffer2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindIndexBuffer2KHR)},
+            {.name = "vkCmdBindIndexBuffer2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindIndexBuffer2KHR)},
             {.name = "vkCmdDrawIndexed", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndexed)},
             {.name = "vkCmdEndRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRenderPass)},
             {.name = "vkCmdPushConstants", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPushConstants)},

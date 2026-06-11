@@ -2001,6 +2001,34 @@ namespace sogen
                     return this->vulkan_.cmd_bind_vertex_buffers(req.command_buffer, req.first_binding, req.binding_count,
                                                                  buffer_ids.data(), offsets.data());
                 }
+                case gpu_bridge::command::cmd_bind_vertex_buffers2: {
+                    gpu_bridge::cmd_bind_vertex_buffers2_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const size_t bindings_bytes = static_cast<size_t>(req.binding_count) * sizeof(gpu_bridge::vertex_buffer_binding2);
+                    if (bindings_bytes > size - sizeof(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::vector<uint64_t> buffer_ids(req.binding_count);
+                    std::vector<uint64_t> offsets(req.binding_count);
+                    std::vector<uint64_t> sizes(req.binding_count);
+                    std::vector<uint64_t> strides(req.binding_count);
+                    for (uint32_t i = 0; i < req.binding_count; ++i)
+                    {
+                        gpu_bridge::vertex_buffer_binding2 vb{};
+                        std::memcpy(&vb, payload + sizeof(req) + i * sizeof(vb), sizeof(vb));
+                        buffer_ids[i] = vb.buffer;
+                        offsets[i] = vb.offset;
+                        sizes[i] = vb.size;
+                        strides[i] = vb.stride;
+                    }
+                    return this->vulkan_.cmd_bind_vertex_buffers2(req.command_buffer, req.first_binding, req.binding_count,
+                                                                  buffer_ids.data(), offsets.data(), req.has_sizes ? sizes.data() : nullptr,
+                                                                  req.has_strides ? strides.data() : nullptr);
+                }
                 case gpu_bridge::command::cmd_bind_index_buffer: {
                     gpu_bridge::cmd_bind_index_buffer_request req{};
                     if (!read(req))
