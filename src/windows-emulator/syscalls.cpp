@@ -449,6 +449,7 @@ namespace sogen
         BOOL handle_NtUserReleaseDC();
         hwnd handle_NtUserSetCapture(const syscall_context& c, hwnd window);
         BOOL handle_NtUserReleaseCapture(const syscall_context& c);
+        BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, emulator_pointer devices, uint32_t device_count, uint32_t size);
         BOOL handle_NtUserDefSetText(const syscall_context& c, hwnd window, emulator_object<LARGE_STRING> text);
         BOOL handle_NtUserGetOemBitmapSize(const syscall_context& c, uint32_t bitmap_id, emulator_pointer size_ptr);
         BOOL handle_NtUserSetWindowState(const syscall_context& c, hwnd window, uint32_t flags);
@@ -590,6 +591,10 @@ namespace sogen
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
         int32_t handle_NtGdiSaveDC(const syscall_context& c, hdc dc);
         BOOL handle_NtGdiRestoreDC(const syscall_context& c, hdc dc, int32_t saved_dc);
+        uint64_t handle_NtGdiAddFontMemResourceEx(const syscall_context& c, emulator_pointer buffer, uint32_t buffer_size,
+                                                  emulator_pointer design_vector, uint32_t design_vector_size,
+                                                  emulator_object<uint32_t> num_fonts);
+        BOOL handle_NtGdiRemoveFontMemResourceEx(const syscall_context& c, uint64_t font_handle);
         uint64_t handle_NtGdiCreateCompatibleBitmap(const syscall_context& c, hdc dc, uint32_t width, uint32_t height);
         uint64_t handle_NtGdiCreateBitmap(const syscall_context& c, uint32_t width, uint32_t height, uint32_t planes, uint32_t bits_pixel,
                                           emulator_pointer bits);
@@ -1121,6 +1126,8 @@ namespace sogen
         add_handler(NtGdiCreateCompatibleDC);
         add_handler(NtGdiSaveDC);
         add_handler(NtGdiRestoreDC);
+        add_handler(NtGdiAddFontMemResourceEx);
+        add_handler(NtGdiRemoveFontMemResourceEx);
         add_handler(NtGdiCreateCompatibleBitmap);
         add_handler(NtGdiCreateBitmap);
         add_handler(NtGdiCreateDIBitmapInternal);
@@ -1223,6 +1230,7 @@ namespace sogen
         add_handler(NtUserGetOemBitmapSize);
         add_handler(NtUserSetCapture);
         add_handler(NtUserReleaseCapture);
+        add_handler(NtUserRegisterRawInputDevices);
         add_handler(NtUserDefSetText);
         add_handler(NtUserSetWindowState);
         add_handler(NtUserClearWindowState);

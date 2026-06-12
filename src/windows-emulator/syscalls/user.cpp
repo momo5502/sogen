@@ -1340,6 +1340,12 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& /*c*/, const emulator_pointer /*devices*/,
+                                                  const uint32_t /*device_count*/, const uint32_t /*size*/)
+        {
+            return TRUE;
+        }
+
         BOOL handle_NtUserDefSetText(const syscall_context& c, const hwnd window, const emulator_object<LARGE_STRING> text)
         {
             auto* win = c.proc.windows.get(window);

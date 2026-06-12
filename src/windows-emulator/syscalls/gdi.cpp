@@ -1639,6 +1639,29 @@ namespace sogen
             return TRUE;
         }
 
+        uint64_t handle_NtGdiAddFontMemResourceEx(const syscall_context& c, const emulator_pointer /*buffer*/,
+                                                  const uint32_t /*buffer_size*/, const emulator_pointer /*design_vector*/,
+                                                  const uint32_t /*design_vector_size*/, const emulator_object<uint32_t> num_fonts)
+        {
+            const auto handle_value = allocate_gdi_object(c, k_gdi_font_type, k_gdi_font_attr_size);
+            if (handle_value == 0)
+            {
+                return 0;
+            }
+
+            if (num_fonts)
+            {
+                num_fonts.write(1);
+            }
+
+            return handle_value;
+        }
+
+        BOOL handle_NtGdiRemoveFontMemResourceEx(const syscall_context& /*c*/, const uint64_t font_handle)
+        {
+            return font_handle != 0 ? TRUE : FALSE;
+        }
+
         uint64_t handle_NtGdiCreateCompatibleBitmap(const syscall_context& c, const hdc /*dc*/, const uint32_t width, const uint32_t height)
         {
             const auto handle_value = allocate_gdi_object(c, k_gdi_bitmap_type, k_gdi_bitmap_attr_size);
