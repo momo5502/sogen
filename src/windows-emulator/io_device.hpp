@@ -107,17 +107,7 @@ namespace sogen
             (void)win_emu;
         }
 
-        NTSTATUS execute_ioctl(windows_emulator& win_emu, const io_device_context& c)
-        {
-            if (c.io_status_block)
-            {
-                c.io_status_block.write({});
-            }
-
-            const auto result = this->io_control(win_emu, c);
-            write_io_status(c.io_status_block, result);
-            return result;
-        }
+        NTSTATUS execute_ioctl(windows_emulator& win_emu, const io_device_context& c);
     };
 
     struct stateless_device : io_device

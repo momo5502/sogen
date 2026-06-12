@@ -104,6 +104,30 @@ namespace sogen
         throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
     }
 
+    NTSTATUS io_device::execute_ioctl(windows_emulator& win_emu, const io_device_context& c)
+    {
+        if (c.io_status_block)
+        {
+            c.io_status_block.write({});
+        }
+
+        const auto result = this->io_control(win_emu, c);
+        write_io_status(c.io_status_block, result);
+
+        // A synchronously-completing IOCTL must signal the optional completion event the caller passed, so a
+        // thread that issues the request and then waits on the event is released. Asynchronous devices return
+        // STATUS_PENDING and signal the event themselves once the delayed operation completes.
+        if (result != STATUS_PENDING && c.event.bits)
+        {
+            if (auto* e = win_emu.process.events.get(c.event); e)
+            {
+                e->signaled = true;
+            }
+        }
+
+        return result;
+    }
+
     NTSTATUS io_device_container::io_control(windows_emulator& win_emu, const io_device_context& context)
     {
         this->assert_validity();
