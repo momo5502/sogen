@@ -2472,9 +2472,23 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
+                // Resolve the guest window's client size so the host can report it as the surface's current
+                // extent; otherwise the layer (DXVK) can't determine the size and creates a 0x0 swapchain.
+                uint32_t window_width = 0;
+                uint32_t window_height = 0;
+                if (const uint64_t surface_hwnd = this->vulkan_.get_surface_hwnd(request.surface); surface_hwnd != 0)
+                {
+                    if (const auto* win = win_emu.process.windows.get(static_cast<hwnd>(surface_hwnd));
+                        win && win->width > 0 && win->height > 0)
+                    {
+                        window_width = static_cast<uint32_t>(win->width);
+                        window_height = static_cast<uint32_t>(win->height);
+                    }
+                }
+
                 std::vector<std::byte> caps(context.output_buffer_length);
-                const int32_t result =
-                    this->vulkan_.get_surface_capabilities(request.physical_device, request.surface, caps.data(), caps.size());
+                const int32_t result = this->vulkan_.get_surface_capabilities(request.physical_device, request.surface, window_width,
+                                                                              window_height, caps.data(), caps.size());
                 if (result != 0)
                 {
                     return STATUS_INVALID_PARAMETER;

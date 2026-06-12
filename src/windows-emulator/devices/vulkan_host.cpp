@@ -2846,7 +2846,14 @@ namespace sogen
         this->impl_->surfaces.erase(surface);
     }
 
-    int32_t vulkan_host::get_surface_capabilities(uint64_t /*physical_device*/, uint64_t surface, void* out, size_t out_size)
+    uint64_t vulkan_host::get_surface_hwnd(uint64_t surface) const
+    {
+        const auto it = this->impl_->surfaces.find(surface);
+        return it == this->impl_->surfaces.end() ? 0 : it->second.hwnd;
+    }
+
+    int32_t vulkan_host::get_surface_capabilities(uint64_t /*physical_device*/, uint64_t surface, uint32_t window_width,
+                                                  uint32_t window_height, void* out, size_t out_size)
     {
         if (!this->impl_->surfaces.contains(surface))
         {
@@ -2855,8 +2862,12 @@ namespace sogen
 
         VkSurfaceCapabilitiesKHR caps{};
         caps.minImageCount = 2;
-        caps.maxImageCount = 0;                                             // no upper bound
-        caps.currentExtent = {.width = 0xFFFFFFFFu, .height = 0xFFFFFFFFu}; // undefined: the app chooses
+        caps.maxImageCount = 0; // no upper bound
+        // Report the guest window's client size as the current extent. Returning the "undefined" value
+        // (0xFFFFFFFF) made DXVK fall back to querying the window size itself and end up with a 0x0
+        // swapchain, so nothing was ever presented (black window). A concrete extent fixes that.
+        caps.currentExtent = (window_width != 0 && window_height != 0) ? VkExtent2D{.width = window_width, .height = window_height}
+                                                                       : VkExtent2D{.width = 0xFFFFFFFFu, .height = 0xFFFFFFFFu};
         caps.minImageExtent = {.width = 1, .height = 1};
         caps.maxImageExtent = {.width = 16384, .height = 16384};
         caps.maxImageArrayLayers = 1;
