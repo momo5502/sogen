@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 17;
+    inline constexpr uint32_t protocol_version = 18;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -159,6 +159,7 @@ namespace sogen::gpu_bridge
         get_event_status = 0x87B,
         set_event = 0x87C,
         reset_event = 0x87D,
+        cmd_resolve_image = 0x87E,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -285,6 +286,7 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_get_event_status = make_ioctl(static_cast<uint32_t>(command::get_event_status));
     inline constexpr uint32_t ioctl_set_event = make_ioctl(static_cast<uint32_t>(command::set_event));
     inline constexpr uint32_t ioctl_reset_event = make_ioctl(static_cast<uint32_t>(command::reset_event));
+    inline constexpr uint32_t ioctl_cmd_resolve_image = make_ioctl(static_cast<uint32_t>(command::cmd_resolve_image));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -974,6 +976,20 @@ namespace sogen::gpu_bridge
         object_id buffer;
         object_id image;
         uint32_t image_layout; // VkImageLayout (current dst layout, e.g. TRANSFER_DST_OPTIMAL)
+        uint32_t width;
+        uint32_t height;
+        uint32_t aspect_mask; // VkImageAspectFlags
+    };
+
+    // Resolves a multisampled source image into a single-sample destination (full image, mip 0 / layer 0).
+    // DXVK uses this to resolve an MSAA backbuffer before presentation.
+    struct cmd_resolve_image_request
+    {
+        object_id command_buffer;
+        object_id src_image;
+        object_id dst_image;
+        uint32_t src_layout; // VkImageLayout
+        uint32_t dst_layout; // VkImageLayout
         uint32_t width;
         uint32_t height;
         uint32_t aspect_mask; // VkImageAspectFlags

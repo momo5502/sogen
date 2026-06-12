@@ -2157,6 +2157,48 @@ extern "C"
         }
     }
 
+    // Resolves a multisampled source image into a single-sample destination. DXVK uses this to resolve an
+    // MSAA backbuffer before presenting it. Remoted assuming full image, mip 0 / layer 0, offset 0.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdResolveImage(VkCommandBuffer commandBuffer, VkImage srcImage,
+                                                                       VkImageLayout srcImageLayout, VkImage dstImage,
+                                                                       VkImageLayout dstImageLayout, uint32_t regionCount,
+                                                                       const VkImageResolve* pRegions)
+    {
+        for (uint32_t i = 0; i < regionCount; ++i)
+        {
+            const VkImageResolve& r = pRegions[i];
+            gb::cmd_resolve_image_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.src_image = to_object_id(srcImage);
+            request.dst_image = to_object_id(dstImage);
+            request.src_layout = static_cast<uint32_t>(srcImageLayout);
+            request.dst_layout = static_cast<uint32_t>(dstImageLayout);
+            request.width = r.extent.width;
+            request.height = r.extent.height;
+            request.aspect_mask = r.srcSubresource.aspectMask;
+            record_command(request.command_buffer, gb::command::cmd_resolve_image, &request, sizeof(request));
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdResolveImage2(VkCommandBuffer commandBuffer,
+                                                                        const VkResolveImageInfo2* pResolveImageInfo)
+    {
+        for (uint32_t i = 0; i < pResolveImageInfo->regionCount; ++i)
+        {
+            const VkImageResolve2& r = pResolveImageInfo->pRegions[i];
+            gb::cmd_resolve_image_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.src_image = to_object_id(pResolveImageInfo->srcImage);
+            request.dst_image = to_object_id(pResolveImageInfo->dstImage);
+            request.src_layout = static_cast<uint32_t>(pResolveImageInfo->srcImageLayout);
+            request.dst_layout = static_cast<uint32_t>(pResolveImageInfo->dstImageLayout);
+            request.width = r.extent.width;
+            request.height = r.extent.height;
+            request.aspect_mask = r.srcSubresource.aspectMask;
+            record_command(request.command_buffer, gb::command::cmd_resolve_image, &request, sizeof(request));
+        }
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyImageToBuffer2(VkCommandBuffer commandBuffer,
                                                                              const VkCopyImageToBufferInfo2* pCopyImageToBufferInfo)
     {
@@ -4077,6 +4119,9 @@ extern "C"
             {.name = "vkCmdCopyBufferToImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage)},
             {.name = "vkCmdCopyBufferToImage2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage2)},
             {.name = "vkCmdCopyBufferToImage2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage2)},
+            {.name = "vkCmdResolveImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResolveImage)},
+            {.name = "vkCmdResolveImage2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResolveImage2)},
+            {.name = "vkCmdResolveImage2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResolveImage2)},
             {.name = "vkCreateSampler", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateSampler)},
             {.name = "vkDestroySampler", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySampler)},
             {.name = "vkCreateWin32SurfaceKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateWin32SurfaceKHR)},

@@ -30,6 +30,8 @@ EXPORTS
     vkCmdCopyBufferToImage2
     vkCmdCopyImageToBuffer
     vkCmdCopyImageToBuffer2
+    vkCmdResolveImage
+    vkCmdResolveImage2
     vkCmdDispatch
     vkCmdDispatchIndirect
     vkCmdDraw

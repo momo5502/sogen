@@ -243,6 +243,9 @@ namespace sogen
         // Copies tightly-packed pixel data from the buffer (offset 0) into mip 0 / layer 0 of the image.
         int32_t cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout, uint32_t width,
                                          uint32_t height, uint32_t aspect_mask);
+        // Resolves a multisampled source image into a single-sample destination (full image, mip 0 / layer 0).
+        int32_t cmd_resolve_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image,
+                                  uint32_t dst_layout, uint32_t width, uint32_t height, uint32_t aspect_mask);
 
         // A linear/nearest sampler (mag/min filter + per-axis address modes; no mipmapping/anisotropy).
         int32_t create_sampler(uint64_t device, uint32_t mag_filter, uint32_t min_filter, uint32_t address_mode_u, uint32_t address_mode_v,

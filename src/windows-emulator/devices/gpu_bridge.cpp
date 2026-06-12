@@ -1436,6 +1436,24 @@ namespace sogen
                 const int32_t result =
                     this->vulkan_.queue_present(request.queue, request.swapchain, request.image_index, pixels, width, height, hwnd_value);
 
+                if (result == 0 && !pixels.empty() && std::getenv("EMULATOR_LOG_PRESENT") != nullptr)
+                {
+                    size_t nonzero = 0;
+                    for (const auto b : pixels)
+                    {
+                        nonzero += (b != std::byte{0}) ? 1 : 0;
+                    }
+                    uint32_t px0 = 0;
+                    std::memcpy(&px0, pixels.data(), 4);
+                    static int present_dbg = 0;
+                    if (present_dbg < 12)
+                    {
+                        win_emu.log.force_print(color::cyan, "present readback %ux%u: %zu/%zu nonzero bytes px0=0x%08x\n", width, height,
+                                                nonzero, pixels.size(), px0);
+                        ++present_dbg;
+                    }
+                }
+
                 if (result == 0 /* VK_SUCCESS */)
                 {
                     if (this->present_count_++ == 0)
@@ -2417,6 +2435,15 @@ namespace sogen
                     }
                     return this->vulkan_.cmd_copy_buffer_to_image(req.command_buffer, req.buffer, req.image, req.image_layout, req.width,
                                                                   req.height, req.aspect_mask);
+                }
+                case gpu_bridge::command::cmd_resolve_image: {
+                    gpu_bridge::cmd_resolve_image_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_resolve_image(req.command_buffer, req.src_image, req.src_layout, req.dst_image, req.dst_layout,
+                                                           req.width, req.height, req.aspect_mask);
                 }
                 default:
                     win_emu.log.warn("[gpu-bridge] record_commands: unsupported command 0x%X\n", command);
