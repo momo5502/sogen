@@ -4755,6 +4755,30 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        static const bool dump_bindings = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
+        if (dump_bindings)
+        {
+            static int dumped_layout = 0;
+            if (dumped_layout < 8)
+            {
+                ++dumped_layout;
+                for (const uint64_t id : sets)
+                {
+                    const auto set = this->impl_->descriptor_sets.find(id);
+                    if (set == this->impl_->descriptor_sets.end())
+                    {
+                        continue;
+                    }
+                    std::string bs;
+                    for (const auto& [b, info] : set->second.buffer_bindings)
+                    {
+                        bs += std::to_string(b) + ":t" + std::to_string(info.type) + " ";
+                    }
+                    std::fprintf(stderr, "DSLAYOUT set=%llu bufbindings=[%s]\n", static_cast<unsigned long long>(id), bs.c_str());
+                }
+            }
+        }
+
         std::vector<VkDescriptorSet> handles;
         handles.reserve(sets.size());
         for (const uint64_t id : sets)

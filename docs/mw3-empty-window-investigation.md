@@ -332,3 +332,47 @@ value), and/or capture whether the SPIR-V actually declares spec constants with 
 constant IDs (0..7) so the specialization takes effect (if the IDs don't match, the override is
 silently ignored and the shader keeps its default-0 constants). Also re-confirm whether the visible
 draws sample a texture whose result drives a discard.
+
+---
+
+## Update (2026-06-12, final for this session): root cause = empty SpecData UBO → alpha test NEVER
+
+Pinned the black screen to a precise mechanism:
+
+1. The fragment shader's alpha-test compare op is `SpecAlphaCompareOp` (DXVK spec constant, dword 1,
+   bits 21..23 of the packed spec data; `src/d3d9/d3d9_spec_constants.h`).
+2. The shader reads it via `Select(IsOptimized, specConstant, ubo)` — and `IsOptimized` defaults
+   **false**, so for the menu pipelines it reads from the runtime **SpecData uniform buffer**
+   (`CbvIndex::SpecData = 20`, remapped to an actual descriptor binding), not from
+   `pSpecializationInfo`.
+3. DXVK sets `alphaOp = VK_COMPARE_OP_ALWAYS (7)` when the alpha test is **disabled**
+   (`d3d9_device.cpp`: `m_alphaTestEnabled ? DecodeCompareOp(...) : VK_COMPARE_OP_ALWAYS`).
+4. In the bridge that descriptor (the menu set's **binding 1**, a 256-byte uniform buffer) reads
+   **all zero** → `AlphaCompareOp = 0 = VK_COMPARE_OP_NEVER` → the alpha test always fails → **every
+   fragment is discarded** → uniform clear color (black). The streaming VS-constant buffer (binding 0)
+   *is* populated (the ortho matrix), so it is specifically the fixed/SpecData constant buffer that is
+   empty.
+
+`DSLAYOUT` confirms the menu set has only buffer bindings 0 and 1; the dense per-draw constant data
+actually lives in *other* host-visible memories (`MEMSCAN`: two 4 MB allocations with ~28k/36k
+non-zero dwords) while the descriptor-referenced 16 MB allocation is nearly empty — i.e. there is a
+buffer↔memory association mismatch for the fixed constant buffers.
+
+### Tried and inconclusive
+
+Forwarding `pSpecializationInfo` is correct and committed, but does not help the menu pipelines
+because they run with `IsOptimized = false` and read the UBO. An env-gated experiment that forced
+`IsOptimized = true` + `AlphaCompareOp = ALWAYS` in the forwarded FS spec data did **not** turn the
+menu visible and was reverted — most likely because the `IsOptimized` selector's spec-constant id in
+the shipped **DXVK 2.7.1** differs from the cloned master (`DxvkLimits::MaxNumSpecConstants = 20`), so
+the override never engaged. The clean fix is to make the SpecData/fixed constant buffer non-empty,
+not to bypass it.
+
+### Next step (concrete)
+
+Trace the fixed (non-streaming) constant buffers — `Kind::PS/SpecData`, written once when render state
+changes, `HOST_VISIBLE|HOST_COHERENT|HOST_CACHED` — through `vkCreateBuffer` → `vkBindBufferMemory` →
+`vkMapMemory` → the descriptor write, by object id. Determine whether (a) DXVK's one-time write lands
+in a different `VkDeviceMemory` than the descriptor references (binding/identity mismatch), or (b) the
+`HOST_CACHED` mapping isn't reflecting the guest's writes in the bridge. Fixing that makes
+`SpecAlphaCompareOp = ALWAYS` reach the shader and should unblock the first visible frame.
