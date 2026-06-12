@@ -86,6 +86,9 @@ namespace sogen
                             nt_memory_permission* old_permissions = nullptr);
 
         bool allocate_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb);
+        // Reserves the range and aliases it onto caller-owned host memory (e.g. a host Vulkan mapping) so the
+        // guest accesses it coherently. The region is treated like MMIO: not serialized, host_pointer not owned.
+        bool allocate_host_memory(uint64_t address, size_t size, void* host_pointer, nt_memory_permission permissions);
         bool allocate_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool reserve_only = false,
                              memory_region_kind kind = memory_region_kind::private_allocation);
 
@@ -144,6 +147,7 @@ namespace sogen
 
         void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) final;
         void map_memory(uint64_t address, size_t size, memory_permission permissions) final;
+        void map_host_memory(uint64_t address, size_t size, void* host_pointer, memory_permission permissions) final;
         void unmap_memory(uint64_t address, size_t size) final;
         void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) final;
 

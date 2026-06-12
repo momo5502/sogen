@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <functional>
+#include <stdexcept>
 
 #include "memory_permission.hpp"
 
@@ -30,6 +31,14 @@ namespace sogen
         virtual void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) = 0;
         virtual void map_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
         virtual void unmap_memory(uint64_t address, size_t size) = 0;
+
+        // Maps caller-owned host memory directly into the guest address space so the guest sees it
+        // coherently (no staging copy). The backend must not take ownership of host_pointer. Backends that
+        // cannot alias host memory (e.g. icicle) keep the default and throw.
+        virtual void map_host_memory(uint64_t /*address*/, size_t /*size*/, void* /*host_pointer*/, memory_permission /*permissions*/)
+        {
+            throw std::runtime_error("Host memory mapping is not supported by this backend");
+        }
 
         virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
 

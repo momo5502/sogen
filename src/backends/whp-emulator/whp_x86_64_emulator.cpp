@@ -1185,6 +1185,41 @@ namespace sogen::whp
                 }
             }
 
+            void map_host_memory(const uint64_t address, const size_t size, void* host_pointer, const memory_permission permissions) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("WHP host memory mappings must be page aligned");
+                }
+                if ((reinterpret_cast<uintptr_t>(host_pointer) % page_size) != 0)
+                {
+                    throw std::runtime_error("WHP host memory mappings require a page-aligned host pointer");
+                }
+
+                // Back each guest page with the caller's host memory (owned_page stays null so unmap never
+                // frees it). WHvMapGpaRange then aliases the guest physical page directly onto that host page,
+                // so guest reads and writes hit it coherently.
+                auto* host_base = static_cast<uint8_t*>(host_pointer);
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    auto& page = this->mapped_pages_[guest_address];
+                    if (!page)
+                    {
+                        page = std::make_unique<mapped_page>();
+                    }
+
+                    page->owned_page = nullptr;
+                    page->host_page = host_base + offset;
+                    this->assign_guest_physical_page(guest_address, *page);
+                    page->permissions = permissions;
+                    this->apply_patched_execution_breakpoints(guest_address);
+                    this->ensure_virtual_mapping(guest_address);
+                }
+
+                this->remap_pages(address, size);
+            }
+
             void unmap_memory(const uint64_t address, const size_t size) override
             {
                 if (!is_page_aligned(address) || !is_page_aligned(size))
