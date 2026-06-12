@@ -1864,6 +1864,11 @@ extern "C"
         request.usage = pCreateInfo->usage;
         request.tiling = static_cast<uint32_t>(pCreateInfo->tiling);
         request.samples = static_cast<uint32_t>(pCreateInfo->samples);
+        request.image_type = static_cast<uint32_t>(pCreateInfo->imageType);
+        request.depth = pCreateInfo->extent.depth;
+        request.mip_levels = pCreateInfo->mipLevels;
+        request.array_layers = pCreateInfo->arrayLayers;
+        request.flags = pCreateInfo->flags;
 
         gb::create_image_response response{};
         if (!bridge_call(gb::ioctl_create_image, &request, sizeof(request), &response, sizeof(response)))
@@ -3073,6 +3078,15 @@ extern "C"
         request.image = to_object_id(pCreateInfo->image);
         request.format = static_cast<uint32_t>(pCreateInfo->format);
         request.aspect_mask = pCreateInfo->subresourceRange.aspectMask;
+        request.view_type = static_cast<uint32_t>(pCreateInfo->viewType);
+        request.base_mip_level = pCreateInfo->subresourceRange.baseMipLevel;
+        request.level_count = pCreateInfo->subresourceRange.levelCount;
+        request.base_array_layer = pCreateInfo->subresourceRange.baseArrayLayer;
+        request.layer_count = pCreateInfo->subresourceRange.layerCount;
+        request.swizzle_r = static_cast<uint32_t>(pCreateInfo->components.r);
+        request.swizzle_g = static_cast<uint32_t>(pCreateInfo->components.g);
+        request.swizzle_b = static_cast<uint32_t>(pCreateInfo->components.b);
+        request.swizzle_a = static_cast<uint32_t>(pCreateInfo->components.a);
 
         gb::object_response response{};
         if (!bridge_call(gb::ioctl_create_image_view, &request, sizeof(request), &response, sizeof(response)))

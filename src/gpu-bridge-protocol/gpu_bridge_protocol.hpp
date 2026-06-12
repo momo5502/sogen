@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 25;
+    inline constexpr uint32_t protocol_version = 26;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -897,6 +897,11 @@ namespace sogen::gpu_bridge
         uint32_t usage;   // VkImageUsageFlags
         uint32_t tiling;  // VkImageTiling
         uint32_t samples; // VkSampleCountFlagBits (1 = no MSAA)
+        uint32_t image_type;   // VkImageType (0=1D,1=2D,2=3D)
+        uint32_t depth;        // extent.depth (3D textures); 0/1 => 1
+        uint32_t mip_levels;   // 0 => 1
+        uint32_t array_layers; // 0 => 1 (cubemaps = 6, arrays = N)
+        uint32_t flags;        // VkImageCreateFlags (e.g. CUBE_COMPATIBLE)
     };
 
     struct create_image_response
@@ -1164,6 +1169,15 @@ namespace sogen::gpu_bridge
         object_id image;
         uint32_t format;      // VkFormat
         uint32_t aspect_mask; // VkImageAspectFlags (COLOR for color targets, DEPTH for depth); 0 => COLOR
+        uint32_t view_type;   // VkImageViewType (2D, CUBE, 2D_ARRAY, 3D, ...)
+        uint32_t base_mip_level;
+        uint32_t level_count; // 0 => 1
+        uint32_t base_array_layer;
+        uint32_t layer_count; // 0 => 1
+        uint32_t swizzle_r;   // VkComponentSwizzle (DXVK uses these to emulate D3D9 formats)
+        uint32_t swizzle_g;
+        uint32_t swizzle_b;
+        uint32_t swizzle_a;
     };
 
     // out = object_response (a VkBufferView)

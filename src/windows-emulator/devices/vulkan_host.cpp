@@ -2549,7 +2549,8 @@ namespace sogen
     }
 
     int32_t vulkan_host::create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,
-                                      uint32_t samples, uint64_t& out_image)
+                                      uint32_t samples, uint32_t image_type, uint32_t depth, uint32_t mip_levels, uint32_t array_layers,
+                                      uint32_t flags, uint64_t& out_image)
     {
         out_image = 0;
 
@@ -2561,11 +2562,12 @@ namespace sogen
 
         VkImageCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-        info.imageType = VK_IMAGE_TYPE_2D;
+        info.flags = flags;
+        info.imageType = static_cast<VkImageType>(image_type);
         info.format = static_cast<VkFormat>(format);
-        info.extent = {.width = width, .height = height, .depth = 1};
-        info.mipLevels = 1;
-        info.arrayLayers = 1;
+        info.extent = {.width = width, .height = height, .depth = depth ? depth : 1};
+        info.mipLevels = mip_levels ? mip_levels : 1;
+        info.arrayLayers = array_layers ? array_layers : 1;
         info.samples = static_cast<VkSampleCountFlagBits>(samples ? samples : VK_SAMPLE_COUNT_1_BIT);
         info.tiling = static_cast<VkImageTiling>(tiling);
         info.usage = usage;
@@ -3451,7 +3453,10 @@ namespace sogen
         this->impl_->shader_modules.erase(it);
     }
 
-    int32_t vulkan_host::create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask, uint64_t& out_view)
+    int32_t vulkan_host::create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask, uint32_t view_type,
+                                           uint32_t base_mip_level, uint32_t level_count, uint32_t base_array_layer, uint32_t layer_count,
+                                           uint32_t swizzle_r, uint32_t swizzle_g, uint32_t swizzle_b, uint32_t swizzle_a,
+                                           uint64_t& out_view)
     {
         out_view = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -3464,11 +3469,17 @@ namespace sogen
         VkImageViewCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         info.image = img->second.handle;
-        info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        info.viewType = static_cast<VkImageViewType>(view_type);
         info.format = static_cast<VkFormat>(format);
+        info.components = {.r = static_cast<VkComponentSwizzle>(swizzle_r),
+                           .g = static_cast<VkComponentSwizzle>(swizzle_g),
+                           .b = static_cast<VkComponentSwizzle>(swizzle_b),
+                           .a = static_cast<VkComponentSwizzle>(swizzle_a)};
         info.subresourceRange.aspectMask = (aspect_mask != 0) ? aspect_mask : static_cast<uint32_t>(VK_IMAGE_ASPECT_COLOR_BIT);
-        info.subresourceRange.levelCount = 1;
-        info.subresourceRange.layerCount = 1;
+        info.subresourceRange.baseMipLevel = base_mip_level;
+        info.subresourceRange.levelCount = level_count ? level_count : 1;
+        info.subresourceRange.baseArrayLayer = base_array_layer;
+        info.subresourceRange.layerCount = layer_count ? layer_count : 1;
 
         VkImageView view{};
         const VkResult result = dev->second.create_image_view(dev->second.handle, &info, nullptr, &view);

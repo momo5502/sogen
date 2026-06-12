@@ -223,7 +223,8 @@ namespace sogen
         // Creates a 2D, single-mip, single-layer image (initial layout UNDEFINED). samples selects the
         // multisample count (1 = no MSAA).
         int32_t create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,
-                             uint32_t samples, uint64_t& out_image);
+                             uint32_t samples, uint32_t image_type, uint32_t depth, uint32_t mip_levels, uint32_t array_layers,
+                             uint32_t flags, uint64_t& out_image);
         void destroy_image(uint64_t device, uint64_t image);
         int32_t get_image_subresource_layout(uint64_t device, uint64_t image, uint32_t aspect_mask, uint32_t mip_level,
                                              uint32_t array_layer, uint64_t& out_offset, uint64_t& out_size, uint64_t& out_row_pitch,
@@ -315,7 +316,9 @@ namespace sogen
         void destroy_shader_module(uint64_t device, uint64_t shader_module);
 
         // aspect_mask selects COLOR vs DEPTH (0 defaults to COLOR).
-        int32_t create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask, uint64_t& out_view);
+        int32_t create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask, uint32_t view_type,
+                                  uint32_t base_mip_level, uint32_t level_count, uint32_t base_array_layer, uint32_t layer_count,
+                                  uint32_t swizzle_r, uint32_t swizzle_g, uint32_t swizzle_b, uint32_t swizzle_a, uint64_t& out_view);
         void destroy_image_view(uint64_t device, uint64_t image_view);
         int32_t create_buffer_view(uint64_t device, uint64_t buffer, uint32_t format, uint64_t offset, uint64_t range, uint64_t& out_view);
         void destroy_buffer_view(uint64_t device, uint64_t buffer_view);
