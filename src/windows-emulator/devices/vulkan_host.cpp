@@ -4149,7 +4149,8 @@ namespace sogen
                                                   uint64_t fragment_shader, uint32_t width, uint32_t height,
                                                   std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
                                                   const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
-                                                  uint32_t stencil_format, uint32_t rasterization_samples, uint64_t& out_pipeline)
+                                                  uint32_t stencil_format, uint32_t rasterization_samples,
+                                                  std::span<const uint32_t> dynamic_states, uint64_t& out_pipeline)
     {
         out_pipeline = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -4230,11 +4231,45 @@ namespace sogen
         viewport_state.scissorCount = 1;
         viewport_state.pScissors = dynamic_rendering ? nullptr : &scissor;
 
-        constexpr std::array<VkDynamicState, 2> dynamic_states{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        // Use the dynamic-state list DXVK declared on the pipeline. It marks vertex-binding stride, cull,
+        // topology, depth/stencil etc. dynamic and sets them at draw time; if the pipeline doesn't declare
+        // them dynamic the baked defaults (e.g. a 0 vertex stride) win and produce degenerate geometry.
+        static const bool no_discard_dyn = std::getenv("EMULATOR_NO_DISCARD_DYN") != nullptr;
+        std::vector<VkDynamicState> dynamic_state_list;
+        dynamic_state_list.reserve(dynamic_states.size() + 2);
+        for (const uint32_t s : dynamic_states)
+        {
+            if (no_discard_dyn && s == static_cast<uint32_t>(VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE))
+            {
+                continue; // bake rasterizerDiscardEnable = FALSE instead of leaving it dynamic
+            }
+            dynamic_state_list.push_back(static_cast<VkDynamicState>(s));
+        }
+        if (dynamic_state_list.empty())
+        {
+            dynamic_state_list.push_back(VK_DYNAMIC_STATE_VIEWPORT);
+            dynamic_state_list.push_back(VK_DYNAMIC_STATE_SCISSOR);
+        }
         VkPipelineDynamicStateCreateInfo dynamic_state{};
         dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-        dynamic_state.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
-        dynamic_state.pDynamicStates = dynamic_states.data();
+        dynamic_state.dynamicStateCount = static_cast<uint32_t>(dynamic_state_list.size());
+        dynamic_state.pDynamicStates = dynamic_state_list.data();
+
+        if (std::getenv("EMULATOR_LOG_BIND") != nullptr)
+        {
+            std::string ds;
+            for (const auto s : dynamic_state_list)
+            {
+                ds += std::to_string(static_cast<uint32_t>(s)) + " ";
+            }
+            std::string bs;
+            for (const auto& b : vk_bindings)
+            {
+                bs += std::to_string(b.stride) + " ";
+            }
+            std::fprintf(stderr, "PIPE dynstates(%zu)=[%s] bindingStrides=[%s] attrs=%zu\n", dynamic_state_list.size(), ds.c_str(),
+                         bs.c_str(), vk_attributes.size());
+        }
 
         VkPipelineRasterizationStateCreateInfo rasterization{};
         rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -4616,7 +4651,8 @@ namespace sogen
     }
 
     int32_t vulkan_host::cmd_bind_descriptor_sets(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t first_set,
-                                                  std::span<const uint64_t> sets, uint32_t bind_point)
+                                                  std::span<const uint64_t> sets, uint32_t bind_point,
+                                                  std::span<const uint32_t> dynamic_offsets)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto layout = this->impl_->pipeline_layouts.find(pipeline_layout);
@@ -4650,7 +4686,8 @@ namespace sogen
         }
 
         dev->second.cmd_bind_descriptor_sets(cb->second.handle, static_cast<VkPipelineBindPoint>(bind_point), layout->second.handle,
-                                             first_set, static_cast<uint32_t>(handles.size()), handles.data(), 0, nullptr);
+                                             first_set, static_cast<uint32_t>(handles.size()), handles.data(),
+                                             static_cast<uint32_t>(dynamic_offsets.size()), dynamic_offsets.data());
         return VK_SUCCESS;
     }
 
@@ -4817,6 +4854,11 @@ namespace sogen
         {
             entries[i] = {viewports[i].x,      viewports[i].y,         viewports[i].width,
                           viewports[i].height, viewports[i].min_depth, viewports[i].max_depth};
+        }
+        if (std::getenv("EMULATOR_LOG_BIND") != nullptr && !entries.empty())
+        {
+            std::fprintf(stderr, "DS set_viewport cb=%llu wc=%d %.0fx%.0f\n", static_cast<unsigned long long>(command_buffer),
+                         with_count ? 1 : 0, entries[0].width, entries[0].height);
         }
 
         if (with_count)
@@ -5014,6 +5056,16 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         const VkCommandBuffer handle = cb->second.handle;
+        if (std::getenv("EMULATOR_LOG_BIND") != nullptr)
+        {
+            std::fprintf(stderr, "DS set_dynamic_u32 cb=%llu state=%u val=%u\n", static_cast<unsigned long long>(command_buffer), state,
+                         value);
+        }
+        static const bool no_cull = std::getenv("EMULATOR_NO_CULL") != nullptr;
+        if (no_cull && static_cast<gpu_bridge::dynamic_state_u32>(state) == gpu_bridge::dynamic_state_u32::cull_mode)
+        {
+            value = 0; // VK_CULL_MODE_NONE
+        }
         switch (static_cast<gpu_bridge::dynamic_state_u32>(state))
         {
         case gpu_bridge::dynamic_state_u32::cull_mode:

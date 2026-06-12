@@ -1837,6 +1837,13 @@ namespace sogen
                     attributes[i] = {.location = a.location, .binding = a.binding, .format = a.format, .offset = a.offset};
                 }
 
+                std::vector<uint32_t> dynamic_states(request.dynamic_state_count);
+                const size_t dynamic_bytes = static_cast<size_t>(request.dynamic_state_count) * sizeof(uint32_t);
+                if (bindings_bytes + attributes_bytes + dynamic_bytes <= trailer.size() && request.dynamic_state_count > 0)
+                {
+                    std::memcpy(dynamic_states.data(), trailer.data() + bindings_bytes + attributes_bytes, dynamic_bytes);
+                }
+
                 const vulkan_host::depth_state depth{.test_enable = request.depth_test_enable,
                                                      .write_enable = request.depth_write_enable,
                                                      .compare_op = request.depth_compare_op};
@@ -1848,7 +1855,7 @@ namespace sogen
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
                     request.device, request.render_pass, request.pipeline_layout, request.vertex_shader, request.fragment_shader,
                     request.width, request.height, bindings, attributes, depth, color_formats, request.depth_format,
-                    request.stencil_format, request.rasterization_samples, pipeline);
+                    request.stencil_format, request.rasterization_samples, dynamic_states, pipeline);
                 if (result != 0)
                 {
                     win_emu.log.force_print(
@@ -2389,7 +2396,8 @@ namespace sogen
                         return vk_error_initialization_failed;
                     }
                     const size_t ids_bytes = static_cast<size_t>(req.set_count) * sizeof(gpu_bridge::object_id);
-                    if (ids_bytes > size - sizeof(req))
+                    const size_t offsets_bytes = static_cast<size_t>(req.dynamic_offset_count) * sizeof(uint32_t);
+                    if (ids_bytes + offsets_bytes > size - sizeof(req))
                     {
                         return vk_error_initialization_failed;
                     }
@@ -2398,8 +2406,13 @@ namespace sogen
                     {
                         std::memcpy(sets.data(), payload + sizeof(req), ids_bytes);
                     }
+                    std::vector<uint32_t> dynamic_offsets(req.dynamic_offset_count);
+                    if (req.dynamic_offset_count > 0)
+                    {
+                        std::memcpy(dynamic_offsets.data(), payload + sizeof(req) + ids_bytes, offsets_bytes);
+                    }
                     return this->vulkan_.cmd_bind_descriptor_sets(req.command_buffer, req.pipeline_layout, req.first_set, sets,
-                                                                  req.bind_point);
+                                                                  req.bind_point, dynamic_offsets);
                 }
                 case gpu_bridge::command::cmd_end_render_pass: {
                     gpu_bridge::cmd_end_render_pass_request req{};

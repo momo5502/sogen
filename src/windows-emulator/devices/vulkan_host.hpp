@@ -403,7 +403,8 @@ namespace sogen
                                          uint64_t fragment_shader, uint32_t width, uint32_t height,
                                          std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
                                          const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
-                                         uint32_t stencil_format, uint32_t rasterization_samples, uint64_t& out_pipeline);
+                                         uint32_t stencil_format, uint32_t rasterization_samples, std::span<const uint32_t> dynamic_states,
+                                         uint64_t& out_pipeline);
         int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, uint64_t shader_module, uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 
@@ -424,7 +425,8 @@ namespace sogen
         int32_t cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count, uint32_t first_index,
                                  int32_t vertex_offset, uint32_t first_instance);
         int32_t cmd_bind_descriptor_sets(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t first_set,
-                                         std::span<const uint64_t> sets, uint32_t bind_point);
+                                         std::span<const uint64_t> sets, uint32_t bind_point,
+                                         std::span<const uint32_t> dynamic_offsets);
         int32_t cmd_end_render_pass(uint64_t command_buffer);
         // Dynamic rendering (VK_KHR_dynamic_rendering / core 1.3). depth/stencil are null when absent.
         int32_t cmd_begin_rendering(uint64_t command_buffer, int32_t area_x, int32_t area_y, uint32_t area_w, uint32_t area_h,

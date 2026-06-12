@@ -3611,6 +3611,12 @@ extern "C"
             request.rasterization_samples =
                 ci.pMultisampleState ? static_cast<uint32_t>(ci.pMultisampleState->rasterizationSamples) : 1u;
 
+            // Forward the dynamic-state list verbatim. DXVK marks vertex-binding stride, cull, topology,
+            // depth/stencil etc. dynamic and sets them via vkCmdSet*/vkCmdBindVertexBuffers2; if the host
+            // pipeline does not also declare them dynamic it bakes (often wrong) defaults instead.
+            const uint32_t dynamic_state_count = ci.pDynamicState ? ci.pDynamicState->dynamicStateCount : 0;
+            request.dynamic_state_count = dynamic_state_count;
+
             // DXVK 2.x builds pipelines with VK_KHR_dynamic_rendering: renderPass is VK_NULL_HANDLE and the
             // attachment formats live in a VkPipelineRenderingCreateInfo on the pNext chain. Forward those so
             // the host can rebuild that info instead of failing for the missing render pass.
@@ -3635,7 +3641,8 @@ extern "C"
             }
 
             std::vector<uint8_t> message(sizeof(request) + static_cast<size_t>(binding_count) * sizeof(gb::vertex_input_binding) +
-                                         static_cast<size_t>(attribute_count) * sizeof(gb::vertex_input_attribute));
+                                         static_cast<size_t>(attribute_count) * sizeof(gb::vertex_input_attribute) +
+                                         static_cast<size_t>(dynamic_state_count) * sizeof(uint32_t));
             std::memcpy(message.data(), &request, sizeof(request));
             size_t cursor = sizeof(request);
             for (uint32_t b = 0; b < binding_count; ++b)
@@ -3656,6 +3663,12 @@ extern "C"
                 wire.offset = vk_attributes[a].offset;
                 std::memcpy(message.data() + cursor, &wire, sizeof(wire));
                 cursor += sizeof(wire);
+            }
+            for (uint32_t d = 0; d < dynamic_state_count; ++d)
+            {
+                const uint32_t value = static_cast<uint32_t>(ci.pDynamicState->pDynamicStates[d]);
+                std::memcpy(message.data() + cursor, &value, sizeof(value));
+                cursor += sizeof(value);
             }
 
             gb::object_response response{};
@@ -3881,24 +3894,34 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer,
                                                                              VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout,
                                                                              uint32_t firstSet, uint32_t descriptorSetCount,
-                                                                             const VkDescriptorSet* pDescriptorSets, uint32_t,
-                                                                             const uint32_t*)
+                                                                             const VkDescriptorSet* pDescriptorSets,
+                                                                             uint32_t dynamicOffsetCount, const uint32_t* pDynamicOffsets)
     {
-        // Dynamic offsets are not modeled yet (the samples use none).
+        // Forward the dynamic offsets: DXVK binds UNIFORM_BUFFER_DYNAMIC descriptors and indexes the current
+        // frame's shader constants in a ring buffer through them. Dropping them reads stale constants.
         const gb::object_id command_buffer = to_object_id(commandBuffer);
         std::vector<uint8_t> message(sizeof(gb::cmd_bind_descriptor_sets_request) +
-                                     static_cast<size_t>(descriptorSetCount) * sizeof(gb::object_id));
+                                     static_cast<size_t>(descriptorSetCount) * sizeof(gb::object_id) +
+                                     static_cast<size_t>(dynamicOffsetCount) * sizeof(uint32_t));
         gb::cmd_bind_descriptor_sets_request header{};
         header.command_buffer = command_buffer;
         header.pipeline_layout = to_object_id(layout);
         header.first_set = firstSet;
         header.set_count = descriptorSetCount;
         header.bind_point = static_cast<uint32_t>(pipelineBindPoint);
+        header.dynamic_offset_count = dynamicOffsetCount;
         std::memcpy(message.data(), &header, sizeof(header));
+        size_t cursor = sizeof(header);
         for (uint32_t i = 0; i < descriptorSetCount; ++i)
         {
             const gb::object_id id = to_object_id(pDescriptorSets[i]);
-            std::memcpy(message.data() + sizeof(header) + i * sizeof(id), &id, sizeof(id));
+            std::memcpy(message.data() + cursor, &id, sizeof(id));
+            cursor += sizeof(id);
+        }
+        for (uint32_t i = 0; i < dynamicOffsetCount; ++i)
+        {
+            std::memcpy(message.data() + cursor, &pDynamicOffsets[i], sizeof(uint32_t));
+            cursor += sizeof(uint32_t);
         }
         record_command(command_buffer, gb::command::cmd_bind_descriptor_sets, message.data(), message.size());
     }
