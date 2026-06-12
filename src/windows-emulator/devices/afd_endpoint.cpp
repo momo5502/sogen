@@ -362,6 +362,14 @@ namespace sogen
             ULONG event_select_mask_{0};
             ULONG triggered_events_{0};
 
+            // Reflects the guest socket's blocking mode (FIONBIO). mswsock keeps this in its per-socket
+            // SOCK_SHARED_INFO and pushes the whole structure to the kernel via AFD_SET_CONTEXT; the
+            // NonBlocking flag is bit 6 of the option bitfield at offset 0x2c. When set, an operation that
+            // would block must fail immediately with STATUS_DEVICE_NOT_READY (which mswsock maps to
+            // WSAEWOULDBLOCK) instead of pending, because the guest's synchronous recv/send call would
+            // otherwise wait forever on a packet that never arrives.
+            bool non_blocking_{false};
+
             afd_endpoint()
             {
                 network::initialize_wsa();
@@ -421,6 +429,33 @@ namespace sogen
                 this->timeout_ = {};
                 this->require_poll_ = {};
                 this->delayed_ioctl_ = {};
+            }
+
+            void update_shared_info(windows_emulator& win_emu, const io_device_context& c)
+            {
+                constexpr size_t option_flags_offset = 0x2c;
+                constexpr ULONG non_blocking_flag = 1u << 6;
+                if (c.input_buffer_length < option_flags_offset + sizeof(ULONG))
+                {
+                    return;
+                }
+
+                const auto option_flags = win_emu.emu().read_memory<ULONG>(c.input_buffer + option_flags_offset);
+                this->non_blocking_ = (option_flags & non_blocking_flag) != 0;
+            }
+
+            // For a non-blocking socket an operation that would block must complete immediately with
+            // STATUS_DEVICE_NOT_READY (mapped to WSAEWOULDBLOCK by mswsock); a blocking socket instead pends
+            // the request and the delayed-ioctl machinery resumes it once the host socket is ready.
+            NTSTATUS pend_or_would_block(const io_device_context& c, const bool require_poll)
+            {
+                if (this->non_blocking_)
+                {
+                    return STATUS_DEVICE_NOT_READY;
+                }
+
+                this->delay_ioctrl(c, require_poll);
+                return STATUS_PENDING;
             }
 
             void work(windows_emulator& win_emu) override
@@ -515,6 +550,7 @@ namespace sogen
                 buffer.read_optional(this->require_poll_);
                 buffer.read_optional(this->delayed_ioctl_);
                 buffer.read_optional(this->timeout_);
+                buffer.read(this->non_blocking_);
             }
 
             void serialize_object(utils::buffer_serializer& buffer) const override
@@ -523,6 +559,7 @@ namespace sogen
                 buffer.write_optional(this->require_poll_);
                 buffer.write_optional(this->delayed_ioctl_);
                 buffer.write_optional(this->timeout_);
+                buffer.write(this->non_blocking_);
             }
 
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
@@ -564,6 +601,8 @@ namespace sogen
                 case AFD_ENUM_NETWORK_EVENTS:
                     return this->ioctl_enum_network_events(win_emu, c);
                 case AFD_SET_CONTEXT:
+                    this->update_shared_info(win_emu, c);
+                    return STATUS_SUCCESS;
                 case AFD_GET_INFORMATION:
                 case AFD_SET_INFORMATION:
                 case AFD_QUERY_HANDLES:
@@ -804,8 +843,7 @@ namespace sogen
                     const auto error = this->s_->get_last_error();
                     if (error == SERR(EWOULDBLOCK))
                     {
-                        this->delay_ioctrl(c, true);
-                        return STATUS_PENDING;
+                        return this->pend_or_would_block(c, true);
                     }
 
                     if (error == SERR(ECONNRESET))
@@ -873,8 +911,7 @@ namespace sogen
                     const auto error = this->s_->get_last_error();
                     if (error == SERR(EWOULDBLOCK))
                     {
-                        this->delay_ioctrl(c, false);
-                        return STATUS_PENDING;
+                        return this->pend_or_would_block(c, false);
                     }
 
                     if (error == SERR(ECONNRESET))
@@ -1069,8 +1106,7 @@ namespace sogen
                     const auto error = this->s_->get_last_error();
                     if (error == SERR(EWOULDBLOCK))
                     {
-                        this->delay_ioctrl(c, true);
-                        return STATUS_PENDING;
+                        return this->pend_or_would_block(c, true);
                     }
 
                     return STATUS_UNSUCCESSFUL;
@@ -1129,8 +1165,7 @@ namespace sogen
                     const auto error = this->s_->get_last_error();
                     if (error == SERR(EWOULDBLOCK))
                     {
-                        this->delay_ioctrl(c, false);
-                        return STATUS_PENDING;
+                        return this->pend_or_would_block(c, false);
                     }
 
                     return STATUS_UNSUCCESSFUL;
