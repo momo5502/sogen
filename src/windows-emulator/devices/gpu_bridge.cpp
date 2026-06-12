@@ -230,6 +230,7 @@ namespace sogen
                 uint64_t guest_address{};
                 uint64_t size{};
                 uint64_t device{};
+                void* host_ptr{};
             };
             std::unordered_map<uint64_t, direct_mapping> direct_mappings_{};
 
@@ -1173,11 +1174,20 @@ namespace sogen
                 const auto copy_bytes = std::min<uint64_t>(request.size, context.output_buffer_length);
 
                 std::vector<std::byte> bytes(static_cast<size_t>(copy_bytes));
-                const int32_t result =
-                    this->vulkan_.download_memory(request.device, request.memory, request.offset, copy_bytes, bytes.data(), bytes.size());
-                if (result != 0)
+                const auto direct = this->direct_mappings_.find(request.memory);
+                if (direct != this->direct_mappings_.end() && direct->second.host_ptr && request.offset + copy_bytes <= direct->second.size)
                 {
-                    return STATUS_INVALID_PARAMETER;
+                    std::memcpy(bytes.data(), static_cast<const std::byte*>(direct->second.host_ptr) + request.offset,
+                                static_cast<size_t>(copy_bytes));
+                }
+                else
+                {
+                    const int32_t result = this->vulkan_.download_memory(request.device, request.memory, request.offset, copy_bytes,
+                                                                         bytes.data(), bytes.size());
+                    if (result != 0)
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
                 }
 
                 if (copy_bytes > 0)
@@ -1252,12 +1262,14 @@ namespace sogen
                     return write_output(win_emu, context, response);
                 }
 
-                this->direct_mappings_[request.memory] = direct_mapping{.guest_address = va, .size = mapped_size, .device = request.device};
+                this->direct_mappings_[request.memory] =
+                    direct_mapping{.guest_address = va, .size = mapped_size, .device = request.device, .host_ptr = host_ptr};
                 response.guest_address = va;
                 if (std::getenv("EMULATOR_LOG_MAP") != nullptr)
                 {
                     static size_t direct_count = 0;
-                    win_emu.log.force_print(color::cyan, "map_memory_direct OK #%zu size=0x%llx va=0x%llx\n", ++direct_count,
+                    win_emu.log.force_print(color::cyan, "map_memory_direct OK #%zu mem=%llu off=%llu size=0x%llx va=0x%llx\n", ++direct_count,
+                                            static_cast<unsigned long long>(request.memory), static_cast<unsigned long long>(request.offset),
                                             static_cast<unsigned long long>(mapped_size), static_cast<unsigned long long>(va));
                 }
                 return write_output(win_emu, context, response);

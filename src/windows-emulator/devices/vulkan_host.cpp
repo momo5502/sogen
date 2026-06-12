@@ -349,12 +349,16 @@ namespace sogen
         {
             VkDeviceMemory handle{};
             uint64_t device_id{};
+            void* persistent_host_pointer{};
+            uint64_t mapped_size{};
         };
 
         struct buffer_data
         {
             VkBuffer handle{};
             uint64_t device_id{};
+            uint64_t memory_id{};
+            uint64_t memory_offset{};
         };
 
         struct image_data
@@ -436,11 +440,20 @@ namespace sogen
             VkDescriptorPool handle{};
             uint64_t device_id{};
         };
+        struct bound_buffer_info
+        {
+            uint64_t buffer_id{};
+            uint64_t offset{};
+            uint64_t range{};
+            uint32_t type{};
+        };
+
         struct descriptor_set_data
         {
             VkDescriptorSet handle{};
             uint64_t device_id{};
             uint64_t pool_id{};
+            std::unordered_map<uint32_t, bound_buffer_info> buffer_bindings;
         };
 
         std::unordered_map<uint64_t, shader_module_data> shader_modules;
@@ -2419,6 +2432,8 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        buf->second.memory_id = memory;
+        buf->second.memory_offset = offset;
         return dev->second.bind_buffer_memory(dev->second.handle, buf->second.handle, mem->second.handle, offset);
     }
 
@@ -2505,6 +2520,8 @@ namespace sogen
         }
 
         out_host_pointer = mapped;
+        mem->second.persistent_host_pointer = mapped;
+        mem->second.mapped_size = size;
         return VK_SUCCESS;
     }
 
@@ -4134,6 +4151,8 @@ namespace sogen
                 bi.offset = w.offset;
                 bi.range = w.range;
                 vw.pBufferInfo = &bi;
+                set->second.buffer_bindings[w.dst_binding] =
+                    impl::bound_buffer_info{.buffer_id = w.buffer, .offset = w.offset, .range = w.range, .type = w.descriptor_type};
             }
             vk_writes.push_back(vw);
         }
@@ -4600,6 +4619,33 @@ namespace sogen
                          (count && strides) ? static_cast<unsigned long long>(strides[0]) : 0ull,
                          (count && sizes) ? static_cast<unsigned long long>(sizes[0]) : 0ull);
         }
+        static const bool dump_vtx = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
+        if (dump_vtx && count > 0 && dev->second.map_memory && dev->second.unmap_memory)
+        {
+            static int dumped = 0;
+            const auto buf = this->impl_->buffers.find(buffer_ids[0]);
+            if (dumped < 16 && buf != this->impl_->buffers.end() && buf->second.memory_id != 0)
+            {
+                const auto mem = this->impl_->memories.find(buf->second.memory_id);
+                if (mem != this->impl_->memories.end())
+                {
+                    const uint64_t base = buf->second.memory_offset + offsets[0];
+                    void* mapped = nullptr;
+                    if (dev->second.map_memory(dev->second.handle, mem->second.handle, base, 32, 0, &mapped) == VK_SUCCESS && mapped)
+                    {
+                        float f[8]{};
+                        std::memcpy(f, mapped, sizeof(f));
+                        std::fprintf(stderr, "VTX buf=%llu off=%llu stride=%llu data=[%g %g %g %g | %g %g %g %g]\n",
+                                     static_cast<unsigned long long>(buffer_ids[0]), static_cast<unsigned long long>(offsets[0]),
+                                     count && strides ? static_cast<unsigned long long>(strides[0]) : 0ull, f[0], f[1], f[2], f[3], f[4],
+                                     f[5], f[6], f[7]);
+                        dev->second.unmap_memory(dev->second.handle, mem->second.handle);
+                        ++dumped;
+                    }
+                }
+            }
+        }
+
         dev->second.cmd_bind_vertex_buffers2(cb->second.handle, first_binding, count, handles.data(), vk_offsets.data(),
                                              sizes ? vk_sizes.data() : nullptr, strides ? vk_strides.data() : nullptr);
         return VK_SUCCESS;
@@ -4685,6 +4731,140 @@ namespace sogen
                          static_cast<unsigned long long>(command_buffer), first_set, handles.size(), bind_point);
         }
 
+        static const bool dump_vtx = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
+        if (dump_vtx && dev->second.map_memory && dev->second.unmap_memory)
+        {
+            static int dumped_ubo = 0;
+            uint32_t dyn_index = 0;
+            for (const uint64_t id : sets)
+            {
+                const auto set = this->impl_->descriptor_sets.find(id);
+                if (set == this->impl_->descriptor_sets.end())
+                {
+                    continue;
+                }
+                std::vector<uint32_t> bindings;
+                for (const auto& [b, info] : set->second.buffer_bindings)
+                {
+                    if (info.type == 6 || info.type == 8) // UNIFORM_BUFFER / UNIFORM_BUFFER_DYNAMIC
+                    {
+                        bindings.push_back(b);
+                    }
+                }
+                std::sort(bindings.begin(), bindings.end());
+                for (const uint32_t b : bindings)
+                {
+                    const auto& info = set->second.buffer_bindings[b];
+                    const bool is_dyn = (info.type == 8);
+                    const uint32_t dyn = (is_dyn && dyn_index < dynamic_offsets.size()) ? dynamic_offsets[dyn_index] : 0;
+                    if (is_dyn)
+                    {
+                        ++dyn_index;
+                    }
+                    if (dumped_ubo >= 24)
+                    {
+                        continue;
+                    }
+                    const auto buf = this->impl_->buffers.find(info.buffer_id);
+                    if (buf == this->impl_->buffers.end() || buf->second.memory_id == 0)
+                    {
+                        continue;
+                    }
+                    const auto mem = this->impl_->memories.find(buf->second.memory_id);
+                    if (mem == this->impl_->memories.end())
+                    {
+                        continue;
+                    }
+                    const uint64_t base = buf->second.memory_offset + info.offset + dyn;
+                    float f[16]{};
+                    bool got = false;
+                    if (mem->second.persistent_host_pointer)
+                    {
+                        std::memcpy(f, static_cast<const uint8_t*>(mem->second.persistent_host_pointer) + base, sizeof(f));
+                        got = true;
+                    }
+                    else
+                    {
+                        void* mapped = nullptr;
+                        if (dev->second.map_memory(dev->second.handle, mem->second.handle, base, 64, 0, &mapped) == VK_SUCCESS && mapped)
+                        {
+                            std::memcpy(f, mapped, sizeof(f));
+                            dev->second.unmap_memory(dev->second.handle, mem->second.handle);
+                            got = true;
+                        }
+                    }
+                    if (got)
+                    {
+                        long long first_nz = -1;
+                        const bool all_zero = (f[0] == 0 && f[1] == 0 && f[2] == 0 && f[3] == 0);
+                        if (all_zero && mem->second.persistent_host_pointer)
+                        {
+                            // Scan a window around the descriptor offset for the first non-zero dword, to learn
+                            // where DXVK actually wrote the constants (vs where the descriptor points).
+                            const auto* bytes = static_cast<const uint8_t*>(mem->second.persistent_host_pointer);
+                            const uint64_t scan_start = base > 0x10000 ? base - 0x10000 : 0;
+                            const uint64_t scan_end = std::min<uint64_t>(base + 0x10000, mem->second.mapped_size);
+                            for (uint64_t o = scan_start; o + 4 <= scan_end; o += 4)
+                            {
+                                uint32_t v = 0;
+                                std::memcpy(&v, bytes + o, 4);
+                                if (v != 0)
+                                {
+                                    first_nz = static_cast<long long>(o);
+                                    break;
+                                }
+                            }
+                        }
+                        float nzf[4]{};
+                        if (first_nz >= 0 && mem->second.persistent_host_pointer)
+                        {
+                            std::memcpy(nzf, static_cast<const uint8_t*>(mem->second.persistent_host_pointer) + first_nz, sizeof(nzf));
+                        }
+                        // One-shot: when the bound constant region is zero, scan every persistently-mapped
+                        // memory for a float that looks like a projection element (1/640 .. small), to locate
+                        // where DXVK actually streamed the constants.
+                        static bool scanned_all = false;
+                        if (all_zero && !scanned_all)
+                        {
+                            scanned_all = true;
+                            for (const auto& [mid, md] : this->impl_->memories)
+                            {
+                                if (!md.persistent_host_pointer)
+                                {
+                                    continue;
+                                }
+                                const auto* bp = static_cast<const uint8_t*>(md.persistent_host_pointer);
+                                size_t nz = 0;
+                                long long fnz = -1;
+                                const uint64_t lim = md.mapped_size >= 4 ? md.mapped_size - 4 : 0;
+                                for (uint64_t o = 0; o <= lim; o += 4)
+                                {
+                                    uint32_t v = 0;
+                                    std::memcpy(&v, bp + o, 4);
+                                    if (v != 0)
+                                    {
+                                        if (fnz < 0)
+                                        {
+                                            fnz = static_cast<long long>(o);
+                                        }
+                                        ++nz;
+                                    }
+                                }
+                                std::fprintf(stderr, "MEMSCAN mem=%llu size=0x%llx nz_dwords=%zu first_nz=%lld\n",
+                                             static_cast<unsigned long long>(mid), static_cast<unsigned long long>(md.mapped_size), nz, fnz);
+                            }
+                        }
+                        std::fprintf(stderr,
+                                     "UBO set=%llu bind=%u type=%u mem=%llu off=%llu base=%llu first_nz=%lld nzf=[%g %g %g %g] f0=%g\n",
+                                     static_cast<unsigned long long>(id), b, info.type, static_cast<unsigned long long>(buf->second.memory_id),
+                                     static_cast<unsigned long long>(info.offset), static_cast<unsigned long long>(base), first_nz, nzf[0],
+                                     nzf[1], nzf[2], nzf[3], f[0]);
+                        ++dumped_ubo;
+                    }
+                }
+            }
+        }
+
         dev->second.cmd_bind_descriptor_sets(cb->second.handle, static_cast<VkPipelineBindPoint>(bind_point), layout->second.handle,
                                              first_set, static_cast<uint32_t>(handles.size()), handles.data(),
                                              static_cast<uint32_t>(dynamic_offsets.size()), dynamic_offsets.data());
@@ -4721,6 +4901,20 @@ namespace sogen
         if (dev == this->impl_->devices.end() || !dev->second.cmd_begin_rendering)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (std::getenv("EMULATOR_LOG_BIND") != nullptr)
+        {
+            const auto& fc = color.empty() ? rendering_attachment{} : color[0];
+            float cv[4]{};
+            std::memcpy(cv, fc.clear_value, sizeof(cv));
+            std::fprintf(stderr,
+                         "RT begin_rendering cb=%llu area=(%d,%d %ux%u) colors=%zu loadOp0=%u view0=%llu resolve0=%llu depth=%d "
+                         "clear0=(%.2f,%.2f,%.2f,%.2f)\n",
+                         static_cast<unsigned long long>(command_buffer), area_x, area_y, area_w, area_h, color.size(),
+                         color.empty() ? 0u : fc.load_op, static_cast<unsigned long long>(color.empty() ? 0 : fc.image_view),
+                         static_cast<unsigned long long>(color.empty() ? 0 : fc.resolve_image_view), depth ? 1 : 0, cv[0], cv[1], cv[2],
+                         cv[3]);
         }
 
         const auto view_handle = [&](uint64_t id) -> VkImageView {
@@ -4831,6 +5025,21 @@ namespace sogen
             std::fprintf(stderr, "BIND push_constants cb=%llu offset=%u size=%u\n", static_cast<unsigned long long>(command_buffer),
                          offset, size);
         }
+        static const bool dump_vtx = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
+        if (dump_vtx && data && size >= 16)
+        {
+            static int dumped_pc = 0;
+            if (dumped_pc < 16)
+            {
+                ++dumped_pc;
+                const float* f = static_cast<const float*>(data);
+                const uint32_t n = size / 4;
+                std::fprintf(stderr, "PC cb=%llu stage=0x%x off=%u size=%u f=[%g %g %g %g %g %g %g %g%s]\n",
+                             static_cast<unsigned long long>(command_buffer), stage_flags, offset, size, f[0], n > 1 ? f[1] : 0.f,
+                             n > 2 ? f[2] : 0.f, n > 3 ? f[3] : 0.f, n > 4 ? f[4] : 0.f, n > 5 ? f[5] : 0.f, n > 6 ? f[6] : 0.f,
+                             n > 7 ? f[7] : 0.f, n > 8 ? " ..." : "");
+            }
+        }
         dev->second.cmd_push_constants(cb->second.handle, layout->second.handle, stage_flags, offset, size, data);
         return VK_SUCCESS;
     }
@@ -4897,6 +5106,13 @@ namespace sogen
         for (size_t i = 0; i < scissors.size(); ++i)
         {
             entries[i] = {{scissors[i].offset_x, scissors[i].offset_y}, {scissors[i].width, scissors[i].height}};
+        }
+
+        if (std::getenv("EMULATOR_LOG_BIND") != nullptr && !entries.empty())
+        {
+            std::fprintf(stderr, "DS set_scissor cb=%llu wc=%d first=(%d,%d) %ux%u\n", static_cast<unsigned long long>(command_buffer),
+                         with_count ? 1 : 0, entries[0].offset.x, entries[0].offset.y, entries[0].extent.width,
+                         entries[0].extent.height);
         }
 
         if (with_count)
