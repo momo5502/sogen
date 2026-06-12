@@ -283,3 +283,52 @@ Then fix the binding/identity handling so the descriptor and DXVK's writes refer
   logs the memory id on direct-map success.
 - `memory_data` now records the persistent host pointer + mapped size; `buffer_data` records its bound
   memory id/offset; `descriptor_set_data` records per-binding buffer infos — all used by the dumps.
+
+---
+
+## Update (2026-06-12, later): constants are NOT empty — correction + spec-constant fix
+
+The "empty shader-constant buffer" conclusion above is **wrong** and is retracted. It was an artifact
+of reading **offset 0** of the descriptor range. Reading the *live* persistent host pointer at the
+right offset shows the constants are present and correct:
+
+- The bound VS uniform (range 512) holds a valid 2D orthographic projection at **byte offset +256**:
+  `[1/640,0,0,-1 / 0,-1/360,0,1 / 0,0,0,1 / 0,0,0,1]` (`1/640 = 0.0015625`, `-1/360 = -0.00277778`).
+  Vertices like `(225,64)` map to `(-0.65, 0.82)` — **on screen**. So geometry transforms correctly.
+
+So with vertices valid, the transform correct, and geometry landing on-screen, "zero fragments" must
+mean **fragments are produced but write nothing** — and since blending is disabled with a full RGBA
+write mask, the only remaining explanation is the **fragment shader discarding** (note: the
+`EMULATOR_CLEAR_GREEN` "uniform green" result cannot distinguish "no fragments" from "all fragments
+discarded" — both leave the clear untouched).
+
+### Real bug fixed: specialization constants were dropped
+
+DXVK bakes d3d9 render state into shaders via **`VkSpecializationInfo`** (see
+`src/d3d9/d3d9_spec_constants.h`: `SpecAlphaCompareOp` is a 3-bit `VkCompareOp`, plus sampler types,
+fog, FF texture-stage ops, …). The GPU bridge **dropped `pSpecializationInfo` entirely** — no handling
+in the protocol, shim, or host — so every spec constant defaulted to 0. For the alpha test that means
+`VK_COMPARE_OP_NEVER`, which discards every fragment.
+
+Fix (this commit): forward per-stage specialization constants end-to-end —
+`specialization_map_entry` wire struct + `vs/fs_spec_*` fields on `create_graphics_pipeline_request`
+(protocol_version → 24); the shim marshals each stage's `pSpecializationInfo` (map entries + data);
+the bridge parses the two trailing blocks; the host rebuilds a `VkSpecializationInfo` per stage and
+attaches it. Verified working: the fragment stage now receives e.g. `entries=8 data=32`,
+`fsdata=[1 0 1000104013 0 1000104013 1 0 0]` (real DXVK packed spec words), not zeros.
+
+### Status: still black after the spec-constant fix
+
+Forwarding spec constants is necessary and correct, but **did not by itself** make the menu render —
+present readback is still alpha-only. So either alpha-test discard was not the (sole) cause, or the
+menu's main draws use a different fragment shader/discard path. There are multiple FS pipelines
+(`entries=8` and `entries=2` variants); which one the visible menu geometry uses is not yet pinned.
+
+### Next step
+
+Identify the fragment shader used by the visible menu draws and why it produces no color: decode the
+forwarded spec-constant bitfield for that pipeline (confirm the alpha-test op resolves to a passing
+value), and/or capture whether the SPIR-V actually declares spec constants with the forwarded
+constant IDs (0..7) so the specialization takes effect (if the IDs don't match, the override is
+silently ignored and the shader keeps its default-0 constants). Also re-confirm whether the visible
+draws sample a texture whose result drives a discard.

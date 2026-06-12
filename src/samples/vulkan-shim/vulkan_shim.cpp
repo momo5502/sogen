@@ -3550,6 +3550,8 @@ extern "C"
 
             gb::object_id vertex_shader = gb::null_object;
             gb::object_id fragment_shader = gb::null_object;
+            const VkSpecializationInfo* vs_spec = nullptr;
+            const VkSpecializationInfo* fs_spec = nullptr;
             VkShaderModule owned_modules[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
             uint32_t owned_count = 0;
             for (uint32_t s = 0; s < ci.stageCount; ++s)
@@ -3563,12 +3565,18 @@ extern "C"
                 if (ci.pStages[s].stage == VK_SHADER_STAGE_VERTEX_BIT)
                 {
                     vertex_shader = to_object_id(module);
+                    vs_spec = ci.pStages[s].pSpecializationInfo;
                 }
                 else if (ci.pStages[s].stage == VK_SHADER_STAGE_FRAGMENT_BIT)
                 {
                     fragment_shader = to_object_id(module);
+                    fs_spec = ci.pStages[s].pSpecializationInfo;
                 }
             }
+            const uint32_t vs_spec_entries = (vs_spec && vs_spec->pMapEntries) ? vs_spec->mapEntryCount : 0u;
+            const uint32_t vs_spec_bytes = (vs_spec && vs_spec->pData) ? static_cast<uint32_t>(vs_spec->dataSize) : 0u;
+            const uint32_t fs_spec_entries = (fs_spec && fs_spec->pMapEntries) ? fs_spec->mapEntryCount : 0u;
+            const uint32_t fs_spec_bytes = (fs_spec && fs_spec->pData) ? static_cast<uint32_t>(fs_spec->dataSize) : 0u;
 
             uint32_t width = 0;
             uint32_t height = 0;
@@ -3608,14 +3616,17 @@ extern "C"
             }
             request.binding_count = binding_count;
             request.attribute_count = attribute_count;
-            request.rasterization_samples =
-                ci.pMultisampleState ? static_cast<uint32_t>(ci.pMultisampleState->rasterizationSamples) : 1u;
+            request.rasterization_samples = ci.pMultisampleState ? static_cast<uint32_t>(ci.pMultisampleState->rasterizationSamples) : 1u;
 
             // Forward the dynamic-state list verbatim. DXVK marks vertex-binding stride, cull, topology,
             // depth/stencil etc. dynamic and sets them via vkCmdSet*/vkCmdBindVertexBuffers2; if the host
             // pipeline does not also declare them dynamic it bakes (often wrong) defaults instead.
             const uint32_t dynamic_state_count = ci.pDynamicState ? ci.pDynamicState->dynamicStateCount : 0;
             request.dynamic_state_count = dynamic_state_count;
+            request.vs_spec_entry_count = vs_spec_entries;
+            request.vs_spec_data_size = vs_spec_bytes;
+            request.fs_spec_entry_count = fs_spec_entries;
+            request.fs_spec_data_size = fs_spec_bytes;
 
             // DXVK 2.x builds pipelines with VK_KHR_dynamic_rendering: renderPass is VK_NULL_HANDLE and the
             // attachment formats live in a VkPipelineRenderingCreateInfo on the pNext chain. Forward those so
@@ -3640,9 +3651,14 @@ extern "C"
                 break;
             }
 
+            const auto spec_block_bytes = [](uint32_t entries, uint32_t bytes) {
+                return static_cast<size_t>(entries) * sizeof(gb::specialization_map_entry) + bytes;
+            };
             std::vector<uint8_t> message(sizeof(request) + static_cast<size_t>(binding_count) * sizeof(gb::vertex_input_binding) +
                                          static_cast<size_t>(attribute_count) * sizeof(gb::vertex_input_attribute) +
-                                         static_cast<size_t>(dynamic_state_count) * sizeof(uint32_t));
+                                         static_cast<size_t>(dynamic_state_count) * sizeof(uint32_t) +
+                                         spec_block_bytes(vs_spec_entries, vs_spec_bytes) +
+                                         spec_block_bytes(fs_spec_entries, fs_spec_bytes));
             std::memcpy(message.data(), &request, sizeof(request));
             size_t cursor = sizeof(request);
             for (uint32_t b = 0; b < binding_count; ++b)
@@ -3670,6 +3686,24 @@ extern "C"
                 std::memcpy(message.data() + cursor, &value, sizeof(value));
                 cursor += sizeof(value);
             }
+            const auto append_spec = [&](const VkSpecializationInfo* spec, uint32_t entries, uint32_t bytes) {
+                for (uint32_t e = 0; e < entries; ++e)
+                {
+                    gb::specialization_map_entry wire{};
+                    wire.constant_id = spec->pMapEntries[e].constantID;
+                    wire.offset = spec->pMapEntries[e].offset;
+                    wire.size = static_cast<uint32_t>(spec->pMapEntries[e].size);
+                    std::memcpy(message.data() + cursor, &wire, sizeof(wire));
+                    cursor += sizeof(wire);
+                }
+                if (bytes > 0)
+                {
+                    std::memcpy(message.data() + cursor, spec->pData, bytes);
+                    cursor += bytes;
+                }
+            };
+            append_spec(vs_spec, vs_spec_entries, vs_spec_bytes);
+            append_spec(fs_spec, fs_spec_entries, fs_spec_bytes);
 
             gb::object_response response{};
             const bool ok = bridge_call(gb::ioctl_create_graphics_pipeline, message.data(), static_cast<DWORD>(message.size()), &response,

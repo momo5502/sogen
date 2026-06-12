@@ -248,8 +248,8 @@ namespace sogen
         int32_t cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout, uint32_t width,
                                          uint32_t height, uint32_t aspect_mask);
         // Resolves a multisampled source image into a single-sample destination (full image, mip 0 / layer 0).
-        int32_t cmd_resolve_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image,
-                                  uint32_t dst_layout, uint32_t width, uint32_t height, uint32_t aspect_mask);
+        int32_t cmd_resolve_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
+                                  uint32_t width, uint32_t height, uint32_t aspect_mask);
         // Updates a buffer region inline from caller-provided data (vkCmdUpdateBuffer).
         int32_t cmd_update_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, const void* data, uint32_t size);
 
@@ -395,6 +395,22 @@ namespace sogen
             uint32_t compare_op;
         };
 
+        struct spec_entry
+        {
+            uint32_t constant_id;
+            uint32_t offset;
+            uint32_t size;
+        };
+
+        // A shader stage's specialization constants. DXVK bakes d3d9 render state (alpha-test compare op, fog,
+        // sampler types, ...) into shaders this way; without it every constant defaults to 0, turning the
+        // alpha-test op into VK_COMPARE_OP_NEVER and discarding every fragment.
+        struct specialization
+        {
+            std::span<const spec_entry> entries;
+            std::span<const uint8_t> data;
+        };
+
         // Triangle list, static full-extent viewport/scissor, one non-blended color attachment, optional
         // depth test. Empty vertex input (no bindings/attributes) leaves vertices to be baked into the shader.
         // When render_pass == 0 the pipeline is built for dynamic rendering (VK_KHR_dynamic_rendering) using
@@ -404,7 +420,7 @@ namespace sogen
                                          std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
                                          const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
                                          uint32_t stencil_format, uint32_t rasterization_samples, std::span<const uint32_t> dynamic_states,
-                                         uint64_t& out_pipeline);
+                                         const specialization& vs_spec, const specialization& fs_spec, uint64_t& out_pipeline);
         int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, uint64_t shader_module, uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 
@@ -425,8 +441,7 @@ namespace sogen
         int32_t cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count, uint32_t first_index,
                                  int32_t vertex_offset, uint32_t first_instance);
         int32_t cmd_bind_descriptor_sets(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t first_set,
-                                         std::span<const uint64_t> sets, uint32_t bind_point,
-                                         std::span<const uint32_t> dynamic_offsets);
+                                         std::span<const uint64_t> sets, uint32_t bind_point, std::span<const uint32_t> dynamic_offsets);
         int32_t cmd_end_render_pass(uint64_t command_buffer);
         // Dynamic rendering (VK_KHR_dynamic_rendering / core 1.3). depth/stencil are null when absent.
         int32_t cmd_begin_rendering(uint64_t command_buffer, int32_t area_x, int32_t area_y, uint32_t area_w, uint32_t area_h,

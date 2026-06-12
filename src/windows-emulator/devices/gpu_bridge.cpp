@@ -1268,9 +1268,10 @@ namespace sogen
                 if (std::getenv("EMULATOR_LOG_MAP") != nullptr)
                 {
                     static size_t direct_count = 0;
-                    win_emu.log.force_print(color::cyan, "map_memory_direct OK #%zu mem=%llu off=%llu size=0x%llx va=0x%llx\n", ++direct_count,
-                                            static_cast<unsigned long long>(request.memory), static_cast<unsigned long long>(request.offset),
-                                            static_cast<unsigned long long>(mapped_size), static_cast<unsigned long long>(va));
+                    win_emu.log.force_print(color::cyan, "map_memory_direct OK #%zu mem=%llu off=%llu size=0x%llx va=0x%llx\n",
+                                            ++direct_count, static_cast<unsigned long long>(request.memory),
+                                            static_cast<unsigned long long>(request.offset), static_cast<unsigned long long>(mapped_size),
+                                            static_cast<unsigned long long>(va));
                 }
                 return write_output(win_emu, context, response);
             }
@@ -1856,6 +1857,36 @@ namespace sogen
                     std::memcpy(dynamic_states.data(), trailer.data() + bindings_bytes + attributes_bytes, dynamic_bytes);
                 }
 
+                // The two per-stage specialization-constant blocks (vertex then fragment) trail the dynamic
+                // states: each is `entry_count` specialization_map_entry records followed by `data_size` bytes.
+                size_t spec_cursor = bindings_bytes + attributes_bytes + dynamic_bytes;
+                std::vector<vulkan_host::spec_entry> vs_entries, fs_entries;
+                std::vector<uint8_t> vs_data, fs_data;
+                const auto parse_spec = [&](uint32_t entry_count, uint32_t data_size, std::vector<vulkan_host::spec_entry>& entries,
+                                            std::vector<uint8_t>& data) {
+                    const size_t entries_bytes = static_cast<size_t>(entry_count) * sizeof(gpu_bridge::specialization_map_entry);
+                    if (spec_cursor + entries_bytes + data_size > trailer.size())
+                    {
+                        return;
+                    }
+                    entries.resize(entry_count);
+                    for (uint32_t i = 0; i < entry_count; ++i)
+                    {
+                        gpu_bridge::specialization_map_entry e{};
+                        std::memcpy(&e, trailer.data() + spec_cursor, sizeof(e));
+                        spec_cursor += sizeof(e);
+                        entries[i] = {.constant_id = e.constant_id, .offset = e.offset, .size = e.size};
+                    }
+                    data.resize(data_size);
+                    if (data_size > 0)
+                    {
+                        std::memcpy(data.data(), trailer.data() + spec_cursor, data_size);
+                        spec_cursor += data_size;
+                    }
+                };
+                parse_spec(request.vs_spec_entry_count, request.vs_spec_data_size, vs_entries, vs_data);
+                parse_spec(request.fs_spec_entry_count, request.fs_spec_data_size, fs_entries, fs_data);
+
                 const vulkan_host::depth_state depth{.test_enable = request.depth_test_enable,
                                                      .write_enable = request.depth_write_enable,
                                                      .compare_op = request.depth_compare_op};
@@ -1863,11 +1894,14 @@ namespace sogen
                 const uint32_t color_count = std::min<uint32_t>(request.color_attachment_count, gpu_bridge::max_color_attachments);
                 const std::span<const uint32_t> color_formats{request.color_formats, color_count};
 
+                const vulkan_host::specialization vs_spec{.entries = vs_entries, .data = vs_data};
+                const vulkan_host::specialization fs_spec{.entries = fs_entries, .data = fs_data};
+
                 uint64_t pipeline = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
                     request.device, request.render_pass, request.pipeline_layout, request.vertex_shader, request.fragment_shader,
-                    request.width, request.height, bindings, attributes, depth, color_formats, request.depth_format,
-                    request.stencil_format, request.rasterization_samples, dynamic_states, pipeline);
+                    request.width, request.height, bindings, attributes, depth, color_formats, request.depth_format, request.stencil_format,
+                    request.rasterization_samples, dynamic_states, vs_spec, fs_spec, pipeline);
                 if (result != 0)
                 {
                     win_emu.log.force_print(

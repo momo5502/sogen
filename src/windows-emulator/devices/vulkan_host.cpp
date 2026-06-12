@@ -359,6 +359,7 @@ namespace sogen
             uint64_t device_id{};
             uint64_t memory_id{};
             uint64_t memory_offset{};
+            uint64_t size{};
         };
 
         struct image_data
@@ -2376,7 +2377,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->buffers.emplace(id, impl::buffer_data{.handle = buffer, .device_id = device});
+        this->impl_->buffers.emplace(id, impl::buffer_data{.handle = buffer, .device_id = device, .size = size});
         out_buffer = id;
         return VK_SUCCESS;
     }
@@ -4169,7 +4170,8 @@ namespace sogen
                                                   std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
                                                   const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
                                                   uint32_t stencil_format, uint32_t rasterization_samples,
-                                                  std::span<const uint32_t> dynamic_states, uint64_t& out_pipeline)
+                                                  std::span<const uint32_t> dynamic_states, const specialization& vs_spec,
+                                                  const specialization& fs_spec, uint64_t& out_pipeline)
     {
         out_pipeline = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -4198,15 +4200,56 @@ namespace sogen
             rp_handle = rp->second.handle;
         }
 
+        // Rebuild a VkSpecializationInfo per stage from the forwarded entries/data. The map-entry vectors and
+        // the two info structs must outlive the vkCreateGraphicsPipelines call below.
+        std::array<std::vector<VkSpecializationMapEntry>, 2> spec_map_entries;
+        std::array<VkSpecializationInfo, 2> spec_infos{};
+        const auto build_spec = [&](const specialization& spec, size_t idx) -> const VkSpecializationInfo* {
+            if (spec.entries.empty() || spec.data.empty())
+            {
+                return nullptr;
+            }
+            auto& entries = spec_map_entries[idx];
+            entries.reserve(spec.entries.size());
+            for (const spec_entry& e : spec.entries)
+            {
+                entries.push_back({.constantID = e.constant_id, .offset = e.offset, .size = e.size});
+            }
+            spec_infos[idx].mapEntryCount = static_cast<uint32_t>(entries.size());
+            spec_infos[idx].pMapEntries = entries.data();
+            spec_infos[idx].dataSize = spec.data.size();
+            spec_infos[idx].pData = spec.data.data();
+            return &spec_infos[idx];
+        };
+
+        if (std::getenv("EMULATOR_LOG_BIND") != nullptr)
+        {
+            std::string fsd, fse;
+            for (size_t i = 0; i + 4 <= fs_spec.data.size(); i += 4)
+            {
+                uint32_t w = 0;
+                std::memcpy(&w, fs_spec.data.data() + i, 4);
+                fsd += std::to_string(w) + " ";
+            }
+            for (const spec_entry& e : fs_spec.entries)
+            {
+                fse += "id" + std::to_string(e.constant_id) + "@" + std::to_string(e.offset) + ":" + std::to_string(e.size) + " ";
+            }
+            std::fprintf(stderr, "PIPE spec vs(entries=%zu) fs(entries=%zu data=%zu) fsdata=[%s] fsmap=[%s]\n", vs_spec.entries.size(),
+                         fs_spec.entries.size(), fs_spec.data.size(), fsd.c_str(), fse.c_str());
+        }
+
         std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
         stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
         stages[0].module = vert->second.handle;
         stages[0].pName = "main";
+        stages[0].pSpecializationInfo = build_spec(vs_spec, 0);
         stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
         stages[1].module = frag->second.handle;
         stages[1].pName = "main";
+        stages[1].pSpecializationInfo = build_spec(fs_spec, 1);
 
         std::vector<VkVertexInputBindingDescription> vk_bindings;
         vk_bindings.reserve(bindings.size());
@@ -4727,8 +4770,8 @@ namespace sogen
         static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
         if (log_bind)
         {
-            std::fprintf(stderr, "BIND descriptor_sets cb=%llu first=%u count=%zu bp=%u\n",
-                         static_cast<unsigned long long>(command_buffer), first_set, handles.size(), bind_point);
+            std::fprintf(stderr, "BIND descriptor_sets cb=%llu first=%u count=%zu bp=%u\n", static_cast<unsigned long long>(command_buffer),
+                         first_set, handles.size(), bind_point);
         }
 
         static const bool dump_vtx = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
@@ -4815,10 +4858,12 @@ namespace sogen
                                 }
                             }
                         }
-                        float nzf[4]{};
+                        float nzf[16]{};
                         if (first_nz >= 0 && mem->second.persistent_host_pointer)
                         {
-                            std::memcpy(nzf, static_cast<const uint8_t*>(mem->second.persistent_host_pointer) + first_nz, sizeof(nzf));
+                            const uint64_t avail = mem->second.mapped_size - static_cast<uint64_t>(first_nz);
+                            std::memcpy(nzf, static_cast<const uint8_t*>(mem->second.persistent_host_pointer) + first_nz,
+                                        std::min<uint64_t>(sizeof(nzf), avail));
                         }
                         // One-shot: when the bound constant region is zero, scan every persistently-mapped
                         // memory for a float that looks like a projection element (1/640 .. small), to locate
@@ -4851,14 +4896,19 @@ namespace sogen
                                     }
                                 }
                                 std::fprintf(stderr, "MEMSCAN mem=%llu size=0x%llx nz_dwords=%zu first_nz=%lld\n",
-                                             static_cast<unsigned long long>(mid), static_cast<unsigned long long>(md.mapped_size), nz, fnz);
+                                             static_cast<unsigned long long>(mid), static_cast<unsigned long long>(md.mapped_size), nz,
+                                             fnz);
                             }
                         }
                         std::fprintf(stderr,
-                                     "UBO set=%llu bind=%u type=%u mem=%llu off=%llu base=%llu first_nz=%lld nzf=[%g %g %g %g] f0=%g\n",
-                                     static_cast<unsigned long long>(id), b, info.type, static_cast<unsigned long long>(buf->second.memory_id),
-                                     static_cast<unsigned long long>(info.offset), static_cast<unsigned long long>(base), first_nz, nzf[0],
-                                     nzf[1], nzf[2], nzf[3], f[0]);
+                                     "UBO set=%llu bind=%u type=%u buf=%llu bufsize=%llu range=%llu mem=%llu off=%llu base=%llu "
+                                     "first_nz=%lld(+%lld) m=[%g %g %g %g / %g %g %g %g / %g %g %g %g / %g %g %g %g]\n",
+                                     static_cast<unsigned long long>(id), b, info.type, static_cast<unsigned long long>(info.buffer_id),
+                                     static_cast<unsigned long long>(buf->second.size), static_cast<unsigned long long>(info.range),
+                                     static_cast<unsigned long long>(buf->second.memory_id), static_cast<unsigned long long>(info.offset),
+                                     static_cast<unsigned long long>(base), first_nz,
+                                     first_nz >= 0 ? first_nz - static_cast<long long>(base) : -1, nzf[0], nzf[1], nzf[2], nzf[3], nzf[4],
+                                     nzf[5], nzf[6], nzf[7], nzf[8], nzf[9], nzf[10], nzf[11], nzf[12], nzf[13], nzf[14], nzf[15]);
                         ++dumped_ubo;
                     }
                 }
@@ -5022,8 +5072,8 @@ namespace sogen
         static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
         if (log_bind)
         {
-            std::fprintf(stderr, "BIND push_constants cb=%llu offset=%u size=%u\n", static_cast<unsigned long long>(command_buffer),
-                         offset, size);
+            std::fprintf(stderr, "BIND push_constants cb=%llu offset=%u size=%u\n", static_cast<unsigned long long>(command_buffer), offset,
+                         size);
         }
         static const bool dump_vtx = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
         if (dump_vtx && data && size >= 16)
@@ -5111,8 +5161,7 @@ namespace sogen
         if (std::getenv("EMULATOR_LOG_BIND") != nullptr && !entries.empty())
         {
             std::fprintf(stderr, "DS set_scissor cb=%llu wc=%d first=(%d,%d) %ux%u\n", static_cast<unsigned long long>(command_buffer),
-                         with_count ? 1 : 0, entries[0].offset.x, entries[0].offset.y, entries[0].extent.width,
-                         entries[0].extent.height);
+                         with_count ? 1 : 0, entries[0].offset.x, entries[0].offset.y, entries[0].extent.width, entries[0].extent.height);
         }
 
         if (with_count)

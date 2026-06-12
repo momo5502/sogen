@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 23;
+    inline constexpr uint32_t protocol_version = 24;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -1309,6 +1309,18 @@ namespace sogen::gpu_bridge
         uint32_t offset;
     };
 
+    // A VkSpecializationMapEntry flattened (size is size_t in Vulkan; the wire keeps it 32-bit because the
+    // guest is 32-bit and DXVK's spec constants are all 4 bytes). DXVK bakes d3d9 render state -- notably
+    // SpecAlphaCompareOp (a VkCompareOp) -- into shaders via specialization constants; dropping them defaults
+    // every constant to 0, which makes the alpha-test compare op VK_COMPARE_OP_NEVER and discards every
+    // fragment (black output despite correct geometry).
+    struct specialization_map_entry
+    {
+        uint32_t constant_id;
+        uint32_t offset;
+        uint32_t size;
+    };
+
     // color attachment). The vertex input state is variable-length: the input buffer is this header
     // immediately followed by `binding_count` vertex_input_binding entries and then `attribute_count`
     // vertex_input_attribute entries. Both counts 0 => no vertex input (vertices baked into the shader).
@@ -1338,9 +1350,18 @@ namespace sogen::gpu_bridge
         uint32_t attribute_count;                      // number of vertex_input_attribute entries that follow the bindings
         uint32_t rasterization_samples;                // VkSampleCountFlagBits the pipeline rasterizes at (1 = no MSAA)
         uint32_t dynamic_state_count;                  // number of uint32 VkDynamicState values that follow the attributes
+        // Per-stage specialization constants (DXVK bakes d3d9 render state into the shaders this way).
+        uint32_t vs_spec_entry_count;
+        uint32_t vs_spec_data_size;
+        uint32_t fs_spec_entry_count;
+        uint32_t fs_spec_data_size;
         // vertex_input_binding bindings[binding_count];
         // vertex_input_attribute attributes[attribute_count];
         // uint32_t dynamic_states[dynamic_state_count]; // VkDynamicState values DXVK declared on the pipeline
+        // specialization_map_entry vs_spec_entries[vs_spec_entry_count];
+        // uint8_t vs_spec_data[vs_spec_data_size];
+        // specialization_map_entry fs_spec_entries[fs_spec_entry_count];
+        // uint8_t fs_spec_data[fs_spec_data_size];
     };
 
     struct create_compute_pipeline_request
