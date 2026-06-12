@@ -8,6 +8,8 @@
 #include "ports/lsa_policy_lookup.hpp"
 #include "binary_writer.hpp"
 
+#include <platform/unicode.hpp>
+
 namespace sogen
 {
 
@@ -15,11 +17,18 @@ namespace sogen
     {
         struct dummy_port : port
         {
+            explicit dummy_port(std::u16string name)
+                : name_(std::move(name))
+            {
+            }
+
             lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context&) override
             {
-                win_emu.log.error("!!! BAD PORT\n");
+                win_emu.log.error("!!! BAD PORT: %s\n", u16_to_u8(name_).c_str());
                 return STATUS_NOT_SUPPORTED;
             }
+
+            std::u16string name_;
         };
 
         struct noop_port : port
@@ -76,7 +85,7 @@ namespace sogen
             return std::make_unique<noop_rpc_port>();
         }
 
-        return std::make_unique<dummy_port>();
+        return std::make_unique<dummy_port>(std::u16string(port));
     }
 
     lpc_message_result port_container::handle_message(windows_emulator& win_emu, const lpc_message_context& c)
