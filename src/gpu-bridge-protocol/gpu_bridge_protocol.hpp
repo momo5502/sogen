@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 15;
+    inline constexpr uint32_t protocol_version = 17;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -1007,6 +1007,8 @@ namespace sogen::gpu_bridge
     struct acquire_next_image_request
     {
         object_id swapchain;
+        object_id semaphore; // null_object if the caller passed VK_NULL_HANDLE
+        object_id fence;     // null_object if the caller passed VK_NULL_HANDLE
     };
 
     struct acquire_next_image_response
@@ -1214,10 +1216,12 @@ namespace sogen::gpu_bridge
     // immediately followed by `binding_count` vertex_input_binding entries and then `attribute_count`
     // vertex_input_attribute entries. Both counts 0 => no vertex input (vertices baked into the shader).
     // out = object_response
+    inline constexpr uint32_t max_color_attachments = 8;
+
     struct create_graphics_pipeline_request
     {
         object_id device;
-        object_id render_pass;
+        object_id render_pass; // 0 => dynamic rendering: use the attachment formats below, and viewport/scissor are dynamic
         object_id pipeline_layout;
         object_id vertex_shader;
         object_id fragment_shader;
@@ -1226,8 +1230,15 @@ namespace sogen::gpu_bridge
         uint32_t depth_test_enable;  // VkBool32 (0 => no depth-stencil state, as before)
         uint32_t depth_write_enable; // VkBool32
         uint32_t depth_compare_op;   // VkCompareOp (used when depth_test_enable != 0)
-        uint32_t binding_count;      // number of vertex_input_binding entries that follow
-        uint32_t attribute_count;    // number of vertex_input_attribute entries that follow the bindings
+        // Dynamic-rendering attachment formats (used when render_pass == 0). DXVK 2.x builds pipelines with
+        // VK_KHR_dynamic_rendering (renderPass = VK_NULL_HANDLE + VkPipelineRenderingCreateInfo) instead of a
+        // render-pass object, so the host rebuilds that info from these formats.
+        uint32_t color_attachment_count;               // number of valid entries in color_formats
+        uint32_t depth_format;                         // VkFormat for depth (VK_FORMAT_UNDEFINED => none)
+        uint32_t stencil_format;                       // VkFormat for stencil (VK_FORMAT_UNDEFINED => none)
+        uint32_t color_formats[max_color_attachments]; // VkFormat per color attachment
+        uint32_t binding_count;                        // number of vertex_input_binding entries that follow
+        uint32_t attribute_count;                      // number of vertex_input_attribute entries that follow the bindings
         // vertex_input_binding bindings[binding_count];
         // vertex_input_attribute attributes[attribute_count];
     };

@@ -1516,16 +1516,14 @@ namespace sogen
             data.cmd_end_render_pass = reinterpret_cast<PFN_vkCmdEndRenderPass>(resolve("vkCmdEndRenderPass"));
             data.cmd_push_constants = reinterpret_cast<PFN_vkCmdPushConstants>(resolve("vkCmdPushConstants"));
             data.cmd_set_viewport = reinterpret_cast<PFN_vkCmdSetViewport>(resolve("vkCmdSetViewport"));
-            data.cmd_set_viewport_with_count =
-                reinterpret_cast<PFN_vkCmdSetViewportWithCount>(resolve("vkCmdSetViewportWithCount"));
+            data.cmd_set_viewport_with_count = reinterpret_cast<PFN_vkCmdSetViewportWithCount>(resolve("vkCmdSetViewportWithCount"));
             data.cmd_set_scissor = reinterpret_cast<PFN_vkCmdSetScissor>(resolve("vkCmdSetScissor"));
             data.cmd_set_scissor_with_count = reinterpret_cast<PFN_vkCmdSetScissorWithCount>(resolve("vkCmdSetScissorWithCount"));
             data.cmd_set_depth_bias = reinterpret_cast<PFN_vkCmdSetDepthBias>(resolve("vkCmdSetDepthBias"));
             data.cmd_set_blend_constants = reinterpret_cast<PFN_vkCmdSetBlendConstants>(resolve("vkCmdSetBlendConstants"));
             data.cmd_set_depth_bounds = reinterpret_cast<PFN_vkCmdSetDepthBounds>(resolve("vkCmdSetDepthBounds"));
             data.cmd_set_line_width = reinterpret_cast<PFN_vkCmdSetLineWidth>(resolve("vkCmdSetLineWidth"));
-            data.cmd_set_stencil_compare_mask =
-                reinterpret_cast<PFN_vkCmdSetStencilCompareMask>(resolve("vkCmdSetStencilCompareMask"));
+            data.cmd_set_stencil_compare_mask = reinterpret_cast<PFN_vkCmdSetStencilCompareMask>(resolve("vkCmdSetStencilCompareMask"));
             data.cmd_set_stencil_write_mask = reinterpret_cast<PFN_vkCmdSetStencilWriteMask>(resolve("vkCmdSetStencilWriteMask"));
             data.cmd_set_stencil_reference = reinterpret_cast<PFN_vkCmdSetStencilReference>(resolve("vkCmdSetStencilReference"));
             data.cmd_set_stencil_op = reinterpret_cast<PFN_vkCmdSetStencilOp>(resolve("vkCmdSetStencilOp"));
@@ -2949,7 +2947,7 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::acquire_next_image(uint64_t swapchain, uint32_t& out_index)
+    int32_t vulkan_host::acquire_next_image(uint64_t swapchain, uint64_t semaphore, uint64_t fence, uint32_t& out_index)
     {
         out_index = 0;
         const auto it = this->impl_->swapchains.find(swapchain);
@@ -2961,6 +2959,71 @@ namespace sogen
         // No real presentation engine: images are always available, handed out round-robin.
         out_index = it->second.next_image;
         it->second.next_image = (it->second.next_image + 1) % static_cast<uint32_t>(it->second.image_ids.size());
+
+        if (semaphore == 0 && fence == 0)
+        {
+            return VK_SUCCESS;
+        }
+
+        // The caller's render submit waits on the acquire semaphore (and it may wait on the fence) before it
+        // can run; with no present engine to signal them, an empty submit does so now that the image is ready.
+        // Otherwise that submit -- and the frame fence it signals -- would never complete, deadlocking DXVK.
+        const auto dev_it = this->impl_->devices.find(it->second.device_id);
+        if (dev_it == this->impl_->devices.end() || !dev_it->second.queue_submit)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        impl::device_data& dev = dev_it->second;
+
+        VkSemaphore sem_handle = VK_NULL_HANDLE;
+        if (semaphore != 0)
+        {
+            const auto sem_it = this->impl_->semaphores.find(semaphore);
+            if (sem_it == this->impl_->semaphores.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            sem_handle = sem_it->second.handle;
+        }
+
+        VkFence fence_handle = VK_NULL_HANDLE;
+        if (fence != 0)
+        {
+            const auto fence_it = this->impl_->fences.find(fence);
+            if (fence_it == this->impl_->fences.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            fence_handle = fence_it->second.handle;
+        }
+
+        VkQueue queue = VK_NULL_HANDLE;
+        for (const auto& [id, q] : this->impl_->queues)
+        {
+            if (q.device_id == it->second.device_id)
+            {
+                queue = q.handle;
+                break;
+            }
+        }
+        if (queue == VK_NULL_HANDLE)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkSubmitInfo submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        if (sem_handle != VK_NULL_HANDLE)
+        {
+            submit.signalSemaphoreCount = 1;
+            submit.pSignalSemaphores = &sem_handle;
+        }
+
+        if (dev.queue_submit(queue, 1, &submit, fence_handle) != VK_SUCCESS)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
         return VK_SUCCESS;
     }
 
@@ -3847,19 +3910,34 @@ namespace sogen
     int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout, uint64_t vertex_shader,
                                                   uint64_t fragment_shader, uint32_t width, uint32_t height,
                                                   std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
-                                                  const depth_state& depth, uint64_t& out_pipeline)
+                                                  const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
+                                                  uint32_t stencil_format, uint64_t& out_pipeline)
     {
         out_pipeline = 0;
         const auto dev = this->impl_->devices.find(device);
-        const auto rp = this->impl_->render_passes.find(render_pass);
         const auto layout = this->impl_->pipeline_layouts.find(pipeline_layout);
         const auto vert = this->impl_->shader_modules.find(vertex_shader);
         const auto frag = this->impl_->shader_modules.find(fragment_shader);
-        if (dev == this->impl_->devices.end() || rp == this->impl_->render_passes.end() || layout == this->impl_->pipeline_layouts.end() ||
+        if (dev == this->impl_->devices.end() || layout == this->impl_->pipeline_layouts.end() ||
             vert == this->impl_->shader_modules.end() || frag == this->impl_->shader_modules.end() ||
             !dev->second.create_graphics_pipelines)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        // render_pass == 0 means the pipeline targets dynamic rendering (DXVK 2.x): there is no render-pass
+        // object; the attachment formats come in via VkPipelineRenderingCreateInfo and viewport/scissor are
+        // dynamic. Otherwise resolve the render pass and bake a static viewport as before.
+        const bool dynamic_rendering = (render_pass == 0);
+        VkRenderPass rp_handle = VK_NULL_HANDLE;
+        if (!dynamic_rendering)
+        {
+            const auto rp = this->impl_->render_passes.find(render_pass);
+            if (rp == this->impl_->render_passes.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            rp_handle = rp->second.handle;
         }
 
         std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
@@ -3905,12 +3983,20 @@ namespace sogen
         VkRect2D scissor{};
         scissor.extent = {.width = width, .height = height};
 
+        // Dynamic rendering pipelines use dynamic viewport/scissor (the static width/height is meaningless,
+        // DXVK sets them per-draw); a render-pass pipeline keeps the baked viewport from width/height.
         VkPipelineViewportStateCreateInfo viewport_state{};
         viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
         viewport_state.viewportCount = 1;
-        viewport_state.pViewports = &viewport;
+        viewport_state.pViewports = dynamic_rendering ? nullptr : &viewport;
         viewport_state.scissorCount = 1;
-        viewport_state.pScissors = &scissor;
+        viewport_state.pScissors = dynamic_rendering ? nullptr : &scissor;
+
+        constexpr std::array<VkDynamicState, 2> dynamic_states{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dynamic_state{};
+        dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+        dynamic_state.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
+        dynamic_state.pDynamicStates = dynamic_states.data();
 
         VkPipelineRasterizationStateCreateInfo rasterization{};
         rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -3923,14 +4009,17 @@ namespace sogen
         multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
         multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-        VkPipelineColorBlendAttachmentState blend_attachment{};
-        blend_attachment.colorWriteMask =
+        // One blend attachment per color target (a render-pass pipeline keeps the single-attachment default).
+        const uint32_t color_count = dynamic_rendering ? static_cast<uint32_t>(color_formats.size()) : 1;
+        VkPipelineColorBlendAttachmentState blend_template{};
+        blend_template.colorWriteMask =
             VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        std::vector<VkPipelineColorBlendAttachmentState> blend_attachments(color_count, blend_template);
 
         VkPipelineColorBlendStateCreateInfo color_blend{};
         color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        color_blend.attachmentCount = 1;
-        color_blend.pAttachments = &blend_attachment;
+        color_blend.attachmentCount = color_count;
+        color_blend.pAttachments = blend_attachments.empty() ? nullptr : blend_attachments.data();
 
         VkPipelineDepthStencilStateCreateInfo depth_stencil{};
         depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -3938,8 +4027,25 @@ namespace sogen
         depth_stencil.depthWriteEnable = depth.write_enable ? VK_TRUE : VK_FALSE;
         depth_stencil.depthCompareOp = static_cast<VkCompareOp>(depth.compare_op);
 
+        std::vector<VkFormat> vk_color_formats;
+        VkPipelineRenderingCreateInfo rendering_info{};
+        if (dynamic_rendering)
+        {
+            vk_color_formats.reserve(color_formats.size());
+            for (const uint32_t format : color_formats)
+            {
+                vk_color_formats.push_back(static_cast<VkFormat>(format));
+            }
+            rendering_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
+            rendering_info.colorAttachmentCount = static_cast<uint32_t>(vk_color_formats.size());
+            rendering_info.pColorAttachmentFormats = vk_color_formats.empty() ? nullptr : vk_color_formats.data();
+            rendering_info.depthAttachmentFormat = static_cast<VkFormat>(depth_format);
+            rendering_info.stencilAttachmentFormat = static_cast<VkFormat>(stencil_format);
+        }
+
         VkGraphicsPipelineCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+        info.pNext = dynamic_rendering ? &rendering_info : nullptr;
         info.stageCount = static_cast<uint32_t>(stages.size());
         info.pStages = stages.data();
         info.pVertexInputState = &vertex_input;
@@ -3949,8 +4055,9 @@ namespace sogen
         info.pMultisampleState = &multisample;
         info.pColorBlendState = &color_blend;
         info.pDepthStencilState = depth.test_enable ? &depth_stencil : nullptr;
+        info.pDynamicState = dynamic_rendering ? &dynamic_state : nullptr;
         info.layout = layout->second.handle;
-        info.renderPass = rp->second.handle;
+        info.renderPass = rp_handle;
         info.subpass = 0;
 
         VkPipeline pipeline{};
@@ -4392,8 +4499,8 @@ namespace sogen
         std::vector<VkViewport> entries(viewports.size());
         for (size_t i = 0; i < viewports.size(); ++i)
         {
-            entries[i] = {viewports[i].x,         viewports[i].y,         viewports[i].width,
-                          viewports[i].height,    viewports[i].min_depth, viewports[i].max_depth};
+            entries[i] = {viewports[i].x,      viewports[i].y,         viewports[i].width,
+                          viewports[i].height, viewports[i].min_depth, viewports[i].max_depth};
         }
 
         if (with_count)
@@ -4415,8 +4522,7 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::cmd_set_scissor(uint64_t command_buffer, uint32_t first, bool with_count,
-                                         std::span<const scissor_entry> scissors)
+    int32_t vulkan_host::cmd_set_scissor(uint64_t command_buffer, uint32_t first, bool with_count, std::span<const scissor_entry> scissors)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         if (cb == this->impl_->command_buffers.end())
@@ -4573,9 +4679,9 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        dev->second.cmd_set_stencil_op(cb->second.handle, static_cast<VkStencilFaceFlags>(face_mask),
-                                       static_cast<VkStencilOp>(fail_op), static_cast<VkStencilOp>(pass_op),
-                                       static_cast<VkStencilOp>(depth_fail_op), static_cast<VkCompareOp>(compare_op));
+        dev->second.cmd_set_stencil_op(cb->second.handle, static_cast<VkStencilFaceFlags>(face_mask), static_cast<VkStencilOp>(fail_op),
+                                       static_cast<VkStencilOp>(pass_op), static_cast<VkStencilOp>(depth_fail_op),
+                                       static_cast<VkCompareOp>(compare_op));
         return VK_SUCCESS;
     }
 

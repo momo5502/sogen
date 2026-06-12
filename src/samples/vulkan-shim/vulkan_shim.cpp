@@ -2769,12 +2769,15 @@ extern "C"
         return (to_write < header.count) ? VK_INCOMPLETE : VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice, VkSwapchainKHR swapchain, uint64_t, VkSemaphore,
-                                                                               VkFence, uint32_t* pImageIndex)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImageKHR(VkDevice, VkSwapchainKHR swapchain, uint64_t,
+                                                                               VkSemaphore semaphore, VkFence fence, uint32_t* pImageIndex)
     {
-        // semaphore/fence are ignored: the bridge's images are always immediately available.
+        // The image is always immediately available, but the caller makes its render submit wait on the
+        // semaphore (and may wait on the fence), so they must still be signalled by the bridge.
         gb::acquire_next_image_request request{};
         request.swapchain = to_object_id(swapchain);
+        request.semaphore = to_object_id(semaphore);
+        request.fence = to_object_id(fence);
 
         gb::acquire_next_image_response response{};
         if (!bridge_call(gb::ioctl_acquire_next_image, &request, sizeof(request), &response, sizeof(response)))
@@ -3409,6 +3412,29 @@ extern "C"
             request.binding_count = binding_count;
             request.attribute_count = attribute_count;
 
+            // DXVK 2.x builds pipelines with VK_KHR_dynamic_rendering: renderPass is VK_NULL_HANDLE and the
+            // attachment formats live in a VkPipelineRenderingCreateInfo on the pNext chain. Forward those so
+            // the host can rebuild that info instead of failing for the missing render pass.
+            for (const auto* base = static_cast<const VkBaseInStructure*>(ci.pNext); base != nullptr; base = base->pNext)
+            {
+                if (base->sType != VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO)
+                {
+                    continue;
+                }
+
+                const auto* rendering = reinterpret_cast<const VkPipelineRenderingCreateInfo*>(base);
+                request.color_attachment_count = rendering->colorAttachmentCount < gb::max_color_attachments
+                                                     ? rendering->colorAttachmentCount
+                                                     : gb::max_color_attachments;
+                for (uint32_t c = 0; c < request.color_attachment_count; ++c)
+                {
+                    request.color_formats[c] = static_cast<uint32_t>(rendering->pColorAttachmentFormats[c]);
+                }
+                request.depth_format = static_cast<uint32_t>(rendering->depthAttachmentFormat);
+                request.stencil_format = static_cast<uint32_t>(rendering->stencilAttachmentFormat);
+                break;
+            }
+
             std::vector<uint8_t> message(sizeof(request) + static_cast<size_t>(binding_count) * sizeof(gb::vertex_input_binding) +
                                          static_cast<size_t>(attribute_count) * sizeof(gb::vertex_input_attribute));
             std::memcpy(message.data(), &request, sizeof(request));
@@ -4027,13 +4053,11 @@ extern "C"
             {.name = "vkCmdSetStencilTestEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilTestEnable)},
             {.name = "vkCmdSetStencilTestEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilTestEnable)},
             {.name = "vkCmdSetRasterizerDiscardEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetRasterizerDiscardEnable)},
-            {.name = "vkCmdSetRasterizerDiscardEnableEXT",
-             .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetRasterizerDiscardEnable)},
+            {.name = "vkCmdSetRasterizerDiscardEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetRasterizerDiscardEnable)},
             {.name = "vkCmdSetDepthBiasEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBiasEnable)},
             {.name = "vkCmdSetDepthBiasEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBiasEnable)},
             {.name = "vkCmdSetPrimitiveRestartEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetPrimitiveRestartEnable)},
-            {.name = "vkCmdSetPrimitiveRestartEnableEXT",
-             .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetPrimitiveRestartEnable)},
+            {.name = "vkCmdSetPrimitiveRestartEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetPrimitiveRestartEnable)},
         };
 
         for (const auto& e : table)

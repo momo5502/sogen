@@ -207,6 +207,7 @@ namespace sogen
 
           private:
             vulkan_host vulkan_{};
+            uint64_t present_count_{0};
 
             static void set_information(const io_device_context& context, const ULONG bytes)
             {
@@ -574,8 +575,7 @@ namespace sogen
                     win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), blob.data(), trailing);
                 }
 
-                const size_t queue_bytes =
-                    static_cast<size_t>(request.queue_create_count) * sizeof(gpu_bridge::device_queue_create_entry);
+                const size_t queue_bytes = static_cast<size_t>(request.queue_create_count) * sizeof(gpu_bridge::device_queue_create_entry);
 
                 std::vector<gpu_bridge::device_queue_create_entry> queue_entries;
                 const std::byte* extension_blob = nullptr;
@@ -1345,7 +1345,7 @@ namespace sogen
                 }
 
                 uint32_t index = 0;
-                const int32_t result = this->vulkan_.acquire_next_image(request.swapchain, index);
+                const int32_t result = this->vulkan_.acquire_next_image(request.swapchain, request.semaphore, request.fence, index);
                 return write_output(win_emu, context, gpu_bridge::acquire_next_image_response{.vk_result = result, .image_index = index});
             }
 
@@ -1363,6 +1363,19 @@ namespace sogen
                 uint64_t hwnd_value = 0;
                 const int32_t result =
                     this->vulkan_.queue_present(request.queue, request.swapchain, request.image_index, pixels, width, height, hwnd_value);
+
+                if (result == 0 /* VK_SUCCESS */)
+                {
+                    if (this->present_count_++ == 0)
+                    {
+                        win_emu.log.force_print(color::green, "GPU bridge: first frame presented (%ux%u)\n", width, height);
+                    }
+                    else if (this->present_count_ % 100 == 0)
+                    {
+                        win_emu.log.force_print(color::green, "GPU bridge: %llu frames presented\n",
+                                                static_cast<unsigned long long>(this->present_count_));
+                    }
+                }
 
                 // Hand the freshly read-back pixels to the guest window through the UI backend (the same
                 // seam GDI EndPaint uses). The swapchain is B8G8R8A8, matching bgra8, so no swizzle.
@@ -1654,10 +1667,23 @@ namespace sogen
                                                      .write_enable = request.depth_write_enable,
                                                      .compare_op = request.depth_compare_op};
 
+                const uint32_t color_count = std::min<uint32_t>(request.color_attachment_count, gpu_bridge::max_color_attachments);
+                const std::span<const uint32_t> color_formats{request.color_formats, color_count};
+
                 uint64_t pipeline = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_graphics_pipeline(request.device, request.render_pass, request.pipeline_layout,
                                                                               request.vertex_shader, request.fragment_shader, request.width,
-                                                                              request.height, bindings, attributes, depth, pipeline);
+                                                                              request.height, bindings, attributes, depth, color_formats,
+                                                                              request.depth_format, request.stencil_format, pipeline);
+                if (result != 0)
+                {
+                    win_emu.log.force_print(
+                        color::red,
+                        "GPU bridge: create_graphics_pipeline FAILED vk=%d (rp=0x%llx layout=0x%llx vs=0x%llx fs=0x%llx %ux%u)\n", result,
+                        static_cast<unsigned long long>(request.render_pass), static_cast<unsigned long long>(request.pipeline_layout),
+                        static_cast<unsigned long long>(request.vertex_shader), static_cast<unsigned long long>(request.fragment_shader),
+                        request.width, request.height);
+                }
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = pipeline});
             }
 

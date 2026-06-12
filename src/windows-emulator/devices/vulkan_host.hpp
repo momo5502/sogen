@@ -263,8 +263,10 @@ namespace sogen
         // Writes the swapchain's image object ids into out_images; out_count gets the true count.
         int32_t get_swapchain_images(uint64_t swapchain, std::span<uint64_t> out_images, uint32_t& out_count);
 
-        // Returns the next image index (round-robin; images are always immediately available).
-        int32_t acquire_next_image(uint64_t swapchain, uint32_t& out_index);
+        // Returns the next image index (round-robin; images are always immediately available). Since the
+        // image is ready immediately, the caller's acquire semaphore/fence are signalled right away so the
+        // render submit that waits on them can proceed (0 = none).
+        int32_t acquire_next_image(uint64_t swapchain, uint64_t semaphore, uint64_t fence, uint32_t& out_index);
 
         // Copies the presented image into the readback buffer (blocking on the queue), then fills
         // out_pixels (BGRA, width*height*4) and reports the target window/extent so the caller can hand
@@ -379,10 +381,13 @@ namespace sogen
 
         // Triangle list, static full-extent viewport/scissor, one non-blended color attachment, optional
         // depth test. Empty vertex input (no bindings/attributes) leaves vertices to be baked into the shader.
+        // When render_pass == 0 the pipeline is built for dynamic rendering (VK_KHR_dynamic_rendering) using
+        // color_formats/depth_format/stencil_format, with viewport and scissor as dynamic state.
         int32_t create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout, uint64_t vertex_shader,
                                          uint64_t fragment_shader, uint32_t width, uint32_t height,
                                          std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
-                                         const depth_state& depth, uint64_t& out_pipeline);
+                                         const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
+                                         uint32_t stencil_format, uint64_t& out_pipeline);
         int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, uint64_t shader_module, uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 
