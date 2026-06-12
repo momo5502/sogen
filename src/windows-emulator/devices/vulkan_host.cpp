@@ -1,5 +1,6 @@
 #include "vulkan_host.hpp"
 
+#include <fstream>
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -4239,6 +4240,67 @@ namespace sogen
                          fs_spec.entries.size(), fs_spec.data.size(), fsd.c_str(), fse.c_str());
         }
 
+        // Diagnostic: replace the fragment shader with a constant-colour module (no discard, no texture)
+        // to separate "geometry produces no fragments" from "fragments are all discarded/black".
+        VkShaderModule forced_fs = VK_NULL_HANDLE;
+        static const char* const force_fs_path = std::getenv("EMULATOR_FORCE_FS");
+        if (force_fs_path && dev->second.create_shader_module)
+        {
+            std::ifstream f(force_fs_path, std::ios::binary);
+            std::vector<char> spv((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            if (!spv.empty())
+            {
+                VkShaderModuleCreateInfo smi{};
+                smi.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+                smi.codeSize = spv.size();
+                smi.pCode = reinterpret_cast<const uint32_t*>(spv.data());
+                dev->second.create_shader_module(dev->second.handle, &smi, nullptr, &forced_fs);
+            }
+        }
+
+        // Diagnostic: force the optimized spec-constant path (IsOptimized id = MaxNumSpecConstants, 12 in
+        // DXVK 2.7.x / 20 in newer builds; unknown ids are ignored) with AlphaCompareOp (dword 1, bits 21..23)
+        // = ALWAYS (7), to bypass the empty SpecData UBO that otherwise makes the alpha test discard.
+        std::vector<uint8_t> fs_data_override;
+        std::vector<spec_entry> fs_entries_override;
+        specialization fs_effective = fs_spec;
+        static const bool force_alpha = std::getenv("EMULATOR_FORCE_ALPHA_PASS") != nullptr;
+        if (force_alpha && !fs_spec.data.empty())
+        {
+            fs_data_override.assign(fs_spec.data.begin(), fs_spec.data.end());
+            fs_entries_override.assign(fs_spec.entries.begin(), fs_spec.entries.end());
+            bool have_dword1 = false;
+            for (const spec_entry& e : fs_entries_override)
+            {
+                if (e.constant_id == 1 && static_cast<size_t>(e.offset) + 4 <= fs_data_override.size())
+                {
+                    have_dword1 = true;
+                    uint32_t w = 0;
+                    std::memcpy(&w, fs_data_override.data() + e.offset, 4);
+                    w = (w & ~(7u << 21)) | (7u << 21);
+                    std::memcpy(fs_data_override.data() + e.offset, &w, 4);
+                }
+            }
+            if (!have_dword1)
+            {
+                const uint32_t off = static_cast<uint32_t>(fs_data_override.size());
+                const uint32_t w = 7u << 21;
+                fs_data_override.resize(off + 4);
+                std::memcpy(fs_data_override.data() + off, &w, 4);
+                fs_entries_override.push_back({.constant_id = 1, .offset = off, .size = 4});
+            }
+            for (const uint32_t selector_id : {12u, 20u})
+            {
+                const uint32_t off = static_cast<uint32_t>(fs_data_override.size());
+                const uint32_t one = 1;
+                fs_data_override.resize(off + 4);
+                std::memcpy(fs_data_override.data() + off, &one, 4);
+                fs_entries_override.push_back({.constant_id = selector_id, .offset = off, .size = 4});
+            }
+            fs_effective.entries = fs_entries_override;
+            fs_effective.data = fs_data_override;
+        }
+
         std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
         stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
@@ -4247,9 +4309,9 @@ namespace sogen
         stages[0].pSpecializationInfo = build_spec(vs_spec, 0);
         stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        stages[1].module = frag->second.handle;
+        stages[1].module = forced_fs ? forced_fs : frag->second.handle;
         stages[1].pName = "main";
-        stages[1].pSpecializationInfo = build_spec(fs_spec, 1);
+        stages[1].pSpecializationInfo = forced_fs ? nullptr : build_spec(fs_effective, 1);
 
         std::vector<VkVertexInputBindingDescription> vk_bindings;
         vk_bindings.reserve(bindings.size());
