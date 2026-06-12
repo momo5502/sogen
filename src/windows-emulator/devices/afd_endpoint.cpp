@@ -1050,14 +1050,17 @@ namespace sogen
                 const auto receive_info = emu.read_memory<AFD_RECV_DATAGRAM_INFO<Traits>>(c.input_buffer);
                 const auto buffer = emu.read_memory<EMU_WSABUF<Traits>>(receive_info.BufferArray);
 
-                if (!buffer.len || buffer.len > 0x10000 || !buffer.buf)
+                if (!buffer.len || !buffer.buf)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
                 network::address from{};
                 std::vector<std::byte> data{};
-                data.resize(buffer.len);
+                // The guest may hand us a buffer larger than any datagram (iw4x uses a 128 KiB packet
+                // buffer); a UDP datagram is at most ~64 KiB, so only allocate/receive up to that. Rejecting
+                // the oversized buffer instead made recvfrom fail with WSAEINVAL and spam the game's netcode.
+                data.resize(std::min<size_t>(buffer.len, 0x10000));
 
                 const auto recevied_data = this->s_->recvfrom(from, data);
 
