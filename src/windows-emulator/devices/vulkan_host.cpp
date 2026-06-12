@@ -2110,13 +2110,11 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        const auto dev = this->impl_->devices.find(it->second.device_id);
-        if (dev == this->impl_->devices.end() || !dev->second.get_event_status)
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        return dev->second.get_event_status(dev->second.handle, it->second.handle);
+        // GPU-side event ops (vkCmdSetEvent2/ResetEvent2/WaitEvents2) are not recorded through the bridge,
+        // so the real VkEvent is never signalled by the GPU. DXVK only uses these events to poll for the
+        // completion of work the bridge has already executed by the time the guest gets here, so report the
+        // event as set. (If precise GPU event ordering is ever needed, record the cmd ops instead.)
+        return VK_EVENT_SET;
     }
 
     int32_t vulkan_host::set_event(uint64_t device, uint64_t event)

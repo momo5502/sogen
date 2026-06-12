@@ -768,6 +768,36 @@ extern "C"
         return static_cast<VkResult>(response.vk_result);
     }
 
+    // GPU-side event commands are not forwarded to the host command buffer: the bridge's submission model
+    // is effectively synchronous, so DXVK's vkGetEventStatus always reports the event as set (see the host).
+    // These recorders are no-ops; they exist so DXVK's device function table is non-null and does not call
+    // through a null pointer when it records them.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetEvent(VkCommandBuffer, VkEvent, VkPipelineStageFlags)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdResetEvent(VkCommandBuffer, VkEvent, VkPipelineStageFlags)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdWaitEvents(VkCommandBuffer, uint32_t, const VkEvent*, VkPipelineStageFlags,
+                                                                     VkPipelineStageFlags, uint32_t, const VkMemoryBarrier*, uint32_t,
+                                                                     const VkBufferMemoryBarrier*, uint32_t, const VkImageMemoryBarrier*)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetEvent2(VkCommandBuffer, VkEvent, const VkDependencyInfo*)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdResetEvent2(VkCommandBuffer, VkEvent, VkPipelineStageFlags2)
+    {
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdWaitEvents2(VkCommandBuffer, uint32_t, const VkEvent*, const VkDependencyInfo*)
+    {
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSemaphore(VkDevice device, const VkSemaphoreCreateInfo* pCreateInfo,
                                                                            const VkAllocationCallbacks*, VkSemaphore* pSemaphore)
     {
@@ -3962,6 +3992,15 @@ extern "C"
             {.name = "vkGetEventStatus", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetEventStatus)},
             {.name = "vkSetEvent", .func = reinterpret_cast<PFN_vkVoidFunction>(vkSetEvent)},
             {.name = "vkResetEvent", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetEvent)},
+            {.name = "vkCmdSetEvent", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetEvent)},
+            {.name = "vkCmdResetEvent", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResetEvent)},
+            {.name = "vkCmdWaitEvents", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdWaitEvents)},
+            {.name = "vkCmdSetEvent2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetEvent2)},
+            {.name = "vkCmdSetEvent2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetEvent2)},
+            {.name = "vkCmdResetEvent2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResetEvent2)},
+            {.name = "vkCmdResetEvent2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResetEvent2)},
+            {.name = "vkCmdWaitEvents2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdWaitEvents2)},
+            {.name = "vkCmdWaitEvents2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdWaitEvents2)},
             {.name = "vkCreateFence", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateFence)},
             {.name = "vkCreateSemaphore", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateSemaphore)},
             {.name = "vkDestroySemaphore", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySemaphore)},
