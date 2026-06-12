@@ -4871,7 +4871,11 @@ namespace sogen
         }
 
         static const bool dump_vtx = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
-        if (dump_vtx && dev->second.map_memory && dev->second.unmap_memory)
+        // Skip the first N descriptor binds (DXVK init) so dumps land during steady-state menu rendering.
+        static const long long dump_skip = std::getenv("EMULATOR_DUMP_SKIP") ? std::atoll(std::getenv("EMULATOR_DUMP_SKIP")) : 0;
+        static long long bind_calls = 0;
+        ++bind_calls;
+        if (dump_vtx && bind_calls >= dump_skip && dev->second.map_memory && dev->second.unmap_memory)
         {
             static int dumped_ubo = 0;
             uint32_t dyn_index = 0;
