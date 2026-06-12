@@ -2445,6 +2445,16 @@ namespace sogen
                     return this->vulkan_.cmd_resolve_image(req.command_buffer, req.src_image, req.src_layout, req.dst_image, req.dst_layout,
                                                            req.width, req.height, req.aspect_mask);
                 }
+                case gpu_bridge::command::cmd_update_buffer: {
+                    gpu_bridge::cmd_update_buffer_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const auto data_bytes = std::min<uint64_t>(req.size, size - sizeof(req));
+                    return this->vulkan_.cmd_update_buffer(req.command_buffer, req.buffer, req.offset, payload + sizeof(req),
+                                                           static_cast<uint32_t>(data_bytes));
+                }
                 default:
                     win_emu.log.warn("[gpu-bridge] record_commands: unsupported command 0x%X\n", command);
                     return vk_error_initialization_failed;

@@ -2180,6 +2180,26 @@ extern "C"
         }
     }
 
+    // Updates a buffer region inline. DXVK uses this for small dynamic uploads (constant/uniform data); the
+    // bytes trail the request header in the recorded stream.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdUpdateBuffer(VkCommandBuffer commandBuffer, VkBuffer dstBuffer,
+                                                                       VkDeviceSize dstOffset, VkDeviceSize dataSize, const void* pData)
+    {
+        const auto size = static_cast<uint32_t>(dataSize);
+        std::vector<uint8_t> message(sizeof(gb::cmd_update_buffer_request) + size);
+        gb::cmd_update_buffer_request header{};
+        header.command_buffer = to_object_id(commandBuffer);
+        header.buffer = to_object_id(dstBuffer);
+        header.offset = dstOffset;
+        header.size = size;
+        std::memcpy(message.data(), &header, sizeof(header));
+        if (size > 0 && pData)
+        {
+            std::memcpy(message.data() + sizeof(header), pData, size);
+        }
+        record_command(header.command_buffer, gb::command::cmd_update_buffer, message.data(), message.size());
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdResolveImage2(VkCommandBuffer commandBuffer,
                                                                         const VkResolveImageInfo2* pResolveImageInfo)
     {
@@ -4119,6 +4139,7 @@ extern "C"
             {.name = "vkCmdCopyBufferToImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage)},
             {.name = "vkCmdCopyBufferToImage2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage2)},
             {.name = "vkCmdCopyBufferToImage2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage2)},
+            {.name = "vkCmdUpdateBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdUpdateBuffer)},
             {.name = "vkCmdResolveImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResolveImage)},
             {.name = "vkCmdResolveImage2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResolveImage2)},
             {.name = "vkCmdResolveImage2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResolveImage2)},

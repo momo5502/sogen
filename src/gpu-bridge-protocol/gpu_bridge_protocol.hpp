@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 18;
+    inline constexpr uint32_t protocol_version = 19;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -160,6 +160,7 @@ namespace sogen::gpu_bridge
         set_event = 0x87C,
         reset_event = 0x87D,
         cmd_resolve_image = 0x87E,
+        cmd_update_buffer = 0x87F,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -287,6 +288,7 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_set_event = make_ioctl(static_cast<uint32_t>(command::set_event));
     inline constexpr uint32_t ioctl_reset_event = make_ioctl(static_cast<uint32_t>(command::reset_event));
     inline constexpr uint32_t ioctl_cmd_resolve_image = make_ioctl(static_cast<uint32_t>(command::cmd_resolve_image));
+    inline constexpr uint32_t ioctl_cmd_update_buffer = make_ioctl(static_cast<uint32_t>(command::cmd_update_buffer));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -993,6 +995,16 @@ namespace sogen::gpu_bridge
         uint32_t width;
         uint32_t height;
         uint32_t aspect_mask; // VkImageAspectFlags
+    };
+
+    // Updates a buffer region inline from data that trails this header in the wire stream (vkCmdUpdateBuffer).
+    struct cmd_update_buffer_request
+    {
+        object_id command_buffer;
+        object_id buffer;
+        uint64_t offset;
+        uint32_t size;
+        uint32_t reserved;
     };
 
     struct create_sampler_request
