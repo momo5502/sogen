@@ -361,6 +361,7 @@ namespace sogen
         {
             VkImage handle{};
             uint64_t device_id{};
+            uint32_t samples{1};
         };
 
         struct sampler_data
@@ -2518,7 +2519,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->images.emplace(id, impl::image_data{.handle = image, .device_id = device});
+        this->impl_->images.emplace(id, impl::image_data{.handle = image, .device_id = device, .samples = samples ? samples : 1});
         out_image = id;
         return VK_SUCCESS;
     }
@@ -3218,8 +3219,16 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        // Diagnostic: override which image is read back (e.g. the MSAA backbuffer) to check upstream content.
+        uint64_t source_image_id = sc.image_ids[image_index];
+        static const char* const present_img_env = std::getenv("EMULATOR_PRESENT_IMG");
+        if (present_img_env)
+        {
+            source_image_id = std::strtoull(present_img_env, nullptr, 0);
+        }
+
         const auto dev_it = this->impl_->devices.find(sc.device_id);
-        const auto img_it = this->impl_->images.find(sc.image_ids[image_index]);
+        const auto img_it = this->impl_->images.find(source_image_id);
         if (dev_it == this->impl_->devices.end() || img_it == this->impl_->images.end())
         {
             return VK_ERROR_INITIALIZATION_FAILED;
@@ -3287,15 +3296,41 @@ namespace sogen
         dev.cmd_pipeline_barrier(sc.present_cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                                  nullptr, 1, &barrier);
 
+        // Diagnostic: an MSAA override image can't be copied directly; resolve it into the swapchain image first.
+        VkImage copy_image = img_it->second.handle;
+        VkImageLayout copy_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        const uint32_t copy_w = present_img_env ? (sc.width > 2 ? sc.width - 2 : sc.width) : sc.width;
+        const uint32_t copy_h = present_img_env ? (sc.height > 2 ? sc.height - 2 : sc.height) : sc.height;
+        if (present_img_env && img_it->second.samples > 1 && dev.cmd_resolve_image)
+        {
+            const auto scratch = this->impl_->images.find(sc.image_ids[image_index]);
+            if (scratch != this->impl_->images.end())
+            {
+                VkImageMemoryBarrier db = barrier;
+                db.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+                db.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+                db.image = scratch->second.handle;
+                dev.cmd_pipeline_barrier(sc.present_cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+                                         0, nullptr, 1, &db);
+                VkImageResolve rr{};
+                rr.srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1};
+                rr.dstSubresource = rr.srcSubresource;
+                rr.extent = {.width = copy_w, .height = copy_h, .depth = 1};
+                dev.cmd_resolve_image(sc.present_cmd, img_it->second.handle, VK_IMAGE_LAYOUT_GENERAL, scratch->second.handle,
+                                      VK_IMAGE_LAYOUT_GENERAL, 1, &rr);
+                copy_image = scratch->second.handle;
+                copy_layout = VK_IMAGE_LAYOUT_GENERAL;
+            }
+        }
+
         VkBufferImageCopy region{};
         region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         region.imageSubresource.mipLevel = 0;
         region.imageSubresource.baseArrayLayer = 0;
         region.imageSubresource.layerCount = 1;
         region.imageOffset = {.x = 0, .y = 0, .z = 0};
-        region.imageExtent = {.width = sc.width, .height = sc.height, .depth = 1};
-        dev.cmd_copy_image_to_buffer(sc.present_cmd, img_it->second.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, sc.readback_buffer, 1,
-                                     &region);
+        region.imageExtent = {.width = copy_w, .height = copy_h, .depth = 1};
+        dev.cmd_copy_image_to_buffer(sc.present_cmd, copy_image, copy_layout, sc.readback_buffer, 1, &region);
         dev.end_command_buffer(sc.present_cmd);
 
         dev.reset_fences(dev.handle, 1, &sc.present_fence);
@@ -4082,7 +4117,7 @@ namespace sogen
                                                   uint64_t fragment_shader, uint32_t width, uint32_t height,
                                                   std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
                                                   const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
-                                                  uint32_t stencil_format, uint64_t& out_pipeline)
+                                                  uint32_t stencil_format, uint32_t rasterization_samples, uint64_t& out_pipeline)
     {
         out_pipeline = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -4178,7 +4213,15 @@ namespace sogen
 
         VkPipelineMultisampleStateCreateInfo multisample{};
         multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        // The pipeline's sample count must match the render target it is used with; DXVK renders the menu
+        // into a multisampled backbuffer, so a hardcoded 1x here would mismatch and drop every fragment.
+        multisample.rasterizationSamples =
+            rasterization_samples ? static_cast<VkSampleCountFlagBits>(rasterization_samples) : VK_SAMPLE_COUNT_1_BIT;
+        if (std::getenv("EMULATOR_LOG_BIND") != nullptr)
+        {
+            std::fprintf(stderr, "PIPE create_graphics_pipeline samples=%u colorCount=%u depthFmt=%u\n", rasterization_samples,
+                         static_cast<uint32_t>(color_formats.size()), depth_format);
+        }
 
         // One blend attachment per color target (a render-pass pipeline keeps the single-attachment default).
         const uint32_t color_count = dynamic_rendering ? static_cast<uint32_t>(color_formats.size()) : 1;
@@ -4197,6 +4240,14 @@ namespace sogen
         depth_stencil.depthTestEnable = depth.test_enable ? VK_TRUE : VK_FALSE;
         depth_stencil.depthWriteEnable = depth.write_enable ? VK_TRUE : VK_FALSE;
         depth_stencil.depthCompareOp = static_cast<VkCompareOp>(depth.compare_op);
+        if (std::getenv("EMULATOR_NO_DEPTH") != nullptr)
+        {
+            depth_stencil.depthTestEnable = VK_FALSE;
+        }
+        if (std::getenv("EMULATOR_LOG_BIND") != nullptr)
+        {
+            std::fprintf(stderr, "PIPE depth test=%u write=%u op=%u\n", depth.test_enable, depth.write_enable, depth.compare_op);
+        }
 
         std::vector<VkFormat> vk_color_formats;
         VkPipelineRenderingCreateInfo rendering_info{};
@@ -4343,6 +4394,12 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
+        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
+        if (log_bind)
+        {
+            std::fprintf(stderr, "BIND pipeline cb=%llu pipe=%llu bp=%u\n", static_cast<unsigned long long>(command_buffer),
+                         static_cast<unsigned long long>(pipeline), bind_point);
+        }
         dev->second.cmd_bind_pipeline(cb->second.handle, static_cast<VkPipelineBindPoint>(bind_point), pipe->second.handle);
         return VK_SUCCESS;
     }
@@ -4424,6 +4481,12 @@ namespace sogen
             vk_offsets[i] = offsets[i];
         }
 
+        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
+        if (log_bind)
+        {
+            std::fprintf(stderr, "BIND vertex_buffers cb=%llu first=%u count=%u\n", static_cast<unsigned long long>(command_buffer),
+                         first_binding, count);
+        }
         dev->second.cmd_bind_vertex_buffers(cb->second.handle, first_binding, count, handles.data(), vk_offsets.data());
         return VK_SUCCESS;
     }
@@ -4460,6 +4523,16 @@ namespace sogen
             vk_strides[i] = strides ? strides[i] : 0;
         }
 
+        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
+        if (log_bind)
+        {
+            std::fprintf(stderr, "BIND vertex_buffers2 cb=%llu first=%u count=%u buf0=%llu off0=%llu stride0=%llu size0=%llu\n",
+                         static_cast<unsigned long long>(command_buffer), first_binding, count,
+                         count ? static_cast<unsigned long long>(buffer_ids[0]) : 0ull,
+                         count ? static_cast<unsigned long long>(offsets[0]) : 0ull,
+                         (count && strides) ? static_cast<unsigned long long>(strides[0]) : 0ull,
+                         (count && sizes) ? static_cast<unsigned long long>(sizes[0]) : 0ull);
+        }
         dev->second.cmd_bind_vertex_buffers2(cb->second.handle, first_binding, count, handles.data(), vk_offsets.data(),
                                              sizes ? vk_sizes.data() : nullptr, strides ? vk_strides.data() : nullptr);
         return VK_SUCCESS;
@@ -4478,6 +4551,12 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
+        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
+        if (log_bind)
+        {
+            std::fprintf(stderr, "BIND index_buffer cb=%llu buf=%llu\n", static_cast<unsigned long long>(command_buffer),
+                         static_cast<unsigned long long>(buffer));
+        }
         dev->second.cmd_bind_index_buffer(cb->second.handle, buf->second.handle, offset, static_cast<VkIndexType>(index_type));
         return VK_SUCCESS;
     }
@@ -4494,6 +4573,11 @@ namespace sogen
         if (dev == this->impl_->devices.end() || !dev->second.cmd_draw_indexed)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
+        if (log_bind)
+        {
+            std::fprintf(stderr, "BIND draw_indexed cb=%llu idx=%u\n", static_cast<unsigned long long>(command_buffer), index_count);
         }
         dev->second.cmd_draw_indexed(cb->second.handle, index_count, instance_count, first_index, vertex_offset, first_instance);
         return VK_SUCCESS;
@@ -4524,6 +4608,13 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             handles.push_back(set->second.handle);
+        }
+
+        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
+        if (log_bind)
+        {
+            std::fprintf(stderr, "BIND descriptor_sets cb=%llu first=%u count=%zu bp=%u\n",
+                         static_cast<unsigned long long>(command_buffer), first_set, handles.size(), bind_point);
         }
 
         dev->second.cmd_bind_descriptor_sets(cb->second.handle, static_cast<VkPipelineBindPoint>(bind_point), layout->second.handle,
@@ -4648,6 +4739,12 @@ namespace sogen
         if (dev == this->impl_->devices.end() || !dev->second.cmd_push_constants)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
+        if (log_bind)
+        {
+            std::fprintf(stderr, "BIND push_constants cb=%llu offset=%u size=%u\n", static_cast<unsigned long long>(command_buffer),
+                         offset, size);
         }
         dev->second.cmd_push_constants(cb->second.handle, layout->second.handle, stage_flags, offset, size, data);
         return VK_SUCCESS;

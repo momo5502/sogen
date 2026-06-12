@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 19;
+    inline constexpr uint32_t protocol_version = 20;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -1310,6 +1310,8 @@ namespace sogen::gpu_bridge
         uint32_t color_formats[max_color_attachments]; // VkFormat per color attachment
         uint32_t binding_count;                        // number of vertex_input_binding entries that follow
         uint32_t attribute_count;                      // number of vertex_input_attribute entries that follow the bindings
+        uint32_t rasterization_samples;                // VkSampleCountFlagBits the pipeline rasterizes at (1 = no MSAA)
+        uint32_t reserved;
         // vertex_input_binding bindings[binding_count];
         // vertex_input_attribute attributes[attribute_count];
     };

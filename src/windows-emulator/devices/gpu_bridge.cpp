@@ -1761,10 +1761,10 @@ namespace sogen
                 const std::span<const uint32_t> color_formats{request.color_formats, color_count};
 
                 uint64_t pipeline = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_graphics_pipeline(request.device, request.render_pass, request.pipeline_layout,
-                                                                              request.vertex_shader, request.fragment_shader, request.width,
-                                                                              request.height, bindings, attributes, depth, color_formats,
-                                                                              request.depth_format, request.stencil_format, pipeline);
+                const int32_t result = this->vulkan_.create_graphics_pipeline(
+                    request.device, request.render_pass, request.pipeline_layout, request.vertex_shader, request.fragment_shader,
+                    request.width, request.height, bindings, attributes, depth, color_formats, request.depth_format,
+                    request.stencil_format, request.rasterization_samples, pipeline);
                 if (result != 0)
                 {
                     win_emu.log.force_print(

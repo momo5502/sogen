@@ -3573,6 +3573,8 @@ extern "C"
             }
             request.binding_count = binding_count;
             request.attribute_count = attribute_count;
+            request.rasterization_samples =
+                ci.pMultisampleState ? static_cast<uint32_t>(ci.pMultisampleState->rasterizationSamples) : 1u;
 
             // DXVK 2.x builds pipelines with VK_KHR_dynamic_rendering: renderPass is VK_NULL_HANDLE and the
             // attachment formats live in a VkPipelineRenderingCreateInfo on the pNext chain. Forward those so
