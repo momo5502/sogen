@@ -136,9 +136,17 @@ namespace sogen
         const auto result = this->device_->io_control(win_emu, context);
         if (trace_ioctl)
         {
-            win_emu.log.print(color::gray, "IOCTL done dev=%s code=0x%X status=0x%X tid=%u\n", u16_to_u8(this->device_name_).c_str(),
-                              static_cast<unsigned>(context.io_control_code), static_cast<unsigned>(result),
-                              win_emu.current_thread().id);
+            // Most bridge responses begin with an int32 vk_result; surface it so a Vulkan-level failure
+            // (which makes DXVK throw a DxvkError on its CS thread) is visible even when the IOCTL status
+            // is success.
+            int32_t vk_result = 0;
+            if (context.output_buffer && context.output_buffer_length >= sizeof(int32_t))
+            {
+                win_emu.emu().read_memory(context.output_buffer, &vk_result, sizeof(vk_result));
+            }
+            win_emu.log.print(vk_result != 0 ? color::red : color::gray, "IOCTL done dev=%s code=0x%X status=0x%X vk=%d tid=%u\n",
+                              u16_to_u8(this->device_name_).c_str(), static_cast<unsigned>(context.io_control_code),
+                              static_cast<unsigned>(result), vk_result, win_emu.current_thread().id);
         }
         return result;
     }

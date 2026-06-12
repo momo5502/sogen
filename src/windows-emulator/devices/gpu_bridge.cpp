@@ -1540,13 +1540,26 @@ namespace sogen
                     {
                         nonzero += (b != std::byte{0}) ? 1 : 0;
                     }
+                    // Count distinctly-green pixels (BGRA: G dominant) to tell whether drawn geometry is
+                    // visible versus only the clear colour.
+                    size_t green = 0;
+                    for (size_t p = 0; p + 4 <= pixels.size(); p += 4)
+                    {
+                        const auto bch = static_cast<uint8_t>(pixels[p]);
+                        const auto gch = static_cast<uint8_t>(pixels[p + 1]);
+                        const auto rch = static_cast<uint8_t>(pixels[p + 2]);
+                        if (gch > 0x60 && gch > static_cast<uint8_t>(bch + 0x20) && gch > static_cast<uint8_t>(rch + 0x20))
+                        {
+                            ++green;
+                        }
+                    }
                     uint32_t px0 = 0;
                     std::memcpy(&px0, pixels.data(), 4);
                     static int present_dbg = 0;
                     if (present_dbg < 12)
                     {
-                        win_emu.log.force_print(color::cyan, "present readback %ux%u: %zu/%zu nonzero bytes px0=0x%08x\n", width, height,
-                                                nonzero, pixels.size(), px0);
+                        win_emu.log.force_print(color::cyan, "present readback %ux%u: %zu/%zu nonzero bytes green_px=%zu px0=0x%08x\n",
+                                                width, height, nonzero, pixels.size(), green, px0);
                         ++present_dbg;
                     }
                 }
@@ -2632,6 +2645,10 @@ namespace sogen
                     if (r != 0 && result == 0)
                     {
                         result = r; // report the first failure
+                        if (std::getenv("EMULATOR_LOG_IOCTL") != nullptr)
+                        {
+                            win_emu.log.print(color::red, "RECORD cmd 0x%X failed vk=%d\n", static_cast<unsigned>(header.command), r);
+                        }
                     }
                     offset += header.size;
                 }

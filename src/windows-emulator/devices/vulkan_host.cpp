@@ -4153,18 +4153,30 @@ namespace sogen
             }
             else
             {
-                const auto buf = this->impl_->buffers.find(w.buffer);
-                if (buf == this->impl_->buffers.end())
-                {
-                    return VK_ERROR_INITIALIZATION_FAILED;
-                }
                 VkDescriptorBufferInfo& bi = buffer_infos[i];
-                bi.buffer = buf->second.handle;
-                bi.offset = w.offset;
-                bi.range = w.range;
+                if (w.buffer == 0)
+                {
+                    // Null descriptor (VK_EXT_robustness2 nullDescriptor, which DXVK enables): an unused
+                    // uniform/storage buffer slot is bound to VK_NULL_HANDLE. Returning an error here makes
+                    // the recorded command buffer fail, which DXVK reports as a fatal vkEndCommandBuffer error.
+                    bi.buffer = VK_NULL_HANDLE;
+                    bi.offset = 0;
+                    bi.range = w.range ? w.range : VK_WHOLE_SIZE;
+                }
+                else
+                {
+                    const auto buf = this->impl_->buffers.find(w.buffer);
+                    if (buf == this->impl_->buffers.end())
+                    {
+                        return VK_ERROR_INITIALIZATION_FAILED;
+                    }
+                    bi.buffer = buf->second.handle;
+                    bi.offset = w.offset;
+                    bi.range = w.range;
+                    set->second.buffer_bindings[w.dst_binding] =
+                        impl::bound_buffer_info{.buffer_id = w.buffer, .offset = w.offset, .range = w.range, .type = w.descriptor_type};
+                }
                 vw.pBufferInfo = &bi;
-                set->second.buffer_bindings[w.dst_binding] =
-                    impl::bound_buffer_info{.buffer_id = w.buffer, .offset = w.offset, .range = w.range, .type = w.descriptor_type};
             }
             vk_writes.push_back(vw);
         }
@@ -4673,6 +4685,12 @@ namespace sogen
         std::vector<VkDeviceSize> vk_offsets(count);
         for (uint32_t i = 0; i < count; ++i)
         {
+            if (buffer_ids[i] == 0)
+            {
+                handles[i] = VK_NULL_HANDLE; // null vertex buffer (nullDescriptor)
+                vk_offsets[i] = 0;
+                continue;
+            }
             const auto buf = this->impl_->buffers.find(buffer_ids[i]);
             if (buf == this->impl_->buffers.end())
             {
@@ -4713,6 +4731,16 @@ namespace sogen
         std::vector<VkDeviceSize> vk_strides(count);
         for (uint32_t i = 0; i < count; ++i)
         {
+            if (buffer_ids[i] == 0)
+            {
+                // Null vertex buffer (VK_EXT_robustness2 nullDescriptor): DXVK binds VK_NULL_HANDLE for
+                // unused vertex-input slots. The matching offset/size must be 0.
+                handles[i] = VK_NULL_HANDLE;
+                vk_offsets[i] = 0;
+                vk_sizes[i] = 0;
+                vk_strides[i] = strides ? strides[i] : 0;
+                continue;
+            }
             const auto buf = this->impl_->buffers.find(buffer_ids[i]);
             if (buf == this->impl_->buffers.end())
             {
