@@ -1117,6 +1117,22 @@ namespace sogen
                 }
                 else
                 {
+                    // A fault on a null/near-null address is almost always a call through a null function
+                    // pointer (e.g. a Vulkan entry point the shim doesn't implement). Log the caller's
+                    // return address so the missing function's call site can be identified.
+                    if (address < 0x1000)
+                    {
+                        const auto sp = this->emu().reg<uint32_t>(x86_register::esp);
+                        uint32_t return_address = 0;
+                        if (this->emu().try_read_memory(sp, &return_address, sizeof(return_address)))
+                        {
+                            const auto* mod = this->mod_manager.find_by_address(return_address);
+                            this->log.error("Null-pointer call to 0x%llx; caller return address 0x%x (%s+0x%llx)\n",
+                                            static_cast<unsigned long long>(address), return_address, mod ? mod->name.c_str() : "?",
+                                            mod ? static_cast<unsigned long long>(return_address - mod->image_base) : return_address);
+                        }
+                    }
+
                     this->callbacks.on_memory_violate(address, size, operation, type);
                     dispatch_access_violation(*this, address, operation);
                 }
