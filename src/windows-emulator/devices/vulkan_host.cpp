@@ -2487,6 +2487,38 @@ namespace sogen
         return VK_SUCCESS;
     }
 
+    int32_t vulkan_host::map_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void*& out_host_pointer)
+    {
+        out_host_pointer = nullptr;
+        const auto dev = this->impl_->devices.find(device);
+        const auto mem = this->impl_->memories.find(memory);
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        void* mapped = nullptr;
+        const VkResult result = dev->second.map_memory(dev->second.handle, mem->second.handle, offset, size, 0, &mapped);
+        if (result != VK_SUCCESS || !mapped)
+        {
+            return result != VK_SUCCESS ? result : VK_ERROR_MEMORY_MAP_FAILED;
+        }
+
+        out_host_pointer = mapped;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::unmap_memory(uint64_t device, uint64_t memory)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto mem = this->impl_->memories.find(memory);
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.unmap_memory)
+        {
+            return;
+        }
+        dev->second.unmap_memory(dev->second.handle, mem->second.handle);
+    }
+
     int32_t vulkan_host::create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,
                                       uint32_t samples, uint64_t& out_image)
     {
@@ -4682,6 +4714,22 @@ namespace sogen
         for (const auto& a : color)
         {
             color_infos.push_back(build(a));
+        }
+
+        // Diagnostic: force every colour attachment to clear to bright green. If a presented frame is then
+        // uniform green the draws produce no fragments (rasterisation/geometry); if it shows black shapes on
+        // green the geometry rasterises but the shading is black (shader/texture).
+        static const bool clear_green = std::getenv("EMULATOR_CLEAR_GREEN") != nullptr;
+        if (clear_green)
+        {
+            for (auto& ci : color_infos)
+            {
+                ci.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+                ci.clearValue.color.float32[0] = 0.0f;
+                ci.clearValue.color.float32[1] = 1.0f;
+                ci.clearValue.color.float32[2] = 0.0f;
+                ci.clearValue.color.float32[3] = 1.0f;
+            }
         }
         VkRenderingAttachmentInfo depth_info{};
         VkRenderingAttachmentInfo stencil_info{};

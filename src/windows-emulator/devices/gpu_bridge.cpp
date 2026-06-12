@@ -118,6 +118,10 @@ namespace sogen
                     return handle_download_memory(win_emu, context);
                 case gpu_bridge::ioctl_upload_memory:
                     return handle_upload_memory(win_emu, context);
+                case gpu_bridge::ioctl_map_memory_direct:
+                    return handle_map_memory_direct(win_emu, context);
+                case gpu_bridge::ioctl_unmap_memory_direct:
+                    return handle_unmap_memory_direct(win_emu, context);
                 case gpu_bridge::ioctl_create_image:
                     return handle_create_image(win_emu, context);
                 case gpu_bridge::ioctl_get_physical_device_image_format_properties:
@@ -218,6 +222,16 @@ namespace sogen
           private:
             vulkan_host vulkan_{};
             uint64_t present_count_{0};
+
+            // VkDeviceMemory aliased directly into the guest address space (see handle_map_memory_direct),
+            // keyed by memory object id, so unmap can release the guest range and the host mapping.
+            struct direct_mapping
+            {
+                uint64_t guest_address{};
+                uint64_t size{};
+                uint64_t device{};
+            };
+            std::unordered_map<uint64_t, direct_mapping> direct_mappings_{};
 
             static void set_information(const io_device_context& context, const ULONG bytes)
             {
@@ -1195,6 +1209,76 @@ namespace sogen
                 const int32_t result =
                     this->vulkan_.upload_memory(request.device, request.memory, request.offset, payload, bytes.data(), bytes.size());
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            // Maps the host VkDeviceMemory and aliases it straight into the guest address space, so the guest
+            // accesses it coherently with no staging copy. Returns guest_address = 0 if it can't be aliased
+            // (e.g. an unaligned host pointer), in which case the shim falls back to the staging path.
+            NTSTATUS handle_map_memory_direct(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::map_memory_direct_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                gpu_bridge::map_memory_direct_response response{};
+
+                void* host_ptr = nullptr;
+                response.vk_result = this->vulkan_.map_memory(request.device, request.memory, request.offset, request.size, host_ptr);
+
+                constexpr uint64_t page = 0x1000;
+                if (response.vk_result != 0 || !host_ptr || (reinterpret_cast<uintptr_t>(host_ptr) % page) != 0)
+                {
+                    if (host_ptr)
+                    {
+                        this->vulkan_.unmap_memory(request.device, request.memory);
+                    }
+                    if (std::getenv("EMULATOR_LOG_MAP") != nullptr)
+                    {
+                        static size_t fallback_count = 0;
+                        win_emu.log.force_print(color::yellow, "map_memory_direct FALLBACK #%zu vk=%d ptr=%p\n", ++fallback_count,
+                                                response.vk_result, host_ptr);
+                    }
+                    return write_output(win_emu, context, response);
+                }
+
+                const uint64_t mapped_size = (request.size + page - 1) & ~(page - 1);
+                const uint64_t va = win_emu.memory.find_free_allocation_base(static_cast<size_t>(mapped_size));
+                if (va == 0 ||
+                    !win_emu.memory.allocate_host_memory(va, static_cast<size_t>(mapped_size), host_ptr, memory_permission::read_write))
+                {
+                    this->vulkan_.unmap_memory(request.device, request.memory);
+                    return write_output(win_emu, context, response);
+                }
+
+                this->direct_mappings_[request.memory] = direct_mapping{.guest_address = va, .size = mapped_size, .device = request.device};
+                response.guest_address = va;
+                if (std::getenv("EMULATOR_LOG_MAP") != nullptr)
+                {
+                    static size_t direct_count = 0;
+                    win_emu.log.force_print(color::cyan, "map_memory_direct OK #%zu size=0x%llx va=0x%llx\n", ++direct_count,
+                                            static_cast<unsigned long long>(mapped_size), static_cast<unsigned long long>(va));
+                }
+                return write_output(win_emu, context, response);
+            }
+
+            NTSTATUS handle_unmap_memory_direct(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::unmap_memory_direct_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto it = this->direct_mappings_.find(request.memory);
+                if (it != this->direct_mappings_.end())
+                {
+                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
+                    this->vulkan_.unmap_memory(it->second.device, request.memory);
+                    this->direct_mappings_.erase(it);
+                }
+                return STATUS_SUCCESS;
             }
 
             static vulkan_host::subresource_range to_host_range(const gpu_bridge::image_subresource_range& range)

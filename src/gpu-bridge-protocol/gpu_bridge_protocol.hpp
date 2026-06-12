@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 20;
+    inline constexpr uint32_t protocol_version = 21;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -161,6 +161,8 @@ namespace sogen::gpu_bridge
         reset_event = 0x87D,
         cmd_resolve_image = 0x87E,
         cmd_update_buffer = 0x87F,
+        map_memory_direct = 0x880,
+        unmap_memory_direct = 0x881,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -289,6 +291,8 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_reset_event = make_ioctl(static_cast<uint32_t>(command::reset_event));
     inline constexpr uint32_t ioctl_cmd_resolve_image = make_ioctl(static_cast<uint32_t>(command::cmd_resolve_image));
     inline constexpr uint32_t ioctl_cmd_update_buffer = make_ioctl(static_cast<uint32_t>(command::cmd_update_buffer));
+    inline constexpr uint32_t ioctl_map_memory_direct = make_ioctl(static_cast<uint32_t>(command::map_memory_direct));
+    inline constexpr uint32_t ioctl_unmap_memory_direct = make_ioctl(static_cast<uint32_t>(command::unmap_memory_direct));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -850,6 +854,28 @@ namespace sogen::gpu_bridge
         uint64_t offset; // VkDeviceSize
         uint64_t size;   // VkDeviceSize
         // uint8_t bytes[size];
+    };
+
+    // Maps host-visible memory and aliases it directly into the guest address space (no staging copy).
+    struct map_memory_direct_request
+    {
+        object_id device;
+        object_id memory;
+        uint64_t offset; // VkDeviceSize
+        uint64_t size;   // VkDeviceSize
+    };
+
+    struct map_memory_direct_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        uint64_t guest_address; // 0 => not mappable directly, caller falls back to staging
+    };
+
+    struct unmap_memory_direct_request
+    {
+        object_id device;
+        object_id memory;
     };
 
     // A VkImageSubresourceRange flattened to plain integers (aspect/mips/layers).

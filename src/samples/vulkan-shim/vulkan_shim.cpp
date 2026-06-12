@@ -17,6 +17,7 @@
 #include <cstring>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #define VK_NO_PROTOTYPES
@@ -101,6 +102,10 @@ namespace
         uint64_t size{};
     };
     std::unordered_map<gb::object_id, mapped_range> g_mapped_ranges;
+
+    // Memory objects the bridge aliased straight into the guest address space (no staging copy). These are
+    // not in g_mapped_ranges; vkUnmapMemory tears them down via the bridge instead of uploading.
+    std::unordered_set<gb::object_id> g_direct_mapped;
 
     // vkDestroyX(device, child) for the non-dispatchable device children that share device_child_request.
     template <typename Handle>
@@ -1194,6 +1199,26 @@ extern "C"
             actual = (total > offset) ? (total - offset) : 0;
         }
 
+        // Prefer aliasing the host mapping straight into the guest address space (coherent, no copy). The
+        // bridge returns guest_address = 0 when that is not possible, in which case we fall back to staging.
+        if (actual > 0)
+        {
+            gb::map_memory_direct_request request{};
+            request.device = to_object_id(device);
+            request.memory = mem_id;
+            request.offset = offset;
+            request.size = actual;
+
+            gb::map_memory_direct_response response{};
+            if (bridge_call(gb::ioctl_map_memory_direct, &request, sizeof(request), &response, sizeof(response)) &&
+                response.vk_result == VK_SUCCESS && response.guest_address != 0)
+            {
+                g_direct_mapped.insert(mem_id);
+                *ppData = reinterpret_cast<void*>(static_cast<uintptr_t>(response.guest_address));
+                return VK_SUCCESS;
+            }
+        }
+
         mapped_range range{};
         range.offset = offset;
         range.size = actual;
@@ -1221,6 +1246,16 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkUnmapMemory(VkDevice device, VkDeviceMemory memory)
     {
         const gb::object_id mem_id = to_object_id(memory);
+
+        if (g_direct_mapped.erase(mem_id) != 0)
+        {
+            gb::unmap_memory_direct_request request{};
+            request.device = to_object_id(device);
+            request.memory = mem_id;
+            bridge_call(gb::ioctl_unmap_memory_direct, &request, sizeof(request), nullptr, 0);
+            return;
+        }
+
         const auto it = g_mapped_ranges.find(mem_id);
         if (it == g_mapped_ranges.end())
         {
