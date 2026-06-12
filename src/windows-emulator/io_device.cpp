@@ -132,7 +132,15 @@ namespace sogen
     {
         this->assert_validity();
         win_emu.callbacks.on_ioctrl(*this->device_, this->device_name_, context.io_control_code);
-        return this->device_->io_control(win_emu, context);
+        static const bool trace_ioctl = std::getenv("EMULATOR_LOG_IOCTL") != nullptr;
+        const auto result = this->device_->io_control(win_emu, context);
+        if (trace_ioctl)
+        {
+            win_emu.log.print(color::gray, "IOCTL done dev=%s code=0x%X status=0x%X tid=%u\n", u16_to_u8(this->device_name_).c_str(),
+                              static_cast<unsigned>(context.io_control_code), static_cast<unsigned>(result),
+                              win_emu.current_thread().id);
+        }
+        return result;
     }
 
     void io_device_container::work(windows_emulator& win_emu)

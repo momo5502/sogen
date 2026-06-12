@@ -501,6 +501,15 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            if (std::getenv("EMULATOR_LOG_IOCTL") != nullptr)
+            {
+                const auto rip = c.emu.read_instruction_pointer();
+                const auto* mod = c.win_emu.mod_manager.find_by_address(rip);
+                c.win_emu.log.print(color::yellow, "NtTerminateThread tid=%u exit=0x%X caller=%s+0x%llx\n", thread->id,
+                                    static_cast<unsigned>(exit_status), mod ? mod->name.c_str() : "?",
+                                    mod ? static_cast<unsigned long long>(rip - mod->image_base) : static_cast<unsigned long long>(rip));
+            }
+
             c.proc.terminate_thread(*thread, exit_status);
             c.win_emu.callbacks.on_thread_terminated(thread_handle, *thread);
 
