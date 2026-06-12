@@ -2436,6 +2436,16 @@ namespace sogen
 
         buf->second.memory_id = memory;
         buf->second.memory_offset = offset;
+        if (std::getenv("EMULATOR_DUMP_VTX") != nullptr)
+        {
+            static int n = 0;
+            if (n++ < 40)
+            {
+                std::fprintf(stderr, "BINDMEM buf=%llu size=%llu -> mem=%llu off=%llu\n", static_cast<unsigned long long>(buffer),
+                             static_cast<unsigned long long>(buf->second.size), static_cast<unsigned long long>(memory),
+                             static_cast<unsigned long long>(offset));
+            }
+        }
         return dev->second.bind_buffer_memory(dev->second.handle, buf->second.handle, mem->second.handle, offset);
     }
 
@@ -4967,6 +4977,7 @@ namespace sogen
                                 const auto* bp = static_cast<const uint8_t*>(md.persistent_host_pointer);
                                 size_t nz = 0;
                                 long long fnz = -1;
+                                long long alpha_always = -1; // first dword with AlphaCompareOp (bits 21..23) == 7
                                 const uint64_t lim = md.mapped_size >= 4 ? md.mapped_size - 4 : 0;
                                 for (uint64_t o = 0; o <= lim; o += 4)
                                 {
@@ -4980,10 +4991,14 @@ namespace sogen
                                         }
                                         ++nz;
                                     }
+                                    if (alpha_always < 0 && ((v >> 21) & 7u) == 7u)
+                                    {
+                                        alpha_always = static_cast<long long>(o);
+                                    }
                                 }
-                                std::fprintf(stderr, "MEMSCAN mem=%llu size=0x%llx nz_dwords=%zu first_nz=%lld\n",
-                                             static_cast<unsigned long long>(mid), static_cast<unsigned long long>(md.mapped_size), nz,
-                                             fnz);
+                                std::fprintf(stderr, "MEMSCAN mem=%llu size=0x%llx nz_dwords=%zu first_nz=%lld alphaAlways@=%lld\n",
+                                             static_cast<unsigned long long>(mid), static_cast<unsigned long long>(md.mapped_size), nz, fnz,
+                                             alpha_always);
                             }
                         }
                         std::fprintf(stderr,

@@ -410,3 +410,28 @@ allocations. The streaming VS-constant buffer (binding 0) is correct. So a fixed
 orphaned-once) DXVK constant buffer is bound, in the bridge, to a different `VkDeviceMemory`/offset
 than the one DXVK actually wrote. Trace `vkCreateBuffer`/`vkBindBufferMemory`/`vkMapMemory`/the
 descriptor write for that buffer by object id and fix the association.
+
+---
+
+## Update (2026-06-12): the empty UBO is a constant-buffer orphaning/tracking bug
+
+`BINDMEM` + `MEMSCAN` traces pin the mechanism. The menu set's descriptors (binding 0 = VS constants,
+binding 1 = SpecData) both reference **`buf 1185`** (a 16 MB chunk, `mem 1184`) which holds only ~15
+non-zero dwords in the whole 16 MB. Meanwhile DXVK's *dense* constant data lives in separate 4 MB
+allocations (`buf 70`/`buf 173`, `mem 69`/`mem 172`, ~28k–36k non-zero dwords). So the descriptors
+point at a nearly-empty buffer while DXVK's real per-draw/spec data is in a different `VkBuffer`.
+
+This matches DXVK's constant-buffer **orphaning** (`D3D9ConstantBuffer::Alloc` →
+`ctx->invalidateBuffer(buf, allocateStorage())` → `bindUniformBufferRange(...)`). When a constant
+buffer fills, DXVK swaps it to new backing storage (a new `VkBuffer` from its allocator) and rebinds
+the descriptor range. In the bridge the descriptor keeps referencing the original (now stale/empty)
+allocation rather than the renamed one, so the shader reads zeros. The SpecData buffer in particular
+ends up empty -> `AlphaCompareOp = NEVER` -> discard.
+
+### Fix direction
+
+Make the bridge honour DXVK buffer renaming: the descriptor write that follows `invalidateBuffer`
+must repoint binding N at the buffer DXVK actually wrote (and `vkMapMemory`/the persistent alias must
+follow the buffer's current storage). Verify by re-dumping a menu-frame `UBO bind=1`: it should read
+a non-zero SpecData word with `AlphaCompareOp = ALWAYS (7)` instead of all-zero, after which the menu
+should render (the `EMULATOR_FORCE_FS` magenta test already proves the rest of the pipeline works).
