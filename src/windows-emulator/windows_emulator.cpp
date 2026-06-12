@@ -784,7 +784,7 @@ namespace sogen
 
     void windows_emulator::trace_alert(std::string event)
     {
-        static const bool enabled = std::getenv("EMULATOR_LOG_ALERTS") != nullptr;
+        static const bool enabled = std::getenv("EMULATOR_LOG_ALERTS") != nullptr || std::getenv("EMULATOR_LOG_EVENTS") != nullptr;
         if (!enabled)
         {
             return;
