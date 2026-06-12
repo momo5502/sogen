@@ -698,6 +698,76 @@ extern "C"
         bridge_call(gb::ioctl_destroy_fence, &request, sizeof(request), nullptr, 0);
     }
 
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateEvent(VkDevice device, const VkEventCreateInfo* pCreateInfo,
+                                                                       const VkAllocationCallbacks*, VkEvent* pEvent)
+    {
+        gb::create_event_request request{};
+        request.device = to_object_id(device);
+        request.flags = pCreateInfo ? pCreateInfo->flags : 0;
+
+        gb::create_event_response response{};
+        if (!bridge_call(gb::ioctl_create_event, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (response.vk_result != VK_SUCCESS)
+        {
+            return static_cast<VkResult>(response.vk_result);
+        }
+
+        *pEvent = to_handle<VkEvent>(response.event);
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyEvent(VkDevice device, VkEvent event, const VkAllocationCallbacks*)
+    {
+        gb::destroy_event_request request{};
+        request.device = to_object_id(device);
+        request.event = to_object_id(event);
+        bridge_call(gb::ioctl_destroy_event, &request, sizeof(request), nullptr, 0);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetEventStatus(VkDevice, VkEvent event)
+    {
+        gb::get_event_status_request request{};
+        request.event = to_object_id(event);
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_get_event_status, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkSetEvent(VkDevice device, VkEvent event)
+    {
+        gb::event_op_request request{};
+        request.device = to_object_id(device);
+        request.event = to_object_id(event);
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_set_event, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkResetEvent(VkDevice device, VkEvent event)
+    {
+        gb::event_op_request request{};
+        request.device = to_object_id(device);
+        request.event = to_object_id(event);
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_reset_event, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateSemaphore(VkDevice device, const VkSemaphoreCreateInfo* pCreateInfo,
                                                                            const VkAllocationCallbacks*, VkSemaphore* pSemaphore)
     {
@@ -3887,6 +3957,11 @@ extern "C"
             {.name = "vkResetCommandBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetCommandBuffer)},
             {.name = "vkQueueWaitIdle", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueueWaitIdle)},
             {.name = "vkDeviceWaitIdle", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDeviceWaitIdle)},
+            {.name = "vkCreateEvent", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateEvent)},
+            {.name = "vkDestroyEvent", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyEvent)},
+            {.name = "vkGetEventStatus", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetEventStatus)},
+            {.name = "vkSetEvent", .func = reinterpret_cast<PFN_vkVoidFunction>(vkSetEvent)},
+            {.name = "vkResetEvent", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetEvent)},
             {.name = "vkCreateFence", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateFence)},
             {.name = "vkCreateSemaphore", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateSemaphore)},
             {.name = "vkDestroySemaphore", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroySemaphore)},

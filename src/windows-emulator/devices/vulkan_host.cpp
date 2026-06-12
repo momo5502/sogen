@@ -168,6 +168,11 @@ namespace sogen
             PFN_vkDestroyFence destroy_fence{};
             PFN_vkResetFences reset_fences{};
             PFN_vkGetFenceStatus get_fence_status{};
+            PFN_vkCreateEvent create_event{};
+            PFN_vkDestroyEvent destroy_event{};
+            PFN_vkGetEventStatus get_event_status{};
+            PFN_vkSetEvent set_event{};
+            PFN_vkResetEvent reset_event{};
             PFN_vkCreateSemaphore create_semaphore{};
             PFN_vkDestroySemaphore destroy_semaphore{};
             PFN_vkGetSemaphoreCounterValue get_semaphore_counter_value{};
@@ -326,6 +331,12 @@ namespace sogen
             uint64_t device_id{};
         };
 
+        struct event_data
+        {
+            VkEvent handle{};
+            uint64_t device_id{};
+        };
+
         struct semaphore_data
         {
             VkSemaphore handle{};
@@ -361,6 +372,7 @@ namespace sogen
         std::unordered_map<uint64_t, command_pool_data> command_pools;
         std::unordered_map<uint64_t, command_buffer_data> command_buffers;
         std::unordered_map<uint64_t, fence_data> fences;
+        std::unordered_map<uint64_t, event_data> events;
         std::unordered_map<uint64_t, semaphore_data> semaphores;
         std::unordered_map<uint64_t, memory_data> memories;
         std::unordered_map<uint64_t, buffer_data> buffers;
@@ -659,6 +671,13 @@ namespace sogen
                     it->second.destroy_fence(it->second.handle, fence.handle, nullptr);
                 }
             }
+            for (auto& [id, event] : this->events)
+            {
+                if (event.device_id == device_id && event.handle && it->second.destroy_event)
+                {
+                    it->second.destroy_event(it->second.handle, event.handle, nullptr);
+                }
+            }
             for (auto& [id, semaphore] : this->semaphores)
             {
                 if (semaphore.device_id == device_id && semaphore.handle && it->second.destroy_semaphore)
@@ -699,6 +718,7 @@ namespace sogen
             this->erase_owned(this->command_buffers, [&](const command_buffer_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->command_pools, [&](const command_pool_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->fences, [&](const fence_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->events, [&](const event_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->semaphores, [&](const semaphore_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->buffers, [&](const buffer_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->images, [&](const image_data& d) { return d.device_id == device_id; });
@@ -1437,6 +1457,11 @@ namespace sogen
             data.create_fence = reinterpret_cast<PFN_vkCreateFence>(resolve("vkCreateFence"));
             data.destroy_fence = reinterpret_cast<PFN_vkDestroyFence>(resolve("vkDestroyFence"));
             data.reset_fences = reinterpret_cast<PFN_vkResetFences>(resolve("vkResetFences"));
+            data.create_event = reinterpret_cast<PFN_vkCreateEvent>(resolve("vkCreateEvent"));
+            data.destroy_event = reinterpret_cast<PFN_vkDestroyEvent>(resolve("vkDestroyEvent"));
+            data.get_event_status = reinterpret_cast<PFN_vkGetEventStatus>(resolve("vkGetEventStatus"));
+            data.set_event = reinterpret_cast<PFN_vkSetEvent>(resolve("vkSetEvent"));
+            data.reset_event = reinterpret_cast<PFN_vkResetEvent>(resolve("vkResetEvent"));
             data.create_semaphore = reinterpret_cast<PFN_vkCreateSemaphore>(resolve("vkCreateSemaphore"));
             data.destroy_semaphore = reinterpret_cast<PFN_vkDestroySemaphore>(resolve("vkDestroySemaphore"));
             data.get_semaphore_counter_value = reinterpret_cast<PFN_vkGetSemaphoreCounterValue>(resolve("vkGetSemaphoreCounterValue"));
@@ -2031,6 +2056,91 @@ namespace sogen
         }
 
         return dev->second.get_fence_status(dev->second.handle, it->second.handle);
+    }
+
+    int32_t vulkan_host::create_event(uint64_t device, uint32_t flags, uint64_t& out_event)
+    {
+        out_event = 0;
+
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_event)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkEventCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_EVENT_CREATE_INFO;
+        info.flags = flags;
+
+        VkEvent event{};
+        const VkResult result = dev->second.create_event(dev->second.handle, &info, nullptr, &event);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->events.emplace(id, impl::event_data{.handle = event, .device_id = device});
+        out_event = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_event(uint64_t device, uint64_t event)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->events.find(event);
+        if (it == this->impl_->events.end())
+        {
+            return;
+        }
+
+        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.destroy_event)
+        {
+            dev->second.destroy_event(dev->second.handle, it->second.handle, nullptr);
+        }
+
+        this->impl_->events.erase(it);
+    }
+
+    int32_t vulkan_host::get_event_status(uint64_t event)
+    {
+        const auto it = this->impl_->events.find(event);
+        if (it == this->impl_->events.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(it->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.get_event_status)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        return dev->second.get_event_status(dev->second.handle, it->second.handle);
+    }
+
+    int32_t vulkan_host::set_event(uint64_t device, uint64_t event)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->events.find(event);
+        if (dev == this->impl_->devices.end() || it == this->impl_->events.end() || !dev->second.set_event)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        return dev->second.set_event(dev->second.handle, it->second.handle);
+    }
+
+    int32_t vulkan_host::reset_event(uint64_t device, uint64_t event)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->events.find(event);
+        if (dev == this->impl_->devices.end() || it == this->impl_->events.end() || !dev->second.reset_event)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        return dev->second.reset_event(dev->second.handle, it->second.handle);
     }
 
     int32_t vulkan_host::queue_submit(uint64_t queue, uint64_t command_buffer, uint64_t fence)

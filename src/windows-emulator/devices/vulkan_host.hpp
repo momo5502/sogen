@@ -113,6 +113,11 @@ namespace sogen
         int32_t create_fence(uint64_t device, uint32_t flags, uint64_t& out_fence);
         void destroy_fence(uint64_t device, uint64_t fence);
         int32_t reset_fence(uint64_t device, uint64_t fence);
+        int32_t create_event(uint64_t device, uint32_t flags, uint64_t& out_event);
+        void destroy_event(uint64_t device, uint64_t event);
+        int32_t get_event_status(uint64_t event);
+        int32_t set_event(uint64_t device, uint64_t event);
+        int32_t reset_event(uint64_t device, uint64_t event);
 
         int32_t create_semaphore(uint64_t device, uint32_t flags, uint32_t semaphore_type, uint64_t initial_value, uint64_t& out_semaphore);
         void destroy_semaphore(uint64_t device, uint64_t semaphore);

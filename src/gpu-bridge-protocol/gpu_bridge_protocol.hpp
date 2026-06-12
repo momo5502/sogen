@@ -154,6 +154,11 @@ namespace sogen::gpu_bridge
         cmd_set_stencil = 0x876,
         cmd_set_stencil_op = 0x877,
         cmd_set_dynamic_u32 = 0x878,
+        create_event = 0x879,
+        destroy_event = 0x87A,
+        get_event_status = 0x87B,
+        set_event = 0x87C,
+        reset_event = 0x87D,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -275,6 +280,11 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_reset_command_buffer = make_ioctl(static_cast<uint32_t>(command::reset_command_buffer));
     inline constexpr uint32_t ioctl_get_physical_device_image_format_properties =
         make_ioctl(static_cast<uint32_t>(command::get_physical_device_image_format_properties));
+    inline constexpr uint32_t ioctl_create_event = make_ioctl(static_cast<uint32_t>(command::create_event));
+    inline constexpr uint32_t ioctl_destroy_event = make_ioctl(static_cast<uint32_t>(command::destroy_event));
+    inline constexpr uint32_t ioctl_get_event_status = make_ioctl(static_cast<uint32_t>(command::get_event_status));
+    inline constexpr uint32_t ioctl_set_event = make_ioctl(static_cast<uint32_t>(command::set_event));
+    inline constexpr uint32_t ioctl_reset_event = make_ioctl(static_cast<uint32_t>(command::reset_event));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -646,6 +656,39 @@ namespace sogen::gpu_bridge
     struct get_fence_status_request
     {
         object_id fence;
+    };
+
+    // VkEvent (host-set GPU event). create returns a handle; status/set/reset return a plain vk_result
+    // (get returns VK_EVENT_SET / VK_EVENT_RESET, the non-blocking poll DXVK spins on).
+    struct create_event_request
+    {
+        object_id device;
+        uint32_t flags; // VkEventCreateFlags
+        uint32_t reserved;
+    };
+
+    struct create_event_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        object_id event;
+    };
+
+    struct destroy_event_request
+    {
+        object_id device;
+        object_id event;
+    };
+
+    struct event_op_request
+    {
+        object_id device;
+        object_id event;
+    };
+
+    struct get_event_status_request
+    {
+        object_id event;
     };
 
     struct queue_submit_request

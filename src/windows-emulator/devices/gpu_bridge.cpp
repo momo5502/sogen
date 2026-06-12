@@ -80,6 +80,16 @@ namespace sogen
                     return handle_reset_fence(win_emu, context);
                 case gpu_bridge::ioctl_get_fence_status:
                     return handle_get_fence_status(win_emu, context);
+                case gpu_bridge::ioctl_create_event:
+                    return handle_create_event(win_emu, context);
+                case gpu_bridge::ioctl_destroy_event:
+                    return handle_destroy_event(win_emu, context);
+                case gpu_bridge::ioctl_get_event_status:
+                    return handle_get_event_status(win_emu, context);
+                case gpu_bridge::ioctl_set_event:
+                    return handle_set_event(win_emu, context);
+                case gpu_bridge::ioctl_reset_event:
+                    return handle_reset_event(win_emu, context);
                 case gpu_bridge::ioctl_queue_submit:
                     return handle_queue_submit(win_emu, context);
                 case gpu_bridge::ioctl_queue_wait_idle:
@@ -731,6 +741,68 @@ namespace sogen
 
                 this->vulkan_.destroy_fence(request.device, request.fence);
                 return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_create_event(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::create_event_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                uint64_t event = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_event(request.device, request.flags, event);
+                return write_output(win_emu, context,
+                                    gpu_bridge::create_event_response{.vk_result = result, .reserved = 0, .event = event});
+            }
+
+            NTSTATUS handle_destroy_event(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::destroy_event_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                this->vulkan_.destroy_event(request.device, request.event);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_event_status(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_event_status_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.get_event_status(request.event);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_set_event(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::event_op_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.set_event(request.device, request.event);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_reset_event(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::event_op_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.reset_event(request.device, request.event);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
             NTSTATUS handle_create_semaphore(windows_emulator& win_emu, const io_device_context& context)
