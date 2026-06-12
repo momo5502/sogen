@@ -245,8 +245,27 @@ namespace sogen
         int32_t cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer, uint32_t width,
                                          uint32_t height, uint32_t aspect_mask);
         // Copies tightly-packed pixel data from the buffer (offset 0) into mip 0 / layer 0 of the image.
-        int32_t cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout, uint32_t width,
-                                         uint32_t height, uint32_t aspect_mask);
+        // One VkBufferImageCopy region. DXVK sub-allocates uploads from a shared staging buffer, so
+        // buffer_offset (and mip/layer/image_offset) are routinely non-zero and must be honoured.
+        struct buffer_image_copy_region
+        {
+            uint64_t buffer_offset;
+            uint32_t buffer_row_length;
+            uint32_t buffer_image_height;
+            int32_t image_offset_x;
+            int32_t image_offset_y;
+            int32_t image_offset_z;
+            uint32_t width;
+            uint32_t height;
+            uint32_t depth;
+            uint32_t mip_level;
+            uint32_t base_array_layer;
+            uint32_t layer_count;
+            uint32_t aspect_mask;
+        };
+
+        int32_t cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout,
+                                         const buffer_image_copy_region& region);
         // Resolves a multisampled source image into a single-sample destination (full image, mip 0 / layer 0).
         int32_t cmd_resolve_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
                                   uint32_t width, uint32_t height, uint32_t aspect_mask);

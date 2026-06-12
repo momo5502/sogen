@@ -2866,7 +2866,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout,
-                                                  uint32_t width, uint32_t height, uint32_t aspect_mask)
+                                                  const buffer_image_copy_region& r)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto buf = this->impl_->buffers.find(buffer);
@@ -2883,15 +2883,15 @@ namespace sogen
         }
 
         VkBufferImageCopy region{};
-        region.bufferOffset = 0;
-        region.bufferRowLength = 0;   // tightly packed
-        region.bufferImageHeight = 0; // tightly packed
-        region.imageSubresource.aspectMask = aspect_mask;
-        region.imageSubresource.mipLevel = 0;
-        region.imageSubresource.baseArrayLayer = 0;
-        region.imageSubresource.layerCount = 1;
-        region.imageOffset = {.x = 0, .y = 0, .z = 0};
-        region.imageExtent = {.width = width, .height = height, .depth = 1};
+        region.bufferOffset = r.buffer_offset;
+        region.bufferRowLength = r.buffer_row_length;
+        region.bufferImageHeight = r.buffer_image_height;
+        region.imageSubresource.aspectMask = r.aspect_mask;
+        region.imageSubresource.mipLevel = r.mip_level;
+        region.imageSubresource.baseArrayLayer = r.base_array_layer;
+        region.imageSubresource.layerCount = r.layer_count ? r.layer_count : 1;
+        region.imageOffset = {.x = r.image_offset_x, .y = r.image_offset_y, .z = r.image_offset_z};
+        region.imageExtent = {.width = r.width, .height = r.height, .depth = r.depth ? r.depth : 1};
 
         dev->second.cmd_copy_buffer_to_image(cb->second.handle, buf->second.handle, img->second.handle, translate_layout(image_layout), 1,
                                              &region);

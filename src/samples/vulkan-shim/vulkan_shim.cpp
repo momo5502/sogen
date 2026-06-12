@@ -2164,9 +2164,19 @@ extern "C"
             request.command_buffer = to_object_id(commandBuffer);
             request.buffer = to_object_id(srcBuffer);
             request.image = to_object_id(dstImage);
+            request.buffer_offset = r.bufferOffset;
             request.image_layout = static_cast<uint32_t>(dstImageLayout);
+            request.buffer_row_length = r.bufferRowLength;
+            request.buffer_image_height = r.bufferImageHeight;
+            request.image_offset_x = r.imageOffset.x;
+            request.image_offset_y = r.imageOffset.y;
+            request.image_offset_z = r.imageOffset.z;
             request.width = r.imageExtent.width;
             request.height = r.imageExtent.height;
+            request.depth = r.imageExtent.depth;
+            request.mip_level = r.imageSubresource.mipLevel;
+            request.base_array_layer = r.imageSubresource.baseArrayLayer;
+            request.layer_count = r.imageSubresource.layerCount;
             request.aspect_mask = r.imageSubresource.aspectMask;
             record_command(request.command_buffer, gb::command::cmd_copy_buffer_to_image, &request, sizeof(request));
         }
@@ -2184,9 +2194,19 @@ extern "C"
             request.command_buffer = to_object_id(commandBuffer);
             request.buffer = to_object_id(pCopyBufferToImageInfo->srcBuffer);
             request.image = to_object_id(pCopyBufferToImageInfo->dstImage);
+            request.buffer_offset = r.bufferOffset;
             request.image_layout = static_cast<uint32_t>(pCopyBufferToImageInfo->dstImageLayout);
+            request.buffer_row_length = r.bufferRowLength;
+            request.buffer_image_height = r.bufferImageHeight;
+            request.image_offset_x = r.imageOffset.x;
+            request.image_offset_y = r.imageOffset.y;
+            request.image_offset_z = r.imageOffset.z;
             request.width = r.imageExtent.width;
             request.height = r.imageExtent.height;
+            request.depth = r.imageExtent.depth;
+            request.mip_level = r.imageSubresource.mipLevel;
+            request.base_array_layer = r.imageSubresource.baseArrayLayer;
+            request.layer_count = r.imageSubresource.layerCount;
             request.aspect_mask = r.imageSubresource.aspectMask;
             record_command(request.command_buffer, gb::command::cmd_copy_buffer_to_image, &request, sizeof(request));
         }

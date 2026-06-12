@@ -2589,8 +2589,22 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    return this->vulkan_.cmd_copy_buffer_to_image(req.command_buffer, req.buffer, req.image, req.image_layout, req.width,
-                                                                  req.height, req.aspect_mask);
+                    const vulkan_host::buffer_image_copy_region region{
+                        .buffer_offset = req.buffer_offset,
+                        .buffer_row_length = req.buffer_row_length,
+                        .buffer_image_height = req.buffer_image_height,
+                        .image_offset_x = req.image_offset_x,
+                        .image_offset_y = req.image_offset_y,
+                        .image_offset_z = req.image_offset_z,
+                        .width = req.width,
+                        .height = req.height,
+                        .depth = req.depth,
+                        .mip_level = req.mip_level,
+                        .base_array_layer = req.base_array_layer,
+                        .layer_count = req.layer_count,
+                        .aspect_mask = req.aspect_mask,
+                    };
+                    return this->vulkan_.cmd_copy_buffer_to_image(req.command_buffer, req.buffer, req.image, req.image_layout, region);
                 }
                 case gpu_bridge::command::cmd_resolve_image: {
                     gpu_bridge::cmd_resolve_image_request req{};

@@ -15,7 +15,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 24;
+    inline constexpr uint32_t protocol_version = 25;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -1003,9 +1003,19 @@ namespace sogen::gpu_bridge
         object_id command_buffer;
         object_id buffer;
         object_id image;
-        uint32_t image_layout; // VkImageLayout (current dst layout, e.g. TRANSFER_DST_OPTIMAL)
+        uint64_t buffer_offset; // byte offset of this region's source data within the (sub-allocated) buffer
+        uint32_t image_layout;  // VkImageLayout (current dst layout, e.g. TRANSFER_DST_OPTIMAL)
+        uint32_t buffer_row_length;   // 0 = tightly packed
+        uint32_t buffer_image_height; // 0 = tightly packed
+        int32_t image_offset_x;
+        int32_t image_offset_y;
+        int32_t image_offset_z;
         uint32_t width;
         uint32_t height;
+        uint32_t depth;
+        uint32_t mip_level;
+        uint32_t base_array_layer;
+        uint32_t layer_count;
         uint32_t aspect_mask; // VkImageAspectFlags
     };
 
