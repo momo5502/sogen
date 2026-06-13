@@ -1340,6 +1340,12 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& /*c*/, const emulator_pointer /*devices*/,
+                                                  const uint32_t /*device_count*/, const uint32_t /*size*/)
+        {
+            return TRUE;
+        }
+
         BOOL handle_NtUserDefSetText(const syscall_context& c, const hwnd window, const emulator_object<LARGE_STRING> text)
         {
             auto* win = c.proc.windows.get(window);
@@ -1601,6 +1607,22 @@ namespace sogen
             }
 
             return 0;
+        }
+
+        // Reports an empty top-level/child window enumeration. The trailing (HWND* phwndFirst, UINT* pcHwndNeeded)
+        // pair is stable across Windows versions; writing a zero count is memory-safe and lets enumeration callers
+        // (EnumWindows and friends) complete without iterating any windows.
+        NTSTATUS handle_NtUserBuildHwndList(const syscall_context& /*c*/, const uint64_t /*desktop*/, const hwnd /*next*/,
+                                            const BOOLEAN /*enum_children*/, const BOOLEAN /*unknown*/, const ULONG /*thread_id*/,
+                                            const ULONG /*max_count*/, const uint64_t /*hwnd_list*/,
+                                            const emulator_object<ULONG> hwnd_needed)
+        {
+            if (hwnd_needed)
+            {
+                hwnd_needed.write(0);
+            }
+
+            return STATUS_SUCCESS;
         }
 
         BOOL handle_NtUserMoveWindow(const syscall_context& c, const hwnd hwnd, const int x, const int y, const int width, const int height,
@@ -2666,25 +2688,75 @@ namespace sogen
                                                   const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
                                                   const DWORD mode_num, const emulator_object<EMU_DEVMODEW> dev_mode, const DWORD /*flags*/)
         {
-            if (dev_mode && (mode_num == ENUM_CURRENT_SETTINGS || mode_num == 0))
+            if (!dev_mode)
             {
-                const auto dev_name = device_name ? read_unicode_string(c.emu, device_name) : u"";
+                return STATUS_UNSUCCESSFUL;
+            }
 
-                if (dev_name.empty() || dev_name == u"\\\\.\\DISPLAY1")
-                {
-                    dev_mode.access([](EMU_DEVMODEW& dm) {
-                        dm.dmFields = 0x5C0000; // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
-                        dm.dmPelsWidth = 1920;
-                        dm.dmPelsHeight = 1080;
-                        dm.dmBitsPerPel = 32;
-                        dm.dmDisplayFrequency = 60;
-                    });
+            const auto dev_name = device_name ? read_unicode_string(c.emu, device_name) : u"";
 
-                    return STATUS_SUCCESS;
-                }
+            if (!dev_name.empty() && dev_name != u"\\\\.\\DISPLAY1")
+            {
+                return STATUS_UNSUCCESSFUL;
+            }
+
+            // The single virtual display advertises a list of common modes so callers (e.g. DXVK's
+            // mode enumeration, which the game uses to validate available resolutions) see real entries.
+            struct display_mode
+            {
+                uint32_t width;
+                uint32_t height;
+            };
+            static constexpr std::array<display_mode, 8> modes = {{
+                {.width = 640, .height = 480},
+                {.width = 800, .height = 600},
+                {.width = 1024, .height = 768},
+                {.width = 1280, .height = 720},
+                {.width = 1280, .height = 1024},
+                {.width = 1600, .height = 900},
+                {.width = 1680, .height = 1050},
+                {.width = 1920, .height = 1080},
+            }};
+
+            const auto fill_mode = [&](const uint32_t width, const uint32_t height) {
+                dev_mode.access([&](EMU_DEVMODEW& dm) {
+                    // Real EnumDisplaySettings fills the whole structure. Clear it first so fields the
+                    // caller did not initialize (notably dmDisplayFlags, which holds DM_INTERLACED) do
+                    // not leak stale stack data; DXVK rejects every mode whose dmDisplayFlags reports
+                    // an interlaced mode.
+                    dm = EMU_DEVMODEW{};
+                    dm.dmSize = sizeof(EMU_DEVMODEW);
+                    dm.dmFields = 0x5C0000; // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
+                    dm.dmPelsWidth = width;
+                    dm.dmPelsHeight = height;
+                    dm.dmBitsPerPel = 32;
+                    dm.dmDisplayFrequency = 60;
+                });
+            };
+
+            if (mode_num == ENUM_CURRENT_SETTINGS || mode_num == ENUM_REGISTRY_SETTINGS)
+            {
+                fill_mode(1920, 1080);
+                return STATUS_SUCCESS;
+            }
+
+            if (mode_num < modes.size())
+            {
+                fill_mode(modes[mode_num].width, modes[mode_num].height);
+                return STATUS_SUCCESS;
             }
 
             return STATUS_UNSUCCESSFUL;
+        }
+
+        // The emulator owns a single virtual display whose mode never actually changes; accept any requested mode
+        // (including CDS_TEST probes) by reporting DISP_CHANGE_SUCCESSFUL so the renderer proceeds to window setup.
+        LONG handle_NtUserChangeDisplaySettings(const syscall_context& /*c*/,
+                                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*device_name*/,
+                                                const emulator_object<EMU_DEVMODEW> /*dev_mode*/, const hwnd /*window*/,
+                                                const DWORD /*flags*/, const uint64_t /*param*/)
+        {
+            return 0; // DISP_CHANGE_SUCCESSFUL
         }
 
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, const hdc hdc_in, const uint64_t clip_rect_ptr,
@@ -3244,7 +3316,7 @@ namespace sogen
             return result;
         }
 
-        NTSTATUS handle_NtUserGetDisplayConfigBufferSizes(const syscall_context& /*c*/, const UINT32 /*flags*/,
+        NTSTATUS handle_NtUserGetDisplayConfigBufferSizes(const syscall_context& c, const UINT32 /*flags*/,
                                                           const emulator_object<UINT32> num_path_array_elements,
                                                           const emulator_object<UINT32> num_mode_info_array_elements)
         {
@@ -3253,8 +3325,16 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            num_path_array_elements.write(1);
-            num_mode_info_array_elements.write(2);
+            // Use non-throwing writes: a failed guest write (e.g. a caller passing a bogus output pointer)
+            // must surface as an error to the caller, not abort the whole emulator with an unhandled
+            // host-side memory exception.
+            const UINT32 path_count = 1;
+            const UINT32 mode_count = 2;
+            if (!c.win_emu.memory.try_write_memory(num_path_array_elements.value(), &path_count, sizeof(path_count)) ||
+                !c.win_emu.memory.try_write_memory(num_mode_info_array_elements.value(), &mode_count, sizeof(mode_count)))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
 
             return STATUS_SUCCESS;
         }

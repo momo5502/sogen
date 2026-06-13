@@ -1639,6 +1639,29 @@ namespace sogen
             return TRUE;
         }
 
+        uint64_t handle_NtGdiAddFontMemResourceEx(const syscall_context& c, const emulator_pointer /*buffer*/,
+                                                  const uint32_t /*buffer_size*/, const emulator_pointer /*design_vector*/,
+                                                  const uint32_t /*design_vector_size*/, const emulator_object<uint32_t> num_fonts)
+        {
+            const auto handle_value = allocate_gdi_object(c, k_gdi_font_type, k_gdi_font_attr_size);
+            if (handle_value == 0)
+            {
+                return 0;
+            }
+
+            if (num_fonts)
+            {
+                num_fonts.write(1);
+            }
+
+            return handle_value;
+        }
+
+        BOOL handle_NtGdiRemoveFontMemResourceEx(const syscall_context& /*c*/, const uint64_t font_handle)
+        {
+            return font_handle != 0 ? TRUE : FALSE;
+        }
+
         uint64_t handle_NtGdiCreateCompatibleBitmap(const syscall_context& c, const hdc /*dc*/, const uint32_t width, const uint32_t height)
         {
             const auto handle_value = allocate_gdi_object(c, k_gdi_bitmap_type, k_gdi_bitmap_attr_size);
@@ -1691,6 +1714,68 @@ namespace sogen
                 }
             }
             return handle_value;
+        }
+
+        // GetDIBits: report a bitmap's geometry into the caller's BITMAPINFOHEADER and, when a pixel buffer is
+        // supplied, copy its contents out as a bottom-up 32bpp BI_RGB DIB. The emulator's GDI bitmaps are all
+        // stored as 32bpp BGRA surfaces, so that is the only format reported. D3D9/DX11 init queries this to
+        // probe a memory bitmap before deciding its presentation path.
+        int handle_NtGdiGetDIBitsInternal(const syscall_context& c, const hdc /*dc*/, const handle bitmap, const uint32_t start_scan,
+                                          const uint32_t scan_lines, const emulator_pointer bits, const emulator_pointer info,
+                                          const uint32_t /*usage*/, const uint32_t max_bits, const uint32_t /*max_info*/)
+        {
+            if (info == 0)
+            {
+                return 0;
+            }
+
+            const auto it = c.proc.gdi_bitmap_surfaces.find(static_cast<uint32_t>(bitmap.bits));
+            if (it == c.proc.gdi_bitmap_surfaces.end())
+            {
+                return 0;
+            }
+            const auto& surface = it->second;
+
+            const auto bi_width = static_cast<int32_t>(surface.width);
+            const auto bi_height = static_cast<int32_t>(surface.height);
+            const uint16_t planes = 1;
+            const uint16_t bit_count = 32;
+            const uint32_t compression = 0; // BI_RGB
+            const uint32_t size_image = surface.width * surface.height * static_cast<uint32_t>(sizeof(uint32_t));
+            c.emu.write_memory(info + 4, &bi_width, sizeof(bi_width));
+            c.emu.write_memory(info + 8, &bi_height, sizeof(bi_height));
+            c.emu.write_memory(info + 12, &planes, sizeof(planes));
+            c.emu.write_memory(info + 14, &bit_count, sizeof(bit_count));
+            c.emu.write_memory(info + 16, &compression, sizeof(compression));
+            c.emu.write_memory(info + 20, &size_image, sizeof(size_image));
+
+            // Query mode: report geometry only.
+            if (bits == 0 || surface.width == 0 || surface.height == 0)
+            {
+                return bi_height;
+            }
+
+            // Copy the requested scanlines as a bottom-up DIB (row 0 is the bottom image row).
+            const size_t stride = static_cast<size_t>(surface.width) * sizeof(uint32_t);
+            uint32_t copied = 0;
+            for (uint32_t row = 0; row < scan_lines; ++row)
+            {
+                const uint32_t dib_row = start_scan + row;
+                if (dib_row >= surface.height)
+                {
+                    break;
+                }
+                const size_t dst_offset = static_cast<size_t>(row) * stride;
+                if (max_bits != 0 && dst_offset + stride > max_bits)
+                {
+                    break;
+                }
+                const uint32_t src_y = surface.height - 1 - dib_row;
+                c.emu.write_memory(bits + dst_offset, surface.pixels.data() + static_cast<size_t>(src_y) * surface.width, stride);
+                ++copied;
+            }
+
+            return static_cast<int>(copied);
         }
 
         int handle_NtGdiSetDIBitsToDeviceInternal(const syscall_context& c, const hdc dc, const int x_dest, const int y_dest,

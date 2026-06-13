@@ -63,9 +63,23 @@ namespace sogen
                 }
             }
 
+            uint64_t section_backing_address = 0;
+            if (value.type == handle_types::section)
+            {
+                auto* section = c.proc.sections.get(h);
+                if (section && section->ref_count == 1)
+                {
+                    section_backing_address = section->backing_address;
+                }
+            }
+
             auto* handle_store = c.proc.get_handle_store(h);
             if (handle_store && handle_store->erase(h))
             {
+                if (section_backing_address != 0)
+                {
+                    c.win_emu.memory.release_memory(section_backing_address, 0);
+                }
                 return STATUS_SUCCESS;
             }
 

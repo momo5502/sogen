@@ -398,6 +398,18 @@ namespace sogen
             teb_obj.TlsSlots.arr[1 /* WOW64_TLS_CPURESERVED */] = wow64_cpureserved_base;
 
             // Note: TLS slot [10] (WOW64_INFO_PTR) will be set by wow64.dll during initialization
+
+            // WoW64 32-bit user32 reads its CLIENTINFO from the 64-bit TEB (pci = TEB32 - WowTebOffset = TEB64),
+            // so it needs the desktop-info pointer published here just like the native path does. Without it,
+            // user32!GetDesktopWindow dereferences a null Win32ClientInfo[4] on the first UI call of every thread.
+            const auto desktop_info_obj = this->gs_segment->reserve<USER_DESKTOPINFO>();
+            desktop_info_obj.access([&](USER_DESKTOPINFO& info) {
+                if (const auto* wnd = context.windows.get(context.default_desktop_window_handle))
+                {
+                    info.spwndDesktop = wnd->guest.value();
+                }
+            });
+            teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
         });
 
         // Allocate dynamic 32-bit stack for WOW64 thread

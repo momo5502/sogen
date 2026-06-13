@@ -426,6 +426,20 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtDeleteValueKey(const syscall_context& c, const handle key_handle,
+                                         const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*value_name*/)
+        {
+            const auto* key = c.proc.registry_keys.get(key_handle);
+            if (!key)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            // Deleting registry values is not supported; the backing hives are read-only and the
+            // overlay has no tombstone concept. Reject the deletion instead of silently succeeding.
+            return STATUS_ACCESS_DENIED;
+        }
+
         NTSTATUS handle_NtNotifyChangeKey()
         {
             return STATUS_SUCCESS;

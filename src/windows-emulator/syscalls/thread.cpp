@@ -60,7 +60,8 @@ namespace sogen
                         merged_context.Dr7 = new_wow64_context.Dr7;
                     }
 
-                    if ((new_wow64_context.ContextFlags & CONTEXT_FLOATING_POINT_32) == CONTEXT_FLOATING_POINT_32)
+                    if ((new_wow64_context.ContextFlags & CONTEXT_FLOATING_POINT_32) == CONTEXT_FLOATING_POINT_32 &&
+                        (new_wow64_context.FloatSave.ControlWord & 0x3F) == 0x3F)
                     {
                         merged_context.FloatSave = new_wow64_context.FloatSave;
                     }
@@ -95,8 +96,13 @@ namespace sogen
 
                     if ((new_wow64_context.ContextFlags & CONTEXT_EXTENDED_REGISTERS_32) == CONTEXT_EXTENDED_REGISTERS_32)
                     {
-                        memcpy(merged_context.ExtendedRegisters, new_wow64_context.ExtendedRegisters,
-                               sizeof(merged_context.ExtendedRegisters));
+                        const uint16_t incoming_ext_cw = static_cast<uint16_t>(new_wow64_context.ExtendedRegisters[0]) |
+                                                         (static_cast<uint16_t>(new_wow64_context.ExtendedRegisters[1]) << 8);
+                        if ((incoming_ext_cw & 0x3F) == 0x3F)
+                        {
+                            memcpy(merged_context.ExtendedRegisters, new_wow64_context.ExtendedRegisters,
+                                   sizeof(merged_context.ExtendedRegisters));
+                        }
                     }
 
                     ctx.Context = merged_context;
@@ -525,10 +531,10 @@ namespace sogen
             {
                 if (t.id == thread_id)
                 {
-                    if (t.waiting_for_alert)
-                    {
-                        t.alerted = true;
-                    }
+                    // The alert is sticky: it must be remembered even if the target is not waiting yet, so a
+                    // subsequent NtWaitForAlertByThreadId consumes it instead of blocking forever. This race-free
+                    // delivery is what ntdll's critical sections and SRW locks rely on.
+                    t.alerted = true;
                     return STATUS_SUCCESS;
                 }
             }
@@ -553,6 +559,14 @@ namespace sogen
         NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, const uint64_t, const emulator_object<LARGE_INTEGER> timeout)
         {
             auto& t = c.win_emu.current_thread();
+
+            if (t.alerted)
+            {
+                // A pending alert was delivered before we started waiting; consume it without blocking.
+                t.alerted = false;
+                return STATUS_ALERTED;
+            }
+
             t.waiting_for_alert = true;
 
             if (timeout.value() && !t.await_time.has_value())
@@ -568,6 +582,15 @@ namespace sogen
         NTSTATUS handle_NtYieldExecution(const syscall_context& c)
         {
             c.win_emu.yield_thread();
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtSetThreadExecutionState(const syscall_context& /*c*/, const ULONG /*new_flags*/,
+                                                  const emulator_object<ULONG> previous_flags)
+        {
+            // The emulator never sleeps the system; report the prior continuous state and accept the request.
+            constexpr ULONG es_continuous = 0x80000000;
+            previous_flags.write_if_valid(es_continuous);
             return STATUS_SUCCESS;
         }
 

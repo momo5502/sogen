@@ -257,6 +257,18 @@ namespace sogen
             const auto next_apx = apcs.front();
             apcs.erase(apcs.begin());
 
+            if (next_apx.restamp_io_status_block && next_apx.apc_argument2)
+            {
+                // Stamp the WoW64 32-bit I/O status block (Status @0, Information @4) here, immediately
+                // before the completion routine runs. This mirrors the real kernel, which writes the
+                // IO_STATUS_BLOCK as it dispatches the completion APC rather than when the I/O is first
+                // queued -- so any value the guest left in that buffer while the async request was pending
+                // (e.g. reusing it for an intervening synchronous call) is correctly superseded.
+                const auto status32 = static_cast<uint32_t>(next_apx.io_status);
+                emu.write_memory(next_apx.apc_argument2, &status32, sizeof(status32));
+                emu.write_memory(next_apx.apc_argument2 + sizeof(status32), &next_apx.io_information, sizeof(next_apx.io_information));
+            }
+
             struct
             {
                 CONTEXT64 context{};
@@ -862,6 +874,22 @@ namespace sogen
                 }
                 else
                 {
+                    // A fault on a null/near-null address is almost always a call through a null function
+                    // pointer (e.g. a Vulkan entry point the shim doesn't implement). Log the caller's
+                    // return address so the missing function's call site can be identified.
+                    if (address < 0x1000)
+                    {
+                        const auto sp = this->emu().reg<uint32_t>(x86_register::esp);
+                        uint32_t return_address = 0;
+                        if (this->emu().try_read_memory(sp, &return_address, sizeof(return_address)))
+                        {
+                            const auto* mod = this->mod_manager.find_by_address(return_address);
+                            this->log.error("Null-pointer call to 0x%llx; caller return address 0x%x (%s+0x%llx)\n",
+                                            static_cast<unsigned long long>(address), return_address, mod ? mod->name.c_str() : "?",
+                                            mod ? static_cast<unsigned long long>(return_address - mod->image_base) : return_address);
+                        }
+                    }
+
                     this->callbacks.on_memory_violate(address, size, operation, type);
                     dispatch_access_violation(*this, address, operation);
                 }

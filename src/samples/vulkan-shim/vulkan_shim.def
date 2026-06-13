@@ -14,21 +14,68 @@ EXPORTS
     vkBindBufferMemory
     vkBindImageMemory
     vkCmdBeginRenderPass
+    vkCmdBeginRendering
     vkCmdBindDescriptorSets
     vkCmdBindIndexBuffer
+    vkCmdBindIndexBuffer2KHR
     vkCmdBindPipeline
+    vkCmdBeginDebugUtilsLabelEXT
     vkCmdBindVertexBuffers
+    vkCmdBindVertexBuffers2
     vkCmdClearColorImage
+    vkCmdClearDepthStencilImage
+    vkCmdBeginQuery
+    vkCmdCopyBuffer
     vkCmdCopyBufferToImage
+    vkCmdCopyBufferToImage2
     vkCmdCopyImageToBuffer
+    vkCmdCopyImageToBuffer2
+    vkCmdResolveImage
+    vkCmdResolveImage2
+    vkCmdUpdateBuffer
+    vkCmdDispatch
+    vkCmdDispatchIndirect
     vkCmdDraw
     vkCmdDrawIndexed
+    vkCmdEndQuery
+    vkCmdResetQueryPool
+    vkCmdWriteTimestamp
+    vkCmdEndDebugUtilsLabelEXT
     vkCmdEndRenderPass
+    vkCmdEndRendering
+    vkCmdExecuteCommands
     vkCmdFillBuffer
+    vkCmdInsertDebugUtilsLabelEXT
     vkCmdPipelineBarrier
     vkCmdPushConstants
+    vkCmdSetBlendConstants
+    vkCmdSetCullMode
+    vkCmdSetDepthBias
+    vkCmdSetDepthBiasEnable
+    vkCmdSetDepthBounds
+    vkCmdSetDepthBoundsTestEnable
+    vkCmdSetDepthCompareOp
+    vkCmdSetDepthTestEnable
+    vkCmdSetDepthWriteEnable
+    vkCmdSetFrontFace
+    vkCmdSetLineWidth
+    vkCmdSetPrimitiveRestartEnable
+    vkCmdSetPrimitiveTopology
+    vkCmdSetRasterizerDiscardEnable
+    vkCmdSetScissor
+    vkCmdSetScissorWithCount
+    vkCmdSetStencilCompareMask
+    vkCmdSetStencilOp
+    vkCmdSetStencilReference
+    vkCmdSetStencilTestEnable
+    vkCmdSetStencilWriteMask
+    vkCmdSetViewport
+    vkCmdSetViewportWithCount
     vkCreateBuffer
+    vkCreateBufferView
     vkCreateCommandPool
+    vkCreateQueryPool
+    vkCreateDebugUtilsMessengerEXT
     vkCreateDescriptorPool
     vkCreateDescriptorSetLayout
     vkCreateDevice
@@ -45,7 +92,10 @@ EXPORTS
     vkCreateSwapchainKHR
     vkCreateWin32SurfaceKHR
     vkDestroyBuffer
+    vkDestroyBufferView
     vkDestroyCommandPool
+    vkDestroyQueryPool
+    vkDestroyDebugUtilsMessengerEXT
     vkDestroyDescriptorPool
     vkDestroyDescriptorSetLayout
     vkDestroyDevice
@@ -61,8 +111,11 @@ EXPORTS
     vkDestroyShaderModule
     vkDestroySurfaceKHR
     vkDestroySwapchainKHR
+    vkDeviceWaitIdle
     vkEndCommandBuffer
     vkEnumerateDeviceExtensionProperties
+    vkFlushMappedMemoryRanges
+    vkInvalidateMappedMemoryRanges
     vkEnumerateInstanceExtensionProperties
     vkEnumerateInstanceLayerProperties
     vkEnumerateInstanceVersion
@@ -74,7 +127,10 @@ EXPORTS
     vkGetDeviceQueue
     vkGetFenceStatus
     vkGetImageMemoryRequirements
+    vkGetImageSubresourceLayout
     vkGetInstanceProcAddr
+    vkGetQueryPoolResults
+    vkGetPhysicalDeviceExternalSemaphoreProperties
     vkGetPhysicalDeviceFeatures
     vkGetPhysicalDeviceFeatures2
     vkGetPhysicalDeviceFormatProperties
@@ -87,8 +143,13 @@ EXPORTS
     vkGetPhysicalDeviceProperties2
     vkGetPhysicalDeviceQueueFamilyProperties
     vkGetPhysicalDeviceQueueFamilyProperties2
+    vkGetPhysicalDeviceSparseImageFormatProperties
+    vkGetPhysicalDeviceSparseImageFormatProperties2
+    vkGetPhysicalDeviceSurfaceCapabilities2KHR
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR
+    vkGetPhysicalDeviceSurfaceFormats2KHR
     vkGetPhysicalDeviceSurfaceFormatsKHR
+    vkGetPhysicalDeviceSurfacePresentModes2EXT
     vkGetPhysicalDeviceSurfacePresentModesKHR
     vkGetPhysicalDeviceSurfaceSupportKHR
     vkGetPhysicalDeviceWin32PresentationSupportKHR
@@ -96,7 +157,13 @@ EXPORTS
     vkMapMemory
     vkQueuePresentKHR
     vkQueueSubmit
+    vkQueueWaitIdle
+    vkReleaseSwapchainImagesEXT
+    vkResetCommandBuffer
+    vkResetCommandPool
+    vkResetQueryPool
     vkResetFences
+    vkSubmitDebugUtilsMessageEXT
     vkUnmapMemory
     vkUpdateDescriptorSets
     vkWaitForFences

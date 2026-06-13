@@ -37,28 +37,46 @@ namespace sogen
             nsi_buffer dynamic;
         };
 
-        uint64_t read_u64(windows_emulator& win_emu, const io_device_context& c, const ULONG offset)
+        // The NSI request structure stores pointers and lengths as native words, so under WoW64 it is
+        // packed with 4-byte fields at different offsets than the 64-bit layout.
+        struct nsi_offsets
         {
-            if (c.input_buffer_length < offset + sizeof(uint64_t))
+            ULONG key_address;
+            ULONG key_size;
+            ULONG rw_address;
+            ULONG rw_size;
+            ULONG dynamic_address;
+            ULONG dynamic_size;
+        };
+
+        uint64_t read_field(windows_emulator& win_emu, const io_device_context& c, const ULONG offset, const bool wow64)
+        {
+            const ULONG width = wow64 ? sizeof(uint32_t) : sizeof(uint64_t);
+            if (c.input_buffer_length < offset + width)
             {
                 return 0;
+            }
+
+            if (wow64)
+            {
+                return win_emu.emu().read_memory<uint32_t>(c.input_buffer + offset);
             }
 
             return win_emu.emu().read_memory<uint64_t>(c.input_buffer + offset);
         }
 
-        nsi_buffer read_buffer(windows_emulator& win_emu, const io_device_context& c, const ULONG address_offset, const ULONG size_offset)
+        nsi_buffer read_buffer(windows_emulator& win_emu, const io_device_context& c, const ULONG address_offset, const ULONG size_offset,
+                               const bool wow64)
         {
-            return nsi_buffer{.address = read_u64(win_emu, c, address_offset), .size = read_u64(win_emu, c, size_offset)};
+            return nsi_buffer{.address = read_field(win_emu, c, address_offset, wow64), .size = read_field(win_emu, c, size_offset, wow64)};
         }
 
-        nsi_request read_request(windows_emulator& win_emu, const io_device_context& c, const ULONG rw_address_offset,
-                                 const ULONG rw_size_offset, const ULONG dynamic_address_offset, const ULONG dynamic_size_offset)
+        nsi_request read_request(windows_emulator& win_emu, const io_device_context& c, const nsi_offsets& offsets, const bool wow64)
         {
             return nsi_request{
-                .key = read_buffer(win_emu, c, 0x28, 0x30),
-                .rw = read_buffer(win_emu, c, rw_address_offset, rw_size_offset),
-                .dynamic = read_buffer(win_emu, c, dynamic_address_offset, dynamic_size_offset),
+                .key = read_buffer(win_emu, c, offsets.key_address, offsets.key_size, wow64),
+                .rw = read_buffer(win_emu, c, offsets.rw_address, offsets.rw_size, wow64),
+                .dynamic = read_buffer(win_emu, c, offsets.dynamic_address, offsets.dynamic_size, wow64),
             };
         }
 
@@ -110,17 +128,50 @@ namespace sogen
         {
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
             {
+                const bool wow64 = win_emu.process.is_wow64_process;
                 switch (c.io_control_code)
                 {
                 case k_nsi_get_parameter:
-                    return get_parameter(win_emu, c, read_request(win_emu, c, 0x40, 0x48, 0x50, 0x58));
+                    return get_parameter(win_emu, c, read_request(win_emu, c, get_offsets(wow64), wow64));
                 case k_nsi_get_all_parameters:
-                    return get_all_parameters(win_emu, c, read_request(win_emu, c, 0x40, 0x48, 0x50, 0x58));
+                    return get_all_parameters(win_emu, c, read_request(win_emu, c, get_offsets(wow64), wow64));
                 case k_nsi_enumerate_objects_all_parameters:
-                    return enumerate_objects_all_parameters(win_emu, c, read_request(win_emu, c, 0x48, 0x50, 0x58, 0x60));
+                    return enumerate_objects_all_parameters(win_emu, c, read_request(win_emu, c, enumerate_offsets(wow64), wow64), wow64);
                 default:
                     return STATUS_SUCCESS;
                 }
+            }
+
+            static nsi_offsets get_offsets(const bool wow64)
+            {
+                return wow64 ? nsi_offsets{.key_address = 0x18,
+                                           .key_size = 0x1C,
+                                           .rw_address = 0x24,
+                                           .rw_size = 0x28,
+                                           .dynamic_address = 0x2C,
+                                           .dynamic_size = 0x30}
+                             : nsi_offsets{.key_address = 0x28,
+                                           .key_size = 0x30,
+                                           .rw_address = 0x40,
+                                           .rw_size = 0x48,
+                                           .dynamic_address = 0x50,
+                                           .dynamic_size = 0x58};
+            }
+
+            static nsi_offsets enumerate_offsets(const bool wow64)
+            {
+                return wow64 ? nsi_offsets{.key_address = 0x18,
+                                           .key_size = 0x1C,
+                                           .rw_address = 0x28,
+                                           .rw_size = 0x2C,
+                                           .dynamic_address = 0x30,
+                                           .dynamic_size = 0x34}
+                             : nsi_offsets{.key_address = 0x28,
+                                           .key_size = 0x30,
+                                           .rw_address = 0x48,
+                                           .rw_size = 0x50,
+                                           .dynamic_address = 0x58,
+                                           .dynamic_size = 0x60};
             }
 
             static NTSTATUS get_parameter(windows_emulator& win_emu, const io_device_context& c, const nsi_request& request)
@@ -161,9 +212,17 @@ namespace sogen
             }
 
             static NTSTATUS enumerate_objects_all_parameters(windows_emulator& win_emu, const io_device_context& c,
-                                                             const nsi_request& request)
+                                                             const nsi_request& request, const bool wow64)
             {
-                if (c.input_buffer_length >= 0x70)
+                // Report a single enumerated object by writing the count field that follows the buffer descriptors.
+                if (wow64)
+                {
+                    if (c.input_buffer_length >= 0x3C)
+                    {
+                        win_emu.emu().write_memory<uint32_t>(c.input_buffer + 0x38, 1);
+                    }
+                }
+                else if (c.input_buffer_length >= 0x70)
                 {
                     win_emu.emu().write_memory<uint64_t>(c.input_buffer + 0x68, 1);
                 }

@@ -282,6 +282,34 @@ namespace sogen
         return true;
     }
 
+    bool memory_manager::allocate_host_memory(const uint64_t address, const size_t size, void* host_pointer,
+                                              const nt_memory_permission permissions)
+    {
+        if (this->overlaps_reserved_region(address, size))
+        {
+            return false;
+        }
+
+        this->map_host_memory(address, size, host_pointer, permissions.is_guarded() ? memory_permission::none : permissions.common);
+
+        const auto entry = this->reserved_regions_
+                               .try_emplace(address,
+                                            reserved_region{
+                                                .length = size,
+                                                .kind = memory_region_kind::mmio,
+                                            })
+                               .first;
+
+        entry->second.committed_regions[address] = committed_region{
+            .length = size,
+            .permissions = permissions,
+        };
+
+        this->update_layout_version();
+
+        return true;
+    }
+
     bool memory_manager::allocate_memory(const uint64_t address, const size_t size, const nt_memory_permission permissions,
                                          const bool reserve_only, const memory_region_kind kind)
     {
@@ -857,6 +885,11 @@ namespace sogen
     void memory_manager::map_memory(const uint64_t address, const size_t size, const memory_permission permissions)
     {
         this->memory_->map_memory(address, size, permissions);
+    }
+
+    void memory_manager::map_host_memory(const uint64_t address, const size_t size, void* host_pointer, const memory_permission permissions)
+    {
+        this->memory_->map_host_memory(address, size, host_pointer, permissions);
     }
 
     void memory_manager::unmap_memory(const uint64_t address, const size_t size)

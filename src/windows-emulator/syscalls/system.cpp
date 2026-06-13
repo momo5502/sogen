@@ -417,8 +417,10 @@ namespace sogen
                                            const uint32_t /*input_buffer_length*/, const uint64_t output_buffer,
                                            const uint32_t output_buffer_length)
         {
-            // POWER_INFORMATION_LEVEL: ProcessorInformation = 10 (per-CPU PROCESSOR_POWER_INFORMATION).
-            constexpr uint32_t processor_information = 10;
+            // POWER_INFORMATION_LEVEL: ProcessorInformation = 11 (per-CPU PROCESSOR_POWER_INFORMATION).
+            // Games measure CPU speed by spinning until CurrentMhz/MhzLimit reports the CPU at full clock,
+            // so CurrentMhz and MhzLimit are reported equal below (ratio 1.0) to let that loop converge.
+            constexpr uint32_t processor_information = 11;
 
             struct processor_power_information
             {
