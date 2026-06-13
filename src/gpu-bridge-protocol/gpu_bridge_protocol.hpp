@@ -894,9 +894,9 @@ namespace sogen::gpu_bridge
         uint32_t format; // VkFormat
         uint32_t width;
         uint32_t height;
-        uint32_t usage;   // VkImageUsageFlags
-        uint32_t tiling;  // VkImageTiling
-        uint32_t samples; // VkSampleCountFlagBits (1 = no MSAA)
+        uint32_t usage;        // VkImageUsageFlags
+        uint32_t tiling;       // VkImageTiling
+        uint32_t samples;      // VkSampleCountFlagBits (1 = no MSAA)
         uint32_t image_type;   // VkImageType (0=1D,1=2D,2=3D)
         uint32_t depth;        // extent.depth (3D textures); 0/1 => 1
         uint32_t mip_levels;   // 0 => 1
@@ -1008,8 +1008,8 @@ namespace sogen::gpu_bridge
         object_id command_buffer;
         object_id buffer;
         object_id image;
-        uint64_t buffer_offset; // byte offset of this region's source data within the (sub-allocated) buffer
-        uint32_t image_layout;  // VkImageLayout (current dst layout, e.g. TRANSFER_DST_OPTIMAL)
+        uint64_t buffer_offset;       // byte offset of this region's source data within the (sub-allocated) buffer
+        uint32_t image_layout;        // VkImageLayout (current dst layout, e.g. TRANSFER_DST_OPTIMAL)
         uint32_t buffer_row_length;   // 0 = tightly packed
         uint32_t buffer_image_height; // 0 = tightly packed
         int32_t image_offset_x;

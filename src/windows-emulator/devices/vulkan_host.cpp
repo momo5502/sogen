@@ -5345,8 +5345,7 @@ namespace sogen
         // NaN, which fails the implicit 0<=z<=1 range test and discards all fragments. Clamp to 0 so the
         // bias becomes a no-op instead of silently killing the draw.
         const auto sanitize = [](float v) { return std::isfinite(v) ? v : 0.0f; };
-        dev->second.cmd_set_depth_bias(cb->second.handle, sanitize(constant_factor), sanitize(clamp),
-                                       sanitize(slope_factor));
+        dev->second.cmd_set_depth_bias(cb->second.handle, sanitize(constant_factor), sanitize(clamp), sanitize(slope_factor));
         return VK_SUCCESS;
     }
 

@@ -1185,7 +1185,8 @@ namespace sogen::whp
                 }
             }
 
-            void map_host_memory(const uint64_t address, const size_t size, void* host_pointer, const memory_permission permissions) override
+            void map_host_memory(const uint64_t address, const size_t size, void* host_pointer,
+                                 const memory_permission permissions) override
             {
                 if (!is_page_aligned(address) || !is_page_aligned(size))
                 {

@@ -1314,10 +1314,9 @@ namespace sogen
                 }
 
                 uint64_t image = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_image(request.device, request.format, request.width, request.height,
-                                                                  request.usage, request.tiling, request.samples, request.image_type,
-                                                                  request.depth, request.mip_levels, request.array_layers, request.flags,
-                                                                  image);
+                const int32_t result = this->vulkan_.create_image(
+                    request.device, request.format, request.width, request.height, request.usage, request.tiling, request.samples,
+                    request.image_type, request.depth, request.mip_levels, request.array_layers, request.flags, image);
                 return write_output(win_emu, context,
                                     gpu_bridge::create_image_response{.vk_result = result, .reserved = 0, .image = image});
             }
@@ -1636,10 +1635,10 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
                 uint64_t view = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_image_view(
-                    request.device, request.image, request.format, request.aspect_mask, request.view_type, request.base_mip_level,
-                    request.level_count, request.base_array_layer, request.layer_count, request.swizzle_r, request.swizzle_g,
-                    request.swizzle_b, request.swizzle_a, view);
+                const int32_t result = this->vulkan_.create_image_view(request.device, request.image, request.format, request.aspect_mask,
+                                                                       request.view_type, request.base_mip_level, request.level_count,
+                                                                       request.base_array_layer, request.layer_count, request.swizzle_r,
+                                                                       request.swizzle_g, request.swizzle_b, request.swizzle_a, view);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = view});
             }
 

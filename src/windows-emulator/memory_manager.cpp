@@ -887,8 +887,7 @@ namespace sogen
         this->memory_->map_memory(address, size, permissions);
     }
 
-    void memory_manager::map_host_memory(const uint64_t address, const size_t size, void* host_pointer,
-                                         const memory_permission permissions)
+    void memory_manager::map_host_memory(const uint64_t address, const size_t size, void* host_pointer, const memory_permission permissions)
     {
         this->memory_->map_host_memory(address, size, host_pointer, permissions);
     }
