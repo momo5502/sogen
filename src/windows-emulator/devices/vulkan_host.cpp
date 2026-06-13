@@ -83,39 +83,47 @@ namespace sogen
         // from the right offset.
         size_t repack_properties_for_wow64(const VkPhysicalDeviceProperties& src, void* out, size_t out_size)
         {
-            static_assert(sizeof(size_t) == 8, "host is expected to be 64-bit");
+            if constexpr (sizeof(size_t) != 8)
+            {
+                (void)src;
+                (void)out;
+                (void)out_size;
+                return 0;
+            }
+            else
+            {
+                constexpr size_t guest_size_t = sizeof(uint32_t);
+                // Guest offset where minMemoryMapAlignment begins: it follows viewportSubPixelBits and,
+                // being a 4-byte size_t on the guest, needs no 8-byte padding (unlike on the host, where
+                // offsetof(minMemoryMapAlignment) is rounded up). Anchor on the preceding field's end.
+                constexpr size_t limits_head = offsetof(VkPhysicalDeviceLimits, viewportSubPixelBits) + sizeof(uint32_t);
+                constexpr size_t host_limits_tail = offsetof(VkPhysicalDeviceLimits, minTexelBufferOffsetAlignment);
+                constexpr size_t guest_limits_tail = (limits_head + guest_size_t + 7) & ~static_cast<size_t>(7);
+                constexpr size_t limits_tail_size = sizeof(VkPhysicalDeviceLimits) - host_limits_tail;
+                constexpr size_t guest_limits_size = guest_limits_tail + limits_tail_size;
 
-            constexpr size_t guest_size_t = sizeof(uint32_t);
-            // Guest offset where minMemoryMapAlignment begins: it follows viewportSubPixelBits and,
-            // being a 4-byte size_t on the guest, needs no 8-byte padding (unlike on the host, where
-            // offsetof(minMemoryMapAlignment) is rounded up). Anchor on the preceding field's end.
-            constexpr size_t limits_head = offsetof(VkPhysicalDeviceLimits, viewportSubPixelBits) + sizeof(uint32_t);
-            constexpr size_t host_limits_tail = offsetof(VkPhysicalDeviceLimits, minTexelBufferOffsetAlignment);
-            constexpr size_t guest_limits_tail = (limits_head + guest_size_t + 7) & ~static_cast<size_t>(7);
-            constexpr size_t limits_tail_size = sizeof(VkPhysicalDeviceLimits) - host_limits_tail;
-            constexpr size_t guest_limits_size = guest_limits_tail + limits_tail_size;
+                constexpr size_t props_head = offsetof(VkPhysicalDeviceProperties, limits);
+                constexpr size_t sparse_size = sizeof(VkPhysicalDeviceSparseProperties);
+                constexpr size_t guest_props_size = props_head + guest_limits_size + sparse_size;
 
-            constexpr size_t props_head = offsetof(VkPhysicalDeviceProperties, limits);
-            constexpr size_t sparse_size = sizeof(VkPhysicalDeviceSparseProperties);
-            constexpr size_t guest_props_size = props_head + guest_limits_size + sparse_size;
+                std::array<std::byte, sizeof(VkPhysicalDeviceProperties)> buffer{};
+                const auto* src_bytes = reinterpret_cast<const std::byte*>(&src);
+                std::byte* dst = buffer.data();
 
-            std::array<std::byte, sizeof(VkPhysicalDeviceProperties)> buffer{};
-            const auto* src_bytes = reinterpret_cast<const std::byte*>(&src);
-            std::byte* dst = buffer.data();
+                // header + limits up to (but not including) minMemoryMapAlignment
+                std::memcpy(dst, src_bytes, props_head + limits_head);
 
-            // header + limits up to (but not including) minMemoryMapAlignment
-            std::memcpy(dst, src_bytes, props_head + limits_head);
+                const auto map_alignment = static_cast<uint32_t>(src.limits.minMemoryMapAlignment);
+                std::memcpy(dst + props_head + limits_head, &map_alignment, sizeof(map_alignment));
 
-            const auto map_alignment = static_cast<uint32_t>(src.limits.minMemoryMapAlignment);
-            std::memcpy(dst + props_head + limits_head, &map_alignment, sizeof(map_alignment));
+                // limits tail (minTexelBufferOffsetAlignment .. end) then sparseProperties
+                std::memcpy(dst + props_head + guest_limits_tail, src_bytes + props_head + host_limits_tail, limits_tail_size);
+                std::memcpy(dst + props_head + guest_limits_size, src_bytes + props_head + sizeof(VkPhysicalDeviceLimits), sparse_size);
 
-            // limits tail (minTexelBufferOffsetAlignment .. end) then sparseProperties
-            std::memcpy(dst + props_head + guest_limits_tail, src_bytes + props_head + host_limits_tail, limits_tail_size);
-            std::memcpy(dst + props_head + guest_limits_size, src_bytes + props_head + sizeof(VkPhysicalDeviceLimits), sparse_size);
-
-            const size_t copy_size = std::min(out_size, guest_props_size);
-            std::memcpy(out, buffer.data(), copy_size);
-            return copy_size;
+                const size_t copy_size = std::min(out_size, guest_props_size);
+                std::memcpy(out, buffer.data(), copy_size);
+                return copy_size;
+            }
         }
     }
 
@@ -755,6 +763,11 @@ namespace sogen
 
         impl()
         {
+            if constexpr (sizeof(size_t) != 8)
+            {
+                return;
+            }
+
             for (const auto* name : vulkan_loader_names)
             {
                 this->loader = load_library(name);
