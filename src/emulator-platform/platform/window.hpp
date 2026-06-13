@@ -184,6 +184,10 @@ namespace sogen
 #define WM_NCCALCSIZE        0x0083
 #define WM_NCACTIVATE        0x0086
 
+#define WA_INACTIVE          0
+#define WA_ACTIVE            1
+#define WA_CLICKACTIVE       2
+
 #define BN_CLICKED           0
 
 #define MK_LBUTTON           0x0001
