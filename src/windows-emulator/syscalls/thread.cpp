@@ -501,15 +501,6 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (std::getenv("EMULATOR_LOG_IOCTL") != nullptr)
-            {
-                const auto rip = c.emu.read_instruction_pointer();
-                const auto* mod = c.win_emu.mod_manager.find_by_address(rip);
-                c.win_emu.log.print(color::yellow, "NtTerminateThread tid=%u exit=0x%X caller=%s+0x%llx\n", thread->id,
-                                    static_cast<unsigned>(exit_status), mod ? mod->name.c_str() : "?",
-                                    mod ? static_cast<unsigned long long>(rip - mod->image_base) : static_cast<unsigned long long>(rip));
-            }
-
             c.proc.terminate_thread(*thread, exit_status);
             c.win_emu.callbacks.on_thread_terminated(thread_handle, *thread);
 
@@ -536,30 +527,16 @@ namespace sogen
 
         NTSTATUS handle_NtAlertThreadByThreadId(const syscall_context& c, const uint64_t thread_id)
         {
-            static const bool trace = std::getenv("EMULATOR_LOG_ALERTS") != nullptr;
-            const auto from = trace ? c.win_emu.current_thread().id : 0;
-
             for (auto& t : c.proc.threads | std::views::values)
             {
                 if (t.id == thread_id)
                 {
-                    if (trace)
-                    {
-                        c.win_emu.trace_alert("ALERT " + std::to_string(from) + "->" + std::to_string(t.id) +
-                                              " waiting=" + std::to_string(t.waiting_for_alert) + " alerted=" + std::to_string(t.alerted));
-                    }
-
                     // The alert is sticky: it must be remembered even if the target is not waiting yet, so a
                     // subsequent NtWaitForAlertByThreadId consumes it instead of blocking forever. This race-free
                     // delivery is what ntdll's critical sections and SRW locks rely on.
                     t.alerted = true;
                     return STATUS_SUCCESS;
                 }
-            }
-
-            if (trace)
-            {
-                c.win_emu.trace_alert("ALERT " + std::to_string(from) + "->" + std::to_string(thread_id) + " NO-TARGET");
             }
 
             return STATUS_SUCCESS;
@@ -581,23 +558,13 @@ namespace sogen
 
         NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, const uint64_t, const emulator_object<LARGE_INTEGER> timeout)
         {
-            static const bool trace = std::getenv("EMULATOR_LOG_ALERTS") != nullptr;
             auto& t = c.win_emu.current_thread();
 
             if (t.alerted)
             {
-                if (trace)
-                {
-                    c.win_emu.trace_alert("WAIT  " + std::to_string(t.id) + " consumed-alert");
-                }
                 // A pending alert was delivered before we started waiting; consume it without blocking.
                 t.alerted = false;
                 return STATUS_ALERTED;
-            }
-
-            if (trace)
-            {
-                c.win_emu.trace_alert("WAIT  " + std::to_string(t.id) + " park" + (timeout.value() ? " (timed)" : ""));
             }
 
             t.waiting_for_alert = true;

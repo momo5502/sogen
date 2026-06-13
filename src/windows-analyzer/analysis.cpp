@@ -220,66 +220,6 @@ namespace sogen
             }
         }
 
-        // Opt-in (EMULATOR_LOG_STACK): on a memory violation, dump the faulting registers, the region the
-        // fault address lives in, and a best-effort walk of the (WoW64) stack with every value resolved to
-        // a module+offset. Invaluable for pinning guest-side faults (e.g. a DXVK worker thread calling a
-        // null function pointer or writing through a bad pointer) without an attached debugger.
-        void log_violation_stack(const analysis_context& c, const uint64_t fault_address)
-        {
-            static const bool enabled = std::getenv("EMULATOR_LOG_STACK") != nullptr;
-            if (!enabled)
-            {
-                return;
-            }
-
-            auto& win_emu = *c.win_emu;
-            auto& emu = win_emu.emu();
-            auto& log = win_emu.log;
-
-            const auto name_at = [&](const uint64_t address) -> std::string {
-                auto* mod = win_emu.mod_manager.find_by_address(address);
-                if (!mod)
-                {
-                    return {};
-                }
-                char buffer[256];
-                std::snprintf(buffer, sizeof(buffer), "%s+0x%llx", mod->name.c_str(),
-                              static_cast<unsigned long long>(address - mod->image_base));
-                return buffer;
-            };
-
-            const uint64_t rip = emu.read_instruction_pointer();
-            const uint64_t rsp = emu.reg<uint64_t>(x86_register::rsp);
-            const uint64_t rdi = emu.reg<uint64_t>(x86_register::rdi);
-            const uint64_t rsi = emu.reg<uint64_t>(x86_register::rsi);
-            const uint64_t rcx = emu.reg<uint64_t>(x86_register::rcx);
-            log.warn("[stack] fault=0x%llx rip=0x%llx (%s) edi=0x%llx esi=0x%llx ecx=0x%llx esp=0x%llx\n",
-                     static_cast<unsigned long long>(fault_address), static_cast<unsigned long long>(rip), name_at(rip).c_str(),
-                     static_cast<unsigned long long>(rdi), static_cast<unsigned long long>(rsi), static_cast<unsigned long long>(rcx),
-                     static_cast<unsigned long long>(rsp));
-
-            const auto info = win_emu.memory.get_region_info(fault_address);
-            log.warn("[stack] region start=0x%llx len=0x%llx perm=0x%x committed=%d\n", static_cast<unsigned long long>(info.start),
-                     static_cast<unsigned long long>(info.length), static_cast<uint32_t>(static_cast<memory_permission>(info.permissions)),
-                     info.is_committed ? 1 : 0);
-
-            const bool wow64 = win_emu.process.is_wow64_process;
-            const size_t width = wow64 ? 4 : 8;
-            for (uint32_t offset = 0; offset < 0x300; offset += static_cast<uint32_t>(width))
-            {
-                uint64_t value = 0;
-                if (!emu.try_read_memory(rsp + offset, &value, width))
-                {
-                    break;
-                }
-                const auto name = name_at(value);
-                if (!name.empty())
-                {
-                    log.warn("[stack] +0x%x: 0x%llx (%s)\n", offset, static_cast<unsigned long long>(value), name.c_str());
-                }
-            }
-        }
-
         void handle_memory_violate(const analysis_context& c, const uint64_t address, const uint64_t size, const memory_operation operation,
                                    const memory_violation_type type)
         {
@@ -289,8 +229,6 @@ namespace sogen
                 event.operation = get_permission_string(operation);
                 event.violation_type = type == memory_violation_type::protection ? "protection"s : "unmapped"s;
             });
-
-            log_violation_stack(c, address);
 
             if (type == memory_violation_type::unmapped)
             {

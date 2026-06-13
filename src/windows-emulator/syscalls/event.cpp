@@ -32,14 +32,6 @@ namespace sogen
                 previous_state.write(entry->signaled ? 1ULL : 0ULL);
             }
 
-            static const bool trace = std::getenv("EMULATOR_LOG_EVENTS") != nullptr;
-            if (trace)
-            {
-                c.win_emu.trace_alert("SETEV  tid" + std::to_string(c.win_emu.current_thread().id) + " ev=" +
-                                      utils::string::to_hex_number(get_handle_value(handle).id) + " was=" +
-                                      std::to_string(entry->signaled));
-            }
-
             entry->signaled = true;
             return STATUS_SUCCESS;
         }
@@ -93,13 +85,6 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            static const bool trace = std::getenv("EMULATOR_LOG_EVENTS") != nullptr;
-            if (trace)
-            {
-                c.win_emu.trace_alert("CLREV  tid" + std::to_string(c.win_emu.current_thread().id) + " ev=" +
-                                      utils::string::to_hex_number(event_handle.value.id));
-            }
-
             e->signaled = false;
             return STATUS_SUCCESS;
         }
@@ -133,9 +118,6 @@ namespace sogen
                 }
             }
 
-            static const bool trace = std::getenv("EMULATOR_LOG_EVENTS") != nullptr;
-            const auto traced_name = trace ? u16_to_u8(name) : std::string{};
-
             event e{};
             e.type = event_type;
             e.signaled = initial_state != FALSE;
@@ -143,14 +125,6 @@ namespace sogen
 
             const auto handle = c.proc.events.store(std::move(e));
             event_handle.write(handle);
-
-            if (trace)
-            {
-                c.win_emu.trace_alert("MKEV   tid" + std::to_string(c.win_emu.current_thread().id) + " ev=" +
-                                      utils::string::to_hex_number(handle.value.id) +
-                                      (event_type == SynchronizationEvent ? " auto" : " manual") + " init=" +
-                                      std::to_string(initial_state != FALSE) + " '" + traced_name + "'");
-            }
 
             static_assert(sizeof(EVENT_TYPE) == sizeof(uint32_t));
             static_assert(sizeof(ACCESS_MASK) == sizeof(uint32_t));
