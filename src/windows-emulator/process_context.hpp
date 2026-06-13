@@ -384,6 +384,7 @@ namespace sogen
         hwnd foreground_window{};
         int32_t cursor_x{};
         int32_t cursor_y{};
+        int32_t cursor_show_count{};
 
         // For WOW64 processes
         std::optional<emulator_object<PEB32>> peb32;

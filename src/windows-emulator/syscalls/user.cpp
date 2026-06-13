@@ -1508,6 +1508,40 @@ namespace sogen
             return TRUE;
         }
 
+        // user32 coordinate helpers (ScreenToClient/ClientToScreen/MapWindowPoints) call this to convert a
+        // point between per-monitor DPI spaces before applying the window-origin offset they do themselves.
+        // The emulated desktop is a single 96-DPI space, so the conversion is the identity: leave the point.
+        BOOL handle_NtUserTransformPoint(const syscall_context& /*c*/, const emulator_pointer /*point*/, const uint32_t /*from_dpi*/,
+                                         const uint32_t /*to_dpi*/, const uint32_t /*flags*/)
+        {
+            return TRUE;
+        }
+
+        // SetCursorPos moves the cursor; games use it to recenter the pointer. Track the new position so a
+        // following GetCursorPos reflects it (and relative-motion deltas compute correctly).
+        BOOL handle_NtUserSetCursorPos(const syscall_context& c, const int32_t x, const int32_t y)
+        {
+            c.proc.cursor_x = x;
+            c.proc.cursor_y = y;
+            return TRUE;
+        }
+
+        // ClipCursor confines the cursor to a rectangle. The emulated cursor is driven by the host window
+        // and never escapes it, so confinement is a no-op; just report success.
+        BOOL handle_NtUserClipCursor(const syscall_context& /*c*/, const emulator_pointer /*rect*/)
+        {
+            return TRUE;
+        }
+
+        // ShowCursor(bShow) adjusts the cursor display counter (+1 to show, -1 to hide) and returns the new
+        // value. Games spin on it to drive the count to a target (e.g. IN_ActivateMouse hides the cursor), so
+        // it must actually track and return the running count or those loops never terminate.
+        int32_t handle_NtUserShowCursor(const syscall_context& c, const BOOL show)
+        {
+            c.proc.cursor_show_count += show ? 1 : -1;
+            return c.proc.cursor_show_count;
+        }
+
         NTSTATUS handle_NtUserSetCursor()
         {
             return STATUS_NOT_SUPPORTED;

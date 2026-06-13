@@ -152,6 +152,18 @@ namespace sogen
                         }
                         break;
 
+                    // Window focus/cursor transitions drive activation. Games gate their per-frame mouse
+                    // polling on WM_ACTIVATE (in_appactive) plus the foreground window, so a window that is
+                    // never told it became active never reads the mouse.
+                    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+                    case SDL_EVENT_WINDOW_MOUSE_ENTER:
+                        this->set_window_active(this->resolve_guest(event.window.windowID), true);
+                        break;
+
+                    case SDL_EVENT_WINDOW_FOCUS_LOST:
+                        this->set_window_active(this->resolve_guest(event.window.windowID), false);
+                        break;
+
                     case SDL_EVENT_KEY_DOWN:
                         if (!event.key.repeat)
                         {
@@ -191,6 +203,7 @@ namespace sogen
                         {
                             if (const auto guest = this->resolve_guest(event.button.windowID); guest != 0)
                             {
+                                this->set_window_active(guest, true);
                                 this->post_event(guest, WM_LBUTTONDOWN, MK_LBUTTON,
                                                  pack_point(static_cast<int>(event.button.x), static_cast<int>(event.button.y)));
                             }
@@ -211,6 +224,7 @@ namespace sogen
                     case SDL_EVENT_MOUSE_MOTION:
                         if (const auto guest = this->resolve_guest(event.motion.windowID); guest != 0)
                         {
+                            this->set_window_active(guest, true);
                             const uint64_t keys = (event.motion.state & SDL_BUTTON_LMASK) ? MK_LBUTTON : 0;
                             this->post_event(guest, WM_MOUSEMOVE, keys,
                                              pack_point(static_cast<int>(event.motion.x), static_cast<int>(event.motion.y)));
@@ -566,6 +580,39 @@ namespace sogen
                 const auto it = this->guest_by_window_id_.find(window_id);
                 return it == this->guest_by_window_id_.end() ? 0 : it->second;
             }
+
+            // Tell the guest a window became (in)active. SDL only reports focus transitions on real OS focus
+            // changes, which need not happen for the embedded game window, so activation is also asserted on
+            // the first mouse interaction. Latched so a held/moving cursor doesn't re-post every frame.
+            // WM_ACTIVATE's wParam is WA_ACTIVE/WA_INACTIVE with the minimized flag (HIWORD) left at 0.
+            void set_window_active(const hwnd window, const bool active)
+            {
+                if (window == 0)
+                {
+                    return;
+                }
+
+                if (active)
+                {
+                    if (this->active_window_ == window)
+                    {
+                        return;
+                    }
+                    this->active_window_ = window;
+                    this->post_event(window, WM_SETFOCUS, 0, 0);
+                    this->post_event(window, WM_ACTIVATE, WA_ACTIVE, 0);
+                }
+                else
+                {
+                    if (this->active_window_ != window)
+                    {
+                        return;
+                    }
+                    this->active_window_ = 0;
+                    this->post_event(window, WM_ACTIVATE, WA_INACTIVE, 0);
+                    this->post_event(window, WM_KILLFOCUS, 0, 0);
+                }
+            }
 #endif
 
             void post_event(const hwnd window, const uint32_t message, const uint64_t w_param, const uint64_t l_param) const
@@ -579,6 +626,7 @@ namespace sogen
             event_sink sink_{};
 #ifdef SOGEN_HAS_SDL3
             bool initialized_{};
+            hwnd active_window_{};
             std::unordered_map<hwnd, window_state> windows_{};
             std::unordered_map<SDL_WindowID, hwnd> guest_by_window_id_{};
 #endif

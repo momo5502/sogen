@@ -1017,6 +1017,20 @@ namespace sogen
             m.window = target.window;
             m.lParam = pack_point(target.x, target.y);
         }
+        else if ((event.message == WM_ACTIVATE && event.wParam != 0) || event.message == WM_SETFOCUS)
+        {
+            // The window just became active/focused: make it the foreground window so polling APIs
+            // (GetForegroundWindow/GetActiveWindow) agree with the activation the game just received.
+            this->process.foreground_window = event.window;
+        }
+        else if ((event.message == WM_ACTIVATE && event.wParam == 0) && this->process.foreground_window == event.window)
+        {
+            this->process.foreground_window = 0;
+        }
+
+        // Mirror the foreground window into the shared SERVERINFO so the guest's client-side
+        // GetForegroundWindow (which reads gpsi directly, never syscalling) returns the active window.
+        this->process.user_handles.set_foreground_window(static_cast<uint32_t>(this->process.foreground_window));
 
         thread->post_message(m);
 

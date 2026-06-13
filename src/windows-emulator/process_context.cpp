@@ -597,6 +597,7 @@ namespace sogen
         buffer.write(this->foreground_window);
         buffer.write(this->cursor_x);
         buffer.write(this->cursor_y);
+        buffer.write(this->cursor_show_count);
 
         buffer.write(this->user_handles);
         buffer.write(this->default_monitor_handle);
@@ -675,6 +676,7 @@ namespace sogen
         buffer.read(this->foreground_window);
         buffer.read(this->cursor_x);
         buffer.read(this->cursor_y);
+        buffer.read(this->cursor_show_count);
 
         buffer.read(this->user_handles);
         buffer.read(this->default_monitor_handle);

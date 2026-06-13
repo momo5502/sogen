@@ -70,6 +70,16 @@ namespace sogen
             return {*memory_, server_info_addr_};
         }
 
+        // user32's client-side GetForegroundWindow reads the foreground HWND straight out of the shared
+        // SERVERINFO (gpsi) via win32u!_ABI_Get_ForegroundWindow, which indexes gpsi + 0x1DE0 -- past the
+        // fields we model but within the page-aligned allocation. Keep it in sync with the active window so
+        // games that gate their input loop on GetForegroundWindow() actually read the mouse.
+        static constexpr uint64_t SERVERINFO_FOREGROUND_WINDOW_OFFSET = 0x1DE0;
+        void set_foreground_window(const uint32_t window) const
+        {
+            memory_->write_memory(server_info_addr_ + SERVERINFO_FOREGROUND_WINDOW_OFFSET, &window, sizeof(window));
+        }
+
         emulator_object<USER_HANDLEENTRY> get_handle_table() const
         {
             return {*memory_, handle_table_addr_};
