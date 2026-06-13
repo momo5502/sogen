@@ -1533,6 +1533,19 @@ namespace sogen
             return TRUE;
         }
 
+        // GetKeyState / GetAsyncKeyState report whether a virtual key (or mouse button) is currently down.
+        // Games poll these for in-game input instead of consuming WM_KEYDOWN messages. The high bit (0x8000)
+        // means down; the tracked state is maintained from key/button events in handle_ui_event.
+        uint32_t handle_NtUserGetKeyState(const syscall_context& c, const int32_t virtual_key)
+        {
+            return (c.proc.key_state[static_cast<uint32_t>(virtual_key) & 0xFF] & 0x80) ? 0x8000u : 0u;
+        }
+
+        uint32_t handle_NtUserGetAsyncKeyState(const syscall_context& c, const int32_t virtual_key)
+        {
+            return (c.proc.key_state[static_cast<uint32_t>(virtual_key) & 0xFF] & 0x80) ? 0x8000u : 0u;
+        }
+
         // ShowCursor(bShow) adjusts the cursor display counter (+1 to show, -1 to hide) and returns the new
         // value. Games spin on it to drive the count to a target (e.g. IN_ActivateMouse hides the cursor), so
         // it must actually track and return the running count or those loops never terminate.

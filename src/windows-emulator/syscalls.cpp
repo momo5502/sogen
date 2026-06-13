@@ -464,6 +464,8 @@ namespace sogen
         BOOL handle_NtUserTransformPoint(const syscall_context& c, emulator_pointer point, uint32_t from_dpi, uint32_t to_dpi,
                                          uint32_t flags);
         int32_t handle_NtUserShowCursor(const syscall_context& c, BOOL show);
+        uint32_t handle_NtUserGetKeyState(const syscall_context& c, int32_t virtual_key);
+        uint32_t handle_NtUserGetAsyncKeyState(const syscall_context& c, int32_t virtual_key);
         BOOL handle_NtUserClipCursor(const syscall_context& c, emulator_pointer rect);
         BOOL handle_NtUserSetCursorPos(const syscall_context& c, int32_t x, int32_t y);
         NTSTATUS handle_NtUserSetCursor();
@@ -1261,6 +1263,8 @@ namespace sogen
         add_handler(NtUserShowCursor);
         add_handler(NtUserClipCursor);
         add_handler(NtUserSetCursorPos);
+        add_handler(NtUserGetKeyState);
+        add_handler(NtUserGetAsyncKeyState);
         add_handler(NtUserReleaseDC);
         add_handler(NtUserFindExistingCursorIcon);
         add_handler(NtUserDestroyCursor);

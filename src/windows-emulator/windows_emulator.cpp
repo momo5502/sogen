@@ -1032,6 +1032,32 @@ namespace sogen
         // GetForegroundWindow (which reads gpsi directly, never syscalling) returns the active window.
         this->process.user_handles.set_foreground_window(static_cast<uint32_t>(this->process.foreground_window));
 
+        // Maintain the polled key state (reported by GetKeyState) from key and mouse-button transitions, so
+        // games that read input by polling rather than via window messages (in-game movement) see it.
+        switch (event.message)
+        {
+        case WM_KEYDOWN:
+            this->process.key_state[event.wParam & 0xFF] = 0x80;
+            break;
+        case WM_KEYUP:
+            this->process.key_state[event.wParam & 0xFF] = 0;
+            break;
+        case WM_LBUTTONDOWN:
+            this->process.key_state[0x01] = 0x80; // VK_LBUTTON
+            break;
+        case WM_LBUTTONUP:
+            this->process.key_state[0x01] = 0;
+            break;
+        case WM_RBUTTONDOWN:
+            this->process.key_state[0x02] = 0x80; // VK_RBUTTON
+            break;
+        case WM_RBUTTONUP:
+            this->process.key_state[0x02] = 0;
+            break;
+        default:
+            break;
+        }
+
         thread->post_message(m);
 
         if (event.message == WM_CLOSE || event.message == WM_COMMAND || event.message == WM_KEYDOWN || event.message == WM_LBUTTONDOWN ||

@@ -270,6 +270,29 @@ namespace sogen
 
         int32_t cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout,
                                          const buffer_image_copy_region& region);
+        // One VkImageCopy region of an image-to-image copy (vkCmdCopyImage[2]).
+        struct image_copy_region
+        {
+            uint32_t src_aspect_mask;
+            uint32_t src_mip_level;
+            uint32_t src_base_array_layer;
+            uint32_t src_layer_count;
+            int32_t src_offset_x;
+            int32_t src_offset_y;
+            int32_t src_offset_z;
+            uint32_t dst_aspect_mask;
+            uint32_t dst_mip_level;
+            uint32_t dst_base_array_layer;
+            uint32_t dst_layer_count;
+            int32_t dst_offset_x;
+            int32_t dst_offset_y;
+            int32_t dst_offset_z;
+            uint32_t width;
+            uint32_t height;
+            uint32_t depth;
+        };
+        int32_t cmd_copy_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
+                               const image_copy_region& region);
         // Resolves a multisampled source image into a single-sample destination (full image, mip 0 / layer 0).
         int32_t cmd_resolve_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
                                   uint32_t width, uint32_t height, uint32_t aspect_mask);

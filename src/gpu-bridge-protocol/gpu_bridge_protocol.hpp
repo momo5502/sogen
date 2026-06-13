@@ -166,6 +166,7 @@ namespace sogen::gpu_bridge
         unmap_memory_direct = 0x881,
         flush_mapped_memory_direct = 0x882,
         invalidate_mapped_memory_direct = 0x883,
+        cmd_copy_image = 0x884,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -293,6 +294,7 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_set_event = make_ioctl(static_cast<uint32_t>(command::set_event));
     inline constexpr uint32_t ioctl_reset_event = make_ioctl(static_cast<uint32_t>(command::reset_event));
     inline constexpr uint32_t ioctl_cmd_resolve_image = make_ioctl(static_cast<uint32_t>(command::cmd_resolve_image));
+    inline constexpr uint32_t ioctl_cmd_copy_image = make_ioctl(static_cast<uint32_t>(command::cmd_copy_image));
     inline constexpr uint32_t ioctl_cmd_update_buffer = make_ioctl(static_cast<uint32_t>(command::cmd_update_buffer));
     inline constexpr uint32_t ioctl_map_memory_direct = make_ioctl(static_cast<uint32_t>(command::map_memory_direct));
     inline constexpr uint32_t ioctl_unmap_memory_direct = make_ioctl(static_cast<uint32_t>(command::unmap_memory_direct));
@@ -1051,6 +1053,36 @@ namespace sogen::gpu_bridge
         uint32_t height;
         uint32_t aspect_mask; // VkImageAspectFlags
     };
+
+    // Copies one VkImageCopy region from a source image to a destination image (vkCmdCopyImage[2]). DXVK
+    // uses this for image-to-image transfers during scene rendering. One region per request (the shim loops).
+    struct cmd_copy_image_request
+    {
+        object_id command_buffer;
+        object_id src_image;
+        object_id dst_image;
+        uint32_t src_layout; // VkImageLayout (current src layout)
+        uint32_t dst_layout; // VkImageLayout (current dst layout)
+        uint32_t src_aspect_mask;
+        uint32_t src_mip_level;
+        uint32_t src_base_array_layer;
+        uint32_t src_layer_count;
+        int32_t src_offset_x;
+        int32_t src_offset_y;
+        int32_t src_offset_z;
+        uint32_t dst_aspect_mask;
+        uint32_t dst_mip_level;
+        uint32_t dst_base_array_layer;
+        uint32_t dst_layer_count;
+        int32_t dst_offset_x;
+        int32_t dst_offset_y;
+        int32_t dst_offset_z;
+        uint32_t width;
+        uint32_t height;
+        uint32_t depth;
+        uint32_t reserved;
+    };
+    static_assert(sizeof(cmd_copy_image_request) == 104, "wire layout drift");
 
     // Updates a buffer region inline from data that trails this header in the wire stream (vkCmdUpdateBuffer).
     struct cmd_update_buffer_request

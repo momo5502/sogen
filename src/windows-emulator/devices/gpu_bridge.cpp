@@ -2590,6 +2590,34 @@ namespace sogen
                     return this->vulkan_.cmd_resolve_image(req.command_buffer, req.src_image, req.src_layout, req.dst_image, req.dst_layout,
                                                            req.width, req.height, req.aspect_mask);
                 }
+                case gpu_bridge::command::cmd_copy_image: {
+                    gpu_bridge::cmd_copy_image_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const vulkan_host::image_copy_region region{
+                        .src_aspect_mask = req.src_aspect_mask,
+                        .src_mip_level = req.src_mip_level,
+                        .src_base_array_layer = req.src_base_array_layer,
+                        .src_layer_count = req.src_layer_count,
+                        .src_offset_x = req.src_offset_x,
+                        .src_offset_y = req.src_offset_y,
+                        .src_offset_z = req.src_offset_z,
+                        .dst_aspect_mask = req.dst_aspect_mask,
+                        .dst_mip_level = req.dst_mip_level,
+                        .dst_base_array_layer = req.dst_base_array_layer,
+                        .dst_layer_count = req.dst_layer_count,
+                        .dst_offset_x = req.dst_offset_x,
+                        .dst_offset_y = req.dst_offset_y,
+                        .dst_offset_z = req.dst_offset_z,
+                        .width = req.width,
+                        .height = req.height,
+                        .depth = req.depth,
+                    };
+                    return this->vulkan_.cmd_copy_image(req.command_buffer, req.src_image, req.src_layout, req.dst_image, req.dst_layout,
+                                                        region);
+                }
                 case gpu_bridge::command::cmd_update_buffer: {
                     gpu_bridge::cmd_update_buffer_request req{};
                     if (!read(req))

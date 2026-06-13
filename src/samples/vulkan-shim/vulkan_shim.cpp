@@ -2359,6 +2359,75 @@ extern "C"
         }
     }
 
+    // Image-to-image copy. DXVK issues this for texture-to-texture transfers during scene rendering. One
+    // VkImageCopy region per recorded command (the shim loops over regions).
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyImage(VkCommandBuffer commandBuffer, VkImage srcImage,
+                                                                    VkImageLayout srcImageLayout, VkImage dstImage,
+                                                                    VkImageLayout dstImageLayout, uint32_t regionCount,
+                                                                    const VkImageCopy* pRegions)
+    {
+        for (uint32_t i = 0; i < regionCount; ++i)
+        {
+            const VkImageCopy& r = pRegions[i];
+            gb::cmd_copy_image_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.src_image = to_object_id(srcImage);
+            request.dst_image = to_object_id(dstImage);
+            request.src_layout = static_cast<uint32_t>(srcImageLayout);
+            request.dst_layout = static_cast<uint32_t>(dstImageLayout);
+            request.src_aspect_mask = r.srcSubresource.aspectMask;
+            request.src_mip_level = r.srcSubresource.mipLevel;
+            request.src_base_array_layer = r.srcSubresource.baseArrayLayer;
+            request.src_layer_count = r.srcSubresource.layerCount;
+            request.src_offset_x = r.srcOffset.x;
+            request.src_offset_y = r.srcOffset.y;
+            request.src_offset_z = r.srcOffset.z;
+            request.dst_aspect_mask = r.dstSubresource.aspectMask;
+            request.dst_mip_level = r.dstSubresource.mipLevel;
+            request.dst_base_array_layer = r.dstSubresource.baseArrayLayer;
+            request.dst_layer_count = r.dstSubresource.layerCount;
+            request.dst_offset_x = r.dstOffset.x;
+            request.dst_offset_y = r.dstOffset.y;
+            request.dst_offset_z = r.dstOffset.z;
+            request.width = r.extent.width;
+            request.height = r.extent.height;
+            request.depth = r.extent.depth;
+            record_command(request.command_buffer, gb::command::cmd_copy_image, &request, sizeof(request));
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyImage2(VkCommandBuffer commandBuffer, const VkCopyImageInfo2* pCopyImageInfo)
+    {
+        for (uint32_t i = 0; i < pCopyImageInfo->regionCount; ++i)
+        {
+            const VkImageCopy2& r = pCopyImageInfo->pRegions[i];
+            gb::cmd_copy_image_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.src_image = to_object_id(pCopyImageInfo->srcImage);
+            request.dst_image = to_object_id(pCopyImageInfo->dstImage);
+            request.src_layout = static_cast<uint32_t>(pCopyImageInfo->srcImageLayout);
+            request.dst_layout = static_cast<uint32_t>(pCopyImageInfo->dstImageLayout);
+            request.src_aspect_mask = r.srcSubresource.aspectMask;
+            request.src_mip_level = r.srcSubresource.mipLevel;
+            request.src_base_array_layer = r.srcSubresource.baseArrayLayer;
+            request.src_layer_count = r.srcSubresource.layerCount;
+            request.src_offset_x = r.srcOffset.x;
+            request.src_offset_y = r.srcOffset.y;
+            request.src_offset_z = r.srcOffset.z;
+            request.dst_aspect_mask = r.dstSubresource.aspectMask;
+            request.dst_mip_level = r.dstSubresource.mipLevel;
+            request.dst_base_array_layer = r.dstSubresource.baseArrayLayer;
+            request.dst_layer_count = r.dstSubresource.layerCount;
+            request.dst_offset_x = r.dstOffset.x;
+            request.dst_offset_y = r.dstOffset.y;
+            request.dst_offset_z = r.dstOffset.z;
+            request.width = r.extent.width;
+            request.height = r.extent.height;
+            request.depth = r.extent.depth;
+            record_command(request.command_buffer, gb::command::cmd_copy_image, &request, sizeof(request));
+        }
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyImageToBuffer2(VkCommandBuffer commandBuffer,
                                                                              const VkCopyImageToBufferInfo2* pCopyImageToBufferInfo)
     {
@@ -4351,6 +4420,9 @@ extern "C"
             {.name = "vkCmdCopyBufferToImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage)},
             {.name = "vkCmdCopyBufferToImage2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage2)},
             {.name = "vkCmdCopyBufferToImage2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyBufferToImage2)},
+            {.name = "vkCmdCopyImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImage)},
+            {.name = "vkCmdCopyImage2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImage2)},
+            {.name = "vkCmdCopyImage2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImage2)},
             {.name = "vkCmdUpdateBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdUpdateBuffer)},
             {.name = "vkCmdResolveImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResolveImage)},
             {.name = "vkCmdResolveImage2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResolveImage2)},
