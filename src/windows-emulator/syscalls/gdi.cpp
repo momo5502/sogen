@@ -1736,8 +1736,8 @@ namespace sogen
             }
             const auto& surface = it->second;
 
-            const int32_t bi_width = static_cast<int32_t>(surface.width);
-            const int32_t bi_height = static_cast<int32_t>(surface.height);
+            const auto bi_width = static_cast<int32_t>(surface.width);
+            const auto bi_height = static_cast<int32_t>(surface.height);
             const uint16_t planes = 1;
             const uint16_t bit_count = 32;
             const uint32_t compression = 0; // BI_RGB

@@ -5,9 +5,10 @@
 // The guest talks to the host through a virtual driver device (\\.\SogenGpu, i.e.
 // \Device\SogenGpu) using NtDeviceIoControlFile. The IOCTL code selects a command;
 // the input/output buffers carry the (de)serialized payload. This header is the single
-// source of truth for that boundary and is intentionally dependency-free (only <cstdint>)
+// source of truth for that boundary and is intentionally lightweight
 // so it can be included unchanged by both the emulator and guest-side shims.
 
+#include <array>
 #include <cstdint>
 
 namespace sogen::gpu_bridge
@@ -1366,14 +1367,14 @@ namespace sogen::gpu_bridge
         // Dynamic-rendering attachment formats (used when render_pass == 0). DXVK 2.x builds pipelines with
         // VK_KHR_dynamic_rendering (renderPass = VK_NULL_HANDLE + VkPipelineRenderingCreateInfo) instead of a
         // render-pass object, so the host rebuilds that info from these formats.
-        uint32_t color_attachment_count;               // number of valid entries in color_formats
-        uint32_t depth_format;                         // VkFormat for depth (VK_FORMAT_UNDEFINED => none)
-        uint32_t stencil_format;                       // VkFormat for stencil (VK_FORMAT_UNDEFINED => none)
-        uint32_t color_formats[max_color_attachments]; // VkFormat per color attachment
-        uint32_t binding_count;                        // number of vertex_input_binding entries that follow
-        uint32_t attribute_count;                      // number of vertex_input_attribute entries that follow the bindings
-        uint32_t rasterization_samples;                // VkSampleCountFlagBits the pipeline rasterizes at (1 = no MSAA)
-        uint32_t dynamic_state_count;                  // number of uint32 VkDynamicState values that follow the attributes
+        uint32_t color_attachment_count;                             // number of valid entries in color_formats
+        uint32_t depth_format;                                       // VkFormat for depth (VK_FORMAT_UNDEFINED => none)
+        uint32_t stencil_format;                                     // VkFormat for stencil (VK_FORMAT_UNDEFINED => none)
+        std::array<uint32_t, max_color_attachments> color_formats{}; // VkFormat per color attachment
+        uint32_t binding_count;                                      // number of vertex_input_binding entries that follow
+        uint32_t attribute_count;                                    // number of vertex_input_attribute entries that follow the bindings
+        uint32_t rasterization_samples;                              // VkSampleCountFlagBits the pipeline rasterizes at (1 = no MSAA)
+        uint32_t dynamic_state_count;                                // number of uint32 VkDynamicState values that follow the attributes
         // Per-stage specialization constants (DXVK bakes d3d9 render state into the shaders this way).
         uint32_t vs_spec_entry_count;
         uint32_t vs_spec_data_size;
@@ -1498,7 +1499,7 @@ namespace sogen::gpu_bridge
         uint32_t load_op;      // VkAttachmentLoadOp
         uint32_t store_op;     // VkAttachmentStoreOp
         uint32_t reserved;
-        uint32_t clear_value[4]; // VkClearValue (16 bytes; color float/int/uint, or {depth(float bits), stencil})
+        std::array<uint32_t, 4> clear_value{}; // VkClearValue (16 bytes; color float/int/uint, or {depth(float bits), stencil})
     };
 
     // record payload (command::cmd_begin_rendering): header followed by `color_attachment_count` color
@@ -1585,7 +1586,7 @@ namespace sogen::gpu_bridge
     struct cmd_set_blend_constants_request
     {
         object_id command_buffer;
-        float constants[4];
+        std::array<float, 4> constants{};
     };
 
     struct cmd_set_depth_bounds_request

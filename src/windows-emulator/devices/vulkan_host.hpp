@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -197,7 +198,7 @@ namespace sogen
             uint32_t resolve_mode;
             uint32_t load_op;
             uint32_t store_op;
-            uint32_t clear_value[4];
+            std::array<uint32_t, 4> clear_value{};
         };
 
         // One VkViewport as plain floats (dynamic viewport state).
@@ -476,7 +477,7 @@ namespace sogen
         int32_t cmd_set_viewport(uint64_t command_buffer, uint32_t first, bool with_count, std::span<const viewport_entry> viewports);
         int32_t cmd_set_scissor(uint64_t command_buffer, uint32_t first, bool with_count, std::span<const scissor_entry> scissors);
         int32_t cmd_set_depth_bias(uint64_t command_buffer, float constant_factor, float clamp, float slope_factor);
-        int32_t cmd_set_blend_constants(uint64_t command_buffer, const float constants[4]);
+        int32_t cmd_set_blend_constants(uint64_t command_buffer, const std::array<float, 4>& constants);
         int32_t cmd_set_depth_bounds(uint64_t command_buffer, float min_depth_bounds, float max_depth_bounds);
         int32_t cmd_set_line_width(uint64_t command_buffer, float line_width);
         int32_t cmd_set_stencil(uint64_t command_buffer, uint32_t which, uint32_t face_mask, uint32_t value);

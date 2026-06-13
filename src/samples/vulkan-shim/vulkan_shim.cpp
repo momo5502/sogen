@@ -559,7 +559,7 @@ extern "C"
             std::memcpy(message.data(), &request, sizeof(request));
             for (uint32_t i = 0; i < rendering->colorAttachmentCount; ++i)
             {
-                const uint32_t format = static_cast<uint32_t>(rendering->pColorAttachmentFormats[i]);
+                const auto format = static_cast<uint32_t>(rendering->pColorAttachmentFormats[i]);
                 std::memcpy(message.data() + sizeof(request) + i * sizeof(uint32_t), &format, sizeof(format));
             }
         }
@@ -1560,8 +1560,14 @@ extern "C"
         std::memcpy(message.data(), &header, sizeof(header));
         for (uint32_t i = 0; i < count; ++i)
         {
-            const gb::viewport_entry entry{pViewports[i].x,      pViewports[i].y,        pViewports[i].width,
-                                           pViewports[i].height, pViewports[i].minDepth, pViewports[i].maxDepth};
+            const gb::viewport_entry entry{
+                .x = pViewports[i].x,
+                .y = pViewports[i].y,
+                .width = pViewports[i].width,
+                .height = pViewports[i].height,
+                .min_depth = pViewports[i].minDepth,
+                .max_depth = pViewports[i].maxDepth,
+            };
             std::memcpy(message.data() + sizeof(header) + static_cast<size_t>(i) * sizeof(entry), &entry, sizeof(entry));
         }
         record_command(command_buffer, gb::command::cmd_set_viewport, message.data(), message.size());
@@ -1580,8 +1586,12 @@ extern "C"
         std::memcpy(message.data(), &header, sizeof(header));
         for (uint32_t i = 0; i < count; ++i)
         {
-            const gb::scissor_entry entry{pScissors[i].offset.x, pScissors[i].offset.y, pScissors[i].extent.width,
-                                          pScissors[i].extent.height};
+            const gb::scissor_entry entry{
+                .offset_x = pScissors[i].offset.x,
+                .offset_y = pScissors[i].offset.y,
+                .width = pScissors[i].extent.width,
+                .height = pScissors[i].extent.height,
+            };
             std::memcpy(message.data() + sizeof(header) + static_cast<size_t>(i) * sizeof(entry), &entry, sizeof(entry));
         }
         record_command(command_buffer, gb::command::cmd_set_scissor, message.data(), message.size());
@@ -3746,7 +3756,7 @@ extern "C"
             }
             for (uint32_t d = 0; d < dynamic_state_count; ++d)
             {
-                const uint32_t value = static_cast<uint32_t>(ci.pDynamicState->pDynamicStates[d]);
+                const auto value = static_cast<uint32_t>(ci.pDynamicState->pDynamicStates[d]);
                 std::memcpy(message.data() + cursor, &value, sizeof(value));
                 cursor += sizeof(value);
             }
@@ -4045,7 +4055,7 @@ extern "C"
             w.resolve_mode = static_cast<uint32_t>(a.resolveMode);
             w.load_op = static_cast<uint32_t>(a.loadOp);
             w.store_op = static_cast<uint32_t>(a.storeOp);
-            std::memcpy(w.clear_value, &a.clearValue, sizeof(w.clear_value));
+            std::memcpy(w.clear_value.data(), &a.clearValue, sizeof(w.clear_value));
             return w;
         };
 

@@ -1,6 +1,5 @@
 #include "vulkan_host.hpp"
 
-#include <fstream>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -2450,16 +2449,6 @@ namespace sogen
 
         buf->second.memory_id = memory;
         buf->second.memory_offset = offset;
-        if (std::getenv("EMULATOR_DUMP_VTX") != nullptr)
-        {
-            static int n = 0;
-            if (n++ < 40)
-            {
-                std::fprintf(stderr, "BINDMEM buf=%llu size=%llu -> mem=%llu off=%llu\n", static_cast<unsigned long long>(buffer),
-                             static_cast<unsigned long long>(buf->second.size), static_cast<unsigned long long>(memory),
-                             static_cast<unsigned long long>(offset));
-            }
-        }
         return dev->second.bind_buffer_memory(dev->second.handle, buf->second.handle, mem->second.handle, offset);
     }
 
@@ -2582,7 +2571,8 @@ namespace sogen
         info.extent = {.width = width, .height = height, .depth = depth ? depth : 1};
         info.mipLevels = mip_levels ? mip_levels : 1;
         info.arrayLayers = array_layers ? array_layers : 1;
-        info.samples = static_cast<VkSampleCountFlagBits>(samples ? samples : VK_SAMPLE_COUNT_1_BIT);
+        const auto sample_count = samples != 0 ? samples : static_cast<uint32_t>(VK_SAMPLE_COUNT_1_BIT);
+        info.samples = static_cast<VkSampleCountFlagBits>(sample_count);
         info.tiling = static_cast<VkImageTiling>(tiling);
         info.usage = usage;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -2659,7 +2649,7 @@ namespace sogen
         }
 
         VkImageSubresource subresource{};
-        subresource.aspectMask = aspect_mask ? aspect_mask : VK_IMAGE_ASPECT_COLOR_BIT;
+        subresource.aspectMask = aspect_mask != 0 ? aspect_mask : static_cast<uint32_t>(VK_IMAGE_ASPECT_COLOR_BIT);
         subresource.mipLevel = mip_level;
         subresource.arrayLayer = array_layer;
 
@@ -3296,13 +3286,7 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        // Diagnostic: override which image is read back (e.g. the MSAA backbuffer) to check upstream content.
         uint64_t source_image_id = sc.image_ids[image_index];
-        static const char* const present_img_env = std::getenv("EMULATOR_PRESENT_IMG");
-        if (present_img_env)
-        {
-            source_image_id = std::strtoull(present_img_env, nullptr, 0);
-        }
 
         const auto dev_it = this->impl_->devices.find(sc.device_id);
         const auto img_it = this->impl_->images.find(source_image_id);
@@ -3373,32 +3357,10 @@ namespace sogen
         dev.cmd_pipeline_barrier(sc.present_cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                                  nullptr, 1, &barrier);
 
-        // Diagnostic: an MSAA override image can't be copied directly; resolve it into the swapchain image first.
         VkImage copy_image = img_it->second.handle;
         VkImageLayout copy_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        const uint32_t copy_w = present_img_env ? (sc.width > 2 ? sc.width - 2 : sc.width) : sc.width;
-        const uint32_t copy_h = present_img_env ? (sc.height > 2 ? sc.height - 2 : sc.height) : sc.height;
-        if (present_img_env && img_it->second.samples > 1 && dev.cmd_resolve_image)
-        {
-            const auto scratch = this->impl_->images.find(sc.image_ids[image_index]);
-            if (scratch != this->impl_->images.end())
-            {
-                VkImageMemoryBarrier db = barrier;
-                db.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-                db.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-                db.image = scratch->second.handle;
-                dev.cmd_pipeline_barrier(sc.present_cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
-                                         0, nullptr, 1, &db);
-                VkImageResolve rr{};
-                rr.srcSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1};
-                rr.dstSubresource = rr.srcSubresource;
-                rr.extent = {.width = copy_w, .height = copy_h, .depth = 1};
-                dev.cmd_resolve_image(sc.present_cmd, img_it->second.handle, VK_IMAGE_LAYOUT_GENERAL, scratch->second.handle,
-                                      VK_IMAGE_LAYOUT_GENERAL, 1, &rr);
-                copy_image = scratch->second.handle;
-                copy_layout = VK_IMAGE_LAYOUT_GENERAL;
-            }
-        }
+        const uint32_t copy_w = sc.width;
+        const uint32_t copy_h = sc.height;
 
         VkBufferImageCopy region{};
         region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -4271,66 +4233,7 @@ namespace sogen
             return &spec_infos[idx];
         };
 
-        // Diagnostic: replace the fragment shader with a constant-colour module (no discard, no texture)
-        // to separate "geometry produces no fragments" from "fragments are all discarded/black".
-        VkShaderModule forced_fs = VK_NULL_HANDLE;
-        static const char* const force_fs_path = std::getenv("EMULATOR_FORCE_FS");
-        if (force_fs_path && dev->second.create_shader_module)
-        {
-            std::ifstream f(force_fs_path, std::ios::binary);
-            std::vector<char> spv((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            if (!spv.empty())
-            {
-                VkShaderModuleCreateInfo smi{};
-                smi.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-                smi.codeSize = spv.size();
-                smi.pCode = reinterpret_cast<const uint32_t*>(spv.data());
-                dev->second.create_shader_module(dev->second.handle, &smi, nullptr, &forced_fs);
-            }
-        }
-
-        // Diagnostic: force the optimized spec-constant path (IsOptimized id = MaxNumSpecConstants, 12 in
-        // DXVK 2.7.x / 20 in newer builds; unknown ids are ignored) with AlphaCompareOp (dword 1, bits 21..23)
-        // = ALWAYS (7), to bypass the empty SpecData UBO that otherwise makes the alpha test discard.
-        std::vector<uint8_t> fs_data_override;
-        std::vector<spec_entry> fs_entries_override;
-        specialization fs_effective = fs_spec;
-        static const bool force_alpha = std::getenv("EMULATOR_FORCE_ALPHA_PASS") != nullptr;
-        if (force_alpha && !fs_spec.data.empty())
-        {
-            fs_data_override.assign(fs_spec.data.begin(), fs_spec.data.end());
-            fs_entries_override.assign(fs_spec.entries.begin(), fs_spec.entries.end());
-            bool have_dword1 = false;
-            for (const spec_entry& e : fs_entries_override)
-            {
-                if (e.constant_id == 1 && static_cast<size_t>(e.offset) + 4 <= fs_data_override.size())
-                {
-                    have_dword1 = true;
-                    uint32_t w = 0;
-                    std::memcpy(&w, fs_data_override.data() + e.offset, 4);
-                    w = (w & ~(7u << 21)) | (7u << 21);
-                    std::memcpy(fs_data_override.data() + e.offset, &w, 4);
-                }
-            }
-            if (!have_dword1)
-            {
-                const uint32_t off = static_cast<uint32_t>(fs_data_override.size());
-                const uint32_t w = 7u << 21;
-                fs_data_override.resize(off + 4);
-                std::memcpy(fs_data_override.data() + off, &w, 4);
-                fs_entries_override.push_back({.constant_id = 1, .offset = off, .size = 4});
-            }
-            for (const uint32_t selector_id : {12u, 20u})
-            {
-                const uint32_t off = static_cast<uint32_t>(fs_data_override.size());
-                const uint32_t one = 1;
-                fs_data_override.resize(off + 4);
-                std::memcpy(fs_data_override.data() + off, &one, 4);
-                fs_entries_override.push_back({.constant_id = selector_id, .offset = off, .size = 4});
-            }
-            fs_effective.entries = fs_entries_override;
-            fs_effective.data = fs_data_override;
-        }
+        const specialization fs_effective = fs_spec;
 
         std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
         stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -4340,9 +4243,9 @@ namespace sogen
         stages[0].pSpecializationInfo = build_spec(vs_spec, 0);
         stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-        stages[1].module = forced_fs ? forced_fs : frag->second.handle;
+        stages[1].module = frag->second.handle;
         stages[1].pName = "main";
-        stages[1].pSpecializationInfo = forced_fs ? nullptr : build_spec(fs_effective, 1);
+        stages[1].pSpecializationInfo = build_spec(fs_effective, 1);
 
         std::vector<VkVertexInputBindingDescription> vk_bindings;
         vk_bindings.reserve(bindings.size());
@@ -4389,15 +4292,10 @@ namespace sogen
         // Use the dynamic-state list DXVK declared on the pipeline. It marks vertex-binding stride, cull,
         // topology, depth/stencil etc. dynamic and sets them at draw time; if the pipeline doesn't declare
         // them dynamic the baked defaults (e.g. a 0 vertex stride) win and produce degenerate geometry.
-        static const bool no_discard_dyn = std::getenv("EMULATOR_NO_DISCARD_DYN") != nullptr;
         std::vector<VkDynamicState> dynamic_state_list;
         dynamic_state_list.reserve(dynamic_states.size() + 2);
         for (const uint32_t s : dynamic_states)
         {
-            if (no_discard_dyn && s == static_cast<uint32_t>(VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE))
-            {
-                continue; // bake rasterizerDiscardEnable = FALSE instead of leaving it dynamic
-            }
             dynamic_state_list.push_back(static_cast<VkDynamicState>(s));
         }
         if (dynamic_state_list.empty())
@@ -4440,10 +4338,6 @@ namespace sogen
         depth_stencil.depthTestEnable = depth.test_enable ? VK_TRUE : VK_FALSE;
         depth_stencil.depthWriteEnable = depth.write_enable ? VK_TRUE : VK_FALSE;
         depth_stencil.depthCompareOp = static_cast<VkCompareOp>(depth.compare_op);
-        if (std::getenv("EMULATOR_NO_DEPTH") != nullptr)
-        {
-            depth_stencil.depthTestEnable = VK_FALSE;
-        }
         std::vector<VkFormat> vk_color_formats;
         VkPipelineRenderingCreateInfo rendering_info{};
         if (dynamic_rendering)
@@ -4722,33 +4616,6 @@ namespace sogen
             vk_strides[i] = strides ? strides[i] : 0;
         }
 
-        static const bool dump_vtx = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
-        if (dump_vtx && count > 0 && dev->second.map_memory && dev->second.unmap_memory)
-        {
-            static int dumped = 0;
-            const auto buf = this->impl_->buffers.find(buffer_ids[0]);
-            if (dumped < 16 && buf != this->impl_->buffers.end() && buf->second.memory_id != 0)
-            {
-                const auto mem = this->impl_->memories.find(buf->second.memory_id);
-                if (mem != this->impl_->memories.end())
-                {
-                    const uint64_t base = buf->second.memory_offset + offsets[0];
-                    void* mapped = nullptr;
-                    if (dev->second.map_memory(dev->second.handle, mem->second.handle, base, 32, 0, &mapped) == VK_SUCCESS && mapped)
-                    {
-                        float f[8]{};
-                        std::memcpy(f, mapped, sizeof(f));
-                        std::fprintf(stderr, "VTX buf=%llu off=%llu stride=%llu data=[%g %g %g %g | %g %g %g %g]\n",
-                                     static_cast<unsigned long long>(buffer_ids[0]), static_cast<unsigned long long>(offsets[0]),
-                                     count && strides ? static_cast<unsigned long long>(strides[0]) : 0ull, f[0], f[1], f[2], f[3], f[4],
-                                     f[5], f[6], f[7]);
-                        dev->second.unmap_memory(dev->second.handle, mem->second.handle);
-                        ++dumped;
-                    }
-                }
-            }
-        }
-
         dev->second.cmd_bind_vertex_buffers2(cb->second.handle, first_binding, count, handles.data(), vk_offsets.data(),
                                              sizes ? vk_sizes.data() : nullptr, strides ? vk_strides.data() : nullptr);
         return VK_SUCCESS;
@@ -4804,30 +4671,6 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        static const bool dump_bindings = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
-        if (dump_bindings)
-        {
-            static int dumped_layout = 0;
-            if (dumped_layout < 8)
-            {
-                ++dumped_layout;
-                for (const uint64_t id : sets)
-                {
-                    const auto set = this->impl_->descriptor_sets.find(id);
-                    if (set == this->impl_->descriptor_sets.end())
-                    {
-                        continue;
-                    }
-                    std::string bs;
-                    for (const auto& [b, info] : set->second.buffer_bindings)
-                    {
-                        bs += std::to_string(b) + ":t" + std::to_string(info.type) + " ";
-                    }
-                    std::fprintf(stderr, "DSLAYOUT set=%llu bufbindings=[%s]\n", static_cast<unsigned long long>(id), bs.c_str());
-                }
-            }
-        }
-
         std::vector<VkDescriptorSet> handles;
         handles.reserve(sets.size());
         for (const uint64_t id : sets)
@@ -4838,156 +4681,6 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             handles.push_back(set->second.handle);
-        }
-
-        static const bool dump_vtx = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
-        // Skip the first N descriptor binds (DXVK init) so dumps land during steady-state menu rendering.
-        static const long long dump_skip = std::getenv("EMULATOR_DUMP_SKIP") ? std::atoll(std::getenv("EMULATOR_DUMP_SKIP")) : 0;
-        static long long bind_calls = 0;
-        ++bind_calls;
-        if (dump_vtx && bind_calls >= dump_skip && dev->second.map_memory && dev->second.unmap_memory)
-        {
-            static int dumped_ubo = 0;
-            uint32_t dyn_index = 0;
-            for (const uint64_t id : sets)
-            {
-                const auto set = this->impl_->descriptor_sets.find(id);
-                if (set == this->impl_->descriptor_sets.end())
-                {
-                    continue;
-                }
-                std::vector<uint32_t> bindings;
-                for (const auto& [b, info] : set->second.buffer_bindings)
-                {
-                    if (info.type == 6 || info.type == 8) // UNIFORM_BUFFER / UNIFORM_BUFFER_DYNAMIC
-                    {
-                        bindings.push_back(b);
-                    }
-                }
-                std::sort(bindings.begin(), bindings.end());
-                for (const uint32_t b : bindings)
-                {
-                    const auto& info = set->second.buffer_bindings[b];
-                    const bool is_dyn = (info.type == 8);
-                    const uint32_t dyn = (is_dyn && dyn_index < dynamic_offsets.size()) ? dynamic_offsets[dyn_index] : 0;
-                    if (is_dyn)
-                    {
-                        ++dyn_index;
-                    }
-                    if (dumped_ubo >= 24)
-                    {
-                        continue;
-                    }
-                    const auto buf = this->impl_->buffers.find(info.buffer_id);
-                    if (buf == this->impl_->buffers.end() || buf->second.memory_id == 0)
-                    {
-                        continue;
-                    }
-                    const auto mem = this->impl_->memories.find(buf->second.memory_id);
-                    if (mem == this->impl_->memories.end())
-                    {
-                        continue;
-                    }
-                    const uint64_t base = buf->second.memory_offset + info.offset + dyn;
-                    float f[16]{};
-                    bool got = false;
-                    if (mem->second.persistent_host_pointer)
-                    {
-                        std::memcpy(f, static_cast<const uint8_t*>(mem->second.persistent_host_pointer) + base, sizeof(f));
-                        got = true;
-                    }
-                    else
-                    {
-                        void* mapped = nullptr;
-                        if (dev->second.map_memory(dev->second.handle, mem->second.handle, base, 64, 0, &mapped) == VK_SUCCESS && mapped)
-                        {
-                            std::memcpy(f, mapped, sizeof(f));
-                            dev->second.unmap_memory(dev->second.handle, mem->second.handle);
-                            got = true;
-                        }
-                    }
-                    if (got)
-                    {
-                        long long first_nz = -1;
-                        const bool all_zero = (f[0] == 0 && f[1] == 0 && f[2] == 0 && f[3] == 0);
-                        if (all_zero && mem->second.persistent_host_pointer)
-                        {
-                            // Scan a window around the descriptor offset for the first non-zero dword, to learn
-                            // where DXVK actually wrote the constants (vs where the descriptor points).
-                            const auto* bytes = static_cast<const uint8_t*>(mem->second.persistent_host_pointer);
-                            const uint64_t scan_start = base > 0x10000 ? base - 0x10000 : 0;
-                            const uint64_t scan_end = std::min<uint64_t>(base + 0x10000, mem->second.mapped_size);
-                            for (uint64_t o = scan_start; o + 4 <= scan_end; o += 4)
-                            {
-                                uint32_t v = 0;
-                                std::memcpy(&v, bytes + o, 4);
-                                if (v != 0)
-                                {
-                                    first_nz = static_cast<long long>(o);
-                                    break;
-                                }
-                            }
-                        }
-                        float nzf[16]{};
-                        if (first_nz >= 0 && mem->second.persistent_host_pointer)
-                        {
-                            const uint64_t avail = mem->second.mapped_size - static_cast<uint64_t>(first_nz);
-                            std::memcpy(nzf, static_cast<const uint8_t*>(mem->second.persistent_host_pointer) + first_nz,
-                                        std::min<uint64_t>(sizeof(nzf), avail));
-                        }
-                        // One-shot: when the bound constant region is zero, scan every persistently-mapped
-                        // memory for a float that looks like a projection element (1/640 .. small), to locate
-                        // where DXVK actually streamed the constants.
-                        static bool scanned_all = false;
-                        if (all_zero && !scanned_all)
-                        {
-                            scanned_all = true;
-                            for (const auto& [mid, md] : this->impl_->memories)
-                            {
-                                if (!md.persistent_host_pointer)
-                                {
-                                    continue;
-                                }
-                                const auto* bp = static_cast<const uint8_t*>(md.persistent_host_pointer);
-                                size_t nz = 0;
-                                long long fnz = -1;
-                                long long alpha_always = -1; // first dword with AlphaCompareOp (bits 21..23) == 7
-                                const uint64_t lim = md.mapped_size >= 4 ? md.mapped_size - 4 : 0;
-                                for (uint64_t o = 0; o <= lim; o += 4)
-                                {
-                                    uint32_t v = 0;
-                                    std::memcpy(&v, bp + o, 4);
-                                    if (v != 0)
-                                    {
-                                        if (fnz < 0)
-                                        {
-                                            fnz = static_cast<long long>(o);
-                                        }
-                                        ++nz;
-                                    }
-                                    if (alpha_always < 0 && ((v >> 21) & 7u) == 7u)
-                                    {
-                                        alpha_always = static_cast<long long>(o);
-                                    }
-                                }
-                                std::fprintf(stderr, "MEMSCAN mem=%llu size=0x%llx nz_dwords=%zu first_nz=%lld alphaAlways@=%lld\n",
-                                             static_cast<unsigned long long>(mid), static_cast<unsigned long long>(md.mapped_size), nz, fnz,
-                                             alpha_always);
-                            }
-                        }
-                        std::fprintf(stderr,
-                                     "UBO set=%llu bind=%u type=%u buf=%llu bufsize=%llu range=%llu mem=%llu off=%llu base=%llu "
-                                     "first_nz=%lld(+%lld) m=[%g %g %g %g / %g %g %g %g / %g %g %g %g / %g %g %g %g]\n",
-                                     static_cast<unsigned long long>(id), b, info.type, static_cast<unsigned long long>(info.buffer_id),
-                                     static_cast<unsigned long long>(buf->second.size), static_cast<unsigned long long>(info.range),
-                                     static_cast<unsigned long long>(buf->second.memory_id), static_cast<unsigned long long>(info.offset),
-                                     static_cast<unsigned long long>(base), first_nz,
-                                     first_nz >= 0 ? first_nz - static_cast<long long>(base) : -1, nzf[0], nzf[1], nzf[2], nzf[3], nzf[4],
-                                     nzf[5], nzf[6], nzf[7], nzf[8], nzf[9], nzf[10], nzf[11], nzf[12], nzf[13], nzf[14], nzf[15]);
-                        ++dumped_ubo;
-                    }
-                }
-            }
         }
 
         dev->second.cmd_bind_descriptor_sets(cb->second.handle, static_cast<VkPipelineBindPoint>(bind_point), layout->second.handle,
@@ -5047,7 +4740,7 @@ namespace sogen
             info.loadOp = static_cast<VkAttachmentLoadOp>(a.load_op);
             info.storeOp = static_cast<VkAttachmentStoreOp>(a.store_op);
             static_assert(sizeof(info.clearValue) == sizeof(a.clear_value));
-            std::memcpy(&info.clearValue, a.clear_value, sizeof(info.clearValue));
+            std::memcpy(&info.clearValue, a.clear_value.data(), sizeof(info.clearValue));
             return info;
         };
 
@@ -5061,18 +4754,6 @@ namespace sogen
         // Diagnostic: force every colour attachment to clear to bright green. If a presented frame is then
         // uniform green the draws produce no fragments (rasterisation/geometry); if it shows black shapes on
         // green the geometry rasterises but the shading is black (shader/texture).
-        static const bool clear_green = std::getenv("EMULATOR_CLEAR_GREEN") != nullptr;
-        if (clear_green)
-        {
-            for (auto& ci : color_infos)
-            {
-                ci.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-                ci.clearValue.color.float32[0] = 0.0f;
-                ci.clearValue.color.float32[1] = 1.0f;
-                ci.clearValue.color.float32[2] = 0.0f;
-                ci.clearValue.color.float32[3] = 1.0f;
-            }
-        }
         VkRenderingAttachmentInfo depth_info{};
         VkRenderingAttachmentInfo stencil_info{};
         if (depth)
@@ -5130,21 +4811,6 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        static const bool dump_vtx = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
-        if (dump_vtx && data && size >= 16)
-        {
-            static int dumped_pc = 0;
-            if (dumped_pc < 16)
-            {
-                ++dumped_pc;
-                const float* f = static_cast<const float*>(data);
-                const uint32_t n = size / 4;
-                std::fprintf(stderr, "PC cb=%llu stage=0x%x off=%u size=%u f=[%g %g %g %g %g %g %g %g%s]\n",
-                             static_cast<unsigned long long>(command_buffer), stage_flags, offset, size, f[0], n > 1 ? f[1] : 0.f,
-                             n > 2 ? f[2] : 0.f, n > 3 ? f[3] : 0.f, n > 4 ? f[4] : 0.f, n > 5 ? f[5] : 0.f, n > 6 ? f[6] : 0.f,
-                             n > 7 ? f[7] : 0.f, n > 8 ? " ..." : "");
-            }
-        }
         dev->second.cmd_push_constants(cb->second.handle, layout->second.handle, stage_flags, offset, size, data);
         return VK_SUCCESS;
     }
@@ -5166,8 +4832,14 @@ namespace sogen
         std::vector<VkViewport> entries(viewports.size());
         for (size_t i = 0; i < viewports.size(); ++i)
         {
-            entries[i] = {viewports[i].x,      viewports[i].y,         viewports[i].width,
-                          viewports[i].height, viewports[i].min_depth, viewports[i].max_depth};
+            entries[i] = {
+                .x = viewports[i].x,
+                .y = viewports[i].y,
+                .width = viewports[i].width,
+                .height = viewports[i].height,
+                .minDepth = viewports[i].min_depth,
+                .maxDepth = viewports[i].max_depth,
+            };
         }
         if (with_count)
         {
@@ -5204,7 +4876,10 @@ namespace sogen
         std::vector<VkRect2D> entries(scissors.size());
         for (size_t i = 0; i < scissors.size(); ++i)
         {
-            entries[i] = {{scissors[i].offset_x, scissors[i].offset_y}, {scissors[i].width, scissors[i].height}};
+            entries[i] = {
+                .offset = {.x = scissors[i].offset_x, .y = scissors[i].offset_y},
+                .extent = {.width = scissors[i].width, .height = scissors[i].height},
+            };
         }
 
         if (with_count)
@@ -5247,7 +4922,7 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::cmd_set_blend_constants(uint64_t command_buffer, const float constants[4])
+    int32_t vulkan_host::cmd_set_blend_constants(uint64_t command_buffer, const std::array<float, 4>& constants)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         if (cb == this->impl_->command_buffers.end())
@@ -5259,7 +4934,7 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        dev->second.cmd_set_blend_constants(cb->second.handle, constants);
+        dev->second.cmd_set_blend_constants(cb->second.handle, constants.data());
         return VK_SUCCESS;
     }
 
@@ -5369,66 +5044,83 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         const VkCommandBuffer handle = cb->second.handle;
-        static const bool no_cull = std::getenv("EMULATOR_NO_CULL") != nullptr;
-        if (no_cull && static_cast<gpu_bridge::dynamic_state_u32>(state) == gpu_bridge::dynamic_state_u32::cull_mode)
-        {
-            value = 0; // VK_CULL_MODE_NONE
-        }
         switch (static_cast<gpu_bridge::dynamic_state_u32>(state))
         {
         case gpu_bridge::dynamic_state_u32::cull_mode:
             if (!dev->second.cmd_set_cull_mode)
+            {
                 return VK_ERROR_INITIALIZATION_FAILED;
+            }
             dev->second.cmd_set_cull_mode(handle, static_cast<VkCullModeFlags>(value));
             break;
         case gpu_bridge::dynamic_state_u32::front_face:
             if (!dev->second.cmd_set_front_face)
+            {
                 return VK_ERROR_INITIALIZATION_FAILED;
+            }
             dev->second.cmd_set_front_face(handle, static_cast<VkFrontFace>(value));
             break;
         case gpu_bridge::dynamic_state_u32::primitive_topology:
             if (!dev->second.cmd_set_primitive_topology)
+            {
                 return VK_ERROR_INITIALIZATION_FAILED;
+            }
             dev->second.cmd_set_primitive_topology(handle, static_cast<VkPrimitiveTopology>(value));
             break;
         case gpu_bridge::dynamic_state_u32::depth_test_enable:
             if (!dev->second.cmd_set_depth_test_enable)
+            {
                 return VK_ERROR_INITIALIZATION_FAILED;
+            }
             dev->second.cmd_set_depth_test_enable(handle, value);
             break;
         case gpu_bridge::dynamic_state_u32::depth_write_enable:
             if (!dev->second.cmd_set_depth_write_enable)
+            {
                 return VK_ERROR_INITIALIZATION_FAILED;
+            }
             dev->second.cmd_set_depth_write_enable(handle, value);
             break;
         case gpu_bridge::dynamic_state_u32::depth_compare_op:
             if (!dev->second.cmd_set_depth_compare_op)
+            {
                 return VK_ERROR_INITIALIZATION_FAILED;
+            }
             dev->second.cmd_set_depth_compare_op(handle, static_cast<VkCompareOp>(value));
             break;
         case gpu_bridge::dynamic_state_u32::depth_bounds_test_enable:
             if (!dev->second.cmd_set_depth_bounds_test_enable)
+            {
                 return VK_ERROR_INITIALIZATION_FAILED;
+            }
             dev->second.cmd_set_depth_bounds_test_enable(handle, value);
             break;
         case gpu_bridge::dynamic_state_u32::stencil_test_enable:
             if (!dev->second.cmd_set_stencil_test_enable)
+            {
                 return VK_ERROR_INITIALIZATION_FAILED;
+            }
             dev->second.cmd_set_stencil_test_enable(handle, value);
             break;
         case gpu_bridge::dynamic_state_u32::rasterizer_discard_enable:
             if (!dev->second.cmd_set_rasterizer_discard_enable)
+            {
                 return VK_ERROR_INITIALIZATION_FAILED;
+            }
             dev->second.cmd_set_rasterizer_discard_enable(handle, value);
             break;
         case gpu_bridge::dynamic_state_u32::depth_bias_enable:
             if (!dev->second.cmd_set_depth_bias_enable)
+            {
                 return VK_ERROR_INITIALIZATION_FAILED;
+            }
             dev->second.cmd_set_depth_bias_enable(handle, value);
             break;
         case gpu_bridge::dynamic_state_u32::primitive_restart_enable:
             if (!dev->second.cmd_set_primitive_restart_enable)
+            {
                 return VK_ERROR_INITIALIZATION_FAILED;
+            }
             dev->second.cmd_set_primitive_restart_enable(handle, value);
             break;
         default:

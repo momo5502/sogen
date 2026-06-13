@@ -1817,8 +1817,10 @@ namespace sogen
                 // The two per-stage specialization-constant blocks (vertex then fragment) trail the dynamic
                 // states: each is `entry_count` specialization_map_entry records followed by `data_size` bytes.
                 size_t spec_cursor = bindings_bytes + attributes_bytes + dynamic_bytes;
-                std::vector<vulkan_host::spec_entry> vs_entries, fs_entries;
-                std::vector<uint8_t> vs_data, fs_data;
+                std::vector<vulkan_host::spec_entry> vs_entries;
+                std::vector<vulkan_host::spec_entry> fs_entries;
+                std::vector<uint8_t> vs_data;
+                std::vector<uint8_t> fs_data;
                 const auto parse_spec = [&](uint32_t entry_count, uint32_t data_size, std::vector<vulkan_host::spec_entry>& entries,
                                             std::vector<uint8_t>& data) {
                     const size_t entries_bytes = static_cast<size_t>(entry_count) * sizeof(gpu_bridge::specialization_map_entry);
@@ -1849,7 +1851,7 @@ namespace sogen
                                                      .compare_op = request.depth_compare_op};
 
                 const uint32_t color_count = std::min<uint32_t>(request.color_attachment_count, gpu_bridge::max_color_attachments);
-                const std::span<const uint32_t> color_formats{request.color_formats, color_count};
+                const std::span<const uint32_t> color_formats{request.color_formats.data(), color_count};
 
                 const vulkan_host::specialization vs_spec{.entries = vs_entries, .data = vs_data};
                 const vulkan_host::specialization fs_spec{.entries = fs_entries, .data = fs_data};
@@ -2448,7 +2450,7 @@ namespace sogen
                         a.resolve_mode = w.resolve_mode;
                         a.load_op = w.load_op;
                         a.store_op = w.store_op;
-                        std::memcpy(a.clear_value, w.clear_value, sizeof(a.clear_value));
+                        std::memcpy(a.clear_value.data(), w.clear_value.data(), sizeof(a.clear_value));
                         return a;
                     };
 

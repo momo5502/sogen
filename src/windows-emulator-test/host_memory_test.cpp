@@ -1,5 +1,6 @@
 #include "emulation_test_utils.hpp"
 
+#include <array>
 #include <cstring>
 #include <vector>
 
@@ -81,14 +82,14 @@ namespace sogen::test
         ASSERT_NOT_TERMINATED(emu);
 
         // mov rax,[rcx]; mov [rdx],rax; add rax,1; mov [rcx],rax; hlt
-        const uint8_t stub[] = {
+        const std::array<uint8_t, 14> stub = {
             0x48, 0x8B, 0x01,       // mov rax, [rcx]
             0x48, 0x89, 0x02,       // mov [rdx], rax
             0x48, 0x83, 0xC0, 0x01, // add rax, 1
             0x48, 0x89, 0x01,       // mov [rcx], rax
             0xF4,                   // hlt
         };
-        cpu.write_memory(code, stub, sizeof(stub));
+        cpu.write_memory(code, stub.data(), stub.size());
         cpu.reg(x86_register::rip, code);
         cpu.reg(x86_register::rcx, src);
         cpu.reg(x86_register::rdx, dst);
