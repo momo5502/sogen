@@ -93,6 +93,12 @@ namespace sogen
         virtual void present_surface(const hwnd /*window*/, const ui_surface_desc& /*surface*/)
         {
         }
+        // Warp the host cursor so it tracks a guest SetCursorPos. Without this, the next host mouse-motion
+        // event reports the (unchanged) host position and overwrites the recentered guest cursor, making
+        // relative-mouse deltas (in-game look) jump. screen_x/y are emulated-desktop screen coordinates.
+        virtual void set_cursor_position(const hwnd /*window*/, const int32_t /*screen_x*/, const int32_t /*screen_y*/)
+        {
+        }
     };
 
     class null_ui_backend final : public ui_backend

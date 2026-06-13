@@ -1523,6 +1523,12 @@ namespace sogen
         {
             c.proc.cursor_x = x;
             c.proc.cursor_y = y;
+            // Warp the host cursor to match, so the next host mouse-motion event measures movement from the
+            // recentered position instead of overwriting it with the stale host location (relative-mouse look).
+            if (c.proc.foreground_window != 0)
+            {
+                c.win_emu.ui().set_cursor_position(c.proc.foreground_window, x, y);
+            }
             return TRUE;
         }
 

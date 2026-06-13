@@ -78,7 +78,29 @@ namespace sogen
                 return 0x22; // VK_NEXT
             case SDLK_INSERT:
                 return 0x2D; // VK_INSERT
+            // Modifier keys: map both sides to the generic Win32 VK so games polling GetKeyState/
+            // GetAsyncKeyState(VK_SHIFT/CONTROL/MENU) see them held (sprint, crouch, ADS, etc.).
+            case SDLK_LSHIFT:
+            case SDLK_RSHIFT:
+                return 0x10; // VK_SHIFT
+            case SDLK_LCTRL:
+            case SDLK_RCTRL:
+                return 0x11; // VK_CONTROL
+            case SDLK_LALT:
+            case SDLK_RALT:
+                return 0x12; // VK_MENU
+            case SDLK_LGUI:
+                return 0x5B; // VK_LWIN
+            case SDLK_RGUI:
+                return 0x5C; // VK_RWIN
+            case SDLK_CAPSLOCK:
+                return 0x14; // VK_CAPITAL
             default:
+                // Function keys F1..F24 are contiguous on both sides (SDLK_F1 -> VK_F1 == 0x70).
+                if (key >= SDLK_F1 && key <= SDLK_F12)
+                {
+                    return 0x70 + static_cast<uint64_t>(key - SDLK_F1); // VK_F1..VK_F12
+                }
                 return 0;
             }
         }
@@ -403,6 +425,24 @@ namespace sogen
 #else
                 (void)window;
                 (void)surface;
+#endif
+            }
+
+            void set_cursor_position(const hwnd window, const int32_t screen_x, const int32_t screen_y) override
+            {
+#ifdef SOGEN_HAS_SDL3
+                // Top-levels are positioned at their emulated rect (SDL_SetWindowPosition), so emulated screen
+                // coordinates map to window-local by subtracting that origin.
+                const auto top = this->get_top_level_ancestor(window);
+                if (auto* state = this->resolve_window(top); state && state->window)
+                {
+                    SDL_WarpMouseInWindow(state->window, static_cast<float>(screen_x - state->desc.rect.left),
+                                          static_cast<float>(screen_y - state->desc.rect.top));
+                }
+#else
+                (void)window;
+                (void)screen_x;
+                (void)screen_y;
 #endif
             }
 
