@@ -2029,6 +2029,36 @@ extern "C"
         return static_cast<VkResult>(response.vk_result);
     }
 
+    // DXVK binds memory through the *2 entry points on Vulkan 1.1+ devices; forward each bind info to the
+    // existing single-bind bridge command.
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBindBufferMemory2(VkDevice device, uint32_t bindInfoCount,
+                                                                             const VkBindBufferMemoryInfo* pBindInfos)
+    {
+        for (uint32_t i = 0; i < bindInfoCount; ++i)
+        {
+            const VkResult r = vkBindBufferMemory(device, pBindInfos[i].buffer, pBindInfos[i].memory, pBindInfos[i].memoryOffset);
+            if (r != VK_SUCCESS)
+            {
+                return r;
+            }
+        }
+        return VK_SUCCESS;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBindImageMemory2(VkDevice device, uint32_t bindInfoCount,
+                                                                            const VkBindImageMemoryInfo* pBindInfos)
+    {
+        for (uint32_t i = 0; i < bindInfoCount; ++i)
+        {
+            const VkResult r = vkBindImageMemory(device, pBindInfos[i].image, pBindInfos[i].memory, pBindInfos[i].memoryOffset);
+            if (r != VK_SUCCESS)
+            {
+                return r;
+            }
+        }
+        return VK_SUCCESS;
+    }
+
     namespace
     {
         gb::image_subresource_range to_wire_range(const VkImageSubresourceRange& range)
@@ -4238,6 +4268,10 @@ extern "C"
             {.name = "vkGetBufferMemoryRequirements2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements2)},
             {.name = "vkGetBufferMemoryRequirements2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetBufferMemoryRequirements2)},
             {.name = "vkBindBufferMemory", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindBufferMemory)},
+            {.name = "vkBindBufferMemory2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindBufferMemory2)},
+            {.name = "vkBindBufferMemory2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindBufferMemory2)},
+            {.name = "vkBindImageMemory2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindImageMemory2)},
+            {.name = "vkBindImageMemory2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkBindImageMemory2)},
             {.name = "vkCmdFillBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdFillBuffer)},
             {.name = "vkCreateImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateImage)},
             {.name = "vkDestroyImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyImage)},
