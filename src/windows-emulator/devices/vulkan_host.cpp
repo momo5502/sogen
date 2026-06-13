@@ -4101,7 +4101,8 @@ namespace sogen
         for (size_t i = 0; i < sets.size(); ++i)
         {
             const uint64_t id = this->impl_->next_id++;
-            this->impl_->descriptor_sets.emplace(id, impl::descriptor_set_data{.handle = sets[i], .device_id = device, .pool_id = pool});
+            this->impl_->descriptor_sets.emplace(
+                id, impl::descriptor_set_data{.handle = sets[i], .device_id = device, .pool_id = pool, .buffer_bindings = {}});
             if (i < out_sets.size())
             {
                 out_sets[i] = id;
