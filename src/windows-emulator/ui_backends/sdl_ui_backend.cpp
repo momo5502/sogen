@@ -54,7 +54,33 @@ namespace sogen
                 return static_cast<uint64_t>(key);
             }
 
-            return 0;
+            // Non-ASCII keys whose SDL keycode does not coincide with the Win32 virtual-key code: map them
+            // explicitly so menu navigation (arrows) and editing keys produce the expected WM_KEYDOWN.
+            switch (key)
+            {
+            case SDLK_LEFT:
+                return 0x25; // VK_LEFT
+            case SDLK_UP:
+                return 0x26; // VK_UP
+            case SDLK_RIGHT:
+                return 0x27; // VK_RIGHT
+            case SDLK_DOWN:
+                return 0x28; // VK_DOWN
+            case SDLK_DELETE:
+                return 0x2E; // VK_DELETE
+            case SDLK_HOME:
+                return 0x24; // VK_HOME
+            case SDLK_END:
+                return 0x23; // VK_END
+            case SDLK_PAGEUP:
+                return 0x21; // VK_PRIOR
+            case SDLK_PAGEDOWN:
+                return 0x22; // VK_NEXT
+            case SDLK_INSERT:
+                return 0x2D; // VK_INSERT
+            default:
+                return 0;
+            }
         }
 #endif
 

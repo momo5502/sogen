@@ -1004,6 +1004,15 @@ namespace sogen
 
         if (is_pointer_message(event.message))
         {
+            // Track the cursor in screen coordinates (top-level window origin + window-local position) so
+            // GetCursorPos reflects it, and treat the window the user is pointing at as the foreground one.
+            if (const auto origin = get_window_origin_relative_to_ancestor(this->process, event.window, 0))
+            {
+                this->process.cursor_x = origin->x + point_x(event.lParam);
+                this->process.cursor_y = origin->y + point_y(event.lParam);
+            }
+            this->process.foreground_window = event.window;
+
             const auto target = route_pointer(this->process, event.window, point_x(event.lParam), point_y(event.lParam));
             m.window = target.window;
             m.lParam = pack_point(target.x, target.y);

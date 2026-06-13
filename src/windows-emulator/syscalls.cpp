@@ -460,7 +460,7 @@ namespace sogen
         BOOL handle_NtUserGetClientRect(const syscall_context& c, hwnd window, emulator_pointer rect_ptr);
         hdc handle_NtUserBeginPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
         BOOL handle_NtUserEndPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
-        NTSTATUS handle_NtUserGetCursorPos();
+        BOOL handle_NtUserGetCursorPos(const syscall_context& c, emulator_pointer point_ptr);
         NTSTATUS handle_NtUserSetCursor();
         uint64_t handle_NtUserGetCursor();
         NTSTATUS handle_NtUserFindExistingCursorIcon();
@@ -543,7 +543,7 @@ namespace sogen
         BOOL handle_NtUserSetWindowPos(const syscall_context& c, hwnd hWnd, hwnd hwnd_insert_after, int x, int y, int cx, int cy,
                                        UINT flags);
         NTSTATUS handle_NtUserSetForegroundWindow();
-        hwnd handle_NtUserGetForegroundWindow();
+        hwnd handle_NtUserGetForegroundWindow(const syscall_context& c);
         hwnd handle_NtUserSetFocus(const syscall_context& c, hwnd hwnd);
         emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                        BOOL Ansi);

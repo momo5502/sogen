@@ -1495,9 +1495,17 @@ namespace sogen
             return TRUE;
         }
 
-        NTSTATUS handle_NtUserGetCursorPos()
+        BOOL handle_NtUserGetCursorPos(const syscall_context& c, const emulator_pointer point_ptr)
         {
-            return STATUS_NOT_SUPPORTED;
+            if (point_ptr == 0)
+            {
+                return FALSE;
+            }
+
+            // POINT is { LONG x; LONG y; }. Report the last tracked cursor position in screen coordinates.
+            const std::array<int32_t, 2> pt = {c.proc.cursor_x, c.proc.cursor_y};
+            c.emu.write_memory(point_ptr, pt.data(), sizeof(pt));
+            return TRUE;
         }
 
         NTSTATUS handle_NtUserSetCursor()
@@ -2919,9 +2927,30 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        hwnd handle_NtUserGetForegroundWindow()
+        hwnd find_foreground_window(const syscall_context& c)
         {
+            // Prefer the window the user last interacted with, if it still exists.
+            if (c.proc.foreground_window != 0 && c.proc.windows.get(c.proc.foreground_window) != nullptr)
+            {
+                return c.proc.foreground_window;
+            }
+
+            // Otherwise fall back to any visible top-level window so a freshly-created game window is
+            // considered foreground before the first mouse event arrives (games gate input on this).
+            for (const auto& [index, win] : c.proc.windows)
+            {
+                if (win.parent_handle == 0 && (win.style & WS_VISIBLE) != 0)
+                {
+                    return win.handle;
+                }
+            }
+
             return 0;
+        }
+
+        hwnd handle_NtUserGetForegroundWindow(const syscall_context& c)
+        {
+            return find_foreground_window(c);
         }
 
         hwnd handle_NtUserSetFocus(const syscall_context& c, const hwnd hwnd)
