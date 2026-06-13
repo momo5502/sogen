@@ -509,6 +509,11 @@ namespace sogen
                                                   surface.width, surface.height);
                 if (state.texture)
                 {
+                    // The presented frame is opaque; its alpha channel holds whatever the guest's backbuffer
+                    // happened to leave there (D3D9/Vulkan ignore backbuffer alpha at present time). Without
+                    // disabling blending, SDL composites the texture over the cleared background using that
+                    // alpha and darkens the whole image.
+                    SDL_SetTextureBlendMode(state.texture, SDL_BLENDMODE_NONE);
                     state.texture_width = surface.width;
                     state.texture_height = surface.height;
                     state.texture_format = surface.format;
