@@ -4257,23 +4257,6 @@ namespace sogen
             return &spec_infos[idx];
         };
 
-        if (std::getenv("EMULATOR_LOG_BIND") != nullptr)
-        {
-            std::string fsd, fse;
-            for (size_t i = 0; i + 4 <= fs_spec.data.size(); i += 4)
-            {
-                uint32_t w = 0;
-                std::memcpy(&w, fs_spec.data.data() + i, 4);
-                fsd += std::to_string(w) + " ";
-            }
-            for (const spec_entry& e : fs_spec.entries)
-            {
-                fse += "id" + std::to_string(e.constant_id) + "@" + std::to_string(e.offset) + ":" + std::to_string(e.size) + " ";
-            }
-            std::fprintf(stderr, "PIPE spec vs(entries=%zu) fs(entries=%zu data=%zu) fsdata=[%s] fsmap=[%s]\n", vs_spec.entries.size(),
-                         fs_spec.entries.size(), fs_spec.data.size(), fsd.c_str(), fse.c_str());
-        }
-
         // Diagnostic: replace the fragment shader with a constant-colour module (no discard, no texture)
         // to separate "geometry produces no fragments" from "fragments are all discarded/black".
         VkShaderModule forced_fs = VK_NULL_HANDLE;
@@ -4413,22 +4396,6 @@ namespace sogen
         dynamic_state.dynamicStateCount = static_cast<uint32_t>(dynamic_state_list.size());
         dynamic_state.pDynamicStates = dynamic_state_list.data();
 
-        if (std::getenv("EMULATOR_LOG_BIND") != nullptr)
-        {
-            std::string ds;
-            for (const auto s : dynamic_state_list)
-            {
-                ds += std::to_string(static_cast<uint32_t>(s)) + " ";
-            }
-            std::string bs;
-            for (const auto& b : vk_bindings)
-            {
-                bs += std::to_string(b.stride) + " ";
-            }
-            std::fprintf(stderr, "PIPE dynstates(%zu)=[%s] bindingStrides=[%s] attrs=%zu\n", dynamic_state_list.size(), ds.c_str(),
-                         bs.c_str(), vk_attributes.size());
-        }
-
         VkPipelineRasterizationStateCreateInfo rasterization{};
         rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
         rasterization.polygonMode = VK_POLYGON_MODE_FILL;
@@ -4442,12 +4409,6 @@ namespace sogen
         // into a multisampled backbuffer, so a hardcoded 1x here would mismatch and drop every fragment.
         multisample.rasterizationSamples =
             rasterization_samples ? static_cast<VkSampleCountFlagBits>(rasterization_samples) : VK_SAMPLE_COUNT_1_BIT;
-        if (std::getenv("EMULATOR_LOG_BIND") != nullptr)
-        {
-            std::fprintf(stderr, "PIPE create_graphics_pipeline samples=%u colorCount=%u depthFmt=%u\n", rasterization_samples,
-                         static_cast<uint32_t>(color_formats.size()), depth_format);
-        }
-
         // One blend attachment per color target (a render-pass pipeline keeps the single-attachment default).
         const uint32_t color_count = dynamic_rendering ? static_cast<uint32_t>(color_formats.size()) : 1;
         VkPipelineColorBlendAttachmentState blend_template{};
@@ -4469,11 +4430,6 @@ namespace sogen
         {
             depth_stencil.depthTestEnable = VK_FALSE;
         }
-        if (std::getenv("EMULATOR_LOG_BIND") != nullptr)
-        {
-            std::fprintf(stderr, "PIPE depth test=%u write=%u op=%u\n", depth.test_enable, depth.write_enable, depth.compare_op);
-        }
-
         std::vector<VkFormat> vk_color_formats;
         VkPipelineRenderingCreateInfo rendering_info{};
         if (dynamic_rendering)
@@ -4619,12 +4575,6 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
-        if (log_bind)
-        {
-            std::fprintf(stderr, "BIND pipeline cb=%llu pipe=%llu bp=%u\n", static_cast<unsigned long long>(command_buffer),
-                         static_cast<unsigned long long>(pipeline), bind_point);
-        }
         dev->second.cmd_bind_pipeline(cb->second.handle, static_cast<VkPipelineBindPoint>(bind_point), pipe->second.handle);
         return VK_SUCCESS;
     }
@@ -4712,12 +4662,6 @@ namespace sogen
             vk_offsets[i] = offsets[i];
         }
 
-        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
-        if (log_bind)
-        {
-            std::fprintf(stderr, "BIND vertex_buffers cb=%llu first=%u count=%u\n", static_cast<unsigned long long>(command_buffer),
-                         first_binding, count);
-        }
         dev->second.cmd_bind_vertex_buffers(cb->second.handle, first_binding, count, handles.data(), vk_offsets.data());
         return VK_SUCCESS;
     }
@@ -4764,16 +4708,6 @@ namespace sogen
             vk_strides[i] = strides ? strides[i] : 0;
         }
 
-        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
-        if (log_bind)
-        {
-            std::fprintf(stderr, "BIND vertex_buffers2 cb=%llu first=%u count=%u buf0=%llu off0=%llu stride0=%llu size0=%llu\n",
-                         static_cast<unsigned long long>(command_buffer), first_binding, count,
-                         count ? static_cast<unsigned long long>(buffer_ids[0]) : 0ull,
-                         count ? static_cast<unsigned long long>(offsets[0]) : 0ull,
-                         (count && strides) ? static_cast<unsigned long long>(strides[0]) : 0ull,
-                         (count && sizes) ? static_cast<unsigned long long>(sizes[0]) : 0ull);
-        }
         static const bool dump_vtx = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
         if (dump_vtx && count > 0 && dev->second.map_memory && dev->second.unmap_memory)
         {
@@ -4819,12 +4753,6 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
-        if (log_bind)
-        {
-            std::fprintf(stderr, "BIND index_buffer cb=%llu buf=%llu\n", static_cast<unsigned long long>(command_buffer),
-                         static_cast<unsigned long long>(buffer));
-        }
         dev->second.cmd_bind_index_buffer(cb->second.handle, buf->second.handle, offset, static_cast<VkIndexType>(index_type));
         return VK_SUCCESS;
     }
@@ -4841,11 +4769,6 @@ namespace sogen
         if (dev == this->impl_->devices.end() || !dev->second.cmd_draw_indexed)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
-        }
-        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
-        if (log_bind)
-        {
-            std::fprintf(stderr, "BIND draw_indexed cb=%llu idx=%u\n", static_cast<unsigned long long>(command_buffer), index_count);
         }
         dev->second.cmd_draw_indexed(cb->second.handle, index_count, instance_count, first_index, vertex_offset, first_instance);
         return VK_SUCCESS;
@@ -4901,13 +4824,6 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             handles.push_back(set->second.handle);
-        }
-
-        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
-        if (log_bind)
-        {
-            std::fprintf(stderr, "BIND descriptor_sets cb=%llu first=%u count=%zu bp=%u\n", static_cast<unsigned long long>(command_buffer),
-                         first_set, handles.size(), bind_point);
         }
 
         static const bool dump_vtx = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
@@ -5098,20 +5014,6 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        if (std::getenv("EMULATOR_LOG_BIND") != nullptr)
-        {
-            const auto& fc = color.empty() ? rendering_attachment{} : color[0];
-            float cv[4]{};
-            std::memcpy(cv, fc.clear_value, sizeof(cv));
-            std::fprintf(stderr,
-                         "RT begin_rendering cb=%llu area=(%d,%d %ux%u) colors=%zu loadOp0=%u view0=%llu resolve0=%llu depth=%d "
-                         "clear0=(%.2f,%.2f,%.2f,%.2f)\n",
-                         static_cast<unsigned long long>(command_buffer), area_x, area_y, area_w, area_h, color.size(),
-                         color.empty() ? 0u : fc.load_op, static_cast<unsigned long long>(color.empty() ? 0 : fc.image_view),
-                         static_cast<unsigned long long>(color.empty() ? 0 : fc.resolve_image_view), depth ? 1 : 0, cv[0], cv[1], cv[2],
-                         cv[3]);
-        }
-
         const auto view_handle = [&](uint64_t id) -> VkImageView {
             if (id == 0)
             {
@@ -5214,12 +5116,6 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        static const bool log_bind = std::getenv("EMULATOR_LOG_BIND") != nullptr;
-        if (log_bind)
-        {
-            std::fprintf(stderr, "BIND push_constants cb=%llu offset=%u size=%u\n", static_cast<unsigned long long>(command_buffer), offset,
-                         size);
-        }
         static const bool dump_vtx = std::getenv("EMULATOR_DUMP_VTX") != nullptr;
         if (dump_vtx && data && size >= 16)
         {
@@ -5259,12 +5155,6 @@ namespace sogen
             entries[i] = {viewports[i].x,      viewports[i].y,         viewports[i].width,
                           viewports[i].height, viewports[i].min_depth, viewports[i].max_depth};
         }
-        if (std::getenv("EMULATOR_LOG_BIND") != nullptr && !entries.empty())
-        {
-            std::fprintf(stderr, "DS set_viewport cb=%llu wc=%d %.0fx%.0f\n", static_cast<unsigned long long>(command_buffer),
-                         with_count ? 1 : 0, entries[0].width, entries[0].height);
-        }
-
         if (with_count)
         {
             if (!dev->second.cmd_set_viewport_with_count)
@@ -5301,12 +5191,6 @@ namespace sogen
         for (size_t i = 0; i < scissors.size(); ++i)
         {
             entries[i] = {{scissors[i].offset_x, scissors[i].offset_y}, {scissors[i].width, scissors[i].height}};
-        }
-
-        if (std::getenv("EMULATOR_LOG_BIND") != nullptr && !entries.empty())
-        {
-            std::fprintf(stderr, "DS set_scissor cb=%llu wc=%d first=(%d,%d) %ux%u\n", static_cast<unsigned long long>(command_buffer),
-                         with_count ? 1 : 0, entries[0].offset.x, entries[0].offset.y, entries[0].extent.width, entries[0].extent.height);
         }
 
         if (with_count)
@@ -5471,11 +5355,6 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         const VkCommandBuffer handle = cb->second.handle;
-        if (std::getenv("EMULATOR_LOG_BIND") != nullptr)
-        {
-            std::fprintf(stderr, "DS set_dynamic_u32 cb=%llu state=%u val=%u\n", static_cast<unsigned long long>(command_buffer), state,
-                         value);
-        }
         static const bool no_cull = std::getenv("EMULATOR_NO_CULL") != nullptr;
         if (no_cull && static_cast<gpu_bridge::dynamic_state_u32>(state) == gpu_bridge::dynamic_state_u32::cull_mode)
         {

@@ -1,7 +1,6 @@
 #pragma once
 #include "std_include.hpp"
 
-#include <deque>
 #include <arch_emulator.hpp>
 
 #include <utils/function.hpp>
@@ -140,12 +139,6 @@ namespace sogen
         module_manager mod_manager;
         process_context process;
         syscall_dispatcher dispatcher;
-
-        // Diagnostic (EMULATOR_LOG_ALERTS): bounded ring buffer of the most recent alert/wait events.
-        // The thread-wait dump prints it, so the handoffs leading into a freeze are preserved without
-        // unbounded logging. Empty and unused unless the env var is set.
-        std::deque<std::string> alert_trace{};
-        void trace_alert(std::string event);
 
         windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
                          emulator_interfaces interfaces = {});

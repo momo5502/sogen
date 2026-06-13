@@ -221,7 +221,6 @@ namespace sogen
 
           private:
             vulkan_host vulkan_{};
-            uint64_t present_count_{0};
 
             // VkDeviceMemory aliased directly into the guest address space (see handle_map_memory_direct),
             // keyed by memory object id, so unmap can release the guest range and the host mapping.
@@ -1244,12 +1243,6 @@ namespace sogen
                     {
                         this->vulkan_.unmap_memory(request.device, request.memory);
                     }
-                    if (std::getenv("EMULATOR_LOG_MAP") != nullptr)
-                    {
-                        static size_t fallback_count = 0;
-                        win_emu.log.force_print(color::yellow, "map_memory_direct FALLBACK #%zu vk=%d ptr=%p\n", ++fallback_count,
-                                                response.vk_result, host_ptr);
-                    }
                     return write_output(win_emu, context, response);
                 }
 
@@ -1265,14 +1258,6 @@ namespace sogen
                 this->direct_mappings_[request.memory] =
                     direct_mapping{.guest_address = va, .size = mapped_size, .device = request.device, .host_ptr = host_ptr};
                 response.guest_address = va;
-                if (std::getenv("EMULATOR_LOG_MAP") != nullptr)
-                {
-                    static size_t direct_count = 0;
-                    win_emu.log.force_print(color::cyan, "map_memory_direct OK #%zu mem=%llu off=%llu size=0x%llx va=0x%llx\n",
-                                            ++direct_count, static_cast<unsigned long long>(request.memory),
-                                            static_cast<unsigned long long>(request.offset), static_cast<unsigned long long>(mapped_size),
-                                            static_cast<unsigned long long>(va));
-                }
                 return write_output(win_emu, context, response);
             }
 
@@ -1533,50 +1518,6 @@ namespace sogen
                 uint64_t hwnd_value = 0;
                 const int32_t result =
                     this->vulkan_.queue_present(request.queue, request.swapchain, request.image_index, pixels, width, height, hwnd_value);
-
-                if (result == 0 && !pixels.empty() && std::getenv("EMULATOR_LOG_PRESENT") != nullptr)
-                {
-                    size_t nonzero = 0;
-                    for (const auto b : pixels)
-                    {
-                        nonzero += (b != std::byte{0}) ? 1 : 0;
-                    }
-                    // Count distinctly-green pixels (BGRA: G dominant) to tell whether drawn geometry is
-                    // visible versus only the clear colour.
-                    size_t green = 0;
-                    for (size_t p = 0; p + 4 <= pixels.size(); p += 4)
-                    {
-                        const auto bch = static_cast<uint8_t>(pixels[p]);
-                        const auto gch = static_cast<uint8_t>(pixels[p + 1]);
-                        const auto rch = static_cast<uint8_t>(pixels[p + 2]);
-                        if (gch > 0x60 && gch > static_cast<uint8_t>(bch + 0x20) && gch > static_cast<uint8_t>(rch + 0x20))
-                        {
-                            ++green;
-                        }
-                    }
-                    uint32_t px0 = 0;
-                    std::memcpy(&px0, pixels.data(), 4);
-                    static int present_dbg = 0;
-                    if (present_dbg < 12)
-                    {
-                        win_emu.log.force_print(color::cyan, "present readback %ux%u: %zu/%zu nonzero bytes green_px=%zu px0=0x%08x\n",
-                                                width, height, nonzero, pixels.size(), green, px0);
-                        ++present_dbg;
-                    }
-                }
-
-                if (result == 0 /* VK_SUCCESS */)
-                {
-                    if (this->present_count_++ == 0)
-                    {
-                        win_emu.log.force_print(color::green, "GPU bridge: first frame presented (%ux%u)\n", width, height);
-                    }
-                    else if (this->present_count_ % 100 == 0)
-                    {
-                        win_emu.log.force_print(color::green, "GPU bridge: %llu frames presented\n",
-                                                static_cast<unsigned long long>(this->present_count_));
-                    }
-                }
 
                 // Hand the freshly read-back pixels to the guest window through the UI backend (the same
                 // seam GDI EndPaint uses). The swapchain is B8G8R8A8, matching bgra8, so no swizzle.
@@ -2662,10 +2603,6 @@ namespace sogen
                     if (r != 0 && result == 0)
                     {
                         result = r; // report the first failure
-                        if (std::getenv("EMULATOR_LOG_IOCTL") != nullptr)
-                        {
-                            win_emu.log.print(color::red, "RECORD cmd 0x%X failed vk=%d\n", static_cast<unsigned>(header.command), r);
-                        }
                     }
                     offset += header.size;
                 }
