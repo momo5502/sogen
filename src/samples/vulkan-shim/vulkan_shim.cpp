@@ -1290,6 +1290,26 @@ extern "C"
         for (uint32_t i = 0; i < memoryRangeCount; ++i)
         {
             const gb::object_id mem_id = to_object_id(pMemoryRanges[i].memory);
+            if (g_direct_mapped.contains(mem_id))
+            {
+                gb::mapped_memory_range_request request{};
+                request.device = to_object_id(device);
+                request.memory = mem_id;
+                request.offset = pMemoryRanges[i].offset;
+                request.size = pMemoryRanges[i].size;
+
+                gb::result_response response{};
+                if (!bridge_call(gb::ioctl_flush_mapped_memory_direct, &request, sizeof(request), &response, sizeof(response)))
+                {
+                    return VK_ERROR_DEVICE_LOST;
+                }
+                if (response.vk_result != VK_SUCCESS)
+                {
+                    return static_cast<VkResult>(response.vk_result);
+                }
+                continue;
+            }
+
             const auto it = g_mapped_ranges.find(mem_id);
             if (it == g_mapped_ranges.end() || it->second.staging.empty())
             {
@@ -1317,6 +1337,26 @@ extern "C"
         for (uint32_t i = 0; i < memoryRangeCount; ++i)
         {
             const gb::object_id mem_id = to_object_id(pMemoryRanges[i].memory);
+            if (g_direct_mapped.contains(mem_id))
+            {
+                gb::mapped_memory_range_request request{};
+                request.device = to_object_id(device);
+                request.memory = mem_id;
+                request.offset = pMemoryRanges[i].offset;
+                request.size = pMemoryRanges[i].size;
+
+                gb::result_response response{};
+                if (!bridge_call(gb::ioctl_invalidate_mapped_memory_direct, &request, sizeof(request), &response, sizeof(response)))
+                {
+                    return VK_ERROR_DEVICE_LOST;
+                }
+                if (response.vk_result != VK_SUCCESS)
+                {
+                    return static_cast<VkResult>(response.vk_result);
+                }
+                continue;
+            }
+
             const auto it = g_mapped_ranges.find(mem_id);
             if (it == g_mapped_ranges.end() || it->second.staging.empty())
             {

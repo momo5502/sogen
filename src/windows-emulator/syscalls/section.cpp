@@ -600,8 +600,8 @@ namespace sogen
             if (region_info.is_reserved && memory_region_policy::is_section_kind(region_info.kind))
             {
                 // A pagefile section keeps one persistent backing shared by every view, so unmapping a view
-                // must not free it (other views and the section object still reference it); it is released when
-                // the section object is destroyed.
+                // must not free it (other views and open section handles may still reference it); it is released
+                // when the last section handle is closed.
                 if (region_info.kind == memory_region_kind::pagefile_section_view)
                 {
                     return STATUS_SUCCESS;

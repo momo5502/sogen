@@ -131,6 +131,7 @@ namespace sogen
         library_handle loader{};
         PFN_vkGetInstanceProcAddr get_instance_proc_addr{};
         PFN_vkCreateInstance create_instance{};
+        PFN_vkEnumerateInstanceVersion enumerate_instance_version{};
 
         struct instance_data
         {
@@ -194,6 +195,8 @@ namespace sogen
             PFN_vkFreeMemory free_memory{};
             PFN_vkMapMemory map_memory{};
             PFN_vkUnmapMemory unmap_memory{};
+            PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges{};
+            PFN_vkInvalidateMappedMemoryRanges invalidate_mapped_memory_ranges{};
             PFN_vkCreateBuffer create_buffer{};
             PFN_vkDestroyBuffer destroy_buffer{};
             PFN_vkGetBufferMemoryRequirements get_buffer_memory_requirements{};
@@ -788,6 +791,8 @@ namespace sogen
             }
 
             this->create_instance = reinterpret_cast<PFN_vkCreateInstance>(this->get_instance_proc_addr(nullptr, "vkCreateInstance"));
+            this->enumerate_instance_version =
+                reinterpret_cast<PFN_vkEnumerateInstanceVersion>(this->get_instance_proc_addr(nullptr, "vkEnumerateInstanceVersion"));
         }
 
         ~impl()
@@ -842,13 +847,19 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        // Advertise Vulkan 1.3 so vkGetDeviceProcAddr resolves the core 1.3 device functions the
-        // bridge forwards (e.g. vkQueueSubmit2, used by DXVK's synchronization2 frame submission).
-        // A 1.0 instance makes those resolve to null. 1.1+ loaders ignore an apiVersion newer than
-        // they support, so requesting 1.3 is safe even on older runtimes.
+        uint32_t api_version = VK_API_VERSION_1_0;
+        if (this->impl_->enumerate_instance_version)
+        {
+            uint32_t supported_version = VK_API_VERSION_1_0;
+            if (this->impl_->enumerate_instance_version(&supported_version) == VK_SUCCESS)
+            {
+                api_version = std::min(supported_version, static_cast<uint32_t>(VK_API_VERSION_1_3));
+            }
+        }
+
         VkApplicationInfo app_info{};
         app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        app_info.apiVersion = VK_API_VERSION_1_3;
+        app_info.apiVersion = api_version;
 
         VkInstanceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -1506,6 +1517,9 @@ namespace sogen
             data.free_memory = reinterpret_cast<PFN_vkFreeMemory>(resolve("vkFreeMemory"));
             data.map_memory = reinterpret_cast<PFN_vkMapMemory>(resolve("vkMapMemory"));
             data.unmap_memory = reinterpret_cast<PFN_vkUnmapMemory>(resolve("vkUnmapMemory"));
+            data.flush_mapped_memory_ranges = reinterpret_cast<PFN_vkFlushMappedMemoryRanges>(resolve("vkFlushMappedMemoryRanges"));
+            data.invalidate_mapped_memory_ranges =
+                reinterpret_cast<PFN_vkInvalidateMappedMemoryRanges>(resolve("vkInvalidateMappedMemoryRanges"));
             data.create_buffer = reinterpret_cast<PFN_vkCreateBuffer>(resolve("vkCreateBuffer"));
             data.destroy_buffer = reinterpret_cast<PFN_vkDestroyBuffer>(resolve("vkDestroyBuffer"));
             data.get_buffer_memory_requirements =
@@ -2515,6 +2529,40 @@ namespace sogen
         std::memcpy(mapped, data, copy_bytes);
         dev->second.unmap_memory(dev->second.handle, mem->second.handle);
         return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::flush_mapped_memory_range(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto mem = this->impl_->memories.find(memory);
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.flush_mapped_memory_ranges)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkMappedMemoryRange range{};
+        range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        range.memory = mem->second.handle;
+        range.offset = offset;
+        range.size = size;
+        return dev->second.flush_mapped_memory_ranges(dev->second.handle, 1, &range);
+    }
+
+    int32_t vulkan_host::invalidate_mapped_memory_range(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto mem = this->impl_->memories.find(memory);
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.invalidate_mapped_memory_ranges)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkMappedMemoryRange range{};
+        range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+        range.memory = mem->second.handle;
+        range.offset = offset;
+        range.size = size;
+        return dev->second.invalidate_mapped_memory_ranges(dev->second.handle, 1, &range);
     }
 
     int32_t vulkan_host::map_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void*& out_host_pointer)

@@ -164,6 +164,8 @@ namespace sogen::gpu_bridge
         cmd_update_buffer = 0x87F,
         map_memory_direct = 0x880,
         unmap_memory_direct = 0x881,
+        flush_mapped_memory_direct = 0x882,
+        invalidate_mapped_memory_direct = 0x883,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -294,6 +296,9 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_cmd_update_buffer = make_ioctl(static_cast<uint32_t>(command::cmd_update_buffer));
     inline constexpr uint32_t ioctl_map_memory_direct = make_ioctl(static_cast<uint32_t>(command::map_memory_direct));
     inline constexpr uint32_t ioctl_unmap_memory_direct = make_ioctl(static_cast<uint32_t>(command::unmap_memory_direct));
+    inline constexpr uint32_t ioctl_flush_mapped_memory_direct = make_ioctl(static_cast<uint32_t>(command::flush_mapped_memory_direct));
+    inline constexpr uint32_t ioctl_invalidate_mapped_memory_direct =
+        make_ioctl(static_cast<uint32_t>(command::invalidate_mapped_memory_direct));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -877,6 +882,14 @@ namespace sogen::gpu_bridge
     {
         object_id device;
         object_id memory;
+    };
+
+    struct mapped_memory_range_request
+    {
+        object_id device;
+        object_id memory;
+        uint64_t offset; // VkDeviceSize
+        uint64_t size;   // VkDeviceSize
     };
 
     // A VkImageSubresourceRange flattened to plain integers (aspect/mips/layers).

@@ -164,6 +164,8 @@ namespace sogen
         int32_t download_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void* out, size_t out_size);
         // Maps host-visible memory and copies `data` into [offset, offset+size). Persists guest writes.
         int32_t upload_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, const void* data, size_t data_size);
+        int32_t flush_mapped_memory_range(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size);
+        int32_t invalidate_mapped_memory_range(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size);
         // Maps host-visible memory and returns the persistent host pointer (for aliasing into the guest).
         int32_t map_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void*& out_host_pointer);
         // Unmaps a mapping previously returned by map_memory.

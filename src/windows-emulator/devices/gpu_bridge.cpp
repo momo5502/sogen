@@ -122,6 +122,10 @@ namespace sogen
                     return handle_map_memory_direct(win_emu, context);
                 case gpu_bridge::ioctl_unmap_memory_direct:
                     return handle_unmap_memory_direct(win_emu, context);
+                case gpu_bridge::ioctl_flush_mapped_memory_direct:
+                    return handle_flush_mapped_memory_direct(win_emu, context);
+                case gpu_bridge::ioctl_invalidate_mapped_memory_direct:
+                    return handle_invalidate_mapped_memory_direct(win_emu, context);
                 case gpu_bridge::ioctl_create_image:
                     return handle_create_image(win_emu, context);
                 case gpu_bridge::ioctl_get_physical_device_image_format_properties:
@@ -1279,6 +1283,32 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            NTSTATUS handle_flush_mapped_memory_direct(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::mapped_memory_range_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result =
+                    this->vulkan_.flush_mapped_memory_range(request.device, request.memory, request.offset, request.size);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            NTSTATUS handle_invalidate_mapped_memory_direct(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::mapped_memory_range_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result =
+                    this->vulkan_.invalidate_mapped_memory_range(request.device, request.memory, request.offset, request.size);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
             static vulkan_host::subresource_range to_host_range(const gpu_bridge::image_subresource_range& range)
             {
                 return vulkan_host::subresource_range{
@@ -1863,8 +1893,7 @@ namespace sogen
                     request.rasterization_samples, dynamic_states, vs_spec, fs_spec, pipeline);
                 if (result != 0)
                 {
-                    win_emu.log.force_print(
-                        color::red,
+                    win_emu.log.error(
                         "GPU bridge: create_graphics_pipeline FAILED vk=%d (rp=0x%llx layout=0x%llx vs=0x%llx fs=0x%llx %ux%u)\n", result,
                         static_cast<unsigned long long>(request.render_pass), static_cast<unsigned long long>(request.pipeline_layout),
                         static_cast<unsigned long long>(request.vertex_shader), static_cast<unsigned long long>(request.fragment_shader),
