@@ -1397,6 +1397,21 @@ namespace sogen::gpu_bridge
     // out = object_response
     inline constexpr uint32_t max_color_attachments = 8;
 
+    // Per-color-attachment blend state baked into a graphics pipeline. DXVK supplies this statically for
+    // D3D9 alpha blending; without forwarding it the host defaults to blend-disabled and transparent
+    // geometry (shadows, decals, particles) renders fully opaque.
+    struct pipeline_blend_attachment
+    {
+        uint32_t blend_enable;           // VkBool32
+        uint32_t src_color_blend_factor; // VkBlendFactor
+        uint32_t dst_color_blend_factor; // VkBlendFactor
+        uint32_t color_blend_op;         // VkBlendOp
+        uint32_t src_alpha_blend_factor; // VkBlendFactor
+        uint32_t dst_alpha_blend_factor; // VkBlendFactor
+        uint32_t alpha_blend_op;         // VkBlendOp
+        uint32_t color_write_mask;       // VkColorComponentFlags
+    };
+
     struct create_graphics_pipeline_request
     {
         object_id device;
@@ -1425,6 +1440,11 @@ namespace sogen::gpu_bridge
         uint32_t vs_spec_data_size;
         uint32_t fs_spec_entry_count;
         uint32_t fs_spec_data_size;
+        // Per-color-attachment blend state (DXVK bakes D3D9 alpha blending statically). blend_attachment_count
+        // entries are valid; the rest are zero. When blend_attachment_count == 0 the host disables blending.
+        uint32_t blend_attachment_count;
+        uint32_t reserved_blend;
+        std::array<pipeline_blend_attachment, max_color_attachments> blend_attachments{};
         // vertex_input_binding bindings[binding_count];
         // vertex_input_attribute attributes[attribute_count];
         // uint32_t dynamic_states[dynamic_state_count]; // VkDynamicState values DXVK declared on the pipeline

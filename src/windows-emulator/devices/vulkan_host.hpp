@@ -450,6 +450,20 @@ namespace sogen
             uint32_t size;
         };
 
+        // Per-color-attachment blend state. DXVK bakes D3D9 alpha blending statically; without honoring it
+        // transparent geometry renders fully opaque.
+        struct color_blend_attachment
+        {
+            uint32_t blend_enable;
+            uint32_t src_color_blend_factor;
+            uint32_t dst_color_blend_factor;
+            uint32_t color_blend_op;
+            uint32_t src_alpha_blend_factor;
+            uint32_t dst_alpha_blend_factor;
+            uint32_t alpha_blend_op;
+            uint32_t color_write_mask;
+        };
+
         // A shader stage's specialization constants. DXVK bakes d3d9 render state (alpha-test compare op, fog,
         // sampler types, ...) into shaders this way; without it every constant defaults to 0, turning the
         // alpha-test op into VK_COMPARE_OP_NEVER and discarding every fragment.
@@ -468,7 +482,8 @@ namespace sogen
                                          std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
                                          const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
                                          uint32_t stencil_format, uint32_t rasterization_samples, std::span<const uint32_t> dynamic_states,
-                                         const specialization& vs_spec, const specialization& fs_spec, uint64_t& out_pipeline);
+                                         const specialization& vs_spec, const specialization& fs_spec,
+                                         std::span<const color_blend_attachment> blend_attachments, uint64_t& out_pipeline);
         int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, uint64_t shader_module, uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 

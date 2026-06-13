@@ -4267,7 +4267,8 @@ namespace sogen
                                                   const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
                                                   uint32_t stencil_format, uint32_t rasterization_samples,
                                                   std::span<const uint32_t> dynamic_states, const specialization& vs_spec,
-                                                  const specialization& fs_spec, uint64_t& out_pipeline)
+                                                  const specialization& fs_spec,
+                                                  std::span<const color_blend_attachment> blend_attachments_in, uint64_t& out_pipeline)
     {
         out_pipeline = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -4412,6 +4413,21 @@ namespace sogen
         blend_template.colorWriteMask =
             VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         std::vector<VkPipelineColorBlendAttachmentState> blend_attachments(color_count, blend_template);
+        // Honor the per-attachment blend state DXVK baked into the pipeline. Falls back to the opaque default
+        // for any attachment the guest did not describe.
+        for (uint32_t i = 0; i < color_count && i < blend_attachments_in.size(); ++i)
+        {
+            const color_blend_attachment& src = blend_attachments_in[i];
+            VkPipelineColorBlendAttachmentState& dst = blend_attachments[i];
+            dst.blendEnable = src.blend_enable ? VK_TRUE : VK_FALSE;
+            dst.srcColorBlendFactor = static_cast<VkBlendFactor>(src.src_color_blend_factor);
+            dst.dstColorBlendFactor = static_cast<VkBlendFactor>(src.dst_color_blend_factor);
+            dst.colorBlendOp = static_cast<VkBlendOp>(src.color_blend_op);
+            dst.srcAlphaBlendFactor = static_cast<VkBlendFactor>(src.src_alpha_blend_factor);
+            dst.dstAlphaBlendFactor = static_cast<VkBlendFactor>(src.dst_alpha_blend_factor);
+            dst.alphaBlendOp = static_cast<VkBlendOp>(src.alpha_blend_op);
+            dst.colorWriteMask = static_cast<VkColorComponentFlags>(src.color_write_mask);
+        }
 
         VkPipelineColorBlendStateCreateInfo color_blend{};
         color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;

@@ -1886,11 +1886,26 @@ namespace sogen
                 const vulkan_host::specialization vs_spec{.entries = vs_entries, .data = vs_data};
                 const vulkan_host::specialization fs_spec{.entries = fs_entries, .data = fs_data};
 
+                const uint32_t blend_count = std::min<uint32_t>(request.blend_attachment_count, gpu_bridge::max_color_attachments);
+                std::vector<vulkan_host::color_blend_attachment> blend_attachments(blend_count);
+                for (uint32_t i = 0; i < blend_count; ++i)
+                {
+                    const gpu_bridge::pipeline_blend_attachment& b = request.blend_attachments[i];
+                    blend_attachments[i] = {.blend_enable = b.blend_enable,
+                                            .src_color_blend_factor = b.src_color_blend_factor,
+                                            .dst_color_blend_factor = b.dst_color_blend_factor,
+                                            .color_blend_op = b.color_blend_op,
+                                            .src_alpha_blend_factor = b.src_alpha_blend_factor,
+                                            .dst_alpha_blend_factor = b.dst_alpha_blend_factor,
+                                            .alpha_blend_op = b.alpha_blend_op,
+                                            .color_write_mask = b.color_write_mask};
+                }
+
                 uint64_t pipeline = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
                     request.device, request.render_pass, request.pipeline_layout, request.vertex_shader, request.fragment_shader,
                     request.width, request.height, bindings, attributes, depth, color_formats, request.depth_format, request.stencil_format,
-                    request.rasterization_samples, dynamic_states, vs_spec, fs_spec, pipeline);
+                    request.rasterization_samples, dynamic_states, vs_spec, fs_spec, blend_attachments, pipeline);
                 if (result != 0)
                 {
                     win_emu.log.error(

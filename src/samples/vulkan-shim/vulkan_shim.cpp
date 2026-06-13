@@ -3811,6 +3811,28 @@ extern "C"
             request.fs_spec_entry_count = fs_spec_entries;
             request.fs_spec_data_size = fs_spec_bytes;
 
+            // Per-attachment blend state. DXVK bakes D3D9 alpha blending statically into pColorBlendState; without
+            // forwarding it the host defaults to blend-disabled and transparent geometry renders fully opaque.
+            if (ci.pColorBlendState && ci.pColorBlendState->pAttachments)
+            {
+                request.blend_attachment_count = ci.pColorBlendState->attachmentCount < gb::max_color_attachments
+                                                     ? ci.pColorBlendState->attachmentCount
+                                                     : gb::max_color_attachments;
+                for (uint32_t a = 0; a < request.blend_attachment_count; ++a)
+                {
+                    const VkPipelineColorBlendAttachmentState& src = ci.pColorBlendState->pAttachments[a];
+                    gb::pipeline_blend_attachment& dst = request.blend_attachments[a];
+                    dst.blend_enable = src.blendEnable ? 1u : 0u;
+                    dst.src_color_blend_factor = static_cast<uint32_t>(src.srcColorBlendFactor);
+                    dst.dst_color_blend_factor = static_cast<uint32_t>(src.dstColorBlendFactor);
+                    dst.color_blend_op = static_cast<uint32_t>(src.colorBlendOp);
+                    dst.src_alpha_blend_factor = static_cast<uint32_t>(src.srcAlphaBlendFactor);
+                    dst.dst_alpha_blend_factor = static_cast<uint32_t>(src.dstAlphaBlendFactor);
+                    dst.alpha_blend_op = static_cast<uint32_t>(src.alphaBlendOp);
+                    dst.color_write_mask = static_cast<uint32_t>(src.colorWriteMask);
+                }
+            }
+
             // DXVK 2.x builds pipelines with VK_KHR_dynamic_rendering: renderPass is VK_NULL_HANDLE and the
             // attachment formats live in a VkPipelineRenderingCreateInfo on the pNext chain. Forward those so
             // the host can rebuild that info instead of failing for the missing render pass.
