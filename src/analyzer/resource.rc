@@ -61,12 +61,12 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName", "momo5502"
-            VALUE "FileDescription", "Windows Emulator"
+            VALUE "FileDescription", "Sogen Windows Emulator"
             VALUE "FileVersion", "1.0.0.0"
-            VALUE "InternalName", "emulator"
+            VALUE "InternalName", "analyzer"
             VALUE "LegalCopyright", "All rights reserved."
-            VALUE "OriginalFilename", "emulator.exe"
-            VALUE "ProductName", "emulator"
+            VALUE "OriginalFilename", "analyzer.exe"
+            VALUE "ProductName", "analyzer"
             VALUE "ProductVersion", "1.0.0.0"
         END
     END
