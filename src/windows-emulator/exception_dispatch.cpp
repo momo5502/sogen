@@ -189,7 +189,9 @@ namespace sogen
 
             XMM_SAVE_AREA32 xmm_state{};
             xmm_state.ControlWord = 0x037F;
-            xmm_state.TagWord = 0xFF;
+            // FXSAVE abridged x87 tag: 0x00 = empty stack (fresh FPU). 0xFF (all valid) makes the next x87
+            // FLD overflow the stack and yield the x87 indefinite (NaN).
+            xmm_state.TagWord = 0x00;
             xmm_state.MxCsr = 0x1F80;
             xmm_state.MxCsr_Mask = 0xFFFFFFFF;
             static_assert(sizeof(xmm_state) <= sizeof(result.ExtendedRegisters));
