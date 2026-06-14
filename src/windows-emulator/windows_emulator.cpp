@@ -481,7 +481,8 @@ namespace sogen
           registry(emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"),
           mod_manager(memory, file_sys, this->callbacks),
           process(*this->emu_, memory, *this->clock_, this->callbacks),
-          use_relative_time_(settings.use_relative_time)
+          use_relative_time_(settings.use_relative_time),
+          instruction_precision_(settings.use_instruction_precision && this->emu_->supports_instruction_counting())
     {
         this->ui_backend_->set_event_sink([this](const ui_event& event) { this->handle_ui_event(event); });
 #ifndef OS_WINDOWS
@@ -830,7 +831,7 @@ namespace sogen
                         (service == BREAKPOINT_PRINT || service == BREAKPOINT_LOAD_SYMBOLS || service == BREAKPOINT_UNLOAD_SYMBOLS ||
                          service == BREAKPOINT_COMMAND_STRING))
                     {
-                        const auto ip = this->emu().supports_instruction_counting() //
+                        const auto ip = this->uses_instruction_precision() //
                                             ? this->current_thread().current_ip
                                             : this->emu().read_instruction_pointer();
                         this->emu().reg(x86_register::rip, ip + 3);
@@ -897,9 +898,12 @@ namespace sogen
                 return memory_violation_continuation::resume;
             });
 
-        this->emu().hook_memory_execution([&](const uint64_t address) {
-            this->on_instruction_execution(address); //
-        });
+        if (this->uses_instruction_precision())
+        {
+            this->emu().hook_memory_execution([&](const uint64_t address) {
+                this->on_instruction_execution(address); //
+            });
+        }
     }
 
     void windows_emulator::start(size_t count)
@@ -931,7 +935,7 @@ namespace sogen
             }
         });
 
-        if (!this->emu().supports_instruction_counting())
+        if (!this->uses_instruction_precision())
         {
             interrupt_thread = std::thread([&] {
                 while (!this->should_stop)

@@ -97,6 +97,7 @@ namespace sogen
     {
         bool disable_logging{false};
         bool use_relative_time{false};
+        bool use_instruction_precision{true};
 
         std::filesystem::path emulation_root{};
         std::filesystem::path registry_directory{"./registry"};
@@ -218,6 +219,11 @@ namespace sogen
             return this->executed_instructions_;
         }
 
+        bool uses_instruction_precision() const
+        {
+            return this->instruction_precision_;
+        }
+
         stop_reason last_stop_reason() const
         {
             return this->last_stop_reason_;
@@ -294,6 +300,7 @@ namespace sogen
       private:
         std::atomic_bool switch_thread_{false};
         bool use_relative_time_{false}; // TODO: Get rid of that
+        bool instruction_precision_{true};
         std::atomic_bool should_stop{false};
 
         std::unordered_map<uint16_t, uint16_t> port_mappings_{};
