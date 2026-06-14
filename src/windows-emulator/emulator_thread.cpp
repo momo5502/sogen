@@ -250,6 +250,9 @@ namespace sogen
             case WM_KEYUP:
                 return QS_KEY;
 
+            case WM_INPUT:
+                return QS_RAWINPUT;
+
             default:
                 return QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
             }

@@ -202,6 +202,7 @@ namespace sogen
         }
 
         void handle_ui_event(const ui_event& event);
+        void deliver_raw_mouse_input(int32_t dx, int32_t dy);
 
         emulator_thread& current_thread() const
         {

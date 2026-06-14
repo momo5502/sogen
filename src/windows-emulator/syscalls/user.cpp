@@ -1340,10 +1340,113 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& /*c*/, const emulator_pointer /*devices*/,
-                                                  const uint32_t /*device_count*/, const uint32_t /*size*/)
+        // Games use raw input (RAWINPUTDEVICE with usUsagePage=1/usUsage=2, the generic mouse) for in-game
+        // mouse-look: instead of consuming WM_MOUSEMOVE they register here and read relative deltas from the
+        // WM_INPUT messages we then synthesize. Record the target window so handle_ui_event knows to deliver
+        // raw input; a RIDEV_REMOVE entry for the mouse unregisters it.
+        BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, const emulator_pointer devices, const uint32_t device_count,
+                                                  const uint32_t size)
         {
+            if (devices == 0 || size < sizeof(RAWINPUTDEVICE32))
+            {
+                return FALSE;
+            }
+
+            for (uint32_t i = 0; i < device_count; ++i)
+            {
+                RAWINPUTDEVICE32 device{};
+                if (!c.emu.try_read_memory(devices + static_cast<uint64_t>(i) * size, &device, sizeof(device)))
+                {
+                    return FALSE;
+                }
+
+                constexpr uint16_t hid_usage_page_generic = 0x01;
+                constexpr uint16_t hid_usage_generic_mouse = 0x02;
+                if (device.usUsagePage != hid_usage_page_generic || device.usUsage != hid_usage_generic_mouse)
+                {
+                    continue;
+                }
+
+                if (device.dwFlags & RIDEV_REMOVE)
+                {
+                    c.proc.raw_mouse_registered = false;
+                    c.proc.raw_mouse_target = 0;
+                }
+                else
+                {
+                    // hwndTarget == 0 is the valid "follow keyboard focus" mode; keep it as-is and resolve the
+                    // destination at delivery time rather than freezing whatever window is foreground right now
+                    // (registration often happens at startup before any window has become foreground).
+                    c.proc.raw_mouse_registered = true;
+                    c.proc.raw_mouse_target = device.hwndTarget;
+                }
+            }
+
             return TRUE;
+        }
+
+        // GetRawInputData fetches the payload referenced by a WM_INPUT message's lParam (an HRAWINPUT token we
+        // minted in handle_ui_event). We only synthesize relative mouse motion, so reconstruct a RAWINPUT whose
+        // mouse delta is the {dx, dy} stored for the token. uiCommand selects the header-only (RID_HEADER) or
+        // full (RID_INPUT) payload; passing pData==NULL is the standard size query.
+        //
+        // The RAWMOUSE body follows the header with no extra padding, so it sits at offset == cbSizeHeader. A
+        // WoW64 (32-bit) guest on 64-bit Windows gets the *64-bit* RAWINPUTHEADER (24 bytes: 8-byte hDevice +
+        // wParam), not the 16-byte 32-bit one -- the well-known WoW64 raw-input quirk -- so honor whatever
+        // cbSizeHeader the caller passes and place the mouse body there, instead of assuming a fixed layout.
+        uint32_t handle_NtUserGetRawInputData(const syscall_context& c, const emulator_pointer raw_input, const uint32_t command,
+                                              const emulator_pointer data, const emulator_object<uint32_t> size_ptr,
+                                              const uint32_t header_size)
+        {
+            constexpr auto failure = static_cast<uint32_t>(-1);
+            constexpr uint32_t max_header_size = 0x20;
+
+            if (!size_ptr || header_size < sizeof(RAWINPUTHEADER32) || header_size > max_header_size)
+            {
+                return failure;
+            }
+
+            const auto token = static_cast<uint32_t>(raw_input);
+            const auto entry = c.proc.raw_inputs.find(token);
+            if (entry == c.proc.raw_inputs.end())
+            {
+                return failure;
+            }
+
+            RAWMOUSE32 mouse{};
+            mouse.usFlags = MOUSE_MOVE_RELATIVE;
+            mouse.lLastX = entry->second[0];
+            mouse.lLastY = entry->second[1];
+
+            const uint32_t total = header_size + sizeof(RAWMOUSE32);
+            const uint32_t required = (command == RID_HEADER) ? header_size : total;
+
+            if (data == 0)
+            {
+                size_ptr.write(required);
+                return 0;
+            }
+
+            if (size_ptr.read() < required)
+            {
+                return failure;
+            }
+
+            // dwType @0 and dwSize @4 are identical across header layouts; hDevice/wParam stay zeroed, so only
+            // the overall header size (which shifts the mouse body) matters.
+            std::array<uint8_t, max_header_size + sizeof(RAWMOUSE32)> buffer{};
+            const uint32_t dw_type = RIM_TYPEMOUSE;
+            const uint32_t dw_size = total;
+            std::memcpy(buffer.data() + 0, &dw_type, sizeof(dw_type));
+            std::memcpy(buffer.data() + 4, &dw_size, sizeof(dw_size));
+            if (command != RID_HEADER)
+            {
+                std::memcpy(buffer.data() + header_size, &mouse, sizeof(mouse));
+                c.proc.raw_inputs.erase(entry);
+            }
+
+            c.emu.write_memory(data, buffer.data(), required);
+            return required;
         }
 
         BOOL handle_NtUserDefSetText(const syscall_context& c, const hwnd window, const emulator_object<LARGE_STRING> text)

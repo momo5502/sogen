@@ -982,6 +982,43 @@ namespace sogen
         }
     }
 
+    void windows_emulator::deliver_raw_mouse_input(const int32_t dx, const int32_t dy)
+    {
+        // Resolve the destination at delivery time: an explicit hwndTarget, else the foreground window
+        // (raw input registered with a NULL target follows keyboard focus). If neither resolves to a live
+        // window right now there is nowhere to deliver to, so skip without dropping the registration.
+        const auto target = this->process.raw_mouse_target != 0 ? this->process.raw_mouse_target : this->process.foreground_window;
+        auto* raw_win = this->process.windows.get(target);
+        if (!raw_win)
+        {
+            return;
+        }
+
+        auto* thread = get_thread_by_id(this->process, raw_win->thread_id);
+        if (!thread)
+        {
+            return;
+        }
+
+        const auto token = this->process.next_raw_input_token++;
+        this->process.raw_inputs[token] = {dx, dy};
+
+        // Bound the pending set: WM_INPUT is normally consumed at once by GetRawInputData, but if the guest
+        // stops pumping, drop the oldest tokens so the map can't grow without limit.
+        constexpr size_t max_pending_raw_inputs = 256;
+        while (this->process.raw_inputs.size() > max_pending_raw_inputs)
+        {
+            this->process.raw_inputs.erase(this->process.raw_inputs.begin());
+        }
+
+        msg m{};
+        m.window = target;
+        m.message = WM_INPUT;
+        m.wParam = RIM_INPUT;
+        m.lParam = token;
+        thread->post_message(m);
+    }
+
     void windows_emulator::handle_ui_event(const ui_event& event)
     {
         const auto* win = this->process.windows.get(event.window);
@@ -1006,11 +1043,30 @@ namespace sogen
         {
             // Track the cursor in screen coordinates (top-level window origin + window-local position) so
             // GetCursorPos reflects it, and treat the window the user is pointing at as the foreground one.
+            int32_t new_cursor_x = this->process.cursor_x;
+            int32_t new_cursor_y = this->process.cursor_y;
             if (const auto origin = get_window_origin_relative_to_ancestor(this->process, event.window, 0))
             {
-                this->process.cursor_x = origin->x + point_x(event.lParam);
-                this->process.cursor_y = origin->y + point_y(event.lParam);
+                new_cursor_x = origin->x + point_x(event.lParam);
+                new_cursor_y = origin->y + point_y(event.lParam);
             }
+
+            // A game using raw input for mouse-look reads relative deltas from WM_INPUT, not WM_MOUSEMOVE.
+            // Synthesize that delta from the change in tracked cursor position before updating it. A
+            // SetCursorPos recenter pre-updates cursor_x/y, so the warp-echo motion event yields a zero
+            // delta -- no spurious look -- while genuine motion between recenters produces the real delta.
+            if (event.message == WM_MOUSEMOVE && this->process.raw_mouse_registered)
+            {
+                const int32_t dx = new_cursor_x - this->process.cursor_x;
+                const int32_t dy = new_cursor_y - this->process.cursor_y;
+                if (dx != 0 || dy != 0)
+                {
+                    this->deliver_raw_mouse_input(dx, dy);
+                }
+            }
+
+            this->process.cursor_x = new_cursor_x;
+            this->process.cursor_y = new_cursor_y;
             this->process.foreground_window = event.window;
 
             const auto target = route_pointer(this->process, event.window, point_x(event.lParam), point_y(event.lParam));

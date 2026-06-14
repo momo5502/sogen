@@ -389,6 +389,17 @@ namespace sogen
         // GetKeyState; games poll this for in-game input (movement, etc.) rather than window messages.
         std::array<uint8_t, 256> key_state{};
 
+        // Raw mouse input registration (NtUserRegisterRawInputDevices). When registered, mouse motion
+        // synthesizes relative-mouse RAWINPUT delivered as WM_INPUT, so in-game mouse-look works.
+        // raw_mouse_target is the explicit hwndTarget; 0 means "follow focus" (deliver to the foreground
+        // window), resolved at delivery time so a registration done before any window is foreground still works.
+        bool raw_mouse_registered{};
+        hwnd raw_mouse_target{};
+        // Pending raw-input payloads keyed by the HRAWINPUT token posted in WM_INPUT's lParam; consumed by
+        // NtUserGetRawInputData. Stores the relative {dx, dy} the motion produced.
+        std::map<uint32_t, std::array<int32_t, 2>> raw_inputs{};
+        uint32_t next_raw_input_token{1};
+
         // For WOW64 processes
         std::optional<emulator_object<PEB32>> peb32;
         std::optional<emulator_object<RTL_USER_PROCESS_PARAMETERS32>> process_params32;

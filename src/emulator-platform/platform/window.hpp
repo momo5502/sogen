@@ -183,6 +183,24 @@ namespace sogen
 #define WM_NCDESTROY         0x0082
 #define WM_NCCALCSIZE        0x0083
 #define WM_NCACTIVATE        0x0086
+#define WM_INPUT             0x00FF
+
+#define RID_INPUT            0x10000003
+#define RID_HEADER           0x10000005
+
+#define RIM_TYPEMOUSE        0
+#define RIM_TYPEKEYBOARD     1
+#define RIM_TYPEHID          2
+
+#define RIM_INPUT            0
+#define RIM_INPUTSINK        1
+
+#define RIDEV_REMOVE         0x00000001
+#define RIDEV_EXCLUDE        0x00000010
+#define RIDEV_INPUTSINK      0x00000100
+
+#define MOUSE_MOVE_RELATIVE  0x0000
+#define MOUSE_MOVE_ABSOLUTE  0x0001
 
 #define WA_INACTIVE          0
 #define WA_ACTIVE            1
