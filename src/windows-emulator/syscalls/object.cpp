@@ -465,6 +465,25 @@ namespace sogen
             return std::nullopt;
         }
 
+        // Resolve a handle for a wait operation: expand object pseudo handles, and recover the real typed
+        // handle for raw/un-typed (reserved) handles by matching their id against the waitable stores -- the
+        // same recovery the wait32 path does. WoW64 and some callers hand us handles without type bits.
+        handle resolve_wait_handle(const syscall_context& c, const handle h)
+        {
+            const auto resolved = c.proc.resolve_object_pseudo_handle(h);
+            if (resolved.value.type != handle_types::reserved || resolved.value.is_pseudo)
+            {
+                return resolved;
+            }
+
+            if (const auto recovered = resolve_wait32_handle(c, static_cast<uint32_t>(resolved.bits)))
+            {
+                return *recovered;
+            }
+
+            return resolved;
+        }
+
         NTSTATUS validate_wait_handle(const syscall_context& c, const handle h)
         {
             const auto validate_handle_in_store = [&](auto& store) -> NTSTATUS {
@@ -504,8 +523,14 @@ namespace sogen
 
                 return validate_handle_in_store(c.proc.timers);
 
+            case handle_types::reserved:
+                // A null or un-typed handle that resolve_wait_handle could not map to a waitable object.
+                // Windows returns STATUS_INVALID_HANDLE for this (e.g. waiting on a null handle, which the
+                // game does every frame and simply ignores) -- it is not an unsupported object type.
+                return STATUS_INVALID_HANDLE;
+
             default:
-                c.win_emu.log.error("Wait handle type not supported!\n");
+                c.win_emu.log.error("Wait handle type not supported: %u\n", static_cast<uint32_t>(h.value.type));
                 return STATUS_OBJECT_TYPE_MISMATCH;
             }
         }
@@ -596,13 +621,17 @@ namespace sogen
 
             for (ULONG i = 0; i < count; ++i)
             {
-                const auto h = handles.read(i);
+                const auto raw_handle = handles.read(i);
 
-                if (c.proc.is_object_pseudo_handle(h))
+                // Unlike NtWaitForSingleObject, pseudo handles (current process/thread) are not allowed in
+                // NtWaitForMultipleObjects; Windows rejects them without resolving.
+                if (c.proc.is_object_pseudo_handle(raw_handle))
                 {
                     t.await_time = {};
                     return STATUS_INVALID_HANDLE;
                 }
+
+                const auto h = resolve_wait_handle(c, raw_handle);
 
                 const auto validation_status = validate_wait_handle(c, h);
                 if (!NT_SUCCESS(validation_status))
@@ -690,7 +719,7 @@ namespace sogen
         NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, const handle h, const BOOLEAN alertable,
                                               const emulator_object<LARGE_INTEGER> timeout)
         {
-            const auto resolved_handle = c.proc.resolve_object_pseudo_handle(h);
+            const auto resolved_handle = resolve_wait_handle(c, h);
             const auto validation_status = validate_wait_handle(c, resolved_handle);
             if (!NT_SUCCESS(validation_status))
             {

@@ -54,7 +54,72 @@ namespace sogen
                 return static_cast<uint64_t>(key);
             }
 
-            return 0;
+            switch (key)
+            {
+            case SDLK_LEFT:
+                return VK_LEFT;
+            case SDLK_UP:
+                return VK_UP;
+            case SDLK_RIGHT:
+                return VK_RIGHT;
+            case SDLK_DOWN:
+                return VK_DOWN;
+            case SDLK_DELETE:
+                return VK_DELETE;
+            case SDLK_HOME:
+                return VK_HOME;
+            case SDLK_END:
+                return VK_END;
+            case SDLK_PAGEUP:
+                return VK_PRIOR;
+            case SDLK_PAGEDOWN:
+                return VK_NEXT;
+            case SDLK_INSERT:
+                return VK_INSERT;
+            case SDLK_LSHIFT:
+            case SDLK_RSHIFT:
+                return VK_SHIFT;
+            case SDLK_LCTRL:
+            case SDLK_RCTRL:
+                return VK_CONTROL;
+            case SDLK_LALT:
+            case SDLK_RALT:
+                return VK_MENU;
+            case SDLK_LGUI:
+                return VK_LWIN;
+            case SDLK_RGUI:
+                return VK_RWIN;
+            case SDLK_CAPSLOCK:
+                return VK_CAPITAL;
+            case SDLK_GRAVE:
+                return VK_OEM_3;
+            case SDLK_MINUS:
+                return VK_OEM_MINUS;
+            case SDLK_EQUALS:
+                return VK_OEM_PLUS;
+            case SDLK_LEFTBRACKET:
+                return VK_OEM_4;
+            case SDLK_RIGHTBRACKET:
+                return VK_OEM_6;
+            case SDLK_BACKSLASH:
+                return VK_OEM_5;
+            case SDLK_SEMICOLON:
+                return VK_OEM_1;
+            case SDLK_APOSTROPHE:
+                return VK_OEM_7;
+            case SDLK_COMMA:
+                return VK_OEM_COMMA;
+            case SDLK_PERIOD:
+                return VK_OEM_PERIOD;
+            case SDLK_SLASH:
+                return VK_OEM_2;
+            default:
+                if (key >= SDLK_F1 && key <= SDLK_F12)
+                {
+                    return VK_F1 + static_cast<uint64_t>(key - SDLK_F1);
+                }
+                return 0;
+            }
         }
 #endif
 
@@ -126,6 +191,18 @@ namespace sogen
                         }
                         break;
 
+                    // Window focus/cursor transitions drive activation. Games gate their per-frame mouse
+                    // polling on WM_ACTIVATE (in_appactive) plus the foreground window, so a window that is
+                    // never told it became active never reads the mouse.
+                    case SDL_EVENT_WINDOW_FOCUS_GAINED:
+                    case SDL_EVENT_WINDOW_MOUSE_ENTER:
+                        this->set_window_active(this->resolve_guest(event.window.windowID), true);
+                        break;
+
+                    case SDL_EVENT_WINDOW_FOCUS_LOST:
+                        this->set_window_active(this->resolve_guest(event.window.windowID), false);
+                        break;
+
                     case SDL_EVENT_KEY_DOWN:
                         if (!event.key.repeat)
                         {
@@ -165,6 +242,7 @@ namespace sogen
                         {
                             if (const auto guest = this->resolve_guest(event.button.windowID); guest != 0)
                             {
+                                this->set_window_active(guest, true);
                                 this->post_event(guest, WM_LBUTTONDOWN, MK_LBUTTON,
                                                  pack_point(static_cast<int>(event.button.x), static_cast<int>(event.button.y)));
                             }
@@ -185,6 +263,7 @@ namespace sogen
                     case SDL_EVENT_MOUSE_MOTION:
                         if (const auto guest = this->resolve_guest(event.motion.windowID); guest != 0)
                         {
+                            this->set_window_active(guest, true);
                             const uint64_t keys = (event.motion.state & SDL_BUTTON_LMASK) ? MK_LBUTTON : 0;
                             this->post_event(guest, WM_MOUSEMOVE, keys,
                                              pack_point(static_cast<int>(event.motion.x), static_cast<int>(event.motion.y)));
@@ -366,6 +445,24 @@ namespace sogen
 #endif
             }
 
+            void set_cursor_position(const hwnd window, const int32_t screen_x, const int32_t screen_y) override
+            {
+#ifdef SOGEN_HAS_SDL3
+                // Top-levels are positioned at their emulated rect (SDL_SetWindowPosition), so emulated screen
+                // coordinates map to window-local by subtracting that origin.
+                const auto top = this->get_top_level_ancestor(window);
+                if (auto* state = this->resolve_window(top); state && state->window)
+                {
+                    SDL_WarpMouseInWindow(state->window, static_cast<float>(screen_x - state->desc.rect.left),
+                                          static_cast<float>(screen_y - state->desc.rect.top));
+                }
+#else
+                (void)window;
+                (void)screen_x;
+                (void)screen_y;
+#endif
+            }
+
           private:
 #ifdef SOGEN_HAS_SDL3
             bool ensure_initialized()
@@ -469,6 +566,7 @@ namespace sogen
                                                   surface.width, surface.height);
                 if (state.texture)
                 {
+                    SDL_SetTextureBlendMode(state.texture, SDL_BLENDMODE_NONE);
                     state.texture_width = surface.width;
                     state.texture_height = surface.height;
                     state.texture_format = surface.format;
@@ -540,6 +638,35 @@ namespace sogen
                 const auto it = this->guest_by_window_id_.find(window_id);
                 return it == this->guest_by_window_id_.end() ? 0 : it->second;
             }
+
+            void set_window_active(const hwnd window, const bool active)
+            {
+                if (window == 0)
+                {
+                    return;
+                }
+
+                if (active)
+                {
+                    if (this->active_window_ == window)
+                    {
+                        return;
+                    }
+                    this->active_window_ = window;
+                    this->post_event(window, WM_SETFOCUS, 0, 0);
+                    this->post_event(window, WM_ACTIVATE, WA_ACTIVE, 0);
+                }
+                else
+                {
+                    if (this->active_window_ != window)
+                    {
+                        return;
+                    }
+                    this->active_window_ = 0;
+                    this->post_event(window, WM_ACTIVATE, WA_INACTIVE, 0);
+                    this->post_event(window, WM_KILLFOCUS, 0, 0);
+                }
+            }
 #endif
 
             void post_event(const hwnd window, const uint32_t message, const uint64_t w_param, const uint64_t l_param) const
@@ -553,6 +680,7 @@ namespace sogen
             event_sink sink_{};
 #ifdef SOGEN_HAS_SDL3
             bool initialized_{};
+            hwnd active_window_{};
             std::unordered_map<hwnd, window_state> windows_{};
             std::unordered_map<SDL_WindowID, hwnd> guest_by_window_id_{};
 #endif

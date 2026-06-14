@@ -1004,9 +1004,58 @@ namespace sogen
 
         if (is_pointer_message(event.message))
         {
+            // Track the cursor in screen coordinates (top-level window origin + window-local position) so
+            // GetCursorPos reflects it, and treat the window the user is pointing at as the foreground one.
+            if (const auto origin = get_window_origin_relative_to_ancestor(this->process, event.window, 0))
+            {
+                this->process.cursor_x = origin->x + point_x(event.lParam);
+                this->process.cursor_y = origin->y + point_y(event.lParam);
+            }
+            this->process.foreground_window = event.window;
+
             const auto target = route_pointer(this->process, event.window, point_x(event.lParam), point_y(event.lParam));
             m.window = target.window;
             m.lParam = pack_point(target.x, target.y);
+        }
+        else if ((event.message == WM_ACTIVATE && event.wParam != 0) || event.message == WM_SETFOCUS)
+        {
+            // The window just became active/focused: make it the foreground window so polling APIs
+            // (GetForegroundWindow/GetActiveWindow) agree with the activation the game just received.
+            this->process.foreground_window = event.window;
+        }
+        else if ((event.message == WM_ACTIVATE && event.wParam == 0) && this->process.foreground_window == event.window)
+        {
+            this->process.foreground_window = 0;
+        }
+
+        // Mirror the foreground window into the shared SERVERINFO so the guest's client-side
+        // GetForegroundWindow (which reads gpsi directly, never syscalling) returns the active window.
+        this->process.user_handles.set_foreground_window(static_cast<uint32_t>(this->process.foreground_window));
+
+        // Maintain the polled key state (reported by GetKeyState) from key and mouse-button transitions, so
+        // games that read input by polling rather than via window messages (in-game movement) see it.
+        switch (event.message)
+        {
+        case WM_KEYDOWN:
+            this->process.key_state[event.wParam & 0xFF] = 0x80;
+            break;
+        case WM_KEYUP:
+            this->process.key_state[event.wParam & 0xFF] = 0;
+            break;
+        case WM_LBUTTONDOWN:
+            this->process.key_state[0x01] = 0x80; // VK_LBUTTON
+            break;
+        case WM_LBUTTONUP:
+            this->process.key_state[0x01] = 0;
+            break;
+        case WM_RBUTTONDOWN:
+            this->process.key_state[0x02] = 0x80; // VK_RBUTTON
+            break;
+        case WM_RBUTTONUP:
+            this->process.key_state[0x02] = 0;
+            break;
+        default:
+            break;
         }
 
         thread->post_message(m);

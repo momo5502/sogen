@@ -214,6 +214,7 @@ namespace sogen
             PFN_vkCmdResolveImage cmd_resolve_image{};
             PFN_vkCmdUpdateBuffer cmd_update_buffer{};
             PFN_vkCmdCopyBufferToImage cmd_copy_buffer_to_image{};
+            PFN_vkCmdCopyImage cmd_copy_image{};
             PFN_vkCmdCopyBuffer cmd_copy_buffer{};
             PFN_vkCreateSampler create_sampler{};
             PFN_vkDestroySampler destroy_sampler{};
@@ -363,6 +364,7 @@ namespace sogen
             uint64_t device_id{};
             void* persistent_host_pointer{};
             uint64_t mapped_size{};
+            uint64_t allocation_size{};
         };
 
         struct buffer_data
@@ -1539,6 +1541,7 @@ namespace sogen
             data.cmd_resolve_image = reinterpret_cast<PFN_vkCmdResolveImage>(resolve("vkCmdResolveImage"));
             data.cmd_update_buffer = reinterpret_cast<PFN_vkCmdUpdateBuffer>(resolve("vkCmdUpdateBuffer"));
             data.cmd_copy_buffer_to_image = reinterpret_cast<PFN_vkCmdCopyBufferToImage>(resolve("vkCmdCopyBufferToImage"));
+            data.cmd_copy_image = reinterpret_cast<PFN_vkCmdCopyImage>(resolve("vkCmdCopyImage"));
             data.cmd_copy_buffer = reinterpret_cast<PFN_vkCmdCopyBuffer>(resolve("vkCmdCopyBuffer"));
             data.create_sampler = reinterpret_cast<PFN_vkCreateSampler>(resolve("vkCreateSampler"));
             data.destroy_sampler = reinterpret_cast<PFN_vkDestroySampler>(resolve("vkDestroySampler"));
@@ -2359,7 +2362,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory, .device_id = device});
+        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory, .device_id = device, .allocation_size = size});
         out_memory = id;
         return VK_SUCCESS;
     }
@@ -2565,9 +2568,10 @@ namespace sogen
         return dev->second.invalidate_mapped_memory_ranges(dev->second.handle, 1, &range);
     }
 
-    int32_t vulkan_host::map_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void*& out_host_pointer)
+    int32_t vulkan_host::map_memory(uint64_t device, uint64_t memory, void*& out_host_pointer, uint64_t& out_size)
     {
         out_host_pointer = nullptr;
+        out_size = 0;
         const auto dev = this->impl_->devices.find(device);
         const auto mem = this->impl_->memories.find(memory);
         if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory)
@@ -2575,16 +2579,25 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        // A VkDeviceMemory must not be mapped twice; reuse the existing whole-object mapping.
+        if (mem->second.persistent_host_pointer)
+        {
+            out_host_pointer = mem->second.persistent_host_pointer;
+            out_size = mem->second.mapped_size;
+            return VK_SUCCESS;
+        }
+
         void* mapped = nullptr;
-        const VkResult result = dev->second.map_memory(dev->second.handle, mem->second.handle, offset, size, 0, &mapped);
+        const VkResult result = dev->second.map_memory(dev->second.handle, mem->second.handle, 0, VK_WHOLE_SIZE, 0, &mapped);
         if (result != VK_SUCCESS || !mapped)
         {
             return result != VK_SUCCESS ? result : VK_ERROR_MEMORY_MAP_FAILED;
         }
 
         out_host_pointer = mapped;
+        out_size = mem->second.allocation_size;
         mem->second.persistent_host_pointer = mapped;
-        mem->second.mapped_size = size;
+        mem->second.mapped_size = mem->second.allocation_size;
         return VK_SUCCESS;
     }
 
@@ -2597,6 +2610,8 @@ namespace sogen
             return;
         }
         dev->second.unmap_memory(dev->second.handle, mem->second.handle);
+        mem->second.persistent_host_pointer = nullptr;
+        mem->second.mapped_size = 0;
     }
 
     int32_t vulkan_host::create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,
@@ -2949,6 +2964,41 @@ namespace sogen
 
         dev->second.cmd_copy_buffer_to_image(cb->second.handle, buf->second.handle, img->second.handle, translate_layout(image_layout), 1,
                                              &region);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_copy_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image,
+                                        uint32_t dst_layout, const image_copy_region& r)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto src = this->impl_->images.find(src_image);
+        const auto dst = this->impl_->images.find(dst_image);
+        if (cb == this->impl_->command_buffers.end() || src == this->impl_->images.end() || dst == this->impl_->images.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_copy_image)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkImageCopy region{};
+        region.srcSubresource = {.aspectMask = r.src_aspect_mask,
+                                 .mipLevel = r.src_mip_level,
+                                 .baseArrayLayer = r.src_base_array_layer,
+                                 .layerCount = r.src_layer_count ? r.src_layer_count : 1};
+        region.srcOffset = {.x = r.src_offset_x, .y = r.src_offset_y, .z = r.src_offset_z};
+        region.dstSubresource = {.aspectMask = r.dst_aspect_mask,
+                                 .mipLevel = r.dst_mip_level,
+                                 .baseArrayLayer = r.dst_base_array_layer,
+                                 .layerCount = r.dst_layer_count ? r.dst_layer_count : 1};
+        region.dstOffset = {.x = r.dst_offset_x, .y = r.dst_offset_y, .z = r.dst_offset_z};
+        region.extent = {.width = r.width, .height = r.height, .depth = r.depth ? r.depth : 1};
+
+        dev->second.cmd_copy_image(cb->second.handle, src->second.handle, translate_layout(src_layout), dst->second.handle,
+                                   translate_layout(dst_layout), 1, &region);
         return VK_SUCCESS;
     }
 
@@ -4230,7 +4280,8 @@ namespace sogen
                                                   const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
                                                   uint32_t stencil_format, uint32_t rasterization_samples,
                                                   std::span<const uint32_t> dynamic_states, const specialization& vs_spec,
-                                                  const specialization& fs_spec, uint64_t& out_pipeline)
+                                                  const specialization& fs_spec,
+                                                  std::span<const color_blend_attachment> blend_attachments_in, uint64_t& out_pipeline)
     {
         out_pipeline = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -4375,6 +4426,21 @@ namespace sogen
         blend_template.colorWriteMask =
             VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
         std::vector<VkPipelineColorBlendAttachmentState> blend_attachments(color_count, blend_template);
+        // Honor the per-attachment blend state DXVK baked into the pipeline. Falls back to the opaque default
+        // for any attachment the guest did not describe.
+        for (uint32_t i = 0; i < color_count && i < blend_attachments_in.size(); ++i)
+        {
+            const color_blend_attachment& src = blend_attachments_in[i];
+            VkPipelineColorBlendAttachmentState& dst = blend_attachments[i];
+            dst.blendEnable = src.blend_enable ? VK_TRUE : VK_FALSE;
+            dst.srcColorBlendFactor = static_cast<VkBlendFactor>(src.src_color_blend_factor);
+            dst.dstColorBlendFactor = static_cast<VkBlendFactor>(src.dst_color_blend_factor);
+            dst.colorBlendOp = static_cast<VkBlendOp>(src.color_blend_op);
+            dst.srcAlphaBlendFactor = static_cast<VkBlendFactor>(src.src_alpha_blend_factor);
+            dst.dstAlphaBlendFactor = static_cast<VkBlendFactor>(src.dst_alpha_blend_factor);
+            dst.alphaBlendOp = static_cast<VkBlendOp>(src.alpha_blend_op);
+            dst.colorWriteMask = static_cast<VkColorComponentFlags>(src.color_write_mask);
+        }
 
         VkPipelineColorBlendStateCreateInfo color_blend{};
         color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;

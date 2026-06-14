@@ -166,6 +166,7 @@ namespace sogen::gpu_bridge
         unmap_memory_direct = 0x881,
         flush_mapped_memory_direct = 0x882,
         invalidate_mapped_memory_direct = 0x883,
+        cmd_copy_image = 0x884,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -293,6 +294,7 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_set_event = make_ioctl(static_cast<uint32_t>(command::set_event));
     inline constexpr uint32_t ioctl_reset_event = make_ioctl(static_cast<uint32_t>(command::reset_event));
     inline constexpr uint32_t ioctl_cmd_resolve_image = make_ioctl(static_cast<uint32_t>(command::cmd_resolve_image));
+    inline constexpr uint32_t ioctl_cmd_copy_image = make_ioctl(static_cast<uint32_t>(command::cmd_copy_image));
     inline constexpr uint32_t ioctl_cmd_update_buffer = make_ioctl(static_cast<uint32_t>(command::cmd_update_buffer));
     inline constexpr uint32_t ioctl_map_memory_direct = make_ioctl(static_cast<uint32_t>(command::map_memory_direct));
     inline constexpr uint32_t ioctl_unmap_memory_direct = make_ioctl(static_cast<uint32_t>(command::unmap_memory_direct));
@@ -1052,6 +1054,36 @@ namespace sogen::gpu_bridge
         uint32_t aspect_mask; // VkImageAspectFlags
     };
 
+    // Copies one VkImageCopy region from a source image to a destination image (vkCmdCopyImage[2]). DXVK
+    // uses this for image-to-image transfers during scene rendering. One region per request (the shim loops).
+    struct cmd_copy_image_request
+    {
+        object_id command_buffer;
+        object_id src_image;
+        object_id dst_image;
+        uint32_t src_layout; // VkImageLayout (current src layout)
+        uint32_t dst_layout; // VkImageLayout (current dst layout)
+        uint32_t src_aspect_mask;
+        uint32_t src_mip_level;
+        uint32_t src_base_array_layer;
+        uint32_t src_layer_count;
+        int32_t src_offset_x;
+        int32_t src_offset_y;
+        int32_t src_offset_z;
+        uint32_t dst_aspect_mask;
+        uint32_t dst_mip_level;
+        uint32_t dst_base_array_layer;
+        uint32_t dst_layer_count;
+        int32_t dst_offset_x;
+        int32_t dst_offset_y;
+        int32_t dst_offset_z;
+        uint32_t width;
+        uint32_t height;
+        uint32_t depth;
+        uint32_t reserved;
+    };
+    static_assert(sizeof(cmd_copy_image_request) == 104, "wire layout drift");
+
     // Updates a buffer region inline from data that trails this header in the wire stream (vkCmdUpdateBuffer).
     struct cmd_update_buffer_request
     {
@@ -1365,6 +1397,21 @@ namespace sogen::gpu_bridge
     // out = object_response
     inline constexpr uint32_t max_color_attachments = 8;
 
+    // Per-color-attachment blend state baked into a graphics pipeline. DXVK supplies this statically for
+    // D3D9 alpha blending; without forwarding it the host defaults to blend-disabled and transparent
+    // geometry (shadows, decals, particles) renders fully opaque.
+    struct pipeline_blend_attachment
+    {
+        uint32_t blend_enable;           // VkBool32
+        uint32_t src_color_blend_factor; // VkBlendFactor
+        uint32_t dst_color_blend_factor; // VkBlendFactor
+        uint32_t color_blend_op;         // VkBlendOp
+        uint32_t src_alpha_blend_factor; // VkBlendFactor
+        uint32_t dst_alpha_blend_factor; // VkBlendFactor
+        uint32_t alpha_blend_op;         // VkBlendOp
+        uint32_t color_write_mask;       // VkColorComponentFlags
+    };
+
     struct create_graphics_pipeline_request
     {
         object_id device;
@@ -1393,6 +1440,11 @@ namespace sogen::gpu_bridge
         uint32_t vs_spec_data_size;
         uint32_t fs_spec_entry_count;
         uint32_t fs_spec_data_size;
+        // Per-color-attachment blend state (DXVK bakes D3D9 alpha blending statically). blend_attachment_count
+        // entries are valid; the rest are zero. When blend_attachment_count == 0 the host disables blending.
+        uint32_t blend_attachment_count;
+        uint32_t reserved_blend;
+        std::array<pipeline_blend_attachment, max_color_attachments> blend_attachments{};
         // vertex_input_binding bindings[binding_count];
         // vertex_input_attribute attributes[attribute_count];
         // uint32_t dynamic_states[dynamic_state_count]; // VkDynamicState values DXVK declared on the pipeline

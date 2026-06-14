@@ -594,6 +594,11 @@ namespace sogen
         buffer.write(this->dxgk);
         buffer.write_optional(this->etw_notification_event);
         buffer.write(this->mouse_capture_window);
+        buffer.write(this->foreground_window);
+        buffer.write(this->cursor_x);
+        buffer.write(this->cursor_y);
+        buffer.write(this->cursor_show_count);
+        buffer.write(this->key_state);
 
         buffer.write(this->user_handles);
         buffer.write(this->default_monitor_handle);
@@ -669,6 +674,11 @@ namespace sogen
         buffer.read(this->dxgk);
         buffer.read_optional(this->etw_notification_event);
         buffer.read(this->mouse_capture_window);
+        buffer.read(this->foreground_window);
+        buffer.read(this->cursor_x);
+        buffer.read(this->cursor_y);
+        buffer.read(this->cursor_show_count);
+        buffer.read(this->key_state);
 
         buffer.read(this->user_handles);
         buffer.read(this->default_monitor_handle);

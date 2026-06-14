@@ -460,7 +460,14 @@ namespace sogen
         BOOL handle_NtUserGetClientRect(const syscall_context& c, hwnd window, emulator_pointer rect_ptr);
         hdc handle_NtUserBeginPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
         BOOL handle_NtUserEndPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
-        NTSTATUS handle_NtUserGetCursorPos();
+        BOOL handle_NtUserGetCursorPos(const syscall_context& c, emulator_pointer point_ptr);
+        BOOL handle_NtUserTransformPoint(const syscall_context& c, emulator_pointer point, uint32_t from_dpi, uint32_t to_dpi,
+                                         uint32_t flags);
+        int32_t handle_NtUserShowCursor(const syscall_context& c, BOOL show);
+        uint32_t handle_NtUserGetKeyState(const syscall_context& c, int32_t virtual_key);
+        uint32_t handle_NtUserGetAsyncKeyState(const syscall_context& c, int32_t virtual_key);
+        BOOL handle_NtUserClipCursor(const syscall_context& c, emulator_pointer rect);
+        BOOL handle_NtUserSetCursorPos(const syscall_context& c, int32_t x, int32_t y);
         NTSTATUS handle_NtUserSetCursor();
         uint64_t handle_NtUserGetCursor();
         NTSTATUS handle_NtUserFindExistingCursorIcon();
@@ -543,7 +550,7 @@ namespace sogen
         BOOL handle_NtUserSetWindowPos(const syscall_context& c, hwnd hWnd, hwnd hwnd_insert_after, int x, int y, int cx, int cy,
                                        UINT flags);
         NTSTATUS handle_NtUserSetForegroundWindow();
-        hwnd handle_NtUserGetForegroundWindow();
+        hwnd handle_NtUserGetForegroundWindow(const syscall_context& c);
         hwnd handle_NtUserSetFocus(const syscall_context& c, hwnd hwnd);
         emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                        BOOL Ansi);
@@ -1252,6 +1259,12 @@ namespace sogen
         add_handler(NtGetNextThread);
         add_handler(NtSetInformationObject);
         add_handler(NtUserGetCursorPos);
+        add_handler(NtUserTransformPoint);
+        add_handler(NtUserShowCursor);
+        add_handler(NtUserClipCursor);
+        add_handler(NtUserSetCursorPos);
+        add_handler(NtUserGetKeyState);
+        add_handler(NtUserGetAsyncKeyState);
         add_handler(NtUserReleaseDC);
         add_handler(NtUserFindExistingCursorIcon);
         add_handler(NtUserDestroyCursor);

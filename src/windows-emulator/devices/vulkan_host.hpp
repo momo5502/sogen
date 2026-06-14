@@ -166,8 +166,10 @@ namespace sogen
         int32_t upload_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, const void* data, size_t data_size);
         int32_t flush_mapped_memory_range(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size);
         int32_t invalidate_mapped_memory_range(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size);
-        // Maps host-visible memory and returns the persistent host pointer (for aliasing into the guest).
-        int32_t map_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void*& out_host_pointer);
+        // Maps the entire VkDeviceMemory object (offset 0) and returns its persistent host pointer plus
+        // allocation size. Mapping the whole object lets a single coherent alias back every guest sub-range
+        // mapping of it. Reuses the existing mapping if already mapped (a memory object must not map twice).
+        int32_t map_memory(uint64_t device, uint64_t memory, void*& out_host_pointer, uint64_t& out_size);
         // Unmaps a mapping previously returned by map_memory.
         void unmap_memory(uint64_t device, uint64_t memory);
 
@@ -270,6 +272,29 @@ namespace sogen
 
         int32_t cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout,
                                          const buffer_image_copy_region& region);
+        // One VkImageCopy region of an image-to-image copy (vkCmdCopyImage[2]).
+        struct image_copy_region
+        {
+            uint32_t src_aspect_mask;
+            uint32_t src_mip_level;
+            uint32_t src_base_array_layer;
+            uint32_t src_layer_count;
+            int32_t src_offset_x;
+            int32_t src_offset_y;
+            int32_t src_offset_z;
+            uint32_t dst_aspect_mask;
+            uint32_t dst_mip_level;
+            uint32_t dst_base_array_layer;
+            uint32_t dst_layer_count;
+            int32_t dst_offset_x;
+            int32_t dst_offset_y;
+            int32_t dst_offset_z;
+            uint32_t width;
+            uint32_t height;
+            uint32_t depth;
+        };
+        int32_t cmd_copy_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
+                               const image_copy_region& region);
         // Resolves a multisampled source image into a single-sample destination (full image, mip 0 / layer 0).
         int32_t cmd_resolve_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
                                   uint32_t width, uint32_t height, uint32_t aspect_mask);
@@ -427,6 +452,20 @@ namespace sogen
             uint32_t size;
         };
 
+        // Per-color-attachment blend state. DXVK bakes D3D9 alpha blending statically; without honoring it
+        // transparent geometry renders fully opaque.
+        struct color_blend_attachment
+        {
+            uint32_t blend_enable;
+            uint32_t src_color_blend_factor;
+            uint32_t dst_color_blend_factor;
+            uint32_t color_blend_op;
+            uint32_t src_alpha_blend_factor;
+            uint32_t dst_alpha_blend_factor;
+            uint32_t alpha_blend_op;
+            uint32_t color_write_mask;
+        };
+
         // A shader stage's specialization constants. DXVK bakes d3d9 render state (alpha-test compare op, fog,
         // sampler types, ...) into shaders this way; without it every constant defaults to 0, turning the
         // alpha-test op into VK_COMPARE_OP_NEVER and discarding every fragment.
@@ -445,7 +484,8 @@ namespace sogen
                                          std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
                                          const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
                                          uint32_t stencil_format, uint32_t rasterization_samples, std::span<const uint32_t> dynamic_states,
-                                         const specialization& vs_spec, const specialization& fs_spec, uint64_t& out_pipeline);
+                                         const specialization& vs_spec, const specialization& fs_spec,
+                                         std::span<const color_blend_attachment> blend_attachments, uint64_t& out_pipeline);
         int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, uint64_t shader_module, uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 

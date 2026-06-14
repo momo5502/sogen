@@ -477,31 +477,37 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const auto region_info = c.win_emu.memory.get_region_info(allocation_base);
+                // The base is rounded down to a page; the rounded base must equal the region's base.
+                const auto release_base = page_align_down(allocation_base);
+
+                const auto region_info = c.win_emu.memory.get_region_info(release_base);
                 if (!region_info.is_reserved)
                 {
                     return STATUS_MEMORY_NOT_ALLOCATED;
                 }
 
-                if (region_info.allocation_base != allocation_base)
+                if (region_info.allocation_base != release_base)
                 {
                     return STATUS_FREE_VM_NOT_AT_BASE;
                 }
 
-                const auto region_kind = c.win_emu.memory.get_region_kind(allocation_base);
+                const auto region_kind = c.win_emu.memory.get_region_kind(release_base);
                 const auto denied_status = memory_region_policy::nt_free_virtual_memory_denied_status(region_kind);
                 if (denied_status != STATUS_SUCCESS)
                 {
                     return denied_status;
                 }
 
-                const bool success = c.win_emu.memory.release_memory(allocation_base, static_cast<size_t>(allocation_size));
+                const auto released_length = region_info.allocation_length;
+                const bool success = c.win_emu.memory.release_memory(release_base, 0);
                 if (success)
                 {
+                    base_address.write(release_base);
+                    bytes_to_allocate.write(static_cast<uint64_t>(released_length));
                     return STATUS_SUCCESS;
                 }
 
-                const auto post_release_region_info = c.win_emu.memory.get_region_info(allocation_base);
+                const auto post_release_region_info = c.win_emu.memory.get_region_info(release_base);
                 if (!post_release_region_info.is_reserved)
                 {
                     return STATUS_MEMORY_NOT_ALLOCATED;
@@ -519,6 +525,7 @@ namespace sogen
                     return denied_status;
                 }
 
+                auto decommit_base = allocation_base;
                 auto decommit_size = static_cast<size_t>(allocation_size);
                 if (!decommit_size)
                 {
@@ -535,9 +542,22 @@ namespace sogen
 
                     decommit_size = region_info.allocation_length;
                 }
+                else
+                {
+                    // NtFreeVirtualMemory decommits whole pages: round the base down and the end up.
+                    decommit_base = page_align_down(allocation_base);
+                    decommit_size = static_cast<size_t>(page_align_up(allocation_base + decommit_size) - decommit_base);
+                }
 
-                const bool success = c.win_emu.memory.decommit_memory(allocation_base, decommit_size);
-                return success ? STATUS_SUCCESS : STATUS_MEMORY_NOT_ALLOCATED;
+                const bool success = c.win_emu.memory.decommit_memory(decommit_base, decommit_size);
+                if (!success)
+                {
+                    return STATUS_MEMORY_NOT_ALLOCATED;
+                }
+
+                base_address.write(decommit_base);
+                bytes_to_allocate.write(static_cast<uint64_t>(decommit_size));
+                return STATUS_SUCCESS;
             }
 
             return STATUS_INVALID_PARAMETER_4;

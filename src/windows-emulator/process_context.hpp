@@ -378,6 +378,16 @@ namespace sogen
         dxgk_state dxgk{};
         std::optional<handle> etw_notification_event{};
         hwnd mouse_capture_window{};
+        // The window that currently holds keyboard focus / is the foreground window, and the last known
+        // cursor position in screen coordinates. Games poll these via GetForegroundWindow/GetActiveWindow
+        // and GetCursorPos to drive menu cursors and gate their input loop on the window being active.
+        hwnd foreground_window{};
+        int32_t cursor_x{};
+        int32_t cursor_y{};
+        int32_t cursor_show_count{};
+        // Per-virtual-key pressed state (0x80 = down), updated from key/mouse-button events and reported by
+        // GetKeyState; games poll this for in-game input (movement, etc.) rather than window messages.
+        std::array<uint8_t, 256> key_state{};
 
         // For WOW64 processes
         std::optional<emulator_object<PEB32>> peb32;

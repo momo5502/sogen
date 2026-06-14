@@ -1495,9 +1495,70 @@ namespace sogen
             return TRUE;
         }
 
-        NTSTATUS handle_NtUserGetCursorPos()
+        BOOL handle_NtUserGetCursorPos(const syscall_context& c, const emulator_pointer point_ptr)
         {
-            return STATUS_NOT_SUPPORTED;
+            if (point_ptr == 0)
+            {
+                return FALSE;
+            }
+
+            // POINT is { LONG x; LONG y; }. Report the last tracked cursor position in screen coordinates.
+            const std::array<int32_t, 2> pt = {c.proc.cursor_x, c.proc.cursor_y};
+            c.emu.write_memory(point_ptr, pt.data(), sizeof(pt));
+            return TRUE;
+        }
+
+        // user32 coordinate helpers (ScreenToClient/ClientToScreen/MapWindowPoints) call this to convert a
+        // point between per-monitor DPI spaces before applying the window-origin offset they do themselves.
+        // The emulated desktop is a single 96-DPI space, so the conversion is the identity: leave the point.
+        BOOL handle_NtUserTransformPoint(const syscall_context& /*c*/, const emulator_pointer /*point*/, const uint32_t /*from_dpi*/,
+                                         const uint32_t /*to_dpi*/, const uint32_t /*flags*/)
+        {
+            return TRUE;
+        }
+
+        // SetCursorPos moves the cursor; games use it to recenter the pointer. Track the new position so a
+        // following GetCursorPos reflects it (and relative-motion deltas compute correctly).
+        BOOL handle_NtUserSetCursorPos(const syscall_context& c, const int32_t x, const int32_t y)
+        {
+            c.proc.cursor_x = x;
+            c.proc.cursor_y = y;
+            // Warp the host cursor to match, so the next host mouse-motion event measures movement from the
+            // recentered position instead of overwriting it with the stale host location (relative-mouse look).
+            if (c.proc.foreground_window != 0)
+            {
+                c.win_emu.ui().set_cursor_position(c.proc.foreground_window, x, y);
+            }
+            return TRUE;
+        }
+
+        // ClipCursor confines the cursor to a rectangle. The emulated cursor is driven by the host window
+        // and never escapes it, so confinement is a no-op; just report success.
+        BOOL handle_NtUserClipCursor(const syscall_context& /*c*/, const emulator_pointer /*rect*/)
+        {
+            return TRUE;
+        }
+
+        // GetKeyState / GetAsyncKeyState report whether a virtual key (or mouse button) is currently down.
+        // Games poll these for in-game input instead of consuming WM_KEYDOWN messages. The high bit (0x8000)
+        // means down; the tracked state is maintained from key/button events in handle_ui_event.
+        uint32_t handle_NtUserGetKeyState(const syscall_context& c, const int32_t virtual_key)
+        {
+            return (c.proc.key_state[static_cast<uint32_t>(virtual_key) & 0xFF] & 0x80) ? 0x8000u : 0u;
+        }
+
+        uint32_t handle_NtUserGetAsyncKeyState(const syscall_context& c, const int32_t virtual_key)
+        {
+            return (c.proc.key_state[static_cast<uint32_t>(virtual_key) & 0xFF] & 0x80) ? 0x8000u : 0u;
+        }
+
+        // ShowCursor(bShow) adjusts the cursor display counter (+1 to show, -1 to hide) and returns the new
+        // value. Games spin on it to drive the count to a target (e.g. IN_ActivateMouse hides the cursor), so
+        // it must actually track and return the running count or those loops never terminate.
+        int32_t handle_NtUserShowCursor(const syscall_context& c, const BOOL show)
+        {
+            c.proc.cursor_show_count += show ? 1 : -1;
+            return c.proc.cursor_show_count;
         }
 
         NTSTATUS handle_NtUserSetCursor()
@@ -2919,9 +2980,30 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        hwnd handle_NtUserGetForegroundWindow()
+        hwnd find_foreground_window(const syscall_context& c)
         {
+            // Prefer the window the user last interacted with, if it still exists.
+            if (c.proc.foreground_window != 0 && c.proc.windows.get(c.proc.foreground_window) != nullptr)
+            {
+                return c.proc.foreground_window;
+            }
+
+            // Otherwise fall back to any visible top-level window so a freshly-created game window is
+            // considered foreground before the first mouse event arrives (games gate input on this).
+            for (const auto& [index, win] : c.proc.windows)
+            {
+                if (win.parent_handle == 0 && (win.style & WS_VISIBLE) != 0)
+                {
+                    return win.handle;
+                }
+            }
+
             return 0;
+        }
+
+        hwnd handle_NtUserGetForegroundWindow(const syscall_context& c)
+        {
+            return find_foreground_window(c);
         }
 
         hwnd handle_NtUserSetFocus(const syscall_context& c, const hwnd hwnd)
