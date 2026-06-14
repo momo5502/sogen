@@ -621,13 +621,17 @@ namespace sogen
 
             for (ULONG i = 0; i < count; ++i)
             {
-                const auto h = resolve_wait_handle(c, handles.read(i));
+                const auto raw_handle = handles.read(i);
 
-                if (c.proc.is_object_pseudo_handle(h))
+                // Unlike NtWaitForSingleObject, pseudo handles (current process/thread) are not allowed in
+                // NtWaitForMultipleObjects; Windows rejects them without resolving.
+                if (c.proc.is_object_pseudo_handle(raw_handle))
                 {
                     t.await_time = {};
                     return STATUS_INVALID_HANDLE;
                 }
+
+                const auto h = resolve_wait_handle(c, raw_handle);
 
                 const auto validation_status = validate_wait_handle(c, h);
                 if (!NT_SUCCESS(validation_status))

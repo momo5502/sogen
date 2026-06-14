@@ -54,52 +54,69 @@ namespace sogen
                 return static_cast<uint64_t>(key);
             }
 
-            // Non-ASCII keys whose SDL keycode does not coincide with the Win32 virtual-key code: map them
-            // explicitly so menu navigation (arrows) and editing keys produce the expected WM_KEYDOWN.
             switch (key)
             {
             case SDLK_LEFT:
-                return 0x25; // VK_LEFT
+                return VK_LEFT;
             case SDLK_UP:
-                return 0x26; // VK_UP
+                return VK_UP;
             case SDLK_RIGHT:
-                return 0x27; // VK_RIGHT
+                return VK_RIGHT;
             case SDLK_DOWN:
-                return 0x28; // VK_DOWN
+                return VK_DOWN;
             case SDLK_DELETE:
-                return 0x2E; // VK_DELETE
+                return VK_DELETE;
             case SDLK_HOME:
-                return 0x24; // VK_HOME
+                return VK_HOME;
             case SDLK_END:
-                return 0x23; // VK_END
+                return VK_END;
             case SDLK_PAGEUP:
-                return 0x21; // VK_PRIOR
+                return VK_PRIOR;
             case SDLK_PAGEDOWN:
-                return 0x22; // VK_NEXT
+                return VK_NEXT;
             case SDLK_INSERT:
-                return 0x2D; // VK_INSERT
-            // Modifier keys: map both sides to the generic Win32 VK so games polling GetKeyState/
-            // GetAsyncKeyState(VK_SHIFT/CONTROL/MENU) see them held (sprint, crouch, ADS, etc.).
+                return VK_INSERT;
             case SDLK_LSHIFT:
             case SDLK_RSHIFT:
-                return 0x10; // VK_SHIFT
+                return VK_SHIFT;
             case SDLK_LCTRL:
             case SDLK_RCTRL:
-                return 0x11; // VK_CONTROL
+                return VK_CONTROL;
             case SDLK_LALT:
             case SDLK_RALT:
-                return 0x12; // VK_MENU
+                return VK_MENU;
             case SDLK_LGUI:
-                return 0x5B; // VK_LWIN
+                return VK_LWIN;
             case SDLK_RGUI:
-                return 0x5C; // VK_RWIN
+                return VK_RWIN;
             case SDLK_CAPSLOCK:
-                return 0x14; // VK_CAPITAL
+                return VK_CAPITAL;
+            case SDLK_GRAVE:
+                return VK_OEM_3;
+            case SDLK_MINUS:
+                return VK_OEM_MINUS;
+            case SDLK_EQUALS:
+                return VK_OEM_PLUS;
+            case SDLK_LEFTBRACKET:
+                return VK_OEM_4;
+            case SDLK_RIGHTBRACKET:
+                return VK_OEM_6;
+            case SDLK_BACKSLASH:
+                return VK_OEM_5;
+            case SDLK_SEMICOLON:
+                return VK_OEM_1;
+            case SDLK_APOSTROPHE:
+                return VK_OEM_7;
+            case SDLK_COMMA:
+                return VK_OEM_COMMA;
+            case SDLK_PERIOD:
+                return VK_OEM_PERIOD;
+            case SDLK_SLASH:
+                return VK_OEM_2;
             default:
-                // Function keys F1..F24 are contiguous on both sides (SDLK_F1 -> VK_F1 == 0x70).
                 if (key >= SDLK_F1 && key <= SDLK_F12)
                 {
-                    return 0x70 + static_cast<uint64_t>(key - SDLK_F1); // VK_F1..VK_F12
+                    return VK_F1 + static_cast<uint64_t>(key - SDLK_F1);
                 }
                 return 0;
             }
@@ -549,10 +566,6 @@ namespace sogen
                                                   surface.width, surface.height);
                 if (state.texture)
                 {
-                    // The presented frame is opaque; its alpha channel holds whatever the guest's backbuffer
-                    // happened to leave there (D3D9/Vulkan ignore backbuffer alpha at present time). Without
-                    // disabling blending, SDL composites the texture over the cleared background using that
-                    // alpha and darkens the whole image.
                     SDL_SetTextureBlendMode(state.texture, SDL_BLENDMODE_NONE);
                     state.texture_width = surface.width;
                     state.texture_height = surface.height;
@@ -626,10 +639,6 @@ namespace sogen
                 return it == this->guest_by_window_id_.end() ? 0 : it->second;
             }
 
-            // Tell the guest a window became (in)active. SDL only reports focus transitions on real OS focus
-            // changes, which need not happen for the embedded game window, so activation is also asserted on
-            // the first mouse interaction. Latched so a held/moving cursor doesn't re-post every frame.
-            // WM_ACTIVATE's wParam is WA_ACTIVE/WA_INACTIVE with the minimized flag (HIWORD) left at 0.
             void set_window_active(const hwnd window, const bool active)
             {
                 if (window == 0)

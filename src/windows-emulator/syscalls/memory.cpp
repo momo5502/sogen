@@ -519,6 +519,7 @@ namespace sogen
                     return denied_status;
                 }
 
+                auto decommit_base = allocation_base;
                 auto decommit_size = static_cast<size_t>(allocation_size);
                 if (!decommit_size)
                 {
@@ -535,8 +536,14 @@ namespace sogen
 
                     decommit_size = region_info.allocation_length;
                 }
+                else
+                {
+                    // NtFreeVirtualMemory decommits whole pages: round the base down and the end up.
+                    decommit_base = page_align_down(allocation_base);
+                    decommit_size = static_cast<size_t>(page_align_up(allocation_base + decommit_size) - decommit_base);
+                }
 
-                const bool success = c.win_emu.memory.decommit_memory(allocation_base, decommit_size);
+                const bool success = c.win_emu.memory.decommit_memory(decommit_base, decommit_size);
                 return success ? STATUS_SUCCESS : STATUS_MEMORY_NOT_ALLOCATED;
             }
 

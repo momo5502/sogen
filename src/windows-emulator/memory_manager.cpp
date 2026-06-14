@@ -422,13 +422,7 @@ namespace sogen
 
     bool memory_manager::decommit_memory(const uint64_t address, const size_t size)
     {
-        // NtFreeVirtualMemory operates on whole pages: the base rounds down and the end rounds up. Without
-        // this the committed regions get split at an unaligned offset and unmap_memory is handed a
-        // non-page-aligned range (which the WHP backend rejects).
-        const auto aligned_start = page_align_down(address);
-        const auto end = page_align_up(address + size);
-
-        const auto entry = this->find_reserved_region(aligned_start);
+        const auto entry = this->find_reserved_region(address);
         if (entry == this->reserved_regions_.end())
         {
             return false;
@@ -439,6 +433,7 @@ namespace sogen
             throw std::runtime_error("Not allowed to decommit MMIO!");
         }
 
+        const auto end = address + size;
         const auto region_end = entry->first + entry->second.length;
 
         if (region_end < end)
@@ -448,7 +443,7 @@ namespace sogen
 
         auto& committed_regions = entry->second.committed_regions;
 
-        split_regions(committed_regions, {aligned_start, end});
+        split_regions(committed_regions, {address, end});
 
         for (auto i = committed_regions.begin(); i != committed_regions.end();)
         {
@@ -458,7 +453,7 @@ namespace sogen
             }
 
             const auto sub_region_end = i->first + i->second.length;
-            if (i->first >= aligned_start && sub_region_end <= end)
+            if (i->first >= address && sub_region_end <= end)
             {
                 this->unmap_memory(i->first, i->second.length);
                 i = committed_regions.erase(i);
