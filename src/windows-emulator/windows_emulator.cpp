@@ -898,9 +898,6 @@ namespace sogen
                 return memory_violation_continuation::resume;
             });
 
-        // The global per-instruction hook drives instruction-quantum thread scheduling and
-        // exact IP tracking. Only register it when instruction precision is active; otherwise
-        // scheduling relies on the wall-clock interrupt thread set up in start().
         if (this->uses_instruction_precision())
         {
             this->emu().hook_memory_execution([&](const uint64_t address) {

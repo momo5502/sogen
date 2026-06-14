@@ -97,11 +97,6 @@ namespace sogen
     {
         bool disable_logging{false};
         bool use_relative_time{false};
-
-        // Enables fine-grained, per-instruction precision: instruction-quantum thread
-        // scheduling and exact instruction-pointer tracking. Enabled by default, but
-        // automatically disabled when the backend does not support instruction counting
-        // (e.g. the WHP backend). See windows_emulator::uses_instruction_precision().
         bool use_instruction_precision{true};
 
         std::filesystem::path emulation_root{};
@@ -224,10 +219,6 @@ namespace sogen
             return this->executed_instructions_;
         }
 
-        // True when per-instruction precision is active: the configured
-        // use_instruction_precision setting AND the backend supports instruction
-        // counting. When false, thread scheduling falls back to coarse, wall-clock
-        // based preemption and the instruction pointer is read live from the backend.
         bool uses_instruction_precision() const
         {
             return this->instruction_precision_;
