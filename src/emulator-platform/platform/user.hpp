@@ -131,6 +131,38 @@ namespace sogen
     static_assert(offsetof(WIN32K_USERCONNECT32, ime_msg_count) == 0x118);
     static_assert(sizeof(WIN32K_USERCONNECT32) == 0x238);
 
+    // WoW64 (32-bit) raw-input structures, as the guest's user32/win32u marshal them.
+    struct RAWINPUTDEVICE32
+    {
+        uint16_t usUsagePage;
+        uint16_t usUsage;
+        uint32_t dwFlags;
+        uint32_t hwndTarget;
+    };
+    static_assert(sizeof(RAWINPUTDEVICE32) == 0x0C);
+
+    struct RAWINPUTHEADER32
+    {
+        uint32_t dwType;
+        uint32_t dwSize;
+        uint32_t hDevice;
+        uint32_t wParam;
+    };
+    static_assert(sizeof(RAWINPUTHEADER32) == 0x10);
+
+    // The mouse body has no pointer fields, so its layout is identical for 32- and 64-bit guests.
+    struct RAWMOUSE32
+    {
+        uint16_t usFlags;
+        uint16_t reserved;
+        uint32_t ulButtons;
+        uint32_t ulRawButtons;
+        int32_t lLastX;
+        int32_t lLastY;
+        uint32_t ulExtraInformation;
+    };
+    static_assert(sizeof(RAWMOUSE32) == 0x18);
+
     enum USER_HANDLETYPE : uint8_t
     {
         TYPE_FREE = 0,

@@ -452,6 +452,8 @@ namespace sogen
         hwnd handle_NtUserSetCapture(const syscall_context& c, hwnd window);
         BOOL handle_NtUserReleaseCapture(const syscall_context& c);
         BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, emulator_pointer devices, uint32_t device_count, uint32_t size);
+        uint32_t handle_NtUserGetRawInputData(const syscall_context& c, emulator_pointer raw_input, uint32_t command, emulator_pointer data,
+                                              emulator_object<uint32_t> size_ptr, uint32_t header_size);
         BOOL handle_NtUserDefSetText(const syscall_context& c, hwnd window, emulator_object<LARGE_STRING> text);
         BOOL handle_NtUserGetOemBitmapSize(const syscall_context& c, uint32_t bitmap_id, emulator_pointer size_ptr);
         BOOL handle_NtUserSetWindowState(const syscall_context& c, hwnd window, uint32_t flags);
@@ -1241,6 +1243,7 @@ namespace sogen
         add_handler(NtUserSetCapture);
         add_handler(NtUserReleaseCapture);
         add_handler(NtUserRegisterRawInputDevices);
+        add_handler(NtUserGetRawInputData);
         add_handler(NtUserDefSetText);
         add_handler(NtUserSetWindowState);
         add_handler(NtUserClearWindowState);
