@@ -532,7 +532,10 @@ namespace sogen
             XMM_SAVE_AREA32 xmm_state{};
             xmm_state.ControlWord = 0x037F;
             xmm_state.StatusWord = 0;
-            xmm_state.TagWord = 0xFF;
+            // FXSAVE abridged x87 tag: 1 bit per register, 1=valid, 0=empty. A fresh FPU has an empty stack,
+            // so this must be 0x00. 0xFF marks all 8 registers valid (a full stack), which makes the first
+            // guest x87 FLD overflow and produce the x87 indefinite (NaN) under hardware (WHP) execution.
+            xmm_state.TagWord = 0x00;
             xmm_state.MxCsr = 0x1F80;
             xmm_state.MxCsr_Mask = 0xFFFFFFFF;
 
