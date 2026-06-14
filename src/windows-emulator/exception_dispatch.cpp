@@ -249,7 +249,7 @@ namespace sogen
         CONTEXT64 ctx{};
         ctx.ContextFlags = CONTEXT64_ALL;
         cpu_context::save(win_emu.emu(), ctx);
-        ctx.Rip = win_emu.emu().supports_instruction_counting() //
+        ctx.Rip = win_emu.uses_instruction_precision() //
                       ? win_emu.current_thread().current_ip
                       : win_emu.emu().read_instruction_pointer();
 

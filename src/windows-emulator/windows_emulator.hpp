@@ -98,6 +98,12 @@ namespace sogen
         bool disable_logging{false};
         bool use_relative_time{false};
 
+        // Enables fine-grained, per-instruction precision: instruction-quantum thread
+        // scheduling and exact instruction-pointer tracking. Enabled by default, but
+        // automatically disabled when the backend does not support instruction counting
+        // (e.g. the WHP backend). See windows_emulator::uses_instruction_precision().
+        bool use_instruction_precision{true};
+
         std::filesystem::path emulation_root{};
         std::filesystem::path registry_directory{"./registry"};
 
@@ -218,6 +224,15 @@ namespace sogen
             return this->executed_instructions_;
         }
 
+        // True when per-instruction precision is active: the configured
+        // use_instruction_precision setting AND the backend supports instruction
+        // counting. When false, thread scheduling falls back to coarse, wall-clock
+        // based preemption and the instruction pointer is read live from the backend.
+        bool uses_instruction_precision() const
+        {
+            return this->instruction_precision_;
+        }
+
         stop_reason last_stop_reason() const
         {
             return this->last_stop_reason_;
@@ -294,6 +309,7 @@ namespace sogen
       private:
         std::atomic_bool switch_thread_{false};
         bool use_relative_time_{false}; // TODO: Get rid of that
+        bool instruction_precision_{true};
         std::atomic_bool should_stop{false};
 
         std::unordered_map<uint16_t, uint16_t> port_mappings_{};
