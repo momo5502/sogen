@@ -166,8 +166,10 @@ namespace sogen
         int32_t upload_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, const void* data, size_t data_size);
         int32_t flush_mapped_memory_range(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size);
         int32_t invalidate_mapped_memory_range(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size);
-        // Maps host-visible memory and returns the persistent host pointer (for aliasing into the guest).
-        int32_t map_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void*& out_host_pointer);
+        // Maps the entire VkDeviceMemory object (offset 0) and returns its persistent host pointer plus
+        // allocation size. Mapping the whole object lets a single coherent alias back every guest sub-range
+        // mapping of it. Reuses the existing mapping if already mapped (a memory object must not map twice).
+        int32_t map_memory(uint64_t device, uint64_t memory, void*& out_host_pointer, uint64_t& out_size);
         // Unmaps a mapping previously returned by map_memory.
         void unmap_memory(uint64_t device, uint64_t memory);
 

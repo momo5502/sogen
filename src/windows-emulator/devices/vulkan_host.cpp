@@ -364,6 +364,7 @@ namespace sogen
             uint64_t device_id{};
             void* persistent_host_pointer{};
             uint64_t mapped_size{};
+            uint64_t allocation_size{};
         };
 
         struct buffer_data
@@ -2361,7 +2362,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory, .device_id = device});
+        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory, .device_id = device, .allocation_size = size});
         out_memory = id;
         return VK_SUCCESS;
     }
@@ -2567,9 +2568,10 @@ namespace sogen
         return dev->second.invalidate_mapped_memory_ranges(dev->second.handle, 1, &range);
     }
 
-    int32_t vulkan_host::map_memory(uint64_t device, uint64_t memory, uint64_t offset, uint64_t size, void*& out_host_pointer)
+    int32_t vulkan_host::map_memory(uint64_t device, uint64_t memory, void*& out_host_pointer, uint64_t& out_size)
     {
         out_host_pointer = nullptr;
+        out_size = 0;
         const auto dev = this->impl_->devices.find(device);
         const auto mem = this->impl_->memories.find(memory);
         if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory)
@@ -2577,16 +2579,25 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        // A VkDeviceMemory must not be mapped twice; reuse the existing whole-object mapping.
+        if (mem->second.persistent_host_pointer)
+        {
+            out_host_pointer = mem->second.persistent_host_pointer;
+            out_size = mem->second.mapped_size;
+            return VK_SUCCESS;
+        }
+
         void* mapped = nullptr;
-        const VkResult result = dev->second.map_memory(dev->second.handle, mem->second.handle, offset, size, 0, &mapped);
+        const VkResult result = dev->second.map_memory(dev->second.handle, mem->second.handle, 0, VK_WHOLE_SIZE, 0, &mapped);
         if (result != VK_SUCCESS || !mapped)
         {
             return result != VK_SUCCESS ? result : VK_ERROR_MEMORY_MAP_FAILED;
         }
 
         out_host_pointer = mapped;
+        out_size = mem->second.allocation_size;
         mem->second.persistent_host_pointer = mapped;
-        mem->second.mapped_size = size;
+        mem->second.mapped_size = mem->second.allocation_size;
         return VK_SUCCESS;
     }
 
@@ -2599,6 +2610,8 @@ namespace sogen
             return;
         }
         dev->second.unmap_memory(dev->second.handle, mem->second.handle);
+        mem->second.persistent_host_pointer = nullptr;
+        mem->second.mapped_size = 0;
     }
 
     int32_t vulkan_host::create_image(uint64_t device, uint32_t format, uint32_t width, uint32_t height, uint32_t usage, uint32_t tiling,

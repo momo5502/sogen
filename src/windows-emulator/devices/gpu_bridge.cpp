@@ -1237,11 +1237,21 @@ namespace sogen
 
                 gpu_bridge::map_memory_direct_response response{};
 
+                // The whole VkDeviceMemory object is aliased once into the guest; any sub-range map is just
+                // an offset into that single coherent alias. If it's already aliased, return base + offset.
+                if (const auto existing = this->direct_mappings_.find(request.memory); existing != this->direct_mappings_.end())
+                {
+                    response.vk_result = 0; // VK_SUCCESS
+                    response.guest_address = existing->second.guest_address + request.offset;
+                    return write_output(win_emu, context, response);
+                }
+
                 void* host_ptr = nullptr;
-                response.vk_result = this->vulkan_.map_memory(request.device, request.memory, request.offset, request.size, host_ptr);
+                uint64_t host_size = 0;
+                response.vk_result = this->vulkan_.map_memory(request.device, request.memory, host_ptr, host_size);
 
                 constexpr uint64_t page = 0x1000;
-                if (response.vk_result != 0 || !host_ptr || (reinterpret_cast<uintptr_t>(host_ptr) % page) != 0)
+                if (response.vk_result != 0 || !host_ptr || host_size == 0 || (reinterpret_cast<uintptr_t>(host_ptr) % page) != 0)
                 {
                     if (host_ptr)
                     {
@@ -1250,7 +1260,7 @@ namespace sogen
                     return write_output(win_emu, context, response);
                 }
 
-                const uint64_t mapped_size = (request.size + page - 1) & ~(page - 1);
+                const uint64_t mapped_size = (host_size + page - 1) & ~(page - 1);
                 const uint64_t va = win_emu.memory.find_free_allocation_base(static_cast<size_t>(mapped_size));
                 if (va == 0 ||
                     !win_emu.memory.allocate_host_memory(va, static_cast<size_t>(mapped_size), host_ptr, memory_permission::read_write))
@@ -1261,7 +1271,7 @@ namespace sogen
 
                 this->direct_mappings_[request.memory] =
                     direct_mapping{.guest_address = va, .size = mapped_size, .device = request.device, .host_ptr = host_ptr};
-                response.guest_address = va;
+                response.guest_address = va + request.offset;
                 return write_output(win_emu, context, response);
             }
 
