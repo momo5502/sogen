@@ -533,6 +533,11 @@ namespace sogen::icicle
             return true;
         }
 
+        bool is_stop_thread_safe() const override
+        {
+            return true;
+        }
+
         std::string get_name() const override
         {
             return "icicle-emu";

@@ -851,6 +851,12 @@ namespace sogen::kvm
             {
                 return false;
             }
+
+            bool is_stop_thread_safe() const override
+            {
+                return true;
+            }
+
             std::string get_name() const override
             {
                 return "Linux KVM";

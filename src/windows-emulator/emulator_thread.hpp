@@ -282,6 +282,7 @@ namespace sogen
         uint64_t start_address{};
         uint64_t argument{};
         uint64_t executed_instructions{0};
+        uint64_t executed_blocks{0};
         bool setup_done{false};
 
         uint32_t id{};
@@ -410,6 +411,7 @@ namespace sogen
             buffer.write(this->start_address);
             buffer.write(this->argument);
             buffer.write(this->executed_instructions);
+            buffer.write(this->executed_blocks);
             buffer.write(this->setup_done);
             buffer.write(this->id);
             buffer.write(this->current_ip);
@@ -478,6 +480,7 @@ namespace sogen
             buffer.read(this->start_address);
             buffer.read(this->argument);
             buffer.read(this->executed_instructions);
+            buffer.read(this->executed_blocks);
             buffer.read(this->setup_done);
             buffer.read(this->id);
             buffer.read(this->current_ip);
