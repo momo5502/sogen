@@ -428,17 +428,21 @@ namespace sogen
             }
         }
 
-        bool empty_rect(const RECT& r)
-        {
-            return r.left >= r.right || r.top >= r.bottom;
-        }
-
         RECT union_update_rect(const RECT& a, const RECT& b)
         {
+            const auto empty_rect = [](const RECT& r) { //
+                return r.left >= r.right || r.top >= r.bottom;
+            };
+
             if (empty_rect(a))
+            {
                 return b;
+            }
+
             if (empty_rect(b))
+            {
                 return a;
+            }
 
             return RECT{
                 .left = std::min(a.left, b.left),
@@ -1224,7 +1228,7 @@ namespace sogen
             auto [handle, menu_obj] = c.proc.menus.create(c.win_emu.memory);
             menu_obj.handle = handle.bits;
             menu_obj.popup = popup;
-            menu_obj.sync_guest(c.win_emu.memory);
+            menu_obj.init_guest();
             return handle.bits;
         }
 
@@ -1247,7 +1251,7 @@ namespace sogen
             return menu;
         }
 
-        std::u16string read_menu_item_text(const syscall_context& c, const MENUITEMINFOW& mi,
+        std::u16string read_menu_item_text(const syscall_context& c, const EMU_MENUITEMINFO& mi,
                                            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> item_text)
         {
             if (item_text)
@@ -1263,11 +1267,11 @@ namespace sogen
                 }
             }
 
-            if (mi.dwTypeData != nullptr && mi.cch != 0)
+            if (mi.dwTypeData != 0 && mi.cch != 0)
             {
                 std::u16string result(mi.cch, u'\0');
                 const auto bytes = result.size() * sizeof(char16_t);
-                if (c.win_emu.memory.try_read_memory(reinterpret_cast<emulator_pointer>(mi.dwTypeData), result.data(), bytes))
+                if (c.win_emu.memory.try_read_memory(mi.dwTypeData, result.data(), bytes))
                 {
                     const auto terminator = result.find(u'\0');
                     if (terminator != std::u16string::npos)
@@ -1281,7 +1285,7 @@ namespace sogen
             return {};
         }
 
-        void update_menu_item(const syscall_context& c, menu_item& item, const MENUITEMINFOW& mi,
+        void update_menu_item(const syscall_context& c, menu_item& item, const EMU_MENUITEMINFO& mi,
                               const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> item_text)
         {
             if ((mi.fMask & MIIM_ID) != 0)
@@ -1290,7 +1294,7 @@ namespace sogen
             }
             if ((mi.fMask & MIIM_SUBMENU) != 0)
             {
-                item.submenu = reinterpret_cast<hmenu>(mi.hSubMenu);
+                item.submenu = mi.hSubMenu;
                 if (const auto* submenu = c.proc.menus.get(item.submenu))
                 {
                     item.submenu_ptr = submenu->guest.value();
@@ -1310,16 +1314,16 @@ namespace sogen
             }
             if ((mi.fMask & MIIM_DATA) != 0)
             {
-                item.data = static_cast<uint64_t>(mi.dwItemData);
+                item.data = mi.dwItemData;
             }
             if ((mi.fMask & MIIM_CHECKMARKS) != 0)
             {
-                item.hbmp_checked = reinterpret_cast<uint64_t>(mi.hbmpChecked);
-                item.hbmp_unchecked = reinterpret_cast<uint64_t>(mi.hbmpUnchecked);
+                item.hbmp_checked = mi.hbmpChecked;
+                item.hbmp_unchecked = mi.hbmpUnchecked;
             }
             if ((mi.fMask & MIIM_BITMAP) != 0)
             {
-                item.hbmp_item = reinterpret_cast<uint64_t>(mi.hbmpItem);
+                item.hbmp_item = mi.hbmpItem;
             }
             if ((mi.fMask & MIIM_STRING) != 0)
             {
@@ -3798,7 +3802,7 @@ namespace sogen
                 if (auto* menu = c.proc.menus.get(win->system_menu_ptr))
                 {
                     menu->items.clear();
-                    menu->sync_guest(c.win_emu.memory);
+                    menu->sync_guest_items(c.win_emu.memory);
                 }
             }
 
@@ -4239,7 +4243,7 @@ namespace sogen
         }
 
         BOOL handle_NtUserThunkedMenuItemInfo(const syscall_context& c, const hmenu menu, const UINT position, const BOOL by_position,
-                                              const BOOL insert, const emulator_object<MENUITEMINFOW> item_info,
+                                              const BOOL insert, const emulator_object<EMU_MENUITEMINFO> item_info,
                                               const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> item_text)
         {
             auto* m = c.proc.menus.get(menu);
@@ -4253,7 +4257,7 @@ namespace sogen
                 return FALSE;
             }
 
-            MENUITEMINFOW mi{};
+            EMU_MENUITEMINFO mi{};
             if (!c.win_emu.memory.try_read_memory(item_info.value(), &mi, sizeof(mi)))
             {
                 return FALSE;
@@ -4274,7 +4278,7 @@ namespace sogen
                     m->items.push_back(menu_item);
                 }
 
-                m->sync_guest(c.win_emu.memory);
+                m->sync_guest_items(c.win_emu.memory);
                 return TRUE;
             }
 
@@ -4290,8 +4294,16 @@ namespace sogen
                     return FALSE;
                 }
 
+                const auto old_text_size = m->items[position].text.size();
                 update_menu_item(c, m->items[position], mi, item_text);
-                m->sync_guest(c.win_emu.memory);
+                if ((mi.fMask & MIIM_STRING) != 0 && m->items[position].text.size() > old_text_size)
+                {
+                    m->sync_guest_items(c.win_emu.memory);
+                }
+                else
+                {
+                    m->sync_guest_item(c.win_emu.memory, position);
+                }
                 return TRUE;
             }
 
@@ -4301,8 +4313,17 @@ namespace sogen
                 return TRUE;
             }
 
+            const auto index = static_cast<size_t>(std::distance(m->items.begin(), it));
+            const auto old_text_size = it->text.size();
             update_menu_item(c, *it, mi, item_text);
-            m->sync_guest(c.win_emu.memory);
+            if ((mi.fMask & MIIM_STRING) != 0 && it->text.size() > old_text_size)
+            {
+                m->sync_guest_items(c.win_emu.memory);
+            }
+            else
+            {
+                m->sync_guest_item(c.win_emu.memory, index);
+            }
             return TRUE;
         }
 
@@ -4337,7 +4358,7 @@ namespace sogen
                 }
 
                 m->items.erase(m->items.begin() + static_cast<ptrdiff_t>(position));
-                m->sync_guest(c.win_emu.memory);
+                m->sync_guest_items(c.win_emu.memory);
                 return TRUE;
             }
 
@@ -4348,7 +4369,7 @@ namespace sogen
             }
 
             m->items.erase(it);
-            m->sync_guest(c.win_emu.memory);
+            m->sync_guest_items(c.win_emu.memory);
             return TRUE;
         }
 

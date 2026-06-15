@@ -172,9 +172,9 @@ namespace sogen
         uint32_t type{};
         uint32_t state{};
         uint64_t data{};
-        uint64_t hbmp_checked{};
-        uint64_t hbmp_unchecked{};
-        uint64_t hbmp_item{};
+        hbitmap hbmp_checked{};
+        hbitmap hbmp_unchecked{};
+        hbitmap hbmp_item{};
         std::u16string text{};
 
         void serialize(utils::buffer_serializer& buffer) const
@@ -220,7 +220,18 @@ namespace sogen
         {
         }
 
-        void sync_guest(memory_manager& memory)
+        void init_guest() const
+        {
+            this->guest.access([&](USER_MENU& m) {
+                m.hMenu = this->handle;
+                m.ptrBase = this->guest.value();
+                m.rgItems = this->item_storage;
+                m.flags = 0;
+                m.cItems = this->item_count;
+            });
+        }
+
+        void sync_guest_items(memory_manager& memory)
         {
             this->release_backing(memory);
             this->item_count = static_cast<uint32_t>(this->items.size());
@@ -234,48 +245,46 @@ namespace sogen
             if (!this->items.empty())
             {
                 const auto item_bytes = sizeof(USER_MENU_ITEM) * this->items.size();
-                this->item_storage =
-                    memory.allocate_memory(static_cast<size_t>(page_align_up(item_bytes)), memory_permission::read);
+                this->item_storage = memory.allocate_memory(static_cast<size_t>(page_align_up(item_bytes)), memory_permission::read);
             }
 
             auto next_text = this->text_storage;
             for (size_t i = 0; i < this->items.size(); ++i)
             {
                 const auto& item = this->items[i];
-                USER_MENU_ITEM guest_item{
-                    .type = item.type,
-                    .state = item.state,
-                    .id = item.id,
-                    .submenu = item.submenu_ptr,
-                    .hbmpChecked = item.hbmp_checked,
-                    .hbmpUnchecked = item.hbmp_unchecked,
-                    .data = item.data,
-                    .hbmpItem = item.hbmp_item,
-                };
+                const auto text_ptr = !item.text.empty() ? next_text : 0;
+                const auto guest_item = make_guest_item(item, text_ptr);
+                write_guest_item_text(memory, item, text_ptr);
 
-                if (!item.text.empty() && next_text != 0)
+                if (text_ptr != 0)
                 {
-                    const auto bytes = item.text.size() * sizeof(char16_t);
-                    memory.write_memory(next_text, item.text.data(), bytes);
-
-                    constexpr char16_t terminator = 0;
-                    memory.write_memory(next_text + bytes, &terminator, sizeof(terminator));
-
-                    guest_item.text = next_text;
-                    guest_item.cch = static_cast<uint32_t>(item.text.size());
-                    next_text += bytes + sizeof(terminator);
+                    next_text += (item.text.size() + 1) * sizeof(char16_t);
                 }
 
                 memory.write_memory(this->item_storage + i * sizeof(USER_MENU_ITEM), &guest_item, sizeof(guest_item));
             }
 
             this->guest.access([&](USER_MENU& m) {
-                m.hMenu = this->handle;
-                m.self = this->guest.value();
                 m.rgItems = this->item_storage;
-                m.flags = 0;
                 m.cItems = this->item_count;
             });
+        }
+
+        void sync_guest_item(memory_manager& memory, const size_t index)
+        {
+            // TODO: This method is very naive and smartly reserving memory could avoid lots of reallocations.
+            if (this->item_storage == 0 || static_cast<size_t>(this->item_count) != this->items.size() || index >= this->items.size())
+            {
+                this->sync_guest_items(memory);
+                return;
+            }
+
+            const auto& item = this->items[index];
+            const auto text_ptr = this->get_guest_text_ptr(index);
+            const auto guest_item = make_guest_item(item, text_ptr);
+            write_guest_item_text(memory, item, text_ptr);
+
+            memory.write_memory(this->item_storage + index * sizeof(USER_MENU_ITEM), &guest_item, sizeof(guest_item));
         }
 
         void release_guest_backing(memory_manager& memory)
@@ -306,6 +315,34 @@ namespace sogen
         }
 
       private:
+        static USER_MENU_ITEM make_guest_item(const menu_item& item, const emulator_pointer text_ptr)
+        {
+            return USER_MENU_ITEM{
+                .type = item.type,
+                .state = item.state,
+                .id = item.id,
+                .submenu = item.submenu_ptr,
+                .hbmpChecked = item.hbmp_checked,
+                .hbmpUnchecked = item.hbmp_unchecked,
+                .text = text_ptr,
+                .cch = static_cast<uint32_t>(item.text.size()),
+                .data = item.data,
+                .hbmpItem = item.hbmp_item,
+            };
+        }
+
+        static void write_guest_item_text(memory_manager& memory, const menu_item& item, const emulator_pointer text_ptr)
+        {
+            if (!item.text.empty() && text_ptr != 0)
+            {
+                const auto bytes = item.text.size() * sizeof(char16_t);
+                memory.write_memory(text_ptr, item.text.data(), bytes);
+
+                constexpr char16_t terminator = 0;
+                memory.write_memory(text_ptr + bytes, &terminator, sizeof(terminator));
+            }
+        }
+
         void release_backing(memory_manager& memory)
         {
             if (this->item_storage != 0)
@@ -319,6 +356,25 @@ namespace sogen
                 memory.release_memory(this->text_storage, 0);
                 this->text_storage = 0;
             }
+        }
+
+        emulator_pointer get_guest_text_ptr(const size_t index) const
+        {
+            if (this->text_storage == 0 || index >= this->items.size())
+            {
+                return 0;
+            }
+
+            auto text_ptr = this->text_storage;
+            for (size_t i = 0; i < index; ++i)
+            {
+                if (!this->items[i].text.empty())
+                {
+                    text_ptr += (this->items[i].text.size() + 1) * sizeof(char16_t);
+                }
+            }
+
+            return this->items[index].text.empty() ? 0 : text_ptr;
         }
 
         size_t text_storage_size() const

@@ -2612,16 +2612,16 @@ namespace sogen
                 return FALSE;
             }
 
-            const uint8_t rop3 = static_cast<uint8_t>((rop >> 16) & 0xFFu);
+            const auto rop3 = static_cast<uint8_t>((rop >> 16) & 0xFFu);
             const bool needs_source = rop3_uses_source(rop3);
 
             int32_t src_origin_x = 0;
             int32_t src_origin_y = 0;
-            uint32_t unused_present_handle = 0;
             gdi_bitmap_surface* src_surface = nullptr;
 
             if (needs_source)
             {
+                uint32_t unused_present_handle = 0;
                 if (src_dc == 0)
                 {
                     return FALSE;
@@ -2634,10 +2634,10 @@ namespace sogen
                 }
             }
 
-            int64_t dx = static_cast<int64_t>(x_dst) + dst_origin_x;
-            int64_t dy = static_cast<int64_t>(y_dst) + dst_origin_y;
-            int64_t sx = static_cast<int64_t>(x_src) + src_origin_x;
-            int64_t sy = static_cast<int64_t>(y_src) + src_origin_y;
+            auto dx = static_cast<int64_t>(x_dst) + dst_origin_x;
+            auto dy = static_cast<int64_t>(y_dst) + dst_origin_y;
+            auto sx = static_cast<int64_t>(x_src) + src_origin_x;
+            auto sy = static_cast<int64_t>(y_src) + src_origin_y;
             int64_t w = width;
             int64_t h = height;
 

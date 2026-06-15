@@ -282,14 +282,14 @@ namespace sogen
     struct USER_MENU
     {
         uint64_t hMenu;
-        uint64_t self;
+        uint64_t ptrBase;
         uint8_t pad_10[0x10];
         uint64_t rgItems;
         uint32_t flags;
         uint32_t cItems;
     };
     static_assert(offsetof(USER_MENU, hMenu) == 0x0);
-    static_assert(offsetof(USER_MENU, self) == 0x8);
+    static_assert(offsetof(USER_MENU, ptrBase) == 0x8);
     static_assert(offsetof(USER_MENU, rgItems) == 0x20);
     static_assert(offsetof(USER_MENU, flags) == 0x28);
     static_assert(offsetof(USER_MENU, cItems) == 0x2C);
@@ -299,17 +299,17 @@ namespace sogen
         uint32_t type;
         uint32_t state;
         uint32_t id;
-        uint8_t pad_0C[4];
+        uint8_t pad_0C[4]{};
         uint64_t submenu;
         uint64_t hbmpChecked;
         uint64_t hbmpUnchecked;
         uint64_t text;
         uint32_t cch;
-        uint8_t pad_34[4];
+        uint8_t pad_34[4]{};
         uint64_t data;
-        uint8_t pad_40[0x20];
+        uint8_t pad_40[0x20]{};
         uint64_t hbmpItem;
-        uint8_t pad_68[8];
+        uint8_t pad_68[8]{};
     };
     static_assert(offsetof(USER_MENU_ITEM, state) == 0x4);
     static_assert(offsetof(USER_MENU_ITEM, id) == 0x8);

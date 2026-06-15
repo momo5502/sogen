@@ -592,7 +592,7 @@ namespace sogen
         NTSTATUS handle_NtUserCreateAcceleratorTable();
         hmenu handle_NtUserCreateMenu(const syscall_context& c);
         BOOL handle_NtUserThunkedMenuItemInfo(const syscall_context& c, hmenu menu, UINT position, BOOL by_position, BOOL insert,
-                                              emulator_object<MENUITEMINFOW> item_info,
+                                              emulator_object<EMU_MENUITEMINFO> item_info,
                                               emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> item_text);
         hmenu handle_NtUserCreatePopupMenu(const syscall_context& c);
         BOOL handle_NtUserSetMenu();
