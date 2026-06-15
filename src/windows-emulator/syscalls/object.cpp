@@ -455,6 +455,7 @@ namespace sogen
             collect_wait32_candidate(c.proc.mutants, id, resolved, candidate_count);
             collect_wait32_candidate(c.proc.semaphores, id, resolved, candidate_count);
             collect_wait32_candidate(c.proc.ports, id, resolved, candidate_count);
+            collect_wait32_candidate(c.proc.io_completions, id, resolved, candidate_count);
             collect_wait32_candidate(c.proc.timers, id, resolved, candidate_count);
 
             if (candidate_count == 1)
@@ -514,6 +515,9 @@ namespace sogen
 
             case handle_types::port:
                 return validate_handle_in_store(c.proc.ports);
+
+            case handle_types::io_completion:
+                return validate_handle_in_store(c.proc.io_completions);
 
             case handle_types::timer:
                 if (h.value.is_pseudo)
