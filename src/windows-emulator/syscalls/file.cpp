@@ -1857,10 +1857,10 @@ namespace sogen
 
             c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
-            const auto local_filename = c.win_emu.file_sys.translate(filename).u8string();
+            const auto local_filename = c.win_emu.file_sys.translate(filename);
 
             struct compat_stat file_stat{};
-            if (!compat_stat(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat))
+            if (!compat_stat(local_filename, &file_stat))
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
@@ -1916,10 +1916,10 @@ namespace sogen
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
 
-            const auto local_filename = c.win_emu.file_sys.translate(filepath).u8string();
+            const auto local_filename = c.win_emu.file_sys.translate(filepath);
 
             struct compat_stat file_stat{};
-            if (!compat_stat(reinterpret_cast<const char*>(local_filename.c_str()), &file_stat))
+            if (!compat_stat(local_filename, &file_stat))
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }

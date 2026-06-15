@@ -4,6 +4,8 @@
 #include <utils/interupt_handler.hpp>
 #include <utils/win.hpp>
 
+#include <shellapi.h>
+
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -53,7 +55,7 @@ namespace sogen::sandbox
         int run(const std::span<const std::string_view> args)
         {
             application_settings app_settings{
-                .application = args[0],
+                .application = std::u8string(args[0].begin(), args[0].end()),
                 .arguments = parse_arguments(args),
             };
 
@@ -92,14 +94,21 @@ namespace sogen::sandbox
             return static_cast<int>(*exit_status);
         }
 
-        int run_main(const int argc, char** argv)
+        int run_main(const int argc, wchar_t** wargv)
         {
             try
             {
-                std::vector<std::string_view> args{};
+                std::vector<std::string> args{};
                 for (int i = 1; i < argc; ++i)
                 {
-                    args.emplace_back(argv[i]);
+                    args.emplace_back(w_to_u8(wargv[i]));
+                }
+
+                std::vector<std::string_view> views{};
+                views.reserve(args.size());
+                for (const auto& str : args)
+                {
+                    views.push_back(str);
                 }
 
                 if (args.empty())
@@ -108,7 +117,7 @@ namespace sogen::sandbox
                     return 1;
                 }
 
-                return run(args);
+                return run(views);
             }
             catch (const std::exception& e)
             {
@@ -121,15 +130,31 @@ namespace sogen::sandbox
 
             return 1;
         }
+
+        int run_current_command_line()
+        {
+            int argc = 0;
+            auto** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            if (!argv)
+            {
+                return 1;
+            }
+
+            const auto result = run_main(argc, argv);
+            LocalFree(argv);
+            return result;
+        }
     }
 }
 
-int main(const int argc, char** argv)
+int wmain(const int argc, wchar_t** argv)
 {
-    return sogen::sandbox::run_main(argc, argv);
+    (void)argc;
+    (void)argv;
+    return sogen::sandbox::run_current_command_line();
 }
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, PSTR, int)
 {
-    return sogen::sandbox::run_main(__argc, __argv);
+    return sogen::sandbox::run_current_command_line();
 }

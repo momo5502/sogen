@@ -5,6 +5,7 @@
 
 #include <fstream>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 
 namespace sogen
@@ -32,7 +33,7 @@ namespace sogen
         int unlink(const std::string& file_path) override;
 
       private:
-        std::string translate_path(std::string_view emulated_path) const;
+        std::optional<std::filesystem::path> translate_path(std::string_view emulated_path) const;
 
         windows_emulator* win_emu_{};
         std::unordered_map<unsigned, std::fstream> opened_files;

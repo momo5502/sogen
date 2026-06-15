@@ -86,15 +86,16 @@ namespace sogen
         return do_stat(handle, stat);
     }
 
-    bool compat_stat(const char* file_name, struct compat_stat* stat)
+    bool compat_stat(const std::filesystem::path& file_name, struct compat_stat* stat)
     {
-        if (file_name == nullptr)
+        if (file_name.empty())
         {
             return false;
         }
 
-        auto* const file_handle = CreateFileA(file_name, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE,
-                                              nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        auto* const file_handle =
+            CreateFileW(file_name.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                        OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
 
         if (file_handle == INVALID_HANDLE_VALUE)
         {
@@ -160,10 +161,10 @@ namespace sogen
         return true;
     }
 
-    bool compat_stat(const char* file_name, struct compat_stat* stat)
+    bool compat_stat(const std::filesystem::path& file_name, struct compat_stat* stat)
     {
         struct stat file_stat{};
-        if (::stat(file_name, &file_stat) != 0)
+        if (::stat(file_name.string().c_str(), &file_stat) != 0)
         {
             return false;
         }
