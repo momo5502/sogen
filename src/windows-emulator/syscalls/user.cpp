@@ -2888,6 +2888,7 @@ namespace sogen
                 return TRUE;
             }
 
+            c.proc.active_thread->await_msg_mask = QS_ALLINPUT;
             c.win_emu.yield_thread(false);
             return {};
         }
