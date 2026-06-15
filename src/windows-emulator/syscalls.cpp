@@ -496,6 +496,8 @@ namespace sogen
         BOOL handle_NtUserGetClassInfoEx(const syscall_context& c, hinstance /*instance*/,
                                          emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                          emulator_object<EMU_WNDCLASSEX> wnd_class_ex, emulator_pointer menu_name, BOOL /*ansi*/);
+        int handle_NtUserGetClassName(const syscall_context& c, hwnd win_hwnd, BOOL real,
+                                      emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name);
         NTSTATUS handle_NtUserSetWindowsHookEx();
         NTSTATUS handle_NtUserUnhookWindowsHookEx();
         hwnd handle_NtUserCreateWindowEx(const syscall_context& c, DWORD ex_style, emulator_object<LARGE_STRING> class_name,
@@ -540,8 +542,8 @@ namespace sogen
         LONG handle_NtUserChangeDisplaySettings(const syscall_context& c,
                                                 emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
                                                 emulator_object<EMU_DEVMODEW> dev_mode, hwnd window, DWORD flags, uint64_t param);
-        NTSTATUS handle_NtUserBuildHwndList(const syscall_context& c, uint64_t desktop, hwnd next, BOOLEAN enum_children, BOOLEAN unknown,
-                                            ULONG thread_id, ULONG max_count, uint64_t hwnd_list, emulator_object<ULONG> hwnd_needed);
+        NTSTATUS handle_NtUserBuildHwndList(const syscall_context& c, hdesk desktop, hwnd hwnd_next, BOOL children, BOOL remove_immersive,
+                                            DWORD thread_id, UINT hwnd_max, emulator_pointer hwnd_list, emulator_object<UINT> hwnd_needed);
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
                                               uint64_t param);
         BOOL completion_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
@@ -1379,6 +1381,7 @@ namespace sogen
         add_handler(NtCallbackReturn);
         add_handler(NtUserPostQuitMessage);
         add_handler(NtUserGetClassInfoEx);
+        add_handler(NtUserGetClassName);
         add_handler(NtUserCallNoParam);
         add_handler(NtUserGetDisplayConfigBufferSizes);
         add_handler(NtUserQueryDisplayConfig);
