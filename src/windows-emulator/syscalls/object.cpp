@@ -515,6 +515,9 @@ namespace sogen
             case handle_types::port:
                 return validate_handle_in_store(c.proc.ports);
 
+            case handle_types::io_completion:
+                return validate_handle_in_store(c.proc.io_completions);
+
             case handle_types::timer:
                 if (h.value.is_pseudo)
                 {
