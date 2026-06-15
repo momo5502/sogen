@@ -1897,9 +1897,33 @@ namespace sogen
 
                 if (children)
                 {
-                    if (win.parent_handle != hwnd_next)
+                    if (hwnd_next == 0)
                     {
-                        continue;
+                        if (win.handle == desktop_window || win.parent_handle != desktop_window)
+                        {
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        hwnd current = win.parent_handle;
+                        bool is_descendant = false;
+                        for (size_t guard = 0; current != 0 && guard < c.proc.windows.size(); ++guard)
+                        {
+                            if (current == hwnd_next)
+                            {
+                                is_descendant = true;
+                                break;
+                            }
+
+                            const auto* parent = c.proc.windows.get(current);
+                            current = parent != nullptr ? parent->parent_handle : 0;
+                        }
+
+                        if (!is_descendant)
+                        {
+                            continue;
+                        }
                     }
                 }
                 else
@@ -2047,18 +2071,20 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtUserGetClassName(const syscall_context& c, const hwnd win_hwnd, const BOOL /*real*/,
-                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name)
+        int handle_NtUserGetClassName(const syscall_context& c, const hwnd win_hwnd, const BOOL /*real*/,
+                                      const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name)
         {
             const auto* wnd = c.proc.windows.get(win_hwnd);
             if (!wnd)
             {
-                return FALSE;
+                set_guest_last_error(c, 6); // ERROR_INVALID_HANDLE
+                return 0;
             }
             const auto& name = wnd->class_name;
             const size_t name_length_bytes = name.size() * sizeof(char16_t);
 
             bool too_small = false;
+            size_t copied_chars = 0;
 
             class_name.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str) {
                 if (str.MaximumLength < sizeof(char16_t) || !str.Buffer)
@@ -2080,15 +2106,16 @@ namespace sogen
                 c.emu.write_memory(str.Buffer + copy_bytes, &terminator, sizeof(terminator));
 
                 str.Length = static_cast<USHORT>(copy_bytes);
+                copied_chars = copy_bytes / sizeof(char16_t);
             });
 
             if (too_small)
             {
                 set_guest_last_error(c, 122); // ERROR_INSUFFICIENT_BUFFER
-                return FALSE;
+                return 0;
             }
 
-            return TRUE;
+            return static_cast<int>(copied_chars);
         }
 
         NTSTATUS handle_NtUserSetWindowsHookEx()
