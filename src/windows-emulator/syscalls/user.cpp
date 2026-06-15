@@ -2050,7 +2050,7 @@ namespace sogen
         BOOL handle_NtUserGetClassName(const syscall_context& c, const hwnd win_hwnd, const BOOL /*real*/,
                                        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name)
         {
-            const auto wnd = c.proc.windows.get(win_hwnd);
+            const auto* wnd = c.proc.windows.get(win_hwnd);
             if (!wnd)
             {
                 return FALSE;
