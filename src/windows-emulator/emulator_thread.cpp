@@ -135,6 +135,17 @@ namespace sogen
                 break;
             }
 
+            case handle_types::io_completion: {
+                io_completion_wait::materialize_signaled_wait_packets(c, h);
+                const auto* completion = c.io_completions.get(h);
+                if (completion && !completion->queue.empty())
+                {
+                    return wait_state::signaled;
+                }
+
+                break;
+            }
+
             case handle_types::thread: {
                 const auto* t = c.threads.get(h);
                 if (t && t->is_terminated())
@@ -218,6 +229,19 @@ namespace sogen
                     return std::nullopt;
                 }
 
+                return wait_state::signaled;
+            }
+
+            case handle_types::io_completion: {
+                io_completion_wait::materialize_signaled_wait_packets(c, h);
+                const auto* completion = c.io_completions.get(h);
+                if (!completion || completion->queue.empty())
+                {
+                    return std::nullopt;
+                }
+
+                // Waiting on the port only observes the signaled state; packets are dequeued via
+                // NtRemoveIoCompletion, so the queue is left untouched here.
                 return wait_state::signaled;
             }
 
