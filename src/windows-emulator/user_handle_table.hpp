@@ -2,6 +2,7 @@
 #include "emulator_utils.hpp"
 #include "handles.hpp"
 
+
 #include <array>
 
 namespace sogen
@@ -12,6 +13,9 @@ namespace sogen
       public:
         static constexpr uint32_t MAX_HANDLES = 0xFFFF;
         static constexpr size_t CLIENT_MESSAGE_BITS_SIZE = 0xC8;
+        static constexpr size_t WND_MESSAGE_BITS_COUNT = FNID_ARRAY_SIZE + 2;
+        static constexpr size_t DEF_WINDOW_MSGS_INDEX = FNID_ARRAY_SIZE;
+        static constexpr size_t DEF_WINDOW_SPEC_MSGS_INDEX = FNID_ARRAY_SIZE + 1;
 
         user_handle_table(memory_manager& memory)
             : memory_(&memory)
@@ -41,28 +45,23 @@ namespace sogen
             const auto handle_table_size = static_cast<size_t>(page_align_up(sizeof(USER_HANDLEENTRY) * MAX_HANDLES));
             handle_table_addr_ = this->allocate_memory(handle_table_size, memory_permission::read);
 
-            client_message_bits_addr_ =
-                this->allocate_memory(static_cast<size_t>(page_align_up(CLIENT_MESSAGE_BITS_SIZE)), memory_permission::read);
-            std::array<uint8_t, CLIENT_MESSAGE_BITS_SIZE> client_message_bits{};
-            const auto set_message_bit = [&](const uint32_t message) {
-                const auto byte_index = message >> 3;
-                if (byte_index < client_message_bits.size())
-                {
-                    client_message_bits[byte_index] |= static_cast<uint8_t>(1u << (message & 7u));
-                }
-            };
-            // Window messages user32 forwards to the client-side window procedure; their bits
-            // are set in the shared client-message bitmap that user32 consults before calling back.
-            static constexpr auto client_callback_messages = std::to_array<uint32_t>(
-                {0x0001u, 0x0002u, 0x0007u, 0x0008u, 0x000Au, 0x000Cu, 0x000Fu, 0x0014u, 0x0030u, 0x0031u, 0x0050u,
-                 0x0070u, 0x0081u, 0x0082u, 0x0084u, 0x0087u, 0x00A1u, 0x00A3u, 0x00F0u, 0x00F1u, 0x00F2u, 0x00F3u,
-                 0x00F4u, 0x00F5u, 0x00F6u, 0x00F7u, 0x00F8u, 0x0100u, 0x0101u, 0x0102u, 0x0105u, 0x0110u, 0x0113u,
-                 0x0128u, 0x0129u, 0x0170u, 0x0171u, 0x0172u, 0x0200u, 0x0201u, 0x0202u, 0x0203u, 0x0215u, 0x0318u});
-            for (const uint32_t message : client_callback_messages)
+            const auto wnd_message_bits_size = static_cast<size_t>(page_align_up(get_wnd_message_bits_allocation_size()));
+            wnd_message_bits_addr_ = this->allocate_memory(wnd_message_bits_size, memory_permission::read);
+            wnd_message_bits_addrs_.fill(0);
+
+            uint64_t wnd_message_bits_cursor = wnd_message_bits_addr_;
+            for (size_t i = 0; i < WND_MESSAGE_BITS.size(); ++i)
             {
-                set_message_bit(message);
+                const auto byte_size = get_wnd_message_bits_byte_size(WND_MESSAGE_BITS[i].max_msgs);
+                if (byte_size == 0)
+                {
+                    continue;
+                }
+
+                wnd_message_bits_addrs_[i] = wnd_message_bits_cursor;
+                memory_->write_memory(wnd_message_bits_cursor, WND_MESSAGE_BITS[i].bits.data(), byte_size);
+                wnd_message_bits_cursor += align_up(byte_size, alignof(uint32_t));
             }
-            memory_->write_memory(client_message_bits_addr_, client_message_bits.data(), client_message_bits.size());
         }
 
         emulator_object<USER_SERVERINFO> get_server_info() const
@@ -90,9 +89,19 @@ namespace sogen
             return {*memory_, display_info_addr_};
         }
 
-        uint64_t get_client_message_bits() const
+        USER_WNDMSG get_awm_control_message(const size_t index) const
         {
-            return client_message_bits_addr_;
+            return get_wnd_message(index);
+        }
+
+        USER_WNDMSG get_def_window_messages() const
+        {
+            return get_wnd_message(DEF_WINDOW_MSGS_INDEX);
+        }
+
+        USER_WNDMSG get_def_window_spec_messages() const
+        {
+            return get_wnd_message(DEF_WINDOW_SPEC_MSGS_INDEX);
         }
 
         template <typename T>
@@ -141,7 +150,8 @@ namespace sogen
             buffer.write(server_info_addr_);
             buffer.write(handle_table_addr_);
             buffer.write(display_info_addr_);
-            buffer.write(client_message_bits_addr_);
+            buffer.write(wnd_message_bits_addr_);
+            buffer.write(wnd_message_bits_addrs_);
             buffer.write_vector(used_indices_);
             buffer.write(is_wow64_process_);
         }
@@ -151,12 +161,100 @@ namespace sogen
             buffer.read(server_info_addr_);
             buffer.read(handle_table_addr_);
             buffer.read(display_info_addr_);
-            buffer.read(client_message_bits_addr_);
+            buffer.read(wnd_message_bits_addr_);
+            buffer.read(wnd_message_bits_addrs_);
             buffer.read_vector(used_indices_);
             buffer.read(is_wow64_process_);
         }
 
       private:
+        static constexpr size_t WND_MESSAGE_BITS_MAX_INTS = 33;
+
+        struct wnd_message_bits_definition
+        {
+            uint32_t max_msgs;
+            std::array<uint32_t, WND_MESSAGE_BITS_MAX_INTS> bits;
+        };
+
+        static constexpr std::array<wnd_message_bits_definition, WND_MESSAGE_BITS_COUNT> WND_MESSAGE_BITS = {{
+            {0x0318u, {0x00109580u, 0x00030000u, 0x00010000u, 0x00010000u, 0x00000096u, 0x00000000u, 0x00000000u, 0x00FF0000u, 0x00000027u,
+                       0x00000100u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x0020000Fu, 0x00000000u,
+                       0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x01000000u}},
+            {0x0318u, {0x0210FDA2u, 0x02033800u, 0x00080000u, 0x30010000u, 0x00000086u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00020015u,
+                       0x01FC0100u, 0xFFFFFFFFu, 0x00000093u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x0020440Fu, 0x00000000u,
+                       0x00000000u, 0x00000000u, 0x00000000u, 0x00000008u, 0x00000000u, 0x00000000u, 0x0180000Fu}},
+            {0x0318u, {0x00108DA2u, 0x00030000u, 0x00000080u, 0x30010000u, 0x00000086u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00380005u,
+                       0x00000000u, 0x00000000u, 0x00000000u, 0xFFFFFFFFu, 0x0004FFFFu, 0x00000000u, 0x00000000u, 0x0020448Fu, 0x0008EC00u,
+                       0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x01000000u}},
+            {0x0402u, {0x031100C0u, 0x0282C100u, 0x00210000u, 0x00010000u, 0x00000004u, 0x00000002u, 0x00000000u, 0x00000000u, 0x00050010u,
+                       0x01FC0000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00020002u, 0x00000000u,
+                       0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+                       0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000007u}},
+            {0x0318u, {0x0010FDA2u, 0x00030000u, 0x00020000u, 0x38010000u, 0x00000086u, 0x3FFF0000u, 0x03FFFBF6u, 0x00000000u, 0x0130E057u,
+                       0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x002044BFu, 0x00000000u,
+                       0x00000000u, 0x00000000u, 0x00000176u, 0x00000000u, 0x00000000u, 0x00000000u, 0x0100001Fu}},
+            {0x0318u, {0x00108DA2u, 0x00030000u, 0x00000080u, 0x30010000u, 0x00000086u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00380005u,
+                       0x00000000u, 0x00000000u, 0x00000000u, 0xFFFFFFFFu, 0x0004FFFFu, 0x00000000u, 0x00000000u, 0x0020448Fu, 0x0008EC00u,
+                       0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x01000000u}},
+            {0x0000u, {}},
+            {0x0318u, {0x0010B406u, 0x00030000u, 0x00010000u, 0x00010000u, 0x00000096u, 0x0000000Au, 0x00000000u, 0x00000000u, 0x00080000u,
+                       0x00000100u, 0x00000000u, 0x000F0000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x0000000Au, 0x00000000u,
+                       0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x01000000u}},
+            {0x0288u, {0x00108006u, 0x00000000u, 0x00000400u, 0x00010000u, 0x00000004u, 0x00000000u, 0x00000000u,
+                       0x00000000u, 0x0000E000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
+                       0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x000001AEu}},
+            {0x0082u, {0x00000006u, 0x00000000u, 0x00000000u, 0x00010000u, 0x00000004u}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x0000u, {}},
+            {0x033Fu, {0x80119800u, 0x082C08C1u, 0x00032000u, 0x88000000u, 0x0000016Bu, 0x0000C03Fu, 0x00000000u, 0x00000000u, 0x00040062u,
+                       0x00000100u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000800u,
+                       0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x08880000u, 0x80000000u}},
+            {0x0349u,
+             {0x030A6040u, 0x0080C002u, 0x042800C0u, 0x00000000u, 0x00001810u, 0x00001000u, 0x00000000u, 0x00000000u, 0x0600E211u,
+              0x01FC0280u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x03005420u, 0x18000400u,
+              0x000EFEEFu, 0x00040000u, 0x000300FEu, 0x00000000u, 0x00002000u, 0x00000040u, 0x02000000u, 0x00000000u, 0x00000200u}},
+        }};
+
+        static constexpr size_t get_wnd_message_bits_byte_size(const uint32_t max_msgs)
+        {
+            return max_msgs == 0 ? 0 : ((max_msgs / 32u) + 1u) * sizeof(uint32_t);
+        }
+
+        static consteval size_t get_wnd_message_bits_allocation_size()
+        {
+            size_t size = 0;
+            for (const auto& entry : WND_MESSAGE_BITS)
+            {
+                size += align_up(get_wnd_message_bits_byte_size(entry.max_msgs), alignof(uint32_t));
+            }
+            return size;
+        }
+
+        USER_WNDMSG get_wnd_message(const size_t index) const
+        {
+            if (index >= WND_MESSAGE_BITS.size())
+            {
+                throw std::out_of_range("Invalid shared wnd message table index");
+            }
+
+            USER_WNDMSG message{};
+            message.maxMsgs = WND_MESSAGE_BITS[index].max_msgs;
+            message.abMsgs = wnd_message_bits_addrs_[index];
+            return message;
+        }
+
         uint32_t find_free_index() const
         {
             for (uint32_t i = 1; i < used_indices_.size(); ++i)
@@ -192,7 +290,8 @@ namespace sogen
         uint64_t server_info_addr_{};
         uint64_t handle_table_addr_{};
         uint64_t display_info_addr_{};
-        uint64_t client_message_bits_addr_{};
+        uint64_t wnd_message_bits_addr_{};
+        std::array<uint64_t, WND_MESSAGE_BITS_COUNT> wnd_message_bits_addrs_{};
         std::vector<bool> used_indices_{};
         memory_manager* memory_{};
         bool is_wow64_process_{};

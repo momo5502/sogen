@@ -75,6 +75,14 @@ namespace sogen
     };
     static_assert(sizeof(USER_HANDLEENTRY) == 0x20);
 
+    struct USER_WNDMSG
+    {
+        DWORD maxMsgs;
+        uint64_t abMsgs;
+    };
+    static_assert(offsetof(USER_WNDMSG, abMsgs) == 0x8);
+    static_assert(sizeof(USER_WNDMSG) == 0x10);
+
     struct USER_SHAREDINFO
     {
         EMULATOR_CAST(uint64_t, USER_SERVERINFO*) psi;
@@ -83,19 +91,14 @@ namespace sogen
         uint32_t pad_014;
         EMULATOR_CAST(uint64_t, USER_DISPINFO*) pDispInfo;
         uint8_t pad_020[0x78];
-        uint32_t controlMessageMax;
-        uint32_t pad_09C;
-        uint64_t controlMessageBits;
-        uint8_t pad_0A8[0x60];
-        uint32_t staticMessageMax;
-        uint32_t pad_10C;
-        uint64_t staticMessageBits;
+        USER_WNDMSG awmControl[FNID_ARRAY_SIZE];
+        USER_WNDMSG DefWindowMsgs;
+        USER_WNDMSG DefWindowSpecMsgs;
     };
     static_assert(offsetof(USER_SHAREDINFO, pDispInfo) == 0x18);
-    static_assert(offsetof(USER_SHAREDINFO, controlMessageMax) == 0x98);
-    static_assert(offsetof(USER_SHAREDINFO, controlMessageBits) == 0xA0);
-    static_assert(offsetof(USER_SHAREDINFO, staticMessageMax) == 0x108);
-    static_assert(offsetof(USER_SHAREDINFO, staticMessageBits) == 0x110);
+    static_assert(offsetof(USER_SHAREDINFO, awmControl) == 0x98);
+    static_assert(offsetof(USER_SHAREDINFO, DefWindowMsgs) == 0x218);
+    static_assert(offsetof(USER_SHAREDINFO, DefWindowSpecMsgs) == 0x228);
 
     // user32 reads fields after copying 0x238 payload to _gSharedInfo
     struct WIN32K_USERCONNECT32

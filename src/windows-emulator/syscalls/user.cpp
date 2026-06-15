@@ -507,6 +507,107 @@ namespace sogen
             return text;
         }
 
+        void validate_window(window& win);
+
+        bool write_message_call_result(const syscall_context& c, const uint64_t result_info, const uint64_t result)
+        {
+            if (result_info == 0)
+            {
+                return true;
+            }
+
+            if (c.proc.is_wow64_process)
+            {
+                const auto result32 = static_cast<uint32_t>(result);
+                return c.win_emu.memory.try_write_memory(result_info, &result32, sizeof(result32));
+            }
+
+            return c.win_emu.memory.try_write_memory(result_info, &result, sizeof(result));
+        }
+
+        uint64_t copy_def_window_text(const syscall_context& c, const window& win, const uint64_t character_count, const uint64_t buffer,
+                                      const bool ansi)
+        {
+            if (character_count == 0 || buffer == 0)
+            {
+                return 0;
+            }
+
+            const auto text = read_guest_window_text(c, win);
+            if (ansi)
+            {
+                const auto narrow = u16_to_u8(text);
+                const auto copy_count = std::min<uint64_t>(narrow.size(), character_count - 1);
+                if (copy_count != 0 && !c.win_emu.memory.try_write_memory(buffer, narrow.data(), static_cast<size_t>(copy_count)))
+                {
+                    return 0;
+                }
+
+                const char terminator = '\0';
+                if (!c.win_emu.memory.try_write_memory(buffer + copy_count, &terminator, sizeof(terminator)))
+                {
+                    return 0;
+                }
+
+                return copy_count;
+            }
+
+            const auto copy_count = std::min<uint64_t>(text.size(), character_count - 1);
+            if (copy_count != 0 &&
+                !c.win_emu.memory.try_write_memory(buffer, text.data(), static_cast<size_t>(copy_count * sizeof(char16_t))))
+            {
+                return 0;
+            }
+
+            const char16_t terminator = u'\0';
+            if (!c.win_emu.memory.try_write_memory(buffer + copy_count * sizeof(char16_t), &terminator, sizeof(terminator)))
+            {
+                return 0;
+            }
+
+            return copy_count;
+        }
+
+        uint64_t handle_default_window_proc_message(const syscall_context& c, window& win, const UINT msg, const uint64_t w_param,
+                                                    const uint64_t l_param, const BOOL ansi)
+        {
+            switch (msg)
+            {
+            case WM_SETTEXT:
+                if (l_param == 0)
+                {
+                    update_window_title(c, win, {});
+                }
+                else if (ansi)
+                {
+                    update_window_title(c, win, u8_to_u16(read_string<char>(c.win_emu.memory, l_param)));
+                }
+                else
+                {
+                    update_window_title(c, win, read_string<char16_t>(c.win_emu.memory, l_param));
+                }
+                return TRUE;
+
+            case WM_GETTEXT:
+                return copy_def_window_text(c, win, w_param, l_param, ansi != FALSE);
+
+            case WM_GETTEXTLENGTH: {
+                const auto text = read_guest_window_text(c, win);
+                return ansi ? u16_to_u8(text).size() : text.size();
+            }
+
+            case WM_ERASEBKGND:
+                return TRUE;
+
+            case WM_PAINT:
+                validate_window(win);
+                return FALSE;
+
+            default:
+                return FALSE;
+            }
+        }
+
         std::u16string normalize_dialog_button_caption(std::u16string text)
         {
             text.erase(std::ranges::remove(text, u'&').begin(), text.end());
@@ -2461,12 +2562,18 @@ namespace sogen
         }
 
         uint64_t handle_NtUserMessageCall(const syscall_context& c, const hwnd hwnd, const UINT msg, const uint64_t w_param,
-                                          const uint64_t l_param, const uint64_t /*result_info*/, const DWORD type, const BOOL ansi)
+                                          const uint64_t l_param, const uint64_t result_info, const DWORD type, const BOOL ansi)
         {
             auto* win = c.proc.windows.get(hwnd);
             if (!win)
             {
                 return 0;
+            }
+
+            if (type == FNID_DEFWINDOW)
+            {
+                const auto result = handle_default_window_proc_message(c, *win, msg, w_param, l_param, ansi);
+                return write_message_call_result(c, result_info, result) ? TRUE : FALSE;
             }
 
             if (win->thread_id != c.proc.active_thread->id)

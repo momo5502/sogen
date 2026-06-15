@@ -274,10 +274,12 @@ namespace sogen
             shared.aheList = process.user_handles.get_handle_table().value();
             shared.HeEntrySize = sizeof(USER_HANDLEENTRY);
             shared.pDispInfo = process.user_handles.get_display_info().value();
-            shared.controlMessageMax = k_wow64_wndmsg_count;
-            shared.controlMessageBits = process.user_handles.get_client_message_bits();
-            shared.staticMessageMax = k_wow64_wndmsg_count;
-            shared.staticMessageBits = process.user_handles.get_client_message_bits();
+            for (int i = 0; i < FNID_ARRAY_SIZE; i++)
+            {
+                shared.awmControl[i] = process.user_handles.get_awm_control_message(i);
+            }
+            shared.DefWindowMsgs = process.user_handles.get_def_window_messages();
+            shared.DefWindowSpecMsgs = process.user_handles.get_def_window_spec_messages();
         }
 
         bool try_write_user_shared_info(memory_interface& memory, const uint64_t destination, const process_context& process)
