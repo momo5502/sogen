@@ -69,7 +69,7 @@ int wmain(int argc, wchar_t** argv)
     return dispatch_main(argc, argv);
 }
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int)
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 {
     return dispatch_main(__argc, __wargv);
 }
