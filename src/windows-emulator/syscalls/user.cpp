@@ -1874,17 +1874,56 @@ namespace sogen
             return 0;
         }
 
-        // Reports an empty top-level/child window enumeration. The trailing (HWND* phwndFirst, UINT* pcHwndNeeded)
-        // pair is stable across Windows versions; writing a zero count is memory-safe and lets enumeration callers
-        // (EnumWindows and friends) complete without iterating any windows.
-        NTSTATUS handle_NtUserBuildHwndList(const syscall_context& /*c*/, const uint64_t /*desktop*/, const hwnd /*next*/,
-                                            const BOOLEAN /*enum_children*/, const BOOLEAN /*unknown*/, const ULONG /*thread_id*/,
-                                            const ULONG /*max_count*/, const uint64_t /*hwnd_list*/,
-                                            const emulator_object<ULONG> hwnd_needed)
+        NTSTATUS handle_NtUserBuildHwndList(const syscall_context& c, const hdesk /*desktop*/, const hwnd hwnd_next, const BOOL children,
+                                            const BOOL /*remove_immersive*/, const DWORD thread_id, const UINT hwnd_max,
+                                            const emulator_pointer hwnd_list, const emulator_object<UINT> hwnd_needed)
         {
-            if (hwnd_needed)
+            if (!hwnd_needed)
             {
-                hwnd_needed.write(0);
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const hwnd desktop_window = c.proc.default_desktop_window_handle.bits;
+            std::vector<hwnd> handles{};
+
+            for (const auto& entry : c.proc.windows)
+            {
+                const auto& win = entry.second;
+
+                if (thread_id != 0 && win.thread_id != thread_id)
+                {
+                    continue;
+                }
+
+                if (children)
+                {
+                    if (win.parent_handle != hwnd_next)
+                    {
+                        continue;
+                    }
+                }
+                else
+                {
+                    if (win.handle == desktop_window || win.parent_handle != desktop_window)
+                    {
+                        continue;
+                    }
+                }
+
+                handles.push_back(win.handle);
+            }
+
+            handles.push_back(0);
+            hwnd_needed.write(static_cast<UINT>(handles.size()));
+
+            if (hwnd_max < handles.size())
+            {
+                return STATUS_BUFFER_TOO_SMALL;
+            }
+
+            if (hwnd_list)
+            {
+                c.emu.write_memory(hwnd_list, handles.data(), handles.size() * sizeof(handles[0]));
             }
 
             return STATUS_SUCCESS;

@@ -540,8 +540,8 @@ namespace sogen
         LONG handle_NtUserChangeDisplaySettings(const syscall_context& c,
                                                 emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
                                                 emulator_object<EMU_DEVMODEW> dev_mode, hwnd window, DWORD flags, uint64_t param);
-        NTSTATUS handle_NtUserBuildHwndList(const syscall_context& c, uint64_t desktop, hwnd next, BOOLEAN enum_children, BOOLEAN unknown,
-                                            ULONG thread_id, ULONG max_count, uint64_t hwnd_list, emulator_object<ULONG> hwnd_needed);
+        NTSTATUS handle_NtUserBuildHwndList(const syscall_context& c, hdesk desktop, hwnd hwnd_next, BOOL children, BOOL remove_immersive,
+                                            DWORD thread_id, UINT hwnd_max, emulator_pointer hwnd_list, emulator_object<UINT> hwnd_needed);
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
                                               uint64_t param);
         BOOL completion_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
