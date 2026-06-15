@@ -3016,7 +3016,7 @@ namespace sogen
 
         // Custom border colors carry their RGBA in a VkSamplerCustomBorderColorCreateInfoEXT pNext that the
         // bridge does not forward; without it the enum is invalid, so fall back to opaque black.
-        VkBorderColor border = static_cast<VkBorderColor>(border_color);
+        auto border = static_cast<VkBorderColor>(border_color);
         if (border == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT || border == VK_BORDER_COLOR_INT_CUSTOM_EXT)
         {
             border = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
