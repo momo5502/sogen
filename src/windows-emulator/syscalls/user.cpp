@@ -2047,6 +2047,50 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserGetClassName(const syscall_context& c, const hwnd win_hwnd, const BOOL /*real*/,
+                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name)
+        {
+            const auto wnd = c.proc.windows.get(win_hwnd);
+            if (!wnd)
+            {
+                return FALSE;
+            }
+            const auto& name = wnd->class_name;
+            const size_t name_length_bytes = name.size() * sizeof(char16_t);
+
+            bool too_small = false;
+
+            class_name.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& str) {
+                if (str.MaximumLength < sizeof(char16_t) || !str.Buffer)
+                {
+                    str.Length = 0;
+                    too_small = true;
+                    return;
+                }
+
+                const auto max_copy_bytes = static_cast<size_t>(str.MaximumLength - sizeof(char16_t)) & ~size_t{1};
+                const auto copy_bytes = std::min(name_length_bytes, max_copy_bytes);
+
+                if (copy_bytes)
+                {
+                    c.emu.write_memory(str.Buffer, name.data(), copy_bytes);
+                }
+
+                constexpr char16_t terminator = 0;
+                c.emu.write_memory(str.Buffer + copy_bytes, &terminator, sizeof(terminator));
+
+                str.Length = static_cast<USHORT>(copy_bytes);
+            });
+
+            if (too_small)
+            {
+                set_guest_last_error(c, 122); // ERROR_INSUFFICIENT_BUFFER
+                return FALSE;
+            }
+
+            return TRUE;
+        }
+
         NTSTATUS handle_NtUserSetWindowsHookEx()
         {
             return STATUS_NOT_SUPPORTED;
