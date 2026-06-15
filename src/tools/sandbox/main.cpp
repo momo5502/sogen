@@ -103,6 +103,7 @@ namespace sogen::sandbox
                 }
 
                 std::vector<std::string_view> views{};
+                views.reserve(args.size());
                 for (const auto& str : args)
                 {
                     views.push_back(str);

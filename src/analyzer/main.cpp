@@ -6,7 +6,7 @@
 #include <windows.h>
 #endif
 
-#include "emulator-platform/platform/unicode.hpp"
+#include <emulator-platform/platform/platform.hpp>
 
 namespace sogen
 {
