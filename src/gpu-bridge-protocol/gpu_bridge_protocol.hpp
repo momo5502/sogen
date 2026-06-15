@@ -167,6 +167,7 @@ namespace sogen::gpu_bridge
         flush_mapped_memory_direct = 0x882,
         invalidate_mapped_memory_direct = 0x883,
         cmd_copy_image = 0x884,
+        get_physical_device_memory_budget = 0x885,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -301,6 +302,8 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_flush_mapped_memory_direct = make_ioctl(static_cast<uint32_t>(command::flush_mapped_memory_direct));
     inline constexpr uint32_t ioctl_invalidate_mapped_memory_direct =
         make_ioctl(static_cast<uint32_t>(command::invalidate_mapped_memory_direct));
+    inline constexpr uint32_t ioctl_get_physical_device_memory_budget =
+        make_ioctl(static_cast<uint32_t>(command::get_physical_device_memory_budget));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -768,6 +771,22 @@ namespace sogen::gpu_bridge
     struct get_physical_device_memory_properties_request
     {
         object_id physical_device;
+    };
+
+    // VK_MAX_MEMORY_HEAPS is 16; mirror it here so the response is a fixed, self-describing size.
+    inline constexpr uint32_t max_memory_heaps = 16;
+
+    struct get_physical_device_memory_budget_request
+    {
+        object_id physical_device;
+    };
+
+    struct get_physical_device_memory_budget_response
+    {
+        int32_t vk_result;
+        uint32_t heap_count;
+        uint64_t heap_budget[max_memory_heaps];
+        uint64_t heap_usage[max_memory_heaps];
     };
 
     struct allocate_memory_request

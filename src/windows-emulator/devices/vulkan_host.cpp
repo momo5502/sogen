@@ -143,6 +143,7 @@ namespace sogen
             PFN_vkGetPhysicalDeviceImageFormatProperties get_physical_device_image_format_properties{};
             PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queue_family_properties{};
             PFN_vkGetPhysicalDeviceMemoryProperties get_physical_device_memory_properties{};
+            PFN_vkGetPhysicalDeviceMemoryProperties2 get_physical_device_memory_properties2{};
             PFN_vkGetPhysicalDeviceFeatures2 get_physical_device_features2{};
             PFN_vkGetPhysicalDeviceProperties2 get_physical_device_properties2{};
             PFN_vkEnumerateDeviceExtensionProperties enumerate_device_extension_properties{};
@@ -889,6 +890,8 @@ namespace sogen
             instance, "vkGetPhysicalDeviceQueueFamilyProperties");
         data.get_physical_device_memory_properties =
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceMemoryProperties>(instance, "vkGetPhysicalDeviceMemoryProperties");
+        data.get_physical_device_memory_properties2 =
+            this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceMemoryProperties2>(instance, "vkGetPhysicalDeviceMemoryProperties2");
         data.get_physical_device_features2 =
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceFeatures2>(instance, "vkGetPhysicalDeviceFeatures2");
         data.get_physical_device_properties2 =
@@ -2336,6 +2339,43 @@ namespace sogen
         instance->second.get_physical_device_memory_properties(pd->second.handle, &properties);
 
         std::memcpy(out, &properties, std::min(out_size, sizeof(properties)));
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::get_physical_device_memory_budget(uint64_t physical_device, uint64_t* heap_budget, uint64_t* heap_usage,
+                                                            uint32_t heap_capacity, uint32_t& out_heap_count)
+    {
+        out_heap_count = 0;
+
+        const auto pd = this->impl_->physical_devices.find(physical_device);
+        if (pd == this->impl_->physical_devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto instance = this->impl_->instances.find(pd->second.instance_id);
+        if (instance == this->impl_->instances.end() || !instance->second.get_physical_device_memory_properties2)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{};
+        budget.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT;
+
+        VkPhysicalDeviceMemoryProperties2 properties2{};
+        properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2;
+        properties2.pNext = &budget;
+
+        instance->second.get_physical_device_memory_properties2(pd->second.handle, &properties2);
+
+        const uint32_t count = std::min(properties2.memoryProperties.memoryHeapCount, heap_capacity);
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            heap_budget[i] = budget.heapBudget[i];
+            heap_usage[i] = budget.heapUsage[i];
+        }
+
+        out_heap_count = count;
         return VK_SUCCESS;
     }
 

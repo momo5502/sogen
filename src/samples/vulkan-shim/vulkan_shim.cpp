@@ -2687,9 +2687,38 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL
     vkGetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2* pMemoryProperties)
     {
-        if (pMemoryProperties)
+        if (!pMemoryProperties)
         {
-            vkGetPhysicalDeviceMemoryProperties(physicalDevice, &pMemoryProperties->memoryProperties);
+            return;
+        }
+
+        vkGetPhysicalDeviceMemoryProperties(physicalDevice, &pMemoryProperties->memoryProperties);
+
+        // Fill any chained VK_EXT_memory_budget request: DXGI's QueryVideoMemoryInfo reports 0 available
+        // VRAM (and apps may abort) unless the host's real per-heap budget/usage is forwarded.
+        for (auto* next = static_cast<VkBaseOutStructure*>(pMemoryProperties->pNext); next != nullptr; next = next->pNext)
+        {
+            if (next->sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT)
+            {
+                continue;
+            }
+
+            auto* budget = reinterpret_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(next);
+
+            gb::get_physical_device_memory_budget_request request{};
+            request.physical_device = to_object_id(physicalDevice);
+
+            gb::get_physical_device_memory_budget_response response{};
+            if (bridge_call(gb::ioctl_get_physical_device_memory_budget, &request, sizeof(request), &response, sizeof(response)) &&
+                response.vk_result == VK_SUCCESS)
+            {
+                const uint32_t count = std::min<uint32_t>(response.heap_count, VK_MAX_MEMORY_HEAPS);
+                for (uint32_t i = 0; i < count; ++i)
+                {
+                    budget->heapBudget[i] = response.heap_budget[i];
+                    budget->heapUsage[i] = response.heap_usage[i];
+                }
+            }
         }
     }
 
