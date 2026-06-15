@@ -2,6 +2,8 @@
 
 #include <platform/platform.hpp>
 
+#include <filesystem>
+
 namespace sogen
 {
 
@@ -21,7 +23,7 @@ namespace sogen
     };
 
     bool compat_fstat(int fd, struct compat_stat* stat);
-    bool compat_stat(const char* file_name, struct compat_stat* stat);
+    bool compat_stat(const std::filesystem::path& file_name, struct compat_stat* stat);
 
     LARGE_INTEGER convert_timespec_to_filetime(timespec timespec);
 } // namespace sogen

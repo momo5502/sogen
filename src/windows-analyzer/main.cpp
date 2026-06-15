@@ -527,7 +527,7 @@ namespace sogen
             }
 
             application_settings app_settings{
-                .application = args[0],
+                .application = std::u8string(args[0].begin(), args[0].end()),
                 .arguments = parse_arguments(args),
                 .environment = options.environment,
             };
