@@ -6,6 +6,8 @@
 #include <windows.h>
 #endif
 
+#include "emulator-platform/platform/unicode.hpp"
+
 namespace sogen
 {
     int windows_main(int argc, char** argv);
@@ -22,20 +24,6 @@ namespace
 }
 
 #ifdef _WIN32
-std::string wide_to_utf8(const std::wstring& w)
-{
-    if (w.empty())
-        return {};
-
-    int size = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
-
-    std::string out(size, '\0');
-
-    WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), out.data(), size, nullptr, nullptr);
-
-    return out;
-}
-
 int dispatch_main(int argc, wchar_t** wargv)
 {
     std::vector<std::string> utf8_storage;
@@ -43,7 +31,7 @@ int dispatch_main(int argc, wchar_t** wargv)
 
     for (int i = 0; i < argc; ++i)
     {
-        utf8_storage.push_back(wide_to_utf8(wargv[i]));
+        utf8_storage.push_back(sogen::w_to_u8(wargv[i]));
     }
 
     std::vector<char*> argv_utf8;

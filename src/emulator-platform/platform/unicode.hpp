@@ -8,6 +8,8 @@
 #include <filesystem>
 #include <type_traits>
 
+#include "traits.hpp"
+
 namespace sogen
 {
 
