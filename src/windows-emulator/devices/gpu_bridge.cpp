@@ -1228,10 +1228,10 @@ namespace sogen
             }
 
             // Maps the host VkDeviceMemory and aliases it straight into the guest address space, so the guest
-            // accesses it coherently with no staging copy. Returns guest_address = 0 if it can't be aliased
-            // (e.g. an unaligned host pointer, or an allocation whose size is not a whole number of pages --
-            // aliasing the page-rounded tail would expose host memory past the allocation to the guest), in
-            // which case the shim falls back to the (bounds-checked) staging path.
+            // accesses it coherently with no staging copy. Allocations are page-rounded at allocation time, so
+            // the page-granular alias never covers memory beyond the allocation. Returns guest_address = 0 if it
+            // still can't be aliased (e.g. an unaligned host pointer, or -- as a safety net -- a non-page-sized
+            // allocation), in which case the shim falls back to the (bounds-checked) staging path.
             NTSTATUS handle_map_memory_direct(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::map_memory_direct_request request{};

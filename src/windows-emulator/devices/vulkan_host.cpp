@@ -2367,9 +2367,16 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        // Round the allocation up to a whole number of guest pages. The map-direct path aliases the host
+        // mapping straight into the guest, which can only be done at page granularity; rounding the actual
+        // allocation up means the page-aligned alias never covers anything beyond this allocation, so the
+        // tail of the final page is the guest's own (slack) memory rather than leaked host memory.
+        constexpr uint64_t page_size = 0x1000;
+        const uint64_t aligned_size = (size > UINT64_MAX - (page_size - 1)) ? size : ((size + page_size - 1) & ~(page_size - 1));
+
         VkMemoryAllocateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        info.allocationSize = size;
+        info.allocationSize = aligned_size;
         info.memoryTypeIndex = memory_type_index;
 
         VkDeviceMemory memory{};
@@ -2380,7 +2387,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory, .device_id = device, .allocation_size = size});
+        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory, .device_id = device, .allocation_size = aligned_size});
         out_memory = id;
         return VK_SUCCESS;
     }
