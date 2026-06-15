@@ -2100,9 +2100,10 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
                 uint64_t sampler = gpu_bridge::null_object;
-                const int32_t result =
-                    this->vulkan_.create_sampler(request.device, request.mag_filter, request.min_filter, request.address_mode_u,
-                                                 request.address_mode_v, request.address_mode_w, sampler);
+                const int32_t result = this->vulkan_.create_sampler(
+                    request.device, request.mag_filter, request.min_filter, request.address_mode_u, request.address_mode_v,
+                    request.address_mode_w, request.mipmap_mode, request.compare_enable, request.compare_op, request.anisotropy_enable,
+                    request.border_color, request.mip_lod_bias, request.max_anisotropy, request.min_lod, request.max_lod, sampler);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = sampler});
             }
 
