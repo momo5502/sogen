@@ -941,7 +941,7 @@ namespace sogen
                 while (!this->should_stop)
                 {
                     std::unique_lock lock{interrupt_mutex};
-                    interrupt_cond.wait_for(lock, std::chrono::seconds(1), [&] {
+                    interrupt_cond.wait_for(lock, std::chrono::milliseconds(20), [&] {
                         return this->should_stop.load(); //
                     });
 
