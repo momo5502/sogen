@@ -1,6 +1,7 @@
 #pragma once
 
 #include "handles.hpp"
+#include "memory_manager.hpp"
 
 #include <algorithm>
 #include <string_view>
@@ -160,6 +161,178 @@ namespace sogen
             buffer.read(this->system_menu_ptr);
             buffer.read(this->host_surface_window);
             buffer.read(this->unicode_proc);
+        }
+    };
+
+    struct menu_item
+    {
+        uint32_t id{};
+        hmenu submenu{};
+        emulator_pointer submenu_ptr{};
+        uint32_t type{};
+        uint32_t state{};
+        uint64_t data{};
+        uint64_t hbmp_checked{};
+        uint64_t hbmp_unchecked{};
+        uint64_t hbmp_item{};
+        std::u16string text{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->id);
+            buffer.write(this->submenu);
+            buffer.write(this->submenu_ptr);
+            buffer.write(this->type);
+            buffer.write(this->state);
+            buffer.write(this->data);
+            buffer.write(this->hbmp_checked);
+            buffer.write(this->hbmp_unchecked);
+            buffer.write(this->hbmp_item);
+            buffer.write(this->text);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->id);
+            buffer.read(this->submenu);
+            buffer.read(this->submenu_ptr);
+            buffer.read(this->type);
+            buffer.read(this->state);
+            buffer.read(this->data);
+            buffer.read(this->hbmp_checked);
+            buffer.read(this->hbmp_unchecked);
+            buffer.read(this->hbmp_item);
+            buffer.read(this->text);
+        }
+    };
+
+    struct menu : user_object<USER_MENU>
+    {
+        hmenu handle{};
+        uint32_t item_count{};
+        bool popup{};
+        std::vector<menu_item> items{};
+        emulator_pointer item_storage{};
+        emulator_pointer text_storage{};
+
+        menu(memory_interface& memory)
+            : user_object(memory)
+        {
+        }
+
+        void sync_guest(memory_manager& memory)
+        {
+            this->release_backing(memory);
+            this->item_count = static_cast<uint32_t>(this->items.size());
+
+            const auto text_bytes = this->text_storage_size();
+            if (text_bytes != 0)
+            {
+                this->text_storage = memory.allocate_memory(static_cast<size_t>(page_align_up(text_bytes)), memory_permission::read);
+            }
+
+            if (!this->items.empty())
+            {
+                const auto item_bytes = sizeof(USER_MENU_ITEM) * this->items.size();
+                this->item_storage =
+                    memory.allocate_memory(static_cast<size_t>(page_align_up(item_bytes)), memory_permission::read);
+            }
+
+            auto next_text = this->text_storage;
+            for (size_t i = 0; i < this->items.size(); ++i)
+            {
+                const auto& item = this->items[i];
+                USER_MENU_ITEM guest_item{
+                    .type = item.type,
+                    .state = item.state,
+                    .id = item.id,
+                    .submenu = item.submenu_ptr,
+                    .hbmpChecked = item.hbmp_checked,
+                    .hbmpUnchecked = item.hbmp_unchecked,
+                    .data = item.data,
+                    .hbmpItem = item.hbmp_item,
+                };
+
+                if (!item.text.empty() && next_text != 0)
+                {
+                    const auto bytes = item.text.size() * sizeof(char16_t);
+                    memory.write_memory(next_text, item.text.data(), bytes);
+
+                    constexpr char16_t terminator = 0;
+                    memory.write_memory(next_text + bytes, &terminator, sizeof(terminator));
+
+                    guest_item.text = next_text;
+                    guest_item.cch = static_cast<uint32_t>(item.text.size());
+                    next_text += bytes + sizeof(terminator);
+                }
+
+                memory.write_memory(this->item_storage + i * sizeof(USER_MENU_ITEM), &guest_item, sizeof(guest_item));
+            }
+
+            this->guest.access([&](USER_MENU& m) {
+                m.hMenu = this->handle;
+                m.self = this->guest.value();
+                m.rgItems = this->item_storage;
+                m.flags = 0;
+                m.cItems = this->item_count;
+            });
+        }
+
+        void release_guest_backing(memory_manager& memory)
+        {
+            this->release_backing(memory);
+        }
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            user_object::serialize_object(buffer);
+            buffer.write(this->handle);
+            buffer.write(this->item_count);
+            buffer.write(this->popup);
+            buffer.write_vector(this->items);
+            buffer.write(this->item_storage);
+            buffer.write(this->text_storage);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            user_object::deserialize_object(buffer);
+            buffer.read(this->handle);
+            buffer.read(this->item_count);
+            buffer.read(this->popup);
+            buffer.read_vector(this->items);
+            buffer.read(this->item_storage);
+            buffer.read(this->text_storage);
+        }
+
+      private:
+        void release_backing(memory_manager& memory)
+        {
+            if (this->item_storage != 0)
+            {
+                memory.release_memory(this->item_storage, 0);
+                this->item_storage = 0;
+            }
+
+            if (this->text_storage != 0)
+            {
+                memory.release_memory(this->text_storage, 0);
+                this->text_storage = 0;
+            }
+        }
+
+        size_t text_storage_size() const
+        {
+            size_t bytes = 0;
+            for (const auto& item : this->items)
+            {
+                if (!item.text.empty())
+                {
+                    bytes += (item.text.size() + 1) * sizeof(char16_t);
+                }
+            }
+
+            return bytes;
         }
     };
 

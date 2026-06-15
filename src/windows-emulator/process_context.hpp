@@ -423,6 +423,7 @@ namespace sogen
         handle default_desktop{};
         handle_store<handle_types::desktop, desktop> desktops{};
         user_handle_store<handle_types::window, window> windows{user_handles};
+        user_handle_store<handle_types::type::menu, menu> menus{user_handles};
         handle_store<handle_types::timer, timer> timers{};
         handle_store<handle_types::registry, registry_key, 2> registry_keys{};
         std::map<uint32_t, handle> thread_handles_by_id{};

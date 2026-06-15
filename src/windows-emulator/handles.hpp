@@ -25,6 +25,7 @@ namespace sogen
             mutant,
             token,
             window,
+            menu,
             timer,
             user_timer,
             monitor,
