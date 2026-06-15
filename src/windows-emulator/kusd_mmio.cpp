@@ -85,6 +85,17 @@ namespace sogen
             kusd.ProcessorFeatures.arr[PF_RDTSC_INSTRUCTION_AVAILABLE] = 1;
             kusd.ProcessorFeatures.arr[PF_RDTSCP_INSTRUCTION_AVAILABLE] = 1;
             kusd.ProcessorFeatures.arr[PF_RDPID_INSTRUCTION_AVAILABLE] = 0;
+            // Keep these in sync with the CPUID feature set advertised by the analyzer (issue #560):
+            // SSE through SSSE3 are exposed, while SSE4.x/AVX are intentionally hidden.
+            kusd.ProcessorFeatures.arr[PF_COMPARE_EXCHANGE_DOUBLE] = 1;
+            kusd.ProcessorFeatures.arr[PF_MMX_INSTRUCTIONS_AVAILABLE] = 1;
+            kusd.ProcessorFeatures.arr[PF_XMMI_INSTRUCTIONS_AVAILABLE] = 1;
+            kusd.ProcessorFeatures.arr[PF_XMMI64_INSTRUCTIONS_AVAILABLE] = 1;
+            kusd.ProcessorFeatures.arr[PF_NX_ENABLED] = 1;
+            kusd.ProcessorFeatures.arr[PF_SSE3_INSTRUCTIONS_AVAILABLE] = 1;
+            kusd.ProcessorFeatures.arr[PF_COMPARE_EXCHANGE128] = 1;
+            kusd.ProcessorFeatures.arr[PF_XSAVE_ENABLED] = 1;
+            kusd.ProcessorFeatures.arr[PF_SSSE3_INSTRUCTIONS_AVAILABLE] = 1;
 
             const auto& system_root = version.get_system_root();
             utils::string::copy(kusd.NtSystemRoot.arr, std::u16string_view{system_root.u16string()});
