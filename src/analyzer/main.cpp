@@ -4,6 +4,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #endif
 
 #include <emulator-platform/platform/platform.hpp>
@@ -24,7 +25,7 @@ namespace
 }
 
 #ifdef _WIN32
-int dispatch_main(int argc, wchar_t** wargv)
+int dispatch_wmain(int argc, wchar_t** wargv)
 {
     std::vector<std::string> utf8_storage;
     utf8_storage.reserve(argc);
@@ -52,16 +53,22 @@ int dispatch_main(int argc, wchar_t** wargv)
     return sogen::windows_main(argc, argv_utf8.data());
 }
 
-int wmain(int argc, wchar_t** argv)
+int dispatch_current_command_line()
 {
-    return dispatch_main(argc, argv);
-}
+    int argc = 0;
+    auto** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv)
+    {
+        return 1;
+    }
 
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
-{
-    return dispatch_main(__argc, __wargv);
+    const auto result = dispatch_wmain(argc, argv);
+    LocalFree(argv);
+    return result;
 }
-#else
+#endif
+
+#ifndef _WIN32
 int dispatch_main(int argc, char** argv)
 {
     if (should_use_linux_analyzer())
@@ -71,9 +78,22 @@ int dispatch_main(int argc, char** argv)
 
     return sogen::windows_main(argc, argv);
 }
+#endif
 
 int main(int argc, char** argv)
 {
+#ifdef _WIN32
+    (void)argc;
+    (void)argv;
+    return dispatch_current_command_line();
+#else
     return dispatch_main(argc, argv);
+#endif
+}
+
+#ifdef _WIN32
+int WINAPI WinMain(HINSTANCE, HINSTANCE, PSTR, int)
+{
+    return dispatch_current_command_line();
 }
 #endif

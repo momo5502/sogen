@@ -4,6 +4,8 @@
 #include <utils/interupt_handler.hpp>
 #include <utils/win.hpp>
 
+#include <shellapi.h>
+
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -128,15 +130,31 @@ namespace sogen::sandbox
 
             return 1;
         }
+
+        int run_current_command_line()
+        {
+            int argc = 0;
+            auto** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+            if (!argv)
+            {
+                return 1;
+            }
+
+            const auto result = run_main(argc, argv);
+            LocalFree(argv);
+            return result;
+        }
     }
 }
 
 int wmain(const int argc, wchar_t** argv)
 {
-    return sogen::sandbox::run_main(argc, argv);
+    (void)argc;
+    (void)argv;
+    return sogen::sandbox::run_current_command_line();
 }
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, PSTR, int)
 {
-    return sogen::sandbox::run_main(__argc, __wargv);
+    return sogen::sandbox::run_current_command_line();
 }
