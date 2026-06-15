@@ -3671,6 +3671,15 @@ extern "C"
         request.address_mode_u = static_cast<uint32_t>(pCreateInfo->addressModeU);
         request.address_mode_v = static_cast<uint32_t>(pCreateInfo->addressModeV);
         request.address_mode_w = static_cast<uint32_t>(pCreateInfo->addressModeW);
+        request.mipmap_mode = static_cast<uint32_t>(pCreateInfo->mipmapMode);
+        request.compare_enable = pCreateInfo->compareEnable;
+        request.compare_op = static_cast<uint32_t>(pCreateInfo->compareOp);
+        request.anisotropy_enable = pCreateInfo->anisotropyEnable;
+        request.border_color = static_cast<uint32_t>(pCreateInfo->borderColor);
+        request.mip_lod_bias = pCreateInfo->mipLodBias;
+        request.max_anisotropy = pCreateInfo->maxAnisotropy;
+        request.min_lod = pCreateInfo->minLod;
+        request.max_lod = pCreateInfo->maxLod;
 
         gb::object_response response{};
         if (!bridge_call(gb::ioctl_create_sampler, &request, sizeof(request), &response, sizeof(response)))

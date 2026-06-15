@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 26;
+    inline constexpr uint32_t protocol_version = 27;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -1102,7 +1102,15 @@ namespace sogen::gpu_bridge
         uint32_t address_mode_u; // VkSamplerAddressMode
         uint32_t address_mode_v;
         uint32_t address_mode_w;
-        uint32_t reserved;
+        uint32_t mipmap_mode;       // VkSamplerMipmapMode
+        uint32_t compare_enable;    // VkBool32 (depth-compare / shadow-map PCF sampler)
+        uint32_t compare_op;        // VkCompareOp
+        uint32_t anisotropy_enable; // VkBool32
+        uint32_t border_color;      // VkBorderColor
+        float mip_lod_bias;
+        float max_anisotropy;
+        float min_lod;
+        float max_lod;
     };
 
     struct create_surface_request
@@ -1905,7 +1913,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_set_dynamic_u32_request) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");
-    static_assert(sizeof(create_sampler_request) == 32, "wire layout drift");
+    static_assert(sizeof(create_sampler_request) == 64, "wire layout drift");
     static_assert(sizeof(enumerate_device_extension_properties_request) == 16, "wire layout drift");
     static_assert(sizeof(enumerate_device_extension_properties_response) == 8, "wire layout drift");
     static_assert(sizeof(feature_chain_record) == 8, "wire layout drift");

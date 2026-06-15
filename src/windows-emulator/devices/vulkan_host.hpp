@@ -301,9 +301,12 @@ namespace sogen
         // Updates a buffer region inline from caller-provided data (vkCmdUpdateBuffer).
         int32_t cmd_update_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, const void* data, uint32_t size);
 
-        // A linear/nearest sampler (mag/min filter + per-axis address modes; no mipmapping/anisotropy).
+        // Creates a sampler honoring the guest's full state: filters, per-axis address modes, mip mode/lod,
+        // anisotropy, border color, and depth-compare (the comparison/PCF mode shadow-map sampling needs).
         int32_t create_sampler(uint64_t device, uint32_t mag_filter, uint32_t min_filter, uint32_t address_mode_u, uint32_t address_mode_v,
-                               uint32_t address_mode_w, uint64_t& out_sampler);
+                               uint32_t address_mode_w, uint32_t mipmap_mode, uint32_t compare_enable, uint32_t compare_op,
+                               uint32_t anisotropy_enable, uint32_t border_color, float mip_lod_bias, float max_anisotropy, float min_lod,
+                               float max_lod, uint64_t& out_sampler);
         void destroy_sampler(uint64_t device, uint64_t sampler);
 
         // --- WSI (modeled with offscreen images; "present" reads back and hands pixels to the UI) ---
