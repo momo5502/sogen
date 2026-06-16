@@ -3,7 +3,9 @@
 #include <ios>
 #include <limits>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
 #endif
 #include <sys/stat.h>
@@ -89,16 +91,24 @@ namespace sogen
         return mode;
     }
 
-    std::string windows_filesystem::translate_path(std::string_view emulated_path) const
+    static int unlink_path(const std::filesystem::path& path)
+    {
+#ifdef _WIN32
+        return _wunlink(path.c_str());
+#else
+        return ::unlink(path.c_str());
+#endif
+    }
+
+    std::optional<std::filesystem::path> windows_filesystem::translate_path(std::string_view emulated_path) const
     {
         try
         {
-            const auto fs_path = this->win_emu_->file_sys.translate(emulated_path);
-            return fs_path.string();
+            return this->win_emu_->file_sys.translate(windows_path{std::u8string(emulated_path.begin(), emulated_path.end())});
         }
         catch (const std::runtime_error&)
         {
-            return {};
+            return std::nullopt;
         }
     }
 
@@ -111,13 +121,18 @@ namespace sogen
         }
 
         const auto real_path = translate_path(file_path);
-        if (real_path.empty())
+        if (!real_path)
         {
             return 0;
         }
 
-        auto stream = std::fstream(real_path, open_mode);
+        auto stream = std::fstream(*real_path, open_mode);
         stream.exceptions(std::fstream::goodbit);
+
+        if (!stream.is_open())
+        {
+            return 0;
+        }
 
         opened_files.emplace(free_index, std::move(stream));
         return free_index++;
@@ -227,12 +242,12 @@ namespace sogen
     int windows_filesystem::unlink(const std::string& file_path)
     {
         const auto real_path = translate_path(file_path);
-        if (real_path.empty())
+        if (!real_path)
         {
             return -1;
         }
 
-        return ::unlink(real_path.c_str());
+        return unlink_path(*real_path);
     }
 
 } // namespace sogen

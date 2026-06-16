@@ -118,13 +118,23 @@ namespace sogen
 #define SEC_IMAGE_NO_EXECUTE       (SEC_IMAGE | SEC_NOCACHE)
 #endif
 
+#ifndef CTL_CODE
 #define CTL_CODE(DeviceType, Function, Method, Access) (((DeviceType) << 16) | ((Access) << 14) | ((Function) << 2) | (Method))
+#endif
 
-#define METHOD_BUFFERED                                0
+#define METHOD_BUFFERED 0
 
-#define FILE_ANY_ACCESS                                0
-#define FILE_READ_ACCESS                               (0x0001) // file & pipe
-#define FILE_WRITE_ACCESS                              (0x0002) // file & pipe
+#ifndef FILE_ANY_ACCESS
+#define FILE_ANY_ACCESS 0
+#endif
+
+#ifndef FILE_READ_ACCESS
+#define FILE_READ_ACCESS (0x0001) // file & pipe
+#endif
+
+#ifndef FILE_WRITE_ACCESS
+#define FILE_WRITE_ACCESS (0x0002) // file & pipe
+#endif
 
     typedef enum _FSINFOCLASS
     {

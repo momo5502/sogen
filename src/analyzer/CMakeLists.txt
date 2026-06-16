@@ -2,6 +2,7 @@ add_executable(analyzer main.cpp)
 
 if(WIN)
   target_sources(analyzer PRIVATE resource.rc)
+  target_link_libraries(analyzer PRIVATE shell32)
 endif()
 
 sogen_assign_source_group(main.cpp)

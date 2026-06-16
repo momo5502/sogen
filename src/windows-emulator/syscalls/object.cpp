@@ -455,6 +455,7 @@ namespace sogen
             collect_wait32_candidate(c.proc.mutants, id, resolved, candidate_count);
             collect_wait32_candidate(c.proc.semaphores, id, resolved, candidate_count);
             collect_wait32_candidate(c.proc.ports, id, resolved, candidate_count);
+            collect_wait32_candidate(c.proc.io_completions, id, resolved, candidate_count);
             collect_wait32_candidate(c.proc.timers, id, resolved, candidate_count);
 
             if (candidate_count == 1)
