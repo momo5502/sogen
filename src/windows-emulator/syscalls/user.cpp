@@ -1746,6 +1746,13 @@ namespace sogen
             return apply_window_state(c, window, flags, false);
         }
 
+        BOOL handle_NtUserDisableProcessWindowsGhosting(const syscall_context& /*c*/)
+        {
+            // Window ghosting is a desktop-compositor feature with no meaning in the emulator; accept the
+            // request so callers (e.g. game engine startup) proceed.
+            return TRUE;
+        }
+
         BOOL handle_NtUserBitBltSysBmp(const syscall_context& c, const hdc dc, const int x, const int y, const uint32_t bitmap_index)
         {
             (void)handle_NtGdiFlush(c);
