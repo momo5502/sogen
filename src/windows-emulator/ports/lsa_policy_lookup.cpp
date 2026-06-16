@@ -137,8 +137,14 @@ namespace sogen
                     return handle_close_policy(win_emu, writer);
                 case 2:
                     return handle_lookup_sids(win_emu, c, writer);
+                case 5:
+                    // The shell's account-lookup path (e.g. SHGetKnownFolderPath, used while the engine sets
+                    // up its crash-report queue) issues this additional lookup. We don't resolve it, but we
+                    // must answer with a well-formed "none mapped" result: returning an RPC error makes the
+                    // runtime raise RPC_S_CALL_FAILED in the caller, whose vectored exception handler then
+                    // re-enters a half-initialized singleton and deadlocks.
+                    return write_lookup_not_mapped_reply(writer);
                 default:
-                    // win_emu.log.warn("Unsupported lsapolicylookup procedure: %u\n", procedure_id);
                     return STATUS_NOT_SUPPORTED;
                 }
             }
@@ -168,6 +174,11 @@ namespace sogen
                     return STATUS_SUCCESS;
                 }
 
+                return write_lookup_not_mapped_reply(writer);
+            }
+
+            static NTSTATUS write_lookup_not_mapped_reply(utils::aligned_binary_writer& writer)
+            {
                 const auto reply_offset = writer.offset();
                 writer.pad(k_lookup_sids_not_mapped_reply_size);
                 writer.write_at(reply_offset + 0x14, k_status_none_mapped);

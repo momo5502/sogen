@@ -48,6 +48,39 @@ namespace sogen
                 }
             }
 
+            // Delivering a wait-completion-packet completion is a satisfied wait, so it must consume the
+            // target's signal exactly like NtWaitForSingleObject would: an auto-reset event resets and a
+            // semaphore decrements. Without this, an edge-triggered target stays signaled and floods the
+            // completion port with spurious packets (e.g. a games's async scheduler busy-spins forever).
+            void consume_wait_completion_target(process_context& process, const handle target_object_handle)
+            {
+                switch (target_object_handle.value.type)
+                {
+                case handle_types::event: {
+                    auto* e = process.events.get(target_object_handle);
+                    if (e && e->type == SynchronizationEvent)
+                    {
+                        e->signaled = false;
+                    }
+                    break;
+                }
+
+                case handle_types::semaphore: {
+                    auto* semaphore = process.semaphores.get(target_object_handle);
+                    if (semaphore)
+                    {
+                        (void)semaphore->try_lock();
+                    }
+                    break;
+                }
+
+                default:
+                    // process/thread/timer are level-triggered or terminal; ports and mutants are left
+                    // untouched (a wait packet does not take mutant ownership).
+                    break;
+                }
+            }
+
             void release_wait_packet_association(process_context& process, wait_completion_packet& wait_packet)
             {
                 release_handle_reference(process, wait_packet.io_completion_handle);
@@ -214,6 +247,8 @@ namespace sogen
                 {
                     continue;
                 }
+
+                consume_wait_completion_target(process, wait_packet.target_object_handle);
 
                 enqueue_wait_packet_completion(process, *completion, process.wait_completion_packets.make_handle(packet_id), wait_packet);
                 wait_packet.queued_completion = true;

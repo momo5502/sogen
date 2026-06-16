@@ -194,15 +194,89 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_system_process_information(const syscall_context& c, const uint64_t system_information,
+                                                   const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
+        {
+            using Traits = EmulatorTraits<Emu64>;
+            using proc_t = SYSTEM_PROCESS_INFORMATION<Traits>;
+            using thread_t = SYSTEM_THREAD_INFORMATION<Traits>;
+
+            uint64_t process_id = 1;
+            uint64_t active_tid = 0;
+            if (c.proc.active_thread && c.proc.active_thread->teb64)
+            {
+                c.proc.active_thread->teb64->access([&](const TEB64& teb) {
+                    process_id = teb.ClientId.UniqueProcess;
+                    active_tid = teb.ClientId.UniqueThread;
+                });
+            }
+
+            std::vector<uint64_t> thread_ids;
+            for (const auto& t : c.proc.threads | std::views::values)
+            {
+                if (t.is_terminated() || !t.teb64)
+                {
+                    continue;
+                }
+                uint64_t tid = 0;
+                t.teb64->access([&](const TEB64& teb) { tid = teb.ClientId.UniqueThread; });
+                thread_ids.push_back(tid);
+            }
+
+            if (thread_ids.empty())
+            {
+                thread_ids.push_back(active_tid);
+            }
+
+            const auto required = static_cast<uint32_t>(sizeof(proc_t) + thread_ids.size() * sizeof(thread_t));
+
+            if (return_length)
+            {
+                return_length.write(required);
+            }
+
+            if (system_information_length < required)
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            proc_t proc{};
+            memset(&proc, 0, sizeof(proc));
+            proc.NextEntryOffset = 0; // single process; terminator
+            proc.NumberOfThreads = static_cast<ULONG>(thread_ids.size());
+            proc.BasePriority = 8;
+            proc.UniqueProcessId = process_id;
+            proc.HandleCount = 0;
+            proc.SessionId = 0;
+            c.emu.write_memory(system_information, &proc, sizeof(proc));
+
+            for (size_t i = 0; i < thread_ids.size(); ++i)
+            {
+                thread_t info{};
+                memset(&info, 0, sizeof(info));
+                info.ClientId.UniqueProcess = process_id;
+                info.ClientId.UniqueThread = thread_ids[i];
+                info.Priority = 8;
+                info.BasePriority = 8;
+                info.ThreadState = 5; // Waiting
+                info.WaitReason = 6;  // WrQueue
+                c.emu.write_memory(system_information + sizeof(proc_t) + i * sizeof(thread_t), &info, sizeof(info));
+            }
+
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class, const uint64_t input_buffer,
                                                    const uint32_t input_buffer_length, const uint64_t system_information,
                                                    const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
         {
             switch (info_class)
             {
+            case SystemProcessInformation:
+                return handle_system_process_information(c, system_information, system_information_length, return_length);
+
             case 250: // Build 27744
             case SystemFlushInformation:
-            case SystemProcessInformation:
             case SystemMemoryUsageInformation:
             case SystemCodeIntegrityPolicyInformation:
             case SystemHypervisorSharedPageInformation:
