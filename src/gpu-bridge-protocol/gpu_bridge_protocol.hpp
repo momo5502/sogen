@@ -785,8 +785,8 @@ namespace sogen::gpu_bridge
     {
         int32_t vk_result;
         uint32_t heap_count;
-        uint64_t heap_budget[max_memory_heaps];
-        uint64_t heap_usage[max_memory_heaps];
+        std::array<uint64_t, max_memory_heaps> heap_budget;
+        std::array<uint64_t, max_memory_heaps> heap_usage;
     };
 
     struct allocate_memory_request

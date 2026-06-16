@@ -1091,8 +1091,9 @@ namespace sogen
 
                 gpu_bridge::get_physical_device_memory_budget_response response{};
                 uint32_t heap_count = 0;
-                response.vk_result = this->vulkan_.get_physical_device_memory_budget(
-                    request.physical_device, response.heap_budget, response.heap_usage, gpu_bridge::max_memory_heaps, heap_count);
+                response.vk_result =
+                    this->vulkan_.get_physical_device_memory_budget(request.physical_device, response.heap_budget.data(),
+                                                                    response.heap_usage.data(), gpu_bridge::max_memory_heaps, heap_count);
                 response.heap_count = heap_count;
                 return write_output(win_emu, context, response);
             }

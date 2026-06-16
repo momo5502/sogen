@@ -2363,7 +2363,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::get_physical_device_memory_budget(uint64_t physical_device, uint64_t* heap_budget, uint64_t* heap_usage,
-                                                            uint32_t heap_capacity, uint32_t& out_heap_count)
+                                                           uint32_t heap_capacity, uint32_t& out_heap_count)
     {
         out_heap_count = 0;
 
