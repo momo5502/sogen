@@ -280,6 +280,8 @@ namespace sogen
             {
             case handle_types::type::window:
                 return TYPE_WINDOW;
+            case handle_types::type::menu:
+                return TYPE_MENU;
             case handle_types::type::monitor:
                 return TYPE_MONITOR;
             default:

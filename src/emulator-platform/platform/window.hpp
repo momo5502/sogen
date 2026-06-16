@@ -25,6 +25,18 @@ namespace sogen
         LONG y;
     } POINTL;
 
+    typedef struct _FIXED
+    {
+        uint16_t fract;
+        int16_t value;
+    } FIXED;
+
+    typedef struct tagPOINTFX
+    {
+        FIXED x;
+        FIXED y;
+    } POINTFX;
+
     typedef struct tagSIZE
     {
         LONG cx;
@@ -52,6 +64,7 @@ namespace sogen
     using hicon = pointer;
     using hcursor = pointer;
     using hbrush = pointer;
+    using hbitmap = pointer;
 
     struct msg
     {
@@ -133,6 +146,22 @@ namespace sogen
         BOOL fRestore;
         BOOL fIncUpdate;
         uint8_t rgbReserved[32];
+    };
+
+    struct EMU_MENUITEMINFO
+    {
+        UINT cbSize;
+        UINT fMask;
+        UINT fType;
+        UINT fState;
+        UINT wID;
+        hmenu hSubMenu;
+        hbitmap hbmpChecked;
+        hbitmap hbmpUnchecked;
+        uint64_t dwItemData;
+        uint64_t dwTypeData;
+        UINT cch;
+        hbitmap hbmpItem;
     };
 
 #define EMU_HWND_MESSAGE ((hwnd) - 3)
@@ -303,6 +332,25 @@ namespace sogen
 #define GWLP_HWNDPARENT      (-8)
 #define GWLP_USERDATA        (-21)
 #define GWLP_ID              (-12)
+
+#define MIIM_STATE           0x0001
+#define MIIM_ID              0x0002
+#define MIIM_SUBMENU         0x0004
+#define MIIM_CHECKMARKS      0x0008
+#define MIIM_TYPE            0x0010
+#define MIIM_DATA            0x0020
+#define MIIM_STRING          0x0040
+#define MIIM_BITMAP          0x0080
+#define MIIM_FTYPE           0x0100
+
+#define MF_INSERT            0x0000
+#define MF_CHANGE            0x0080
+#define MF_APPEND            0x0100
+#define MF_DELETE            0x0200
+#define MF_REMOVE            0x1000
+
+#define MF_BYCOMMAND         0x0000
+#define MF_BYPOSITION        0x0400
 #endif
 
 #define WM_UAHDESTROYWINDOW 0x0090

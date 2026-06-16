@@ -1,6 +1,7 @@
 #pragma once
 
 #include "handles.hpp"
+#include "memory_manager.hpp"
 
 #include <algorithm>
 #include <string_view>
@@ -96,7 +97,7 @@ namespace sogen
         bool erase_pending{};
         std::map<std::u16string, uint64_t> props{};
         emulator_pointer wnd_proc{};
-        emulator_pointer system_menu_ptr{};
+        hmenu system_menu_handle{};
         bool host_surface_window{};
         bool unicode_proc{};
 
@@ -131,7 +132,7 @@ namespace sogen
             buffer.write(this->erase_pending);
             buffer.write_map(this->props);
             buffer.write(this->wnd_proc);
-            buffer.write(this->system_menu_ptr);
+            buffer.write(this->system_menu_handle);
             buffer.write(this->host_surface_window);
             buffer.write(this->unicode_proc);
         }
@@ -157,9 +158,237 @@ namespace sogen
             buffer.read(this->erase_pending);
             buffer.read_map(this->props);
             buffer.read(this->wnd_proc);
-            buffer.read(this->system_menu_ptr);
+            buffer.read(this->system_menu_handle);
             buffer.read(this->host_surface_window);
             buffer.read(this->unicode_proc);
+        }
+    };
+
+    struct menu_item
+    {
+        uint32_t id{};
+        hmenu submenu{};
+        emulator_pointer submenu_ptr{};
+        uint32_t type{};
+        uint32_t state{};
+        uint64_t data{};
+        hbitmap hbmp_checked{};
+        hbitmap hbmp_unchecked{};
+        hbitmap hbmp_item{};
+        std::u16string text{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->id);
+            buffer.write(this->submenu);
+            buffer.write(this->submenu_ptr);
+            buffer.write(this->type);
+            buffer.write(this->state);
+            buffer.write(this->data);
+            buffer.write(this->hbmp_checked);
+            buffer.write(this->hbmp_unchecked);
+            buffer.write(this->hbmp_item);
+            buffer.write(this->text);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->id);
+            buffer.read(this->submenu);
+            buffer.read(this->submenu_ptr);
+            buffer.read(this->type);
+            buffer.read(this->state);
+            buffer.read(this->data);
+            buffer.read(this->hbmp_checked);
+            buffer.read(this->hbmp_unchecked);
+            buffer.read(this->hbmp_item);
+            buffer.read(this->text);
+        }
+    };
+
+    struct menu : user_object<USER_MENU>
+    {
+        hmenu handle{};
+        uint32_t item_count{};
+        bool popup{};
+        std::vector<menu_item> items{};
+        emulator_pointer item_storage{};
+        emulator_pointer text_storage{};
+
+        menu(memory_interface& memory)
+            : user_object(memory)
+        {
+        }
+
+        void init_guest() const
+        {
+            this->guest.access([&](USER_MENU& m) {
+                m.hMenu = this->handle;
+                m.ptrBase = this->guest.value();
+                m.rgItems = this->item_storage;
+                m.flags = 0;
+                m.cItems = this->item_count;
+            });
+        }
+
+        void sync_guest_items(memory_manager& memory)
+        {
+            this->release_backing(memory);
+            this->item_count = static_cast<uint32_t>(this->items.size());
+
+            const auto text_bytes = this->text_storage_size();
+            if (text_bytes != 0)
+            {
+                this->text_storage = memory.allocate_memory(static_cast<size_t>(page_align_up(text_bytes)), memory_permission::read);
+            }
+
+            if (!this->items.empty())
+            {
+                const auto item_bytes = sizeof(USER_MENU_ITEM) * this->items.size();
+                this->item_storage = memory.allocate_memory(static_cast<size_t>(page_align_up(item_bytes)), memory_permission::read);
+            }
+
+            auto next_text = this->text_storage;
+            for (size_t i = 0; i < this->items.size(); ++i)
+            {
+                const auto& item = this->items[i];
+                const auto text_ptr = !item.text.empty() ? next_text : 0;
+                const auto guest_item = make_guest_item(item, text_ptr);
+                write_guest_item_text(memory, item, text_ptr);
+
+                if (text_ptr != 0)
+                {
+                    next_text += (item.text.size() + 1) * sizeof(char16_t);
+                }
+
+                memory.write_memory(this->item_storage + i * sizeof(USER_MENU_ITEM), &guest_item, sizeof(guest_item));
+            }
+
+            this->guest.access([&](USER_MENU& m) {
+                m.rgItems = this->item_storage;
+                m.cItems = this->item_count;
+            });
+        }
+
+        void sync_guest_item(memory_manager& memory, const size_t index)
+        {
+            // TODO: This method is very naive and smartly reserving memory could avoid lots of reallocations.
+            if (this->item_storage == 0 || static_cast<size_t>(this->item_count) != this->items.size() || index >= this->items.size())
+            {
+                this->sync_guest_items(memory);
+                return;
+            }
+
+            const auto& item = this->items[index];
+            const auto text_ptr = this->get_guest_text_ptr(index);
+            const auto guest_item = make_guest_item(item, text_ptr);
+            write_guest_item_text(memory, item, text_ptr);
+
+            memory.write_memory(this->item_storage + index * sizeof(USER_MENU_ITEM), &guest_item, sizeof(guest_item));
+        }
+
+        void release_guest_backing(memory_manager& memory)
+        {
+            this->release_backing(memory);
+        }
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            user_object::serialize_object(buffer);
+            buffer.write(this->handle);
+            buffer.write(this->item_count);
+            buffer.write(this->popup);
+            buffer.write_vector(this->items);
+            buffer.write(this->item_storage);
+            buffer.write(this->text_storage);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            user_object::deserialize_object(buffer);
+            buffer.read(this->handle);
+            buffer.read(this->item_count);
+            buffer.read(this->popup);
+            buffer.read_vector(this->items);
+            buffer.read(this->item_storage);
+            buffer.read(this->text_storage);
+        }
+
+      private:
+        static USER_MENU_ITEM make_guest_item(const menu_item& item, const emulator_pointer text_ptr)
+        {
+            return USER_MENU_ITEM{
+                .type = item.type,
+                .state = item.state,
+                .id = item.id,
+                .submenu = item.submenu_ptr,
+                .hbmpChecked = item.hbmp_checked,
+                .hbmpUnchecked = item.hbmp_unchecked,
+                .text = text_ptr,
+                .cch = static_cast<uint32_t>(item.text.size()),
+                .data = item.data,
+                .hbmpItem = item.hbmp_item,
+            };
+        }
+
+        static void write_guest_item_text(memory_manager& memory, const menu_item& item, const emulator_pointer text_ptr)
+        {
+            if (!item.text.empty() && text_ptr != 0)
+            {
+                const auto bytes = item.text.size() * sizeof(char16_t);
+                memory.write_memory(text_ptr, item.text.data(), bytes);
+
+                constexpr char16_t terminator = 0;
+                memory.write_memory(text_ptr + bytes, &terminator, sizeof(terminator));
+            }
+        }
+
+        void release_backing(memory_manager& memory)
+        {
+            if (this->item_storage != 0)
+            {
+                memory.release_memory(this->item_storage, 0);
+                this->item_storage = 0;
+            }
+
+            if (this->text_storage != 0)
+            {
+                memory.release_memory(this->text_storage, 0);
+                this->text_storage = 0;
+            }
+        }
+
+        emulator_pointer get_guest_text_ptr(const size_t index) const
+        {
+            if (this->text_storage == 0 || index >= this->items.size())
+            {
+                return 0;
+            }
+
+            auto text_ptr = this->text_storage;
+            for (size_t i = 0; i < index; ++i)
+            {
+                if (!this->items[i].text.empty())
+                {
+                    text_ptr += (this->items[i].text.size() + 1) * sizeof(char16_t);
+                }
+            }
+
+            return this->items[index].text.empty() ? 0 : text_ptr;
+        }
+
+        size_t text_storage_size() const
+        {
+            size_t bytes = 0;
+            for (const auto& item : this->items)
+            {
+                if (!item.text.empty())
+                {
+                    bytes += (item.text.size() + 1) * sizeof(char16_t);
+                }
+            }
+
+            return bytes;
         }
     };
 

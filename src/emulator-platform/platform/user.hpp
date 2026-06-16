@@ -279,6 +279,49 @@ namespace sogen
     };
     static_assert(sizeof(USER_WINDOW) == 328);
 
+    struct USER_MENU
+    {
+        uint64_t hMenu;
+        uint64_t ptrBase;
+        uint8_t pad_10[0x10];
+        uint64_t rgItems;
+        uint32_t flags;
+        uint32_t cItems;
+    };
+    static_assert(offsetof(USER_MENU, hMenu) == 0x0);
+    static_assert(offsetof(USER_MENU, ptrBase) == 0x8);
+    static_assert(offsetof(USER_MENU, rgItems) == 0x20);
+    static_assert(offsetof(USER_MENU, flags) == 0x28);
+    static_assert(offsetof(USER_MENU, cItems) == 0x2C);
+
+    struct USER_MENU_ITEM
+    {
+        uint32_t type;
+        uint32_t state;
+        uint32_t id;
+        uint8_t pad_0C[4]{};
+        uint64_t submenu;
+        uint64_t hbmpChecked;
+        uint64_t hbmpUnchecked;
+        uint64_t text;
+        uint32_t cch;
+        uint8_t pad_34[4]{};
+        uint64_t data;
+        uint8_t pad_40[0x20]{};
+        uint64_t hbmpItem;
+        uint8_t pad_68[8]{};
+    };
+    static_assert(offsetof(USER_MENU_ITEM, state) == 0x4);
+    static_assert(offsetof(USER_MENU_ITEM, id) == 0x8);
+    static_assert(offsetof(USER_MENU_ITEM, submenu) == 0x10);
+    static_assert(offsetof(USER_MENU_ITEM, hbmpChecked) == 0x18);
+    static_assert(offsetof(USER_MENU_ITEM, hbmpUnchecked) == 0x20);
+    static_assert(offsetof(USER_MENU_ITEM, text) == 0x28);
+    static_assert(offsetof(USER_MENU_ITEM, cch) == 0x30);
+    static_assert(offsetof(USER_MENU_ITEM, data) == 0x38);
+    static_assert(offsetof(USER_MENU_ITEM, hbmpItem) == 0x60);
+    static_assert(sizeof(USER_MENU_ITEM) == 0x70);
+
     struct USER_DESKTOPINFO
     {
         uint8_t unknown0[0x8];

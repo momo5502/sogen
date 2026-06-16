@@ -1,4 +1,4 @@
-#include "../std_include.hpp"
+﻿#include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
@@ -14,6 +14,43 @@ namespace sogen
                                                                     const uint32_t system_information_length,
                                                                     const emulator_object<uint32_t> return_length)
             {
+                constexpr auto group_root_size = offsetof(EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64, Group);
+                constexpr auto group_size = group_root_size + sizeof(EMU_GROUP_RELATIONSHIP64);
+                constexpr auto numa_root_size = offsetof(EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64, NumaNode);
+                constexpr auto numa_size = numa_root_size + sizeof(EMU_NUMA_NODE_RELATIONSHIP64);
+
+                const auto write_group = [&](const uint64_t output_buffer) {
+                    EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64 proc_info{};
+                    proc_info.Size = group_size;
+                    proc_info.Relationship = RelationGroup;
+
+                    c.emu.write_memory(output_buffer, &proc_info, group_root_size);
+
+                    EMU_GROUP_RELATIONSHIP64 group{};
+                    group.ActiveGroupCount = 1;
+                    group.MaximumGroupCount = 1;
+
+                    auto& group_info = group.GroupInfo[0];
+                    group_info.ActiveProcessorCount = static_cast<uint8_t>(c.proc.kusd.get().ActiveProcessorCount);
+                    group_info.ActiveProcessorMask = (1ULL << group_info.ActiveProcessorCount) - 1;
+                    group_info.MaximumProcessorCount = group_info.ActiveProcessorCount;
+
+                    c.emu.write_memory(output_buffer + group_root_size, group);
+                };
+
+                const auto write_numa = [&](const uint64_t output_buffer) {
+                    EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64 proc_info{};
+                    proc_info.Size = numa_size;
+                    proc_info.Relationship = RelationNumaNode;
+
+                    c.emu.write_memory(output_buffer, &proc_info, numa_root_size);
+
+                    EMU_NUMA_NODE_RELATIONSHIP64 numa_node{};
+                    memset(&numa_node, 0, sizeof(numa_node));
+
+                    c.emu.write_memory(output_buffer + numa_root_size, numa_node);
+                };
+
                 if (input_buffer_length != sizeof(LOGICAL_PROCESSOR_RELATIONSHIP))
                 {
                     return STATUS_INVALID_PARAMETER;
@@ -23,13 +60,7 @@ namespace sogen
 
                 if (request == RelationAll)
                 {
-                    return STATUS_NOT_SUPPORTED;
-                }
-
-                if (request == RelationGroup)
-                {
-                    constexpr auto root_size = offsetof(EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64, Group);
-                    constexpr auto required_size = root_size + sizeof(EMU_GROUP_RELATIONSHIP64);
+                    constexpr auto required_size = group_size + numa_size;
 
                     if (return_length)
                     {
@@ -41,50 +72,40 @@ namespace sogen
                         return STATUS_INFO_LENGTH_MISMATCH;
                     }
 
-                    EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64 proc_info{};
-                    proc_info.Size = required_size;
-                    proc_info.Relationship = RelationGroup;
+                    write_group(system_information);
+                    write_numa(system_information + group_size);
+                    return STATUS_SUCCESS;
+                }
 
-                    c.emu.write_memory(system_information, &proc_info, root_size);
+                if (request == RelationGroup)
+                {
+                    if (return_length)
+                    {
+                        return_length.write(group_size);
+                    }
 
-                    EMU_GROUP_RELATIONSHIP64 group{};
-                    group.ActiveGroupCount = 1;
-                    group.MaximumGroupCount = 1;
+                    if (system_information_length < group_size)
+                    {
+                        return STATUS_INFO_LENGTH_MISMATCH;
+                    }
 
-                    auto& group_info = group.GroupInfo[0];
-                    group_info.ActiveProcessorCount = static_cast<uint8_t>(c.proc.kusd.get().ActiveProcessorCount);
-                    group_info.ActiveProcessorMask = (1 << group_info.ActiveProcessorCount) - 1;
-                    group_info.MaximumProcessorCount = group_info.ActiveProcessorCount;
-
-                    c.emu.write_memory(system_information + root_size, group);
+                    write_group(system_information);
                     return STATUS_SUCCESS;
                 }
 
                 if (request == RelationNumaNode || request == RelationNumaNodeEx)
                 {
-                    constexpr auto root_size = offsetof(EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64, NumaNode);
-                    constexpr auto required_size = root_size + sizeof(EMU_NUMA_NODE_RELATIONSHIP64);
-
                     if (return_length)
                     {
-                        return_length.write(required_size);
+                        return_length.write(numa_size);
                     }
 
-                    if (system_information_length < required_size)
+                    if (system_information_length < numa_size)
                     {
                         return STATUS_INFO_LENGTH_MISMATCH;
                     }
 
-                    EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64 proc_info{};
-                    proc_info.Size = required_size;
-                    proc_info.Relationship = RelationNumaNode;
-
-                    c.emu.write_memory(system_information, &proc_info, root_size);
-
-                    EMU_NUMA_NODE_RELATIONSHIP64 numa_node{};
-                    memset(&numa_node, 0, sizeof(numa_node));
-
-                    c.emu.write_memory(system_information + root_size, numa_node);
+                    write_numa(system_information);
                     return STATUS_SUCCESS;
                 }
 

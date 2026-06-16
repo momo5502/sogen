@@ -589,6 +589,24 @@ namespace sogen
         BOOL handle_NtUserValidateTimerCallback(const syscall_context& c, uint64_t timer_proc);
         uint32_t handle_NtUserGetQueueStatusReadonly(const syscall_context& c, UINT flags);
         uint32_t handle_NtUserGetQueueStatus(const syscall_context& c, UINT flags);
+        NTSTATUS handle_NtUserCreateAcceleratorTable();
+        hmenu handle_NtUserCreateMenu(const syscall_context& c);
+        BOOL handle_NtUserThunkedMenuItemInfo(const syscall_context& c, hmenu menu, UINT position, BOOL by_position, BOOL insert,
+                                              emulator_object<EMU_MENUITEMINFO> item_info,
+                                              emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> item_text);
+        hmenu handle_NtUserCreatePopupMenu(const syscall_context& c);
+        BOOL handle_NtUserSetMenu();
+        BOOL handle_NtUserRemoveMenu(const syscall_context& c, hmenu menu, UINT position, UINT flags);
+        BOOL handle_NtUserDestroyMenu(const syscall_context& c, hmenu menu);
+        BOOL handle_NtUserDrawMenuBar(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserSetWindowCompositionAttribute(const syscall_context& c, hwnd hwnd, emulator_pointer data);
+        BOOL handle_NtUserCreateCaret();
+        BOOL handle_NtUserIsTouchWindow();
+        BOOL handle_NtUserGetWindowPlacement();
+        BOOL handle_NtUserTrackMouseEvent();
+        BOOL handle_NtUserSetWindowRgn();
+        BOOL handle_NtUserAlterWindowStyle();
+        BOOL handle_NtUserSetActiveWindow();
 
         // syscalls/gdi.cpp:
         NTSTATUS handle_NtDxgkIsFeatureEnabled();
@@ -638,8 +656,14 @@ namespace sogen
         uint32_t handle_NtGdiQueryFontAssocInfo(const syscall_context& c, hdc dc);
         uint32_t handle_NtGdiGetTextMetricsW(const syscall_context& c, hdc dc, emulator_pointer ptm, uint32_t cj);
         int32_t handle_NtGdiGetTextFaceW(const syscall_context& c, hdc dc, int32_t count, emulator_pointer face_name, BOOL alias_name);
+        uint32_t handle_NtGdiGetGlyphOutline(const syscall_context& c, hdc dc, UINT character, UINT format, emulator_pointer glyph_metrics,
+                                             DWORD buffer_size, emulator_pointer buffer, emulator_pointer mat2);
+        uint32_t handle_NtGdiGetOutlineTextMetricsInternalW(const syscall_context& c, hdc dc, uint32_t cj_copy, emulator_pointer metrics,
+                                                            emulator_pointer unknown);
         BOOL handle_NtGdiGetTextExtent(const syscall_context& c, hdc dc, emulator_pointer text, int32_t char_count, emulator_pointer size,
                                        ULONG flags);
+        NTSTATUS handle_NtGdiExtCreateRegion();
+        NTSTATUS handle_NtGdiTransparentBlt();
         uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
         int32_t handle_NtGdiGetRandomRgn(const syscall_context& c, hdc dc, uint64_t region, LONG index);
         int32_t handle_NtGdiIntersectClipRect(const syscall_context& c, hdc dc, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
@@ -648,11 +672,15 @@ namespace sogen
         BOOL handle_NtGdiLineTo(const syscall_context& c, hdc dc, LONG x_end, LONG y_end);
         BOOL handle_NtGdiRectangle(const syscall_context& c, hdc dc, LONG left, LONG top, LONG right, LONG bottom);
         BOOL handle_NtGdiPatBlt(const syscall_context& c, hdc dc, LONG x, LONG y, LONG width, LONG height, DWORD rop);
+        BOOL handle_NtGdiBitBlt(const syscall_context& c, hdc dst_dc, int x_dst, int y_dst, int width, int height, hdc src_dc, int x_src,
+                                int y_src, DWORD rop, DWORD cr_back_color, FLONG fl);
         BOOL handle_NtGdiPolyPatBlt(const syscall_context& c, hdc dc, DWORD rop, emulator_pointer poly, DWORD count, DWORD mode);
         BOOL handle_NtGdiExtTextOutW(const syscall_context& c, hdc dc, LONG x, LONG y, UINT options, emulator_pointer rect,
                                      emulator_pointer text, UINT count, emulator_pointer dx, DWORD code_page);
         BOOL handle_NtGdiGetRealizationInfo(const syscall_context& c, hdc dc, emulator_pointer realization_info, uint64_t font);
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, uint32_t handle_value, emulator_pointer entry_ptr);
+        NTSTATUS handle_NtGdiSetLayout();
+        NTSTATUS handle_NtGdiGetDCObject();
         BOOL handle_NtGdiMoveToEx(const syscall_context& c, hdc dc, LONG x, LONG y, emulator_pointer old_point_ptr);
         uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, hdc dc, uint32_t brush, emulator_pointer old_brush_ptr);
         uint64_t handle_NtGdiSelectPenLocal(const syscall_context& c, hdc dc, uint32_t pen, emulator_pointer old_pen_ptr);
@@ -1160,6 +1188,7 @@ namespace sogen
         add_handler(NtGdiGetTextMetricsW);
         add_handler(NtGdiGetTextFaceW);
         add_handler(NtGdiGetTextExtent);
+        add_handler(NtGdiGetGlyphOutline);
         add_handler(NtGdiCreateRectRgn);
         add_handler(NtGdiGetRandomRgn);
         add_handler(NtGdiIntersectClipRect);
@@ -1168,6 +1197,7 @@ namespace sogen
         add_handler(NtGdiLineTo);
         add_handler(NtGdiRectangle);
         add_handler(NtGdiPatBlt);
+        add_handler(NtGdiBitBlt);
         add_handler(NtGdiPolyPatBlt);
         add_handler(NtGdiExtTextOutW);
         add_handler(NtGdiGetRealizationInfo);
@@ -1423,6 +1453,27 @@ namespace sogen
         add_handler(NtUserGetQueueStatusReadonly);
         add_handler(NtUserGetQueueStatus);
         add_handler(NtUserScheduleDispatchNotification);
+        add_handler(NtGdiExtCreateRegion);
+        add_handler(NtUserSetWindowRgn);
+        add_handler(NtUserAlterWindowStyle);
+        add_handler(NtUserSetActiveWindow);
+        add_handler(NtGdiTransparentBlt);
+        add_handler(NtUserCreateAcceleratorTable);
+        add_handler(NtGdiSetLayout);
+        add_handler(NtGdiGetDCObject);
+        add_handler(NtUserCreateMenu);
+        add_handler(NtUserThunkedMenuItemInfo);
+        add_handler(NtUserIsTouchWindow);
+        add_handler(NtUserCreatePopupMenu);
+        add_handler(NtUserSetMenu);
+        add_handler(NtUserRemoveMenu);
+        add_handler(NtUserDestroyMenu);
+        add_handler(NtUserDrawMenuBar);
+        add_handler(NtUserSetWindowCompositionAttribute);
+        add_handler(NtUserGetWindowPlacement);
+        add_handler(NtUserCreateCaret);
+        add_handler(NtUserTrackMouseEvent);
+        add_handler(NtGdiGetOutlineTextMetricsInternalW);
 
 #undef add_handler
     }

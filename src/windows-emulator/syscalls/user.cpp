@@ -428,12 +428,46 @@ namespace sogen
             }
         }
 
+        RECT union_update_rect(const RECT& a, const RECT& b)
+        {
+            const auto empty_rect = [](const RECT& r) { //
+                return r.left >= r.right || r.top >= r.bottom;
+            };
+
+            if (empty_rect(a))
+            {
+                return b;
+            }
+
+            if (empty_rect(b))
+            {
+                return a;
+            }
+
+            return RECT{
+                .left = std::min(a.left, b.left),
+                .top = std::min(a.top, b.top),
+                .right = std::max(a.right, b.right),
+                .bottom = std::max(a.bottom, b.bottom),
+            };
+        }
+
         void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect = std::nullopt,
                                bool erase = false)
         {
-            win.update_pending = true;
+            const RECT new_rect = update_rect.value_or(get_client_rect(win));
+
             win.erase_pending = win.erase_pending || erase;
-            win.update_rect = update_rect.value_or(get_client_rect(win));
+
+            if (!win.update_pending)
+            {
+                win.update_rect = new_rect;
+                win.update_pending = true;
+            }
+            else
+            {
+                win.update_rect = union_update_rect(win.update_rect, new_rect);
+            }
 
             if (win.host_surface_window)
             {
@@ -1187,6 +1221,106 @@ namespace sogen
             }
 
             return read_large_string(window_name);
+        }
+
+        hmenu ensure_system_menu(const syscall_context& c, window& win)
+        {
+            if (win.system_menu_handle != 0 && c.proc.menus.get(win.system_menu_handle) != nullptr)
+            {
+                return win.system_menu_handle;
+            }
+
+            auto [handle, menu_obj] = c.proc.menus.create(c.win_emu.memory);
+            menu_obj.handle = handle.bits;
+            menu_obj.popup = false;
+            menu_obj.init_guest();
+
+            win.system_menu_handle = menu_obj.handle;
+            win.guest.access([&](USER_WINDOW& guest_win) { //
+                guest_win.spmenu = menu_obj.guest.value();
+            });
+
+            return handle.bits;
+        }
+
+        std::u16string read_menu_item_text(const syscall_context& c, const EMU_MENUITEMINFO& mi,
+                                           const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> item_text)
+        {
+            if (item_text)
+            {
+                const auto str = item_text.try_read();
+                if (str && str->Buffer != 0 && str->Length != 0)
+                {
+                    std::u16string result(str->Length / sizeof(char16_t), u'\0');
+                    if (c.win_emu.memory.try_read_memory(str->Buffer, result.data(), str->Length))
+                    {
+                        return result;
+                    }
+                }
+            }
+
+            if (mi.dwTypeData != 0 && mi.cch != 0)
+            {
+                std::u16string result(mi.cch, u'\0');
+                const auto bytes = result.size() * sizeof(char16_t);
+                if (c.win_emu.memory.try_read_memory(mi.dwTypeData, result.data(), bytes))
+                {
+                    const auto terminator = result.find(u'\0');
+                    if (terminator != std::u16string::npos)
+                    {
+                        result.resize(terminator);
+                    }
+                    return result;
+                }
+            }
+
+            return {};
+        }
+
+        void update_menu_item(const syscall_context& c, menu_item& item, const EMU_MENUITEMINFO& mi,
+                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> item_text)
+        {
+            if ((mi.fMask & MIIM_ID) != 0)
+            {
+                item.id = mi.wID;
+            }
+            if ((mi.fMask & MIIM_SUBMENU) != 0)
+            {
+                item.submenu = mi.hSubMenu;
+                if (const auto* submenu = c.proc.menus.get(item.submenu))
+                {
+                    item.submenu_ptr = submenu->guest.value();
+                }
+                else
+                {
+                    item.submenu_ptr = 0;
+                }
+            }
+            if ((mi.fMask & MIIM_FTYPE) != 0)
+            {
+                item.type = mi.fType;
+            }
+            if ((mi.fMask & MIIM_STATE) != 0)
+            {
+                item.state = mi.fState;
+            }
+            if ((mi.fMask & MIIM_DATA) != 0)
+            {
+                item.data = mi.dwItemData;
+            }
+            if ((mi.fMask & MIIM_CHECKMARKS) != 0)
+            {
+                item.hbmp_checked = mi.hbmpChecked;
+                item.hbmp_unchecked = mi.hbmpUnchecked;
+            }
+            if ((mi.fMask & MIIM_BITMAP) != 0)
+            {
+                item.hbmp_item = mi.hbmpItem;
+            }
+            if ((mi.fMask & MIIM_STRING) != 0)
+            {
+                item.text = read_menu_item_text(c, mi, item_text);
+            }
         }
     }
 
@@ -1968,7 +2102,7 @@ namespace sogen
 
         uint64_t handle_NtUserGetProcessWindowStation()
         {
-            return 0;
+            return 1;
         }
 
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t code)
@@ -3592,17 +3726,7 @@ namespace sogen
                 return FALSE;
             }
 
-            if (win->system_menu_ptr == 0)
-            {
-                win->system_menu_ptr = c.win_emu.memory.allocate_memory(0x1000, memory_permission::read_write);
-            }
-
-            if (win->guest.value() != 0)
-            {
-                const auto spmenu_addr = win->guest.value() + offsetof(USER_WINDOW, spmenu);
-                c.win_emu.memory.write_memory(spmenu_addr, &win->system_menu_ptr, sizeof(win->system_menu_ptr));
-            }
-
+            (void)ensure_system_menu(c, *win);
             return TRUE;
         }
 
@@ -3657,15 +3781,24 @@ namespace sogen
             return TRUE;
         }
 
-        uint64_t handle_NtUserGetSystemMenu(const syscall_context& c, const hwnd hwnd, const BOOL /*revert*/)
+        uint64_t handle_NtUserGetSystemMenu(const syscall_context& c, const hwnd hwnd, const BOOL revert)
         {
-            const auto* win = c.proc.windows.get(hwnd);
+            auto* win = c.proc.windows.get(hwnd);
             if (!win)
             {
                 return 0;
             }
 
-            return win->system_menu_ptr;
+            if (revert != FALSE && win->system_menu_handle != 0)
+            {
+                if (auto* menu = c.proc.menus.get(win->system_menu_handle))
+                {
+                    menu->items.clear();
+                    menu->sync_guest_items(c.win_emu.memory);
+                }
+            }
+
+            return ensure_system_menu(c, *win);
         }
 
         BOOL handle_NtUserAllowSetForegroundWindow()
@@ -4089,6 +4222,223 @@ namespace sogen
             const auto result = handle_NtUserGetQueueStatusReadonly(c, flags);
             c.proc.active_thread->queue_status_changed_bits &= ~flags;
             return result;
+        }
+
+        NTSTATUS handle_NtUserCreateAcceleratorTable()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        hmenu handle_NtUserCreateMenu(const syscall_context& c)
+        {
+            auto [handle, menu_obj] = c.proc.menus.create(c.win_emu.memory);
+            menu_obj.handle = handle.bits;
+            menu_obj.popup = false;
+            menu_obj.init_guest();
+            return handle.bits;
+        }
+
+        BOOL handle_NtUserThunkedMenuItemInfo(const syscall_context& c, const hmenu menu, const UINT position, const BOOL by_position,
+                                              const BOOL insert, const emulator_object<EMU_MENUITEMINFO> item_info,
+                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> item_text)
+        {
+            auto* m = c.proc.menus.get(menu);
+            if (!m)
+            {
+                return FALSE;
+            }
+
+            if (!item_info)
+            {
+                return FALSE;
+            }
+
+            EMU_MENUITEMINFO mi{};
+            if (!c.win_emu.memory.try_read_memory(item_info.value(), &mi, sizeof(mi)))
+            {
+                return FALSE;
+            }
+
+            if (insert)
+            {
+                menu_item menu_item{};
+                update_menu_item(c, menu_item, mi, item_text);
+
+                if (by_position)
+                {
+                    const auto insert_at = std::min<size_t>(position, m->items.size());
+                    m->items.insert(m->items.begin() + static_cast<ptrdiff_t>(insert_at), menu_item);
+                }
+                else
+                {
+                    const auto it = std::ranges::find_if(m->items, [&](const auto& item) { return item.id == position; });
+                    m->items.insert(it, menu_item);
+                }
+
+                m->sync_guest_items(c.win_emu.memory);
+                return TRUE;
+            }
+
+            if (m->items.empty())
+            {
+                return FALSE;
+            }
+
+            if (by_position)
+            {
+                if (position >= m->items.size())
+                {
+                    return FALSE;
+                }
+
+                const auto old_text_size = m->items[position].text.size();
+                update_menu_item(c, m->items[position], mi, item_text);
+                if ((mi.fMask & MIIM_STRING) != 0 && m->items[position].text.size() > old_text_size)
+                {
+                    m->sync_guest_items(c.win_emu.memory);
+                }
+                else
+                {
+                    m->sync_guest_item(c.win_emu.memory, position);
+                }
+                return TRUE;
+            }
+
+            const auto it = std::ranges::find_if(m->items, [&](const auto& item) { return item.id == position; });
+            if (it == m->items.end())
+            {
+                return TRUE;
+            }
+
+            const auto index = static_cast<size_t>(std::distance(m->items.begin(), it));
+            const auto old_text_size = it->text.size();
+            update_menu_item(c, *it, mi, item_text);
+            if ((mi.fMask & MIIM_STRING) != 0 && it->text.size() > old_text_size)
+            {
+                m->sync_guest_items(c.win_emu.memory);
+            }
+            else
+            {
+                m->sync_guest_item(c.win_emu.memory, index);
+            }
+            return TRUE;
+        }
+
+        hmenu handle_NtUserCreatePopupMenu(const syscall_context& c)
+        {
+            auto [handle, menu_obj] = c.proc.menus.create(c.win_emu.memory);
+            menu_obj.handle = handle.bits;
+            menu_obj.popup = true;
+            menu_obj.init_guest();
+            return handle.bits;
+        }
+
+        BOOL handle_NtUserSetMenu()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserRemoveMenu(const syscall_context& c, const hmenu menu, const UINT position, const UINT flags)
+        {
+            auto* m = c.proc.menus.get(menu);
+            if (!m)
+            {
+                return FALSE;
+            }
+
+            if (m->items.empty())
+            {
+                return FALSE;
+            }
+
+            if ((flags & MF_BYPOSITION) != 0)
+            {
+                if (position >= m->items.size())
+                {
+                    return FALSE;
+                }
+
+                m->items.erase(m->items.begin() + static_cast<ptrdiff_t>(position));
+                m->sync_guest_items(c.win_emu.memory);
+                return TRUE;
+            }
+
+            const auto it = std::ranges::find_if(m->items, [&](const auto& item) { return item.id == position; });
+            if (it == m->items.end())
+            {
+                return FALSE;
+            }
+
+            m->items.erase(it);
+            m->sync_guest_items(c.win_emu.memory);
+            return TRUE;
+        }
+
+        BOOL handle_NtUserDestroyMenu(const syscall_context& c, const hmenu menu)
+        {
+            auto* m = c.proc.menus.get(menu);
+            if (!m)
+            {
+                return FALSE;
+            }
+
+            m->release_guest_backing(c.win_emu.memory);
+            return c.proc.menus.erase(menu) ? TRUE : FALSE;
+        }
+
+        BOOL handle_NtUserDrawMenuBar(const syscall_context& c, const hwnd hwnd)
+        {
+            if (hwnd != 0 && !c.proc.windows.get(hwnd))
+            {
+                return FALSE;
+            }
+
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetWindowCompositionAttribute(const syscall_context& c, const hwnd hwnd, const emulator_pointer /*data*/)
+        {
+            if (hwnd != 0 && !c.proc.windows.get(hwnd))
+            {
+                return FALSE;
+            }
+
+            return TRUE;
+        }
+
+        BOOL handle_NtUserCreateCaret()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserIsTouchWindow()
+        {
+            return FALSE;
+        }
+
+        BOOL handle_NtUserGetWindowPlacement()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserTrackMouseEvent()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetWindowRgn()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserAlterWindowStyle()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetActiveWindow()
+        {
+            return TRUE;
         }
     }
 
