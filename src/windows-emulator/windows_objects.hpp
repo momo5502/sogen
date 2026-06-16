@@ -97,7 +97,7 @@ namespace sogen
         bool erase_pending{};
         std::map<std::u16string, uint64_t> props{};
         emulator_pointer wnd_proc{};
-        emulator_pointer system_menu_ptr{};
+        hmenu system_menu_handle{};
         bool host_surface_window{};
         bool unicode_proc{};
 
@@ -132,7 +132,7 @@ namespace sogen
             buffer.write(this->erase_pending);
             buffer.write_map(this->props);
             buffer.write(this->wnd_proc);
-            buffer.write(this->system_menu_ptr);
+            buffer.write(this->system_menu_handle);
             buffer.write(this->host_surface_window);
             buffer.write(this->unicode_proc);
         }
@@ -158,7 +158,7 @@ namespace sogen
             buffer.read(this->erase_pending);
             buffer.read_map(this->props);
             buffer.read(this->wnd_proc);
-            buffer.read(this->system_menu_ptr);
+            buffer.read(this->system_menu_handle);
             buffer.read(this->host_surface_window);
             buffer.read(this->unicode_proc);
         }

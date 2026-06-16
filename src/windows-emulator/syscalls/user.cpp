@@ -1223,32 +1223,24 @@ namespace sogen
             return read_large_string(window_name);
         }
 
-        hmenu create_menu_object(const syscall_context& c, const bool popup)
-        {
-            auto [handle, menu_obj] = c.proc.menus.create(c.win_emu.memory);
-            menu_obj.handle = handle.bits;
-            menu_obj.popup = popup;
-            menu_obj.init_guest();
-            return handle.bits;
-        }
-
         hmenu ensure_system_menu(const syscall_context& c, window& win)
         {
-            if (win.system_menu_ptr != 0 && c.proc.menus.get(win.system_menu_ptr))
+            if (win.system_menu_handle != 0 && c.proc.menus.get(win.system_menu_handle) != nullptr)
             {
-                return win.system_menu_ptr;
+                return win.system_menu_handle;
             }
 
-            const auto menu = create_menu_object(c, false);
-            win.system_menu_ptr = menu;
+            auto [handle, menu_obj] = c.proc.menus.create(c.win_emu.memory);
+            menu_obj.handle = handle.bits;
+            menu_obj.popup = false;
+            menu_obj.init_guest();
 
-            if (win.guest.value() != 0)
-            {
-                const auto spmenu_addr = win.guest.value() + offsetof(USER_WINDOW, spmenu);
-                c.win_emu.memory.write_memory(spmenu_addr, &menu, sizeof(menu));
-            }
+            win.system_menu_handle = menu_obj.handle;
+            win.guest.access([&](USER_WINDOW& guest_win) { //
+                guest_win.spmenu = menu_obj.guest.value();
+            });
 
-            return menu;
+            return handle.bits;
         }
 
         std::u16string read_menu_item_text(const syscall_context& c, const EMU_MENUITEMINFO& mi,
@@ -3797,9 +3789,9 @@ namespace sogen
                 return 0;
             }
 
-            if (revert != FALSE && win->system_menu_ptr != 0)
+            if (revert != FALSE && win->system_menu_handle != 0)
             {
-                if (auto* menu = c.proc.menus.get(win->system_menu_ptr))
+                if (auto* menu = c.proc.menus.get(win->system_menu_handle))
                 {
                     menu->items.clear();
                     menu->sync_guest_items(c.win_emu.memory);
@@ -4239,7 +4231,11 @@ namespace sogen
 
         hmenu handle_NtUserCreateMenu(const syscall_context& c)
         {
-            return create_menu_object(c, false);
+            auto [handle, menu_obj] = c.proc.menus.create(c.win_emu.memory);
+            menu_obj.handle = handle.bits;
+            menu_obj.popup = false;
+            menu_obj.init_guest();
+            return handle.bits;
         }
 
         BOOL handle_NtUserThunkedMenuItemInfo(const syscall_context& c, const hmenu menu, const UINT position, const BOOL by_position,
@@ -4275,7 +4271,8 @@ namespace sogen
                 }
                 else
                 {
-                    m->items.push_back(menu_item);
+                    const auto it = std::ranges::find_if(m->items, [&](const auto& item) { return item.id == position; });
+                    m->items.insert(it, menu_item);
                 }
 
                 m->sync_guest_items(c.win_emu.memory);
@@ -4329,7 +4326,11 @@ namespace sogen
 
         hmenu handle_NtUserCreatePopupMenu(const syscall_context& c)
         {
-            return create_menu_object(c, true);
+            auto [handle, menu_obj] = c.proc.menus.create(c.win_emu.memory);
+            menu_obj.handle = handle.bits;
+            menu_obj.popup = true;
+            menu_obj.init_guest();
+            return handle.bits;
         }
 
         BOOL handle_NtUserSetMenu()
