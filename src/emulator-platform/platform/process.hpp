@@ -1152,6 +1152,65 @@ namespace sogen
         typename Traits::PVOID DefaultBase;
     };
 
+    template <typename Traits>
+    struct SYSTEM_THREAD_INFORMATION
+    {
+        LARGE_INTEGER KernelTime;
+        LARGE_INTEGER UserTime;
+        LARGE_INTEGER CreateTime;
+        ULONG WaitTime;
+        typename Traits::PVOID StartAddress;
+        CLIENT_ID<Traits> ClientId;
+        LONG Priority;
+        LONG BasePriority;
+        ULONG ContextSwitches;
+        ULONG ThreadState;
+        ULONG WaitReason;
+    };
+
+    template <typename Traits>
+    struct SYSTEM_PROCESS_INFORMATION
+    {
+        ULONG NextEntryOffset;
+        ULONG NumberOfThreads;
+        LARGE_INTEGER WorkingSetPrivateSize;
+        ULONG HardFaultCount;
+        ULONG NumberOfThreadsHighWatermark;
+        ULONGLONG CycleTime;
+        LARGE_INTEGER CreateTime;
+        LARGE_INTEGER UserTime;
+        LARGE_INTEGER KernelTime;
+        UNICODE_STRING<Traits> ImageName;
+        LONG BasePriority;
+        typename Traits::HANDLE UniqueProcessId;
+        typename Traits::HANDLE InheritedFromUniqueProcessId;
+        ULONG HandleCount;
+        ULONG SessionId;
+        typename Traits::ULONG_PTR UniqueProcessKey;
+        typename Traits::SIZE_T PeakVirtualSize;
+        typename Traits::SIZE_T VirtualSize;
+        ULONG PageFaultCount;
+        typename Traits::SIZE_T PeakWorkingSetSize;
+        typename Traits::SIZE_T WorkingSetSize;
+        typename Traits::SIZE_T QuotaPeakPagedPoolUsage;
+        typename Traits::SIZE_T QuotaPagedPoolUsage;
+        typename Traits::SIZE_T QuotaPeakNonPagedPoolUsage;
+        typename Traits::SIZE_T QuotaNonPagedPoolUsage;
+        typename Traits::SIZE_T PagefileUsage;
+        typename Traits::SIZE_T PeakPagefileUsage;
+        typename Traits::SIZE_T PrivatePageCount;
+        LARGE_INTEGER ReadOperationCount;
+        LARGE_INTEGER WriteOperationCount;
+        LARGE_INTEGER OtherOperationCount;
+        LARGE_INTEGER ReadTransferCount;
+        LARGE_INTEGER WriteTransferCount;
+        LARGE_INTEGER OtherTransferCount;
+        // Followed by SYSTEM_THREAD_INFORMATION<Traits> Threads[NumberOfThreads]
+    };
+
+    static_assert(sizeof(SYSTEM_THREAD_INFORMATION<EmulatorTraits<Emu64>>) == 0x50);
+    static_assert(sizeof(SYSTEM_PROCESS_INFORMATION<EmulatorTraits<Emu64>>) == 0x100);
+
     struct PROCESS_PRIORITY_CLASS
     {
         BOOLEAN Foreground;
