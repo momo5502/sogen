@@ -1,5 +1,7 @@
 #include "vulkan_host.hpp"
 
+#include <address_utils.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -73,6 +75,24 @@ namespace sogen
         constexpr std::array<const char*, 2> vulkan_loader_names{"libvulkan.so.1", "libvulkan.so"};
 #endif
 #endif
+
+        // Validates a guest-controlled [offset, offset + size) range against an allocation size without
+        // overflowing. VK_WHOLE_SIZE is only accepted where the Vulkan API itself permits it (flush /
+        // invalidate of mapped ranges), in which case it covers the rest of the allocation from offset.
+        bool is_memory_range_valid(const uint64_t allocation_size, const uint64_t offset, const uint64_t size, const bool allow_whole_size)
+        {
+            if (offset > allocation_size)
+            {
+                return false;
+            }
+
+            if (allow_whole_size && size == VK_WHOLE_SIZE)
+            {
+                return true;
+            }
+
+            return size <= allocation_size - offset;
+        }
 
         // VkPhysicalDeviceProperties crosses the 32/64-bit ABI boundary unchanged except for
         // VkPhysicalDeviceLimits::minMemoryMapAlignment, the struct's only size_t (8 bytes on the
@@ -2349,9 +2369,16 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        // Round the allocation up to a whole number of guest pages. The map-direct path aliases the host
+        // mapping straight into the guest, which can only be done at page granularity; rounding the actual
+        // allocation up means the page-aligned alias never covers anything beyond this allocation, so the
+        // tail of the final page is the guest's own (slack) memory rather than leaked host memory.
+        constexpr uint64_t page_size = 0x1000;
+        const uint64_t aligned_size = (size > UINT64_MAX - (page_size - 1)) ? size : page_align_up(size, page_size);
+
         VkMemoryAllocateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        info.allocationSize = size;
+        info.allocationSize = aligned_size;
         info.memoryTypeIndex = memory_type_index;
 
         VkDeviceMemory memory{};
@@ -2362,7 +2389,7 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory, .device_id = device, .allocation_size = size});
+        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory, .device_id = device, .allocation_size = aligned_size});
         out_memory = id;
         return VK_SUCCESS;
     }
@@ -2497,6 +2524,11 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        if (!is_memory_range_valid(mem->second.allocation_size, offset, size, false))
+        {
+            return VK_ERROR_MEMORY_MAP_FAILED;
+        }
+
         const size_t copy_bytes = std::min(static_cast<size_t>(size), out_size);
 
         void* mapped = nullptr;
@@ -2518,6 +2550,11 @@ namespace sogen
         if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory || !dev->second.unmap_memory)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (!is_memory_range_valid(mem->second.allocation_size, offset, size, false))
+        {
+            return VK_ERROR_MEMORY_MAP_FAILED;
         }
 
         const size_t copy_bytes = std::min(static_cast<size_t>(size), data_size);
@@ -2543,6 +2580,11 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        if (!is_memory_range_valid(mem->second.allocation_size, offset, size, true))
+        {
+            return VK_ERROR_MEMORY_MAP_FAILED;
+        }
+
         VkMappedMemoryRange range{};
         range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
         range.memory = mem->second.handle;
@@ -2558,6 +2600,11 @@ namespace sogen
         if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.invalidate_mapped_memory_ranges)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (!is_memory_range_valid(mem->second.allocation_size, offset, size, true))
+        {
+            return VK_ERROR_MEMORY_MAP_FAILED;
         }
 
         VkMappedMemoryRange range{};

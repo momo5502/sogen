@@ -1178,7 +1178,10 @@ namespace sogen
 
                 std::vector<std::byte> bytes(static_cast<size_t>(copy_bytes));
                 const auto direct = this->direct_mappings_.find(request.memory);
-                if (direct != this->direct_mappings_.end() && direct->second.host_ptr && request.offset + copy_bytes <= direct->second.size)
+                // The alias only covers whole-page allocations, so direct->second.size is the real allocation
+                // size; bound the copy against it without overflowing on a hostile offset.
+                if (direct != this->direct_mappings_.end() && direct->second.host_ptr && request.offset <= direct->second.size &&
+                    copy_bytes <= direct->second.size - request.offset)
                 {
                     std::memcpy(bytes.data(), static_cast<const std::byte*>(direct->second.host_ptr) + request.offset,
                                 static_cast<size_t>(copy_bytes));
@@ -1225,8 +1228,10 @@ namespace sogen
             }
 
             // Maps the host VkDeviceMemory and aliases it straight into the guest address space, so the guest
-            // accesses it coherently with no staging copy. Returns guest_address = 0 if it can't be aliased
-            // (e.g. an unaligned host pointer), in which case the shim falls back to the staging path.
+            // accesses it coherently with no staging copy. Allocations are page-rounded at allocation time, so
+            // the page-granular alias never covers memory beyond the allocation. Returns guest_address = 0 if it
+            // still can't be aliased (e.g. an unaligned host pointer, or -- as a safety net -- a non-page-sized
+            // allocation), in which case the shim falls back to the (bounds-checked) staging path.
             NTSTATUS handle_map_memory_direct(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::map_memory_direct_request request{};
@@ -1251,7 +1256,8 @@ namespace sogen
                 response.vk_result = this->vulkan_.map_memory(request.device, request.memory, host_ptr, host_size);
 
                 constexpr uint64_t page = 0x1000;
-                if (response.vk_result != 0 || !host_ptr || host_size == 0 || (reinterpret_cast<uintptr_t>(host_ptr) % page) != 0)
+                if (response.vk_result != 0 || !host_ptr || host_size == 0 || (reinterpret_cast<uintptr_t>(host_ptr) % page) != 0 ||
+                    (host_size % page) != 0)
                 {
                     if (host_ptr)
                     {
