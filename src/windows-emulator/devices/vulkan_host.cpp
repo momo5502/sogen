@@ -1,5 +1,7 @@
 #include "vulkan_host.hpp"
 
+#include <address_utils.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -2372,7 +2374,7 @@ namespace sogen
         // allocation up means the page-aligned alias never covers anything beyond this allocation, so the
         // tail of the final page is the guest's own (slack) memory rather than leaked host memory.
         constexpr uint64_t page_size = 0x1000;
-        const uint64_t aligned_size = (size > UINT64_MAX - (page_size - 1)) ? size : ((size + page_size - 1) & ~(page_size - 1));
+        const uint64_t aligned_size = (size > UINT64_MAX - (page_size - 1)) ? size : page_align_up(size, page_size);
 
         VkMemoryAllocateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
