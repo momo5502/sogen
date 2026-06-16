@@ -2387,19 +2387,25 @@ namespace sogen
             static constexpr uint32_t k_outline_text_metric_text_metric_offset = 0x04;
             static constexpr std::u16string_view k_family_name = u"Segoe UI";
             static constexpr std::u16string_view k_face_name = u"Segoe UI";
-            static constexpr std::u16string_view k_style_name = u"Regular";
-            static constexpr std::u16string_view k_full_name = u"Segoe UI";
+            static constexpr std::u16string_view k_style_name = u"Normal";
+            static constexpr std::u16string_view k_full_name = u"Segoe UI Regular";
 
             const auto string_bytes = [](const std::u16string_view str) {
                 return static_cast<uint32_t>((str.size() + 1) * sizeof(char16_t));
             };
+            const auto ansi_string_bytes = [](const std::u16string_view str) {
+                return static_cast<uint32_t>(str.size() + 1);
+            };
+
             const auto required_size = k_outline_text_metric_fixed_size + string_bytes(k_family_name) + string_bytes(k_face_name) +
                                        string_bytes(k_style_name) + string_bytes(k_full_name);
+            const auto required_size_a = k_outline_text_metric_fixed_size + ansi_string_bytes(k_family_name) + ansi_string_bytes(k_face_name) +
+                                         ansi_string_bytes(k_style_name) + ansi_string_bytes(k_full_name);
 
             if (unknown != 0)
             {
-                constexpr uint64_t zero = 0;
-                c.emu.write_memory(unknown, &zero, sizeof(zero));
+                const auto required_size_a64 = static_cast<uint64_t>(required_size_a);
+                c.emu.write_memory(unknown, &required_size_a64, sizeof(required_size_a64));
             }
 
             if (metrics == 0 || cj_copy == 0)
@@ -2427,8 +2433,9 @@ namespace sogen
             const auto write_u8 = [&](const uint32_t offset, const uint8_t value) {
                 c.emu.write_memory(metrics + offset, &value, sizeof(value));
             };
-            const auto write_ptr = [&](const uint32_t offset, const emulator_pointer value) {
-                c.emu.write_memory(metrics + offset, &value, sizeof(value));
+            const auto write_offset = [&](const uint32_t pointer_offset, const uint32_t string_offset_value) {
+                const auto value64 = static_cast<uint64_t>(string_offset_value);
+                c.emu.write_memory(metrics + pointer_offset, &value64, sizeof(value64));
             };
 
             write_u32(0x00, required_size);
@@ -2476,10 +2483,10 @@ namespace sogen
             auto string_offset = k_outline_text_metric_fixed_size;
             const auto write_string = [&](const uint32_t pointer_offset, const std::u16string_view str) {
                 const auto string_ptr = metrics + string_offset;
-                write_ptr(pointer_offset, string_ptr);
+                write_offset(pointer_offset, string_offset);
                 c.emu.write_memory(string_ptr, str.data(), str.size() * sizeof(char16_t));
 
-                constexpr char16_t terminator = 0;
+                constexpr char16_t terminator = u'\0';
                 c.emu.write_memory(string_ptr + str.size() * sizeof(char16_t), &terminator, sizeof(terminator));
                 string_offset += string_bytes(str);
             };
