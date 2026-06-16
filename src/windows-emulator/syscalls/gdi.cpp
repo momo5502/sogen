@@ -2393,14 +2393,12 @@ namespace sogen
             const auto string_bytes = [](const std::u16string_view str) {
                 return static_cast<uint32_t>((str.size() + 1) * sizeof(char16_t));
             };
-            const auto ansi_string_bytes = [](const std::u16string_view str) {
-                return static_cast<uint32_t>(str.size() + 1);
-            };
+            const auto ansi_string_bytes = [](const std::u16string_view str) { return static_cast<uint32_t>(str.size() + 1); };
 
             const auto required_size = k_outline_text_metric_fixed_size + string_bytes(k_family_name) + string_bytes(k_face_name) +
                                        string_bytes(k_style_name) + string_bytes(k_full_name);
-            const auto required_size_a = k_outline_text_metric_fixed_size + ansi_string_bytes(k_family_name) + ansi_string_bytes(k_face_name) +
-                                         ansi_string_bytes(k_style_name) + ansi_string_bytes(k_full_name);
+            const auto required_size_a = k_outline_text_metric_fixed_size + ansi_string_bytes(k_family_name) +
+                                         ansi_string_bytes(k_face_name) + ansi_string_bytes(k_style_name) + ansi_string_bytes(k_full_name);
 
             if (unknown != 0)
             {
