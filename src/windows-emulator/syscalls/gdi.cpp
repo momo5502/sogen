@@ -167,6 +167,21 @@ namespace sogen
                 std::array<gdi_batch_pat_rect, 1> rects{};
             };
 
+            struct emu_ttpolygonheader
+            {
+                uint32_t cb{};
+                uint32_t dwType{};
+                POINTFX pfxStart{};
+            };
+            static_assert(sizeof(emu_ttpolygonheader) == 16);
+
+            struct emu_ttpolycurve_header
+            {
+                uint16_t wType{};
+                uint16_t cpfx{};
+            };
+            static_assert(sizeof(emu_ttpolycurve_header) == 4);
+
             constexpr uint32_t k_dxgk_adapter_count = 1;
             constexpr uint32_t k_dxgk_adapter_handle = 0x4000;
             constexpr uint32_t k_dxgk_device_handle = 0x5000;
@@ -2342,6 +2357,43 @@ namespace sogen
                 return 0;
             }
 
+            const auto make_pointfx = [](const int16_t x, const int16_t y) {
+                return POINTFX{
+                    .x = {.fract = 0, .value = x},
+                    .y = {.fract = 0, .value = y},
+                };
+            };
+            const auto append_outline = []<typename T>(std::vector<uint8_t>& outline, const T& value) {
+                const auto* const bytes = reinterpret_cast<const uint8_t*>(&value);
+                outline.insert(outline.end(), bytes, bytes + sizeof(value));
+            };
+            const auto make_native_outline = [&]() {
+                std::vector<uint8_t> outline;
+                const std::array<POINTFX, 4> points{
+                    make_pointfx(static_cast<int16_t>(glyph_width), 0),
+                    make_pointfx(static_cast<int16_t>(glyph_width), static_cast<int16_t>(glyph_height)),
+                    make_pointfx(0, static_cast<int16_t>(glyph_height)),
+                    make_pointfx(0, 0),
+                };
+
+                const emu_ttpolycurve_header curve{
+                    .wType = 1,
+                    .cpfx = static_cast<uint16_t>(points.size()),
+                };
+                const emu_ttpolygonheader header{
+                    .cb = static_cast<uint32_t>(sizeof(emu_ttpolygonheader) + sizeof(emu_ttpolycurve_header) + sizeof(points)),
+                    .dwType = 24,
+                    .pfxStart = make_pointfx(0, 0),
+                };
+
+                outline.reserve(header.cb);
+                append_outline(outline, header);
+                append_outline(outline, curve);
+                append_outline(outline, points);
+                return outline;
+            };
+
+            std::vector<uint8_t> native_outline;
             uint32_t required_size = 0;
             switch (glyph_format)
             {
@@ -2354,13 +2406,14 @@ namespace sogen
                 required_size = glyph_width * glyph_height;
                 break;
             case ggo_native:
-                required_size = 0;
+                native_outline = make_native_outline();
+                required_size = static_cast<uint32_t>(native_outline.size());
                 break;
             default:
                 return gdi_error;
             }
 
-            if (buffer == 0 || buffer_size == 0 || required_size == 0)
+            if (buffer == 0 || buffer_size == 0)
             {
                 return required_size;
             }
@@ -2370,8 +2423,15 @@ namespace sogen
                 return gdi_error;
             }
 
-            std::vector<uint8_t> zeroed(required_size);
-            c.emu.write_memory(buffer, zeroed.data(), zeroed.size());
+            if (glyph_format == ggo_native)
+            {
+                c.emu.write_memory(buffer, native_outline.data(), native_outline.size());
+            }
+            else
+            {
+                std::vector<uint8_t> zeroed(required_size);
+                c.emu.write_memory(buffer, zeroed.data(), zeroed.size());
+            }
             return required_size;
         }
 
