@@ -393,7 +393,7 @@ namespace sogen
 
                 if (section_entry->backing_address == 0)
                 {
-                    const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
+                    const auto reserve_only = (section_entry->allocation_attributes & SEC_RESERVE) != 0;
                     const auto backing = c.win_emu.memory.allocate_memory(backing_size, protection, reserve_only, 0,
                                                                           memory_region_kind::pagefile_section_view);
                     if (!backing)
@@ -426,7 +426,7 @@ namespace sogen
 
             const auto size = static_cast<size_t>(file_data.size() - offset);
             const auto aligned_size = static_cast<size_t>(page_align_up(size));
-            const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
+            const auto reserve_only = (section_entry->allocation_attributes & SEC_RESERVE) != 0;
             const auto address =
                 c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only, 0, memory_region_kind::file_section_view);
 
