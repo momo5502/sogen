@@ -144,6 +144,11 @@ namespace sogen
         // Writes up to out_size bytes of the device's VkPhysicalDeviceMemoryProperties into out.
         int32_t get_physical_device_memory_properties(uint64_t physical_device, void* out, size_t out_size);
 
+        // Queries VK_EXT_memory_budget for per-heap budget/usage. heap_budget/heap_usage point to arrays of
+        // at least heap_capacity entries; out_heap_count receives the number filled.
+        int32_t get_physical_device_memory_budget(uint64_t physical_device, uint64_t* heap_budget, uint64_t* heap_usage,
+                                                  uint32_t heap_capacity, uint32_t& out_heap_count);
+
         // Allocates a single VkDeviceMemory of `size` from `memory_type_index`. out_memory receives a
         // fresh object id, or 0 on failure.
         int32_t allocate_memory(uint64_t device, uint64_t size, uint32_t memory_type_index, uint64_t& out_memory);

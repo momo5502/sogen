@@ -102,6 +102,8 @@ namespace sogen
                     return handle_reset_command_buffer(win_emu, context);
                 case gpu_bridge::ioctl_get_physical_device_memory_properties:
                     return handle_get_physical_device_memory_properties(win_emu, context);
+                case gpu_bridge::ioctl_get_physical_device_memory_budget:
+                    return handle_get_physical_device_memory_budget(win_emu, context);
                 case gpu_bridge::ioctl_allocate_memory:
                     return handle_allocate_memory(win_emu, context);
                 case gpu_bridge::ioctl_free_memory:
@@ -1077,6 +1079,23 @@ namespace sogen
                 win_emu.emu().write_memory(context.output_buffer, properties.data(), properties.size());
                 set_information(context, context.output_buffer_length);
                 return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_physical_device_memory_budget(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_physical_device_memory_budget_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                gpu_bridge::get_physical_device_memory_budget_response response{};
+                uint32_t heap_count = 0;
+                response.vk_result =
+                    this->vulkan_.get_physical_device_memory_budget(request.physical_device, response.heap_budget.data(),
+                                                                    response.heap_usage.data(), gpu_bridge::max_memory_heaps, heap_count);
+                response.heap_count = heap_count;
+                return write_output(win_emu, context, response);
             }
 
             NTSTATUS handle_allocate_memory(windows_emulator& win_emu, const io_device_context& context)
