@@ -571,7 +571,10 @@ namespace sogen
             }
             else
             {
-                std::this_thread::sleep_for(1ms);
+                // Yield rather than sleep: when every thread is parked (e.g. all blocked on a cooperative
+                // GPU wait), the scheduler re-polls readiness each iteration, so a 1ms sleep would cap how
+                // fast a GPU-finished thread can wake. Yielding re-polls the instant the GPU signals.
+                std::this_thread::yield();
             }
 
             if (this->should_stop)

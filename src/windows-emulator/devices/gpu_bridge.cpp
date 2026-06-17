@@ -894,9 +894,45 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const int32_t result =
-                    this->vulkan_.wait_semaphores(request.device, request.flags, entries.data(), request.semaphore_count, request.timeout);
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+                constexpr int32_t vk_success = 0;
+                constexpr int32_t vk_timeout = 2;
+
+                const auto device = request.device;
+                const auto flags = request.flags;
+                const auto count = request.semaphore_count;
+
+                // Poll once without blocking.
+                const int32_t poll = this->vulkan_.wait_semaphores(device, flags, entries.data(), count, 0);
+
+                // Already signaled, an error, or a finite-timeout wait: handle inline. A finite wait still
+                // blocks the VP for its (bounded) duration, but those are rare -- the hot path is DXVK's
+                // infinite frame waits, handled cooperatively below.
+                if (poll != vk_timeout || request.timeout != UINT64_MAX)
+                {
+                    const int32_t result = (poll == vk_timeout)
+                                               ? this->vulkan_.wait_semaphores(device, flags, entries.data(), count, request.timeout)
+                                               : poll;
+                    return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+                }
+
+                // Infinite wait, not yet signaled: blocking here would freeze the single VP (and every other
+                // guest thread) for the whole GPU wait. Instead pre-write the success result and park this
+                // thread on a predicate that polls the semaphore; the scheduler runs other guest threads
+                // meanwhile and wakes this one when the GPU signals. An infinite wait never times out, so the
+                // result is always VK_SUCCESS.
+                const auto out_status =
+                    write_output(win_emu, context, gpu_bridge::result_response{.vk_result = vk_success, .reserved = 0});
+                if (out_status != STATUS_SUCCESS)
+                {
+                    return out_status;
+                }
+
+                auto* vulkan = &this->vulkan_;
+                win_emu.current_thread().await_host_condition = [vulkan, device, flags, entries = std::move(entries), count]() {
+                    return vulkan->wait_semaphores(device, flags, entries.data(), count, 0) == 0 /* VK_SUCCESS */;
+                };
+                win_emu.yield_thread(false);
+                return STATUS_SUCCESS;
             }
 
             NTSTATUS handle_get_buffer_device_address(windows_emulator& win_emu, const io_device_context& context)
