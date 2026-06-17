@@ -1,0 +1,6 @@
+.sympath srv*C:\Users\mauri\Desktop\sogen\symcache*https://msdl.microsoft.com/download/symbols
+.reload /f ntdll.dll
+.echo ===UF===
+uf ntdll!AlpcGetMessageAttribute
+.echo ===END===
+q
