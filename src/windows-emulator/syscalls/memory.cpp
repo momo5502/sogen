@@ -117,6 +117,24 @@ namespace sogen
 
                 return STATUS_SUCCESS;
             }
+
+            std::optional<std::u16string> get_mapped_filename(const syscall_context& c, const uint64_t base_address)
+            {
+                const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);
+                if (!mod || mod->module_path.empty())
+                {
+                    return std::nullopt;
+                }
+
+                try
+                {
+                    return mod->module_path.to_device_path();
+                }
+                catch (const std::exception&)
+                {
+                    return mod->module_path.to_unc_path();
+                }
+            }
         }
 
         NTSTATUS handle_NtQueryVirtualMemory(const syscall_context& c, const handle process_handle, const uint64_t base_address,
@@ -180,6 +198,43 @@ namespace sogen
                     {
                         image_info.Type = memory_region_policy::to_memory_basic_information_type(region_info.kind);
                     }
+                });
+
+                return STATUS_SUCCESS;
+            }
+
+            if (info_class == MemoryMappedFilenameInformation)
+            {
+                const auto mapped_filename = get_mapped_filename(c, base_address);
+                if (!mapped_filename)
+                {
+                    return STATUS_INVALID_ADDRESS;
+                }
+
+                const auto string_bytes = static_cast<uint32_t>(mapped_filename->size() * sizeof(char16_t));
+                const auto required_length =
+                    static_cast<uint32_t>(sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>) + string_bytes + sizeof(char16_t));
+
+                if (return_length)
+                {
+                    return_length.write(required_length);
+                }
+
+                if (memory_information_length < required_length)
+                {
+                    return STATUS_BUFFER_OVERFLOW;
+                }
+
+                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> info{c.emu, memory_information};
+                info.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& filename) {
+                    const auto buffer_start = static_cast<uint64_t>(memory_information) + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>);
+                    filename.Length = static_cast<USHORT>(string_bytes);
+                    filename.MaximumLength = static_cast<USHORT>(string_bytes + sizeof(char16_t));
+                    filename.Buffer = buffer_start;
+
+                    c.emu.write_memory(buffer_start, mapped_filename->data(), string_bytes);
+                    const char16_t terminator = u'\0';
+                    c.emu.write_memory(buffer_start + string_bytes, &terminator, sizeof(terminator));
                 });
 
                 return STATUS_SUCCESS;

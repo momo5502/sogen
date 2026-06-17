@@ -343,13 +343,31 @@ namespace sogen
 
     bool memory_manager::commit_memory(const uint64_t address, const size_t size, const nt_memory_permission permissions)
     {
+        return this->commit_memory(address, size, permissions, false);
+    }
+
+    bool memory_manager::commit_image_memory(const uint64_t address, const size_t size, const nt_memory_permission permissions)
+    {
+        const auto entry = this->find_reserved_region(address);
+        if (entry == this->reserved_regions_.end() || entry->second.kind != memory_region_kind::section_image)
+        {
+            return false;
+        }
+
+        return this->commit_memory(address, size, permissions, true);
+    }
+
+    bool memory_manager::commit_memory(const uint64_t address, const size_t size, const nt_memory_permission permissions,
+                                       const bool allow_image_section)
+    {
         const auto entry = this->find_reserved_region(address);
         if (entry == this->reserved_regions_.end())
         {
             return false;
         }
 
-        if (memory_region_policy::is_section_kind(entry->second.kind))
+        if (memory_region_policy::is_section_kind(entry->second.kind) &&
+            !(allow_image_section && entry->second.kind == memory_region_kind::section_image))
         {
             return false;
         }

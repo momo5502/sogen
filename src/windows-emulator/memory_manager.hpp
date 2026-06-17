@@ -93,6 +93,7 @@ namespace sogen
                              memory_region_kind kind = memory_region_kind::private_allocation);
 
         bool commit_memory(uint64_t address, size_t size, nt_memory_permission permissions);
+        bool commit_image_memory(uint64_t address, size_t size, nt_memory_permission permissions);
         bool decommit_memory(uint64_t address, size_t size);
 
         bool release_memory(uint64_t address, size_t size);
@@ -152,6 +153,7 @@ namespace sogen
         void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) final;
 
         void update_layout_version();
+        bool commit_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool allow_image_section);
     };
 
     namespace memory_region_policy
