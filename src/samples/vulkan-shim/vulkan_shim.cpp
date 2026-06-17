@@ -15,6 +15,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -44,8 +45,20 @@ namespace
         return g_bridge;
     }
 
+    // Flushes any descriptor-set updates the shim has coalesced (see vkUpdateDescriptorSets). Defined
+    // below, but called from bridge_call so every host-observable operation sees prior updates applied.
+    void flush_descriptor_updates();
+
     bool bridge_call(uint32_t code, const void* in, DWORD in_len, void* out, DWORD out_len)
     {
+        // Any bridge call other than the descriptor-update flush itself is a point where the host might
+        // observe descriptor state (command recording, submit, ...), so drain pending updates first. This
+        // keeps the host's descriptor state identical to the un-batched path at every observation point.
+        if (code != gb::ioctl_update_descriptor_sets_batch)
+        {
+            flush_descriptor_updates();
+        }
+
         const HANDLE handle = bridge();
         if (handle == INVALID_HANDLE_VALUE)
         {
@@ -127,6 +140,39 @@ namespace
     // emulated frame time. The shim only runs inside the single-threaded emulator, so the map needs no
     // lock. Each record is a gb::command_record_header followed by that command's request payload.
     std::unordered_map<gb::object_id, std::vector<uint8_t>> g_command_streams;
+
+    // vkUpdateDescriptorSets is by far the most frequent bridge call (DXVK updates descriptors per draw).
+    // Each is void-returning and only mutates host descriptor state, so instead of one IOCTL apiece the
+    // shim appends each update's wire blob here and flushes the lot in a single IOCTL right before the next
+    // host-observable bridge call. Issue order is preserved, so the host sees exactly the same descriptor
+    // state at every observation point as the un-batched path did.
+    //
+    // Unlike the per-command-buffer streams (each externally synchronised to one thread by Vulkan), this is
+    // a single global touched by every DXVK thread. The emulator runs one guest thread at a time, but the
+    // preemptive time-slice can interrupt a thread mid-append, so a second thread's append/flush would
+    // observe a half-mutated vector. The mutex makes append and flush-swap atomic against that.
+    std::vector<uint8_t> g_pending_descriptor_updates;
+    std::mutex g_pending_descriptor_updates_mutex;
+
+    void flush_descriptor_updates()
+    {
+        // Move the buffer out under the lock so the IOCTL (and any concurrent append) operates on a stable
+        // local copy. The lock is released before bridge_call so the nested flush-guard / further appends
+        // don't deadlock.
+        std::vector<uint8_t> batch;
+        {
+            std::lock_guard<std::mutex> lock(g_pending_descriptor_updates_mutex);
+            if (g_pending_descriptor_updates.empty())
+            {
+                return;
+            }
+            batch.swap(g_pending_descriptor_updates);
+        }
+
+        gb::result_response response{};
+        bridge_call(gb::ioctl_update_descriptor_sets_batch, batch.data(), static_cast<DWORD>(batch.size()), &response,
+                    sizeof(response));
+    }
 
     void record_command(gb::object_id command_buffer, gb::command command, const void* payload, size_t size)
     {
@@ -3561,15 +3607,18 @@ extern "C"
         header.device = to_object_id(device);
         header.write_count = static_cast<uint32_t>(writes.size());
 
-        std::vector<uint8_t> message(sizeof(header) + writes.size() * sizeof(gb::descriptor_write));
-        std::memcpy(message.data(), &header, sizeof(header));
+        // Append this update's blob (header + writes) to the pending batch instead of issuing an IOCTL now.
+        // flush_descriptor_updates() drains it before the next host-observable bridge call. The lock keeps
+        // the append atomic against a flush/append from another thread that preempts this one mid-insert.
+        const auto* header_bytes = reinterpret_cast<const uint8_t*>(&header);
+        const auto* write_bytes = reinterpret_cast<const uint8_t*>(writes.data());
+        std::lock_guard<std::mutex> lock(g_pending_descriptor_updates_mutex);
+        g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), header_bytes, header_bytes + sizeof(header));
         if (!writes.empty())
         {
-            std::memcpy(message.data() + sizeof(header), writes.data(), writes.size() * sizeof(gb::descriptor_write));
+            g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), write_bytes,
+                                                write_bytes + writes.size() * sizeof(gb::descriptor_write));
         }
-
-        gb::result_response response{};
-        bridge_call(gb::ioctl_update_descriptor_sets, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response));
     }
 
     // Descriptor update templates are lowered entirely inside the shim: the template definition is kept
