@@ -3,6 +3,7 @@
 #include "logger.hpp"
 #include "windows_emulator.hpp"
 #include "ports/api_port.hpp"
+#include "ports/audio_service.hpp"
 #include "ports/core_messaging_registrar.hpp"
 #include "ports/dns_resolver.hpp"
 #include "ports/lsa_policy_lookup.hpp"
@@ -65,6 +66,12 @@ namespace sogen
         if (port == u"\\RPC Control\\LSARPC_ENDPOINT" || port == u"\\RPC Control\\lsapolicylookup")
         {
             return create_lsa_policy_lookup_port();
+        }
+
+        if (port == u"\\RPC Control\\Audiosrv" || port == u"\\RPC Control\\AudioClientRpc" ||
+            port == u"\\RPC Control\\AudioSrvServiceRpc")
+        {
+            return create_audio_service_port();
         }
 
         if (port == u"\\WindowsErrorReportingServicePort")
@@ -252,8 +259,11 @@ namespace sogen
                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
         std::memcpy(header.data() + 12, &call_id, sizeof(call_id));
 
+        const auto pointer_size = win_emu.process.is_wow64_process ? utils::aligned_binary_writer::pointer_size_32
+                                                                   : utils::aligned_binary_writer::pointer_size_64;
+
         std::vector<uint8_t> payload;
-        utils::aligned_binary_writer writer(payload);
+        utils::aligned_binary_writer writer(payload, pointer_size);
         writer.write(header.data(), header.size());
 
         lpc_request_context rpc_context{};

@@ -876,6 +876,16 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
+        NTSTATUS handle_NtCreateWnfStateName()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtDeleteWnfStateName()
+        {
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtQueryInformationJobObject()
         {
             return STATUS_NOT_SUPPORTED;
@@ -1234,6 +1244,8 @@ namespace sogen
         add_handler(NtQueryDefaultUILanguage);
         add_handler(NtQueryInstallUILanguage);
         add_handler(NtUpdateWnfStateData);
+        add_handler(NtCreateWnfStateName);
+        add_handler(NtDeleteWnfStateName);
         add_handler(NtRaiseException);
         add_handler(NtQueryInformationJobObject);
         add_handler(NtSetSystemInformation);
