@@ -3839,6 +3839,17 @@ extern "C"
             request.attribute_count = attribute_count;
             request.rasterization_samples = ci.pMultisampleState ? static_cast<uint32_t>(ci.pMultisampleState->rasterizationSamples) : 1u;
 
+            request.primitive_topology = static_cast<uint32_t>(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+
+            request.primitive_restart_enable = 0;
+
+            if (ci.pInputAssemblyState)
+            {
+                request.primitive_topology = static_cast<uint32_t>(ci.pInputAssemblyState->topology);
+
+                request.primitive_restart_enable = ci.pInputAssemblyState->primitiveRestartEnable ? 1u : 0u;
+            }
+
             // Forward the dynamic-state list verbatim. DXVK marks vertex-binding stride, cull, topology,
             // depth/stencil etc. dynamic and sets them via vkCmdSet*/vkCmdBindVertexBuffers2; if the host
             // pipeline does not also declare them dynamic it bakes (often wrong) defaults instead.

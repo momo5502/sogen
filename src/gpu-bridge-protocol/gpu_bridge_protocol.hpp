@@ -1462,6 +1462,8 @@ namespace sogen::gpu_bridge
         uint32_t attribute_count;                                    // number of vertex_input_attribute entries that follow the bindings
         uint32_t rasterization_samples;                              // VkSampleCountFlagBits the pipeline rasterizes at (1 = no MSAA)
         uint32_t dynamic_state_count;                                // number of uint32 VkDynamicState values that follow the attributes
+        uint32_t primitive_topology;
+        uint32_t primitive_restart_enable;
         // Per-stage specialization constants (DXVK bakes d3d9 render state into the shaders this way).
         uint32_t vs_spec_entry_count;
         uint32_t vs_spec_data_size;
