@@ -23,8 +23,15 @@ namespace sogen
 
         constexpr uint32_t k_audio_opnum_get_default_endpoint = 25; // {923F85B3}
         constexpr uint32_t k_audio_opnum_get_mix_format = 0;        // {D574D111}
+        constexpr uint32_t k_audio_opnum_open_stream = 4;           // {D574D111} (Initialize prep)
+        constexpr uint32_t k_audio_opnum_create_stream = 7;         // {D574D111} CreateRemoteStream
 
         constexpr NTSTATUS k_hr_ok = 0;
+
+        // An NDR [out] context handle: a 4-byte attributes field + a 16-byte UUID identifying the stream. The
+        // client stores this and passes it back as the binding for the follow-on stream RPCs.
+        constexpr std::array<uint8_t, 16> k_stream_context_uuid = {0x53, 0x6f, 0x67, 0x65, 0x6e, 0x41, 0x75, 0x64,
+                                                                   0x69, 0x6f, 0x53, 0x74, 0x72, 0x6d, 0x00, 0x01};
 
         // The audio endpoint database lives in the registry under
         // HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\{Render,Capture}. Each endpoint is a
@@ -119,6 +126,10 @@ namespace sogen
                     {
                     case k_audio_opnum_get_mix_format:
                         return handle_get_mix_format(writer);
+                    case k_audio_opnum_open_stream:
+                        return handle_open_stream(writer);
+                    case k_audio_opnum_create_stream:
+                        return handle_create_stream(writer);
                     default:
                         return log_unhandled(win_emu, "AudioClient", procedure_id, c);
                     }
@@ -176,6 +187,38 @@ namespace sogen
                 writer.write_ndr_pointer(true);          // unique pointer referent
                 writer.write_pointer_sized(cb_size);     // conformance: length of the conformant tail
                 writer.write(fmt.data(), fmt.size(), 1);
+
+                writer.align_to(sizeof(uint32_t));
+                writer.write(k_hr_ok); // return HRESULT
+                return STATUS_SUCCESS;
+            }
+
+            // {D574D111} opnum 4: the IAudioClient::Initialize "open stream" prep call.
+            //   [in]  endpointId, sharemode, flags, WAVEFORMATEX*, GUID*, request-struct
+            //   [out] LPWSTR*       (unique pointer, optional)
+            //   [out] context_handle (the stream handle, reused as the binding for follow-on RPCs)
+            //   returns HRESULT
+            static NTSTATUS handle_open_stream(utils::aligned_binary_writer& writer)
+            {
+                writer.write_ndr_pointer(false); // [out] string: null
+
+                writer.write<uint32_t>(0);                                              // context handle: attributes
+                writer.write(k_stream_context_uuid.data(), k_stream_context_uuid.size(), 1); // context handle: uuid
+
+                writer.align_to(sizeof(uint32_t));
+                writer.write(k_hr_ok); // return HRESULT
+                return STATUS_SUCCESS;
+            }
+
+            // {D574D111} opnum 7: CreateRemoteStream. [out] is a 1232-byte SYSTEM_AUDIO_STREAM (FC_BOGUS_STRUCT
+            // with embedded pointers/handles). First pass: return an all-zero struct (null pointers/handles) to
+            // get past unmarshalling and observe the next requirement.
+            static NTSTATUS handle_create_stream(utils::aligned_binary_writer& writer)
+            {
+                constexpr size_t k_system_audio_stream_size = 0x4d0; // 1232
+                writer.align_to(8);
+                const std::array<uint8_t, k_system_audio_stream_size> stream{};
+                writer.write(stream.data(), stream.size(), 1);
 
                 writer.align_to(sizeof(uint32_t));
                 writer.write(k_hr_ok); // return HRESULT
