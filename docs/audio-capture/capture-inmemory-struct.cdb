@@ -1,0 +1,7 @@
+.sympath srv*C:\Users\mauri\Desktop\sogen\symcache*https://msdl.microsoft.com/download/symbols
+.reload /f audioses.dll
+.echo ===BP-SET===
+bp audioses!CAudioClient::CreateRemoteStream "r @$t0=@rcx; r @$t1=@rdx; r @$t2=@r8; r @$t3=@r9; r @$t4=poi(@rsp+0x28); r @$t5=poi(@rsp+0x30); r @$t6=poi(@rsp+0x38); gu; .echo ===RETURNED===; .printf \"this=%p a1=%p a2=%p a3=%p a4=%p a5=%p out6=%p\\n\", @$t0,@$t1,@$t2,@$t3,@$t4,@$t5,@$t6; .echo ---out6---; db @$t6 L4d0; .writemem C:\\Users\\mauri\\Desktop\\sogen\\sas_out6.bin @$t6 L4d0; gc"
+g
+.echo ===DONE===
+q

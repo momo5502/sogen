@@ -1,0 +1,8 @@
+.sympath srv*C:\Users\mauri\Desktop\sogen\symcache*https://msdl.microsoft.com/download/symbols
+.reload /f ntdll.dll
+.echo ===UF-HEADERSIZE===
+uf ntdll!AlpcGetHeaderSize
+.echo ===UF-INIT===
+uf ntdll!AlpcInitializeMessageAttribute
+.echo ===END===
+q
