@@ -227,6 +227,14 @@ namespace sogen
             return STATUS_INVALID_PARAMETER;
         }
 
+        // The bind carries the target interface's RPC_SYNTAX_IDENTIFIER GUID at offset 12.
+        constexpr ULONG rpc_handshake_interface_offset = 12;
+        if (c.send_buffer_length >= rpc_handshake_interface_offset + this->bound_interface_.size())
+        {
+            win_emu.emu().read_memory(c.send_buffer + rpc_handshake_interface_offset, this->bound_interface_.data(),
+                                      this->bound_interface_.size());
+        }
+
         std::vector<uint8_t> payload(c.send_buffer_length, 0);
         win_emu.emu().read_memory(c.recv_buffer, payload.data(), payload.size());
 
@@ -276,6 +284,18 @@ namespace sogen
         }
 
         const auto status = this->handle_rpc(win_emu, procedure_id, rpc_context, writer);
+
+        if (getenv("EMULATOR_LOG_RPC"))
+        {
+            std::string hex;
+            char tmp[4];
+            for (size_t i = sizeof(header); i < payload.size() && i < sizeof(header) + 128; ++i)
+            {
+                (void)snprintf(tmp, sizeof(tmp), "%02x ", payload[i]);
+                hex += tmp;
+            }
+            win_emu.log.error("[rpc] opnum=%u reply ndr(%zu): %s\n", procedure_id, payload.size() - sizeof(header), hex.c_str());
+        }
 
         return {status, std::move(payload)};
     }

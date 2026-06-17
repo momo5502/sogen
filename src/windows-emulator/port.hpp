@@ -319,8 +319,18 @@ namespace sogen
         virtual NTSTATUS handle_rpc(windows_emulator& win_emu, uint32_t procedure_id, const lpc_request_context& c,
                                     utils::aligned_binary_writer& writer) = 0;
 
+        // The interface UUID the client bound to (captured from the LRPC bind). A single ALPC port can host
+        // several RPC interfaces whose opnums overlap, so handlers dispatch by (interface, opnum).
+        const std::array<uint8_t, 16>& bound_interface() const
+        {
+            return bound_interface_;
+        }
+
+      protected:
+        std::array<uint8_t, 16> bound_interface_{};
+
       private:
-        static lpc_request_result handle_handshake(windows_emulator& win_emu, const lpc_request_context& c);
+        lpc_request_result handle_handshake(windows_emulator& win_emu, const lpc_request_context& c);
         lpc_request_result handle_rpc_call(windows_emulator& win_emu, const lpc_request_context& c);
     };
 
