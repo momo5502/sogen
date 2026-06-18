@@ -3,6 +3,7 @@
 #include <map>
 #include <atomic>
 #include <cstdint>
+#include <optional>
 
 #include "memory_permission_ext.hpp"
 #include "memory_region.hpp"
@@ -73,6 +74,7 @@ namespace sogen
             memory_permission initial_permission{};
             committed_region_map committed_regions{};
             memory_region_kind kind{memory_region_kind::private_allocation};
+            std::u16string mapped_filename{};
         };
 
         using reserved_region_map = std::map<uint64_t, reserved_region>;
@@ -108,6 +110,8 @@ namespace sogen
                                            uint64_t highest_address) const;
 
         region_info get_region_info(uint64_t address);
+        std::optional<std::u16string> get_region_mapped_filename(uint64_t address) const;
+        void set_region_mapped_filename(uint64_t address, std::u16string filename);
 
         reserved_region_map::iterator find_reserved_region(uint64_t address);
 

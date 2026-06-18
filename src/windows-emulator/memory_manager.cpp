@@ -85,6 +85,7 @@ namespace sogen
         static void serialize(buffer_serializer& buffer, const memory_manager::reserved_region& region)
         {
             buffer.write(region.kind);
+            buffer.write(region.mapped_filename);
             buffer.write(region.initial_permission);
             buffer.write<uint64_t>(region.length);
             buffer.write_map(region.committed_regions);
@@ -93,6 +94,7 @@ namespace sogen
         static void deserialize(buffer_deserializer& buffer, memory_manager::reserved_region& region)
         {
             buffer.read(region.kind);
+            buffer.read(region.mapped_filename);
             buffer.read(region.initial_permission);
             region.length = static_cast<size_t>(buffer.read<uint64_t>());
             buffer.read_map(region.committed_regions);
@@ -572,6 +574,7 @@ namespace sogen
             left_region.length = static_cast<size_t>(aligned_start - reserved_start);
             left_region.initial_permission = region.initial_permission;
             left_region.kind = region.kind;
+            left_region.mapped_filename = region.mapped_filename;
             left_region.committed_regions = std::move(left_committed);
             this->reserved_regions_.try_emplace(reserved_start, std::move(left_region));
         }
@@ -582,6 +585,7 @@ namespace sogen
             right_region.length = static_cast<size_t>(reserved_end - aligned_end);
             right_region.initial_permission = region.initial_permission;
             right_region.kind = region.kind;
+            right_region.mapped_filename = region.mapped_filename;
             right_region.committed_regions = std::move(right_committed);
             this->reserved_regions_.try_emplace(aligned_end, std::move(right_region));
         }
@@ -802,6 +806,39 @@ namespace sogen
         result.length = static_cast<size_t>(committed_end - result.start);
 
         return result;
+    }
+
+    std::optional<std::u16string> memory_manager::get_region_mapped_filename(const uint64_t address) const
+    {
+        if (this->reserved_regions_.empty())
+        {
+            return std::nullopt;
+        }
+
+        auto upper_bound = this->reserved_regions_.upper_bound(address);
+        if (upper_bound == this->reserved_regions_.begin())
+        {
+            return std::nullopt;
+        }
+
+        const auto entry = --upper_bound;
+        if (entry->first + entry->second.length <= address || entry->second.mapped_filename.empty())
+        {
+            return std::nullopt;
+        }
+
+        return entry->second.mapped_filename;
+    }
+
+    void memory_manager::set_region_mapped_filename(const uint64_t address, std::u16string filename)
+    {
+        const auto entry = this->find_reserved_region(address);
+        if (entry == this->reserved_regions_.end())
+        {
+            return;
+        }
+
+        entry->second.mapped_filename = std::move(filename);
     }
 
     memory_manager::reserved_region_map::iterator memory_manager::find_reserved_region(const uint64_t address)

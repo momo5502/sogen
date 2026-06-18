@@ -4,6 +4,7 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 #include "../memory_manager.hpp"
+#include "../windows_path.hpp"
 
 namespace sogen
 {
@@ -120,6 +121,18 @@ namespace sogen
 
             std::optional<std::u16string> get_mapped_filename(const syscall_context& c, const uint64_t base_address)
             {
+                if (const auto mapped_filename = c.win_emu.memory.get_region_mapped_filename(base_address))
+                {
+                    try
+                    {
+                        return windows_path(*mapped_filename).to_device_path();
+                    }
+                    catch (const std::exception&)
+                    {
+                        return windows_path(*mapped_filename).to_unc_path();
+                    }
+                }
+
                 const auto* mod = c.win_emu.mod_manager.find_by_address(base_address);
                 if (!mod || mod->module_path.empty())
                 {

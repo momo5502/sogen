@@ -429,6 +429,7 @@ namespace sogen
             const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
             const auto address =
                 c.win_emu.memory.allocate_memory(aligned_size, protection, reserve_only, 0, memory_region_kind::file_section_view);
+            c.win_emu.memory.set_region_mapped_filename(address, section_entry->file_name);
 
             if (!reserve_only && !file_data.empty())
             {
