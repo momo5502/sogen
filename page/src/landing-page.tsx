@@ -3,7 +3,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Shield,
   Cpu,
-  Terminal,
   ExternalLink,
   Play,
   ArrowRight,
@@ -11,8 +10,9 @@ import {
   Lock,
   Bug,
   Split,
-  Layers,
+  Save,
   Code,
+  Image as ImageIcon,
 } from "lucide-react";
 import { Highlight } from "prism-react-renderer";
 import type { PrismTheme } from "prism-react-renderer";
@@ -52,6 +52,25 @@ function generateButtons(additionalClasses: string = "") {
           </span>
         </Button>
       </a>
+    </div>
+  );
+}
+
+function ScreenshotPlaceholder({
+  label,
+  className = "",
+}: {
+  label: string;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`flex items-center justify-center rounded-xl border border-dashed border-neutral-600 bg-neutral-900/60 text-neutral-500 text-sm select-none ${className}`}
+    >
+      <span className="flex items-center gap-2">
+        <ImageIcon className="h-4 w-4" />
+        {label}
+      </span>
     </div>
   );
 }
@@ -111,30 +130,23 @@ export function LandingPage() {
   const features = [
     {
       icon: <Cpu className="h-6 w-6" />,
-      title: "Syscall Emulation",
+      title: "Real DLLs, Not Stubs",
       description:
-        "Operates at syscall level for Windows NT and Linux x86-64 binaries, minimizing API reimplementation overhead",
+        "The actual ntdll, kernel32 and user32 execute inside the emulator. Nothing is reimplemented, so even undocumented quirks behave exactly like they do on the real OS.",
       accent: "from-[#f76548] to-[#b00101]",
     },
     {
       icon: <Split className="h-6 w-6" />,
-      title: "Hooking Capabilities",
+      title: "Hook & Rewrite Everything",
       description:
-        "Provides powerful hooking interfaces to intercept memory access, code execution and much more",
+        "Intercept memory reads and writes, individual instructions, syscalls and API calls, at any granularity. Observe what a program does, or change it on the fly.",
       accent: "from-[#ffcb00] to-[#da6000]",
     },
     {
-      icon: <Terminal className="h-6 w-6" />,
-      title: "Debugging Interface",
+      icon: <Save className="h-6 w-6" />,
+      title: "Snapshot & Restore",
       description:
-        "Implements GDB serial protocol for integration with common debugging tools",
-      accent: "from-[#00c4e9] to-[#005ff6]",
-    },
-    {
-      icon: <Layers className="h-6 w-6" />,
-      title: "State Management",
-      description:
-        "Saves and restores the entire state of the emulator to quickly resume your work exactly where you left off.",
+        "Serialize the entire emulator state, load minidumps, and jump back to any point, with no replaying a run from the start. Combined with deterministic execution, a bug reproduces every single time.",
       accent: "from-[#aee703] to-[#647502]",
     },
   ];
@@ -144,94 +156,62 @@ export function LandingPage() {
       icon: <Shield className="h-6 w-6" />,
       title: "Security Research",
       description:
-        "Analyze security vulnerabilities in a controlled environment",
+        "Detonate untrusted code in isolation and watch every syscall and API call it makes.",
     },
     {
       icon: <Lock className="h-6 w-6" />,
       title: "DRM Research",
       description:
-        "Study digital rights management systems and protection mechanisms",
+        "Step through licensing and protection logic with full control over what the code sees.",
     },
     {
       icon: <Bug className="h-6 w-6" />,
       title: "Malware Analysis",
       description:
-        "Reverse engineer malicious software with full process control",
+        "Run samples without spinning up a VM, and snapshot the moment before they unpack.",
     },
-  ];
-
-  const stats = [
-    { value: "100%", label: "Open Source" },
-    { value: "2", label: "OS Targets" },
-    { value: "3", label: "Backends" },
-    { value: "100%", label: "Deterministic" },
   ];
 
   return (
     <>
       <Header
-        title="Sogen"
-        description="A high-performance Windows & Linux userspace emulator."
+        title="Sogen - Windows & Linux Userspace Emulator"
+        description="Sogen is a high-performance Windows & Linux userspace emulator. It runs binaries at the CPU and syscall level, letting you hook and inspect every instruction, memory access and API call. Ideal for security, malware and DRM research."
       />
       <div className="flex flex-col min-h-screen bg-linear-to-br from-zinc-900 via-neutral-900 to-black overflow-x-hidden">
         {/* Hero Section with Animated Background */}
         <section className="relative overflow-visible">
-          {/* Animated Background Elements */}
-          <div className="absolute inset-0 container mx-auto">
-            <div className="absolute top-20 left-10 w-72 h-72 bg-yellow-500/15 rounded-full blur-3xl"></div>
-            <div className="absolute top-40 right-20 w-96 h-96 bg-lime-500/15 rounded-full blur-3xl"></div>
-            <div className="absolute bottom-20 left-1/3 w-80 h-80 bg-cyan-500/15 rounded-full blur-3xl"></div>
-          </div>
+          <div className="relative container mx-auto px-4 min-[340px]:px-6 pt-28 pb-16 xl:pt-32 xl:pb-24">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+              {/* Text column */}
+              <div className="text-center lg:text-left space-y-8 max-w-2xl mx-auto lg:mx-0">
+                <h1 className="text-4xl md:text-5xl lg:text-4xl font-bold text-white leading-[1.2] tracking-tight">
+                  Run any Windows binary.
+                  <br />
+                  <span className="text-neutral-300">Without Windows.</span>
+                </h1>
 
-          <div className="relative container mx-auto min-h-dvh p-1 min-[340px]:p-4 flex items-center xl:min-h-0 xl:px-6 xl:py-32">
-            <div className="text-center space-y-8 max-w-4xl mx-auto">
-              {/* Main Headline */}
-              <h1 className="text-5xl md:text-7xl font-bold text-white leading-tight">
-                Sogen
-              </h1>
+                <p className="text-lg md:text-xl text-neutral-400 font-light leading-relaxed max-w-xl mx-auto lg:mx-0 text-balance">
+                  Sogen is a userspace emulator for Windows and Linux binaries.
+                  Hook, debug and snapshot any process, with control over every
+                  instruction, syscall and API call.
+                </p>
 
-              <p className="text-xl md:text-2xl text-neutral-300 font-light leading-relaxed">
-                A high-performance Windows & Linux userspace emulator.
-              </p>
-
-              {
-                /* CTA Buttons */
-                generateButtons("pt-8")
-              }
-
-              {/* Stats */}
-              <div className="flex justify-center flex-col min-[400px]:flex-row gap-6 sm:gap-8 pt-12">
-                {stats.map((stat, index) => (
-                  <div key={index} className="text-center">
-                    <div className="text-2xl font-bold text-white">
-                      {stat.value}
-                    </div>
-                    <div className="text-sm text-neutral-400">{stat.label}</div>
-                  </div>
-                ))}
+                {
+                  /* CTA Buttons */
+                  generateButtons("pt-2 lg:px-0 lg:justify-start")
+                }
               </div>
-            </div>
-          </div>
-        </section>
 
-        {/* Preview Section */}
-        <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
-          <div className="container mx-auto px-6">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl font-bold text-white mb-6">
-                Understand Your Applications
-              </h2>
-              <p className="text-xl text-neutral-400">
-                Analyze application semantics and uncover how programs truly
-                behave.
-              </p>
-            </div>
-
-            <div className="mx-auto w-full gap-12 flex items-center justify-center flex-col lg:flex-row">
-              <img
-                className="mx-auto -my-8"
-                src="https://momo5502.com/sogen/preview.svg"
-              />
+              {/* Product shot */}
+              <div className="relative">
+                <div className="absolute -inset-4 bg-linear-to-r from-yellow-500/10 via-lime-500/10 to-cyan-500/10 rounded-3xl blur-2xl"></div>
+                <img
+                  src="https://momo5502.com/sogen/preview.svg"
+                  alt="The Sogen emulator tracing a program's execution"
+                  className="relative w-full"
+                />
+              </div>
             </div>
           </div>
         </section>
@@ -241,14 +221,14 @@ export function LandingPage() {
           <div className="container mx-auto px-6">
             <div className="text-center mb-16">
               <h2 className="text-4xl font-bold text-white mb-6">
-                Powerful Features
+                Everything You Need to Dig In
               </h2>
               <p className="text-xl text-neutral-400 max-w-2xl mx-auto">
-                Built from the ground up for performance and accuracy.
+                Built in C++ for accuracy and speed.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-8 lg:mx-32">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
               {features.map((feature, index) => (
                 <Card
                   key={index}
@@ -275,16 +255,104 @@ export function LandingPage() {
           </div>
         </section>
 
+        {/* Debugger Showcase */}
+        <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
+          <div className="container mx-auto px-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-12 items-center max-w-6xl mx-auto">
+              <div className="relative order-last xl:order-first">
+                <div className="absolute -inset-4 bg-linear-to-r from-cyan-500/10 to-blue-500/10 rounded-2xl blur-md"></div>
+                <ScreenshotPlaceholder
+                  label="Debugger screenshot"
+                  className="relative aspect-video w-full shadow-2xl"
+                />
+              </div>
+
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-800/60 px-4 py-2 text-sm text-neutral-300 mb-6">
+                  <Bug className="h-4 w-4" />
+                  Debugger
+                </div>
+                <h2 className="text-4xl font-bold text-white mb-6">
+                  Debug It Like a Real Target
+                </h2>
+                <p className="text-xl text-neutral-400 leading-relaxed mb-6">
+                  Step through execution right in your browser: disassembly,
+                  registers, breakpoints, call stack, a control-flow graph and a
+                  scripting console, all against the live emulator. Prefer your
+                  own tools? Attach IDA, GDB, LLDB or VS Code over the GDB
+                  protocol.
+                </p>
+
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <a href="#/playground">
+                    <Button
+                      asChild
+                      size="lg"
+                      className="rounded-lg bg-linear-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100 w-full flex"
+                    >
+                      <span>
+                        <Play className="mr-2 h-5 w-5 transition-transform" />
+                        <span className="flex-1 text-center">
+                          Open the Debugger
+                        </span>
+                        <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                      </span>
+                    </Button>
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Frontier / Experimental Section */}
+        <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
+          <div className="container mx-auto px-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-12 items-center max-w-6xl mx-auto">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-800/60 px-4 py-2 text-sm text-neutral-300 mb-6">
+                  <span className="relative flex h-2 w-2">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-75"></span>
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan-500"></span>
+                  </span>
+                  Experimental
+                </div>
+                <h2 className="text-4xl font-bold text-white mb-6">
+                  It Runs Real GUI Apps, Even Games
+                </h2>
+                <p className="text-xl text-neutral-400 leading-relaxed">
+                  Real user32 windows, dialogs and controls run their own logic
+                  and paint through emulated GDI, while a Vulkan bridge forwards
+                  graphics to your host's real GPU. Enough to bring interactive
+                  Windows applications, and even games, to life inside the
+                  emulator.
+                </p>
+              </div>
+
+              <div className="relative w-full max-w-2xl mx-auto">
+                <div className="absolute -inset-4 bg-linear-to-r from-[#76b900]/10 to-cyan-500/10 rounded-2xl blur-md"></div>
+                <img
+                  src="https://momo5502.com/sogen/game.png"
+                  alt="A game running inside the Sogen emulator"
+                  width={1283}
+                  height={754}
+                  className="relative w-full rounded-xl border border-neutral-700 shadow-2xl"
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Use Cases */}
         <section className="py-24 bg-neutral-800/40">
           <div className="container mx-auto px-6">
             <div className="text-center mb-16">
               <h2 className="text-4xl font-bold text-white mb-6">
-                Perfect For Your Research
+                Who It's For
               </h2>
               <p className="text-xl text-neutral-400">
-                Designed for researchers who need precise control over
-                user-space process execution on Windows and Linux.
+                For reverse engineers who need precise, low-level control over
+                how a process runs.
               </p>
             </div>
 
@@ -419,8 +487,7 @@ export function LandingPage() {
                 See Sogen in Action
               </h2>
               <p className="text-xl text-neutral-400 max-w-3xl mx-auto">
-                Watch a comprehensive overview of the emulator's capabilities
-                and discover how it can accelerate your research workflow.
+                Two walkthroughs of how Sogen works and what it can do.
               </p>
             </div>
 
@@ -485,7 +552,7 @@ export function LandingPage() {
                 <a
                   href="https://github.com/momo5502/sogen"
                   target="_blank"
-                  title="Soure Code"
+                  title="Source Code"
                   className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
                 >
                   <Code className="h-6 w-6" />

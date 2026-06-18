@@ -7,11 +7,13 @@
 	<img src="https://img.shields.io/github/commit-activity/m/momo5502/sogen?color=FF3131"/>
 </h1>
 
-Sogen is a high-performance Windows & Linux userspace emulator that operates at syscall level, providing full control over process execution through comprehensive hooking capabilities.
+Sogen runs Windows and Linux programs without a real operating system, and lets you see and control everything they do.
 
-Perfect for security research, malware analysis, and DRM research where fine-grained control over process execution is required.
+Instead of reimplementing thousands of OS APIs, Sogen emulates binaries at the CPU and syscall level and runs the **real system DLLs**, so behavior closely matches the real OS. Every instruction, memory access and API call can be hooked, inspected or rewritten, runs are fully deterministic, and the entire emulator state can be snapshotted and restored.
 
-Built in C++ and powered by the backend of your choice:
+That makes it ideal for security research, malware analysis and DRM research, where fine-grained control over process execution is essential.
+
+Built in C++ and powered by the CPU backend of your choice:
 
 - [Unicorn Engine](https://github.com/unicorn-engine/unicorn)
 - [icicle-emu](https://github.com/icicle-emu/icicle-emu)
