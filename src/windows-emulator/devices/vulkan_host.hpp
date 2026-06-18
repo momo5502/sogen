@@ -491,7 +491,8 @@ namespace sogen
                                          uint64_t fragment_shader, uint32_t width, uint32_t height,
                                          std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
                                          const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
-                                         uint32_t stencil_format, uint32_t rasterization_samples, std::span<const uint32_t> dynamic_states,
+                                         uint32_t stencil_format, uint32_t rasterization_samples, uint32_t primitive_topology,
+                                         uint32_t primitive_restart_enable, std::span<const uint32_t> dynamic_states,
                                          const specialization& vs_spec, const specialization& fs_spec,
                                          std::span<const color_blend_attachment> blend_attachments, uint64_t& out_pipeline);
         int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, uint64_t shader_module, uint64_t& out_pipeline);

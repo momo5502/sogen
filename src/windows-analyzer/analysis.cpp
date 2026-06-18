@@ -628,6 +628,11 @@ namespace sogen
 
         emulator_callbacks::continuation handle_syscall(analysis_context& c, const uint32_t syscall_id, const std::string_view syscall_name)
         {
+            if (c.settings->ignored_functions.contains(syscall_name))
+            {
+                return instruction_hook_continuation::run_instruction;
+            }
+
             auto& win_emu = *c.win_emu;
             auto& emu = win_emu.emu();
 

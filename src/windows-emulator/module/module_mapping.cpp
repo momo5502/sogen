@@ -436,7 +436,7 @@ namespace sogen
                     continue;
                 }
 
-                if (!memory.commit_memory(target_ptr, section_size, memory_permission::read_write))
+                if (!memory.commit_image_memory(target_ptr, section_size, memory_permission::read_write))
                 {
                     return false;
                 }
@@ -511,13 +511,13 @@ namespace sogen
             binary.address_names.clear();
 
             const auto image_size = static_cast<size_t>(binary.size_of_image);
-            if (!memory.allocate_memory(binary.image_base, image_size, memory_permission::all, true))
+            if (!memory.allocate_memory(binary.image_base, image_size, memory_permission::all, true, memory_region_kind::section_image))
             {
                 return false;
             }
 
             const auto headers_size = static_cast<size_t>(page_align_up(optional_header.SizeOfHeaders));
-            if (!memory.commit_memory(binary.image_base, headers_size, memory_permission::read_write))
+            if (!memory.commit_image_memory(binary.image_base, headers_size, memory_permission::read_write))
             {
                 memory.release_memory(binary.image_base, 0);
                 return false;

@@ -3309,14 +3309,14 @@ namespace sogen::whp
 
                 if (exception.ExceptionType == WHvX64ExceptionTypeBreakpointTrap)
                 {
-                    if (this->handle_patched_execution_breakpoint(exit_context.VpContext.Rip - 1))
+                    const auto rip = exit_context.VpContext.Rip;
+                    if (this->handle_patched_execution_breakpoint(rip - 1) || this->handle_patched_execution_breakpoint(rip))
                     {
                         return true;
                     }
 
                     if (this->syscall_hook_ != nullptr)
                     {
-                        const auto rip = exit_context.VpContext.Rip;
                         if (rip == this->syscall_hook_page_ || rip == (this->syscall_hook_page_ + 1))
                         {
                             return this->handle_syscall_halt();
