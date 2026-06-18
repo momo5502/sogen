@@ -1233,11 +1233,15 @@ namespace sogen::whp
                 // an expensive EPT flush, so freeing a large region one page at a time stalls the guest for
                 // seconds. The LIFO GPA free list scatters a region's pages across non-adjacent and reverse-ordered
                 // guest-physical addresses, so sort them to recover every contiguous run before unmapping.
+                //
+                // Free pages high-to-low so released GPA indices land on the LIFO free list in descending order;
+                // the next large allocation then pops them back ascending, keeping remap_pages' contiguous-run
+                // check effective so re-mapping the region stays coalesced too.
                 std::vector<uint64_t> unmap_gpas;
                 bool flushed_virtual_mappings = false;
-                for (size_t offset = 0; offset < size; offset += page_size)
+                for (size_t offset = size; offset > 0; offset -= page_size)
                 {
-                    const auto guest_address = address + offset;
+                    const auto guest_address = address + offset - page_size;
                     this->revoke_mmio_read_grace(guest_address);
 
                     const auto entry = this->mapped_pages_.find(guest_address);

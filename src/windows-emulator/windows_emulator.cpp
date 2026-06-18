@@ -571,10 +571,29 @@ namespace sogen
             }
             else
             {
-                // Yield rather than sleep: when every thread is parked (e.g. all blocked on a cooperative
-                // GPU wait), the scheduler re-polls readiness each iteration, so a 1ms sleep would cap how
-                // fast a GPU-finished thread can wake. Yielding re-polls the instant the GPU signals.
-                std::this_thread::yield();
+                bool host_wait_pending = false;
+                for (const auto& thread_entry : this->process.threads)
+                {
+                    if (thread_entry.second.await_host_condition)
+                    {
+                        host_wait_pending = true;
+                        break;
+                    }
+                }
+
+                if (host_wait_pending)
+                {
+                    // A cooperative host wait (e.g. a GPU semaphore) is parked: only its host-side predicate can
+                    // make a thread ready, so re-poll immediately rather than sleeping, to wake it with minimal
+                    // latency the instant the GPU signals.
+                    std::this_thread::yield();
+                }
+                else
+                {
+                    // Only timed/object waits are outstanding; nothing host-side can change readiness sooner than
+                    // wall-clock time, so sleep rather than busy-spinning a CPU for the whole guest timeout.
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
             }
 
             if (this->should_stop)

@@ -926,8 +926,17 @@ namespace sogen
                 }
 
                 auto* vulkan = &this->vulkan_;
-                win_emu.current_thread().await_host_condition = [vulkan, device, flags, entries = std::move(entries), count]() {
-                    return vulkan->wait_semaphores(device, flags, entries.data(), count, 0) == 0 /* VK_SUCCESS */;
+                win_emu.current_thread().await_host_condition = [vulkan, &win_emu, context, device, flags, entries = std::move(entries),
+                                                                 count]() {
+                    const int32_t result = vulkan->wait_semaphores(device, flags, entries.data(), count, 0);
+                    if (result == vk_timeout)
+                    {
+                        return false;
+                    }
+                    // Propagate the real result (success, or an error such as device loss), overwriting the
+                    // pre-written success, so error cases reach the guest instead of parking the thread forever.
+                    write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+                    return true;
                 };
                 win_emu.yield_thread(false);
                 return STATUS_SUCCESS;
