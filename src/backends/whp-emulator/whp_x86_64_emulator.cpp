@@ -1847,7 +1847,8 @@ namespace sogen::whp
                     WHV_PARTITION_PROPERTY exception_exit_bitmap{};
                     exception_exit_bitmap.ExceptionExitBitmap =
                         (1ull << WHvX64ExceptionTypeDebugTrapOrFault) | (1ull << WHvX64ExceptionTypeBreakpointTrap) |
-                        (1ull << WHvX64ExceptionTypeInvalidOpcodeFault) | (1ull << WHvX64ExceptionTypePageFault);
+                        (1ull << WHvX64ExceptionTypeInvalidOpcodeFault) | (1ull << WHvX64ExceptionTypePageFault) |
+                        (1ull << WHvX64ExceptionTypeFloatingPointErrorFault) | (1ull << WHvX64ExceptionTypeSimdFloatingPointFault);
 
                     WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExceptionExitBitmap,
                                                          &exception_exit_bitmap, sizeof(exception_exit_bitmap)));
@@ -3350,6 +3351,22 @@ namespace sogen::whp
                     {
                         return true;
                     }
+                }
+
+                if (exception.ExceptionType == WHvX64ExceptionTypeSimdFloatingPointFault ||
+                    exception.ExceptionType == WHvX64ExceptionTypeFloatingPointErrorFault)
+                {
+                    // There is no guest IDT, so an FP exception cannot be vectored by the CPU - it would read
+                    // the null IDT (e.g. IDT[19] = 0x130 for #XM) and fault. The guest reaches here only because
+                    // its MXCSR / x87 control word has the exception masks cleared, which is never the Windows
+                    // user-mode default (0x1F80 / 0x037F = all masked) and is a corrupted state. Restore the
+                    // masked defaults and clear the sticky exception flags, then let the faulting SSE/x87
+                    // instruction re-run; it now completes (producing NaN/inf) exactly as it would on Windows.
+                    const auto mxcsr = this->reg<uint32_t>(x86_register::mxcsr);
+                    this->reg(x86_register::mxcsr, (mxcsr | 0x1F80u) & ~0x3Fu);
+                    const auto fpcw = this->reg<uint16_t>(x86_register::fpcw);
+                    this->reg(x86_register::fpcw, static_cast<uint16_t>(fpcw | 0x3Fu));
+                    return true;
                 }
 
                 for (auto& [_, hook] : this->interrupt_hooks_)
