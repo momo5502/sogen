@@ -1228,11 +1228,16 @@ namespace sogen::whp
                     throw std::runtime_error("WHP memory unmappings must be page aligned");
                 }
 
+                // Collect the guest-physical pages backing this region and run the per-page bookkeeping, then drop
+                // them from the partition with as few WHvUnmapGpaRange calls as possible. Each WHvUnmapGpaRange is
+                // an expensive EPT flush, so freeing a large region one page at a time stalls the guest for
+                // seconds. The LIFO GPA free list scatters a region's pages across non-adjacent and reverse-ordered
+                // guest-physical addresses, so sort them to recover every contiguous run before unmapping.
+                std::vector<uint64_t> unmap_gpas;
                 bool flushed_virtual_mappings = false;
-                for (size_t offset = size; offset > 0; offset -= page_size)
+                for (size_t offset = 0; offset < size; offset += page_size)
                 {
-                    const auto guest_address = address + offset - page_size;
-
+                    const auto guest_address = address + offset;
                     this->revoke_mmio_read_grace(guest_address);
 
                     const auto entry = this->mapped_pages_.find(guest_address);
@@ -1243,13 +1248,26 @@ namespace sogen::whp
 
                     if (entry->second->map_flags != 0)
                     {
-                        WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, entry->second->guest_physical_address, page_size));
+                        unmap_gpas.push_back(entry->second->guest_physical_address);
                     }
 
                     flushed_virtual_mappings = this->clear_virtual_mapping(guest_address) || flushed_virtual_mappings;
                     this->mark_patched_execution_breakpoints_unmapped(guest_address);
                     this->release_guest_physical_page(entry->second->guest_physical_address);
                     this->mapped_pages_.erase(entry);
+                }
+
+                std::sort(unmap_gpas.begin(), unmap_gpas.end());
+                for (size_t i = 0; i < unmap_gpas.size();)
+                {
+                    size_t j = i;
+                    while (j + 1 < unmap_gpas.size() && unmap_gpas[j + 1] == unmap_gpas[j] + page_size)
+                    {
+                        ++j;
+                    }
+
+                    WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, unmap_gpas[i], (j - i + 1) * page_size));
+                    i = j + 1;
                 }
 
                 if (flushed_virtual_mappings)
