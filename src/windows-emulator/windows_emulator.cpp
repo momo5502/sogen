@@ -583,15 +583,12 @@ namespace sogen
 
                 if (host_wait_pending)
                 {
-                    // A cooperative host wait (e.g. a GPU semaphore) is parked: only its host-side predicate can
-                    // make a thread ready, so re-poll immediately rather than sleeping, to wake it with minimal
-                    // latency the instant the GPU signals.
+                    // A host wait (e.g. a GPU semaphore) is parked - re-poll immediately to wake it promptly.
                     std::this_thread::yield();
                 }
                 else
                 {
-                    // Only timed/object waits are outstanding; nothing host-side can change readiness sooner than
-                    // wall-clock time, so sleep rather than busy-spinning a CPU for the whole guest timeout.
+                    // Only timed waits remain; nothing host-side wakes sooner than wall-clock, so don't busy-spin.
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
             }

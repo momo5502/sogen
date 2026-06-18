@@ -168,10 +168,8 @@ namespace sogen::gpu_bridge
         invalidate_mapped_memory_direct = 0x883,
         cmd_copy_image = 0x884,
         get_physical_device_memory_budget = 0x885,
-        // Coalesced vkUpdateDescriptorSets: the payload is a concatenation of one-or-more
-        // update_descriptor_sets_request blobs (each header + its descriptor_write[]). The shim buffers
-        // updates and flushes them in one IOCTL before any other bridge call, preserving issue order while
-        // collapsing the dominant per-frame round-trip count.
+        // Coalesced vkUpdateDescriptorSets: payload is a concatenation of update_descriptor_sets_request blobs
+        // (each a header + its descriptor_write[]), applied in issue order.
         update_descriptor_sets_batch = 0x886,
     };
 

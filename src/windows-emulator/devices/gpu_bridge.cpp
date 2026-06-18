@@ -901,12 +901,10 @@ namespace sogen
                 const auto flags = request.flags;
                 const auto count = request.semaphore_count;
 
-                // Poll once without blocking.
                 const int32_t poll = this->vulkan_.wait_semaphores(device, flags, entries.data(), count, 0);
 
-                // Already signaled, an error, or a finite-timeout wait: handle inline. A finite wait still
-                // blocks the VP for its (bounded) duration, but those are rare -- the hot path is DXVK's
-                // infinite frame waits, handled cooperatively below.
+                // Signaled, errored, or a finite-timeout wait: handle inline. The hot path is DXVK's infinite
+                // frame waits, parked cooperatively below.
                 if (poll != vk_timeout || request.timeout != UINT64_MAX)
                 {
                     const int32_t result =
@@ -914,11 +912,9 @@ namespace sogen
                     return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
                 }
 
-                // Infinite wait, not yet signaled: blocking here would freeze the single VP (and every other
-                // guest thread) for the whole GPU wait. Instead pre-write the success result and park this
-                // thread on a predicate that polls the semaphore; the scheduler runs other guest threads
-                // meanwhile and wakes this one when the GPU signals. An infinite wait never times out, so the
-                // result is always VK_SUCCESS.
+                // Infinite wait, not yet signaled: blocking would freeze the single VP and every guest thread.
+                // Park on a semaphore-polling predicate instead, so the scheduler runs other threads and wakes
+                // this one when the GPU signals.
                 const auto out_status = write_output(win_emu, context, gpu_bridge::result_response{.vk_result = vk_success, .reserved = 0});
                 if (out_status != STATUS_SUCCESS)
                 {
@@ -933,8 +929,7 @@ namespace sogen
                     {
                         return false;
                     }
-                    // Propagate the real result (success, or an error such as device loss), overwriting the
-                    // pre-written success, so error cases reach the guest instead of parking the thread forever.
+                    // Propagate the real result so an error (e.g. device loss) reaches the guest instead of hanging.
                     write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
                     return true;
                 };
@@ -2127,10 +2122,8 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // Applies one update_descriptor_sets_request blob (header followed by `write_count`
-            // descriptor_write records) from a host-side byte buffer. Shared by the single IOCTL and the
-            // coalesced batch. Returns the VkResult, or VK_ERROR_INITIALIZATION_FAILED on a malformed record,
-            // and advances `offset` past the consumed blob.
+            // Applies one update_descriptor_sets_request blob (header + write_count descriptor_write records) and
+            // advances `offset` past it. Shared by the single and coalesced-batch IOCTLs.
             int32_t apply_update_descriptor_sets(const std::byte* data, size_t size, size_t& offset)
             {
                 constexpr int32_t vk_error_initialization_failed = -3; // VK_ERROR_INITIALIZATION_FAILED (no vulkan.h here)
@@ -2187,8 +2180,7 @@ namespace sogen
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
-            // Coalesced vkUpdateDescriptorSets: the input buffer is a concatenation of update blobs, applied
-            // in order (preserving the guest's issue order). See command::update_descriptor_sets_batch.
+            // Applies a concatenation of update_descriptor_sets blobs in order (see update_descriptor_sets_batch).
             NTSTATUS handle_update_descriptor_sets_batch(windows_emulator& win_emu, const io_device_context& context)
             {
                 if (!context.input_buffer || context.input_buffer_length == 0)

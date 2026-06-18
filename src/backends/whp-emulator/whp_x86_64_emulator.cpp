@@ -1228,15 +1228,10 @@ namespace sogen::whp
                     throw std::runtime_error("WHP memory unmappings must be page aligned");
                 }
 
-                // Collect the guest-physical pages backing this region and run the per-page bookkeeping, then drop
-                // them from the partition with as few WHvUnmapGpaRange calls as possible. Each WHvUnmapGpaRange is
-                // an expensive EPT flush, so freeing a large region one page at a time stalls the guest for
-                // seconds. The LIFO GPA free list scatters a region's pages across non-adjacent and reverse-ordered
-                // guest-physical addresses, so sort them to recover every contiguous run before unmapping.
-                //
-                // Free pages high-to-low so released GPA indices land on the LIFO free list in descending order;
-                // the next large allocation then pops them back ascending, keeping remap_pages' contiguous-run
-                // check effective so re-mapping the region stays coalesced too.
+                // Coalesce into one WHvUnmapGpaRange per contiguous guest-physical run: each call is an EPT flush,
+                // so freeing a large region page-by-page stalls the guest for seconds. The LIFO GPA free list
+                // scatters/reverses a region's GPAs, hence the sort. Free high-to-low so the indices pop back
+                // ascending on the next allocation, keeping remap_pages' map-side coalescing effective too.
                 std::vector<uint64_t> unmap_gpas;
                 bool flushed_virtual_mappings = false;
                 for (size_t offset = size; offset > 0; offset -= page_size)
@@ -3378,12 +3373,10 @@ namespace sogen::whp
                 if (exception.ExceptionType == WHvX64ExceptionTypeSimdFloatingPointFault ||
                     exception.ExceptionType == WHvX64ExceptionTypeFloatingPointErrorFault)
                 {
-                    // There is no guest IDT, so an FP exception cannot be vectored by the CPU - it would read
-                    // the null IDT (e.g. IDT[19] = 0x130 for #XM) and fault. The guest reaches here only because
-                    // its MXCSR / x87 control word has the exception masks cleared, which is never the Windows
-                    // user-mode default (0x1F80 / 0x037F = all masked) and is a corrupted state. Restore the
-                    // masked defaults and clear the sticky exception flags, then let the faulting SSE/x87
-                    // instruction re-run; it now completes (producing NaN/inf) exactly as it would on Windows.
+                    // With no guest IDT, an unhandled FP exception faults at IDT[vec] (e.g. 0x130 for #XM). The
+                    // guest only reaches here with its FP exception masks cleared (a corrupted MXCSR/x87 control
+                    // word); restore the masked Windows defaults and re-run the instruction so it completes as it
+                    // would natively.
                     const auto mxcsr = this->reg<uint32_t>(x86_register::mxcsr);
                     this->reg(x86_register::mxcsr, (mxcsr | 0x1F80u) & ~0x3Fu);
                     const auto fpcw = this->reg<uint16_t>(x86_register::fpcw);

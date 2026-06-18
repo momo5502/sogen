@@ -923,9 +923,8 @@ namespace sogen
 
         if (this->await_host_condition)
         {
-            // GPU-bridge cooperative wait: poll the host predicate (a Vulkan semaphore poll). The wait is
-            // only ever armed with an infinite timeout, so it completes with STATUS_SUCCESS when ready and
-            // otherwise just stays parked (complete_if_timed_out is a no-op without an await_time).
+            // Cooperative host wait (e.g. a GPU-bridge semaphore poll): ready when the predicate signals,
+            // otherwise stay parked.
             if (this->await_host_condition())
             {
                 this->mark_as_ready(STATUS_SUCCESS);
