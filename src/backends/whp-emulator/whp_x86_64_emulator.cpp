@@ -1257,7 +1257,7 @@ namespace sogen::whp
                     this->mapped_pages_.erase(entry);
                 }
 
-                std::sort(unmap_gpas.begin(), unmap_gpas.end());
+                std::ranges::sort(unmap_gpas);
                 for (size_t i = 0; i < unmap_gpas.size();)
                 {
                     size_t j = i;

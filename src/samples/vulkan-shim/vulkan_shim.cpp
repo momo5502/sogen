@@ -170,8 +170,7 @@ namespace
         }
 
         gb::result_response response{};
-        bridge_call(gb::ioctl_update_descriptor_sets_batch, batch.data(), static_cast<DWORD>(batch.size()), &response,
-                    sizeof(response));
+        bridge_call(gb::ioctl_update_descriptor_sets_batch, batch.data(), static_cast<DWORD>(batch.size()), &response, sizeof(response));
     }
 
     void record_command(gb::object_id command_buffer, gb::command command, const void* payload, size_t size)

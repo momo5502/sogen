@@ -909,9 +909,8 @@ namespace sogen
                 // infinite frame waits, handled cooperatively below.
                 if (poll != vk_timeout || request.timeout != UINT64_MAX)
                 {
-                    const int32_t result = (poll == vk_timeout)
-                                               ? this->vulkan_.wait_semaphores(device, flags, entries.data(), count, request.timeout)
-                                               : poll;
+                    const int32_t result =
+                        (poll == vk_timeout) ? this->vulkan_.wait_semaphores(device, flags, entries.data(), count, request.timeout) : poll;
                     return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
                 }
 
@@ -920,8 +919,7 @@ namespace sogen
                 // thread on a predicate that polls the semaphore; the scheduler runs other guest threads
                 // meanwhile and wakes this one when the GPU signals. An infinite wait never times out, so the
                 // result is always VK_SUCCESS.
-                const auto out_status =
-                    write_output(win_emu, context, gpu_bridge::result_response{.vk_result = vk_success, .reserved = 0});
+                const auto out_status = write_output(win_emu, context, gpu_bridge::result_response{.vk_result = vk_success, .reserved = 0});
                 if (out_status != STATUS_SUCCESS)
                 {
                     return out_status;

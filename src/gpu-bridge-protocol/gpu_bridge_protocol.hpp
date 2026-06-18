@@ -270,8 +270,7 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_destroy_descriptor_pool = make_ioctl(static_cast<uint32_t>(command::destroy_descriptor_pool));
     inline constexpr uint32_t ioctl_allocate_descriptor_sets = make_ioctl(static_cast<uint32_t>(command::allocate_descriptor_sets));
     inline constexpr uint32_t ioctl_update_descriptor_sets = make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets));
-    inline constexpr uint32_t ioctl_update_descriptor_sets_batch =
-        make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets_batch));
+    inline constexpr uint32_t ioctl_update_descriptor_sets_batch = make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets_batch));
     inline constexpr uint32_t ioctl_create_sampler = make_ioctl(static_cast<uint32_t>(command::create_sampler));
     inline constexpr uint32_t ioctl_destroy_sampler = make_ioctl(static_cast<uint32_t>(command::destroy_sampler));
     inline constexpr uint32_t ioctl_enumerate_device_extension_properties =
