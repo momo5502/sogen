@@ -305,8 +305,8 @@ export function LandingPage() {
                 <img
                   src="https://momo5502.com/sogen/browser.png"
                   alt="The Sogen playground running in a web browser"
-                  width={1167}
-                  height={673}
+                  width={1017}
+                  height={583}
                   className="relative w-full rounded-xl border border-neutral-700 shadow-2xl"
                 />
               </div>
