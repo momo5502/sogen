@@ -398,12 +398,11 @@ export function LandingPage() {
                   Python bindings
                 </div>
                 <h2 className="text-4xl font-bold text-white mb-6">
-                  Automate Sogen from Python
+                  Script It in Python
                 </h2>
                 <p className="text-xl text-neutral-400 leading-relaxed mb-6">
-                  Script emulator runs, register callbacks, and intercept WinAPI
-                  calls directly from Python. Install from PyPI, load your
-                  target, and start exploring.
+                  Drive the emulator from Python: register callbacks, hook API
+                  calls, and read or write memory.
                 </p>
 
                 <div className="mb-8 inline-flex items-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-4 py-3 font-mono text-sm text-neutral-200">
