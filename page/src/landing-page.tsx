@@ -361,7 +361,7 @@ export function LandingPage() {
                   Experimental
                 </div>
                 <h2 className="text-4xl font-bold text-white mb-6">
-                  Even Games Run
+                  Safely Run Games
                 </h2>
                 <p className="text-xl text-neutral-400 leading-relaxed">
                   Native GUI apps run, with working windows, dialogs and
