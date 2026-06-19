@@ -580,6 +580,7 @@ namespace sogen
         this->await_msg = {};
         this->await_msg_mask = {};
         this->await_io_completion = {};
+        this->await_host_condition = {};
 
         // TODO: Find out if this is correct
         if (this->waiting_for_alert)
@@ -918,6 +919,19 @@ namespace sogen
         if (this->await_time.has_value())
         {
             return complete_if_timed_out(STATUS_SUCCESS);
+        }
+
+        if (this->await_host_condition)
+        {
+            // Cooperative host wait (e.g. a GPU-bridge semaphore poll): ready when the predicate signals,
+            // otherwise stay parked.
+            if (this->await_host_condition())
+            {
+                this->mark_as_ready(STATUS_SUCCESS);
+                return true;
+            }
+
+            return complete_if_timed_out(STATUS_TIMEOUT);
         }
 
         if (this->await_io_completion.has_value())

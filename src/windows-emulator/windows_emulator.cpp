@@ -185,6 +185,19 @@ namespace sogen
             return {.window = top_level, .x = x, .y = y};
         }
 
+        bool has_pending_host_wait(const process_context& process)
+        {
+            for (const auto& thread_entry : process.threads)
+            {
+                if (thread_entry.second.await_host_condition)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         void perform_context_switch_work(windows_emulator& win_emu)
         {
             auto& threads = win_emu.process.threads;
@@ -569,9 +582,15 @@ namespace sogen
             {
                 this->executed_instructions_ += MAX_INSTRUCTIONS_PER_TIME_SLICE;
             }
+            else if (has_pending_host_wait(this->process))
+            {
+                // A host wait (e.g. a GPU semaphore) is parked - re-poll immediately to wake it promptly.
+                std::this_thread::yield();
+            }
             else
             {
-                std::this_thread::sleep_for(1ms);
+                // Only timed waits remain; nothing host-side wakes sooner than wall-clock, so don't busy-spin.
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
 
             if (this->should_stop)

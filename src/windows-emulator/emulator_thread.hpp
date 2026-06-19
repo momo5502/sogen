@@ -4,6 +4,8 @@
 #include "emulator_utils.hpp"
 #include "memory_manager.hpp"
 
+#include <functional>
+
 #include <utils/moved_marker.hpp>
 
 namespace sogen
@@ -300,6 +302,12 @@ namespace sogen
         std::optional<pending_msg> await_msg{};
         std::optional<DWORD> await_msg_mask{};
         std::optional<pending_io_completion_wait> await_io_completion{};
+
+        // When set, the thread is parked until this host-side predicate returns true. Used by the GPU
+        // bridge to wait on a Vulkan semaphore cooperatively (other guest threads run while the GPU works)
+        // instead of blocking the single VP. Polled by is_thread_ready and completed via
+        // mark_as_ready(STATUS_SUCCESS). Not serialized: the only user (GPU bridge) is not snapshotable.
+        std::function<bool()> await_host_condition{};
 
         bool apc_alertable{false};
         std::vector<pending_apc> pending_apcs{};

@@ -206,6 +206,8 @@ namespace sogen
                     return handle_allocate_descriptor_sets(win_emu, context);
                 case gpu_bridge::ioctl_update_descriptor_sets:
                     return handle_update_descriptor_sets(win_emu, context);
+                case gpu_bridge::ioctl_update_descriptor_sets_batch:
+                    return handle_update_descriptor_sets_batch(win_emu, context);
                 case gpu_bridge::ioctl_create_sampler:
                     return handle_create_sampler(win_emu, context);
                 case gpu_bridge::ioctl_destroy_sampler:
@@ -892,9 +894,47 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const int32_t result =
-                    this->vulkan_.wait_semaphores(request.device, request.flags, entries.data(), request.semaphore_count, request.timeout);
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+                constexpr int32_t vk_success = 0;
+                constexpr int32_t vk_timeout = 2;
+
+                const auto device = request.device;
+                const auto flags = request.flags;
+                const auto count = request.semaphore_count;
+
+                const int32_t poll = this->vulkan_.wait_semaphores(device, flags, entries.data(), count, 0);
+
+                // Signaled, errored, or a finite-timeout wait: handle inline. The hot path is DXVK's infinite
+                // frame waits, parked cooperatively below.
+                if (poll != vk_timeout || request.timeout != UINT64_MAX)
+                {
+                    const int32_t result =
+                        (poll == vk_timeout) ? this->vulkan_.wait_semaphores(device, flags, entries.data(), count, request.timeout) : poll;
+                    return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+                }
+
+                // Infinite wait, not yet signaled: blocking would freeze the single VP and every guest thread.
+                // Park on a semaphore-polling predicate instead, so the scheduler runs other threads and wakes
+                // this one when the GPU signals.
+                const auto out_status = write_output(win_emu, context, gpu_bridge::result_response{.vk_result = vk_success, .reserved = 0});
+                if (out_status != STATUS_SUCCESS)
+                {
+                    return out_status;
+                }
+
+                auto* vulkan = &this->vulkan_;
+                win_emu.current_thread().await_host_condition = [vulkan, &win_emu, context, device, flags, entries = std::move(entries),
+                                                                 count]() {
+                    const int32_t result = vulkan->wait_semaphores(device, flags, entries.data(), count, 0);
+                    if (result == vk_timeout)
+                    {
+                        return false;
+                    }
+                    // Propagate the real result so an error (e.g. device loss) reaches the guest instead of hanging.
+                    write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+                    return true;
+                };
+                win_emu.yield_thread(false);
+                return STATUS_SUCCESS;
             }
 
             NTSTATUS handle_get_buffer_device_address(windows_emulator& win_emu, const io_device_context& context)
@@ -2083,38 +2123,95 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            NTSTATUS handle_update_descriptor_sets(windows_emulator& win_emu, const io_device_context& context)
+            // Cap guest-declared descriptor-update payloads so a bogus IOCTL length can't force a huge allocation.
+            static constexpr size_t max_descriptor_update_input_bytes = size_t{256} * 1024 * 1024;
+
+            // Applies one update_descriptor_sets_request blob (header + write_count descriptor_write records) and
+            // advances `offset` past it. Shared by the single and coalesced-batch IOCTLs.
+            int32_t apply_update_descriptor_sets(const std::byte* data, size_t size, size_t& offset)
             {
+                constexpr int32_t vk_error_initialization_failed = -3; // VK_ERROR_INITIALIZATION_FAILED (no vulkan.h here)
                 using request_t = gpu_bridge::update_descriptor_sets_request;
 
+                if (size - offset < sizeof(request_t))
+                {
+                    return vk_error_initialization_failed;
+                }
+
                 request_t request{};
-                if (!read_input(win_emu, context, request))
+                std::memcpy(&request, data + offset, sizeof(request));
+                offset += sizeof(request);
+
+                const size_t writes_bytes = static_cast<size_t>(request.write_count) * sizeof(gpu_bridge::descriptor_write);
+                if (size - offset < writes_bytes)
+                {
+                    return vk_error_initialization_failed;
+                }
+
+                std::vector<vulkan_host::descriptor_write> writes(request.write_count);
+                for (size_t i = 0; i < request.write_count; ++i)
+                {
+                    gpu_bridge::descriptor_write w{};
+                    std::memcpy(&w, data + offset + i * sizeof(w), sizeof(w));
+                    writes[i] = {.dst_set = w.dst_set,
+                                 .dst_binding = w.dst_binding,
+                                 .dst_array_element = w.dst_array_element,
+                                 .descriptor_type = w.descriptor_type,
+                                 .buffer = w.buffer,
+                                 .offset = w.offset,
+                                 .range = w.range,
+                                 .sampler = w.sampler,
+                                 .image_view = w.image_view,
+                                 .image_layout = w.image_layout};
+                }
+                offset += writes_bytes;
+
+                return this->vulkan_.update_descriptor_sets(request.device, writes);
+            }
+
+            NTSTATUS handle_update_descriptor_sets(windows_emulator& win_emu, const io_device_context& context)
+            {
+                if (!context.input_buffer || context.input_buffer_length < sizeof(gpu_bridge::update_descriptor_sets_request) ||
+                    context.input_buffer_length > max_descriptor_update_input_bytes)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                std::vector<gpu_bridge::descriptor_write> wire;
-                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.write_count, wire))
+                std::vector<std::byte> buffer(context.input_buffer_length);
+                win_emu.emu().read_memory(context.input_buffer, buffer.data(), buffer.size());
+
+                size_t offset = 0;
+                const int32_t result = this->apply_update_descriptor_sets(buffer.data(), buffer.size(), offset);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
+            // Applies a concatenation of update_descriptor_sets blobs in order (see update_descriptor_sets_batch).
+            NTSTATUS handle_update_descriptor_sets_batch(windows_emulator& win_emu, const io_device_context& context)
+            {
+                if (!context.input_buffer || context.input_buffer_length == 0 ||
+                    context.input_buffer_length > max_descriptor_update_input_bytes)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                std::vector<vulkan_host::descriptor_write> writes(wire.size());
-                for (size_t i = 0; i < wire.size(); ++i)
+                std::vector<std::byte> buffer(context.input_buffer_length);
+                win_emu.emu().read_memory(context.input_buffer, buffer.data(), buffer.size());
+
+                int32_t result = 0; // VK_SUCCESS
+                size_t offset = 0;
+                while (offset + sizeof(gpu_bridge::update_descriptor_sets_request) <= buffer.size())
                 {
-                    writes[i] = {.dst_set = wire[i].dst_set,
-                                 .dst_binding = wire[i].dst_binding,
-                                 .dst_array_element = wire[i].dst_array_element,
-                                 .descriptor_type = wire[i].descriptor_type,
-                                 .buffer = wire[i].buffer,
-                                 .offset = wire[i].offset,
-                                 .range = wire[i].range,
-                                 .sampler = wire[i].sampler,
-                                 .image_view = wire[i].image_view,
-                                 .image_layout = wire[i].image_layout};
+                    const int32_t r = this->apply_update_descriptor_sets(buffer.data(), buffer.size(), offset);
+                    if (r != 0 && result == 0)
+                    {
+                        result = r; // report the first failure
+                    }
+                    if (r == -3) // malformed record: stop to avoid spinning on a bad offset
+                    {
+                        break;
+                    }
                 }
 
-                const int32_t result = this->vulkan_.update_descriptor_sets(request.device, writes);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 

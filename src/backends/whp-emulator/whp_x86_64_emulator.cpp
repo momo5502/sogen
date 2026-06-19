@@ -1228,11 +1228,18 @@ namespace sogen::whp
                     throw std::runtime_error("WHP memory unmappings must be page aligned");
                 }
 
+                // Coalesce into one WHvUnmapGpaRange per contiguous guest-physical run: each call is an EPT flush,
+                // so freeing a large region page-by-page stalls the guest for seconds. The LIFO GPA free list
+                // scatters/reverses a region's GPAs, hence the sort. Free high-to-low so the indices pop back
+                // ascending on the next allocation, keeping remap_pages' map-side coalescing effective too.
+                std::vector<uint64_t> unmap_gpas;
+                // Keep each page's host backing alive until after the unmaps below: erasing the mapped_page drops
+                // its (shared) owned_page, which can free memory the WHP partition still maps by GPA.
+                std::vector<std::shared_ptr<uint8_t>> retired_backings;
                 bool flushed_virtual_mappings = false;
                 for (size_t offset = size; offset > 0; offset -= page_size)
                 {
                     const auto guest_address = address + offset - page_size;
-
                     this->revoke_mmio_read_grace(guest_address);
 
                     const auto entry = this->mapped_pages_.find(guest_address);
@@ -1243,13 +1250,27 @@ namespace sogen::whp
 
                     if (entry->second->map_flags != 0)
                     {
-                        WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, entry->second->guest_physical_address, page_size));
+                        unmap_gpas.push_back(entry->second->guest_physical_address);
                     }
 
                     flushed_virtual_mappings = this->clear_virtual_mapping(guest_address) || flushed_virtual_mappings;
                     this->mark_patched_execution_breakpoints_unmapped(guest_address);
                     this->release_guest_physical_page(entry->second->guest_physical_address);
+                    retired_backings.push_back(std::move(entry->second->owned_page));
                     this->mapped_pages_.erase(entry);
+                }
+
+                std::ranges::sort(unmap_gpas);
+                for (size_t i = 0; i < unmap_gpas.size();)
+                {
+                    size_t j = i;
+                    while (j + 1 < unmap_gpas.size() && unmap_gpas[j + 1] == unmap_gpas[j] + page_size)
+                    {
+                        ++j;
+                    }
+
+                    WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, unmap_gpas[i], (j - i + 1) * page_size));
+                    i = j + 1;
                 }
 
                 if (flushed_virtual_mappings)
@@ -1847,7 +1868,8 @@ namespace sogen::whp
                     WHV_PARTITION_PROPERTY exception_exit_bitmap{};
                     exception_exit_bitmap.ExceptionExitBitmap =
                         (1ull << WHvX64ExceptionTypeDebugTrapOrFault) | (1ull << WHvX64ExceptionTypeBreakpointTrap) |
-                        (1ull << WHvX64ExceptionTypeInvalidOpcodeFault) | (1ull << WHvX64ExceptionTypePageFault);
+                        (1ull << WHvX64ExceptionTypeInvalidOpcodeFault) | (1ull << WHvX64ExceptionTypePageFault) |
+                        (1ull << WHvX64ExceptionTypeFloatingPointErrorFault) | (1ull << WHvX64ExceptionTypeSimdFloatingPointFault);
 
                     WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeExceptionExitBitmap,
                                                          &exception_exit_bitmap, sizeof(exception_exit_bitmap)));
@@ -3350,6 +3372,24 @@ namespace sogen::whp
                     {
                         return true;
                     }
+                }
+
+                if (exception.ExceptionType == WHvX64ExceptionTypeSimdFloatingPointFault ||
+                    exception.ExceptionType == WHvX64ExceptionTypeFloatingPointErrorFault)
+                {
+                    // With no guest IDT, an unhandled FP exception faults at IDT[vec] (e.g. 0x130 for #XM). The
+                    // guest only reaches here with its FP exception masks cleared (a corrupted MXCSR/x87 control
+                    // word); restore the masked Windows defaults and re-run the instruction so it completes as it
+                    // would natively.
+                    const auto mxcsr = this->reg<uint32_t>(x86_register::mxcsr);
+                    this->reg(x86_register::mxcsr, (mxcsr | 0x1F80u) & ~0x3Fu);
+                    const auto fpcw = this->reg<uint16_t>(x86_register::fpcw);
+                    this->reg(x86_register::fpcw, static_cast<uint16_t>(fpcw | 0x3Fu));
+                    // Also clear the x87 status-word exception flags / summary (ES) bit, or an FWAIT or following
+                    // x87 op would re-raise #MF on the rerun.
+                    const auto fpsw = this->reg<uint16_t>(x86_register::fpsw);
+                    this->reg(x86_register::fpsw, static_cast<uint16_t>(fpsw & ~0x80FFu));
+                    return true;
                 }
 
                 for (auto& [_, hook] : this->interrupt_hooks_)
