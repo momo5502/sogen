@@ -567,7 +567,7 @@ export function LandingPage() {
                   </a>{" "}
                   with lots of help from{" "}
                   <a
-                    href="https://github.com/momo5502/sogen/graphs/contributors"
+                    href="https://github.com/momo5502/sogen/graphs/contributors?all=1"
                     className="underline"
                     target="_blank"
                   >
