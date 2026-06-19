@@ -113,44 +113,44 @@ export function LandingPage() {
   const features = [
     {
       icon: <Cpu className="h-6 w-6" />,
-      title: "Real DLLs, Not Stubs",
+      title: "Real System DLLs",
       description:
-        "The actual ntdll, kernel32 and user32 execute inside the emulator. Nothing is reimplemented, so even undocumented quirks behave exactly like they do on the real OS.",
+        "Runs the actual ntdll, kernel32 and user32, not reimplemented stubs. Behavior matches real Windows, edge cases included.",
       accent: "from-[#f76548] to-[#b00101]",
     },
     {
       icon: <Split className="h-6 w-6" />,
-      title: "Hook & Rewrite Everything",
+      title: "Hook & Rewrite",
       description:
-        "Intercept memory reads and writes, individual instructions, syscalls and API calls, at any granularity. Observe what a program does, or change it on the fly.",
+        "Intercept and change memory, instructions, syscalls and API calls. Watch what a program does, or change how it behaves.",
       accent: "from-[#ffcb00] to-[#da6000]",
     },
     {
       icon: <Save className="h-6 w-6" />,
       title: "Snapshot & Restore",
       description:
-        "Serialize the entire emulator state, load minidumps, and jump back to any earlier point without replaying the run from the start.",
+        "Save and restore full emulator state, or load a minidump. Jump back to any point instead of replaying from the start.",
       accent: "from-[#aee703] to-[#647502]",
     },
     {
       icon: <Globe className="h-6 w-6" />,
       title: "Runs Everywhere",
       description:
-        "One codebase that runs on Windows, Linux, macOS, Android, iOS and in the browser, on both x86-64 and arm64.",
+        "Sogen runs on Windows, Linux, macOS, Android, and more.",
       accent: "from-[#a974ff] to-[#5a13c4]",
     },
     {
       icon: <Boxes className="h-6 w-6" />,
-      title: "Your Choice of Backend",
+      title: "Pluggable Backends",
       description:
-        "Run on the CPU backend that fits the job: Unicorn, icicle or Hyper-V.",
+        "Switch between the Unicorn, icicle and Hyper-V backends. Pick the right trade-off between speed and accuracy.",
       accent: "from-[#00c4e9] to-[#005ff6]",
     },
     {
       icon: <Repeat className="h-6 w-6" />,
       title: "Deterministic",
       description:
-        "Every run is reproducible down to the instruction, so a session replays identically and bugs don't slip away.",
+        "Every run is reproducible, down to the instruction. A bug that happens once happens every time.",
       accent: "from-[#ff7eb3] to-[#b0185f]",
     },
   ];
@@ -268,21 +268,56 @@ export function LandingPage() {
           </div>
         </section>
 
+        {/* In the Browser */}
+        <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
+          <div className="container mx-auto px-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-12 items-center max-w-6xl mx-auto">
+              <div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-800/60 px-4 py-2 text-sm text-neutral-300 mb-6">
+                  <Globe className="h-4 w-4" />
+                  In your browser
+                </div>
+                <h2 className="text-4xl font-bold text-white mb-6">
+                  Run It in Your Browser
+                </h2>
+                <p className="text-xl text-neutral-400 leading-relaxed mb-8">
+                  The whole emulator compiles to WebAssembly and runs in the
+                  browser. Nothing is uploaded, everything runs locally, with
+                  nothing to install.
+                </p>
+                <a href="#/playground" className="inline-block">
+                  <Button
+                    asChild
+                    size="lg"
+                    className="rounded-lg bg-linear-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100"
+                  >
+                    <span>
+                      <Play className="mr-2 h-5 w-5 transition-transform" />
+                      Try Online
+                      <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                    </span>
+                  </Button>
+                </a>
+              </div>
+
+              <div className="relative w-full max-w-2xl mx-auto xl:order-first">
+                <div className="absolute -inset-4 bg-linear-to-r from-yellow-500/10 to-cyan-500/10 rounded-2xl blur-md"></div>
+                <img
+                  src="https://momo5502.com/sogen/browser.png"
+                  alt="The Sogen playground running in a web browser"
+                  width={1167}
+                  height={673}
+                  className="relative w-full rounded-xl border border-neutral-700 shadow-2xl"
+                />
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Debugger Showcase */}
         <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
           <div className="container mx-auto px-6">
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-12 items-center max-w-6xl mx-auto">
-              <div className="relative order-last xl:order-first w-full max-w-2xl mx-auto">
-                <div className="absolute -inset-4 bg-linear-to-r from-neutral-500/10 to-neutral-400/10 rounded-2xl blur-md"></div>
-                <img
-                  src="https://momo5502.com/sogen/debugger.png"
-                  alt="An IDA Pro remote GDB session debugging a process running in Sogen"
-                  width={1464}
-                  height={902}
-                  className="relative w-full rounded-xl border border-neutral-700 shadow-2xl"
-                />
-              </div>
-
               <div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-800/60 px-4 py-2 text-sm text-neutral-300 mb-6">
                   <Bug className="h-4 w-4" />
@@ -298,6 +333,17 @@ export function LandingPage() {
                   Since the debugger lives outside the process, anti-debugging
                   tricks have nothing to detect.
                 </p>
+              </div>
+
+              <div className="relative w-full max-w-2xl mx-auto">
+                <div className="absolute -inset-4 bg-linear-to-r from-neutral-500/10 to-neutral-400/10 rounded-2xl blur-md"></div>
+                <img
+                  src="https://momo5502.com/sogen/debugger.png"
+                  alt="An IDA Pro remote GDB session debugging a process running in Sogen"
+                  width={1464}
+                  height={902}
+                  className="relative w-full rounded-xl border border-neutral-700 shadow-2xl"
+                />
               </div>
             </div>
           </div>
@@ -327,7 +373,7 @@ export function LandingPage() {
                 </p>
               </div>
 
-              <div className="relative w-full max-w-2xl mx-auto">
+              <div className="relative w-full max-w-2xl mx-auto xl:order-first">
                 <div className="absolute -inset-4 bg-linear-to-r from-[#76b900]/10 to-cyan-500/10 rounded-2xl blur-md"></div>
                 <img
                   src="https://momo5502.com/sogen/game.png"
@@ -479,12 +525,29 @@ export function LandingPage() {
         <section className="py-24 bg-linear-to-r from-neutral-800/40 to-neutral-900">
           <div className="container mx-auto px-6 text-center">
             <h2 className="text-4xl font-bold text-white mb-6">
-              Ready to Start Emulating?
+              Help Build Sogen
             </h2>
             <p className="text-xl text-neutral-300 mb-8 max-w-2xl mx-auto">
-              Try Sogen directly in your browser or explore the source code.
+              Sogen is open source, and there's always more to build. Report a
+              bug, add a syscall, or open a pull request.
             </p>
-            {generateButtons()}
+            <a
+              href="https://github.com/momo5502/sogen"
+              target="_blank"
+              className="inline-block"
+            >
+              <Button
+                asChild
+                size="lg"
+                className="rounded-lg bg-linear-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100"
+              >
+                <span>
+                  <Code className="mr-2 h-5 w-5 transition-transform" />
+                  Contribute on GitHub
+                  <ExternalLink className="ml-2 h-4 w-4" />
+                </span>
+              </Button>
+            </a>
           </div>
         </section>
 
