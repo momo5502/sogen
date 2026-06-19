@@ -324,14 +324,14 @@ export function LandingPage() {
                   Debugging
                 </div>
                 <h2 className="text-4xl font-bold text-white mb-6">
-                  Debug It With the Tools You Trust
+                  Undetectable Debugging
                 </h2>
                 <p className="text-xl text-neutral-400 leading-relaxed">
-                  Sogen speaks the GDB protocol, so you can debug with tools you
-                  already know, like IDA Pro, GDB, or right in the browser.
+                  Sogen implements the GDB protocol, so you can debug with tools
+                  you already know, like IDA Pro or GDB.
                   <br />
-                  Since the debugger lives outside the process, anti-debugging
-                  tricks have nothing to detect.
+                  The debugger runs at the emulator level, outside the process,
+                  so it's invisible to anti-debug checks.
                 </p>
               </div>
 
