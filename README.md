@@ -7,11 +7,13 @@
 	<img src="https://img.shields.io/github/commit-activity/m/momo5502/sogen?color=FF3131"/>
 </h1>
 
-Sogen is a high-performance Windows & Linux userspace emulator that operates at syscall level, providing full control over process execution through comprehensive hooking capabilities.
+Sogen runs Windows and Linux programs without a real operating system, and lets you see and control everything they do.
 
-Perfect for security research, malware analysis, and DRM research where fine-grained control over process execution is required.
+Instead of reimplementing thousands of OS APIs, Sogen emulates binaries at the CPU and syscall level and runs the **real system DLLs**, so behavior closely matches the real OS.
 
-Built in C++ and powered by the backend of your choice:
+Every instruction, memory access and API call can be hooked, inspected or rewritten, runs are fully deterministic, and the entire emulator state can be snapshotted and restored.
+
+Built in C++ and powered by the CPU backend of your choice:
 
 - [Unicorn Engine](https://github.com/unicorn-engine/unicorn)
 - [icicle-emu](https://github.com/icicle-emu/icicle-emu)
@@ -19,32 +21,39 @@ Built in C++ and powered by the backend of your choice:
 
 Try it out: <a href="https://sogen.dev">sogen.dev</a>
 
-<hr>
-
-> [!WARNING]  
-> Caution is advised when analyzing malware in Sogen, as host isolation might not be perfect.  
-> To mitigate potential risk, use the <a href="https://sogen.dev/#/playground">web version</a> to benefit from the additional safety provided by your browser's sandbox.
-
 ## Key Features
 
-- 🔄 **Syscall-Level Emulation**
-  - Instead of reimplementing Windows APIs, the emulator operates at the syscall level, allowing it to leverage existing system DLLs
-- 📝 **Advanced Memory Management**
-  - Supports Windows-specific memory types including reserved, committed, built on top of Unicorn's memory management
-- 📦 **Complete PE Loading**
-  - Handles executable and DLL loading with proper memory mapping, relocations, and TLS
-- ⚡ **Exception Handling**
-  - Implements Windows structured exception handling (SEH) with proper exception dispatcher and unwinding support
-- 🧵 **Threading Support**
-  - Provides a scheduled (round-robin) threading model
-- 💾 **State Management**
-  - Supports both full state serialization and fast in-memory snapshots
-- 💻 **Debugging Interface**
-  - Implements GDB serial protocol for integration with common debugging tools (IDA Pro, GDB, LLDB, VS Code, ...)
+- **Real system DLLs**: runs the actual ntdll, kernel32 and user32, not reimplemented stubs
+- **Hook & rewrite**: intercept and change memory, instructions, syscalls and API calls
+- **Faithful Windows internals**: PE loading (relocations, TLS), Windows memory types, SEH, threading, the registry, filesystem and networking
+- **Snapshot & restore**: full state serialization, fast in-memory snapshots and minidump loading
+- **Runs everywhere**: Windows, Linux, macOS, Android, iOS and the browser, on x86-64 and arm64
+- **Deterministic**: every run is reproducible, down to the instruction
 
 ## Preview
 
-![Preview](https://momo5502.com/sogen/preview.svg)
+<img src="https://momo5502.com/sogen/preview.svg" width="650" alt="Preview" />
+
+## Undetectable Debugging
+
+Debug with the tools you already know, like IDA Pro or GDB, over the GDB protocol, or use the built-in in-browser debugger.  
+The debugger runs at the emulator level, outside the process, so it stays invisible to anti-debug checks.
+
+<img src="https://momo5502.com/sogen/debugger.png" width="650" alt="Debugging a process running in Sogen from an IDA Pro remote GDB session" />
+
+## Run It in Your Browser
+
+The whole emulator compiles to WebAssembly and runs in the browser.  
+Nothing is uploaded, everything runs locally, with nothing to install. Try it at [sogen.dev](https://sogen.dev).
+
+<img src="https://momo5502.com/sogen/browser.png" width="650" alt="The Sogen playground running in a web browser" />
+
+## Even Games Run
+
+Native GUI apps run, with working windows, dialogs and controls.  
+GPU paravirtualization enables 3D acceleration on your real GPU, while the Hyper-V backend runs the code natively on your CPU. Fast enough for games.
+
+<img src="https://momo5502.com/sogen/game.png" width="650" alt="A game running inside the Sogen emulator" />
 
 ## YouTube Overview
 
