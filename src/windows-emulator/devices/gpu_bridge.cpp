@@ -2122,6 +2122,9 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            // Cap guest-declared descriptor-update payloads so a bogus IOCTL length can't force a huge allocation.
+            static constexpr size_t max_descriptor_update_input_bytes = size_t{256} * 1024 * 1024;
+
             // Applies one update_descriptor_sets_request blob (header + write_count descriptor_write records) and
             // advances `offset` past it. Shared by the single and coalesced-batch IOCTLs.
             int32_t apply_update_descriptor_sets(const std::byte* data, size_t size, size_t& offset)
@@ -2167,7 +2170,8 @@ namespace sogen
 
             NTSTATUS handle_update_descriptor_sets(windows_emulator& win_emu, const io_device_context& context)
             {
-                if (!context.input_buffer || context.input_buffer_length < sizeof(gpu_bridge::update_descriptor_sets_request))
+                if (!context.input_buffer || context.input_buffer_length < sizeof(gpu_bridge::update_descriptor_sets_request) ||
+                    context.input_buffer_length > max_descriptor_update_input_bytes)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -2183,7 +2187,8 @@ namespace sogen
             // Applies a concatenation of update_descriptor_sets blobs in order (see update_descriptor_sets_batch).
             NTSTATUS handle_update_descriptor_sets_batch(windows_emulator& win_emu, const io_device_context& context)
             {
-                if (!context.input_buffer || context.input_buffer_length == 0)
+                if (!context.input_buffer || context.input_buffer_length == 0 ||
+                    context.input_buffer_length > max_descriptor_update_input_bytes)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
