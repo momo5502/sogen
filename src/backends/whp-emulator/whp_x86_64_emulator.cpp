@@ -1233,6 +1233,9 @@ namespace sogen::whp
                 // scatters/reverses a region's GPAs, hence the sort. Free high-to-low so the indices pop back
                 // ascending on the next allocation, keeping remap_pages' map-side coalescing effective too.
                 std::vector<uint64_t> unmap_gpas;
+                // Keep each page's host backing alive until after the unmaps below: erasing the mapped_page drops
+                // its (shared) owned_page, which can free memory the WHP partition still maps by GPA.
+                std::vector<std::shared_ptr<uint8_t>> retired_backings;
                 bool flushed_virtual_mappings = false;
                 for (size_t offset = size; offset > 0; offset -= page_size)
                 {
@@ -1253,6 +1256,7 @@ namespace sogen::whp
                     flushed_virtual_mappings = this->clear_virtual_mapping(guest_address) || flushed_virtual_mappings;
                     this->mark_patched_execution_breakpoints_unmapped(guest_address);
                     this->release_guest_physical_page(entry->second->guest_physical_address);
+                    retired_backings.push_back(std::move(entry->second->owned_page));
                     this->mapped_pages_.erase(entry);
                 }
 
