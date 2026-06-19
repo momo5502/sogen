@@ -171,6 +171,7 @@ namespace sogen::gpu_bridge
         // Coalesced vkUpdateDescriptorSets: payload is a concatenation of update_descriptor_sets_request blobs
         // (each a header + its descriptor_write[]), applied in issue order.
         update_descriptor_sets_batch = 0x886,
+        reset_descriptor_pool = 0x887,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -266,6 +267,7 @@ namespace sogen::gpu_bridge
         make_ioctl(static_cast<uint32_t>(command::destroy_descriptor_set_layout));
     inline constexpr uint32_t ioctl_create_descriptor_pool = make_ioctl(static_cast<uint32_t>(command::create_descriptor_pool));
     inline constexpr uint32_t ioctl_destroy_descriptor_pool = make_ioctl(static_cast<uint32_t>(command::destroy_descriptor_pool));
+    inline constexpr uint32_t ioctl_reset_descriptor_pool = make_ioctl(static_cast<uint32_t>(command::reset_descriptor_pool));
     inline constexpr uint32_t ioctl_allocate_descriptor_sets = make_ioctl(static_cast<uint32_t>(command::allocate_descriptor_sets));
     inline constexpr uint32_t ioctl_update_descriptor_sets = make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets));
     inline constexpr uint32_t ioctl_update_descriptor_sets_batch = make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets_batch));
@@ -1802,6 +1804,15 @@ namespace sogen::gpu_bridge
         uint32_t pool_size_count;
         uint32_t reserved;
         // descriptor_pool_size pool_sizes[pool_size_count];
+    };
+
+    // ioctl_reset_descriptor_pool: out = result_response
+    struct reset_descriptor_pool_request
+    {
+        object_id device;
+        object_id descriptor_pool;
+        uint32_t flags; // VkDescriptorPoolResetFlags (reserved, must be 0)
+        uint32_t reserved;
     };
 
     // ioctl_allocate_descriptor_sets: in header immediately followed by `set_count` object_id set-layout

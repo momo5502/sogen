@@ -163,6 +163,7 @@ EXPORTS
     vkReleaseSwapchainImagesEXT
     vkResetCommandBuffer
     vkResetCommandPool
+    vkResetDescriptorPool
     vkResetQueryPool
     vkResetFences
     vkSubmitDebugUtilsMessageEXT
