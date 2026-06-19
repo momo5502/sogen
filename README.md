@@ -42,14 +42,6 @@ The debugger runs at the emulator level, outside the process, so it stays invisi
 <img src="https://momo5502.com/sogen/debugger.png" width="650" alt="Debugging a process running in Sogen from an IDA Pro remote GDB session" />
 &nbsp;  
 
-## Run It in Your Browser
-
-The whole emulator compiles to WebAssembly and runs in the browser.  
-Nothing is uploaded, everything runs locally, with nothing to install. Try it at [sogen.dev](https://sogen.dev).
-
-<img src="https://momo5502.com/sogen/browser.png" width="650" alt="The Sogen playground running in a web browser" />
-&nbsp;  
-
 ## Run Games in a Sandbox
 
 Native GUI apps run, with working windows, dialogs and controls.  
