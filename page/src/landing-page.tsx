@@ -7,8 +7,13 @@ import {
   ArrowRight,
   BookOpen,
   Bug,
+  Lock,
   Split,
   Save,
+  Globe,
+  Box,
+  Boxes,
+  Repeat,
   Code,
 } from "lucide-react";
 import { Highlight } from "prism-react-renderer";
@@ -124,8 +129,29 @@ export function LandingPage() {
       icon: <Save className="h-6 w-6" />,
       title: "Snapshot & Restore",
       description:
-        "Serialize the entire emulator state, load minidumps, and jump back to any point. Re-examine the exact moment a bug happens, again and again, without replaying the run from the start.",
+        "Serialize the entire emulator state, load minidumps, and jump back to any earlier point without replaying the run from the start.",
       accent: "from-[#aee703] to-[#647502]",
+    },
+    {
+      icon: <Globe className="h-6 w-6" />,
+      title: "Runs Everywhere",
+      description:
+        "One codebase that runs on Windows, Linux, macOS, Android, iOS and in the browser, on both x86-64 and arm64.",
+      accent: "from-[#a974ff] to-[#5a13c4]",
+    },
+    {
+      icon: <Boxes className="h-6 w-6" />,
+      title: "Your Choice of Backend",
+      description:
+        "Run on the CPU backend that fits the job: Unicorn, icicle or Hyper-V.",
+      accent: "from-[#00c4e9] to-[#005ff6]",
+    },
+    {
+      icon: <Repeat className="h-6 w-6" />,
+      title: "Deterministic",
+      description:
+        "Every run is reproducible down to the instruction, so a session replays identically and bugs don't slip away.",
+      accent: "from-[#ff7eb3] to-[#b0185f]",
     },
   ];
 
@@ -173,18 +199,48 @@ export function LandingPage() {
           </div>
         </section>
 
+        {/* What you can do */}
+        <section className="py-16">
+          <div className="container mx-auto px-6 max-w-4xl">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-8 gap-y-10 text-center">
+              <div>
+                <Bug className="h-6 w-6 mx-auto mb-3 text-neutral-300" />
+                <h3 className="text-white font-semibold mb-1.5">
+                  Analyze malware
+                </h3>
+                <p className="text-sm text-neutral-400 leading-relaxed">
+                  Run a sample and see what it does, without any risk.
+                </p>
+              </div>
+              <div>
+                <Lock className="h-6 w-6 mx-auto mb-3 text-neutral-300" />
+                <h3 className="text-white font-semibold mb-1.5">
+                  Understand DRM
+                </h3>
+                <p className="text-sm text-neutral-400 leading-relaxed">
+                  Follow licensing and protection logic step by step.
+                </p>
+              </div>
+              <div>
+                <Box className="h-6 w-6 mx-auto mb-3 text-neutral-300" />
+                <h3 className="text-white font-semibold mb-1.5">
+                  Sandbox apps &amp; games
+                </h3>
+                <p className="text-sm text-neutral-400 leading-relaxed">
+                  Run untrusted software, even games, in full isolation.
+                </p>
+              </div>
+            </div>
+            <p className="text-center text-lg text-neutral-400 mt-12 text-balance">
+              A safe, fully instrumented place to run code you don't trust or
+              understand.
+            </p>
+          </div>
+        </section>
+
         {/* Features Section */}
         <section className="py-24 relative">
           <div className="container mx-auto px-6">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl font-bold text-white mb-6">
-                Everything You Need to Dig In
-              </h2>
-              <p className="text-xl text-neutral-400 max-w-2xl mx-auto">
-                Built in C++ for accuracy and speed.
-              </p>
-            </div>
-
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
               {features.map((feature, index) => (
                 <Card
@@ -208,30 +264,6 @@ export function LandingPage() {
                   </CardContent>
                 </Card>
               ))}
-            </div>
-          </div>
-        </section>
-
-        {/* Runs Everywhere Strip */}
-        <section className="py-16 border-y border-neutral-800/80">
-          <div className="container mx-auto px-6 text-center">
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-neutral-500 mb-6">
-              Runs everywhere
-            </p>
-            <div className="flex flex-wrap justify-center items-center gap-x-8 gap-y-3 text-lg md:text-xl font-medium text-neutral-200">
-              <span>Windows</span>
-              <span>Linux</span>
-              <span>macOS</span>
-              <span>Android</span>
-              <span>iOS</span>
-              <span>Browser</span>
-            </div>
-            <div className="mt-5 flex flex-wrap justify-center items-center gap-x-3 gap-y-2 text-sm text-neutral-500">
-              <span>x86-64 &amp; arm64</span>
-              <span className="text-neutral-700">·</span>
-              <span>Unicorn / icicle / Hyper-V</span>
-              <span className="text-neutral-700">·</span>
-              <span>Deterministic</span>
             </div>
           </div>
         </section>
