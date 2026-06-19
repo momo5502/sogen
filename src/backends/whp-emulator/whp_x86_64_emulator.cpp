@@ -3381,6 +3381,10 @@ namespace sogen::whp
                     this->reg(x86_register::mxcsr, (mxcsr | 0x1F80u) & ~0x3Fu);
                     const auto fpcw = this->reg<uint16_t>(x86_register::fpcw);
                     this->reg(x86_register::fpcw, static_cast<uint16_t>(fpcw | 0x3Fu));
+                    // Also clear the x87 status-word exception flags / summary (ES) bit, or an FWAIT or following
+                    // x87 op would re-raise #MF on the rerun.
+                    const auto fpsw = this->reg<uint16_t>(x86_register::fpsw);
+                    this->reg(x86_register::fpsw, static_cast<uint16_t>(fpsw & ~0x80FFu));
                     return true;
                 }
 
