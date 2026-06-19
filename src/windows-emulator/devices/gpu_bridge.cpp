@@ -230,16 +230,59 @@ namespace sogen
           private:
             vulkan_host vulkan_{};
 
-            // VkDeviceMemory aliased directly into the guest address space (see handle_map_memory_direct),
-            // keyed by memory object id, so unmap can release the guest range and the host mapping.
+            // Guest-visible RAM shadows mapped VkDeviceMemory so CPU accesses remain normal WHP memory.
+            // Vulkan synchronization operations copy between the shadow and the host mapping.
             struct direct_mapping
             {
                 uint64_t guest_address{};
                 uint64_t size{};
                 uint64_t device{};
                 void* host_ptr{};
+                void* shadow_ptr{};
             };
             std::unordered_map<uint64_t, direct_mapping> direct_mappings_{};
+
+            static void copy_direct_mapping_to_host(const direct_mapping& mapping, const uint64_t offset, const uint64_t size)
+            {
+                if (!mapping.host_ptr || !mapping.shadow_ptr || offset > mapping.size)
+                {
+                    return;
+                }
+
+                const auto copy_size = std::min<uint64_t>(size, mapping.size - offset);
+                if (copy_size == 0)
+                {
+                    return;
+                }
+
+                std::memcpy(static_cast<std::byte*>(mapping.host_ptr) + offset, static_cast<const std::byte*>(mapping.shadow_ptr) + offset,
+                            static_cast<size_t>(copy_size));
+            }
+
+            static void copy_direct_mapping_to_shadow(const direct_mapping& mapping, const uint64_t offset, const uint64_t size)
+            {
+                if (!mapping.host_ptr || !mapping.shadow_ptr || offset > mapping.size)
+                {
+                    return;
+                }
+
+                const auto copy_size = std::min<uint64_t>(size, mapping.size - offset);
+                if (copy_size == 0)
+                {
+                    return;
+                }
+
+                std::memcpy(static_cast<std::byte*>(mapping.shadow_ptr) + offset, static_cast<const std::byte*>(mapping.host_ptr) + offset,
+                            static_cast<size_t>(copy_size));
+            }
+
+            void sync_all_direct_mappings_to_host()
+            {
+                for (const auto& mapping : this->direct_mappings_ | std::views::values)
+                {
+                    copy_direct_mapping_to_host(mapping, 0, mapping.size);
+                }
+            }
 
             static void set_information(const io_device_context& context, const ULONG bytes)
             {
@@ -990,6 +1033,8 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                this->sync_all_direct_mappings_to_host();
+
                 const int32_t result =
                     this->vulkan_.queue_submit2(request.queue, request.fence, waits.data(), request.wait_count, command_buffers.data(),
                                                 request.command_buffer_count, signals.data(), request.signal_count);
@@ -1042,6 +1087,8 @@ namespace sogen
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
+
+                this->sync_all_direct_mappings_to_host();
 
                 const int32_t result = this->vulkan_.queue_submit(request.queue, request.command_buffer, request.fence);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
@@ -1237,12 +1284,12 @@ namespace sogen
 
                 std::vector<std::byte> bytes(static_cast<size_t>(copy_bytes));
                 const auto direct = this->direct_mappings_.find(request.memory);
-                // The alias only covers whole-page allocations, so direct->second.size is the real allocation
+                // The shadow only covers whole-page allocations, so direct->second.size is the real allocation
                 // size; bound the copy against it without overflowing on a hostile offset.
-                if (direct != this->direct_mappings_.end() && direct->second.host_ptr && request.offset <= direct->second.size &&
+                if (direct != this->direct_mappings_.end() && direct->second.shadow_ptr && request.offset <= direct->second.size &&
                     copy_bytes <= direct->second.size - request.offset)
                 {
-                    std::memcpy(bytes.data(), static_cast<const std::byte*>(direct->second.host_ptr) + request.offset,
+                    std::memcpy(bytes.data(), static_cast<const std::byte*>(direct->second.shadow_ptr) + request.offset,
                                 static_cast<size_t>(copy_bytes));
                 }
                 else
@@ -1281,16 +1328,24 @@ namespace sogen
                     win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), bytes.data(), bytes.size());
                 }
 
-                const int32_t result =
-                    this->vulkan_.upload_memory(request.device, request.memory, request.offset, payload, bytes.data(), bytes.size());
+                int32_t result = 0;
+                const auto direct = this->direct_mappings_.find(request.memory);
+                if (direct != this->direct_mappings_.end() && request.offset <= direct->second.size &&
+                    payload <= direct->second.size - request.offset)
+                {
+                    std::memcpy(static_cast<std::byte*>(direct->second.shadow_ptr) + request.offset, bytes.data(), bytes.size());
+                    std::memcpy(static_cast<std::byte*>(direct->second.host_ptr) + request.offset, bytes.data(), bytes.size());
+                }
+                else
+                {
+                    result =
+                        this->vulkan_.upload_memory(request.device, request.memory, request.offset, payload, bytes.data(), bytes.size());
+                }
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
-            // Maps the host VkDeviceMemory and aliases it straight into the guest address space, so the guest
-            // accesses it coherently with no staging copy. Allocations are page-rounded at allocation time, so
-            // the page-granular alias never covers memory beyond the allocation. Returns guest_address = 0 if it
-            // still can't be aliased (e.g. an unaligned host pointer, or -- as a safety net -- a non-page-sized
-            // allocation), in which case the shim falls back to the (bounds-checked) staging path.
+            // Maps VkDeviceMemory on the host, but exposes a normal RAM shadow to the guest. Returns
+            // guest_address = 0 if it still can't be mapped, in which case the shim falls back to staging.
             NTSTATUS handle_map_memory_direct(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::map_memory_direct_request request{};
@@ -1326,16 +1381,31 @@ namespace sogen
                 }
 
                 const uint64_t mapped_size = (host_size + page - 1) & ~(page - 1);
-                const uint64_t va = win_emu.memory.find_free_allocation_base(static_cast<size_t>(mapped_size));
-                if (va == 0 ||
-                    !win_emu.memory.allocate_host_memory(va, static_cast<size_t>(mapped_size), host_ptr, memory_permission::read_write))
+                void* shadow_ptr = VirtualAlloc(nullptr, static_cast<size_t>(mapped_size), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+                if (!shadow_ptr)
                 {
                     this->vulkan_.unmap_memory(request.device, request.memory);
                     return write_output(win_emu, context, response);
                 }
 
-                this->direct_mappings_[request.memory] =
-                    direct_mapping{.guest_address = va, .size = mapped_size, .device = request.device, .host_ptr = host_ptr};
+                std::memcpy(shadow_ptr, host_ptr, static_cast<size_t>(mapped_size));
+
+                const uint64_t va = win_emu.memory.find_free_allocation_base(static_cast<size_t>(mapped_size));
+                if (va == 0 ||
+                    !win_emu.memory.allocate_host_memory(va, static_cast<size_t>(mapped_size), shadow_ptr, memory_permission::read_write))
+                {
+                    VirtualFree(shadow_ptr, 0, MEM_RELEASE);
+                    this->vulkan_.unmap_memory(request.device, request.memory);
+                    return write_output(win_emu, context, response);
+                }
+
+                this->direct_mappings_[request.memory] = direct_mapping{
+                    .guest_address = va,
+                    .size = mapped_size,
+                    .device = request.device,
+                    .host_ptr = host_ptr,
+                    .shadow_ptr = shadow_ptr,
+                };
                 response.guest_address = va + request.offset;
                 return write_output(win_emu, context, response);
             }
@@ -1351,8 +1421,13 @@ namespace sogen
                 const auto it = this->direct_mappings_.find(request.memory);
                 if (it != this->direct_mappings_.end())
                 {
+                    copy_direct_mapping_to_host(it->second, 0, it->second.size);
                     win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
                     this->vulkan_.unmap_memory(it->second.device, request.memory);
+                    if (it->second.shadow_ptr)
+                    {
+                        VirtualFree(it->second.shadow_ptr, 0, MEM_RELEASE);
+                    }
                     this->direct_mappings_.erase(it);
                 }
                 return STATUS_SUCCESS;
@@ -1364,6 +1439,11 @@ namespace sogen
                 if (!read_input(win_emu, context, request))
                 {
                     return STATUS_INVALID_PARAMETER;
+                }
+
+                if (const auto direct = this->direct_mappings_.find(request.memory); direct != this->direct_mappings_.end())
+                {
+                    copy_direct_mapping_to_host(direct->second, request.offset, request.size);
                 }
 
                 const int32_t result =
@@ -1381,6 +1461,13 @@ namespace sogen
 
                 const int32_t result =
                     this->vulkan_.invalidate_mapped_memory_range(request.device, request.memory, request.offset, request.size);
+                if (result == 0)
+                {
+                    if (const auto direct = this->direct_mappings_.find(request.memory); direct != this->direct_mappings_.end())
+                    {
+                        copy_direct_mapping_to_shadow(direct->second, request.offset, request.size);
+                    }
+                }
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
