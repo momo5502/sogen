@@ -148,17 +148,18 @@ namespace
 
     void flush_descriptor_updates()
     {
-        // Swap the batch out under the lock, then release it before the IOCTL so the nested flush-guard and
-        // concurrent appends don't deadlock.
-        std::vector<uint8_t> batch;
+        // Hold the lock across the IOCTL so concurrent flushes stay ordered: releasing it after the swap lets a
+        // preempting thread append + flush and get its batch applied on the host before this (earlier) one. The
+        // batch IOCTL never re-enters flush_descriptor_updates (bridge_call skips the flush for it) and runs
+        // synchronously, so the lock cannot self-deadlock; a preempted appender just waits for this flush.
+        std::lock_guard<std::mutex> lock(g_pending_descriptor_updates_mutex);
+        if (g_pending_descriptor_updates.empty())
         {
-            std::lock_guard<std::mutex> lock(g_pending_descriptor_updates_mutex);
-            if (g_pending_descriptor_updates.empty())
-            {
-                return;
-            }
-            batch.swap(g_pending_descriptor_updates);
+            return;
         }
+
+        std::vector<uint8_t> batch;
+        batch.swap(g_pending_descriptor_updates);
 
         gb::result_response response{};
         bridge_call(gb::ioctl_update_descriptor_sets_batch, batch.data(), static_cast<DWORD>(batch.size()), &response, sizeof(response));
