@@ -135,8 +135,7 @@ export function LandingPage() {
     {
       icon: <Globe className="h-6 w-6" />,
       title: "Runs Everywhere",
-      description:
-        "Sogen runs on Windows, Linux, macOS, Android, and more.",
+      description: "Sogen runs on Windows, Linux, macOS, Android, and more.",
       accent: "from-[#00c4e9] to-[#005ff6]",
     },
     {
