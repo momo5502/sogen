@@ -137,14 +137,14 @@ export function LandingPage() {
       title: "Runs Everywhere",
       description:
         "Sogen runs on Windows, Linux, macOS, Android, and more.",
-      accent: "from-[#a974ff] to-[#5a13c4]",
+      accent: "from-[#00c4e9] to-[#005ff6]",
     },
     {
       icon: <Boxes className="h-6 w-6" />,
       title: "Pluggable Backends",
       description:
         "Switch between the Unicorn, icicle and Hyper-V backends. Pick the right trade-off between speed and accuracy.",
-      accent: "from-[#00c4e9] to-[#005ff6]",
+      accent: "from-[#a974ff] to-[#5a13c4]",
     },
     {
       icon: <Repeat className="h-6 w-6" />,
@@ -165,9 +165,9 @@ export function LandingPage() {
         {/* Hero Section with Animated Background */}
         <section className="relative overflow-visible">
           <div className="relative container mx-auto px-4 min-[340px]:px-6 pt-28 pb-16 xl:pt-32 xl:pb-24">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-0 gap-y-12 items-center">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-center gap-8 lg:gap-12">
               {/* Text column */}
-              <div className="text-center lg:text-left space-y-8 max-w-2xl mx-auto lg:mx-0">
+              <div className="text-center lg:text-left space-y-8 w-full max-w-lg mx-auto lg:mx-0">
                 <h1 className="text-4xl md:text-5xl lg:text-4xl font-bold text-white leading-[1.2] tracking-tight">
                   Run any Windows binary.
                   <br />
@@ -187,7 +187,7 @@ export function LandingPage() {
               </div>
 
               {/* Product shot */}
-              <div className="relative">
+              <div className="relative w-full max-w-2xl lg:max-w-[680px] mx-auto lg:mx-0">
                 <div className="absolute -inset-4 bg-linear-to-r from-yellow-500/10 via-lime-500/10 to-cyan-500/10 rounded-3xl blur-2xl"></div>
                 <img
                   src="https://momo5502.com/sogen/preview.svg"
