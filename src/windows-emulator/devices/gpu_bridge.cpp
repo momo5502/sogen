@@ -4,6 +4,7 @@
 #include "../windows_emulator.hpp"
 
 #include <gpu_bridge_protocol.hpp>
+#include <new>
 
 namespace sogen
 {
@@ -228,6 +229,8 @@ namespace sogen
             }
 
           private:
+            static constexpr size_t direct_mapping_alignment = 0x1000;
+
             vulkan_host vulkan_{};
 
             // Guest-visible RAM shadows mapped VkDeviceMemory so CPU accesses remain normal WHP memory.
@@ -1369,9 +1372,8 @@ namespace sogen
                 uint64_t host_size = 0;
                 response.vk_result = this->vulkan_.map_memory(request.device, request.memory, host_ptr, host_size);
 
-                constexpr uint64_t page = 0x1000;
-                if (response.vk_result != 0 || !host_ptr || host_size == 0 || (reinterpret_cast<uintptr_t>(host_ptr) % page) != 0 ||
-                    (host_size % page) != 0)
+                if (response.vk_result != 0 || !host_ptr || host_size == 0 ||
+                    (reinterpret_cast<uintptr_t>(host_ptr) % direct_mapping_alignment) != 0 || (host_size % direct_mapping_alignment) != 0)
                 {
                     if (host_ptr)
                     {
@@ -1380,8 +1382,9 @@ namespace sogen
                     return write_output(win_emu, context, response);
                 }
 
-                const uint64_t mapped_size = (host_size + page - 1) & ~(page - 1);
-                void* shadow_ptr = VirtualAlloc(nullptr, static_cast<size_t>(mapped_size), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+                const uint64_t mapped_size = (host_size + direct_mapping_alignment - 1) & ~(direct_mapping_alignment - 1);
+                void* shadow_ptr =
+                    ::operator new(static_cast<size_t>(mapped_size), std::align_val_t{direct_mapping_alignment}, std::nothrow);
                 if (!shadow_ptr)
                 {
                     this->vulkan_.unmap_memory(request.device, request.memory);
@@ -1394,7 +1397,7 @@ namespace sogen
                 if (va == 0 ||
                     !win_emu.memory.allocate_host_memory(va, static_cast<size_t>(mapped_size), shadow_ptr, memory_permission::read_write))
                 {
-                    VirtualFree(shadow_ptr, 0, MEM_RELEASE);
+                    ::operator delete(shadow_ptr, std::align_val_t{direct_mapping_alignment});
                     this->vulkan_.unmap_memory(request.device, request.memory);
                     return write_output(win_emu, context, response);
                 }
@@ -1426,7 +1429,7 @@ namespace sogen
                     this->vulkan_.unmap_memory(it->second.device, request.memory);
                     if (it->second.shadow_ptr)
                     {
-                        VirtualFree(it->second.shadow_ptr, 0, MEM_RELEASE);
+                        ::operator delete(it->second.shadow_ptr, std::align_val_t{direct_mapping_alignment});
                     }
                     this->direct_mappings_.erase(it);
                 }
