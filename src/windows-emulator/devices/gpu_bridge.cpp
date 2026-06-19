@@ -1210,6 +1210,18 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                // Freeing a VkDeviceMemory implicitly unmaps it, so drop any direct mapping first: otherwise
+                // its host pointer dangles and the next sync_all_direct_mappings_to_host() copies into freed memory.
+                if (const auto it = this->direct_mappings_.find(request.memory); it != this->direct_mappings_.end())
+                {
+                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
+                    if (it->second.shadow_ptr)
+                    {
+                        ::operator delete(it->second.shadow_ptr, std::align_val_t{direct_mapping_alignment});
+                    }
+                    this->direct_mappings_.erase(it);
+                }
+
                 this->vulkan_.free_memory(request.device, request.memory);
                 return STATUS_SUCCESS;
             }
