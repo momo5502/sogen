@@ -40,6 +40,7 @@ Debug with the tools you already know, like IDA Pro or GDB, over the GDB protoco
 The debugger runs at the emulator level, outside the process, so it stays invisible to anti-debug checks.
 
 <img src="https://momo5502.com/sogen/debugger.png" width="650" alt="Debugging a process running in Sogen from an IDA Pro remote GDB session" />
+&nbsp;  
 
 ## Run It in Your Browser
 
@@ -47,21 +48,24 @@ The whole emulator compiles to WebAssembly and runs in the browser.
 Nothing is uploaded, everything runs locally, with nothing to install. Try it at [sogen.dev](https://sogen.dev).
 
 <img src="https://momo5502.com/sogen/browser.png" width="650" alt="The Sogen playground running in a web browser" />
+&nbsp;  
 
-## Even Games Run
+## Run Games in a Sandbox
 
 Native GUI apps run, with working windows, dialogs and controls.  
 GPU paravirtualization enables 3D acceleration on your real GPU, while the Hyper-V backend runs the code natively on your CPU. Fast enough for games.
 
 <img src="https://momo5502.com/sogen/game.png" width="650" alt="A game running inside the Sogen emulator" />
+&nbsp;  
 
-## YouTube Overview
+## Project Overview
 
 <a href="https://www.youtube.com/watch?v=wY9Q0DhodOQ" target="_blank">
   <img src="https://momo5502.com/sogen/video.png" alt="YouTube Video" width="600" />
 </a>
 
 Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.
+&nbsp;  
 
 ## Python Bindings
 
