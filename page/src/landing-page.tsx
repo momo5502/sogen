@@ -362,14 +362,15 @@ export function LandingPage() {
                   Experimental
                 </div>
                 <h2 className="text-4xl font-bold text-white mb-6">
-                  It Runs Real GUI Apps, Even Games
+                  Even Games Run
                 </h2>
                 <p className="text-xl text-neutral-400 leading-relaxed">
-                  Real user32 windows, dialogs and controls run their own logic
-                  and paint through emulated GDI, while a Vulkan bridge forwards
-                  graphics to your host's real GPU. Enough to bring interactive
-                  Windows applications, and even games, to life inside the
-                  emulator.
+                  Native GUI apps run, with working windows, dialogs and
+                  controls.
+                  <br />
+                  GPU paravirtualization enables 3D acceleration on your real
+                  GPU, while the Hyper-V backend runs the code natively on your
+                  CPU. Fast enough for games.
                 </p>
               </div>
 
