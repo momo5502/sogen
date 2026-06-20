@@ -776,6 +776,16 @@ namespace sogen
         ULONG ByteWordEmulationCount;
     } SYSTEM_EXCEPTION_INFORMATION, *PSYSTEM_EXCEPTION_INFORMATION;
 
+    typedef struct _SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION
+    {
+        LARGE_INTEGER IdleTime;
+        LARGE_INTEGER KernelTime;
+        LARGE_INTEGER UserTime;
+        LARGE_INTEGER DpcTime;
+        LARGE_INTEGER InterruptTime;
+        ULONG InterruptCount;
+    } SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION, *PSYSTEM_PROCESSOR_PERFORMANCE_INFORMATION;
+
     typedef struct _SYSTEM_MEMORY_LIST_INFORMATION64
     {
         EmulatorTraits<Emu64>::ULONG_PTR ZeroPageCount;

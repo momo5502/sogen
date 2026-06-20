@@ -385,6 +385,38 @@ namespace sogen
                                                                           info.SystemRangeStart = 0xFFFF800000000000; //
                                                                       });
 
+            case SystemProcessorPerformanceInformation: {
+                // Per-processor CPU time counters. We don't track real CPU time, so report an idle system:
+                // IdleTime == KernelTime (Windows kernel time includes idle), UserTime == 0. Use the
+                // executed-instruction tick as a monotonic clock so consecutive samples differ and callers
+                // computing usage from deltas don't divide by zero.
+                const auto processor_count = c.proc.kusd.get().ActiveProcessorCount;
+                constexpr auto entry_size = sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION);
+                const auto required = static_cast<uint32_t>(processor_count * entry_size);
+
+                if (return_length)
+                {
+                    return_length.try_write(required);
+                }
+
+                if (system_information_length < required)
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                const auto tick = static_cast<int64_t>(c.win_emu.get_executed_instructions());
+                std::vector<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION> entries(processor_count);
+                for (auto& entry : entries)
+                {
+                    memset(&entry, 0, sizeof(entry));
+                    entry.IdleTime.QuadPart = tick;
+                    entry.KernelTime.QuadPart = tick;
+                }
+
+                c.emu.write_memory(system_information, entries.data(), entries.size() * entry_size);
+                return STATUS_SUCCESS;
+            }
+
             case SystemProcessorInformation:
             case SystemEmulationProcessorInformation:
                 return handle_query<SYSTEM_PROCESSOR_INFORMATION64>(
