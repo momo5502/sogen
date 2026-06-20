@@ -18,6 +18,18 @@ namespace sogen
         // in snapshots yet; restoring with an open GPU handle is an experimental limitation.
         struct gpu_bridge_device : io_device
         {
+            void work(windows_emulator& win_emu) override
+            {
+                for (auto& frame : this->vulkan_.poll_presented_frames())
+                {
+                    win_emu.ui().present_surface(static_cast<hwnd>(frame.hwnd), ui_surface_desc{.width = static_cast<int>(frame.width),
+                                                                                                .height = static_cast<int>(frame.height),
+                                                                                                .stride = static_cast<int>(frame.width * 4),
+                                                                                                .format = ui_surface_format::bgra8,
+                                                                                                .pixels = frame.pixels.data()});
+                }
+            }
+
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
             {
                 switch (context.io_control_code)

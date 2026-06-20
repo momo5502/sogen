@@ -337,9 +337,8 @@ namespace sogen
             VkCommandBuffer present_cmd{};
             VkFence present_fence{};
             uint32_t next_image{};
-            // Async present: the readback copy of the most recent frame is submitted but not waited on
-            // here; it is drained on the *next* present (by which point the GPU has finished it), so the
-            // host thread never blocks on vkQueueWaitIdle inline. Present is therefore one frame behind.
+            // The device work loop polls this copy so the frame can be displayed without waiting for
+            // another guest present.
             bool present_in_flight{};
         };
 
@@ -3593,12 +3592,8 @@ namespace sogen
 
         const VkDeviceSize readback_size = static_cast<VkDeviceSize>(sc.width) * sc.height * 4;
 
-        // Async present, part 1: drain the copy submitted on the *previous* present and hand its pixels
-        // back to be shown now. A full guest frame has elapsed since it was submitted, so its fence is
-        // essentially always already signalled (the GPU did the copy while the guest rendered the next
-        // frame) -- only fall back to a blocking wait in the unlikely case it is not. The previous
-        // synchronous vkQueueWaitIdle here was ~25% of the emulated frame; deferring keeps it off the
-        // host thread's critical path. Present is therefore one frame behind, which is imperceptible.
+        // The work loop normally collects completed readbacks. If another present arrives first, reclaim
+        // the single readback slot here; waiting is only necessary when the guest outruns the GPU copy.
         if (sc.present_in_flight)
         {
             if (dev.get_fence_status(dev.handle, sc.present_fence) != VK_SUCCESS)
@@ -3619,9 +3614,6 @@ namespace sogen
             sc.present_in_flight = false;
         }
 
-        // Async present, part 2: record + submit the copy for the *current* frame, but do not wait on it.
-        // It runs on the GPU while the guest proceeds; the next present drains it (above). The previous
-        // copy is guaranteed finished here (the drain checked its fence), so reusing present_cmd is safe.
         // Make the rendered image's writes visible to the copy, then copy it into the readback buffer.
         // The guest left the image in PRESENT_SRC, which the bridge mapped to TRANSFER_SRC_OPTIMAL.
         VkCommandBufferBeginInfo begin{};
@@ -3671,9 +3663,55 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
+        // Do not wait here. gpu_bridge_device::work publishes the frame as soon as this fence signals.
         sc.present_in_flight = true;
 
         return VK_SUCCESS;
+    }
+
+    std::vector<vulkan_host::presented_frame> vulkan_host::poll_presented_frames()
+    {
+        std::vector<presented_frame> frames{};
+
+        for (auto& [id, sc] : this->impl_->swapchains)
+        {
+            (void)id;
+            if (!sc.present_in_flight)
+            {
+                continue;
+            }
+
+            const auto dev_it = this->impl_->devices.find(sc.device_id);
+            if (dev_it == this->impl_->devices.end())
+            {
+                continue;
+            }
+            auto& dev = dev_it->second;
+            if (!dev.get_fence_status || !dev.map_memory || !dev.unmap_memory ||
+                dev.get_fence_status(dev.handle, sc.present_fence) != VK_SUCCESS)
+            {
+                continue;
+            }
+
+            const auto readback_size = static_cast<VkDeviceSize>(sc.width) * sc.height * 4;
+            void* mapped = nullptr;
+            if (dev.map_memory(dev.handle, sc.readback_memory, 0, readback_size, 0, &mapped) != VK_SUCCESS || !mapped)
+            {
+                sc.present_in_flight = false;
+                continue;
+            }
+
+            auto& frame = frames.emplace_back();
+            frame.pixels.resize(static_cast<size_t>(readback_size));
+            std::memcpy(frame.pixels.data(), mapped, frame.pixels.size());
+            dev.unmap_memory(dev.handle, sc.readback_memory);
+            frame.width = sc.width;
+            frame.height = sc.height;
+            frame.hwnd = sc.hwnd;
+            sc.present_in_flight = false;
+        }
+
+        return frames;
     }
 
     int32_t vulkan_host::create_shader_module(uint64_t device, const void* code, size_t code_size, uint64_t& out_module)
