@@ -460,6 +460,13 @@ namespace sogen
                                                                     basic_info.NumberOfProcessors = 4;
                                                                 });
 
+            case SystemDeviceInformation:
+                return handle_query<SYSTEM_DEVICE_INFORMATION>(c.emu, system_information, system_information_length, return_length,
+                                                               [&](SYSTEM_DEVICE_INFORMATION& info) {
+                                                                   memset(&info, 0, sizeof(info));
+                                                                   info.NumberOfDisks = 1;
+                                                               });
+
             case SystemRecommendedSharedDataAlignment:
                 return handle_query<ULONG>(c.emu, system_information, system_information_length, return_length,
                                            [&](ULONG& alignment) { alignment = 64; });

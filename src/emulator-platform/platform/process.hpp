@@ -758,6 +758,16 @@ namespace sogen
         char NumberOfProcessors;
     } SYSTEM_BASIC_INFORMATION64, *PSYSTEM_BASIC_INFORMATION64;
 
+    typedef struct _SYSTEM_DEVICE_INFORMATION
+    {
+        ULONG NumberOfDisks;
+        ULONG NumberOfFloppies;
+        ULONG NumberOfCdRoms;
+        ULONG NumberOfTapes;
+        ULONG NumberOfSerialPorts;
+        ULONG NumberOfParallelPorts;
+    } SYSTEM_DEVICE_INFORMATION, *PSYSTEM_DEVICE_INFORMATION;
+
     typedef struct _SYSTEM_RANGE_START_INFORMATION64
     {
         EmulatorTraits<Emu64>::SIZE_T SystemRangeStart;
