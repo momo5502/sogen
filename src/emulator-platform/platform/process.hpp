@@ -780,6 +780,19 @@ namespace sogen
         EmulatorTraits<Emu64>::ULONG_PTR ModifiedPageCountPageFile;
     } SYSTEM_MEMORY_LIST_INFORMATION64, *PSYSTEM_MEMORY_LIST_INFORMATION64;
 
+    typedef struct _SYSTEM_FILECACHE_INFORMATION64
+    {
+        EmulatorTraits<Emu64>::SIZE_T CurrentSize;
+        EmulatorTraits<Emu64>::SIZE_T PeakSize;
+        ULONG PageFaultCount;
+        EmulatorTraits<Emu64>::SIZE_T MinimumWorkingSet;
+        EmulatorTraits<Emu64>::SIZE_T MaximumWorkingSet;
+        EmulatorTraits<Emu64>::SIZE_T CurrentSizeIncludingTransitionInPages;
+        EmulatorTraits<Emu64>::SIZE_T PeakSizeIncludingTransitionInPages;
+        ULONG TransitionRePurposeCount;
+        ULONG Flags;
+    } SYSTEM_FILECACHE_INFORMATION64, *PSYSTEM_FILECACHE_INFORMATION64;
+
     typedef struct _SYSTEM_RANGE_START_INFORMATION64
     {
         EmulatorTraits<Emu64>::SIZE_T SystemRangeStart;

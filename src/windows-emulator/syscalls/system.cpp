@@ -473,6 +473,13 @@ namespace sogen
                                                                           memset(&info, 0, sizeof(info));
                                                                       });
 
+            case SystemFileCacheInformation:
+            case SystemFileCacheInformationEx:
+                return handle_query<SYSTEM_FILECACHE_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
+                                                                    [&](SYSTEM_FILECACHE_INFORMATION64& info) {
+                                                                        memset(&info, 0, sizeof(info));
+                                                                    });
+
             case SystemRecommendedSharedDataAlignment:
                 return handle_query<ULONG>(c.emu, system_information, system_information_length, return_length,
                                            [&](ULONG& alignment) { alignment = 64; });
