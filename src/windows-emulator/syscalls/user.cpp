@@ -4254,14 +4254,8 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        int32_t handle_NtUserTranslateAccelerator(const syscall_context& c, const hwnd hwnd, const uint64_t /*accel_table*/,
-                                                  const emulator_object<msg> /*message*/)
+        int32_t handle_NtUserTranslateAccelerator()
         {
-            if (hwnd != 0 && !c.proc.windows.get(hwnd))
-            {
-                return 0;
-            }
-
             return 0;
         }
 

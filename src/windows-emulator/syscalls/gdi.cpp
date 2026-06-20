@@ -1667,12 +1667,12 @@ namespace sogen
             return handle;
         }
 
-        NTSTATUS handle_NtGdiCreatePaletteInternal()
+        uint64_t handle_NtGdiCreatePaletteInternal(const syscall_context& c)
         {
-            return STATUS_SUCCESS;
+            return allocate_gdi_object(c, k_gdi_palette_type, k_gdi_palette_attr_size);
         }
 
-        uint64_t handle_NtGdiCreateHalftonePalette(const syscall_context& c, const hdc /*dc*/)
+        uint64_t handle_NtGdiCreateHalftonePalette(const syscall_context& c)
         {
             return allocate_gdi_object(c, k_gdi_palette_type, k_gdi_palette_attr_size);
         }
@@ -2182,7 +2182,7 @@ namespace sogen
             }
 
             const auto bitmap_handle = static_cast<uint32_t>(bitmap.bits);
-            if (c.proc.gdi_bitmap_surfaces.find(bitmap_handle) == c.proc.gdi_bitmap_surfaces.end())
+            if (!c.proc.gdi_bitmap_surfaces.contains(bitmap_handle))
             {
                 return 0;
             }
@@ -4064,20 +4064,22 @@ namespace sogen
 
         COLORREF handle_NtGdiSetPixel(const syscall_context& c, const hdc dc, const int x, const int y, const COLORREF color)
         {
+            constexpr uint64_t clr_invalid = 0xFFFFFFFF;
+
             gdi_dc_state* dc_state = nullptr;
             gdi_bitmap_surface* surface = nullptr;
             int32_t origin_x = 0;
             int32_t origin_y = 0;
             if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
             {
-                return CLR_INVALID;
+                return clr_invalid;
             }
 
             const auto surface_x = x + origin_x;
             const auto surface_y = y + origin_y;
             if (!get_surface_pixel(*surface, surface_x, surface_y).has_value())
             {
-                return CLR_INVALID;
+                return clr_invalid;
             }
 
             const auto bgra = colorref_to_bgra(color);
@@ -4101,19 +4103,21 @@ namespace sogen
 
         COLORREF handle_NtGdiGetPixel(const syscall_context& c, const hdc dc, const int x, const int y)
         {
+            constexpr uint64_t clr_invalid = 0xFFFFFFFF;
+
             gdi_dc_state* dc_state = nullptr;
             gdi_bitmap_surface* surface = nullptr;
             int32_t origin_x = 0;
             int32_t origin_y = 0;
             if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
             {
-                return CLR_INVALID;
+                return clr_invalid;
             }
 
             const auto pixel = get_surface_pixel(*surface, x + origin_x, y + origin_y);
             if (!pixel.has_value())
             {
-                return CLR_INVALID;
+                return clr_invalid;
             }
 
             return bgra_to_colorref(*pixel);

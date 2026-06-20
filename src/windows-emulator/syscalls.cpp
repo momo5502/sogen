@@ -595,7 +595,7 @@ namespace sogen
         uint32_t handle_NtUserGetQueueStatusReadonly(const syscall_context& c, UINT flags);
         uint32_t handle_NtUserGetQueueStatus(const syscall_context& c, UINT flags);
         NTSTATUS handle_NtUserCreateAcceleratorTable();
-        int32_t handle_NtUserTranslateAccelerator(const syscall_context& c, hwnd hwnd, uint64_t accel_table, emulator_object<msg> message);
+        int32_t handle_NtUserTranslateAccelerator();
         hmenu handle_NtUserCreateMenu(const syscall_context& c);
         BOOL handle_NtUserThunkedMenuItemInfo(const syscall_context& c, hmenu menu, UINT position, BOOL by_position, BOOL insert,
                                               emulator_object<EMU_MENUITEMINFO> item_info,
@@ -635,8 +635,8 @@ namespace sogen
         uint64_t handle_NtGdiCreateSolidBrush(const syscall_context& c, uint32_t color, uint64_t unused);
         uint64_t handle_NtGdiCreatePatternBrushInternal(const syscall_context& c, handle bitmap, uint32_t unused);
         uint64_t handle_NtGdiCreatePen(const syscall_context& c, uint32_t style, uint32_t width, uint32_t color);
-        NTSTATUS handle_NtGdiCreatePaletteInternal();
-        uint64_t handle_NtGdiCreateHalftonePalette(const syscall_context& c, hdc dc);
+        uint64_t handle_NtGdiCreatePaletteInternal(const syscall_context& c);
+        uint64_t handle_NtGdiCreateHalftonePalette(const syscall_context& c);
         NTSTATUS handle_NtGdiDoPalette();
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
         int32_t handle_NtGdiSaveDC(const syscall_context& c, hdc dc);
