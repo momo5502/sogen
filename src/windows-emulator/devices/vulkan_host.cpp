@@ -4233,7 +4233,14 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        return dev->second.reset_descriptor_pool(dev->second.handle, it->second.handle, static_cast<VkDescriptorPoolResetFlags>(flags));
+        const int32_t result =
+            dev->second.reset_descriptor_pool(dev->second.handle, it->second.handle, static_cast<VkDescriptorPoolResetFlags>(flags));
+        if (result == VK_SUCCESS)
+        {
+            // The reset implicitly frees every set allocated from this pool; drop their ids.
+            this->impl_->erase_owned(this->impl_->descriptor_sets, [&](const impl::descriptor_set_data& d) { return d.pool_id == pool; });
+        }
+        return result;
     }
 
     void vulkan_host::destroy_descriptor_pool(uint64_t device, uint64_t pool)

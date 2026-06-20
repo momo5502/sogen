@@ -1965,4 +1965,5 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(reset_command_buffer_request) == 16, "wire layout drift");
     static_assert(sizeof(get_physical_device_image_format_properties_request) == 32, "wire layout drift");
     static_assert(sizeof(get_physical_device_image_format_properties_response) == 40, "wire layout drift");
+    static_assert(sizeof(reset_descriptor_pool_request) == 24, "wire layout drift");
 }
