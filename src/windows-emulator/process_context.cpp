@@ -392,7 +392,7 @@ namespace sogen
                     allocator.make_unicode_string(params32.CommandLine, read_unicode_string(emu, params64.CommandLine));
                     allocator.make_unicode_string(params32.DllPath, read_unicode_string(emu, params64.DllPath));
                     allocator.make_unicode_string(params32.CurrentDirectory.DosPath,
-                                                  read_unicode_string(emu, params64.CurrentDirectory.DosPath));
+                                                  read_unicode_string(emu, params64.CurrentDirectory.DosPath), 1024);
                     allocator.make_unicode_string(params32.WindowTitle, read_unicode_string(emu, params64.WindowTitle));
                     allocator.make_unicode_string(params32.DesktopInfo, read_unicode_string(emu, params64.DesktopInfo));
                     allocator.make_unicode_string(params32.ShellInfo, read_unicode_string(emu, params64.ShellInfo));
