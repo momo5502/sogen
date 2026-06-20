@@ -3477,6 +3477,71 @@ namespace sogen
             return hwnd;
         }
 
+        emulator_pointer handle_NtUserSetClassLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
+                                                      BOOL /*Ansi*/)
+        {
+            auto* win = c.proc.windows.get(hWnd);
+            if (!win)
+            {
+                return 0;
+            }
+
+            const auto entry = c.proc.classes.find(win->class_name);
+            if (entry == c.proc.classes.end())
+            {
+                return 0;
+            }
+
+            auto& cls = entry->second.wnd_class;
+            emulator_pointer old_value = 0;
+
+            // GET/SET CLASS LONG indices (winuser.h)
+            constexpr int gcl_style = -26;
+            constexpr int gclp_wndproc = -24;
+            constexpr int gclp_hmodule = -16;
+            constexpr int gclp_hicon = -14;
+            constexpr int gclp_hcursor = -12;
+            constexpr int gclp_hbrbackground = -10;
+            constexpr int gclp_hiconsm = -34;
+
+            switch (nIndex)
+            {
+            case gcl_style:
+                old_value = cls.style;
+                cls.style = static_cast<uint32_t>(dwNewLong);
+                break;
+            case gclp_wndproc:
+                old_value = cls.lpfnWndProc;
+                cls.lpfnWndProc = dwNewLong;
+                break;
+            case gclp_hmodule:
+                old_value = cls.hInstance;
+                cls.hInstance = dwNewLong;
+                break;
+            case gclp_hicon:
+                old_value = cls.hIcon;
+                cls.hIcon = dwNewLong;
+                break;
+            case gclp_hcursor:
+                old_value = cls.hCursor;
+                cls.hCursor = dwNewLong;
+                break;
+            case gclp_hbrbackground:
+                old_value = cls.hbrBackground;
+                cls.hbrBackground = dwNewLong;
+                break;
+            case gclp_hiconsm:
+                old_value = cls.hIconSm;
+                cls.hIconSm = dwNewLong;
+                break;
+            default:
+                // GCL_CBCLSEXTRA / GCL_CBWNDEXTRA / GCLP_MENUNAME / positive class-extra offsets: not modeled.
+                break;
+            }
+
+            return old_value;
+        }
+
         emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                        BOOL /*Ansi*/)
         {
