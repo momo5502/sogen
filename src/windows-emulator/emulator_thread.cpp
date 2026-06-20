@@ -376,6 +376,7 @@ namespace sogen
                     }
                 });
                 teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
+                teb_obj.Win32ClientInfo.arr[29] = USER_DEFAULT_DPI_CONTEXT;
             });
 
             return;
@@ -461,6 +462,7 @@ namespace sogen
                 }
             });
             teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
+            teb_obj.Win32ClientInfo.arr[29] = USER_DEFAULT_DPI_CONTEXT;
         });
 
         // Allocate dynamic 32-bit stack for WOW64 thread
@@ -513,6 +515,7 @@ namespace sogen
             teb32_obj.StaticUnicodeString.Length = 0;
             teb32_obj.StaticUnicodeString.MaximumLength = sizeof(teb32_obj.StaticUnicodeBuffer);
             teb32_obj.StaticUnicodeString.Buffer = static_cast<uint32_t>(teb32_addr + offsetof(TEB32, StaticUnicodeBuffer));
+            teb32_obj.Win32ClientInfo[29] = USER_DEFAULT_DPI_CONTEXT;
 
             // Note: CurrentLocale and other fields will be initialized by WOW64 runtime
         });

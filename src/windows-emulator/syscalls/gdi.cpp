@@ -19,6 +19,7 @@ namespace sogen
             constexpr uint8_t k_gdi_dc_type = 0x01;
             constexpr uint8_t k_gdi_region_type = 0x04;
             constexpr uint8_t k_gdi_bitmap_type = 0x05;
+            constexpr uint8_t k_gdi_palette_type = 0x08;
             constexpr uint8_t k_gdi_font_type = 0x0A;
             constexpr uint8_t k_gdi_brush_type = 0x10;
             constexpr uint8_t k_gdi_pen_type = 0x30;
@@ -27,6 +28,7 @@ namespace sogen
             constexpr uint32_t k_gdi_brush_attr_size = 0x20;
             constexpr uint32_t k_gdi_pen_attr_size = 0x20;
             constexpr uint32_t k_gdi_bitmap_attr_size = 0x20;
+            constexpr uint32_t k_gdi_palette_attr_size = 0x20;
             constexpr uint32_t k_gdi_font_attr_size = 0x40;
             constexpr uint32_t k_gdi_region_attr_size = 0x20;
 
@@ -403,7 +405,7 @@ namespace sogen
                     entry_obj.access([&](GDI_HANDLE_ENTRY64& writable) {
                         writable = {};
                         writable.Object = object_ptr;
-                        writable.Owner.Value = 0;
+                        writable.Owner.ProcessId = static_cast<uint16_t>(process_context::process_id);
                         writable.Unique = unique;
                         writable.Type = type;
                         writable.Flags = 0;
@@ -549,9 +551,24 @@ namespace sogen
                 surface.pixels[static_cast<size_t>(y) * surface.width + static_cast<size_t>(x)] = color;
             }
 
+            std::optional<uint32_t> get_surface_pixel(const gdi_bitmap_surface& surface, const int x, const int y)
+            {
+                if (x < 0 || y < 0 || x >= static_cast<int>(surface.width) || y >= static_cast<int>(surface.height))
+                {
+                    return std::nullopt;
+                }
+
+                return surface.pixels[static_cast<size_t>(y) * surface.width + static_cast<size_t>(x)];
+            }
+
             uint32_t colorref_to_bgra(const uint32_t colorref)
             {
                 return 0xFF000000u | ((colorref & 0x000000FFu) << 16) | (colorref & 0x0000FF00u) | ((colorref & 0x00FF0000u) >> 16);
+            }
+
+            uint32_t bgra_to_colorref(const uint32_t bgra)
+            {
+                return ((bgra & 0x00FF0000u) >> 16) | (bgra & 0x0000FF00u) | ((bgra & 0x000000FFu) << 16);
             }
 
             bool set_gdi_object_color(const syscall_context& c, const uint32_t handle_value, const uint8_t expected_type,
@@ -1084,6 +1101,22 @@ namespace sogen
                 {
                     c.proc.gdi_dc_states[handle_value] = {};
                 }
+                return handle_value;
+            }
+
+            uint32_t create_gdi_bitmap_surface(const syscall_context& c, const uint32_t width, const uint32_t height,
+                                               const uint32_t fill = k_default_bitmap_fill)
+            {
+                const auto handle_value = allocate_gdi_object(c, k_gdi_bitmap_type, k_gdi_bitmap_attr_size);
+                if (handle_value == 0)
+                {
+                    return 0;
+                }
+
+                auto& surface = c.proc.gdi_bitmap_surfaces[handle_value];
+                surface.width = width;
+                surface.height = height;
+                surface.pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), fill);
                 return handle_value;
             }
 
@@ -1634,10 +1667,48 @@ namespace sogen
             return handle;
         }
 
+        NTSTATUS handle_NtGdiCreatePaletteInternal()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        uint64_t handle_NtGdiCreateHalftonePalette(const syscall_context& c, const hdc /*dc*/)
+        {
+            return allocate_gdi_object(c, k_gdi_palette_type, k_gdi_palette_attr_size);
+        }
+
+        NTSTATUS handle_NtGdiDoPalette()
+        {
+            return STATUS_SUCCESS;
+        }
+
         uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, const hdc /*dc*/)
         {
             uint64_t dc_attr = 0;
-            return allocate_gdi_dc(c, dc_attr);
+            const auto dc = allocate_gdi_dc(c, dc_attr);
+            if (dc == 0)
+            {
+                return 0;
+            }
+
+            const auto it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
+            if (it == c.proc.gdi_dc_states.end())
+            {
+                return 0;
+            }
+
+            it->second.is_memory_dc = true;
+
+            // Memory DCs begin with a default monochrome bitmap selected, and SelectObject
+            // returns that previous bitmap on the first real bitmap selection.
+            const auto default_bitmap = create_gdi_bitmap_surface(c, 1, 1, 0xFF000000u);
+            if (default_bitmap == 0)
+            {
+                return 0;
+            }
+
+            it->second.selected_bitmap = default_bitmap;
+            return dc;
         }
 
         hdc handle_NtGdiOpenDCW(const syscall_context& c)
@@ -1722,28 +1793,16 @@ namespace sogen
 
         uint64_t handle_NtGdiCreateCompatibleBitmap(const syscall_context& c, const hdc /*dc*/, const uint32_t width, const uint32_t height)
         {
-            const auto handle_value = allocate_gdi_object(c, k_gdi_bitmap_type, k_gdi_bitmap_attr_size);
-            if (handle_value != 0)
-            {
-                auto& surface = c.proc.gdi_bitmap_surfaces[handle_value];
-                surface.width = width;
-                surface.height = height;
-                surface.pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), k_default_bitmap_fill);
-            }
-            return handle_value;
+            return create_gdi_bitmap_surface(c, width, height);
         }
 
         uint64_t handle_NtGdiCreateBitmap(const syscall_context& c, const uint32_t width, const uint32_t height, const uint32_t planes,
                                           const uint32_t bits_pixel, const emulator_pointer bits)
         {
-            const auto handle_value = allocate_gdi_object(c, k_gdi_bitmap_type, k_gdi_bitmap_attr_size);
+            const auto handle_value = create_gdi_bitmap_surface(c, width, height);
             if (handle_value != 0)
             {
                 auto& surface = c.proc.gdi_bitmap_surfaces[handle_value];
-                surface.width = width;
-                surface.height = height;
-                surface.pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), k_default_bitmap_fill);
-
                 if (bits != 0 && planes == 1 && bits_pixel == 32)
                 {
                     const auto byte_count = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(uint32_t);
@@ -1753,18 +1812,20 @@ namespace sogen
             return handle_value;
         }
 
+        uint64_t handle_NtGdiCreateDIBSection()
+        {
+            return STATUS_SUCCESS;
+        }
+
         uint64_t handle_NtGdiCreateDIBitmapInternal(const syscall_context& c, const hdc /*dc*/, const uint32_t width, const uint32_t height,
                                                     const uint32_t /*usage*/, const emulator_pointer bits, const emulator_pointer /*info*/,
                                                     const uint32_t /*info_header_size*/, const uint32_t /*init*/, const uint32_t /*offset*/,
                                                     const uint32_t /*cj*/, const uint32_t /*i_usage*/)
         {
-            const auto handle_value = allocate_gdi_object(c, k_gdi_bitmap_type, k_gdi_bitmap_attr_size);
+            const auto handle_value = create_gdi_bitmap_surface(c, width, height);
             if (handle_value != 0)
             {
                 auto& surface = c.proc.gdi_bitmap_surfaces[handle_value];
-                surface.width = width;
-                surface.height = height;
-                surface.pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), k_default_bitmap_fill);
                 if (bits != 0)
                 {
                     const auto byte_count = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(uint32_t);
@@ -2112,11 +2173,30 @@ namespace sogen
             const auto it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
             if (it == c.proc.gdi_dc_states.end())
             {
-                return bitmap.bits;
+                return 0;
+            }
+
+            if (!it->second.is_memory_dc)
+            {
+                return 0;
+            }
+
+            const auto bitmap_handle = static_cast<uint32_t>(bitmap.bits);
+            if (c.proc.gdi_bitmap_surfaces.find(bitmap_handle) == c.proc.gdi_bitmap_surfaces.end())
+            {
+                return 0;
+            }
+
+            for (const auto& [other_dc, state] : c.proc.gdi_dc_states)
+            {
+                if (other_dc != static_cast<uint32_t>(dc) && state.selected_bitmap == bitmap_handle)
+                {
+                    return 0;
+                }
             }
 
             const auto old = it->second.selected_bitmap;
-            it->second.selected_bitmap = static_cast<uint32_t>(bitmap.bits);
+            it->second.selected_bitmap = bitmap_handle;
             return old;
         }
 
@@ -2125,9 +2205,18 @@ namespace sogen
             return dc != 0 ? font : 0;
         }
 
-        hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, const handle /*bitmap*/)
+        hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, const handle bitmap)
         {
-            return ensure_default_hdc(c);
+            const auto bitmap_handle = static_cast<uint32_t>(bitmap.bits);
+            for (const auto& [dc_handle, dc_state] : c.proc.gdi_dc_states)
+            {
+                if (dc_state.is_memory_dc && dc_state.selected_bitmap == bitmap_handle)
+                {
+                    return static_cast<hdc>(dc_handle);
+                }
+            }
+
+            return 0;
         }
 
         BOOL handle_NtGdiGetDCDword(const syscall_context& c, const hdc dc, const uint32_t /*index*/, const emulator_pointer result)
@@ -2442,8 +2531,41 @@ namespace sogen
             }
             else
             {
-                std::vector<uint8_t> zeroed(required_size);
-                c.emu.write_memory(buffer, zeroed.data(), zeroed.size());
+                std::vector<uint8_t> bitmap(required_size);
+                constexpr int center_x = glyph_width / 2;
+                constexpr int center_y = glyph_height / 2;
+                constexpr int dot_radius = 1;
+                if (glyph_format == ggo_bitmap)
+                {
+                    constexpr auto row_size = ((glyph_width + 31) / 32) * 4;
+                    for (int y = center_y - dot_radius; y <= center_y + dot_radius; ++y)
+                    {
+                        for (int x = center_x - dot_radius; x <= center_x + dot_radius; ++x)
+                        {
+                            bitmap[y * row_size + x / 8] |= static_cast<uint8_t>(0x80u >> (x % 8));
+                        }
+                    }
+                }
+                else
+                {
+                    uint8_t intensity = 64;
+                    if (glyph_format == ggo_gray2_bitmap)
+                    {
+                        intensity = 4;
+                    }
+                    else if (glyph_format == ggo_gray4_bitmap)
+                    {
+                        intensity = 16;
+                    }
+                    for (int y = center_y - dot_radius; y <= center_y + dot_radius; ++y)
+                    {
+                        for (int x = center_x - dot_radius; x <= center_x + dot_radius; ++x)
+                        {
+                            bitmap[y * glyph_width + x] = intensity;
+                        }
+                    }
+                }
+                c.emu.write_memory(buffer, bitmap.data(), bitmap.size());
             }
             return required_size;
         }
@@ -3938,6 +4060,63 @@ namespace sogen
             });
 
             return STATUS_SUCCESS;
+        }
+
+        COLORREF handle_NtGdiSetPixel(const syscall_context& c, const hdc dc, const int x, const int y, const COLORREF color)
+        {
+            gdi_dc_state* dc_state = nullptr;
+            gdi_bitmap_surface* surface = nullptr;
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
+            {
+                return CLR_INVALID;
+            }
+
+            const auto surface_x = x + origin_x;
+            const auto surface_y = y + origin_y;
+            if (!get_surface_pixel(*surface, surface_x, surface_y).has_value())
+            {
+                return CLR_INVALID;
+            }
+
+            const auto bgra = colorref_to_bgra(color);
+            set_surface_pixel(*surface, surface_x, surface_y, bgra);
+
+            uint32_t present_handle = 0;
+            resolve_dc_surface(c, dc, origin_x, origin_y, present_handle);
+            if (present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
+            {
+                c.win_emu.ui().present_surface(present_handle, {
+                                                                   .width = static_cast<int32_t>(surface->width),
+                                                                   .height = static_cast<int32_t>(surface->height),
+                                                                   .stride = static_cast<int32_t>(surface->width * sizeof(uint32_t)),
+                                                                   .format = ui_surface_format::bgra8,
+                                                                   .pixels = surface->pixels.data(),
+                                                               });
+            }
+
+            return bgra_to_colorref(bgra);
+        }
+
+        COLORREF handle_NtGdiGetPixel(const syscall_context& c, const hdc dc, const int x, const int y)
+        {
+            gdi_dc_state* dc_state = nullptr;
+            gdi_bitmap_surface* surface = nullptr;
+            int32_t origin_x = 0;
+            int32_t origin_y = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
+            {
+                return CLR_INVALID;
+            }
+
+            const auto pixel = get_surface_pixel(*surface, x + origin_x, y + origin_y);
+            if (!pixel.has_value())
+            {
+                return CLR_INVALID;
+            }
+
+            return bgra_to_colorref(*pixel);
         }
     }
 
