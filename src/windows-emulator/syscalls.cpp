@@ -17,6 +17,7 @@ namespace sogen
     {
         // syscalls/event.cpp:
         NTSTATUS handle_NtSetEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
+        NTSTATUS handle_NtPulseEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
         NTSTATUS handle_NtTraceEvent();
         NTSTATUS handle_NtQueryEvent(const syscall_context& c, handle event_handle, uint32_t event_information_class,
                                      emulator_object<EVENT_BASIC_INFORMATION> event_information, uint32_t event_information_length,
@@ -1084,6 +1085,7 @@ namespace sogen
         add_handler(NtSetInformationThread);
         add_handler(NtSetThreadExecutionState);
         add_handler(NtSetEvent);
+        add_handler(NtPulseEvent);
         add_handler(NtClose);
         add_handler(NtOpenKey);
         add_handler(NtAllocateVirtualMemory);

@@ -36,6 +36,38 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtPulseEvent(const syscall_context& c, const uint64_t handle, const emulator_object<LONG> previous_state)
+        {
+            auto* entry = c.proc.events.get(handle);
+            if (!entry)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            if (previous_state.value())
+            {
+                previous_state.write(entry->signaled ? 1ULL : 0ULL);
+            }
+
+            // Pulse: momentarily signal the event so threads already blocked on it wake, then return it to
+            // the non-signaled state. Threads that are not currently waiting miss the pulse, matching the
+            // lossy NtPulseEvent semantics. The cooperative scheduler only re-evaluates readiness at context
+            // switches, so wake the current waiters explicitly while the event is signaled.
+            entry->signaled = true;
+
+            const auto event_handle = make_handle(handle);
+            for (auto& thread : c.proc.threads | std::views::values)
+            {
+                if (std::ranges::find(thread.await_objects, event_handle) != thread.await_objects.end())
+                {
+                    (void)thread.is_thread_ready(c.proc, c.win_emu.clock());
+                }
+            }
+
+            entry->signaled = false;
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtTraceEvent()
         {
             return STATUS_SUCCESS;
