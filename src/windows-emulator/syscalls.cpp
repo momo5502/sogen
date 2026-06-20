@@ -606,6 +606,7 @@ namespace sogen
         BOOL handle_NtUserShowCaret();
         BOOL handle_NtUserHideCaret();
         BOOL handle_NtUserDestroyCaret();
+        BOOL handle_NtUserGetObjectInformation();
         uint64_t handle_NtUserQueryWindow(const syscall_context& c, hwnd window_handle, uint32_t query_type);
         int handle_NtUserSetScrollInfo();
         BOOL handle_NtUserIsTouchWindow();
@@ -1490,6 +1491,7 @@ namespace sogen
         add_handler(NtUserShowCaret);
         add_handler(NtUserHideCaret);
         add_handler(NtUserDestroyCaret);
+        add_handler(NtUserGetObjectInformation);
         add_handler(NtUserQueryWindow);
         add_handler(NtUserSetScrollInfo);
         add_handler(NtUserTrackMouseEvent);
