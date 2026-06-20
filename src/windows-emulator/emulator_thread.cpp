@@ -148,7 +148,9 @@ namespace sogen
 
             case handle_types::thread: {
                 const auto* t = c.threads.get(h);
-                if (t && t->is_terminated())
+                // A reaped thread is gone from the store, but its handle stays signaled (it terminated),
+                // so a missing thread counts the same as a terminated one.
+                if (!t || t->is_terminated())
                 {
                     return wait_state::signaled;
                 }
@@ -247,7 +249,9 @@ namespace sogen
 
             case handle_types::thread: {
                 const auto* thread = c.threads.get(h);
-                if (!thread || !thread->is_terminated())
+                // A missing (reaped) thread counts as terminated; its signal is sticky, so consuming it
+                // is a no-op.
+                if (thread && !thread->is_terminated())
                 {
                     return std::nullopt;
                 }
