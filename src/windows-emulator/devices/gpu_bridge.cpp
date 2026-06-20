@@ -446,8 +446,8 @@ namespace sogen
 
                 std::vector<std::byte> properties(array_bytes);
                 uint32_t count = 0;
-                const int32_t result =
-                    this->vulkan_.get_queue_family_properties(request.physical_device, properties.data(), properties.size(), count);
+                const int32_t result = this->vulkan_.get_queue_family_properties(
+                    request.physical_device, request.query_ownership_transfer != 0, properties.data(), properties.size(), count);
                 if (result != 0)
                 {
                     return STATUS_INVALID_PARAMETER;

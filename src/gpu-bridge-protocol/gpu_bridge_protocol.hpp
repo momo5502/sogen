@@ -367,14 +367,25 @@ namespace sogen::gpu_bridge
     {
         object_id physical_device;
         uint32_t max_count; // capacity (in entries) of the array following the response header
-        uint32_t reserved;
+        uint32_t query_ownership_transfer;
     };
 
-    // ioctl_get_queue_family_properties: out header, followed by `count` raw VkQueueFamilyProperties
+    // ioctl_get_queue_family_properties: out header, followed by queue_family_properties entries
     struct get_queue_family_properties_response
     {
         uint32_t count; // true number of queue families on the device
         uint32_t reserved;
+    };
+
+    struct queue_family_properties
+    {
+        uint32_t queue_flags;
+        uint32_t queue_count;
+        uint32_t timestamp_valid_bits;
+        uint32_t min_image_transfer_granularity_width;
+        uint32_t min_image_transfer_granularity_height;
+        uint32_t min_image_transfer_granularity_depth;
+        uint32_t optimal_image_transfer_to_queue_families;
     };
 
     struct enumerate_device_extension_properties_request
@@ -1985,6 +1996,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");
     static_assert(sizeof(create_sampler_request) == 64, "wire layout drift");
     static_assert(sizeof(enumerate_device_extension_properties_request) == 16, "wire layout drift");
+    static_assert(sizeof(queue_family_properties) == 28, "wire layout drift");
     static_assert(sizeof(enumerate_device_extension_properties_response) == 8, "wire layout drift");
     static_assert(sizeof(feature_chain_record) == 8, "wire layout drift");
     static_assert(sizeof(get_physical_device_features2_request) == 16, "wire layout drift");

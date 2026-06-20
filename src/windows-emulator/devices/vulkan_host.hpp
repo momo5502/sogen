@@ -62,9 +62,10 @@ namespace sogen
         int32_t get_physical_device_image_format_properties(uint64_t physical_device, uint32_t format, uint32_t type, uint32_t tiling,
                                                             uint32_t usage, uint32_t flags, image_format_properties& out);
 
-        // Writes the device's queue families as raw VkQueueFamilyProperties into out (sized in
-        // bytes). out_count always receives the true family count.
-        int32_t get_queue_family_properties(uint64_t physical_device, void* out, size_t out_size, uint32_t& out_count);
+        // Writes the device's queue families in the bridge wire format into out (sized in bytes).
+        // out_count always receives the true family count.
+        int32_t get_queue_family_properties(uint64_t physical_device, bool query_ownership_transfer, void* out, size_t out_size,
+                                            uint32_t& out_count);
 
         // Writes the device's real VkExtensionProperties array into out (sized in bytes); out_count
         // always receives the true device-extension count.

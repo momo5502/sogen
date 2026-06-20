@@ -162,6 +162,7 @@ namespace sogen
             PFN_vkGetPhysicalDeviceFormatProperties get_physical_device_format_properties{};
             PFN_vkGetPhysicalDeviceImageFormatProperties get_physical_device_image_format_properties{};
             PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queue_family_properties{};
+            PFN_vkGetPhysicalDeviceQueueFamilyProperties2 get_queue_family_properties2{};
             PFN_vkGetPhysicalDeviceMemoryProperties get_physical_device_memory_properties{};
             PFN_vkGetPhysicalDeviceMemoryProperties2 get_physical_device_memory_properties2{};
             PFN_vkGetPhysicalDeviceFeatures2 get_physical_device_features2{};
@@ -911,6 +912,8 @@ namespace sogen
             instance, "vkGetPhysicalDeviceImageFormatProperties");
         data.get_queue_family_properties = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
             instance, "vkGetPhysicalDeviceQueueFamilyProperties");
+        data.get_queue_family_properties2 = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceQueueFamilyProperties2>(
+            instance, "vkGetPhysicalDeviceQueueFamilyProperties2");
         data.get_physical_device_memory_properties =
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceMemoryProperties>(instance, "vkGetPhysicalDeviceMemoryProperties");
         data.get_physical_device_memory_properties2 =
@@ -1113,7 +1116,8 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::get_queue_family_properties(uint64_t physical_device, void* out, size_t out_size, uint32_t& out_count)
+    int32_t vulkan_host::get_queue_family_properties(uint64_t physical_device, const bool query_ownership_transfer, void* out,
+                                                     size_t out_size, uint32_t& out_count)
     {
         out_count = 0;
 
@@ -1132,18 +1136,57 @@ namespace sogen
         uint32_t count = 0;
         instance->second.get_queue_family_properties(pd->second.handle, &count, nullptr);
 
-        std::vector<VkQueueFamilyProperties> families(count);
-        if (count > 0)
+        std::vector<gpu_bridge::queue_family_properties> wire_families(count);
+        if (query_ownership_transfer && instance->second.get_queue_family_properties2)
         {
-            instance->second.get_queue_family_properties(pd->second.handle, &count, families.data());
+            std::vector<VkQueueFamilyProperties2> families(count);
+            std::vector<VkQueueFamilyOwnershipTransferPropertiesKHR> ownership(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                families[i].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2;
+                families[i].pNext = &ownership[i];
+                ownership[i].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_OWNERSHIP_TRANSFER_PROPERTIES_KHR;
+            }
+            instance->second.get_queue_family_properties2(pd->second.handle, &count, families.data());
+            wire_families.resize(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const auto& family = families[i].queueFamilyProperties;
+                wire_families[i] = {.queue_flags = family.queueFlags,
+                                    .queue_count = family.queueCount,
+                                    .timestamp_valid_bits = family.timestampValidBits,
+                                    .min_image_transfer_granularity_width = family.minImageTransferGranularity.width,
+                                    .min_image_transfer_granularity_height = family.minImageTransferGranularity.height,
+                                    .min_image_transfer_granularity_depth = family.minImageTransferGranularity.depth,
+                                    .optimal_image_transfer_to_queue_families = ownership[i].optimalImageTransferToQueueFamilies};
+            }
+        }
+        else
+        {
+            std::vector<VkQueueFamilyProperties> families(count);
+            if (count > 0)
+            {
+                instance->second.get_queue_family_properties(pd->second.handle, &count, families.data());
+            }
+            wire_families.resize(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const auto& family = families[i];
+                wire_families[i] = {.queue_flags = family.queueFlags,
+                                    .queue_count = family.queueCount,
+                                    .timestamp_valid_bits = family.timestampValidBits,
+                                    .min_image_transfer_granularity_width = family.minImageTransferGranularity.width,
+                                    .min_image_transfer_granularity_height = family.minImageTransferGranularity.height,
+                                    .min_image_transfer_granularity_depth = family.minImageTransferGranularity.depth};
+            }
         }
 
         out_count = count;
 
-        const size_t copy_bytes = std::min(out_size, families.size() * sizeof(VkQueueFamilyProperties));
+        const size_t copy_bytes = std::min(out_size, wire_families.size() * sizeof(gpu_bridge::queue_family_properties));
         if (copy_bytes > 0)
         {
-            std::memcpy(out, families.data(), copy_bytes);
+            std::memcpy(out, wire_families.data(), copy_bytes);
         }
 
         return VK_SUCCESS;

@@ -323,7 +323,7 @@ extern "C"
         request.max_count = pProperties ? *pCount : 0;
 
         std::vector<std::byte> buffer(sizeof(gb::get_queue_family_properties_response) +
-                                      static_cast<size_t>(request.max_count) * sizeof(VkQueueFamilyProperties));
+                                      static_cast<size_t>(request.max_count) * sizeof(gb::queue_family_properties));
         if (!bridge_call(gb::ioctl_get_queue_family_properties, &request, sizeof(request), buffer.data(),
                          static_cast<DWORD>(buffer.size())))
         {
@@ -341,10 +341,15 @@ extern "C"
 
         const uint32_t written = (response->count < *pCount) ? response->count : *pCount;
         const auto* families =
-            reinterpret_cast<const VkQueueFamilyProperties*>(buffer.data() + sizeof(gb::get_queue_family_properties_response));
+            reinterpret_cast<const gb::queue_family_properties*>(buffer.data() + sizeof(gb::get_queue_family_properties_response));
         for (uint32_t i = 0; i < written; ++i)
         {
-            pProperties[i] = families[i];
+            pProperties[i] = {.queueFlags = families[i].queue_flags,
+                              .queueCount = families[i].queue_count,
+                              .timestampValidBits = families[i].timestamp_valid_bits,
+                              .minImageTransferGranularity = {.width = families[i].min_image_transfer_granularity_width,
+                                                              .height = families[i].min_image_transfer_granularity_height,
+                                                              .depth = families[i].min_image_transfer_granularity_depth}};
         }
         *pCount = written;
     }
@@ -2826,12 +2831,50 @@ extern "C"
             return;
         }
 
-        std::vector<VkQueueFamilyProperties> families(*pCount);
-        uint32_t count = *pCount;
-        vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &count, families.data());
+        gb::get_queue_family_properties_request request{};
+        request.physical_device = to_object_id(physicalDevice);
+        request.max_count = *pCount;
+        for (uint32_t i = 0; i < *pCount && request.query_ownership_transfer == 0; ++i)
+        {
+            for (const auto* next = reinterpret_cast<const VkBaseOutStructure*>(pProperties[i].pNext); next; next = next->pNext)
+            {
+                if (next->sType == VK_STRUCTURE_TYPE_QUEUE_FAMILY_OWNERSHIP_TRANSFER_PROPERTIES_KHR)
+                {
+                    request.query_ownership_transfer = 1;
+                    break;
+                }
+            }
+        }
+        std::vector<std::byte> buffer(sizeof(gb::get_queue_family_properties_response) +
+                                      static_cast<size_t>(request.max_count) * sizeof(gb::queue_family_properties));
+        if (!bridge_call(gb::ioctl_get_queue_family_properties, &request, sizeof(request), buffer.data(),
+                         static_cast<DWORD>(buffer.size())))
+        {
+            *pCount = 0;
+            return;
+        }
+
+        const auto* response = reinterpret_cast<const gb::get_queue_family_properties_response*>(buffer.data());
+        const uint32_t count = std::min(response->count, *pCount);
+        const auto* families =
+            reinterpret_cast<const gb::queue_family_properties*>(buffer.data() + sizeof(gb::get_queue_family_properties_response));
         for (uint32_t i = 0; i < count; ++i)
         {
-            pProperties[i].queueFamilyProperties = families[i];
+            pProperties[i].queueFamilyProperties = {
+                .queueFlags = families[i].queue_flags,
+                .queueCount = families[i].queue_count,
+                .timestampValidBits = families[i].timestamp_valid_bits,
+                .minImageTransferGranularity = {.width = families[i].min_image_transfer_granularity_width,
+                                                .height = families[i].min_image_transfer_granularity_height,
+                                                .depth = families[i].min_image_transfer_granularity_depth}};
+            for (auto* next = reinterpret_cast<VkBaseOutStructure*>(pProperties[i].pNext); next; next = next->pNext)
+            {
+                if (next->sType == VK_STRUCTURE_TYPE_QUEUE_FAMILY_OWNERSHIP_TRANSFER_PROPERTIES_KHR)
+                {
+                    reinterpret_cast<VkQueueFamilyOwnershipTransferPropertiesKHR*>(next)->optimalImageTransferToQueueFamilies =
+                        families[i].optimal_image_transfer_to_queue_families;
+                }
+            }
         }
         *pCount = count;
     }
@@ -4329,16 +4372,19 @@ extern "C"
             return;
         }
 
-        // DXVK uses the maintenance6-style bind info, which replaces the old pipeline bind point with
-        // a stage mask. The bridge still replays the legacy vkCmdBindDescriptorSets call, so collapse
-        // the stage mask back to the matching bind point. DXVK only uses graphics or compute here.
-        const VkPipelineBindPoint bind_point = pBindDescriptorSetsInfo->stageFlags == VK_SHADER_STAGE_COMPUTE_BIT
-                                                   ? VK_PIPELINE_BIND_POINT_COMPUTE
-                                                   : VK_PIPELINE_BIND_POINT_GRAPHICS;
-
-        vkCmdBindDescriptorSets(commandBuffer, bind_point, pBindDescriptorSetsInfo->layout, pBindDescriptorSetsInfo->firstSet,
-                                pBindDescriptorSetsInfo->descriptorSetCount, pBindDescriptorSetsInfo->pDescriptorSets,
-                                pBindDescriptorSetsInfo->dynamicOffsetCount, pBindDescriptorSetsInfo->pDynamicOffsets);
+        const auto bind = [&](const VkPipelineBindPoint bind_point) {
+            vkCmdBindDescriptorSets(commandBuffer, bind_point, pBindDescriptorSetsInfo->layout, pBindDescriptorSetsInfo->firstSet,
+                                    pBindDescriptorSetsInfo->descriptorSetCount, pBindDescriptorSetsInfo->pDescriptorSets,
+                                    pBindDescriptorSetsInfo->dynamicOffsetCount, pBindDescriptorSetsInfo->pDynamicOffsets);
+        };
+        if (pBindDescriptorSetsInfo->stageFlags & VK_SHADER_STAGE_ALL_GRAPHICS)
+        {
+            bind(VK_PIPELINE_BIND_POINT_GRAPHICS);
+        }
+        if (pBindDescriptorSetsInfo->stageFlags & VK_SHADER_STAGE_COMPUTE_BIT)
+        {
+            bind(VK_PIPELINE_BIND_POINT_COMPUTE);
+        }
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer commandBuffer)
