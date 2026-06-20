@@ -473,6 +473,15 @@ namespace sogen
                                                                       memset(&info, 0, sizeof(info));
                                                                   });
 
+            case SystemLookasideInformation:
+                // Variable-length array of per-lookaside-list stats. We don't model kernel lookaside
+                // lists, so report an empty set.
+                if (return_length)
+                {
+                    return_length.try_write(0);
+                }
+                return STATUS_SUCCESS;
+
             case SystemMemoryListInformation:
                 return handle_query<SYSTEM_MEMORY_LIST_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
                                                                       [&](SYSTEM_MEMORY_LIST_INFORMATION64& info) {
