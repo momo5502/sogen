@@ -32,10 +32,22 @@ namespace sogen::gpu_bridge
             return sizeof(VkPhysicalDeviceVulkan12Features);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES:
             return sizeof(VkPhysicalDeviceVulkan13Features);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT:
+            return sizeof(VkPhysicalDeviceDepthClipEnableFeaturesEXT);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT:
+            return sizeof(VkPhysicalDeviceExtendedDynamicState3FeaturesEXT);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT:
             return sizeof(VkPhysicalDeviceRobustness2FeaturesEXT);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR:
             return sizeof(VkPhysicalDeviceMaintenance5FeaturesKHR);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES_KHR:
+            return sizeof(VkPhysicalDeviceMaintenance6FeaturesKHR);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_7_FEATURES_KHR:
+            return sizeof(VkPhysicalDeviceMaintenance7FeaturesKHR);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_8_FEATURES_KHR:
+            return sizeof(VkPhysicalDeviceMaintenance8FeaturesKHR);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_9_FEATURES_KHR:
+            return sizeof(VkPhysicalDeviceMaintenance9FeaturesKHR);
         default:
             return 0;
         }

@@ -204,6 +204,8 @@ namespace sogen
                     return handle_destroy_descriptor_pool(win_emu, context);
                 case gpu_bridge::ioctl_allocate_descriptor_sets:
                     return handle_allocate_descriptor_sets(win_emu, context);
+                case gpu_bridge::ioctl_reset_descriptor_pool:
+                    return handle_reset_descriptor_pool(win_emu, context);
                 case gpu_bridge::ioctl_update_descriptor_sets:
                     return handle_update_descriptor_sets(win_emu, context);
                 case gpu_bridge::ioctl_update_descriptor_sets_batch:
@@ -2123,6 +2125,18 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            NTSTATUS handle_reset_descriptor_pool(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::reset_descriptor_pool_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.reset_descriptor_pool(request.device, request.descriptor_pool, request.flags);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
             // Cap guest-declared descriptor-update payloads so a bogus IOCTL length can't force a huge allocation.
             static constexpr size_t max_descriptor_update_input_bytes = size_t{256} * 1024 * 1024;
 
@@ -2765,6 +2779,38 @@ namespace sogen
                         .depth = req.depth,
                     };
                     return this->vulkan_.cmd_copy_image(req.command_buffer, req.src_image, req.src_layout, req.dst_image, req.dst_layout,
+                                                        region);
+                }
+                case gpu_bridge::command::cmd_blit_image: {
+                    gpu_bridge::cmd_blit_image_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const vulkan_host::image_blit_region region{
+                        .src_aspect_mask = req.src_aspect_mask,
+                        .src_mip_level = req.src_mip_level,
+                        .src_base_array_layer = req.src_base_array_layer,
+                        .src_layer_count = req.src_layer_count,
+                        .src_offset_x0 = req.src_offset_x0,
+                        .src_offset_y0 = req.src_offset_y0,
+                        .src_offset_z0 = req.src_offset_z0,
+                        .src_offset_x1 = req.src_offset_x1,
+                        .src_offset_y1 = req.src_offset_y1,
+                        .src_offset_z1 = req.src_offset_z1,
+                        .dst_aspect_mask = req.dst_aspect_mask,
+                        .dst_mip_level = req.dst_mip_level,
+                        .dst_base_array_layer = req.dst_base_array_layer,
+                        .dst_layer_count = req.dst_layer_count,
+                        .dst_offset_x0 = req.dst_offset_x0,
+                        .dst_offset_y0 = req.dst_offset_y0,
+                        .dst_offset_z0 = req.dst_offset_z0,
+                        .dst_offset_x1 = req.dst_offset_x1,
+                        .dst_offset_y1 = req.dst_offset_y1,
+                        .dst_offset_z1 = req.dst_offset_z1,
+                        .filter = req.filter,
+                    };
+                    return this->vulkan_.cmd_blit_image(req.command_buffer, req.src_image, req.src_layout, req.dst_image, req.dst_layout,
                                                         region);
                 }
                 case gpu_bridge::command::cmd_update_buffer: {

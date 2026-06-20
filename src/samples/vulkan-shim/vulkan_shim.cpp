@@ -1807,6 +1807,11 @@ extern "C"
         record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::depth_bounds_test_enable, depthBoundsTestEnable);
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetDepthClipEnableEXT(VkCommandBuffer commandBuffer, VkBool32 depthClipEnable)
+    {
+        record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::depth_clip_enable, depthClipEnable);
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdSetStencilTestEnable(VkCommandBuffer commandBuffer, VkBool32 stencilTestEnable)
     {
         record_set_dynamic_u32(commandBuffer, gb::dynamic_state_u32::stencil_test_enable, stencilTestEnable);
@@ -2463,6 +2468,53 @@ extern "C"
             request.depth = r.extent.depth;
             record_command(request.command_buffer, gb::command::cmd_copy_image, &request, sizeof(request));
         }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBlitImage2(VkCommandBuffer commandBuffer, const VkBlitImageInfo2* pBlitImageInfo)
+    {
+        if (!pBlitImageInfo)
+        {
+            return;
+        }
+
+        for (uint32_t i = 0; i < pBlitImageInfo->regionCount; ++i)
+        {
+            const VkImageBlit2& r = pBlitImageInfo->pRegions[i];
+            gb::cmd_blit_image_request request{};
+            request.command_buffer = to_object_id(commandBuffer);
+            request.src_image = to_object_id(pBlitImageInfo->srcImage);
+            request.dst_image = to_object_id(pBlitImageInfo->dstImage);
+            request.src_layout = static_cast<uint32_t>(pBlitImageInfo->srcImageLayout);
+            request.dst_layout = static_cast<uint32_t>(pBlitImageInfo->dstImageLayout);
+            request.src_aspect_mask = r.srcSubresource.aspectMask;
+            request.src_mip_level = r.srcSubresource.mipLevel;
+            request.src_base_array_layer = r.srcSubresource.baseArrayLayer;
+            request.src_layer_count = r.srcSubresource.layerCount;
+            request.src_offset_x0 = r.srcOffsets[0].x;
+            request.src_offset_y0 = r.srcOffsets[0].y;
+            request.src_offset_z0 = r.srcOffsets[0].z;
+            request.src_offset_x1 = r.srcOffsets[1].x;
+            request.src_offset_y1 = r.srcOffsets[1].y;
+            request.src_offset_z1 = r.srcOffsets[1].z;
+            request.dst_aspect_mask = r.dstSubresource.aspectMask;
+            request.dst_mip_level = r.dstSubresource.mipLevel;
+            request.dst_base_array_layer = r.dstSubresource.baseArrayLayer;
+            request.dst_layer_count = r.dstSubresource.layerCount;
+            request.dst_offset_x0 = r.dstOffsets[0].x;
+            request.dst_offset_y0 = r.dstOffsets[0].y;
+            request.dst_offset_z0 = r.dstOffsets[0].z;
+            request.dst_offset_x1 = r.dstOffsets[1].x;
+            request.dst_offset_y1 = r.dstOffsets[1].y;
+            request.dst_offset_z1 = r.dstOffsets[1].z;
+            request.filter = static_cast<uint32_t>(pBlitImageInfo->filter);
+            record_command(request.command_buffer, gb::command::cmd_blit_image, &request, sizeof(request));
+        }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBlitImage2KHR(VkCommandBuffer commandBuffer,
+                                                                        const VkBlitImageInfo2* pBlitImageInfo)
+    {
+        vkCmdBlitImage2(commandBuffer, pBlitImageInfo);
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyImageToBuffer2(VkCommandBuffer commandBuffer,
@@ -3520,6 +3572,23 @@ extern "C"
         destroy_device_child(gb::ioctl_destroy_descriptor_pool, device, descriptorPool);
     }
 
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkResetDescriptorPool(VkDevice device, VkDescriptorPool descriptorPool,
+                                                                               VkDescriptorPoolResetFlags flags)
+    {
+        gb::reset_descriptor_pool_request request{};
+        request.device = to_object_id(device);
+        request.descriptor_pool = to_object_id(descriptorPool);
+        request.flags = static_cast<uint32_t>(flags);
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_reset_descriptor_pool, &request, sizeof(request), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        return static_cast<VkResult>(response.vk_result);
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAllocateDescriptorSets(VkDevice device,
                                                                                   const VkDescriptorSetAllocateInfo* pAllocateInfo,
                                                                                   VkDescriptorSet* pDescriptorSets)
@@ -4252,6 +4321,26 @@ extern "C"
         record_command(command_buffer, gb::command::cmd_bind_descriptor_sets, message.data(), message.size());
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets2KHR(VkCommandBuffer commandBuffer,
+                                                                                 const VkBindDescriptorSetsInfo* pBindDescriptorSetsInfo)
+    {
+        if (!pBindDescriptorSetsInfo)
+        {
+            return;
+        }
+
+        // DXVK uses the maintenance6-style bind info, which replaces the old pipeline bind point with
+        // a stage mask. The bridge still replays the legacy vkCmdBindDescriptorSets call, so collapse
+        // the stage mask back to the matching bind point. DXVK only uses graphics or compute here.
+        const VkPipelineBindPoint bind_point = pBindDescriptorSetsInfo->stageFlags == VK_SHADER_STAGE_COMPUTE_BIT
+                                                   ? VK_PIPELINE_BIND_POINT_COMPUTE
+                                                   : VK_PIPELINE_BIND_POINT_GRAPHICS;
+
+        vkCmdBindDescriptorSets(commandBuffer, bind_point, pBindDescriptorSetsInfo->layout, pBindDescriptorSetsInfo->firstSet,
+                                pBindDescriptorSetsInfo->descriptorSetCount, pBindDescriptorSetsInfo->pDescriptorSets,
+                                pBindDescriptorSetsInfo->dynamicOffsetCount, pBindDescriptorSetsInfo->pDynamicOffsets);
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer commandBuffer)
     {
         gb::cmd_end_render_pass_request request{};
@@ -4347,6 +4436,18 @@ extern "C"
             std::memcpy(message.data() + sizeof(header), pValues, size);
         }
         record_command(header.command_buffer, gb::command::cmd_push_constants, message.data(), message.size());
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdPushConstants2KHR(VkCommandBuffer commandBuffer,
+                                                                            const VkPushConstantsInfo* pPushConstantsInfo)
+    {
+        if (!pPushConstantsInfo)
+        {
+            return;
+        }
+
+        vkCmdPushConstants(commandBuffer, pPushConstantsInfo->layout, pPushConstantsInfo->stageFlags, pPushConstantsInfo->offset,
+                           pPushConstantsInfo->size, pPushConstantsInfo->pValues);
     }
 
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName);
@@ -4561,6 +4662,7 @@ extern "C"
             {.name = "vkDestroyDescriptorSetLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorSetLayout)},
             {.name = "vkCreateDescriptorPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDescriptorPool)},
             {.name = "vkDestroyDescriptorPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorPool)},
+            {.name = "vkResetDescriptorPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetDescriptorPool)},
             {.name = "vkAllocateDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkAllocateDescriptorSets)},
             {.name = "vkUpdateDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkUpdateDescriptorSets)},
             {.name = "vkCreateDescriptorUpdateTemplate", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDescriptorUpdateTemplate)},
@@ -4585,15 +4687,21 @@ extern "C"
             {.name = "vkCmdDraw", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDraw)},
             {.name = "vkCmdDispatch", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDispatch)},
             {.name = "vkCmdDispatchIndirect", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDispatchIndirect)},
+            {.name = "vkCmdBlitImage2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBlitImage2)},
+            {.name = "vkCmdBlitImage2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBlitImage2KHR)},
             {.name = "vkCmdBindVertexBuffers", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindVertexBuffers)},
             {.name = "vkCmdBindVertexBuffers2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindVertexBuffers2)},
             {.name = "vkCmdBindVertexBuffers2EXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindVertexBuffers2)},
+            {.name = "vkCmdBindDescriptorSets2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindDescriptorSets2KHR)},
+            {.name = "vkCmdBindDescriptorSets2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindDescriptorSets2KHR)},
             {.name = "vkCmdBindIndexBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindIndexBuffer)},
             {.name = "vkCmdBindIndexBuffer2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindIndexBuffer2KHR)},
             {.name = "vkCmdBindIndexBuffer2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindIndexBuffer2KHR)},
             {.name = "vkCmdDrawIndexed", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndexed)},
             {.name = "vkCmdEndRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRenderPass)},
             {.name = "vkCmdPushConstants", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPushConstants)},
+            {.name = "vkCmdPushConstants2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPushConstants2KHR)},
+            {.name = "vkCmdPushConstants2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPushConstants2KHR)},
             {.name = "vkCmdSetViewport", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetViewport)},
             {.name = "vkCmdSetViewportWithCount", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetViewportWithCount)},
             {.name = "vkCmdSetViewportWithCountEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetViewportWithCount)},
@@ -4623,6 +4731,7 @@ extern "C"
             {.name = "vkCmdSetDepthCompareOpEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthCompareOp)},
             {.name = "vkCmdSetDepthBoundsTestEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBoundsTestEnable)},
             {.name = "vkCmdSetDepthBoundsTestEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBoundsTestEnable)},
+            {.name = "vkCmdSetDepthClipEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthClipEnableEXT)},
             {.name = "vkCmdSetStencilTestEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilTestEnable)},
             {.name = "vkCmdSetStencilTestEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetStencilTestEnable)},
             {.name = "vkCmdSetRasterizerDiscardEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetRasterizerDiscardEnable)},

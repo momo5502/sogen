@@ -3895,6 +3895,21 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtGdiDdDDIOpenAdapterFromLuid(const syscall_context&,
+                                                      const emulator_object<EMU_D3DKMT_OPENADAPTERFROMLUID> open_adapter)
+        {
+            if (!open_adapter)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            open_adapter.access([](EMU_D3DKMT_OPENADAPTERFROMLUID& params) { //
+                params.hAdapter = k_dxgk_adapter_handle;
+            });
+
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtGdiDdDDIOpenAdapterFromHdc(const syscall_context&,
                                                      const emulator_object<EMU_D3DKMT_OPENADAPTERFROMHDC> open_adapter)
         {

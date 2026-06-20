@@ -236,6 +236,7 @@ namespace sogen
             PFN_vkCmdUpdateBuffer cmd_update_buffer{};
             PFN_vkCmdCopyBufferToImage cmd_copy_buffer_to_image{};
             PFN_vkCmdCopyImage cmd_copy_image{};
+            PFN_vkCmdBlitImage cmd_blit_image{};
             PFN_vkCmdCopyBuffer cmd_copy_buffer{};
             PFN_vkCreateSampler create_sampler{};
             PFN_vkDestroySampler destroy_sampler{};
@@ -263,6 +264,7 @@ namespace sogen
             PFN_vkDestroyDescriptorSetLayout destroy_descriptor_set_layout{};
             PFN_vkCreateDescriptorPool create_descriptor_pool{};
             PFN_vkDestroyDescriptorPool destroy_descriptor_pool{};
+            PFN_vkResetDescriptorPool reset_descriptor_pool{};
             PFN_vkAllocateDescriptorSets allocate_descriptor_sets{};
             PFN_vkUpdateDescriptorSets update_descriptor_sets{};
             PFN_vkCmdBindDescriptorSets cmd_bind_descriptor_sets{};
@@ -302,6 +304,7 @@ namespace sogen
             PFN_vkCmdSetDepthWriteEnable cmd_set_depth_write_enable{};
             PFN_vkCmdSetDepthCompareOp cmd_set_depth_compare_op{};
             PFN_vkCmdSetDepthBoundsTestEnable cmd_set_depth_bounds_test_enable{};
+            PFN_vkCmdSetDepthClipEnableEXT cmd_set_depth_clip_enable{};
             PFN_vkCmdSetStencilTestEnable cmd_set_stencil_test_enable{};
             PFN_vkCmdSetRasterizerDiscardEnable cmd_set_rasterizer_discard_enable{};
             PFN_vkCmdSetDepthBiasEnable cmd_set_depth_bias_enable{};
@@ -1565,6 +1568,7 @@ namespace sogen
             data.cmd_update_buffer = reinterpret_cast<PFN_vkCmdUpdateBuffer>(resolve("vkCmdUpdateBuffer"));
             data.cmd_copy_buffer_to_image = reinterpret_cast<PFN_vkCmdCopyBufferToImage>(resolve("vkCmdCopyBufferToImage"));
             data.cmd_copy_image = reinterpret_cast<PFN_vkCmdCopyImage>(resolve("vkCmdCopyImage"));
+            data.cmd_blit_image = reinterpret_cast<PFN_vkCmdBlitImage>(resolve("vkCmdBlitImage"));
             data.cmd_copy_buffer = reinterpret_cast<PFN_vkCmdCopyBuffer>(resolve("vkCmdCopyBuffer"));
             data.create_sampler = reinterpret_cast<PFN_vkCreateSampler>(resolve("vkCreateSampler"));
             data.destroy_sampler = reinterpret_cast<PFN_vkDestroySampler>(resolve("vkDestroySampler"));
@@ -1593,6 +1597,7 @@ namespace sogen
                 reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(resolve("vkDestroyDescriptorSetLayout"));
             data.create_descriptor_pool = reinterpret_cast<PFN_vkCreateDescriptorPool>(resolve("vkCreateDescriptorPool"));
             data.destroy_descriptor_pool = reinterpret_cast<PFN_vkDestroyDescriptorPool>(resolve("vkDestroyDescriptorPool"));
+            data.reset_descriptor_pool = reinterpret_cast<PFN_vkResetDescriptorPool>(resolve("vkResetDescriptorPool"));
             data.allocate_descriptor_sets = reinterpret_cast<PFN_vkAllocateDescriptorSets>(resolve("vkAllocateDescriptorSets"));
             data.update_descriptor_sets = reinterpret_cast<PFN_vkUpdateDescriptorSets>(resolve("vkUpdateDescriptorSets"));
             data.cmd_bind_descriptor_sets = reinterpret_cast<PFN_vkCmdBindDescriptorSets>(resolve("vkCmdBindDescriptorSets"));
@@ -1633,6 +1638,7 @@ namespace sogen
             data.cmd_set_depth_compare_op = reinterpret_cast<PFN_vkCmdSetDepthCompareOp>(resolve("vkCmdSetDepthCompareOp"));
             data.cmd_set_depth_bounds_test_enable =
                 reinterpret_cast<PFN_vkCmdSetDepthBoundsTestEnable>(resolve("vkCmdSetDepthBoundsTestEnable"));
+            data.cmd_set_depth_clip_enable = reinterpret_cast<PFN_vkCmdSetDepthClipEnableEXT>(resolve("vkCmdSetDepthClipEnableEXT"));
             data.cmd_set_stencil_test_enable = reinterpret_cast<PFN_vkCmdSetStencilTestEnable>(resolve("vkCmdSetStencilTestEnable"));
             data.cmd_set_rasterizer_discard_enable =
                 reinterpret_cast<PFN_vkCmdSetRasterizerDiscardEnable>(resolve("vkCmdSetRasterizerDiscardEnable"));
@@ -3089,6 +3095,42 @@ namespace sogen
         return VK_SUCCESS;
     }
 
+    int32_t vulkan_host::cmd_blit_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image,
+                                        uint32_t dst_layout, const image_blit_region& r)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto src = this->impl_->images.find(src_image);
+        const auto dst = this->impl_->images.find(dst_image);
+        if (cb == this->impl_->command_buffers.end() || src == this->impl_->images.end() || dst == this->impl_->images.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_blit_image)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkImageBlit region{};
+        region.srcSubresource = {.aspectMask = r.src_aspect_mask,
+                                 .mipLevel = r.src_mip_level,
+                                 .baseArrayLayer = r.src_base_array_layer,
+                                 .layerCount = r.src_layer_count ? r.src_layer_count : 1};
+        region.srcOffsets[0] = {.x = r.src_offset_x0, .y = r.src_offset_y0, .z = r.src_offset_z0};
+        region.srcOffsets[1] = {.x = r.src_offset_x1, .y = r.src_offset_y1, .z = r.src_offset_z1};
+        region.dstSubresource = {.aspectMask = r.dst_aspect_mask,
+                                 .mipLevel = r.dst_mip_level,
+                                 .baseArrayLayer = r.dst_base_array_layer,
+                                 .layerCount = r.dst_layer_count ? r.dst_layer_count : 1};
+        region.dstOffsets[0] = {.x = r.dst_offset_x0, .y = r.dst_offset_y0, .z = r.dst_offset_z0};
+        region.dstOffsets[1] = {.x = r.dst_offset_x1, .y = r.dst_offset_y1, .z = r.dst_offset_z1};
+
+        dev->second.cmd_blit_image(cb->second.handle, src->second.handle, translate_layout(src_layout), dst->second.handle,
+                                   translate_layout(dst_layout), 1, &region, static_cast<VkFilter>(r.filter));
+        return VK_SUCCESS;
+    }
+
     int32_t vulkan_host::create_sampler(uint64_t device, uint32_t mag_filter, uint32_t min_filter, uint32_t address_mode_u,
                                         uint32_t address_mode_v, uint32_t address_mode_w, uint32_t mipmap_mode, uint32_t compare_enable,
                                         uint32_t compare_op, uint32_t anisotropy_enable, uint32_t border_color, float mip_lod_bias,
@@ -4239,6 +4281,26 @@ namespace sogen
         this->impl_->descriptor_pools.erase(it);
     }
 
+    int32_t vulkan_host::reset_descriptor_pool(uint64_t device, uint64_t pool, uint32_t flags)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto it = this->impl_->descriptor_pools.find(pool);
+        if (dev == this->impl_->devices.end() || it == this->impl_->descriptor_pools.end() || !dev->second.reset_descriptor_pool)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const VkResult result =
+            dev->second.reset_descriptor_pool(dev->second.handle, it->second.handle, static_cast<VkDescriptorPoolResetFlags>(flags));
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        this->impl_->erase_owned(this->impl_->descriptor_sets, [&](const impl::descriptor_set_data& d) { return d.pool_id == pool; });
+        return VK_SUCCESS;
+    }
+
     int32_t vulkan_host::allocate_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> set_layouts,
                                                   std::span<uint64_t> out_sets, uint32_t& out_count)
     {
@@ -5314,6 +5376,13 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             dev->second.cmd_set_depth_bounds_test_enable(handle, value);
+            break;
+        case gpu_bridge::dynamic_state_u32::depth_clip_enable:
+            if (!dev->second.cmd_set_depth_clip_enable)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_depth_clip_enable(handle, value);
             break;
         case gpu_bridge::dynamic_state_u32::stencil_test_enable:
             if (!dev->second.cmd_set_stencil_test_enable)
