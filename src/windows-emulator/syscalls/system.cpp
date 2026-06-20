@@ -531,10 +531,12 @@ namespace sogen
             case SystemPerformanceInformation:
             case SystemProcessorPowerInformation:
             case SystemInterruptInformation:
+            case SystemProcessorIdleInformation:
                 // SYSTEM_PERFORMANCE_INFORMATION is a large, OS-version-dependent counter block;
-                // SystemProcessorPowerInformation / SystemInterruptInformation are per-processor arrays. We
-                // don't model any of these, so report no activity by zeroing exactly the caller's buffer,
-                // which keeps any struct revision/processor count happy instead of rejecting an unexpected size.
+                // SystemProcessorPowerInformation / SystemInterruptInformation / SystemProcessorIdleInformation
+                // are per-processor arrays. We don't model any of these, so report no activity by zeroing
+                // exactly the caller's buffer, which keeps any struct revision/processor count happy instead
+                // of rejecting an unexpected size.
                 if (system_information)
                 {
                     const std::vector<std::byte> zeros(system_information_length, std::byte{});
