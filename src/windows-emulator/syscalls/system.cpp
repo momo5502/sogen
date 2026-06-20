@@ -467,6 +467,12 @@ namespace sogen
                                                                    info.NumberOfDisks = 1;
                                                                });
 
+            case SystemExceptionInformation:
+                return handle_query<SYSTEM_EXCEPTION_INFORMATION>(c.emu, system_information, system_information_length, return_length,
+                                                                  [&](SYSTEM_EXCEPTION_INFORMATION& info) {
+                                                                      memset(&info, 0, sizeof(info));
+                                                                  });
+
             case SystemMemoryListInformation:
                 return handle_query<SYSTEM_MEMORY_LIST_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
                                                                       [&](SYSTEM_MEMORY_LIST_INFORMATION64& info) {

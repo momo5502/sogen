@@ -768,6 +768,14 @@ namespace sogen
         ULONG NumberOfParallelPorts;
     } SYSTEM_DEVICE_INFORMATION, *PSYSTEM_DEVICE_INFORMATION;
 
+    typedef struct _SYSTEM_EXCEPTION_INFORMATION
+    {
+        ULONG AlignmentFixupCount;
+        ULONG ExceptionDispatchCount;
+        ULONG FloatingEmulationCount;
+        ULONG ByteWordEmulationCount;
+    } SYSTEM_EXCEPTION_INFORMATION, *PSYSTEM_EXCEPTION_INFORMATION;
+
     typedef struct _SYSTEM_MEMORY_LIST_INFORMATION64
     {
         EmulatorTraits<Emu64>::ULONG_PTR ZeroPageCount;
