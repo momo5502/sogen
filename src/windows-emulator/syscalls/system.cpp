@@ -480,6 +480,21 @@ namespace sogen
                                                                         memset(&info, 0, sizeof(info));
                                                                     });
 
+            case SystemPerformanceInformation:
+                // SYSTEM_PERFORMANCE_INFORMATION is a large, OS-version-dependent counter block. Report no
+                // activity by zeroing exactly the caller's buffer, which keeps any struct revision happy
+                // instead of rejecting an unexpected size.
+                if (system_information)
+                {
+                    const std::vector<std::byte> zeros(system_information_length, std::byte{});
+                    c.emu.write_memory(system_information, zeros.data(), zeros.size());
+                }
+                if (return_length)
+                {
+                    return_length.try_write(system_information_length);
+                }
+                return STATUS_SUCCESS;
+
             case SystemRecommendedSharedDataAlignment:
                 return handle_query<ULONG>(c.emu, system_information, system_information_length, return_length,
                                            [&](ULONG& alignment) { alignment = 64; });
