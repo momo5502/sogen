@@ -352,7 +352,7 @@ namespace sogen
                 // https://github.com/momo5502/emulator/issues/128
                 reinterpret_cast<uint8_t*>(&teb_obj)[0x179C] = 1;
 
-                teb_obj.ClientId.UniqueProcess = 1ul;
+                teb_obj.ClientId.UniqueProcess = process_context::process_id;
                 teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
                 teb_obj.DeallocationStack = this->stack_base;
                 teb_obj.NtTib.StackLimit = this->stack_base;
@@ -423,7 +423,7 @@ namespace sogen
             // https://github.com/momo5502/emulator/issues/128
             reinterpret_cast<uint8_t*>(&teb_obj)[0x179C] = 1;
 
-            teb_obj.ClientId.UniqueProcess = 1ul;
+            teb_obj.ClientId.UniqueProcess = process_context::process_id;
             teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
 
             // Native 64-bit stack
@@ -490,7 +490,7 @@ namespace sogen
             teb32_obj.NtTib.ArbitraryUserPointer = static_cast<uint32_t>(0x0);
 
             // Set ClientId for 32-bit TEB
-            teb32_obj.ClientId.UniqueProcess = 1;
+            teb32_obj.ClientId.UniqueProcess = process_context::process_id;
             teb32_obj.ClientId.UniqueThread = this->id;
 
             // Set 32-bit PEB pointer

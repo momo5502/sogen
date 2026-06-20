@@ -132,7 +132,7 @@ namespace sogen
             case ProcessBasicInformation: {
                 const auto init_basic_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
                     basic_info.PebBaseAddress = c.proc.peb64.value();
-                    basic_info.UniqueProcessId = 1;
+                    basic_info.UniqueProcessId = process_context::process_id;
                 };
 
                 switch (process_information_length)

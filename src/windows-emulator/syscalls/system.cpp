@@ -201,7 +201,7 @@ namespace sogen
             using proc_t = SYSTEM_PROCESS_INFORMATION<Traits>;
             using thread_t = SYSTEM_THREAD_INFORMATION<Traits>;
 
-            uint64_t process_id = 1;
+            uint64_t process_id = process_context::process_id;
             uint64_t active_tid = 0;
             if (c.proc.active_thread && c.proc.active_thread->teb64)
             {

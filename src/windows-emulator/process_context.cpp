@@ -863,7 +863,9 @@ namespace sogen
     handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
                                           const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread)
     {
-        emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, ++this->spawned_thread_count, initial_thread};
+        // Thread ids are 8, 12, 16, ... (the process keeps id 4); all 4-aligned like real Windows.
+        const uint32_t thread_id = (++this->spawned_thread_count + 1) * 4;
+        emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;
         this->callbacks_->on_thread_create(h, *thr);
