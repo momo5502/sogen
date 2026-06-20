@@ -506,8 +506,9 @@ namespace sogen
                                                                   });
 
             case SystemLookasideInformation:
-                // Variable-length array of per-lookaside-list stats. We don't model kernel lookaside
-                // lists, so report an empty set.
+            case SystemPageFileInformation:
+                // Variable-length lists we don't model (per-lookaside-list stats / configured page files).
+                // Report an empty set.
                 if (return_length)
                 {
                     return_length.try_write(0);
