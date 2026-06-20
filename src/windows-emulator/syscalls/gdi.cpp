@@ -2313,6 +2313,19 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtGdiGetCharWidthW(const syscall_context& c, const hdc dc, const UINT /*first_char*/, const UINT char_count,
+                                       const emulator_pointer /*chars*/, const UINT /*flags*/, const emulator_pointer buffer)
+        {
+            if (dc == 0 || buffer == 0)
+            {
+                return FALSE;
+            }
+
+            const std::vector<int32_t> widths(char_count, static_cast<int32_t>(k_default_font_width));
+            c.emu.write_memory(buffer, widths.data(), widths.size() * sizeof(int32_t));
+            return TRUE;
+        }
+
         uint32_t handle_NtGdiGetGlyphOutline(const syscall_context& c, const hdc dc, const UINT /*character*/, const UINT format,
                                              const emulator_pointer glyph_metrics, const DWORD buffer_size, const emulator_pointer buffer,
                                              const emulator_pointer mat2)

@@ -4418,6 +4418,49 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserSetCaretPos()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserShowCaret()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserHideCaret()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserDestroyCaret()
+        {
+            return TRUE;
+        }
+
+        uint64_t handle_NtUserQueryWindow(const syscall_context& c, const hwnd window_handle, const uint32_t query_type)
+        {
+            const auto* win = c.proc.windows.get(window_handle);
+            if (!win)
+            {
+                return 0;
+            }
+
+            // WINDOWINFOCLASS: WindowProcess (0) returns the owning process id; the single emulated process
+            // always has id 1 (see TEB ClientId.UniqueProcess). Everything else resolves to the thread.
+            if (query_type == 0)
+            {
+                return 1;
+            }
+
+            return win->thread_id;
+        }
+
+        int handle_NtUserSetScrollInfo()
+        {
+            return 0;
+        }
+
         BOOL handle_NtUserIsTouchWindow()
         {
             return FALSE;

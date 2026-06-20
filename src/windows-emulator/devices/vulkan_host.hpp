@@ -443,6 +443,7 @@ namespace sogen
         int32_t create_descriptor_set_layout(uint64_t device, std::span<const descriptor_binding> bindings, uint64_t& out_layout);
         void destroy_descriptor_set_layout(uint64_t device, uint64_t layout);
         int32_t create_descriptor_pool(uint64_t device, uint32_t max_sets, std::span<const descriptor_pool_size> sizes, uint64_t& out_pool);
+        int32_t reset_descriptor_pool(uint64_t device, uint64_t pool, uint32_t flags);
         void destroy_descriptor_pool(uint64_t device, uint64_t pool);
         // Allocates one set per layout id; writes the allocated set ids into out_sets, out_count gets the
         // true count.

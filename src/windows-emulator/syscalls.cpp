@@ -602,6 +602,12 @@ namespace sogen
         BOOL handle_NtUserDrawMenuBar(const syscall_context& c, hwnd hwnd);
         BOOL handle_NtUserSetWindowCompositionAttribute(const syscall_context& c, hwnd hwnd, emulator_pointer data);
         BOOL handle_NtUserCreateCaret();
+        BOOL handle_NtUserSetCaretPos();
+        BOOL handle_NtUserShowCaret();
+        BOOL handle_NtUserHideCaret();
+        BOOL handle_NtUserDestroyCaret();
+        uint64_t handle_NtUserQueryWindow(const syscall_context& c, hwnd window_handle, uint32_t query_type);
+        int handle_NtUserSetScrollInfo();
         BOOL handle_NtUserIsTouchWindow();
         BOOL handle_NtUserGetWindowPlacement();
         BOOL handle_NtUserTrackMouseEvent();
@@ -663,6 +669,8 @@ namespace sogen
                                                             emulator_pointer unknown);
         BOOL handle_NtGdiGetTextExtent(const syscall_context& c, hdc dc, emulator_pointer text, int32_t char_count, emulator_pointer size,
                                        ULONG flags);
+        BOOL handle_NtGdiGetCharWidthW(const syscall_context& c, hdc dc, UINT first_char, UINT char_count, emulator_pointer chars,
+                                       UINT flags, emulator_pointer buffer);
         NTSTATUS handle_NtGdiExtCreateRegion();
         NTSTATUS handle_NtGdiTransparentBlt();
         uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
@@ -1191,6 +1199,7 @@ namespace sogen
         add_handler(NtGdiGetTextMetricsW);
         add_handler(NtGdiGetTextFaceW);
         add_handler(NtGdiGetTextExtent);
+        add_handler(NtGdiGetCharWidthW);
         add_handler(NtGdiGetGlyphOutline);
         add_handler(NtGdiCreateRectRgn);
         add_handler(NtGdiGetRandomRgn);
@@ -1477,6 +1486,12 @@ namespace sogen
         add_handler(NtUserSetWindowCompositionAttribute);
         add_handler(NtUserGetWindowPlacement);
         add_handler(NtUserCreateCaret);
+        add_handler(NtUserSetCaretPos);
+        add_handler(NtUserShowCaret);
+        add_handler(NtUserHideCaret);
+        add_handler(NtUserDestroyCaret);
+        add_handler(NtUserQueryWindow);
+        add_handler(NtUserSetScrollInfo);
         add_handler(NtUserTrackMouseEvent);
         add_handler(NtGdiGetOutlineTextMetricsInternalW);
 

@@ -202,6 +202,8 @@ namespace sogen
                     return handle_create_descriptor_pool(win_emu, context);
                 case gpu_bridge::ioctl_destroy_descriptor_pool:
                     return handle_destroy_descriptor_pool(win_emu, context);
+                case gpu_bridge::ioctl_reset_descriptor_pool:
+                    return handle_reset_descriptor_pool(win_emu, context);
                 case gpu_bridge::ioctl_allocate_descriptor_sets:
                     return handle_allocate_descriptor_sets(win_emu, context);
                 case gpu_bridge::ioctl_update_descriptor_sets:
@@ -2081,6 +2083,18 @@ namespace sogen
                 }
                 this->vulkan_.destroy_descriptor_pool(request.device, request.object);
                 return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_reset_descriptor_pool(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::reset_descriptor_pool_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.reset_descriptor_pool(request.device, request.descriptor_pool, request.flags);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
             NTSTATUS handle_allocate_descriptor_sets(windows_emulator& win_emu, const io_device_context& context)
