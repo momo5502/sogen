@@ -162,6 +162,7 @@ namespace sogen
             PFN_vkGetPhysicalDeviceFormatProperties get_physical_device_format_properties{};
             PFN_vkGetPhysicalDeviceImageFormatProperties get_physical_device_image_format_properties{};
             PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queue_family_properties{};
+            PFN_vkGetPhysicalDeviceQueueFamilyProperties2 get_queue_family_properties2{};
             PFN_vkGetPhysicalDeviceMemoryProperties get_physical_device_memory_properties{};
             PFN_vkGetPhysicalDeviceMemoryProperties2 get_physical_device_memory_properties2{};
             PFN_vkGetPhysicalDeviceFeatures2 get_physical_device_features2{};
@@ -236,6 +237,7 @@ namespace sogen
             PFN_vkCmdUpdateBuffer cmd_update_buffer{};
             PFN_vkCmdCopyBufferToImage cmd_copy_buffer_to_image{};
             PFN_vkCmdCopyImage cmd_copy_image{};
+            PFN_vkCmdBlitImage cmd_blit_image{};
             PFN_vkCmdCopyBuffer cmd_copy_buffer{};
             PFN_vkCreateSampler create_sampler{};
             PFN_vkDestroySampler destroy_sampler{};
@@ -302,6 +304,7 @@ namespace sogen
             PFN_vkCmdSetDepthWriteEnable cmd_set_depth_write_enable{};
             PFN_vkCmdSetDepthCompareOp cmd_set_depth_compare_op{};
             PFN_vkCmdSetDepthBoundsTestEnable cmd_set_depth_bounds_test_enable{};
+            PFN_vkCmdSetDepthClipEnableEXT cmd_set_depth_clip_enable{};
             PFN_vkCmdSetStencilTestEnable cmd_set_stencil_test_enable{};
             PFN_vkCmdSetRasterizerDiscardEnable cmd_set_rasterizer_discard_enable{};
             PFN_vkCmdSetDepthBiasEnable cmd_set_depth_bias_enable{};
@@ -908,6 +911,8 @@ namespace sogen
             instance, "vkGetPhysicalDeviceImageFormatProperties");
         data.get_queue_family_properties = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
             instance, "vkGetPhysicalDeviceQueueFamilyProperties");
+        data.get_queue_family_properties2 = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceQueueFamilyProperties2>(
+            instance, "vkGetPhysicalDeviceQueueFamilyProperties2");
         data.get_physical_device_memory_properties =
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceMemoryProperties>(instance, "vkGetPhysicalDeviceMemoryProperties");
         data.get_physical_device_memory_properties2 =
@@ -1110,7 +1115,8 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::get_queue_family_properties(uint64_t physical_device, void* out, size_t out_size, uint32_t& out_count)
+    int32_t vulkan_host::get_queue_family_properties(uint64_t physical_device, const bool query_ownership_transfer, void* out,
+                                                     size_t out_size, uint32_t& out_count)
     {
         out_count = 0;
 
@@ -1129,18 +1135,58 @@ namespace sogen
         uint32_t count = 0;
         instance->second.get_queue_family_properties(pd->second.handle, &count, nullptr);
 
-        std::vector<VkQueueFamilyProperties> families(count);
-        if (count > 0)
+        std::vector<gpu_bridge::queue_family_properties> wire_families(count);
+        if (query_ownership_transfer && instance->second.get_queue_family_properties2)
         {
-            instance->second.get_queue_family_properties(pd->second.handle, &count, families.data());
+            std::vector<VkQueueFamilyProperties2> families(count);
+            std::vector<VkQueueFamilyOwnershipTransferPropertiesKHR> ownership(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                families[i].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2;
+                families[i].pNext = &ownership[i];
+                ownership[i].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_OWNERSHIP_TRANSFER_PROPERTIES_KHR;
+            }
+            instance->second.get_queue_family_properties2(pd->second.handle, &count, families.data());
+            wire_families.resize(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const auto& family = families[i].queueFamilyProperties;
+                wire_families[i] = {.queue_flags = family.queueFlags,
+                                    .queue_count = family.queueCount,
+                                    .timestamp_valid_bits = family.timestampValidBits,
+                                    .min_image_transfer_granularity_width = family.minImageTransferGranularity.width,
+                                    .min_image_transfer_granularity_height = family.minImageTransferGranularity.height,
+                                    .min_image_transfer_granularity_depth = family.minImageTransferGranularity.depth,
+                                    .optimal_image_transfer_to_queue_families = ownership[i].optimalImageTransferToQueueFamilies};
+            }
+        }
+        else
+        {
+            std::vector<VkQueueFamilyProperties> families(count);
+            if (count > 0)
+            {
+                instance->second.get_queue_family_properties(pd->second.handle, &count, families.data());
+            }
+            wire_families.resize(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const auto& family = families[i];
+                wire_families[i] = {.queue_flags = family.queueFlags,
+                                    .queue_count = family.queueCount,
+                                    .timestamp_valid_bits = family.timestampValidBits,
+                                    .min_image_transfer_granularity_width = family.minImageTransferGranularity.width,
+                                    .min_image_transfer_granularity_height = family.minImageTransferGranularity.height,
+                                    .min_image_transfer_granularity_depth = family.minImageTransferGranularity.depth,
+                                    .optimal_image_transfer_to_queue_families = 0};
+            }
         }
 
         out_count = count;
 
-        const size_t copy_bytes = std::min(out_size, families.size() * sizeof(VkQueueFamilyProperties));
+        const size_t copy_bytes = std::min(out_size, wire_families.size() * sizeof(gpu_bridge::queue_family_properties));
         if (copy_bytes > 0)
         {
-            std::memcpy(out, families.data(), copy_bytes);
+            std::memcpy(out, wire_families.data(), copy_bytes);
         }
 
         return VK_SUCCESS;
@@ -1565,6 +1611,7 @@ namespace sogen
             data.cmd_update_buffer = reinterpret_cast<PFN_vkCmdUpdateBuffer>(resolve("vkCmdUpdateBuffer"));
             data.cmd_copy_buffer_to_image = reinterpret_cast<PFN_vkCmdCopyBufferToImage>(resolve("vkCmdCopyBufferToImage"));
             data.cmd_copy_image = reinterpret_cast<PFN_vkCmdCopyImage>(resolve("vkCmdCopyImage"));
+            data.cmd_blit_image = reinterpret_cast<PFN_vkCmdBlitImage>(resolve("vkCmdBlitImage"));
             data.cmd_copy_buffer = reinterpret_cast<PFN_vkCmdCopyBuffer>(resolve("vkCmdCopyBuffer"));
             data.create_sampler = reinterpret_cast<PFN_vkCreateSampler>(resolve("vkCreateSampler"));
             data.destroy_sampler = reinterpret_cast<PFN_vkDestroySampler>(resolve("vkDestroySampler"));
@@ -1633,6 +1680,7 @@ namespace sogen
             data.cmd_set_depth_compare_op = reinterpret_cast<PFN_vkCmdSetDepthCompareOp>(resolve("vkCmdSetDepthCompareOp"));
             data.cmd_set_depth_bounds_test_enable =
                 reinterpret_cast<PFN_vkCmdSetDepthBoundsTestEnable>(resolve("vkCmdSetDepthBoundsTestEnable"));
+            data.cmd_set_depth_clip_enable = reinterpret_cast<PFN_vkCmdSetDepthClipEnableEXT>(resolve("vkCmdSetDepthClipEnableEXT"));
             data.cmd_set_stencil_test_enable = reinterpret_cast<PFN_vkCmdSetStencilTestEnable>(resolve("vkCmdSetStencilTestEnable"));
             data.cmd_set_rasterizer_discard_enable =
                 reinterpret_cast<PFN_vkCmdSetRasterizerDiscardEnable>(resolve("vkCmdSetRasterizerDiscardEnable"));
@@ -3086,6 +3134,42 @@ namespace sogen
 
         dev->second.cmd_copy_image(cb->second.handle, src->second.handle, translate_layout(src_layout), dst->second.handle,
                                    translate_layout(dst_layout), 1, &region);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_blit_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image,
+                                        uint32_t dst_layout, const image_blit_region& r)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto src = this->impl_->images.find(src_image);
+        const auto dst = this->impl_->images.find(dst_image);
+        if (cb == this->impl_->command_buffers.end() || src == this->impl_->images.end() || dst == this->impl_->images.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_blit_image)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkImageBlit region{};
+        region.srcSubresource = {.aspectMask = r.src_aspect_mask,
+                                 .mipLevel = r.src_mip_level,
+                                 .baseArrayLayer = r.src_base_array_layer,
+                                 .layerCount = r.src_layer_count ? r.src_layer_count : 1};
+        region.srcOffsets[0] = {.x = r.src_offset_x0, .y = r.src_offset_y0, .z = r.src_offset_z0};
+        region.srcOffsets[1] = {.x = r.src_offset_x1, .y = r.src_offset_y1, .z = r.src_offset_z1};
+        region.dstSubresource = {.aspectMask = r.dst_aspect_mask,
+                                 .mipLevel = r.dst_mip_level,
+                                 .baseArrayLayer = r.dst_base_array_layer,
+                                 .layerCount = r.dst_layer_count ? r.dst_layer_count : 1};
+        region.dstOffsets[0] = {.x = r.dst_offset_x0, .y = r.dst_offset_y0, .z = r.dst_offset_z0};
+        region.dstOffsets[1] = {.x = r.dst_offset_x1, .y = r.dst_offset_y1, .z = r.dst_offset_z1};
+
+        dev->second.cmd_blit_image(cb->second.handle, src->second.handle, translate_layout(src_layout), dst->second.handle,
+                                   translate_layout(dst_layout), 1, &region, static_cast<VkFilter>(r.filter));
         return VK_SUCCESS;
     }
 
@@ -5314,6 +5398,13 @@ namespace sogen
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
             dev->second.cmd_set_depth_bounds_test_enable(handle, value);
+            break;
+        case gpu_bridge::dynamic_state_u32::depth_clip_enable:
+            if (!dev->second.cmd_set_depth_clip_enable)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            dev->second.cmd_set_depth_clip_enable(handle, value);
             break;
         case gpu_bridge::dynamic_state_u32::stencil_test_enable:
             if (!dev->second.cmd_set_stencil_test_enable)

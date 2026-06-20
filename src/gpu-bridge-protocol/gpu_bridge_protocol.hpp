@@ -171,6 +171,7 @@ namespace sogen::gpu_bridge
         // Coalesced vkUpdateDescriptorSets: payload is a concatenation of update_descriptor_sets_request blobs
         // (each a header + its descriptor_write[]), applied in issue order.
         update_descriptor_sets_batch = 0x886,
+        cmd_blit_image = 0x887,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -188,6 +189,7 @@ namespace sogen::gpu_bridge
         rasterizer_discard_enable = 8,
         depth_bias_enable = 9,
         primitive_restart_enable = 10,
+        depth_clip_enable = 11,
     };
 
     // Discriminator for cmd_set_stencil: which of the three single-value stencil dynamic states to set.
@@ -363,14 +365,25 @@ namespace sogen::gpu_bridge
     {
         object_id physical_device;
         uint32_t max_count; // capacity (in entries) of the array following the response header
-        uint32_t reserved;
+        uint32_t query_ownership_transfer;
     };
 
-    // ioctl_get_queue_family_properties: out header, followed by `count` raw VkQueueFamilyProperties
+    // ioctl_get_queue_family_properties: out header, followed by queue_family_properties entries
     struct get_queue_family_properties_response
     {
         uint32_t count; // true number of queue families on the device
         uint32_t reserved;
+    };
+
+    struct queue_family_properties
+    {
+        uint32_t queue_flags;
+        uint32_t queue_count;
+        uint32_t timestamp_valid_bits;
+        uint32_t min_image_transfer_granularity_width;
+        uint32_t min_image_transfer_granularity_height;
+        uint32_t min_image_transfer_granularity_depth;
+        uint32_t optimal_image_transfer_to_queue_families;
     };
 
     struct enumerate_device_extension_properties_request
@@ -1106,6 +1119,38 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
     static_assert(sizeof(cmd_copy_image_request) == 104, "wire layout drift");
+
+    struct cmd_blit_image_request
+    {
+        object_id command_buffer;
+        object_id src_image;
+        object_id dst_image;
+        uint32_t src_layout; // VkImageLayout
+        uint32_t dst_layout; // VkImageLayout
+        uint32_t src_aspect_mask;
+        uint32_t src_mip_level;
+        uint32_t src_base_array_layer;
+        uint32_t src_layer_count;
+        int32_t src_offset_x0;
+        int32_t src_offset_y0;
+        int32_t src_offset_z0;
+        int32_t src_offset_x1;
+        int32_t src_offset_y1;
+        int32_t src_offset_z1;
+        uint32_t dst_aspect_mask;
+        uint32_t dst_mip_level;
+        uint32_t dst_base_array_layer;
+        uint32_t dst_layer_count;
+        int32_t dst_offset_x0;
+        int32_t dst_offset_y0;
+        int32_t dst_offset_z0;
+        int32_t dst_offset_x1;
+        int32_t dst_offset_y1;
+        int32_t dst_offset_z1;
+        uint32_t filter; // VkFilter
+        uint32_t reserved;
+    };
+    static_assert(sizeof(cmd_blit_image_request) == 120, "wire layout drift");
 
     // Updates a buffer region inline from data that trails this header in the wire stream (vkCmdUpdateBuffer).
     struct cmd_update_buffer_request
@@ -1940,6 +1985,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");
     static_assert(sizeof(create_sampler_request) == 64, "wire layout drift");
     static_assert(sizeof(enumerate_device_extension_properties_request) == 16, "wire layout drift");
+    static_assert(sizeof(queue_family_properties) == 28, "wire layout drift");
     static_assert(sizeof(enumerate_device_extension_properties_response) == 8, "wire layout drift");
     static_assert(sizeof(feature_chain_record) == 8, "wire layout drift");
     static_assert(sizeof(get_physical_device_features2_request) == 16, "wire layout drift");

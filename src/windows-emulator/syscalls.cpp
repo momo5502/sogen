@@ -713,6 +713,8 @@ namespace sogen
                                                     emulator_object<EMU_D3DKMT_DESTROYALLOCATION> destroy_allocation);
         NTSTATUS handle_NtGdiDdDDIDestroyContext();
         NTSTATUS handle_NtGdiDdDDIDestroyDevice();
+        NTSTATUS handle_NtGdiDdDDIOpenAdapterFromLuid(const syscall_context& c,
+                                                      emulator_object<EMU_D3DKMT_OPENADAPTERFROMLUID> open_adapter);
         NTSTATUS handle_NtGdiDdDDIOpenAdapterFromHdc(const syscall_context& c, emulator_object<EMU_D3DKMT_OPENADAPTERFROMHDC> open_adapter);
 
         // syscalls/trace.cpp:
@@ -1443,6 +1445,7 @@ namespace sogen
         add_handler(NtAllocateLocallyUniqueId);
         add_handler(NtUserAllowSetForegroundWindow);
         add_handler(NtGdiOpenDCW);
+        add_handler(NtGdiDdDDIOpenAdapterFromLuid);
         add_handler(NtGdiDdDDIOpenAdapterFromHdc);
         add_handler(NtGdiSelectFont);
         add_handler(NtUserInitThreadCoreMessagingIocp2);
