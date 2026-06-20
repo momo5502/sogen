@@ -54,6 +54,7 @@ namespace sogen
                                                                         });
             }
             case ProcessEnclaveInformation:
+            case ProcessTelemetryIdInformation:
                 return STATUS_NOT_SUPPORTED;
 
             case ProcessTimes:

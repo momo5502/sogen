@@ -2109,6 +2109,15 @@ namespace sogen
             auto* device = c.proc.devices.get(file_handle);
             if (!device)
             {
+                constexpr ULONG FSCTL_GET_REPARSE_POINT = 0x900A8;
+                if (fs_control_code == FSCTL_GET_REPARSE_POINT && c.proc.files.get(file_handle))
+                {
+                    // The target is a regular file or directory, not a reparse point. Returning
+                    // STATUS_INVALID_HANDLE here makes callers (e.g. path canonicalization) treat
+                    // the buffer as populated; Windows reports STATUS_NOT_A_REPARSE_POINT instead.
+                    return STATUS_NOT_A_REPARSE_POINT;
+                }
+
                 c.win_emu.log.warn("NtFsControlFile on non-device handle (control code 0x%X)\n", static_cast<uint32_t>(fs_control_code));
                 return STATUS_INVALID_HANDLE;
             }
