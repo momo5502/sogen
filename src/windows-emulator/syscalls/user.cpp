@@ -4438,6 +4438,11 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserGetObjectInformation()
+        {
+            return FALSE;
+        }
+
         uint64_t handle_NtUserQueryWindow(const syscall_context& c, const hwnd window_handle, const uint32_t query_type)
         {
             const auto* win = c.proc.windows.get(window_handle);
