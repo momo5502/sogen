@@ -496,6 +496,14 @@ namespace sogen
             case handle_types::process:
                 return h == GUEST_PROCESS_HANDLE ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
 
+            case handle_types::file:
+                if (h.value.is_pseudo)
+                {
+                    return STATUS_SUCCESS;
+                }
+
+                return validate_handle_in_store(c.proc.files);
+
             case handle_types::event:
                 if (h.value.is_pseudo)
                 {

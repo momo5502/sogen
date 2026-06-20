@@ -101,6 +101,17 @@ namespace sogen
                 break;
             }
 
+            case handle_types::file: {
+                // File I/O is synchronous in the emulator, so no operation is ever in flight when a
+                // wait is issued -- the file object's built-in event stays signaled.
+                if (h.value.is_pseudo || c.files.get(h))
+                {
+                    return wait_state::signaled;
+                }
+
+                break;
+            }
+
             case handle_types::mutant: {
                 const auto* e = c.mutants.get(h);
                 if (e && e->is_signaled(current_thread_id))
@@ -190,6 +201,15 @@ namespace sogen
                 if (event->type == SynchronizationEvent)
                 {
                     event->signaled = false;
+                }
+
+                return wait_state::signaled;
+            }
+
+            case handle_types::file: {
+                if (!h.value.is_pseudo && !c.files.get(h))
+                {
+                    return std::nullopt;
                 }
 
                 return wait_state::signaled;
