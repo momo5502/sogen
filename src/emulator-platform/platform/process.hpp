@@ -768,6 +768,18 @@ namespace sogen
         ULONG NumberOfParallelPorts;
     } SYSTEM_DEVICE_INFORMATION, *PSYSTEM_DEVICE_INFORMATION;
 
+    typedef struct _SYSTEM_MEMORY_LIST_INFORMATION64
+    {
+        EmulatorTraits<Emu64>::ULONG_PTR ZeroPageCount;
+        EmulatorTraits<Emu64>::ULONG_PTR FreePageCount;
+        EmulatorTraits<Emu64>::ULONG_PTR ModifiedPageCount;
+        EmulatorTraits<Emu64>::ULONG_PTR ModifiedNoWritePageCount;
+        EmulatorTraits<Emu64>::ULONG_PTR BadPageCount;
+        EmulatorTraits<Emu64>::ULONG_PTR PageCountByPriority[8];
+        EmulatorTraits<Emu64>::ULONG_PTR RepurposedPagesByPriority[8];
+        EmulatorTraits<Emu64>::ULONG_PTR ModifiedPageCountPageFile;
+    } SYSTEM_MEMORY_LIST_INFORMATION64, *PSYSTEM_MEMORY_LIST_INFORMATION64;
+
     typedef struct _SYSTEM_RANGE_START_INFORMATION64
     {
         EmulatorTraits<Emu64>::SIZE_T SystemRangeStart;
