@@ -16,12 +16,15 @@ EXPORTS
     vkCmdBeginRenderPass
     vkCmdBeginRendering
     vkCmdBindDescriptorSets
+    vkCmdBindDescriptorSets2KHR
     vkCmdBindIndexBuffer
     vkCmdBindIndexBuffer2KHR
     vkCmdBindPipeline
     vkCmdBeginDebugUtilsLabelEXT
     vkCmdBindVertexBuffers
     vkCmdBindVertexBuffers2
+    vkCmdBlitImage2
+    vkCmdBlitImage2KHR
     vkCmdClearColorImage
     vkCmdClearDepthStencilImage
     vkCmdBeginQuery
@@ -50,12 +53,14 @@ EXPORTS
     vkCmdInsertDebugUtilsLabelEXT
     vkCmdPipelineBarrier
     vkCmdPushConstants
+    vkCmdPushConstants2KHR
     vkCmdSetBlendConstants
     vkCmdSetCullMode
     vkCmdSetDepthBias
     vkCmdSetDepthBiasEnable
     vkCmdSetDepthBounds
     vkCmdSetDepthBoundsTestEnable
+    vkCmdSetDepthClipEnableEXT
     vkCmdSetDepthCompareOp
     vkCmdSetDepthTestEnable
     vkCmdSetDepthWriteEnable

@@ -446,8 +446,8 @@ namespace sogen
 
                 std::vector<std::byte> properties(array_bytes);
                 uint32_t count = 0;
-                const int32_t result =
-                    this->vulkan_.get_queue_family_properties(request.physical_device, properties.data(), properties.size(), count);
+                const int32_t result = this->vulkan_.get_queue_family_properties(
+                    request.physical_device, request.query_ownership_transfer != 0, properties.data(), properties.size(), count);
                 if (result != 0)
                 {
                     return STATUS_INVALID_PARAMETER;
@@ -2779,6 +2779,38 @@ namespace sogen
                         .depth = req.depth,
                     };
                     return this->vulkan_.cmd_copy_image(req.command_buffer, req.src_image, req.src_layout, req.dst_image, req.dst_layout,
+                                                        region);
+                }
+                case gpu_bridge::command::cmd_blit_image: {
+                    gpu_bridge::cmd_blit_image_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const vulkan_host::image_blit_region region{
+                        .src_aspect_mask = req.src_aspect_mask,
+                        .src_mip_level = req.src_mip_level,
+                        .src_base_array_layer = req.src_base_array_layer,
+                        .src_layer_count = req.src_layer_count,
+                        .src_offset_x0 = req.src_offset_x0,
+                        .src_offset_y0 = req.src_offset_y0,
+                        .src_offset_z0 = req.src_offset_z0,
+                        .src_offset_x1 = req.src_offset_x1,
+                        .src_offset_y1 = req.src_offset_y1,
+                        .src_offset_z1 = req.src_offset_z1,
+                        .dst_aspect_mask = req.dst_aspect_mask,
+                        .dst_mip_level = req.dst_mip_level,
+                        .dst_base_array_layer = req.dst_base_array_layer,
+                        .dst_layer_count = req.dst_layer_count,
+                        .dst_offset_x0 = req.dst_offset_x0,
+                        .dst_offset_y0 = req.dst_offset_y0,
+                        .dst_offset_z0 = req.dst_offset_z0,
+                        .dst_offset_x1 = req.dst_offset_x1,
+                        .dst_offset_y1 = req.dst_offset_y1,
+                        .dst_offset_z1 = req.dst_offset_z1,
+                        .filter = req.filter,
+                    };
+                    return this->vulkan_.cmd_blit_image(req.command_buffer, req.src_image, req.src_layout, req.dst_image, req.dst_layout,
                                                         region);
                 }
                 case gpu_bridge::command::cmd_update_buffer: {

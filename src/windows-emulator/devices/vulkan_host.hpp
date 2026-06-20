@@ -62,9 +62,10 @@ namespace sogen
         int32_t get_physical_device_image_format_properties(uint64_t physical_device, uint32_t format, uint32_t type, uint32_t tiling,
                                                             uint32_t usage, uint32_t flags, image_format_properties& out);
 
-        // Writes the device's queue families as raw VkQueueFamilyProperties into out (sized in
-        // bytes). out_count always receives the true family count.
-        int32_t get_queue_family_properties(uint64_t physical_device, void* out, size_t out_size, uint32_t& out_count);
+        // Writes the device's queue families in the bridge wire format into out (sized in bytes).
+        // out_count always receives the true family count.
+        int32_t get_queue_family_properties(uint64_t physical_device, bool query_ownership_transfer, void* out, size_t out_size,
+                                            uint32_t& out_count);
 
         // Writes the device's real VkExtensionProperties array into out (sized in bytes); out_count
         // always receives the true device-extension count.
@@ -298,8 +299,34 @@ namespace sogen
             uint32_t height;
             uint32_t depth;
         };
+        struct image_blit_region
+        {
+            uint32_t src_aspect_mask;
+            uint32_t src_mip_level;
+            uint32_t src_base_array_layer;
+            uint32_t src_layer_count;
+            int32_t src_offset_x0;
+            int32_t src_offset_y0;
+            int32_t src_offset_z0;
+            int32_t src_offset_x1;
+            int32_t src_offset_y1;
+            int32_t src_offset_z1;
+            uint32_t dst_aspect_mask;
+            uint32_t dst_mip_level;
+            uint32_t dst_base_array_layer;
+            uint32_t dst_layer_count;
+            int32_t dst_offset_x0;
+            int32_t dst_offset_y0;
+            int32_t dst_offset_z0;
+            int32_t dst_offset_x1;
+            int32_t dst_offset_y1;
+            int32_t dst_offset_z1;
+            uint32_t filter;
+        };
         int32_t cmd_copy_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
                                const image_copy_region& region);
+        int32_t cmd_blit_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
+                               const image_blit_region& region);
         // Resolves a multisampled source image into a single-sample destination (full image, mip 0 / layer 0).
         int32_t cmd_resolve_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
                                   uint32_t width, uint32_t height, uint32_t aspect_mask);

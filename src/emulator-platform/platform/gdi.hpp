@@ -389,6 +389,12 @@ namespace sogen
         LUID AdapterLuid;
         UINT VidPnSourceId;
     };
+
+    struct EMU_D3DKMT_OPENADAPTERFROMLUID
+    {
+        LUID AdapterLuid;
+        UINT32 hAdapter;
+    };
 } // namespace sogen
 
 // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
