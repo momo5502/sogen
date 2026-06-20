@@ -1176,7 +1176,8 @@ namespace sogen
                                     .timestamp_valid_bits = family.timestampValidBits,
                                     .min_image_transfer_granularity_width = family.minImageTransferGranularity.width,
                                     .min_image_transfer_granularity_height = family.minImageTransferGranularity.height,
-                                    .min_image_transfer_granularity_depth = family.minImageTransferGranularity.depth};
+                                    .min_image_transfer_granularity_depth = family.minImageTransferGranularity.depth,
+                                    .optimal_image_transfer_to_queue_families = 0};
             }
         }
 
