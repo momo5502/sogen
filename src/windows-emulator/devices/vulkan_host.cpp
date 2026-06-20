@@ -265,7 +265,6 @@ namespace sogen
             PFN_vkDestroyDescriptorSetLayout destroy_descriptor_set_layout{};
             PFN_vkCreateDescriptorPool create_descriptor_pool{};
             PFN_vkDestroyDescriptorPool destroy_descriptor_pool{};
-            PFN_vkResetDescriptorPool reset_descriptor_pool{};
             PFN_vkAllocateDescriptorSets allocate_descriptor_sets{};
             PFN_vkUpdateDescriptorSets update_descriptor_sets{};
             PFN_vkCmdBindDescriptorSets cmd_bind_descriptor_sets{};
@@ -1640,7 +1639,6 @@ namespace sogen
                 reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(resolve("vkDestroyDescriptorSetLayout"));
             data.create_descriptor_pool = reinterpret_cast<PFN_vkCreateDescriptorPool>(resolve("vkCreateDescriptorPool"));
             data.destroy_descriptor_pool = reinterpret_cast<PFN_vkDestroyDescriptorPool>(resolve("vkDestroyDescriptorPool"));
-            data.reset_descriptor_pool = reinterpret_cast<PFN_vkResetDescriptorPool>(resolve("vkResetDescriptorPool"));
             data.allocate_descriptor_sets = reinterpret_cast<PFN_vkAllocateDescriptorSets>(resolve("vkAllocateDescriptorSets"));
             data.update_descriptor_sets = reinterpret_cast<PFN_vkUpdateDescriptorSets>(resolve("vkUpdateDescriptorSets"));
             data.cmd_bind_descriptor_sets = reinterpret_cast<PFN_vkCmdBindDescriptorSets>(resolve("vkCmdBindDescriptorSets"));
@@ -4322,26 +4320,6 @@ namespace sogen
         // Sets allocated from this pool are freed implicitly; drop their ids.
         this->impl_->erase_owned(this->impl_->descriptor_sets, [&](const impl::descriptor_set_data& d) { return d.pool_id == pool; });
         this->impl_->descriptor_pools.erase(it);
-    }
-
-    int32_t vulkan_host::reset_descriptor_pool(uint64_t device, uint64_t pool, uint32_t flags)
-    {
-        const auto dev = this->impl_->devices.find(device);
-        const auto it = this->impl_->descriptor_pools.find(pool);
-        if (dev == this->impl_->devices.end() || it == this->impl_->descriptor_pools.end() || !dev->second.reset_descriptor_pool)
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        const VkResult result =
-            dev->second.reset_descriptor_pool(dev->second.handle, it->second.handle, static_cast<VkDescriptorPoolResetFlags>(flags));
-        if (result != VK_SUCCESS)
-        {
-            return result;
-        }
-
-        this->impl_->erase_owned(this->impl_->descriptor_sets, [&](const impl::descriptor_set_data& d) { return d.pool_id == pool; });
-        return VK_SUCCESS;
     }
 
     int32_t vulkan_host::allocate_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> set_layouts,

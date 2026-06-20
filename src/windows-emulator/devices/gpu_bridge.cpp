@@ -204,8 +204,6 @@ namespace sogen
                     return handle_destroy_descriptor_pool(win_emu, context);
                 case gpu_bridge::ioctl_allocate_descriptor_sets:
                     return handle_allocate_descriptor_sets(win_emu, context);
-                case gpu_bridge::ioctl_reset_descriptor_pool:
-                    return handle_reset_descriptor_pool(win_emu, context);
                 case gpu_bridge::ioctl_update_descriptor_sets:
                     return handle_update_descriptor_sets(win_emu, context);
                 case gpu_bridge::ioctl_update_descriptor_sets_batch:
@@ -2123,18 +2121,6 @@ namespace sogen
                 }
                 set_information(context, static_cast<ULONG>(sizeof(response_t) + written * sizeof(gpu_bridge::object_id)));
                 return STATUS_SUCCESS;
-            }
-
-            NTSTATUS handle_reset_descriptor_pool(windows_emulator& win_emu, const io_device_context& context)
-            {
-                gpu_bridge::reset_descriptor_pool_request request{};
-                if (!read_input(win_emu, context, request))
-                {
-                    return STATUS_INVALID_PARAMETER;
-                }
-
-                const int32_t result = this->vulkan_.reset_descriptor_pool(request.device, request.descriptor_pool, request.flags);
-                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
             // Cap guest-declared descriptor-update payloads so a bogus IOCTL length can't force a huge allocation.

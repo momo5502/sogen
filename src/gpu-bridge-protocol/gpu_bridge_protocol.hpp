@@ -172,7 +172,6 @@ namespace sogen::gpu_bridge
         // (each a header + its descriptor_write[]), applied in issue order.
         update_descriptor_sets_batch = 0x886,
         cmd_blit_image = 0x887,
-        reset_descriptor_pool = 0x888,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -270,7 +269,6 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_create_descriptor_pool = make_ioctl(static_cast<uint32_t>(command::create_descriptor_pool));
     inline constexpr uint32_t ioctl_destroy_descriptor_pool = make_ioctl(static_cast<uint32_t>(command::destroy_descriptor_pool));
     inline constexpr uint32_t ioctl_allocate_descriptor_sets = make_ioctl(static_cast<uint32_t>(command::allocate_descriptor_sets));
-    inline constexpr uint32_t ioctl_reset_descriptor_pool = make_ioctl(static_cast<uint32_t>(command::reset_descriptor_pool));
     inline constexpr uint32_t ioctl_update_descriptor_sets = make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets));
     inline constexpr uint32_t ioctl_update_descriptor_sets_batch = make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets_batch));
     inline constexpr uint32_t ioctl_create_sampler = make_ioctl(static_cast<uint32_t>(command::create_sampler));
@@ -1869,14 +1867,6 @@ namespace sogen::gpu_bridge
         // object_id sets[count];
     };
 
-    struct reset_descriptor_pool_request
-    {
-        object_id device;
-        object_id descriptor_pool;
-        uint32_t flags; // VkDescriptorPoolResetFlags
-        uint32_t reserved;
-    };
-
     // One descriptor write (trailing-array element of update_descriptor_sets). Models a single buffer or
     // image descriptor per write (descriptor_count == 1). For buffer types the buffer/offset/range fields
     // apply; for image types (combined image sampler) the sampler/image_view/image_layout fields apply.
@@ -1971,7 +1961,6 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_end_query_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_write_timestamp_request) == 24, "wire layout drift");
     static_assert(sizeof(reset_query_pool_request) == 24, "wire layout drift");
-    static_assert(sizeof(reset_descriptor_pool_request) == 24, "wire layout drift");
     static_assert(sizeof(vertex_buffer_binding) == 16, "wire layout drift");
     static_assert(sizeof(vertex_buffer_binding2) == 32, "wire layout drift");
     static_assert(sizeof(cmd_bind_vertex_buffers2_request) == 24, "wire layout drift");

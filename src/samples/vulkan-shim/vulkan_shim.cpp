@@ -3615,23 +3615,6 @@ extern "C"
         destroy_device_child(gb::ioctl_destroy_descriptor_pool, device, descriptorPool);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkResetDescriptorPool(VkDevice device, VkDescriptorPool descriptorPool,
-                                                                               VkDescriptorPoolResetFlags flags)
-    {
-        gb::reset_descriptor_pool_request request{};
-        request.device = to_object_id(device);
-        request.descriptor_pool = to_object_id(descriptorPool);
-        request.flags = static_cast<uint32_t>(flags);
-
-        gb::result_response response{};
-        if (!bridge_call(gb::ioctl_reset_descriptor_pool, &request, sizeof(request), &response, sizeof(response)))
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        return static_cast<VkResult>(response.vk_result);
-    }
-
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkAllocateDescriptorSets(VkDevice device,
                                                                                   const VkDescriptorSetAllocateInfo* pAllocateInfo,
                                                                                   VkDescriptorSet* pDescriptorSets)
@@ -4708,7 +4691,6 @@ extern "C"
             {.name = "vkDestroyDescriptorSetLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorSetLayout)},
             {.name = "vkCreateDescriptorPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDescriptorPool)},
             {.name = "vkDestroyDescriptorPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyDescriptorPool)},
-            {.name = "vkResetDescriptorPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkResetDescriptorPool)},
             {.name = "vkAllocateDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkAllocateDescriptorSets)},
             {.name = "vkUpdateDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkUpdateDescriptorSets)},
             {.name = "vkCreateDescriptorUpdateTemplate", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateDescriptorUpdateTemplate)},
