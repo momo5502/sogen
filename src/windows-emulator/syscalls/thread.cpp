@@ -109,6 +109,33 @@ namespace sogen
                     // c.win_emu.callbacks.on_suspicious_activity("WOW64 CONTEXT");
                 });
 
+                // Debug registers are real CPU state (shared between 32/64-bit), not part of the
+                // WOW64_CPURESERVED block that wow64cpu reloads on resume. They must be programmed into
+                // the VP directly, otherwise a 32-bit hardware breakpoint armed via the thread context
+                // (e.g. t6r's CEG single-step trick) never arms and never fires.
+                if ((new_wow64_context.ContextFlags & CONTEXT_DEBUG_REGISTERS_32) == CONTEXT_DEBUG_REGISTERS_32)
+                {
+                    const bool needs_switch = thread != c.proc.active_thread;
+                    if (needs_switch)
+                    {
+                        c.proc.active_thread->save(c.emu);
+                        thread->restore(c.emu);
+                    }
+
+                    c.emu.reg(x86_register::dr0, static_cast<uint64_t>(new_wow64_context.Dr0));
+                    c.emu.reg(x86_register::dr1, static_cast<uint64_t>(new_wow64_context.Dr1));
+                    c.emu.reg(x86_register::dr2, static_cast<uint64_t>(new_wow64_context.Dr2));
+                    c.emu.reg(x86_register::dr3, static_cast<uint64_t>(new_wow64_context.Dr3));
+                    c.emu.reg(x86_register::dr6, static_cast<uint64_t>(new_wow64_context.Dr6));
+                    c.emu.reg(x86_register::dr7, static_cast<uint64_t>(new_wow64_context.Dr7));
+
+                    if (needs_switch)
+                    {
+                        thread->save(c.emu);
+                        c.proc.active_thread->restore(c.emu);
+                    }
+                }
+
                 return STATUS_SUCCESS;
             }
 
