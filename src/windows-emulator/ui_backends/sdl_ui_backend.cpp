@@ -434,7 +434,15 @@ namespace sogen
             void present_surface(const hwnd window, const ui_surface_desc& surface) override
             {
 #ifdef SOGEN_HAS_SDL3
-                if (auto* state = this->resolve_window(window))
+                // The render target is frequently a child window (e.g. a D3D/Vulkan swap-chain child),
+                // which has no SDL renderer of its own. Composite its surface onto the top-level
+                // ancestor -- the window that actually owns the on-screen SDL window and renderer.
+                auto* state = this->resolve_window(window);
+                if (state && !state->renderer)
+                {
+                    state = this->resolve_window(this->get_top_level_ancestor(window));
+                }
+                if (state && state->renderer)
                 {
                     update_surface_texture(*state, surface);
                     render_window(*state);
