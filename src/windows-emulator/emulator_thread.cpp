@@ -860,7 +860,7 @@ namespace sogen
     void emulator_thread::post_message(const windows_emulator& win_emu, msg msg, const bool try_coalesce)
     {
         msg.time = get_current_message_time(win_emu.clock());
-        msg.pt = {win_emu.process.cursor_x, win_emu.process.cursor_y};
+        msg.pt = {.x = win_emu.process.cursor_x, .y = win_emu.process.cursor_y};
 
         if (try_coalesce && this->can_coalesce_message(msg))
         {

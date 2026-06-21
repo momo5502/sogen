@@ -214,6 +214,7 @@ namespace sogen
 #define WM_NCDESTROY         0x0082
 #define WM_NCCALCSIZE        0x0083
 #define WM_NCACTIVATE        0x0086
+#define WM_NCMOUSEMOVE       0x00A0
 #define WM_INPUT             0x00FF
 
 #define RID_INPUT            0x10000003
