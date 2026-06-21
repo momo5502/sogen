@@ -359,12 +359,12 @@ namespace sogen
         user_timer& create_user_timer(process_context& process, hwnd hwnd, uint64_t timer_id, uint64_t timer_proc,
                                       std::chrono::milliseconds interval, std::chrono::steady_clock::time_point now);
         bool delete_user_timer(hwnd hwnd, uint64_t timer_id);
-        bool synthesize_due_user_timer(const windows_emulator& win_emu, hwnd hwnd_filter = 0, UINT filter_min = 0, UINT filter_max = 0);
+        bool synthesize_due_user_timer(windows_emulator& win_emu, hwnd hwnd_filter = 0, UINT filter_min = 0, UINT filter_max = 0);
 
-        uint32_t get_message_queue_status(const windows_emulator& win_emu);
-        std::optional<msg> peek_pending_message(const windows_emulator& win_emu, hwnd hwnd_filter = 0, UINT filter_min = 0,
-                                                UINT filter_max = 0, bool remove = false);
-        void post_message(const windows_emulator& win_emu, msg msg, bool try_coalesce = false);
+        uint32_t get_message_queue_status(windows_emulator& win_emu);
+        std::optional<msg> peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter = 0, UINT filter_min = 0, UINT filter_max = 0,
+                                                bool remove = false);
+        void post_message(windows_emulator& win_emu, msg msg, bool try_coalesce = false);
 
         bool is_terminated() const;
 

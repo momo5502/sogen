@@ -72,10 +72,10 @@ namespace sogen
         UINT message;
         wparam wParam;
         lparam lParam;
-        DWORD time;
-        POINT pt;
+        DWORD time{};
+        POINT pt{};
 #ifdef _MAC
-        DWORD lPrivate;
+        DWORD lPrivate{};
 #endif
     };
 

@@ -318,12 +318,12 @@ namespace sogen
             }
         }
 
-        DWORD get_current_message_time(const utils::clock& clock)
+        DWORD get_current_message_time(utils::clock& clock)
         {
-            const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(clock.steady_now().time_since_epoch()).count();
+            const auto now = clock.steady_now().time_since_epoch();
+            const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
             return static_cast<DWORD>(now_ms);
         }
-
     }
 
     emulator_thread::emulator_thread(memory_manager& memory, const process_context& context, const uint64_t start_address,
@@ -704,7 +704,7 @@ namespace sogen
         return true;
     }
 
-    bool emulator_thread::synthesize_due_user_timer(const windows_emulator& win_emu, const hwnd hwnd_filter, const UINT filter_min,
+    bool emulator_thread::synthesize_due_user_timer(windows_emulator& win_emu, const hwnd hwnd_filter, const UINT filter_min,
                                                     const UINT filter_max)
     {
         const auto now = win_emu.clock().steady_now();
@@ -744,7 +744,7 @@ namespace sogen
         return false;
     }
 
-    uint32_t emulator_thread::get_message_queue_status(const windows_emulator& win_emu)
+    uint32_t emulator_thread::get_message_queue_status(windows_emulator& win_emu)
     {
         if (this->await_msg_mask && (*this->await_msg_mask & QS_TIMER) != 0)
         {
@@ -781,8 +781,8 @@ namespace sogen
         }
     }
 
-    std::optional<msg> emulator_thread::peek_pending_message(const windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min,
-                                                             UINT filter_max, bool remove)
+    std::optional<msg> emulator_thread::peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
+                                                             bool remove)
     {
         (void)this->synthesize_due_user_timer(win_emu, hwnd_filter, filter_min, filter_max);
 
@@ -857,18 +857,18 @@ namespace sogen
         }
     }
 
-    void emulator_thread::post_message(const windows_emulator& win_emu, msg msg, const bool try_coalesce)
+    void emulator_thread::post_message(windows_emulator& win_emu, msg msg, const bool try_coalesce)
     {
         msg.time = get_current_message_time(win_emu.clock());
         msg.pt = {.x = win_emu.process.cursor_x, .y = win_emu.process.cursor_y};
+        const auto bits = get_message_queue_status_bits(msg);
 
         if (try_coalesce && this->can_coalesce_message(msg))
         {
+            this->queue_status_changed_bits |= bits;
             message_queue.back() = msg;
             return;
         }
-
-        const auto bits = get_message_queue_status_bits(msg);
 
         for_each_queue_status_bit(bits, [this](const uint32_t /*bit*/, const size_t index) { //
             ++this->message_queue_status_bit_counts[index];

@@ -424,8 +424,7 @@ namespace sogen
 
             if (auto* thread = c.proc.find_thread_by_id(win.thread_id))
             {
-                thread->post_message(c.win_emu,
-                                     msg{.window = win.handle, .message = WM_PAINT, .wParam = 0, .lParam = 0, .time = 0, .pt = {}});
+                thread->post_message(c.win_emu, msg{.window = win.handle, .message = WM_PAINT, .wParam = 0, .lParam = 0});
                 win.paint_message_posted = true;
             }
         }
@@ -2981,8 +2980,6 @@ namespace sogen
             {
                 return 0;
             }
-
-            c.proc.active_thread->current_message_time = m.time;
 
             if (m.message == WM_TIMER && m.lParam != 0)
             {

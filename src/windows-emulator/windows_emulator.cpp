@@ -416,7 +416,7 @@ namespace sogen
             {
             }
 
-            uint64_t ticks() const override
+            uint64_t ticks() override
             {
                 return *this->instructions_;
             }
