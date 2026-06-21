@@ -344,8 +344,12 @@ namespace sogen
 #ifdef SOGEN_HAS_SDL3
                 if (const auto it = this->windows_.find(window); it != this->windows_.end())
                 {
-                    SDL_StopTextInput(it->second.window);
-                    this->guest_by_window_id_.erase(SDL_GetWindowID(it->second.window));
+                    // Child (non-top-level) windows have no SDL window; only top-level windows do.
+                    if (it->second.window)
+                    {
+                        SDL_StopTextInput(it->second.window);
+                        this->guest_by_window_id_.erase(SDL_GetWindowID(it->second.window));
+                    }
                     destroy_window_resources(it->second);
                     this->windows_.erase(it);
                 }
@@ -434,7 +438,15 @@ namespace sogen
             void present_surface(const hwnd window, const ui_surface_desc& surface) override
             {
 #ifdef SOGEN_HAS_SDL3
-                if (auto* state = this->resolve_window(window))
+                // The render target is frequently a child window (e.g. a D3D/Vulkan swap-chain child),
+                // which has no SDL renderer of its own. Composite its surface onto the top-level
+                // ancestor -- the window that actually owns the on-screen SDL window and renderer.
+                auto* state = this->resolve_window(window);
+                if (state && !state->renderer)
+                {
+                    state = this->resolve_window(this->get_top_level_ancestor(window));
+                }
+                if (state && state->renderer)
                 {
                     update_surface_texture(*state, surface);
                     render_window(*state);
@@ -489,7 +501,9 @@ namespace sogen
 
             hwnd get_top_level_ancestor(hwnd window) const
             {
-                while (true)
+                // Bound the walk so a malformed parent chain (stale handles, a cycle) can't loop forever.
+                constexpr auto max_depth = 32;
+                for (auto depth = 0; depth < max_depth; ++depth)
                 {
                     const auto* state = this->resolve_window(window);
                     if (!state)
@@ -502,6 +516,8 @@ namespace sogen
                     }
                     window = state->desc.parent;
                 }
+
+                return window;
             }
 
             void redraw_related(const hwnd window)

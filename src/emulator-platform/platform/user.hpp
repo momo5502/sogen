@@ -172,6 +172,17 @@ namespace sogen
     };
     static_assert(sizeof(RAWMOUSE32) == 0x18);
 
+    struct RAWKEYBOARD32
+    {
+        uint16_t MakeCode;
+        uint16_t Flags;
+        uint16_t Reserved;
+        uint16_t VKey;
+        uint32_t Message;
+        uint32_t ExtraInformation;
+    };
+    static_assert(sizeof(RAWKEYBOARD32) == 0x10);
+
     enum USER_HANDLETYPE : uint8_t
     {
         TYPE_FREE = 0,

@@ -2722,6 +2722,15 @@ namespace sogen
                     return this->vulkan_.cmd_clear_color_image(req.command_buffer, req.image, req.image_layout, req.color_r, req.color_g,
                                                                req.color_b, req.color_a, to_host_range(req.subresource));
                 }
+                case gpu_bridge::command::cmd_clear_attachments: {
+                    gpu_bridge::cmd_clear_attachments_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_clear_attachments(req.command_buffer, req.attachment_count, req.rect_count,
+                                                               payload + sizeof(req), size - sizeof(req));
+                }
                 case gpu_bridge::command::cmd_clear_depth_stencil_image: {
                     gpu_bridge::cmd_clear_depth_stencil_image_request req{};
                     if (!read(req))
