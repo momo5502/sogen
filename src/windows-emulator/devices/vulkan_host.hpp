@@ -251,6 +251,8 @@ namespace sogen
         // Records vkCmdClearColorImage with an RGBA float clear color.
         int32_t cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r, float g, float b, float a,
                                       const subresource_range& range);
+        int32_t cmd_clear_attachments(uint64_t command_buffer, uint32_t attachment_count, uint32_t rect_count, const void* data,
+                                      size_t data_size);
         int32_t cmd_clear_depth_stencil_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float depth, uint32_t stencil,
                                               const subresource_range& range);
         // Copies mip 0 / layer 0 of the image (tightly packed) into the buffer at offset 0.

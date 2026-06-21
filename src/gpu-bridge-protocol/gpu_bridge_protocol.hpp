@@ -173,6 +173,7 @@ namespace sogen::gpu_bridge
         update_descriptor_sets_batch = 0x886,
         cmd_blit_image = 0x887,
         reset_descriptor_pool = 0x888,
+        cmd_clear_attachments = 0x889,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -1679,6 +1680,16 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
+    // record payload (command::cmd_clear_attachments): header followed by `attachment_count` raw
+    // VkClearAttachment structs, then `rect_count` raw VkClearRect structs (both forwarded verbatim;
+    // no object ids are involved, so the host reinterprets the trailing bytes directly).
+    struct cmd_clear_attachments_request
+    {
+        object_id command_buffer;
+        uint32_t attachment_count;
+        uint32_t rect_count;
+    };
+
     // One VkViewport. Trails cmd_set_viewport_request `count` times.
     struct viewport_entry
     {
@@ -1981,6 +1992,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(allocate_command_buffer_request) == 24, "wire layout drift");
     static_assert(sizeof(begin_command_buffer_request) == 40, "wire layout drift");
     static_assert(sizeof(cmd_execute_commands_request) == 16, "wire layout drift");
+    static_assert(sizeof(cmd_clear_attachments_request) == 16, "wire layout drift");
     static_assert(sizeof(viewport_entry) == 24, "wire layout drift");
     static_assert(sizeof(cmd_set_viewport_request) == 24, "wire layout drift");
     static_assert(sizeof(scissor_entry) == 16, "wire layout drift");

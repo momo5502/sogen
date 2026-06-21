@@ -232,6 +232,7 @@ namespace sogen
             PFN_vkBindImageMemory bind_image_memory{};
             PFN_vkCmdPipelineBarrier cmd_pipeline_barrier{};
             PFN_vkCmdClearColorImage cmd_clear_color_image{};
+            PFN_vkCmdClearAttachments cmd_clear_attachments{};
             PFN_vkCmdClearDepthStencilImage cmd_clear_depth_stencil_image{};
             PFN_vkCmdCopyImageToBuffer cmd_copy_image_to_buffer{};
             PFN_vkCmdResolveImage cmd_resolve_image{};
@@ -1626,6 +1627,7 @@ namespace sogen
             data.bind_image_memory = reinterpret_cast<PFN_vkBindImageMemory>(resolve("vkBindImageMemory"));
             data.cmd_pipeline_barrier = reinterpret_cast<PFN_vkCmdPipelineBarrier>(resolve("vkCmdPipelineBarrier"));
             data.cmd_clear_color_image = reinterpret_cast<PFN_vkCmdClearColorImage>(resolve("vkCmdClearColorImage"));
+            data.cmd_clear_attachments = reinterpret_cast<PFN_vkCmdClearAttachments>(resolve("vkCmdClearAttachments"));
             data.cmd_clear_depth_stencil_image = reinterpret_cast<PFN_vkCmdClearDepthStencilImage>(resolve("vkCmdClearDepthStencilImage"));
             data.cmd_copy_image_to_buffer = reinterpret_cast<PFN_vkCmdCopyImageToBuffer>(resolve("vkCmdCopyImageToBuffer"));
             data.cmd_resolve_image = reinterpret_cast<PFN_vkCmdResolveImage>(resolve("vkCmdResolveImage"));
@@ -2981,6 +2983,35 @@ namespace sogen
 
         const VkImageSubresourceRange vk_range = to_vk_range(range);
         dev->second.cmd_clear_color_image(cb->second.handle, img->second.handle, translate_layout(image_layout), &clear, 1, &vk_range);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_clear_attachments(uint64_t command_buffer, uint32_t attachment_count, uint32_t rect_count, const void* data,
+                                               size_t data_size)
+    {
+        const size_t attach_bytes = static_cast<size_t>(attachment_count) * sizeof(VkClearAttachment);
+        const size_t rect_bytes = static_cast<size_t>(rect_count) * sizeof(VkClearRect);
+        if (attach_bytes + rect_bytes > data_size)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_clear_attachments)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        // VkClearAttachment / VkClearRect carry no object handles, so the guest blob is forwarded verbatim.
+        const auto* attachments = reinterpret_cast<const VkClearAttachment*>(data);
+        const auto* rects = reinterpret_cast<const VkClearRect*>(static_cast<const uint8_t*>(data) + attach_bytes);
+        dev->second.cmd_clear_attachments(cb->second.handle, attachment_count, attachment_count ? attachments : nullptr, rect_count,
+                                          rect_count ? rects : nullptr);
         return VK_SUCCESS;
     }
 
