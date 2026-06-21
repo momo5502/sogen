@@ -184,6 +184,22 @@ namespace sogen
             };
             static_assert(sizeof(emu_ttpolycurve_header) == 4);
 
+            struct bitmap_info_header
+            {
+                DWORD biSize;
+                LONG biWidth;
+                LONG biHeight;
+                WORD biPlanes;
+                WORD biBitCount;
+                DWORD biCompression;
+                DWORD biSizeImage;
+                LONG biXPelsPerMeter;
+                LONG biYPelsPerMeter;
+                DWORD biClrUsed;
+                DWORD biClrImportant;
+            };
+            static_assert(sizeof(bitmap_info_header) == 40);
+
             constexpr uint32_t k_dxgk_adapter_count = 1;
             constexpr uint32_t k_dxgk_adapter_handle = 0x4000;
             constexpr uint32_t k_dxgk_device_handle = 0x5000;
@@ -522,12 +538,16 @@ namespace sogen
             }
 
             bool get_dc_state_and_surface(const syscall_context& c, const hdc dc, gdi_dc_state*& dc_state, gdi_bitmap_surface*& surface,
-                                          int32_t& origin_x, int32_t& origin_y)
+                                          int32_t& origin_x, int32_t& origin_y, uint32_t* present_handle = nullptr)
             {
                 dc_state = nullptr;
                 surface = nullptr;
                 origin_x = 0;
                 origin_y = 0;
+                if (present_handle != nullptr)
+                {
+                    *present_handle = 0;
+                }
 
                 const auto dc_it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
                 if (dc_it == c.proc.gdi_dc_states.end())
@@ -536,8 +556,12 @@ namespace sogen
                 }
 
                 dc_state = &dc_it->second;
-                uint32_t present_handle = 0;
-                surface = resolve_dc_surface(c, dc, origin_x, origin_y, present_handle);
+                uint32_t resolved_present_handle = 0;
+                surface = resolve_dc_surface(c, dc, origin_x, origin_y, resolved_present_handle);
+                if (present_handle != nullptr)
+                {
+                    *present_handle = resolved_present_handle;
+                }
                 return surface != nullptr;
             }
 
@@ -1812,9 +1836,60 @@ namespace sogen
             return handle_value;
         }
 
-        uint64_t handle_NtGdiCreateDIBSection()
+        uint64_t handle_NtGdiCreateDIBSection(const syscall_context& c, const hdc /*dc*/, const uint64_t /*section_app*/,
+                                              const uint32_t /*offset*/, const emulator_pointer info, const uint32_t /*usage*/,
+                                              const uint32_t header_size, const uint32_t /*flags*/, const uint64_t /*color_space*/,
+                                              const emulator_object<emulator_pointer> bits)
         {
-            return STATUS_SUCCESS;
+            if (info == 0 || !bits || header_size < sizeof(bitmap_info_header))
+            {
+                return 0;
+            }
+
+            bitmap_info_header header{};
+            c.emu.read_memory(info, &header, sizeof(header));
+
+            if (header.biSize < sizeof(bitmap_info_header) || header.biWidth <= 0 || header.biHeight == 0 || header.biBitCount == 0)
+            {
+                return 0;
+            }
+
+            const auto width = static_cast<uint32_t>(header.biWidth);
+            const auto abs_height = header.biHeight > 0 ? static_cast<uint32_t>(header.biHeight)
+                                                        : static_cast<uint32_t>(-static_cast<int64_t>(header.biHeight));
+
+            const auto stride = static_cast<uint32_t>(((static_cast<uint64_t>(width) * header.biBitCount + 31u) / 32u) * 4u);
+
+            const auto allocation_bytes = static_cast<uint64_t>(stride) * abs_height;
+
+            if (allocation_bytes == 0 || allocation_bytes > (std::numeric_limits<size_t>::max)())
+            {
+                return 0;
+            }
+
+            const auto guest_bits =
+                c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(allocation_bytes)), memory_permission::read_write, false,
+                                                 DEFAULT_ALLOCATION_ADDRESS_32BIT);
+
+            if (guest_bits == 0)
+            {
+                return 0;
+            }
+
+            std::vector<uint8_t> zeroed(static_cast<size_t>(allocation_bytes), 0);
+            c.emu.write_memory(guest_bits, zeroed.data(), zeroed.size());
+
+            const auto handle_value = create_gdi_bitmap_surface(c, width, abs_height, 0);
+            if (handle_value == 0)
+            {
+                c.win_emu.memory.release_memory(guest_bits, 0);
+                return 0;
+            }
+
+            // TODO: Tie the allocated memory with the surface.
+
+            bits.write(guest_bits);
+            return handle_value;
         }
 
         uint64_t handle_NtGdiCreateDIBitmapInternal(const syscall_context& c, const hdc /*dc*/, const uint32_t width, const uint32_t height,
@@ -4070,7 +4145,8 @@ namespace sogen
             gdi_bitmap_surface* surface = nullptr;
             int32_t origin_x = 0;
             int32_t origin_y = 0;
-            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
+            uint32_t present_handle = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y, &present_handle) || !surface)
             {
                 return clr_invalid;
             }
@@ -4084,9 +4160,6 @@ namespace sogen
 
             const auto bgra = colorref_to_bgra(color);
             set_surface_pixel(*surface, surface_x, surface_y, bgra);
-
-            uint32_t present_handle = 0;
-            resolve_dc_surface(c, dc, origin_x, origin_y, present_handle);
             if (present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
             {
                 c.win_emu.ui().present_surface(present_handle, {
