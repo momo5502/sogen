@@ -601,6 +601,8 @@ namespace sogen
         buffer.write(this->key_state);
         buffer.write(this->raw_mouse_registered);
         buffer.write(this->raw_mouse_target);
+        buffer.write(this->raw_keyboard_registered);
+        buffer.write(this->raw_keyboard_target);
         buffer.write_map(this->raw_inputs);
         buffer.write(this->next_raw_input_token);
 
@@ -685,6 +687,8 @@ namespace sogen
         buffer.read(this->key_state);
         buffer.read(this->raw_mouse_registered);
         buffer.read(this->raw_mouse_target);
+        buffer.read(this->raw_keyboard_registered);
+        buffer.read(this->raw_keyboard_target);
         buffer.read_map(this->raw_inputs);
         buffer.read(this->next_raw_input_token);
 

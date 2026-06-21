@@ -1597,23 +1597,26 @@ namespace sogen
 
                 constexpr uint16_t hid_usage_page_generic = 0x01;
                 constexpr uint16_t hid_usage_generic_mouse = 0x02;
-                if (device.usUsagePage != hid_usage_page_generic || device.usUsage != hid_usage_generic_mouse)
+                constexpr uint16_t hid_usage_generic_keyboard = 0x06;
+                if (device.usUsagePage != hid_usage_page_generic ||
+                    (device.usUsage != hid_usage_generic_mouse && device.usUsage != hid_usage_generic_keyboard))
                 {
                     continue;
                 }
 
-                if (device.dwFlags & RIDEV_REMOVE)
+                // hwndTarget == 0 is the valid "follow keyboard focus" mode; keep it as-is and resolve the
+                // destination at delivery time rather than freezing whatever window is foreground right now
+                // (registration often happens at startup before any window has become foreground).
+                const bool remove = (device.dwFlags & RIDEV_REMOVE) != 0;
+                if (device.usUsage == hid_usage_generic_mouse)
                 {
-                    c.proc.raw_mouse_registered = false;
-                    c.proc.raw_mouse_target = 0;
+                    c.proc.raw_mouse_registered = !remove;
+                    c.proc.raw_mouse_target = remove ? hwnd{} : device.hwndTarget;
                 }
                 else
                 {
-                    // hwndTarget == 0 is the valid "follow keyboard focus" mode; keep it as-is and resolve the
-                    // destination at delivery time rather than freezing whatever window is foreground right now
-                    // (registration often happens at startup before any window has become foreground).
-                    c.proc.raw_mouse_registered = true;
-                    c.proc.raw_mouse_target = device.hwndTarget;
+                    c.proc.raw_keyboard_registered = !remove;
+                    c.proc.raw_keyboard_target = remove ? hwnd{} : device.hwndTarget;
                 }
             }
 
@@ -1648,12 +1651,13 @@ namespace sogen
                 return failure;
             }
 
-            RAWMOUSE32 mouse{};
-            mouse.usFlags = MOUSE_MOVE_RELATIVE;
-            mouse.lLastX = entry->second[0];
-            mouse.lLastY = entry->second[1];
+            const auto& payload = entry->second;
 
-            const uint32_t total = header_size + sizeof(RAWMOUSE32);
+            // The body is a RAWKEYBOARD or RAWMOUSE depending on what the token carried.
+            const uint32_t body_size = payload.keyboard ? sizeof(RAWKEYBOARD32) : sizeof(RAWMOUSE32);
+            const uint32_t dw_type = payload.keyboard ? RIM_TYPEKEYBOARD : RIM_TYPEMOUSE;
+
+            const uint32_t total = header_size + body_size;
             const uint32_t required = (command == RID_HEADER) ? header_size : total;
 
             if (data == 0)
@@ -1668,15 +1672,31 @@ namespace sogen
             }
 
             // dwType @0 and dwSize @4 are identical across header layouts; hDevice/wParam stay zeroed, so only
-            // the overall header size (which shifts the mouse body) matters.
+            // the overall header size (which shifts the body) matters.
             std::array<uint8_t, max_header_size + sizeof(RAWMOUSE32)> buffer{};
-            const uint32_t dw_type = RIM_TYPEMOUSE;
             const uint32_t dw_size = total;
             std::memcpy(buffer.data() + 0, &dw_type, sizeof(dw_type));
             std::memcpy(buffer.data() + 4, &dw_size, sizeof(dw_size));
             if (command != RID_HEADER)
             {
-                std::memcpy(buffer.data() + header_size, &mouse, sizeof(mouse));
+                if (payload.keyboard)
+                {
+                    RAWKEYBOARD32 keyboard{};
+                    keyboard.MakeCode = payload.scan_code;
+                    keyboard.Flags = payload.key_release; // RI_KEY_MAKE (0) / RI_KEY_BREAK (1)
+                    keyboard.VKey = payload.vkey;
+                    keyboard.Message = payload.key_release ? WM_KEYUP : WM_KEYDOWN;
+                    std::memcpy(buffer.data() + header_size, &keyboard, sizeof(keyboard));
+                }
+                else
+                {
+                    RAWMOUSE32 mouse{};
+                    mouse.usFlags = MOUSE_MOVE_RELATIVE;
+                    mouse.ulButtons = payload.mouse_buttons; // low 16 bits == usButtonFlags
+                    mouse.lLastX = payload.dx;
+                    mouse.lLastY = payload.dy;
+                    std::memcpy(buffer.data() + header_size, &mouse, sizeof(mouse));
+                }
                 c.proc.raw_inputs.erase(entry);
             }
 
