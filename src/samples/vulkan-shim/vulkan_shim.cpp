@@ -2109,6 +2109,26 @@ extern "C"
         vkDestroyImage(device, image, nullptr);
     }
 
+    // VK_KHR_maintenance5 / core 1.4: query an image's subresource layout straight from its create-info,
+    // with no live VkImage. The bridge has no such query, so probe a throwaway image (same approach as
+    // vkGetDeviceImageMemoryRequirements above). DXVK calls this during resource setup.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceImageSubresourceLayoutKHR(VkDevice device,
+                                                                                          const VkDeviceImageSubresourceInfo* pInfo,
+                                                                                          VkSubresourceLayout2* pLayout)
+    {
+        if (!pInfo || !pInfo->pCreateInfo || !pInfo->pSubresource || !pLayout)
+        {
+            return;
+        }
+        VkImage image = VK_NULL_HANDLE;
+        if (vkCreateImage(device, pInfo->pCreateInfo, nullptr, &image) != VK_SUCCESS)
+        {
+            return;
+        }
+        vkGetImageSubresourceLayout(device, image, &pInfo->pSubresource->imageSubresource, &pLayout->subresourceLayout);
+        vkDestroyImage(device, image, nullptr);
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBindImageMemory(VkDevice device, VkImage image, VkDeviceMemory memory,
                                                                            VkDeviceSize memoryOffset)
     {
@@ -4654,6 +4674,10 @@ extern "C"
             {.name = "vkGetImageSubresourceLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageSubresourceLayout)},
             {.name = "vkGetImageSubresourceLayout2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageSubresourceLayout2KHR)},
             {.name = "vkGetImageSubresourceLayout2EXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageSubresourceLayout2KHR)},
+            {.name = "vkGetDeviceImageSubresourceLayout",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceImageSubresourceLayoutKHR)},
+            {.name = "vkGetDeviceImageSubresourceLayoutKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceImageSubresourceLayoutKHR)},
             {.name = "vkGetImageMemoryRequirements2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements2)},
             {.name = "vkGetImageMemoryRequirements2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements2)},
             {.name = "vkGetDeviceBufferMemoryRequirements",

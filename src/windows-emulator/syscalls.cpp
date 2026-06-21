@@ -17,6 +17,7 @@ namespace sogen
     {
         // syscalls/event.cpp:
         NTSTATUS handle_NtSetEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
+        NTSTATUS handle_NtPulseEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
         NTSTATUS handle_NtTraceEvent();
         NTSTATUS handle_NtQueryEvent(const syscall_context& c, handle event_handle, uint32_t event_information_class,
                                      emulator_object<EVENT_BASIC_INFORMATION> event_information, uint32_t event_information_length,
@@ -559,6 +560,8 @@ namespace sogen
         hwnd handle_NtUserSetFocus(const syscall_context& c, hwnd hwnd);
         emulator_pointer handle_NtUserSetWindowLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
                                                        BOOL Ansi);
+        emulator_pointer handle_NtUserSetClassLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
+                                                      BOOL Ansi);
         uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi);
         uint64_t handle_NtUserGetAncestor(const syscall_context& c, hwnd child_hwnd, UINT flags);
         BOOL handle_NtUserRedrawWindow(const syscall_context& c, hwnd hwnd, emulator_object<RECT> update_rect, uint64_t update_rgn,
@@ -1084,6 +1087,7 @@ namespace sogen
         add_handler(NtSetInformationThread);
         add_handler(NtSetThreadExecutionState);
         add_handler(NtSetEvent);
+        add_handler(NtPulseEvent);
         add_handler(NtClose);
         add_handler(NtOpenKey);
         add_handler(NtAllocateVirtualMemory);
@@ -1409,6 +1413,7 @@ namespace sogen
         add_handler(NtUserGetForegroundWindow);
         add_handler(NtUserSetFocus);
         add_handler(NtUserSetWindowLongPtr);
+        add_handler(NtUserSetClassLongPtr);
         add_handler(NtUserSetWindowLong);
         add_handler(NtUserGetAncestor);
         add_handler(NtUserPostMessage);

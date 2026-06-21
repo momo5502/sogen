@@ -385,6 +385,38 @@ namespace sogen
                                                                           info.SystemRangeStart = 0xFFFF800000000000; //
                                                                       });
 
+            case SystemProcessorPerformanceInformation: {
+                // Per-processor CPU time counters. We don't track real CPU time, so report an idle system:
+                // IdleTime == KernelTime (Windows kernel time includes idle), UserTime == 0. Use the
+                // executed-instruction tick as a monotonic clock so consecutive samples differ and callers
+                // computing usage from deltas don't divide by zero.
+                const auto processor_count = c.proc.kusd.get().ActiveProcessorCount;
+                constexpr auto entry_size = sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION);
+                const auto required = static_cast<uint32_t>(processor_count * entry_size);
+
+                if (return_length)
+                {
+                    return_length.try_write(required);
+                }
+
+                if (system_information_length < required)
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                const auto tick = static_cast<int64_t>(c.win_emu.get_executed_instructions());
+                std::vector<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION> entries(processor_count);
+                for (auto& entry : entries)
+                {
+                    memset(&entry, 0, sizeof(entry));
+                    entry.IdleTime.QuadPart = tick;
+                    entry.KernelTime.QuadPart = tick;
+                }
+
+                c.emu.write_memory(system_information, entries.data(), entries.size() * entry_size);
+                return STATUS_SUCCESS;
+            }
+
             case SystemProcessorInformation:
             case SystemEmulationProcessorInformation:
                 return handle_query<SYSTEM_PROCESSOR_INFORMATION64>(
@@ -459,6 +491,59 @@ namespace sogen
                                                                     basic_info.ActiveProcessorsAffinityMask = 0x0000000000000f;
                                                                     basic_info.NumberOfProcessors = 4;
                                                                 });
+
+            case SystemDeviceInformation:
+                return handle_query<SYSTEM_DEVICE_INFORMATION>(c.emu, system_information, system_information_length, return_length,
+                                                               [&](SYSTEM_DEVICE_INFORMATION& info) {
+                                                                   memset(&info, 0, sizeof(info));
+                                                                   info.NumberOfDisks = 1;
+                                                               });
+
+            case SystemExceptionInformation:
+                return handle_query<SYSTEM_EXCEPTION_INFORMATION>(
+                    c.emu, system_information, system_information_length, return_length,
+                    [&](SYSTEM_EXCEPTION_INFORMATION& info) { memset(&info, 0, sizeof(info)); });
+
+            case SystemLookasideInformation:
+            case SystemPageFileInformation:
+                // Variable-length lists we don't model (per-lookaside-list stats / configured page files).
+                // Report an empty set.
+                if (return_length)
+                {
+                    return_length.try_write(0);
+                }
+                return STATUS_SUCCESS;
+
+            case SystemMemoryListInformation:
+                return handle_query<SYSTEM_MEMORY_LIST_INFORMATION64>(
+                    c.emu, system_information, system_information_length, return_length,
+                    [&](SYSTEM_MEMORY_LIST_INFORMATION64& info) { memset(&info, 0, sizeof(info)); });
+
+            case SystemFileCacheInformation:
+            case SystemFileCacheInformationEx:
+                return handle_query<SYSTEM_FILECACHE_INFORMATION64>(
+                    c.emu, system_information, system_information_length, return_length,
+                    [&](SYSTEM_FILECACHE_INFORMATION64& info) { memset(&info, 0, sizeof(info)); });
+
+            case SystemPerformanceInformation:
+            case SystemProcessorPowerInformation:
+            case SystemInterruptInformation:
+            case SystemProcessorIdleInformation:
+                // SYSTEM_PERFORMANCE_INFORMATION is a large, OS-version-dependent counter block;
+                // SystemProcessorPowerInformation / SystemInterruptInformation / SystemProcessorIdleInformation
+                // are per-processor arrays. We don't model any of these, so report no activity by zeroing
+                // exactly the caller's buffer, which keeps any struct revision/processor count happy instead
+                // of rejecting an unexpected size.
+                if (system_information)
+                {
+                    const std::vector<std::byte> zeros(system_information_length, std::byte{});
+                    c.emu.write_memory(system_information, zeros.data(), zeros.size());
+                }
+                if (return_length)
+                {
+                    return_length.try_write(system_information_length);
+                }
+                return STATUS_SUCCESS;
 
             case SystemRecommendedSharedDataAlignment:
                 return handle_query<ULONG>(c.emu, system_information, system_information_length, return_length,

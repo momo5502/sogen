@@ -758,6 +758,59 @@ namespace sogen
         char NumberOfProcessors;
     } SYSTEM_BASIC_INFORMATION64, *PSYSTEM_BASIC_INFORMATION64;
 
+    typedef struct _SYSTEM_DEVICE_INFORMATION
+    {
+        ULONG NumberOfDisks;
+        ULONG NumberOfFloppies;
+        ULONG NumberOfCdRoms;
+        ULONG NumberOfTapes;
+        ULONG NumberOfSerialPorts;
+        ULONG NumberOfParallelPorts;
+    } SYSTEM_DEVICE_INFORMATION, *PSYSTEM_DEVICE_INFORMATION;
+
+    typedef struct _SYSTEM_EXCEPTION_INFORMATION
+    {
+        ULONG AlignmentFixupCount;
+        ULONG ExceptionDispatchCount;
+        ULONG FloatingEmulationCount;
+        ULONG ByteWordEmulationCount;
+    } SYSTEM_EXCEPTION_INFORMATION, *PSYSTEM_EXCEPTION_INFORMATION;
+
+    typedef struct _SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION
+    {
+        LARGE_INTEGER IdleTime;
+        LARGE_INTEGER KernelTime;
+        LARGE_INTEGER UserTime;
+        LARGE_INTEGER DpcTime;
+        LARGE_INTEGER InterruptTime;
+        ULONG InterruptCount;
+    } SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION, *PSYSTEM_PROCESSOR_PERFORMANCE_INFORMATION;
+
+    typedef struct _SYSTEM_MEMORY_LIST_INFORMATION64
+    {
+        EmulatorTraits<Emu64>::ULONG_PTR ZeroPageCount;
+        EmulatorTraits<Emu64>::ULONG_PTR FreePageCount;
+        EmulatorTraits<Emu64>::ULONG_PTR ModifiedPageCount;
+        EmulatorTraits<Emu64>::ULONG_PTR ModifiedNoWritePageCount;
+        EmulatorTraits<Emu64>::ULONG_PTR BadPageCount;
+        EmulatorTraits<Emu64>::ULONG_PTR PageCountByPriority[8];
+        EmulatorTraits<Emu64>::ULONG_PTR RepurposedPagesByPriority[8];
+        EmulatorTraits<Emu64>::ULONG_PTR ModifiedPageCountPageFile;
+    } SYSTEM_MEMORY_LIST_INFORMATION64, *PSYSTEM_MEMORY_LIST_INFORMATION64;
+
+    typedef struct _SYSTEM_FILECACHE_INFORMATION64
+    {
+        EmulatorTraits<Emu64>::SIZE_T CurrentSize;
+        EmulatorTraits<Emu64>::SIZE_T PeakSize;
+        ULONG PageFaultCount;
+        EmulatorTraits<Emu64>::SIZE_T MinimumWorkingSet;
+        EmulatorTraits<Emu64>::SIZE_T MaximumWorkingSet;
+        EmulatorTraits<Emu64>::SIZE_T CurrentSizeIncludingTransitionInPages;
+        EmulatorTraits<Emu64>::SIZE_T PeakSizeIncludingTransitionInPages;
+        ULONG TransitionRePurposeCount;
+        ULONG Flags;
+    } SYSTEM_FILECACHE_INFORMATION64, *PSYSTEM_FILECACHE_INFORMATION64;
+
     typedef struct _SYSTEM_RANGE_START_INFORMATION64
     {
         EmulatorTraits<Emu64>::SIZE_T SystemRangeStart;
