@@ -2112,8 +2112,9 @@ extern "C"
     // VK_KHR_maintenance5 / core 1.4: query an image's subresource layout straight from its create-info,
     // with no live VkImage. The bridge has no such query, so probe a throwaway image (same approach as
     // vkGetDeviceImageMemoryRequirements above). DXVK calls this during resource setup.
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceImageSubresourceLayoutKHR(
-        VkDevice device, const VkDeviceImageSubresourceInfo* pInfo, VkSubresourceLayout2* pLayout)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceImageSubresourceLayoutKHR(VkDevice device,
+                                                                                          const VkDeviceImageSubresourceInfo* pInfo,
+                                                                                          VkSubresourceLayout2* pLayout)
     {
         if (!pInfo || !pInfo->pCreateInfo || !pInfo->pSubresource || !pLayout)
         {

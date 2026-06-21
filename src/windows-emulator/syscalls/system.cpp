@@ -500,10 +500,9 @@ namespace sogen
                                                                });
 
             case SystemExceptionInformation:
-                return handle_query<SYSTEM_EXCEPTION_INFORMATION>(c.emu, system_information, system_information_length, return_length,
-                                                                  [&](SYSTEM_EXCEPTION_INFORMATION& info) {
-                                                                      memset(&info, 0, sizeof(info));
-                                                                  });
+                return handle_query<SYSTEM_EXCEPTION_INFORMATION>(
+                    c.emu, system_information, system_information_length, return_length,
+                    [&](SYSTEM_EXCEPTION_INFORMATION& info) { memset(&info, 0, sizeof(info)); });
 
             case SystemLookasideInformation:
             case SystemPageFileInformation:
@@ -516,17 +515,15 @@ namespace sogen
                 return STATUS_SUCCESS;
 
             case SystemMemoryListInformation:
-                return handle_query<SYSTEM_MEMORY_LIST_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
-                                                                      [&](SYSTEM_MEMORY_LIST_INFORMATION64& info) {
-                                                                          memset(&info, 0, sizeof(info));
-                                                                      });
+                return handle_query<SYSTEM_MEMORY_LIST_INFORMATION64>(
+                    c.emu, system_information, system_information_length, return_length,
+                    [&](SYSTEM_MEMORY_LIST_INFORMATION64& info) { memset(&info, 0, sizeof(info)); });
 
             case SystemFileCacheInformation:
             case SystemFileCacheInformationEx:
-                return handle_query<SYSTEM_FILECACHE_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
-                                                                    [&](SYSTEM_FILECACHE_INFORMATION64& info) {
-                                                                        memset(&info, 0, sizeof(info));
-                                                                    });
+                return handle_query<SYSTEM_FILECACHE_INFORMATION64>(
+                    c.emu, system_information, system_information_length, return_length,
+                    [&](SYSTEM_FILECACHE_INFORMATION64& info) { memset(&info, 0, sizeof(info)); });
 
             case SystemPerformanceInformation:
             case SystemProcessorPowerInformation:
