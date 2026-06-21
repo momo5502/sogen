@@ -383,6 +383,7 @@ namespace sogen
                     }
                 });
                 teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
+                teb_obj.Win32ClientInfo.arr[29] = USER_DEFAULT_DPI_CONTEXT;
             });
 
             return;
@@ -468,6 +469,7 @@ namespace sogen
                 }
             });
             teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
+            teb_obj.Win32ClientInfo.arr[29] = USER_DEFAULT_DPI_CONTEXT;
         });
 
         // Allocate dynamic 32-bit stack for WOW64 thread

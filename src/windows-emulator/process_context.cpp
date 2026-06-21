@@ -551,6 +551,8 @@ namespace sogen
             window.rcClient = window.rcWindow;
             window.fnid = 0x29D;   // FNID_DESKTOP
             window.windowBand = 1; // ZBID_DESKTOP
+            window.dpiContext = USER_DEFAULT_DPI_CONTEXT;
+            window.processId = process_context::process_id;
         });
 
         const auto user_display_info = this->user_handles.get_display_info();
@@ -597,6 +599,7 @@ namespace sogen
         buffer.write(this->foreground_window);
         buffer.write(this->cursor_x);
         buffer.write(this->cursor_y);
+        buffer.write(this->current_cursor);
         buffer.write(this->cursor_show_count);
         buffer.write(this->key_state);
         buffer.write(this->raw_mouse_registered);
@@ -681,6 +684,7 @@ namespace sogen
         buffer.read(this->foreground_window);
         buffer.read(this->cursor_x);
         buffer.read(this->cursor_y);
+        buffer.read(this->current_cursor);
         buffer.read(this->cursor_show_count);
         buffer.read(this->key_state);
         buffer.read(this->raw_mouse_registered);

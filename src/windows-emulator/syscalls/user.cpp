@@ -1912,14 +1912,34 @@ namespace sogen
             return c.proc.cursor_show_count;
         }
 
-        NTSTATUS handle_NtUserSetCursor()
+        hcursor handle_NtUserSetCursor(const syscall_context& c, const hcursor cursor)
         {
-            return STATUS_NOT_SUPPORTED;
+            return std::exchange(c.proc.current_cursor, cursor);
         }
 
-        uint64_t handle_NtUserGetCursor()
+        hcursor handle_NtUserGetCursor(const syscall_context& c)
         {
-            return 0;
+            return c.proc.current_cursor;
+        }
+
+        hicon handle_NtUserCreateEmptyCursorObject()
+        {
+            return make_pseudo_handle(0x100, handle_types::reserved).bits;
+        }
+
+        BOOL handle_NtUserSetCursorIconData()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetCursorIconDataEx()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserGetRequiredCursorSizes()
+        {
+            return TRUE;
         }
 
         NTSTATUS handle_NtUserFindExistingCursorIcon()
@@ -2437,7 +2457,10 @@ namespace sogen
                     guest_win.spmenu = menu;
                 }
                 guest_win.windowBand = 1; // ZBID_DESKTOP
+                guest_win.dpiContext = USER_DEFAULT_DPI_CONTEXT;
                 guest_win.fnid = get_builtin_window_fnid(normalized_class);
+                guest_win.threadId = win.thread_id;
+                guest_win.processId = process_context::process_id;
 
                 win.host_surface_window = !is_message_only;
 
@@ -4308,6 +4331,11 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        int32_t handle_NtUserTranslateAccelerator()
+        {
+            return 0;
+        }
+
         hmenu handle_NtUserCreateMenu(const syscall_context& c)
         {
             auto [handle, menu_obj] = c.proc.menus.create(c.win_emu.memory);
@@ -4489,6 +4517,10 @@ namespace sogen
         {
             return TRUE;
         }
+        BOOL handle_NtUserDestroyCaret()
+        {
+            return TRUE;
+        }
 
         BOOL handle_NtUserSetCaretPos()
         {
@@ -4501,11 +4533,6 @@ namespace sogen
         }
 
         BOOL handle_NtUserHideCaret()
-        {
-            return TRUE;
-        }
-
-        BOOL handle_NtUserDestroyCaret()
         {
             return TRUE;
         }
@@ -4523,11 +4550,11 @@ namespace sogen
                 return 0;
             }
 
-            // WINDOWINFOCLASS: WindowProcess (0) returns the owning process id; the single emulated process
-            // always has id 1 (see TEB ClientId.UniqueProcess). Everything else resolves to the thread.
+            // WINDOWINFOCLASS: WindowProcess (0) returns the owning process id. Everything else resolves to
+            // the thread.
             if (query_type == 0)
             {
-                return 1;
+                return process_context::process_id;
             }
 
             return win->thread_id;
@@ -4566,6 +4593,195 @@ namespace sogen
         BOOL handle_NtUserSetActiveWindow()
         {
             return TRUE;
+        }
+
+        NTSTATUS handle_NtUserSelectPalette()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        BOOL handle_NtUserSwapMouseButton()
+        {
+            return TRUE;
+        }
+
+        int32_t handle_NtUserGetKeyNameText(const syscall_context& c, const int32_t l_param, const emulator_pointer buffer,
+                                            const int32_t character_count)
+        {
+            const auto copy_u16_string_to_buffer = [](const syscall_context& c, const std::u16string_view text,
+                                                      const emulator_pointer buffer, const int32_t character_count) -> uint64_t {
+                if (character_count <= 0 || buffer == 0)
+                {
+                    return 0;
+                }
+
+                const auto capacity = static_cast<uint64_t>(character_count);
+                const auto copy_count = std::min<uint64_t>(text.size(), capacity - 1);
+                if (copy_count != 0 &&
+                    !c.win_emu.memory.try_write_memory(buffer, text.data(), static_cast<size_t>(copy_count * sizeof(char16_t))))
+                {
+                    return 0;
+                }
+
+                const char16_t terminator = u'\0';
+                if (!c.win_emu.memory.try_write_memory(buffer + copy_count * sizeof(char16_t), &terminator, sizeof(terminator)))
+                {
+                    return 0;
+                }
+
+                return copy_count;
+            };
+
+            const auto get_key_name_from_lparam = [](const uint64_t l_param) -> std::u16string {
+                const auto scan_code = static_cast<uint32_t>((l_param >> 16) & 0xFFu);
+                const auto extended = ((l_param >> 24) & 0x1u) != 0;
+
+                if (scan_code >= 0x10 && scan_code <= 0x19)
+                {
+                    static constexpr std::u16string_view top_row = u"QWERTYUIOP";
+                    return {1, top_row[scan_code - 0x10]};
+                }
+
+                if (scan_code >= 0x1E && scan_code <= 0x26)
+                {
+                    static constexpr std::u16string_view home_row = u"ASDFGHJKL";
+                    return {1, home_row[scan_code - 0x1E]};
+                }
+
+                if (scan_code >= 0x2C && scan_code <= 0x32)
+                {
+                    static constexpr std::u16string_view bottom_row = u"ZXCVBNM";
+                    return {1, bottom_row[scan_code - 0x2C]};
+                }
+
+                if (scan_code >= 0x02 && scan_code <= 0x0B)
+                {
+                    static constexpr std::u16string_view digits = u"1234567890";
+                    return {1, digits[scan_code - 0x02]};
+                }
+
+                if (scan_code >= 0x3B && scan_code <= 0x44)
+                {
+                    const auto fn = 1u + (scan_code - 0x3B);
+                    std::u16string name = u"F";
+                    for (const char ch : std::to_string(fn))
+                    {
+                        name.push_back(static_cast<char16_t>(ch));
+                    }
+                    return name;
+                }
+
+                if (scan_code == 0x57)
+                {
+                    return u"F11";
+                }
+
+                if (scan_code == 0x58)
+                {
+                    return u"F12";
+                }
+
+                switch (scan_code)
+                {
+                case 0x01:
+                    return u"Esc";
+                case 0x0C:
+                    return u"-";
+                case 0x0D:
+                    return u"=";
+                case 0x0E:
+                    return u"Backspace";
+                case 0x0F:
+                    return u"Tab";
+                case 0x1A:
+                    return u"[";
+                case 0x1B:
+                    return u"]";
+                case 0x1C:
+                    return u"Enter";
+                case 0x1D:
+                    return u"Ctrl";
+                case 0x27:
+                    return u";";
+                case 0x28:
+                    return u"'";
+                case 0x29:
+                    return u"`";
+                case 0x2A:
+                case 0x36:
+                    return u"Shift";
+                case 0x2B:
+                    return u"\\";
+                case 0x33:
+                    return u",";
+                case 0x34:
+                    return u".";
+                case 0x35:
+                    return extended ? u"Num /" : u"/";
+                case 0x37:
+                    return extended ? u"PrtScn" : u"Num *";
+                case 0x38:
+                    return u"Alt";
+                case 0x39:
+                    return u"Space";
+                case 0x3A:
+                    return u"Caps Lock";
+                case 0x45:
+                    return extended ? u"Pause" : u"Num Lock";
+                case 0x46:
+                    return u"Scroll Lock";
+                case 0x47:
+                    return extended ? u"Home" : u"Num 7";
+                case 0x48:
+                    return extended ? u"Up" : u"Num 8";
+                case 0x49:
+                    return extended ? u"Page Up" : u"Num 9";
+                case 0x4A:
+                    return u"Num -";
+                case 0x4B:
+                    return extended ? u"Left" : u"Num 4";
+                case 0x4C:
+                    return u"Num 5";
+                case 0x4D:
+                    return extended ? u"Right" : u"Num 6";
+                case 0x4E:
+                    return u"Num +";
+                case 0x4F:
+                    return extended ? u"End" : u"Num 1";
+                case 0x50:
+                    return extended ? u"Down" : u"Num 2";
+                case 0x51:
+                    return extended ? u"Page Down" : u"Num 3";
+                case 0x52:
+                    return extended ? u"Insert" : u"Num 0";
+                case 0x53:
+                    return extended ? u"Delete" : u"Num Del";
+                case 0x5B:
+                    return u"Left Windows";
+                case 0x5C:
+                    return u"Right Windows";
+                case 0x5D:
+                    return u"Application";
+                default:
+                    return {};
+                }
+            };
+
+            const auto name = get_key_name_from_lparam(static_cast<uint32_t>(l_param));
+            if (name.empty())
+            {
+                return 0;
+            }
+
+            return static_cast<int32_t>(copy_u16_string_to_buffer(c, name, buffer, character_count));
+        }
+
+        hwnd handle_NtUserWindowFromPoint(const syscall_context& c, const int32_t /*x*/, const int32_t /*y*/)
+        {
+            // TODO: Properly resolve the topmost visible/enabled window containing the
+            //       screen point, walking child windows in z-order; this stub just returns the
+            //       current foreground window.
+            return c.proc.foreground_window;
         }
     }
 
