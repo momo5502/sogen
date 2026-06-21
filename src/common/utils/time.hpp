@@ -29,12 +29,12 @@ namespace sogen
 
             virtual ~clock() = default;
 
-            virtual system_time_point system_now()
+            virtual system_time_point system_now() const
             {
                 return std::chrono::system_clock::now();
             }
 
-            virtual steady_time_point steady_now()
+            virtual steady_time_point steady_now() const
             {
                 return std::chrono::steady_clock::now();
             }
@@ -66,12 +66,12 @@ namespace sogen
                 }
             }
 
-            system_time_point system_now() override
+            system_time_point system_now() const override
             {
                 return this->now(this->system_start_);
             }
 
-            steady_time_point steady_now() override
+            steady_time_point steady_now() const override
             {
                 return this->now(this->steady_start_);
             }
@@ -81,7 +81,7 @@ namespace sogen
                 return this->ticks();
             }
 
-            virtual uint64_t ticks() = 0;
+            virtual uint64_t ticks() const = 0;
 
             uint64_t get_frequency() const
             {
@@ -94,7 +94,7 @@ namespace sogen
             steady_time_point steady_start_{};
 
             template <typename TimePoint>
-            TimePoint now(const TimePoint start)
+            TimePoint now(const TimePoint start) const
             {
                 using duration = typename TimePoint::duration;
 

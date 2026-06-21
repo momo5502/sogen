@@ -17,6 +17,7 @@ namespace sogen
     {
         constexpr ULONG k_thread_state_win32_thread_info = 0xE;
         constexpr ULONG k_thread_state_dialog_state = 0xA;
+        constexpr ULONG k_thread_state_message_time = 0x9;
         constexpr size_t k_win32_thread_info_slab_size = 0x2000;
         constexpr uint64_t k_win32_thread_info_bias = 0x800;
         constexpr uint32_t k_client_setup_callback_id = 0x54;
@@ -423,7 +424,8 @@ namespace sogen
 
             if (auto* thread = c.proc.find_thread_by_id(win.thread_id))
             {
-                thread->post_message(msg{.window = win.handle, .message = WM_PAINT, .wParam = 0, .lParam = 0, .time = 0, .pt = {}});
+                thread->post_message(c.win_emu,
+                                     msg{.window = win.handle, .message = WM_PAINT, .wParam = 0, .lParam = 0, .time = 0, .pt = {}});
                 win.paint_message_posted = true;
             }
         }
@@ -1345,6 +1347,11 @@ namespace sogen
 
         uint64_t handle_NtUserGetThreadState(const syscall_context& c, const ULONG routine)
         {
+            if (routine == k_thread_state_message_time)
+            {
+                return c.proc.active_thread ? c.proc.active_thread->current_message_time : 0;
+            }
+
             if (routine == k_thread_state_dialog_state)
             {
                 return c.proc.active_thread ? c.proc.active_thread->win32k_thread_state : 0;
@@ -2840,7 +2847,7 @@ namespace sogen
                         queued_message.message = msg;
                         queued_message.wParam = w_param;
                         queued_message.lParam = l_param;
-                        t->post_message(queued_message);
+                        t->post_message(c.win_emu, queued_message);
                         return TRUE;
                     }
                 }
@@ -2975,6 +2982,8 @@ namespace sogen
                 return 0;
             }
 
+            c.proc.active_thread->current_message_time = m.time;
+
             if (m.message == WM_TIMER && m.lParam != 0)
             {
                 set_thread_window_context(c, m.window, win ? win->guest.value() : 0);
@@ -3016,9 +3025,10 @@ namespace sogen
         {
             auto& t = c.win_emu.current_thread();
 
-            if (auto pending_msg = t.peek_pending_message(c.proc, c.win_emu.clock(), hwnd, msg_filter_min, msg_filter_max, true))
+            if (auto pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, true))
             {
                 message.write(*pending_msg);
+                t.current_message_time = pending_msg->time;
                 set_thread_window_context(c, pending_msg->window);
                 return pending_msg->message != WM_QUIT ? TRUE : FALSE;
             }
@@ -3035,12 +3045,12 @@ namespace sogen
             auto& t = c.win_emu.current_thread();
 
             const bool should_remove = (remove_message & PM_REMOVE) != 0;
-            std::optional<msg> pending_msg =
-                t.peek_pending_message(c.proc, c.win_emu.clock(), hwnd, msg_filter_min, msg_filter_max, should_remove);
+            std::optional<msg> pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, should_remove);
 
             if (pending_msg)
             {
                 message.write(*pending_msg);
+                t.current_message_time = pending_msg->time;
                 set_thread_window_context(c, pending_msg->window);
                 return TRUE;
             }
@@ -3051,7 +3061,7 @@ namespace sogen
         BOOL handle_NtUserWaitMessage(const syscall_context& c)
         {
             auto& t = c.win_emu.current_thread();
-            if (t.peek_pending_message(c.proc, c.win_emu.clock()))
+            if (t.peek_pending_message(c.win_emu))
             {
                 return TRUE;
             }
@@ -3125,7 +3135,7 @@ namespace sogen
                 qmsg.wParam = wParam;
                 qmsg.lParam = lParam;
 
-                thread->post_message(qmsg);
+                thread->post_message(c.win_emu, qmsg);
                 return TRUE;
             }
 
@@ -3142,7 +3152,7 @@ namespace sogen
                 qmsg.wParam = wParam;
                 qmsg.lParam = lParam;
 
-                thread->post_message(qmsg);
+                thread->post_message(c.win_emu, qmsg);
                 return TRUE;
             }
 
@@ -3155,7 +3165,7 @@ namespace sogen
             qmsg.message = WM_QUIT;
             qmsg.wParam = exit_code;
 
-            c.proc.active_thread->post_message(qmsg);
+            c.proc.active_thread->post_message(c.win_emu, qmsg);
             return TRUE;
         }
 
@@ -4284,7 +4294,7 @@ namespace sogen
         uint32_t handle_NtUserGetQueueStatusReadonly(const syscall_context& c, const UINT flags)
         {
             auto* thread = c.proc.active_thread;
-            const auto current_bits = thread->get_message_queue_status(c.win_emu.clock()) & flags;
+            const auto current_bits = thread->get_message_queue_status(c.win_emu) & flags;
             const auto changed_bits = thread->queue_status_changed_bits & flags;
             return current_bits | (changed_bits << 16);
         }
