@@ -53,7 +53,7 @@ jobs:
             runner: ubuntu-24.04
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -110,7 +110,7 @@ jobs:
       LLVM_VERSION: 21
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install Clang-format
         uses: nick-fields/retry@v4.0.0
@@ -136,7 +136,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -174,7 +174,7 @@ jobs:
           #  runner: windows-2019
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Download DirectX Runtime
         run: curl --connect-timeout 20 --max-time 200 --retry 5 --retry-delay 2 --retry-max-time 200 -L -o directx_Jun2010_redist.exe https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe
@@ -281,7 +281,7 @@ jobs:
             cmake-options: "-DSOGEN_EMSCRIPTEN_SUPPORT_NODEJS=On -DSOGEN_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -402,7 +402,7 @@ jobs:
             cmake-options: "-DSOGEN_ENABLE_LTO=Off"
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -476,7 +476,7 @@ jobs:
             runner: macos-15-intel
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -549,7 +549,7 @@ jobs:
             preset: release
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -795,7 +795,7 @@ jobs:
     needs: [create-emulation-root, build]
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -873,7 +873,7 @@ jobs:
             artifact: macos-x86_64
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
@@ -939,7 +939,7 @@ jobs:
             artifact: macos-x86_64
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -985,7 +985,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout Source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           submodules: recursive
