@@ -110,6 +110,7 @@ namespace sogen
         hwnd target_window{};
         int32_t current_x{};
         int32_t current_y{};
+        bool is_memory_dc{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -117,6 +118,7 @@ namespace sogen
             buffer.write(this->target_window);
             buffer.write(this->current_x);
             buffer.write(this->current_y);
+            buffer.write(this->is_memory_dc);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -125,6 +127,7 @@ namespace sogen
             buffer.read(this->target_window);
             buffer.read(this->current_x);
             buffer.read(this->current_y);
+            buffer.read(this->is_memory_dc);
         }
     };
 
@@ -384,6 +387,7 @@ namespace sogen
         hwnd foreground_window{};
         int32_t cursor_x{};
         int32_t cursor_y{};
+        hcursor current_cursor{};
         int32_t cursor_show_count{};
         // Per-virtual-key pressed state (0x80 = down), updated from key/mouse-button events and reported by
         // GetKeyState; games poll this for in-game input (movement, etc.) rather than window messages.

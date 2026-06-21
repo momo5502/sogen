@@ -387,7 +387,7 @@ namespace sogen
             auto& emu = win_emu.emu();
             auto& context = win_emu.process;
 
-            const auto is_ready = thread.is_thread_ready(context, win_emu.clock());
+            const auto is_ready = thread.is_thread_ready(win_emu);
             const auto has_pending_status = thread.pending_status.has_value();
             const auto can_dispatch_apcs = thread.apc_alertable && !thread.pending_apcs.empty();
 
@@ -1042,7 +1042,7 @@ namespace sogen
         while (!this->should_stop)
         {
             this->ui_backend_->pump_events();
-            if (this->switch_thread_ || !this->current_thread().is_thread_ready(this->process, this->clock()))
+            if (this->switch_thread_ || !this->current_thread().is_thread_ready(*this))
             {
                 if (!this->perform_thread_switch())
                 {
@@ -1105,7 +1105,7 @@ namespace sogen
         m.message = WM_INPUT;
         m.wParam = RIM_INPUT;
         m.lParam = token;
-        thread->post_message(m);
+        thread->post_message(*this, m);
     }
 
     void windows_emulator::deliver_raw_mouse_input(const int32_t dx, const int32_t dy, const uint16_t button_flags)
@@ -1230,7 +1230,7 @@ namespace sogen
             this->deliver_raw_keyboard_input(vk, vk_to_scan_code(vk), event.message == WM_KEYUP);
         }
 
-        thread->post_message(m);
+        thread->post_message(*this, m, true);
 
         if (event.message == WM_CLOSE || event.message == WM_COMMAND || event.message == WM_KEYDOWN || event.message == WM_LBUTTONDOWN ||
             event.message == WM_LBUTTONUP)
