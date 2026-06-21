@@ -4428,6 +4428,7 @@ namespace sogen
 
             const bool is_image =
                 (w.descriptor_type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ||
+                 w.descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE || w.descriptor_type == VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT ||
                  w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLER);
             if (is_image)
             {

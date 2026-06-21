@@ -265,6 +265,7 @@ namespace sogen
                 || info_class == ProcessDynamicFunctionTableInformation      //
                 || info_class == ProcessPriorityBoost                        //
                 || info_class == ProcessPriorityClassEx                      //
+                || info_class == ProcessQuotaLimits                          //
                 || info_class == ProcessPriorityClass || info_class == ProcessAffinityMask)
             {
                 return STATUS_SUCCESS;

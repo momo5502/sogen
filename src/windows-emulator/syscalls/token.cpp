@@ -256,6 +256,21 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            if (token_information_class == TokenElevationType)
+            {
+                constexpr auto required_size = sizeof(ULONG);
+                return_length.write(required_size);
+
+                if (required_size > token_information_length)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                // TokenElevationTypeDefault: no UAC split token (matches the non-elevated TokenElevation above).
+                emulator_object<ULONG>{c.emu, token_information}.write(1);
+                return STATUS_SUCCESS;
+            }
+
             if (token_information_class == TokenIsAppContainer)
             {
                 constexpr auto required_size = sizeof(ULONG);
