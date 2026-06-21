@@ -2991,7 +2991,7 @@ namespace sogen
     {
         const size_t attach_bytes = static_cast<size_t>(attachment_count) * sizeof(VkClearAttachment);
         const size_t rect_bytes = static_cast<size_t>(rect_count) * sizeof(VkClearRect);
-        if (attach_bytes + rect_bytes > data_size)
+        if (data_size < attach_bytes || data_size - attach_bytes < rect_bytes)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
