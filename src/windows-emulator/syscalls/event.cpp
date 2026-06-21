@@ -60,7 +60,7 @@ namespace sogen
             {
                 if (std::ranges::find(thread.await_objects, event_handle) != thread.await_objects.end())
                 {
-                    (void)thread.is_thread_ready(c.proc, c.win_emu.clock());
+                    (void)thread.is_thread_ready(c.win_emu);
                 }
             }
 
