@@ -9,6 +9,7 @@
 #include <cstring>
 #include <unordered_map>
 #include <vector>
+#include <ranges>
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan_core.h>
@@ -507,6 +508,26 @@ namespace sogen
         std::unordered_map<uint64_t, descriptor_pool_data> descriptor_pools;
         std::unordered_map<uint64_t, descriptor_set_data> descriptor_sets;
         uint64_t next_id{1};
+
+        static bool drain_readback(swapchain_data& sc, device_data& dev, vulkan_host::presented_frame& frame)
+        {
+            const auto readback_size = static_cast<VkDeviceSize>(sc.width) * sc.height * 4;
+            void* mapped = nullptr;
+            if (dev.map_memory(dev.handle, sc.readback_memory, 0, readback_size, 0, &mapped) != VK_SUCCESS || !mapped)
+            {
+                sc.present_in_flight = false;
+                return false;
+            }
+
+            frame.pixels.resize(static_cast<size_t>(readback_size));
+            std::memcpy(frame.pixels.data(), mapped, frame.pixels.size());
+            dev.unmap_memory(dev.handle, sc.readback_memory);
+            frame.width = sc.width;
+            frame.height = sc.height;
+            frame.hwnd = sc.hwnd;
+            sc.present_in_flight = false;
+            return true;
+        }
 
         // Picks the first memory type set in `type_bits` that has all `required` property flags, using
         // the memory properties of the device's physical device. Returns UINT32_MAX if none qualifies.
@@ -3590,8 +3611,6 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        const VkDeviceSize readback_size = static_cast<VkDeviceSize>(sc.width) * sc.height * 4;
-
         // The work loop normally collects completed readbacks. If another present arrives first, reclaim
         // the single readback slot here; waiting is only necessary when the guest outruns the GPU copy.
         if (sc.present_in_flight)
@@ -3601,17 +3620,14 @@ namespace sogen
                 dev.queue_wait_idle(queue_it->second.handle);
             }
 
-            void* mapped = nullptr;
-            if (dev.map_memory(dev.handle, sc.readback_memory, 0, readback_size, 0, &mapped) == VK_SUCCESS && mapped)
+            presented_frame frame{};
+            if (impl::drain_readback(sc, dev, frame))
             {
-                out_pixels.resize(static_cast<size_t>(readback_size));
-                std::memcpy(out_pixels.data(), mapped, out_pixels.size());
-                dev.unmap_memory(dev.handle, sc.readback_memory);
-                out_width = sc.width;
-                out_height = sc.height;
-                out_hwnd = sc.hwnd;
+                out_pixels = std::move(frame.pixels);
+                out_width = frame.width;
+                out_height = frame.height;
+                out_hwnd = frame.hwnd;
             }
-            sc.present_in_flight = false;
         }
 
         // Make the rendered image's writes visible to the copy, then copy it into the readback buffer.
@@ -3673,9 +3689,8 @@ namespace sogen
     {
         std::vector<presented_frame> frames{};
 
-        for (auto& [id, sc] : this->impl_->swapchains)
+        for (auto& sc : this->impl_->swapchains | std::views::values)
         {
-            (void)id;
             if (!sc.present_in_flight)
             {
                 continue;
@@ -3693,22 +3708,12 @@ namespace sogen
                 continue;
             }
 
-            const auto readback_size = static_cast<VkDeviceSize>(sc.width) * sc.height * 4;
-            void* mapped = nullptr;
-            if (dev.map_memory(dev.handle, sc.readback_memory, 0, readback_size, 0, &mapped) != VK_SUCCESS || !mapped)
+            auto& frame = frames.emplace_back();
+            if (!impl::drain_readback(sc, dev, frame))
             {
-                sc.present_in_flight = false;
+                frames.pop_back();
                 continue;
             }
-
-            auto& frame = frames.emplace_back();
-            frame.pixels.resize(static_cast<size_t>(readback_size));
-            std::memcpy(frame.pixels.data(), mapped, frame.pixels.size());
-            dev.unmap_memory(dev.handle, sc.readback_memory);
-            frame.width = sc.width;
-            frame.height = sc.height;
-            frame.hwnd = sc.hwnd;
-            sc.present_in_flight = false;
         }
 
         return frames;

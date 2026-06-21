@@ -22,11 +22,7 @@ namespace sogen
             {
                 for (auto& frame : this->vulkan_.poll_presented_frames())
                 {
-                    win_emu.ui().present_surface(static_cast<hwnd>(frame.hwnd), ui_surface_desc{.width = static_cast<int>(frame.width),
-                                                                                                .height = static_cast<int>(frame.height),
-                                                                                                .stride = static_cast<int>(frame.width * 4),
-                                                                                                .format = ui_surface_format::bgra8,
-                                                                                                .pixels = frame.pixels.data()});
+                    present_surface_if_ready(win_emu, frame.hwnd, frame.width, frame.height, frame.pixels);
                 }
             }
 
@@ -261,6 +257,23 @@ namespace sogen
                 {
                     context.io_status_block.access([&](IO_STATUS_BLOCK<EmulatorTraits<Emu64>>& block) { block.Information = bytes; });
                 }
+            }
+
+            static void present_surface_if_ready(windows_emulator& win_emu, const uint64_t hwnd_value, const uint32_t width,
+                                                 const uint32_t height, const std::vector<std::byte>& pixels)
+            {
+                if (hwnd_value == 0 || pixels.empty())
+                {
+                    return;
+                }
+
+                win_emu.ui().present_surface(static_cast<hwnd>(hwnd_value), ui_surface_desc{
+                                                                                .width = static_cast<int>(width),
+                                                                                .height = static_cast<int>(height),
+                                                                                .stride = static_cast<int>(width * 4),
+                                                                                .format = ui_surface_format::bgra8,
+                                                                                .pixels = pixels.data(),
+                                                                            });
             }
 
             // Reads a fixed-size request struct from the guest input buffer.
@@ -1640,15 +1653,9 @@ namespace sogen
 
                 // Hand the freshly read-back pixels to the guest window through the UI backend (the same
                 // seam GDI EndPaint uses). The swapchain is B8G8R8A8, matching bgra8, so no swizzle.
-                if (result == 0 /* VK_SUCCESS */ && hwnd_value != 0 && !pixels.empty())
+                if (result == 0 /* VK_SUCCESS */)
                 {
-                    win_emu.ui().present_surface(static_cast<hwnd>(hwnd_value), ui_surface_desc{
-                                                                                    .width = static_cast<int>(width),
-                                                                                    .height = static_cast<int>(height),
-                                                                                    .stride = static_cast<int>(width * 4),
-                                                                                    .format = ui_surface_format::bgra8,
-                                                                                    .pixels = pixels.data(),
-                                                                                });
+                    present_surface_if_ready(win_emu, hwnd_value, width, height, pixels);
                 }
 
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
