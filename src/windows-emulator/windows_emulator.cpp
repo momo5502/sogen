@@ -183,10 +183,10 @@ namespace sogen
             default:
                 if (vk >= 'A' && vk <= 'Z')
                 {
-                    static constexpr uint8_t letter_scan[26] = {0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17,
-                                                                0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13,
-                                                                0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C};
-                    return letter_scan[vk - 'A'];
+                    static constexpr std::array<uint8_t, 26> letter_scan = {0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17,
+                                                                            0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13,
+                                                                            0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C};
+                    return letter_scan[static_cast<size_t>(vk - 'A')];
                 }
                 if (vk >= '1' && vk <= '9')
                 {
