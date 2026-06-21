@@ -1921,6 +1921,11 @@ namespace sogen
             return make_pseudo_handle(0x100, handle_types::reserved).bits;
         }
 
+        BOOL handle_NtUserSetCursorIconData()
+        {
+            return TRUE;
+        }
+
         BOOL handle_NtUserSetCursorIconDataEx()
         {
             return TRUE;

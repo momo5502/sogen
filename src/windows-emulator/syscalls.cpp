@@ -474,6 +474,7 @@ namespace sogen
         hcursor handle_NtUserSetCursor(const syscall_context& c, hcursor cursor);
         hcursor handle_NtUserGetCursor(const syscall_context& c);
         hicon handle_NtUserCreateEmptyCursorObject();
+        BOOL handle_NtUserSetCursorIconData();
         BOOL handle_NtUserSetCursorIconDataEx();
         BOOL handle_NtUserGetRequiredCursorSizes();
         NTSTATUS handle_NtUserFindExistingCursorIcon();
@@ -1331,6 +1332,7 @@ namespace sogen
         add_handler(NtUserReleaseDC);
         add_handler(NtUserFindExistingCursorIcon);
         add_handler(NtUserCreateEmptyCursorObject);
+        add_handler(NtUserSetCursorIconData);
         add_handler(NtUserSetCursorIconDataEx);
         add_handler(NtUserGetRequiredCursorSizes);
         add_handler(NtUserDestroyCursor);
