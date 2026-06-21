@@ -2728,8 +2728,8 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    return this->vulkan_.cmd_clear_attachments(req.command_buffer, req.attachment_count, req.rect_count, payload + sizeof(req),
-                                                               size - sizeof(req));
+                    return this->vulkan_.cmd_clear_attachments(req.command_buffer, req.attachment_count, req.rect_count,
+                                                               payload + sizeof(req), size - sizeof(req));
                 }
                 case gpu_bridge::command::cmd_clear_depth_stencil_image: {
                     gpu_bridge::cmd_clear_depth_stencil_image_request req{};
