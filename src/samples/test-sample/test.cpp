@@ -1541,7 +1541,7 @@ namespace
             return false;
         }
 
-        const auto cursor = LoadCursorFromFileW(cursor_path);
+        const HCURSOR cursor = LoadCursorFromFileW(cursor_path);
         if (!cursor)
         {
             puts("LoadCursorFromFileW failed to load aero_arrow.cur");

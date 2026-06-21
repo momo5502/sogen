@@ -4567,25 +4567,25 @@ namespace sogen
                 if (scan_code >= 0x10 && scan_code <= 0x19)
                 {
                     static constexpr std::u16string_view top_row = u"QWERTYUIOP";
-                    return std::u16string(1, top_row[scan_code - 0x10]);
+                    return {1, top_row[scan_code - 0x10]};
                 }
 
                 if (scan_code >= 0x1E && scan_code <= 0x26)
                 {
                     static constexpr std::u16string_view home_row = u"ASDFGHJKL";
-                    return std::u16string(1, home_row[scan_code - 0x1E]);
+                    return {1, home_row[scan_code - 0x1E]};
                 }
 
                 if (scan_code >= 0x2C && scan_code <= 0x32)
                 {
                     static constexpr std::u16string_view bottom_row = u"ZXCVBNM";
-                    return std::u16string(1, bottom_row[scan_code - 0x2C]);
+                    return {1, bottom_row[scan_code - 0x2C]};
                 }
 
                 if (scan_code >= 0x02 && scan_code <= 0x0B)
                 {
                     static constexpr std::u16string_view digits = u"1234567890";
-                    return std::u16string(1, digits[scan_code - 0x02]);
+                    return {1, digits[scan_code - 0x02]};
                 }
 
                 if (scan_code >= 0x3B && scan_code <= 0x44)
@@ -4626,9 +4626,9 @@ namespace sogen
                 case 0x1B:
                     return u"]";
                 case 0x1C:
-                    return extended ? u"Enter" : u"Enter";
+                    return u"Enter";
                 case 0x1D:
-                    return extended ? u"Ctrl" : u"Ctrl";
+                    return u"Ctrl";
                 case 0x27:
                     return u";";
                 case 0x28:
@@ -4649,7 +4649,7 @@ namespace sogen
                 case 0x37:
                     return extended ? u"PrtScn" : u"Num *";
                 case 0x38:
-                    return extended ? u"Alt" : u"Alt";
+                    return u"Alt";
                 case 0x39:
                     return u"Space";
                 case 0x3A:
