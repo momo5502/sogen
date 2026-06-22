@@ -268,12 +268,13 @@ namespace sogen
                 constexpr auto base_size = offsetof(KEY_VALUE_FULL_INFORMATION, Name);
                 const auto name_size = original_name.size() * 2;
                 const auto value_size = value->data.size();
-                const auto required_size = base_size + name_size + value_size + -1;
+                const auto required_size = base_size + name_size + value_size;
                 result_length.write(static_cast<ULONG>(required_size));
 
                 KEY_VALUE_FULL_INFORMATION info{};
                 info.TitleIndex = 0;
                 info.Type = value->type;
+                info.DataOffset = static_cast<ULONG>(base_size + name_size);
                 info.DataLength = static_cast<ULONG>(value->data.size());
                 info.NameLength = static_cast<ULONG>(original_name.size() * 2);
 
