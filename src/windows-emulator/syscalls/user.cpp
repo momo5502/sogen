@@ -1328,7 +1328,7 @@ namespace sogen
     namespace syscalls
     {
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
-        uint64_t handle_NtGdiCreateCompatibleDC(const syscall_context& c, hdc dc);
+        hdc create_gdi_window_dc(const syscall_context& c, hwnd window);
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         BOOL handle_NtGdiFlush(const syscall_context& c);
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
@@ -1519,12 +1519,7 @@ namespace sogen
 
         hdc handle_NtUserGetDCEx(const syscall_context& c, const hwnd window, const uint64_t /*clip_region*/, const ULONG /*flags*/)
         {
-            const auto dc = handle_NtGdiCreateCompatibleDC(c, {});
-            if (dc != 0)
-            {
-                c.proc.gdi_dc_states[static_cast<uint32_t>(dc)].target_window = window;
-            }
-            return dc;
+            return create_gdi_window_dc(c, window);
         }
 
         hdc handle_NtUserGetDC(const syscall_context& c, const hwnd window)
