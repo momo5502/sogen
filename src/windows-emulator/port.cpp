@@ -43,7 +43,7 @@ namespace sogen
         struct noop_rpc_port : rpc_port
         {
             NTSTATUS handle_rpc(windows_emulator& /*win_emu*/, const uint32_t /*procedure_id*/, const lpc_request_context&,
-                                utils::aligned_binary_writer& /*writer*/) override
+                                utils::aligned_binary_writer& /*writer*/, std::vector<alpc_reply_handle>& /*reply_handles*/) override
             {
                 return STATUS_SUCCESS;
             }
@@ -191,6 +191,7 @@ namespace sogen
         {
             result.payload = std::move(*request_result.payload);
         }
+        result.handles = std::move(request_result.handles);
 
         return result;
     }
@@ -283,7 +284,8 @@ namespace sogen
             rpc_context.recv_buffer_length = c.recv_buffer_length - static_cast<DWORD>(header.size());
         }
 
-        const auto status = this->handle_rpc(win_emu, procedure_id, rpc_context, writer);
+        std::vector<alpc_reply_handle> reply_handles;
+        const auto status = this->handle_rpc(win_emu, procedure_id, rpc_context, writer, reply_handles);
 
         if (getenv("EMULATOR_LOG_RPC"))
         {
@@ -294,10 +296,13 @@ namespace sogen
                 (void)snprintf(tmp, sizeof(tmp), "%02x ", payload[i]);
                 hex += tmp;
             }
-            win_emu.log.error("[rpc] opnum=%u reply ndr(%zu): %s\n", procedure_id, payload.size() - sizeof(header), hex.c_str());
+            win_emu.log.error("[rpc] opnum=%u reply ndr(%zu) handles(%zu): %s\n", procedure_id, payload.size() - sizeof(header),
+                              reply_handles.size(), hex.c_str());
         }
 
-        return {status, std::move(payload)};
+        lpc_request_result result{status, std::move(payload)};
+        result.handles = std::move(reply_handles);
+        return result;
     }
 
 } // namespace sogen
