@@ -305,11 +305,14 @@ namespace sogen
                 constexpr uint32_t section_all_access = 0xF001F; // SECTION_ALL_ACCESS
                 reply_handles.push_back(alpc_reply_handle{section_handle.bits, 0, section_all_access});
 
-                // The 120-byte op7 [out] wire (captured from a live service). NOTE: the emulator's audioses takes
-                // the op7 client stub at audioses!0x50154, whose NDR format treats the cookie (+0x20) as a unique
-                // pointer and the three counts (+0x50..0x58) as conformant array sizes. The captured non-zero
-                // values make that unmarshal expect trailing referent data and fail with E_INVALIDARG, so they
-                // are zeroed (null pointer / empty arrays) to keep op7 valid for this path.
+                // The 120-byte op7 [out] wire (captured from a live service). Its NDR type is an FC_BOGUS_STRUCT
+                // (in-memory size 0x4e8) with several embedded unique pointers and an FC_SYSTEM_HANDLE (the shared
+                // render section). The cookie (+0x20) and the three referent ids (+0x50/+0x54/+0x58) are those
+                // embedded pointers; when non-zero, NDR follows them and reads the system handle from the ALPC
+                // HANDLE attribute. Delivering that handle so audioses accepts it isn't solved yet (it validates
+                // the handle: GrantedAccess 0xF001F -> E_INVALIDARG, 0/0x6 -> E_HANDLE), so we zero the referents
+                // (null pointers / empty arrays). That makes op7 return S_OK, but the client then takes the
+                // op7a->op5 path; op5 has no capture (native uses op7->op8/op9). See the alpc_capture notes.
                 static constexpr std::array<uint8_t, 120> system_audio_stream = {
                     0x40, 0x37, 0x77, 0xcd, 0x87, 0xb1, 0x74, 0x49, 0xa1, 0xd5, 0xe0, 0xff, // session GUID
                     0x91, 0x37, 0x22, 0x77, 0x20, 0x62, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, // nAvgBytesPerSec=0x56220
@@ -317,7 +320,7 @@ namespace sogen
                     0x00, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // embedded ptr referents -> null
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
