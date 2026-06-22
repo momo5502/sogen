@@ -3381,6 +3381,7 @@ namespace sogen
         {
             VkImageCreateInfo info{};
             info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+            info.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
             info.imageType = VK_IMAGE_TYPE_2D;
             info.format = vk_format;
             info.extent = {.width = width, .height = height, .depth = 1};
