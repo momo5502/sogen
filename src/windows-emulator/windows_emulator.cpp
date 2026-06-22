@@ -134,6 +134,72 @@ namespace sogen
                    message == WM_RBUTTONUP;
         }
 
+        // Window button message -> RAWMOUSE usButtonFlags transition bit (winuser.h RI_MOUSE_* values).
+        uint16_t raw_mouse_button_flags(const uint32_t message)
+        {
+            switch (message)
+            {
+            case WM_LBUTTONDOWN:
+                return 0x0001; // RI_MOUSE_LEFT_BUTTON_DOWN
+            case WM_LBUTTONUP:
+                return 0x0002; // RI_MOUSE_LEFT_BUTTON_UP
+            case WM_RBUTTONDOWN:
+                return 0x0004; // RI_MOUSE_RIGHT_BUTTON_DOWN
+            case WM_RBUTTONUP:
+                return 0x0008; // RI_MOUSE_RIGHT_BUTTON_UP
+            default:
+                return 0;
+            }
+        }
+
+        // Best-effort US-layout virtual-key -> PS/2 set-1 scan code for the RAWKEYBOARD MakeCode field
+        // (games that bind by scan code need it; the VKey is delivered too for those that use it).
+        uint16_t vk_to_scan_code(const uint16_t vk)
+        {
+            switch (vk)
+            {
+            case VK_ESCAPE:
+                return 0x01;
+            case VK_RETURN:
+                return 0x1C;
+            case VK_SPACE:
+                return 0x39;
+            case VK_TAB:
+                return 0x0F;
+            case VK_BACK:
+                return 0x0E;
+            case VK_SHIFT:
+                return 0x2A;
+            case VK_CONTROL:
+                return 0x1D;
+            case VK_UP:
+                return 0x48;
+            case VK_DOWN:
+                return 0x50;
+            case VK_LEFT:
+                return 0x4B;
+            case VK_RIGHT:
+                return 0x4D;
+            default:
+                if (vk >= 'A' && vk <= 'Z')
+                {
+                    static constexpr std::array<uint8_t, 26> letter_scan = {0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17,
+                                                                            0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13,
+                                                                            0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C};
+                    return letter_scan[static_cast<size_t>(vk - 'A')];
+                }
+                if (vk >= '1' && vk <= '9')
+                {
+                    return static_cast<uint16_t>(0x02 + (vk - '1'));
+                }
+                if (vk == '0')
+                {
+                    return 0x0B;
+                }
+                return 0;
+            }
+        }
+
         uint64_t pack_point(const int x, const int y)
         {
             return static_cast<uint16_t>(x) | (static_cast<uint64_t>(static_cast<uint16_t>(y)) << 16);
@@ -321,7 +387,7 @@ namespace sogen
             auto& emu = win_emu.emu();
             auto& context = win_emu.process;
 
-            const auto is_ready = thread.is_thread_ready(context, win_emu.clock());
+            const auto is_ready = thread.is_thread_ready(win_emu);
             const auto has_pending_status = thread.pending_status.has_value();
             const auto can_dispatch_apcs = thread.apc_alertable && !thread.pending_apcs.empty();
 
@@ -976,7 +1042,7 @@ namespace sogen
         while (!this->should_stop)
         {
             this->ui_backend_->pump_events();
-            if (this->switch_thread_ || !this->current_thread().is_thread_ready(this->process, this->clock()))
+            if (this->switch_thread_ || !this->current_thread().is_thread_ready(*this))
             {
                 if (!this->perform_thread_switch())
                 {
@@ -1005,12 +1071,12 @@ namespace sogen
         }
     }
 
-    void windows_emulator::deliver_raw_mouse_input(const int32_t dx, const int32_t dy)
+    void windows_emulator::deliver_raw_input(const process_context::raw_input_payload& payload, const hwnd explicit_target)
     {
         // Resolve the destination at delivery time: an explicit hwndTarget, else the foreground window
         // (raw input registered with a NULL target follows keyboard focus). If neither resolves to a live
         // window right now there is nowhere to deliver to, so skip without dropping the registration.
-        const auto target = this->process.raw_mouse_target != 0 ? this->process.raw_mouse_target : this->process.foreground_window;
+        const auto target = explicit_target != 0 ? explicit_target : this->process.foreground_window;
         auto* raw_win = this->process.windows.get(target);
         if (!raw_win)
         {
@@ -1024,7 +1090,7 @@ namespace sogen
         }
 
         const auto token = this->process.next_raw_input_token++;
-        this->process.raw_inputs[token] = {dx, dy};
+        this->process.raw_inputs[token] = payload;
 
         // Bound the pending set: WM_INPUT is normally consumed at once by GetRawInputData, but if the guest
         // stops pumping, drop the oldest tokens so the map can't grow without limit.
@@ -1039,7 +1105,19 @@ namespace sogen
         m.message = WM_INPUT;
         m.wParam = RIM_INPUT;
         m.lParam = token;
-        thread->post_message(m);
+        thread->post_message(*this, m);
+    }
+
+    void windows_emulator::deliver_raw_mouse_input(const int32_t dx, const int32_t dy, const uint16_t button_flags)
+    {
+        this->deliver_raw_input({.keyboard = false, .dx = dx, .dy = dy, .mouse_buttons = button_flags}, this->process.raw_mouse_target);
+    }
+
+    void windows_emulator::deliver_raw_keyboard_input(const uint16_t vkey, const uint16_t scan_code, const bool release)
+    {
+        this->deliver_raw_input(
+            {.keyboard = true, .vkey = vkey, .scan_code = scan_code, .key_release = static_cast<uint16_t>(release ? 1 : 0)},
+            this->process.raw_keyboard_target);
     }
 
     void windows_emulator::handle_ui_event(const ui_event& event)
@@ -1078,13 +1156,21 @@ namespace sogen
             // Synthesize that delta from the change in tracked cursor position before updating it. A
             // SetCursorPos recenter pre-updates cursor_x/y, so the warp-echo motion event yields a zero
             // delta -- no spurious look -- while genuine motion between recenters produces the real delta.
-            if (event.message == WM_MOUSEMOVE && this->process.raw_mouse_registered)
+            if (this->process.raw_mouse_registered)
             {
-                const int32_t dx = new_cursor_x - this->process.cursor_x;
-                const int32_t dy = new_cursor_y - this->process.cursor_y;
-                if (dx != 0 || dy != 0)
+                if (event.message == WM_MOUSEMOVE)
                 {
-                    this->deliver_raw_mouse_input(dx, dy);
+                    const int32_t dx = new_cursor_x - this->process.cursor_x;
+                    const int32_t dy = new_cursor_y - this->process.cursor_y;
+                    if (dx != 0 || dy != 0)
+                    {
+                        this->deliver_raw_mouse_input(dx, dy, 0);
+                    }
+                }
+                else if (const uint16_t buttons = raw_mouse_button_flags(event.message); buttons != 0)
+                {
+                    // Raw-input games read button transitions from WM_INPUT, not WM_LBUTTONDOWN/UP.
+                    this->deliver_raw_mouse_input(0, 0, buttons);
                 }
             }
 
@@ -1137,7 +1223,14 @@ namespace sogen
             break;
         }
 
-        thread->post_message(m);
+        // Raw-input games (e.g. Skyrim) read the keyboard via WM_INPUT/GetRawInputData, not WM_KEYDOWN.
+        if (this->process.raw_keyboard_registered && (event.message == WM_KEYDOWN || event.message == WM_KEYUP))
+        {
+            const auto vk = static_cast<uint16_t>(event.wParam & 0xFFFF);
+            this->deliver_raw_keyboard_input(vk, vk_to_scan_code(vk), event.message == WM_KEYUP);
+        }
+
+        thread->post_message(*this, m, true);
 
         if (event.message == WM_CLOSE || event.message == WM_COMMAND || event.message == WM_KEYDOWN || event.message == WM_LBUTTONDOWN ||
             event.message == WM_LBUTTONUP)

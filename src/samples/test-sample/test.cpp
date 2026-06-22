@@ -1523,6 +1523,34 @@ namespace
 
         return true;
     }
+
+    bool test_gdi()
+    {
+        const wchar_t* cursor_path = L"C:\\Windows\\Cursors\\aero_arrow.cur";
+
+        const auto attrs = GetFileAttributesW(cursor_path);
+        if (attrs == INVALID_FILE_ATTRIBUTES)
+        {
+            puts("aero_arrow.cur does not exist");
+            return false;
+        }
+
+        if ((attrs & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        {
+            puts("aero_arrow.cur is not a file");
+            return false;
+        }
+
+        const HCURSOR cursor = LoadCursorFromFileW(cursor_path);
+        if (!cursor)
+        {
+            puts("LoadCursorFromFileW failed to load aero_arrow.cur");
+            return false;
+        }
+
+        DestroyCursor(cursor);
+        return true;
+    }
 }
 
 #define RUN_TEST(func, name)                 \
@@ -1580,6 +1608,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_private_namespace, "Private Namespace")
     RUN_TEST(test_actctx, "Activation Context")
     RUN_TEST(test_mmio, "MMIO")
+    RUN_TEST(test_gdi, "GDI")
 
     return valid ? 0 : 1;
 }

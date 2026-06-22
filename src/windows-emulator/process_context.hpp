@@ -110,6 +110,7 @@ namespace sogen
         hwnd target_window{};
         int32_t current_x{};
         int32_t current_y{};
+        bool is_memory_dc{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -117,6 +118,7 @@ namespace sogen
             buffer.write(this->target_window);
             buffer.write(this->current_x);
             buffer.write(this->current_y);
+            buffer.write(this->is_memory_dc);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -125,6 +127,7 @@ namespace sogen
             buffer.read(this->target_window);
             buffer.read(this->current_x);
             buffer.read(this->current_y);
+            buffer.read(this->is_memory_dc);
         }
     };
 
@@ -384,6 +387,7 @@ namespace sogen
         hwnd foreground_window{};
         int32_t cursor_x{};
         int32_t cursor_y{};
+        hcursor current_cursor{};
         int32_t cursor_show_count{};
         // Per-virtual-key pressed state (0x80 = down), updated from key/mouse-button events and reported by
         // GetKeyState; games poll this for in-game input (movement, etc.) rather than window messages.
@@ -395,9 +399,22 @@ namespace sogen
         // window), resolved at delivery time so a registration done before any window is foreground still works.
         bool raw_mouse_registered{};
         hwnd raw_mouse_target{};
-        // Pending raw-input payloads keyed by the HRAWINPUT token posted in WM_INPUT's lParam; consumed by
-        // NtUserGetRawInputData. Stores the relative {dx, dy} the motion produced.
-        std::map<uint32_t, std::array<int32_t, 2>> raw_inputs{};
+        // Keyboard raw input registration (HID usage page 0x01, usage 0x06), mirroring the mouse fields above.
+        bool raw_keyboard_registered{};
+        hwnd raw_keyboard_target{};
+        // One pending raw-input payload (mouse motion + buttons, or a keyboard make/break) keyed by the
+        // HRAWINPUT token posted in WM_INPUT's lParam; consumed by NtUserGetRawInputData.
+        struct raw_input_payload
+        {
+            bool keyboard{};          // false = mouse, true = keyboard
+            int32_t dx{};             // mouse relative motion
+            int32_t dy{};             //
+            uint16_t mouse_buttons{}; // RI_MOUSE_* button transition flags
+            uint16_t vkey{};          // keyboard virtual key
+            uint16_t scan_code{};     // keyboard scan code
+            uint16_t key_release{};   // 0 = key down (RI_KEY_MAKE), 1 = key up (RI_KEY_BREAK)
+        };
+        std::map<uint32_t, raw_input_payload> raw_inputs{};
         uint32_t next_raw_input_token{1};
 
         // For WOW64 processes
@@ -436,6 +453,10 @@ namespace sogen
 
         std::vector<std::byte> default_register_set{};
 
+        // Process and thread ids mimic Windows' PspCidTable: a single space of distinct multiples of 4.
+        // The process keeps id 4; threads take 8, 12, 16, ... Real Windows never hands out tiny or
+        // non-4-aligned ids, and some code (e.g. CEG-style anti-tamper) relies on that.
+        static constexpr uint32_t process_id = 4;
         uint32_t spawned_thread_count{0};
         handle_store<handle_types::thread, emulator_thread> threads{};
         emulator_thread* active_thread{nullptr};

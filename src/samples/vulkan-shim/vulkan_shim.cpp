@@ -182,6 +182,7 @@ namespace
         std::fputs(message, stdout);
         std::fflush(stdout);
     }
+
 }
 
 extern "C"
@@ -2109,6 +2110,26 @@ extern "C"
         vkDestroyImage(device, image, nullptr);
     }
 
+    // VK_KHR_maintenance5 / core 1.4: query an image's subresource layout straight from its create-info,
+    // with no live VkImage. The bridge has no such query, so probe a throwaway image (same approach as
+    // vkGetDeviceImageMemoryRequirements above). DXVK calls this during resource setup.
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceImageSubresourceLayoutKHR(VkDevice device,
+                                                                                          const VkDeviceImageSubresourceInfo* pInfo,
+                                                                                          VkSubresourceLayout2* pLayout)
+    {
+        if (!pInfo || !pInfo->pCreateInfo || !pInfo->pSubresource || !pLayout)
+        {
+            return;
+        }
+        VkImage image = VK_NULL_HANDLE;
+        if (vkCreateImage(device, pInfo->pCreateInfo, nullptr, &image) != VK_SUCCESS)
+        {
+            return;
+        }
+        vkGetImageSubresourceLayout(device, image, &pInfo->pSubresource->imageSubresource, &pLayout->subresourceLayout);
+        vkDestroyImage(device, image, nullptr);
+    }
+
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkBindImageMemory(VkDevice device, VkImage image, VkDeviceMemory memory,
                                                                            VkDeviceSize memoryOffset)
     {
@@ -2241,6 +2262,31 @@ extern "C"
             request.color_a = pColor->float32[3];
             record_command(request.command_buffer, gb::command::cmd_clear_color_image, &request, sizeof(request));
         }
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdClearAttachments(VkCommandBuffer commandBuffer, uint32_t attachmentCount,
+                                                                           const VkClearAttachment* pAttachments, uint32_t rectCount,
+                                                                           const VkClearRect* pRects)
+    {
+        const gb::object_id command_buffer = to_object_id(commandBuffer);
+        const size_t attach_bytes = static_cast<size_t>(attachmentCount) * sizeof(VkClearAttachment);
+        const size_t rect_bytes = static_cast<size_t>(rectCount) * sizeof(VkClearRect);
+
+        std::vector<uint8_t> message(sizeof(gb::cmd_clear_attachments_request) + attach_bytes + rect_bytes);
+        gb::cmd_clear_attachments_request header{};
+        header.command_buffer = command_buffer;
+        header.attachment_count = attachmentCount;
+        header.rect_count = rectCount;
+        std::memcpy(message.data(), &header, sizeof(header));
+        if (attach_bytes)
+        {
+            std::memcpy(message.data() + sizeof(header), pAttachments, attach_bytes);
+        }
+        if (rect_bytes)
+        {
+            std::memcpy(message.data() + sizeof(header) + attach_bytes, pRects, rect_bytes);
+        }
+        record_command(command_buffer, gb::command::cmd_clear_attachments, message.data(), message.size());
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdClearDepthStencilImage(VkCommandBuffer commandBuffer, VkImage image,
@@ -4654,6 +4700,10 @@ extern "C"
             {.name = "vkGetImageSubresourceLayout", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageSubresourceLayout)},
             {.name = "vkGetImageSubresourceLayout2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageSubresourceLayout2KHR)},
             {.name = "vkGetImageSubresourceLayout2EXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageSubresourceLayout2KHR)},
+            {.name = "vkGetDeviceImageSubresourceLayout",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceImageSubresourceLayoutKHR)},
+            {.name = "vkGetDeviceImageSubresourceLayoutKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceImageSubresourceLayoutKHR)},
             {.name = "vkGetImageMemoryRequirements2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements2)},
             {.name = "vkGetImageMemoryRequirements2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetImageMemoryRequirements2)},
             {.name = "vkGetDeviceBufferMemoryRequirements",
@@ -4669,6 +4719,7 @@ extern "C"
             {.name = "vkCmdPipelineBarrier2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier2)},
             {.name = "vkCmdPipelineBarrier2KHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPipelineBarrier2)},
             {.name = "vkCmdClearColorImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdClearColorImage)},
+            {.name = "vkCmdClearAttachments", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdClearAttachments)},
             {.name = "vkCmdClearDepthStencilImage", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdClearDepthStencilImage)},
             {.name = "vkCmdCopyImageToBuffer", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImageToBuffer)},
             {.name = "vkCmdCopyImageToBuffer2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyImageToBuffer2)},

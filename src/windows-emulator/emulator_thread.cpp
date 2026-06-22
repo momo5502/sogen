@@ -317,6 +317,13 @@ namespace sogen
                 mask &= ~bit;
             }
         }
+
+        DWORD get_current_message_time(utils::clock& clock)
+        {
+            const auto now = clock.steady_now().time_since_epoch();
+            const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
+            return static_cast<DWORD>(now_ms);
+        }
     }
 
     emulator_thread::emulator_thread(memory_manager& memory, const process_context& context, const uint64_t start_address,
@@ -352,7 +359,7 @@ namespace sogen
                 // https://github.com/momo5502/emulator/issues/128
                 reinterpret_cast<uint8_t*>(&teb_obj)[0x179C] = 1;
 
-                teb_obj.ClientId.UniqueProcess = 1ul;
+                teb_obj.ClientId.UniqueProcess = process_context::process_id;
                 teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
                 teb_obj.DeallocationStack = this->stack_base;
                 teb_obj.NtTib.StackLimit = this->stack_base;
@@ -376,6 +383,7 @@ namespace sogen
                     }
                 });
                 teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
+                teb_obj.Win32ClientInfo.arr[29] = USER_DEFAULT_DPI_CONTEXT;
             });
 
             return;
@@ -423,7 +431,7 @@ namespace sogen
             // https://github.com/momo5502/emulator/issues/128
             reinterpret_cast<uint8_t*>(&teb_obj)[0x179C] = 1;
 
-            teb_obj.ClientId.UniqueProcess = 1ul;
+            teb_obj.ClientId.UniqueProcess = process_context::process_id;
             teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
 
             // Native 64-bit stack
@@ -461,6 +469,7 @@ namespace sogen
                 }
             });
             teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
+            teb_obj.Win32ClientInfo.arr[29] = USER_DEFAULT_DPI_CONTEXT;
         });
 
         // Allocate dynamic 32-bit stack for WOW64 thread
@@ -490,7 +499,7 @@ namespace sogen
             teb32_obj.NtTib.ArbitraryUserPointer = static_cast<uint32_t>(0x0);
 
             // Set ClientId for 32-bit TEB
-            teb32_obj.ClientId.UniqueProcess = 1;
+            teb32_obj.ClientId.UniqueProcess = process_context::process_id;
             teb32_obj.ClientId.UniqueThread = this->id;
 
             // Set 32-bit PEB pointer
@@ -697,10 +706,10 @@ namespace sogen
         return true;
     }
 
-    bool emulator_thread::synthesize_due_user_timer(utils::clock& clock, const hwnd hwnd_filter, const UINT filter_min,
+    bool emulator_thread::synthesize_due_user_timer(windows_emulator& win_emu, const hwnd hwnd_filter, const UINT filter_min,
                                                     const UINT filter_max)
     {
-        const auto now = clock.steady_now();
+        const auto now = win_emu.clock().steady_now();
         for (auto& user_timer : this->user_timers | std::views::values)
         {
             if (!user_timer.due_time.has_value() || user_timer.due_time.value() > now)
@@ -729,7 +738,7 @@ namespace sogen
                 continue;
             }
 
-            this->post_message(timer_message);
+            this->post_message(win_emu, timer_message, true);
             user_timer.due_time = now + user_timer.interval;
             return true;
         }
@@ -737,11 +746,11 @@ namespace sogen
         return false;
     }
 
-    uint32_t emulator_thread::get_message_queue_status(utils::clock& clock)
+    uint32_t emulator_thread::get_message_queue_status(windows_emulator& win_emu)
     {
         if (this->await_msg_mask && (*this->await_msg_mask & QS_TIMER) != 0)
         {
-            (void)this->synthesize_due_user_timer(clock);
+            (void)this->synthesize_due_user_timer(win_emu);
         }
 
         return this->message_queue_status_bits;
@@ -774,10 +783,10 @@ namespace sogen
         }
     }
 
-    std::optional<msg> emulator_thread::peek_pending_message(const process_context& process, utils::clock& clock, hwnd hwnd_filter,
-                                                             UINT filter_min, UINT filter_max, bool remove)
+    std::optional<msg> emulator_thread::peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
+                                                             bool remove)
     {
-        (void)this->synthesize_due_user_timer(clock, hwnd_filter, filter_min, filter_max);
+        (void)this->synthesize_due_user_timer(win_emu, hwnd_filter, filter_min, filter_max);
 
         for (auto it = message_queue.begin(); it != message_queue.end(); ++it)
         {
@@ -788,7 +797,7 @@ namespace sogen
                     continue;
                 }
             }
-            else if (hwnd_filter != 0 && !window_matches_filter(process, it->window, hwnd_filter))
+            else if (hwnd_filter != 0 && !window_matches_filter(win_emu.process, it->window, hwnd_filter))
             {
                 continue;
             }
@@ -823,9 +832,45 @@ namespace sogen
         return std::nullopt;
     }
 
-    void emulator_thread::post_message(const msg& msg)
+    bool emulator_thread::can_coalesce_message(const msg& msg) const
     {
+        if (message_queue.empty())
+        {
+            return false;
+        }
+
+        const auto& tail_msg = message_queue.back();
+        if (tail_msg.message != msg.message || tail_msg.window != msg.window)
+        {
+            return false;
+        }
+
+        switch (msg.message)
+        {
+        case WM_MOUSEMOVE:
+        case WM_NCMOUSEMOVE:
+            return true;
+
+        case WM_TIMER:
+            return tail_msg.wParam == msg.wParam && tail_msg.lParam == msg.lParam;
+
+        default:
+            return false;
+        }
+    }
+
+    void emulator_thread::post_message(windows_emulator& win_emu, msg msg, const bool try_coalesce)
+    {
+        msg.time = get_current_message_time(win_emu.clock());
+        msg.pt = {.x = win_emu.process.cursor_x, .y = win_emu.process.cursor_y};
         const auto bits = get_message_queue_status_bits(msg);
+
+        if (try_coalesce && this->can_coalesce_message(msg))
+        {
+            this->queue_status_changed_bits |= bits;
+            message_queue.back() = msg;
+            return;
+        }
 
         for_each_queue_status_bit(bits, [this](const uint32_t /*bit*/, const size_t index) { //
             ++this->message_queue_status_bit_counts[index];
@@ -841,12 +886,15 @@ namespace sogen
         return this->exit_status.has_value();
     }
 
-    bool emulator_thread::is_thread_ready(process_context& process, utils::clock& clock)
+    bool emulator_thread::is_thread_ready(windows_emulator& win_emu)
     {
         if (this->is_terminated() || this->suspended > 0)
         {
             return false;
         }
+
+        auto& process = win_emu.process;
+        auto& clock = win_emu.clock();
 
         const auto complete_if_timed_out = [&](const NTSTATUS status) {
             if (!this->is_await_time_over(clock) || this->has_pending_alertable_apc())
@@ -912,7 +960,7 @@ namespace sogen
             bool message_ready = false;
             if (this->await_msg_mask.has_value())
             {
-                const auto current_message_bits = this->get_message_queue_status(clock);
+                const auto current_message_bits = this->get_message_queue_status(win_emu);
                 message_ready = (current_message_bits & *this->await_msg_mask) != 0;
             }
 
@@ -1025,10 +1073,11 @@ namespace sogen
 
         if (this->await_msg.has_value())
         {
-            if (const auto m = this->peek_pending_message(process, clock, this->await_msg->hwnd_filter, this->await_msg->filter_min,
+            if (const auto m = this->peek_pending_message(win_emu, this->await_msg->hwnd_filter, this->await_msg->filter_min,
                                                           this->await_msg->filter_max, true))
             {
                 this->await_msg->message.write(*m);
+                this->current_message_time = m->time;
 
                 uint64_t active_handle = 0;
                 uint64_t active_window_ptr = 0;

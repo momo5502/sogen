@@ -18,6 +18,14 @@ namespace sogen
         // in snapshots yet; restoring with an open GPU handle is an experimental limitation.
         struct gpu_bridge_device : io_device
         {
+            void work(windows_emulator& win_emu) override
+            {
+                for (auto& frame : this->vulkan_.poll_presented_frames())
+                {
+                    present_surface_if_ready(win_emu, frame.hwnd, frame.width, frame.height, frame.pixels);
+                }
+            }
+
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
             {
                 switch (context.io_control_code)
@@ -249,6 +257,23 @@ namespace sogen
                 {
                     context.io_status_block.access([&](IO_STATUS_BLOCK<EmulatorTraits<Emu64>>& block) { block.Information = bytes; });
                 }
+            }
+
+            static void present_surface_if_ready(windows_emulator& win_emu, const uint64_t hwnd_value, const uint32_t width,
+                                                 const uint32_t height, const std::vector<std::byte>& pixels)
+            {
+                if (hwnd_value == 0 || pixels.empty())
+                {
+                    return;
+                }
+
+                win_emu.ui().present_surface(static_cast<hwnd>(hwnd_value), ui_surface_desc{
+                                                                                .width = static_cast<int>(width),
+                                                                                .height = static_cast<int>(height),
+                                                                                .stride = static_cast<int>(width * 4),
+                                                                                .format = ui_surface_format::bgra8,
+                                                                                .pixels = pixels.data(),
+                                                                            });
             }
 
             // Reads a fixed-size request struct from the guest input buffer.
@@ -1628,15 +1653,9 @@ namespace sogen
 
                 // Hand the freshly read-back pixels to the guest window through the UI backend (the same
                 // seam GDI EndPaint uses). The swapchain is B8G8R8A8, matching bgra8, so no swizzle.
-                if (result == 0 /* VK_SUCCESS */ && hwnd_value != 0 && !pixels.empty())
+                if (result == 0 /* VK_SUCCESS */)
                 {
-                    win_emu.ui().present_surface(static_cast<hwnd>(hwnd_value), ui_surface_desc{
-                                                                                    .width = static_cast<int>(width),
-                                                                                    .height = static_cast<int>(height),
-                                                                                    .stride = static_cast<int>(width * 4),
-                                                                                    .format = ui_surface_format::bgra8,
-                                                                                    .pixels = pixels.data(),
-                                                                                });
+                    present_surface_if_ready(win_emu, hwnd_value, width, height, pixels);
                 }
 
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
@@ -2702,6 +2721,15 @@ namespace sogen
                     }
                     return this->vulkan_.cmd_clear_color_image(req.command_buffer, req.image, req.image_layout, req.color_r, req.color_g,
                                                                req.color_b, req.color_a, to_host_range(req.subresource));
+                }
+                case gpu_bridge::command::cmd_clear_attachments: {
+                    gpu_bridge::cmd_clear_attachments_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_clear_attachments(req.command_buffer, req.attachment_count, req.rect_count,
+                                                               payload + sizeof(req), size - sizeof(req));
                 }
                 case gpu_bridge::command::cmd_clear_depth_stencil_image: {
                     gpu_bridge::cmd_clear_depth_stencil_image_request req{};

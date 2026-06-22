@@ -1357,6 +1357,56 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtCopyFileChunk(const syscall_context& c, const handle source_handle, const handle destination_handle,
+                                        const handle /*event_handle*/,
+                                        const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const ULONG length,
+                                        const emulator_object<LARGE_INTEGER> source_offset,
+                                        const emulator_object<LARGE_INTEGER> destination_offset,
+                                        const emulator_object<ULONG> /*source_key*/, const emulator_object<ULONG> /*destination_key*/,
+                                        const ULONG /*flags*/)
+        {
+            const auto* source = c.proc.files.get(source_handle);
+            const auto* destination = c.proc.files.get(destination_handle);
+            if (!source || !destination || !source->handle || !destination->handle)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            if (source_offset)
+            {
+                const auto offset = source_offset.read();
+                if (offset.QuadPart < 0 || !source->handle.seek_to(offset.QuadPart))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+            }
+
+            std::string temp_buffer{};
+            temp_buffer.resize(length);
+            const auto bytes_read = fread(temp_buffer.data(), 1, temp_buffer.size(), source->handle);
+
+            if (destination_offset)
+            {
+                const auto offset = destination_offset.read();
+                if (offset.QuadPart < 0 || !destination->handle.seek_to(offset.QuadPart))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+            }
+
+            const auto bytes_written = fwrite(temp_buffer.data(), 1, bytes_read, destination->handle);
+            (void)fflush(destination->handle);
+
+            if (io_status_block)
+            {
+                IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Information = bytes_written;
+                io_status_block.write(block);
+            }
+
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtLockFile(const syscall_context& c, const handle file_handle, const handle /*event_handle*/,
                                    const uint64_t /*apc_routine*/, const uint64_t /*apc_context*/,
                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
@@ -2109,6 +2159,15 @@ namespace sogen
             auto* device = c.proc.devices.get(file_handle);
             if (!device)
             {
+                constexpr ULONG FSCTL_GET_REPARSE_POINT = 0x900A8;
+                if (fs_control_code == FSCTL_GET_REPARSE_POINT && c.proc.files.get(file_handle))
+                {
+                    // The target is a regular file or directory, not a reparse point. Returning
+                    // STATUS_INVALID_HANDLE here makes callers (e.g. path canonicalization) treat
+                    // the buffer as populated; Windows reports STATUS_NOT_A_REPARSE_POINT instead.
+                    return STATUS_NOT_A_REPARSE_POINT;
+                }
+
                 c.win_emu.log.warn("NtFsControlFile on non-device handle (control code 0x%X)\n", static_cast<uint32_t>(fs_control_code));
                 return STATUS_INVALID_HANDLE;
             }

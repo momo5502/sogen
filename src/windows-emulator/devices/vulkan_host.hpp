@@ -251,6 +251,8 @@ namespace sogen
         // Records vkCmdClearColorImage with an RGBA float clear color.
         int32_t cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r, float g, float b, float a,
                                       const subresource_range& range);
+        int32_t cmd_clear_attachments(uint64_t command_buffer, uint32_t attachment_count, uint32_t rect_count, const void* data,
+                                      size_t data_size);
         int32_t cmd_clear_depth_stencil_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float depth, uint32_t stencil,
                                               const subresource_range& range);
         // Copies mip 0 / layer 0 of the image (tightly packed) into the buffer at offset 0.
@@ -367,11 +369,23 @@ namespace sogen
         // render submit that waits on them can proceed (0 = none).
         int32_t acquire_next_image(uint64_t swapchain, uint64_t semaphore, uint64_t fence, uint32_t& out_index);
 
-        // Copies the presented image into the readback buffer (blocking on the queue), then fills
-        // out_pixels (BGRA, width*height*4) and reports the target window/extent so the caller can hand
-        // the pixels to the UI backend.
+        // Submits an asynchronous copy of the presented image into the readback buffer. If the previous
+        // copy has already completed, out_pixels receives that frame immediately; otherwise it is later
+        // returned by poll_presented_frames().
         int32_t queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index, std::vector<std::byte>& out_pixels,
                               uint32_t& out_width, uint32_t& out_height, uint64_t& out_hwnd);
+
+        struct presented_frame
+        {
+            std::vector<std::byte> pixels{};
+            uint32_t width{};
+            uint32_t height{};
+            uint64_t hwnd{};
+        };
+
+        // Collects readbacks whose GPU fences have completed without waiting. This lets the host UI
+        // display a static final frame even when the guest does not issue another present.
+        std::vector<presented_frame> poll_presented_frames();
 
         // --- graphics pipeline (enough for a render-pass triangle) ---
 
