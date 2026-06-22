@@ -1735,6 +1735,17 @@ namespace sogen
             return dc;
         }
 
+        hdc create_gdi_window_dc(const syscall_context& c, const hwnd window)
+        {
+            uint64_t dc_attr = 0;
+            const auto dc = allocate_gdi_dc(c, dc_attr);
+            if (dc != 0)
+            {
+                c.proc.gdi_dc_states[dc].target_window = window;
+            }
+            return dc;
+        }
+
         hdc handle_NtGdiOpenDCW(const syscall_context& c)
         {
             return ensure_default_hdc(c);
