@@ -14,10 +14,12 @@ SET EMU_FILESYS=%EMU_ROOT%\filesys
 SET EMU_WINDIR=%EMU_FILESYS%\c\windows
 SET EMU_SYSDIR=%EMU_WINDIR%\system32
 SET EMU_SYSDIR_WOW64=%EMU_WINDIR%\syswow64
+SET EMU_CURSORDIR=%EMU_WINDIR%\cursors
 SET EMU_REGDIR=%EMU_ROOT%\registry
 
 MKDIR %EMU_SYSDIR%
 MKDIR %EMU_SYSDIR_WOW64%
+MKDIR %EMU_CURSORDIR%
 MKDIR %EMU_REGDIR%
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0create-profile-dirs.ps1" "%EMU_FILESYS%"
@@ -167,6 +169,8 @@ CALL :collect locale.nls
 CALL :collect c_1252.nls
 CALL :collect c_437.nls
 CALL :collect c_850.nls
+
+CALL :collect_file "%WINDIR%\Cursors", aero_arrow.cur, %EMU_CURSORDIR%
 
 EXIT /B 0
 

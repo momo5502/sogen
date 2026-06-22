@@ -36,6 +36,7 @@ namespace sogen
     constexpr size_t USER_NUM_SYSCOLORS = 31;
     constexpr size_t USER_SERVERINFO_BRUSH_SLOT_COUNT = 32;
     constexpr size_t USER_SERVERINFO_BRUSH_TRAILING_BYTES = 0x78;
+    constexpr uint32_t USER_DEFAULT_DPI_CONTEXT = 18;
 
     struct USER_SERVERINFO
     {
@@ -76,6 +77,8 @@ namespace sogen
         uint8_t bFlags;
         uint16_t wUniq;
     };
+    static_assert(offsetof(USER_HANDLEENTRY, unknown) == 0x10);
+    static_assert(offsetof(USER_HANDLEENTRY, bType) == 0x18);
     static_assert(sizeof(USER_HANDLEENTRY) == 0x20);
 
     struct USER_WNDMSG
@@ -168,6 +171,17 @@ namespace sogen
         uint32_t ulExtraInformation;
     };
     static_assert(sizeof(RAWMOUSE32) == 0x18);
+
+    struct RAWKEYBOARD32
+    {
+        uint16_t MakeCode;
+        uint16_t Flags;
+        uint16_t Reserved;
+        uint16_t VKey;
+        uint32_t Message;
+        uint32_t ExtraInformation;
+    };
+    static_assert(sizeof(RAWKEYBOARD32) == 0x10);
 
     enum USER_HANDLETYPE : uint8_t
     {
@@ -272,12 +286,19 @@ namespace sogen
         uint32_t windowBand;
         uint8_t pad_0F0[8];
         uint32_t wndExtraOffset;
-        uint8_t pad_0FC[44];
+        uint8_t pad_0FC[0x24];
+        uint32_t dpiContext;
+        uint8_t pad_124[0x4];
         uint64_t pExtraBytes;
         uint8_t pad_130[16];
         uint64_t wID;
+        uint32_t threadId;
+        uint32_t processId;
     };
-    static_assert(sizeof(USER_WINDOW) == 328);
+    static_assert(offsetof(USER_WINDOW, dpiContext) == 0x120);
+    static_assert(offsetof(USER_WINDOW, threadId) == 0x148);
+    static_assert(offsetof(USER_WINDOW, processId) == 0x14C);
+    static_assert(sizeof(USER_WINDOW) == 0x150);
 
     struct USER_MENU
     {

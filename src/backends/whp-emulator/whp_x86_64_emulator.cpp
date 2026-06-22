@@ -3327,6 +3327,10 @@ namespace sogen::whp
                             return true;
                         }
                     }
+
+                    // Not one of sogen's internal single-steps: a guest-armed debug breakpoint (DR0-3) or a
+                    // guest trap-flag single-step. Fall through to the generic interrupt delivery below, which
+                    // forwards it to the guest as #DB (vector 1 == WHvX64ExceptionTypeDebugTrapOrFault).
                 }
 
                 if (exception.ExceptionType == WHvX64ExceptionTypeBreakpointTrap)

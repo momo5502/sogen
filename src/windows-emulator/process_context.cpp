@@ -551,6 +551,8 @@ namespace sogen
             window.rcClient = window.rcWindow;
             window.fnid = 0x29D;   // FNID_DESKTOP
             window.windowBand = 1; // ZBID_DESKTOP
+            window.dpiContext = USER_DEFAULT_DPI_CONTEXT;
+            window.processId = process_context::process_id;
         });
 
         const auto user_display_info = this->user_handles.get_display_info();
@@ -597,10 +599,13 @@ namespace sogen
         buffer.write(this->foreground_window);
         buffer.write(this->cursor_x);
         buffer.write(this->cursor_y);
+        buffer.write(this->current_cursor);
         buffer.write(this->cursor_show_count);
         buffer.write(this->key_state);
         buffer.write(this->raw_mouse_registered);
         buffer.write(this->raw_mouse_target);
+        buffer.write(this->raw_keyboard_registered);
+        buffer.write(this->raw_keyboard_target);
         buffer.write_map(this->raw_inputs);
         buffer.write(this->next_raw_input_token);
 
@@ -681,10 +686,13 @@ namespace sogen
         buffer.read(this->foreground_window);
         buffer.read(this->cursor_x);
         buffer.read(this->cursor_y);
+        buffer.read(this->current_cursor);
         buffer.read(this->cursor_show_count);
         buffer.read(this->key_state);
         buffer.read(this->raw_mouse_registered);
         buffer.read(this->raw_mouse_target);
+        buffer.read(this->raw_keyboard_registered);
+        buffer.read(this->raw_keyboard_target);
         buffer.read_map(this->raw_inputs);
         buffer.read(this->next_raw_input_token);
 
@@ -863,7 +871,9 @@ namespace sogen
     handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
                                           const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread)
     {
-        emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, ++this->spawned_thread_count, initial_thread};
+        // Thread ids are 8, 12, 16, ... (the process keeps id 4); all 4-aligned like real Windows.
+        const uint32_t thread_id = (++this->spawned_thread_count + 1) * 4;
+        emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;
         this->callbacks_->on_thread_create(h, *thr);
