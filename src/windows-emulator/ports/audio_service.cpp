@@ -25,6 +25,8 @@ namespace sogen
         constexpr uint32_t k_audio_opnum_get_mix_format = 0;        // {D574D111}
         constexpr uint32_t k_audio_opnum_open_stream = 4;           // {D574D111} (Initialize prep)
         constexpr uint32_t k_audio_opnum_create_stream = 7;         // {D574D111} CreateRemoteStream
+        constexpr uint32_t k_audio_opnum_post_create_a = 8;         // {D574D111} post-CreateRemoteStream (returns S_OK)
+        constexpr uint32_t k_audio_opnum_post_create_b = 9;         // {D574D111} post-CreateRemoteStream (returns S_OK)
 
         constexpr NTSTATUS k_hr_ok = 0;
 
@@ -39,50 +41,61 @@ namespace sogen
         // opening that registry key, so GetDefaultEndpoint must return an id that actually exists there.
         std::optional<std::u16string> find_default_endpoint_id(windows_emulator& win_emu, const uint32_t data_flow)
         {
-            const std::filesystem::path render =
-                R"(\Registry\Machine\Software\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render)";
-            const std::filesystem::path capture =
-                R"(\Registry\Machine\Software\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture)";
+            const std::string base = R"(\Registry\Machine\Software\Microsoft\Windows\CurrentVersion\MMDevices\Audio\)";
 
-            const auto key = win_emu.registry.get_key(utils::path_key{data_flow == 0 ? render : capture});
-            if (!key)
-            {
-                win_emu.log.error("[audiosrv] MMDevices key missing for flow=%u\n", data_flow);
-                return std::nullopt;
-            }
+            // A headless/server host has no physical audio device, so the local Render/Capture folders are
+            // empty; an RDP session instead populates RemoteRender/RemoteCapture with the redirected endpoint.
+            // Scan both, preferring a local endpoint when one exists.
+            const std::array<const char*, 2> folders = data_flow == 0 ? std::array<const char*, 2>{"Render", "RemoteRender"}
+                                                                      : std::array<const char*, 2>{"Capture", "RemoteCapture"};
 
             std::optional<std::u16string> first_active{};
             std::optional<std::u16string> first_any{};
-            for (size_t i = 0;; ++i)
+
+            for (const auto* folder : folders)
             {
-                const auto name = win_emu.registry.get_sub_key_name(*key, i);
-                if (!name)
+                const std::filesystem::path root = base + folder;
+                const auto key = win_emu.registry.get_key(utils::path_key{root});
+                if (!key)
                 {
-                    break;
+                    continue;
                 }
 
-                const std::string name_str(*name);
-                std::u16string id(name_str.begin(), name_str.end());
-                const auto sub_key = win_emu.registry.get_key(utils::path_key{(data_flow == 0 ? render : capture) / name_str});
-                uint32_t state = 0;
-                if (sub_key)
+                for (size_t i = 0;; ++i)
                 {
-                    if (const auto v = win_emu.registry.get_value(*sub_key, "DeviceState"))
+                    const auto name = win_emu.registry.get_sub_key_name(*key, i);
+                    if (!name)
                     {
-                        state = v->as_dword().value_or(0);
+                        break;
                     }
-                }
 
-                if (!first_any)
-                {
-                    first_any = id;
-                }
-                if (state == 1 /* DEVICE_STATE_ACTIVE */ && !first_active)
-                {
-                    first_active = id;
+                    const std::string name_str(*name);
+                    std::u16string id(name_str.begin(), name_str.end());
+                    const auto sub_key = win_emu.registry.get_key(utils::path_key{root / name_str});
+                    uint32_t state = 0;
+                    if (sub_key)
+                    {
+                        if (const auto v = win_emu.registry.get_value(*sub_key, "DeviceState"))
+                        {
+                            state = v->as_dword().value_or(0);
+                        }
+                    }
+
+                    if (!first_any)
+                    {
+                        first_any = id;
+                    }
+                    if (state == 1 /* DEVICE_STATE_ACTIVE */ && !first_active)
+                    {
+                        first_active = id;
+                    }
                 }
             }
 
+            if (!first_active && !first_any)
+            {
+                win_emu.log.error("[audiosrv] no audio endpoint found for flow=%u\n", data_flow);
+            }
             return first_active ? first_active : first_any;
         }
 
@@ -111,7 +124,7 @@ namespace sogen
         struct audio_service_port : rpc_port
         {
             NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c,
-                                utils::aligned_binary_writer& writer) override
+                                utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>& reply_handles) override
             {
                 const auto& iface = this->bound_interface();
                 if (getenv("EMULATOR_LOG_RPC"))
@@ -129,7 +142,11 @@ namespace sogen
                     case k_audio_opnum_open_stream:
                         return handle_open_stream(writer);
                     case k_audio_opnum_create_stream:
-                        return handle_create_stream(writer);
+                        return handle_create_stream(win_emu, writer, reply_handles);
+                    case 5:
+                    case k_audio_opnum_post_create_a:
+                    case k_audio_opnum_post_create_b:
+                        return handle_post_create(writer);
                     default:
                         return log_unhandled(win_emu, "AudioClient", procedure_id, c);
                     }
@@ -160,7 +177,9 @@ namespace sogen
             // report 48 kHz / 2-channel / 32-bit float.
             static NTSTATUS handle_get_mix_format(utils::aligned_binary_writer& writer)
             {
-                constexpr uint32_t sample_rate = 48000;
+                // 44100 Hz matches the real captured device mix format; CreateRemoteStream reports the same
+                // nAvgBytesPerSec, so the stream format the client negotiates stays self-consistent.
+                constexpr uint32_t sample_rate = 44100;
                 constexpr uint16_t channels = 2;
                 constexpr uint16_t bits = 32;
                 constexpr uint16_t block_align = channels * (bits / 8);
@@ -210,17 +229,108 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // {D574D111} opnum 7: CreateRemoteStream. [out] is a 1232-byte SYSTEM_AUDIO_STREAM (FC_BOGUS_STRUCT
-            // with embedded pointers/handles). First pass: return an all-zero struct (null pointers/handles) to
-            // get past unmarshalling and observe the next requirement.
-            static NTSTATUS handle_create_stream(utils::aligned_binary_writer& writer)
+            // {D574D111} opnum 7: CreateRemoteStream. The [out] SYSTEM_AUDIO_STREAM wire is only 120 bytes (the
+            // 1232-byte form seen in memory is bloated by host pointers): a session GUID, nAvgBytesPerSec, an
+            // opaque server cookie (the client just hands it back in opnums 8/9, which we ignore), and a few
+            // counts. The shared render buffer is NOT in the payload — it rides in as an ALPC HANDLE message
+            // attribute. We back it with a pagefile section the guest can map and attach its handle. The wire
+            // below was captured from a live Windows audio service (tools/alpc_capture.py).
+            static NTSTATUS handle_create_stream(windows_emulator& win_emu, utils::aligned_binary_writer& writer,
+                                                 std::vector<alpc_reply_handle>& reply_handles)
             {
-                constexpr size_t k_system_audio_stream_size = 0x4d0; // 1232
-                writer.align_to(8);
-                const std::array<uint8_t, k_system_audio_stream_size> stream{};
-                writer.write(stream.data(), stream.size(), 1);
+                // The shared render buffer the client maps: 0x57000 bytes (one second of 44100 Hz / 2ch /
+                // 32-bit float, page-aligned), prefixed by a WASAPI shared-buffer control header that audioses
+                // validates during Initialize. The header (buffer size, "DCPE" magic, period 0x989680, and the
+                // WAVEFORMATEXTENSIBLE) was captured from a live audio service (tools/alpc_capture.py); the rest
+                // of the buffer stays silent. We pre-allocate the section backing and write the header so the
+                // client's mapping reads it.
+                constexpr uint64_t render_section_size = 0x57000;
+                section render_section{};
+                render_section.maximum_size = render_section_size;
+                render_section.section_page_protection = PAGE_READWRITE;
+                render_section.allocation_attributes = SEC_COMMIT;
 
-                writer.align_to(sizeof(uint32_t));
+                static constexpr std::array<uint8_t, 0x1c0> render_control_header = {
+                    0x01, 0x00, 0x00, 0x00, 0x20, 0x66, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, // version, buffer size
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x44, 0x43, 0x50, 0x45, // "DCPE"
+                    0xdc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x80, 0x96, 0x98, 0x00, 0x00, 0x00, 0x00, 0x00, // period 0x989680
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+                    0x80, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x20, 0x66, 0x05, 0x00,
+                    0x20, 0x66, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0xfe, 0xff, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00, 0x20, 0x62, 0x05, 0x00, // WAVEFORMATEXTENSIBLE
+                    0x08, 0x00, 0x20, 0x00, 0x16, 0x00, 0x20, 0x00, 0x03, 0x00, 0x00, 0x00,
+                    0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa,
+                    0x00, 0x38, 0x9b, 0x71, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00,
+                };
+
+                const auto backing = win_emu.memory.allocate_memory(static_cast<size_t>(render_section_size),
+                                                                    memory_permission::read_write, false, 0,
+                                                                    memory_region_kind::pagefile_section_view);
+                if (backing)
+                {
+                    win_emu.emu().write_memory(backing, render_control_header.data(), render_control_header.size());
+                    render_section.backing_address = backing;
+                }
+
+                const auto section_handle = win_emu.process.sections.store(std::move(render_section));
+
+                constexpr uint32_t section_all_access = 0xF001F; // SECTION_ALL_ACCESS
+                reply_handles.push_back(alpc_reply_handle{section_handle.bits, 0, section_all_access});
+
+                // The 120-byte op7 [out] wire (captured from a live service). NOTE: the emulator's audioses takes
+                // the op7 client stub at audioses!0x50154, whose NDR format treats the cookie (+0x20) as a unique
+                // pointer and the three counts (+0x50..0x58) as conformant array sizes. The captured non-zero
+                // values make that unmarshal expect trailing referent data and fail with E_INVALIDARG, so they
+                // are zeroed (null pointer / empty arrays) to keep op7 valid for this path.
+                static constexpr std::array<uint8_t, 120> system_audio_stream = {
+                    0x40, 0x37, 0x77, 0xcd, 0x87, 0xb1, 0x74, 0x49, 0xa1, 0xd5, 0xe0, 0xff, // session GUID
+                    0x91, 0x37, 0x22, 0x77, 0x20, 0x62, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, // nAvgBytesPerSec=0x56220
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // cookie -> null pointer
+                    0x00, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                };
+                writer.write(system_audio_stream.data(), system_audio_stream.size(), 1);
+                return STATUS_SUCCESS;
+            }
+
+            // {D574D111} opnums 8 and 9: the post-CreateRemoteStream finalize calls. Each returns just an
+            // S_OK HRESULT (the captured replies are 8 zero bytes of NDR).
+            static NTSTATUS handle_post_create(utils::aligned_binary_writer& writer)
+            {
+                writer.write<uint32_t>(0);
                 writer.write(k_hr_ok); // return HRESULT
                 return STATUS_SUCCESS;
             }

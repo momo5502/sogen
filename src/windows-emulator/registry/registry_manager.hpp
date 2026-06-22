@@ -176,6 +176,7 @@ namespace sogen
         hive_map::iterator find_hive(const utils::path_key& key);
 
         void setup();
+        void alias_remote_audio_endpoints(const std::filesystem::path& machine);
     };
 
 } // namespace sogen

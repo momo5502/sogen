@@ -132,14 +132,60 @@ namespace sogen
                                             connection_message, buffer_length, out_message_attributes, in_message_attributes, timeout);
         }
 
+        // Deliver reply handles (e.g. the shared render section in an audio Initialize reply) to the receiver
+        // via an ALPC HANDLE message attribute. The attribute buffer is an 8-byte {Allocated; Valid} header
+        // followed by the per-attribute structs laid out highest-bit-first for the attributes the caller
+        // allocated room for. We only emit a single HANDLE attribute (the common case for NDR system handles).
+        void write_reply_handle_attribute(const syscall_context& c,
+                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes,
+                                          const std::vector<alpc_reply_handle>& handles)
+        {
+            if (!attributes || handles.empty())
+            {
+                return;
+            }
+
+            auto header = attributes.read();
+            if (!(header.AllocatedAttributes & ALPC_MESSAGE_HANDLE_ATTRIBUTE))
+            {
+                return; // caller did not reserve space for a handle attribute
+            }
+
+            uint64_t offset = sizeof(ALPC_MESSAGE_ATTRIBUTES);
+            if (header.AllocatedAttributes & ALPC_MESSAGE_SECURITY_ATTRIBUTE)
+            {
+                offset += 0x20;
+            }
+            if (header.AllocatedAttributes & ALPC_MESSAGE_VIEW_ATTRIBUTE)
+            {
+                offset += 0x20;
+            }
+            if (header.AllocatedAttributes & ALPC_MESSAGE_CONTEXT_ATTRIBUTE)
+            {
+                offset += 0x18;
+            }
+
+            // The caller pre-fills the attribute slot's Flags (it describes how it wants the handle handled);
+            // the kernel only fills in the granted handle. Preserve the caller's Flags and write just the
+            // Handle, ObjectType and GrantedAccess so we match the real ALPC receive behaviour.
+            const auto& h = handles.front();
+            const auto attr_base = attributes.value() + offset;
+            emulator_object<EmulatorTraits<Emu64>::HANDLE>{c.emu, attr_base + 8}.write(
+                static_cast<EmulatorTraits<Emu64>::HANDLE>(h.handle));
+            emulator_object<ULONG>{c.emu, attr_base + 0x10}.write(h.object_type);
+            emulator_object<ULONG>{c.emu, attr_base + 0x14}.write(h.desired_access);
+
+            header.ValidAttributes |= ALPC_MESSAGE_HANDLE_ATTRIBUTE;
+            attributes.write(header);
+        }
+
         NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const handle port_handle, const ULONG /*flags*/,
                                                   const emulator_object<PORT_MESSAGE64> send_message,
                                                   const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
                                                   /*send_message_attributes*/,
                                                   const emulator_object<PORT_MESSAGE64> receive_message,
                                                   const emulator_object<EmulatorTraits<Emu64>::SIZE_T> buffer_length,
-                                                  const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
-                                                  /*receive_message_attributes*/,
+                                                  const emulator_object<ALPC_MESSAGE_ATTRIBUTES> receive_message_attributes,
                                                   const emulator_object<LARGE_INTEGER> /*timeout*/)
         {
             auto* port = c.proc.ports.get(port_handle);
@@ -172,6 +218,8 @@ namespace sogen
                     c.emu.write_memory(receive_message.value() + result.message.header_size(), result.payload.data(),
                                        result.payload.size());
                 }
+
+                write_reply_handle_attribute(c, receive_message_attributes, result.handles);
             }
 
             if (receive_message && buffer_length)

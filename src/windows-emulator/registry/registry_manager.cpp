@@ -244,6 +244,54 @@ namespace sogen
         this->add_path_mapping(machine / "SOFTWARE" / "Wow6432Node" / "Policies", machine / "SOFTWARE" / "Policies");
         this->add_path_mapping(machine / "SOFTWARE" / "Wow6432Node" / "RegisteredApplications",
                                machine / "SOFTWARE" / "RegisteredApplications");
+
+        this->alias_remote_audio_endpoints(machine);
+    }
+
+    // On a headless/server host the local Render/Capture endpoint folders are empty, while an RDP session
+    // populates RemoteRender/RemoteCapture with the redirected device. mmdevapi resolves the default endpoint
+    // by opening MMDevices\Audio\Render\{id} (or Capture\{id}), so alias each remote endpoint into the local
+    // folder it expects, making the RDP audio device usable as the default playback/recording endpoint.
+    void registry_manager::alias_remote_audio_endpoints(const std::filesystem::path& machine)
+    {
+        const auto audio = machine / "SOFTWARE" / "Microsoft" / "Windows" / "CurrentVersion" / "MMDevices" / "Audio";
+
+        const std::array<std::pair<const char*, const char*>, 2> folders = {{
+            {"Render", "RemoteRender"},
+            {"Capture", "RemoteCapture"},
+        }};
+
+        for (const auto& [local, remote] : folders)
+        {
+            const auto remote_key = this->get_key(utils::path_key{audio / remote});
+            if (!remote_key)
+            {
+                continue;
+            }
+
+            for (size_t i = 0;; ++i)
+            {
+                const auto name = this->get_sub_key_name(*remote_key, i);
+                if (!name)
+                {
+                    break;
+                }
+
+                const std::string name_str(*name);
+                this->add_path_mapping(audio / local / name_str, audio / remote / name_str);
+
+                // RDP remote endpoints carry no DeviceState value; mmdevapi/audioses treat a missing or zero
+                // state as an invalidated device, so mark the aliased endpoint active.
+                const auto endpoint_key = this->get_key(utils::path_key{audio / remote / name_str});
+                if (endpoint_key && !this->get_value(*endpoint_key, "DeviceState"))
+                {
+                    constexpr uint32_t device_state_active = 1; // DEVICE_STATE_ACTIVE
+                    const auto* state_bytes = reinterpret_cast<const std::byte*>(&device_state_active);
+                    this->set_value(*endpoint_key, "DeviceState", 4 /* REG_DWORD */,
+                                    std::span<const std::byte>(state_bytes, sizeof(device_state_active)));
+                }
+            }
+        }
     }
 
     utils::path_key registry_manager::normalize_path(utils::path_key path) const

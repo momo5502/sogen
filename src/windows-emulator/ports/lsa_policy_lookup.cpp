@@ -127,7 +127,7 @@ namespace sogen
         struct lsa_policy_lookup_port : rpc_port
         {
             NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c,
-                                utils::aligned_binary_writer& writer) override
+                                utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>& /*reply_handles*/) override
             {
                 switch (procedure_id)
                 {
