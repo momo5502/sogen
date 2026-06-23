@@ -162,20 +162,33 @@ namespace sogen
             }
             if (header.AllocatedAttributes & ALPC_MESSAGE_CONTEXT_ATTRIBUTE)
             {
-                offset += 0x18;
+                // ALPC_CONTEXT_ATTR is {PortContext; MessageContext; Sequence; MessageId; CallbackId} = 0x1c,
+                // padded to 0x20. rpcrt4's handle-import offset calc (rpcrt4!0x54180) uses 0x20 here, so the
+                // HANDLE attribute lands at header+VIEW+0x20; using 0x18 would mis-place it by 8 bytes.
+                offset += 0x20;
             }
 
-            // The caller pre-fills the attribute slot's Flags (it describes how it wants the handle handled);
-            // the kernel only fills in the granted handle. Preserve the caller's Flags and write just the
-            // Handle, ObjectType and GrantedAccess so we match the real ALPC receive behaviour.
+            // On a real ALPC receive the KERNEL (not the caller) fills the whole handle attribute: a non-zero
+            // Flags value that marks the slot as carrying a duplicated handle, then the Handle/ObjectType/
+            // GrantedAccess. A live capture of the audio CreateRemoteStream reply showed Flags=0x001243fb, so we
+            // replicate it to match the real kernel's receive layout. (Note: this alone does not yet make WASAPI
+            // Initialize succeed - rpcrt4's client-side LRPC system-handle table still does not reconstruct the
+            // delivered section handle into the unmarshalled NDR struct; see the audio-rpc notes.)
+            constexpr ULONG alpc_received_handle_flags = 0x001243fb & ~0x00040000u; // clear ALPC_HANDLEFLG_INDIRECT
             const auto& h = handles.front();
             const auto attr_base = attributes.value() + offset;
+            emulator_object<ULONG>{c.emu, attr_base + 0}.write(alpc_received_handle_flags);
             emulator_object<EmulatorTraits<Emu64>::HANDLE>{c.emu, attr_base + 8}.write(
                 static_cast<EmulatorTraits<Emu64>::HANDLE>(h.handle));
-            emulator_object<ULONG>{c.emu, attr_base + 0x10}.write(h.object_type);
+            // rpcrt4's handle import (rpcrt4!0x919e0) reads attr+0x10 as the HANDLE COUNT and then fetches each
+            // handle via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation) - it does NOT read the
+            // Handle field above. So this field must be the number of delivered handles, not an object type.
+            emulator_object<ULONG>{c.emu, attr_base + 0x10}.write(static_cast<ULONG>(handles.size()));
             emulator_object<ULONG>{c.emu, attr_base + 0x14}.write(h.desired_access);
 
-            header.ValidAttributes |= ALPC_MESSAGE_HANDLE_ATTRIBUTE;
+            // Report exactly the attributes the reply carries (CONTEXT|HANDLE), matching the real kernel, rather
+            // than OR-ing HANDLE onto whatever stale ValidAttributes the caller's buffer happened to contain.
+            header.ValidAttributes = (header.ValidAttributes & ALPC_MESSAGE_CONTEXT_ATTRIBUTE) | ALPC_MESSAGE_HANDLE_ATTRIBUTE;
             attributes.write(header);
         }
 
@@ -220,6 +233,14 @@ namespace sogen
                 }
 
                 write_reply_handle_attribute(c, receive_message_attributes, result.handles);
+
+                // Stash the delivered handles so rpcrt4 can pull them back via
+                // NtAlpcQueryInformationMessage(AlpcMessageHandleInformation), which is how its system-handle
+                // unmarshal actually imports them (it does not read the handle attribute's Handle field).
+                if (!result.handles.empty())
+                {
+                    c.proc.pending_alpc_message_handles = result.handles;
+                }
             }
 
             if (receive_message && buffer_length)
@@ -233,6 +254,52 @@ namespace sogen
         NTSTATUS handle_NtAlpcQueryInformation()
         {
             return STATUS_NOT_SUPPORTED;
+        }
+
+        // rpcrt4's client-side system-handle unmarshal imports a handle delivered with an ALPC reply by
+        // calling NtAlpcQueryInformationMessage(AlpcMessageHandleInformation = 3, index). The output is an
+        // ALPC_MESSAGE_HANDLE_INFORMATION {ULONG Index; ULONG Reserved; ULONG Handle; ULONG ObjectType;
+        // ULONG GrantedAccess;} (0x14 bytes); rpcrt4 reads Handle@+8, ObjectType@+0xc, GrantedAccess@+0x10.
+        // We return the handle stashed by the matching NtAlpcSendWaitReceivePort reply.
+        NTSTATUS handle_NtAlpcQueryInformationMessage(const syscall_context& c, const handle /*port_handle*/,
+                                                      const emulator_object<PORT_MESSAGE64> /*port_message*/,
+                                                      const uint32_t message_information_class,
+                                                      const emulator_pointer message_information,
+                                                      const uint32_t length, const emulator_object<ULONG> return_length)
+        {
+            constexpr uint32_t alpc_message_handle_information = 3;
+            if (message_information_class != alpc_message_handle_information)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            constexpr uint32_t info_size = 0x14;
+            if (!message_information || length < info_size)
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            // The caller passes the requested handle index in the first dword of the buffer.
+            const auto index = c.emu.read_memory<uint32_t>(message_information);
+            const auto& handles = c.proc.pending_alpc_message_handles;
+            if (index >= handles.size())
+            {
+                return STATUS_NO_MORE_ENTRIES;
+            }
+
+            const auto& h = handles[index];
+            emulator_object<uint32_t>{c.emu, message_information + 0x00}.write(index);
+            emulator_object<uint32_t>{c.emu, message_information + 0x04}.write(0);
+            emulator_object<uint32_t>{c.emu, message_information + 0x08}.write(static_cast<uint32_t>(h.handle));
+            emulator_object<uint32_t>{c.emu, message_information + 0x0c}.write(h.object_type);
+            emulator_object<uint32_t>{c.emu, message_information + 0x10}.write(h.desired_access);
+
+            if (return_length)
+            {
+                return_length.write(info_size);
+            }
+
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtAlpcSetInformation()

@@ -250,6 +250,10 @@ namespace sogen
                                                   /*receive_message_attributes*/,
                                                   emulator_object<LARGE_INTEGER> /*timeout*/);
         NTSTATUS handle_NtAlpcQueryInformation();
+        NTSTATUS handle_NtAlpcQueryInformationMessage(const syscall_context& c, handle port_handle,
+                                                      emulator_object<PORT_MESSAGE64> port_message,
+                                                      uint32_t message_information_class, emulator_pointer message_information,
+                                                      uint32_t length, emulator_object<ULONG> return_length);
         NTSTATUS handle_NtAlpcSetInformation();
         NTSTATUS handle_NtAlpcCreateSecurityContext();
         NTSTATUS handle_NtAlpcDeleteSecurityContext();
@@ -989,6 +993,13 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        // win32k client-interactivity-tracking telemetry hook; audioses pokes it while starting/stopping a
+        // stream. There is nothing to track in the emulator, so acknowledge it.
+        NTSTATUS handle_NtUserCitSetInfo()
+        {
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtSystemDebugControl()
         {
             return STATUS_DEBUGGER_INACTIVE;
@@ -1318,6 +1329,7 @@ namespace sogen
         add_handler(NtGetContextThread);
         add_handler(NtYieldExecution);
         add_handler(NtUserModifyUserStartupInfoFlags);
+        add_handler(NtUserCitSetInfo);
         add_handler(NtUserGetDCEx);
         add_handler(NtUserGetDC);
         add_handler(NtUserGetWindowDC);
@@ -1343,6 +1355,7 @@ namespace sogen
         add_handler(NtAlpcConnectPortEx);
         add_handler(NtAlpcConnectPort);
         add_handler(NtAlpcQueryInformation);
+        add_handler(NtAlpcQueryInformationMessage);
         add_handler(NtGetNextThread);
         add_handler(NtSetInformationObject);
         add_handler(NtUserGetCursorPos);
