@@ -302,26 +302,34 @@ namespace sogen
 
                 const auto section_handle = win_emu.process.sections.store(std::move(render_section));
 
-                constexpr uint32_t section_all_access = 0xF001F; // SECTION_ALL_ACCESS
-                reply_handles.push_back(alpc_reply_handle{section_handle.bits, 0, section_all_access});
+                // Deliver the render section. The op7 NDR references it as an sh_section handle (the _Struct_9
+                // union arm). rpcrt4!LRPC_SYSTEM_HANDLE_DATA::GetSystemHandle requires the handle's ObjectType
+                // to be a single-bit mask whose table lookup (rpcrt4 rva 0xECA50: bit->NdrSystemHandleResource)
+                // matches the expected resource; bit 7 maps to Section (=6), so ObjectType must be 1<<7 = 0x80.
+                // A zero/wrong ObjectType makes rpcrt4 __fastfail(FAST_FAIL_INVALID_ARG). Report SECTION access.
+                constexpr uint32_t alpc_objtype_section = 0x80;
+                constexpr uint32_t section_access = 0xF001F; // SECTION_ALL_ACCESS
+                reply_handles.push_back(alpc_reply_handle{section_handle.bits, alpc_objtype_section, section_access});
 
-                // The 120-byte op7 [out] wire (captured from a live service). Its NDR type is an FC_BOGUS_STRUCT
-                // (in-memory size 0x4e8) with several embedded unique pointers and an FC_SYSTEM_HANDLE (the shared
-                // render section). The cookie (+0x20) and the three referent ids (+0x50/+0x54/+0x58) are those
-                // embedded pointers; when non-zero, NDR follows them and reads the system handle from the ALPC
-                // HANDLE attribute. Delivering that handle so audioses accepts it isn't solved yet (it validates
-                // the handle: GrantedAccess 0xF001F -> E_INVALIDARG, 0/0x6 -> E_HANDLE), so we zero the referents
-                // (null pointers / empty arrays). That makes op7 return S_OK, but the client then takes the
-                // op7a->op5 path; op5 has no capture (native uses op7->op8/op9). See the alpc_capture notes.
+                // The 120-byte op7 [out] _Struct_4 wire, replayed BYTE-FOR-BYTE from a live capture
+                // (build/.../capture/alpc_reply_27_op7_len144.bin, NDR payload @ +0x18). Decompiled IDL
+                // (docs/audio-capture/audioclient_rpc_idl.txt, AudioServerCreateStream): GUID + nAvgBytesPerSec
+                // + [system_handle(sh_file)] HANDLE (+0x18, null here) + i64 cookie (+0x20) + i64 (+0x28) +
+                // three default _Struct_5 unions + a _Struct_9 union whose selector (+0x54 = 1) picks the
+                // sh_section arm, and whose handle index (+0x58 = 1) references the delivered render section.
+                // rpcrt4!Ndr64SystemHandleUnmarshall consumes 8 wire bytes per system handle and treats a
+                // 1-based index (0 = null); Ndr64UnionUnmarshall reads the selectors. The earlier hand-typed
+                // copy had these three values shifted 4 bytes early, which misaligned the union/handle parse
+                // and tripped RPC_X_BYTE_COUNT_TOO_SMALL.
                 static constexpr std::array<uint8_t, 120> system_audio_stream = {
                     0x40, 0x37, 0x77, 0xcd, 0x87, 0xb1, 0x74, 0x49, 0xa1, 0xd5, 0xe0, 0xff, // session GUID
                     0x91, 0x37, 0x22, 0x77, 0x20, 0x62, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, // nAvgBytesPerSec=0x56220
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // cookie -> null pointer
-                    0x00, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0xd2, 0x14, 0x55, // +0x20: server cookie
+                    0xd2, 0x01, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // +0x28: 0x18
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // embedded ptr referents -> null
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, // +0x50: 1
+                    0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // +0x54 union sel=1, +0x58 handle idx=1
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 };

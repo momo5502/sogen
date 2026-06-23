@@ -1,0 +1,994 @@
+﻿// DllOffset: 0x178C10
+// DllPath C:\Windows\System32\audiosrv.dll
+// ServiceName: Audiosrv
+// ServiceDisplayName: Windows Audio
+
+typedef struct Struct_2 _Struct_2;
+typedef struct Struct_5 _Struct_5;
+typedef struct Struct_9 _Struct_9;
+typedef union Union_6 _Union_6;
+typedef struct Struct_7 _Struct_7;
+typedef struct Struct_8 _Struct_8;
+typedef union Union_10 _Union_10;
+typedef struct Struct_11 _Struct_11;
+typedef union Union_15 _Union_15;
+typedef struct Struct_16 _Struct_16;
+typedef struct Struct_17 _Struct_17;
+typedef struct Struct_18 _Struct_18;
+typedef struct Struct_20 _Struct_20;
+typedef struct Struct_21 _Struct_21;
+typedef struct Struct_22 _Struct_22;
+typedef struct Struct_39 _Struct_39;
+typedef struct Struct_40 _Struct_40;
+typedef struct Struct_41 _Struct_41;
+typedef struct Struct_42 _Struct_42;
+typedef struct Struct_43 _Struct_43;
+typedef struct Struct_44 _Struct_44;
+typedef struct Struct_45 _Struct_45;
+typedef struct Struct_46 _Struct_46;
+typedef struct Struct_47 _Struct_47;
+typedef struct Struct_48 _Struct_48;
+typedef struct Struct_49 _Struct_49;
+typedef struct Struct_50 _Struct_50;
+typedef struct Struct_51 _Struct_51;
+typedef struct Struct_52 _Struct_52;
+typedef struct Struct_53 _Struct_53;
+typedef struct Struct_54 _Struct_54;
+typedef struct Struct_55 _Struct_55;
+typedef struct Struct_56 _Struct_56;
+typedef struct Struct_57 _Struct_57;
+typedef struct Struct_58 _Struct_58;
+typedef struct Struct_59 _Struct_59;
+typedef struct Struct_60 _Struct_60;
+typedef struct Struct_32 _Struct_32;
+typedef struct Struct_14 _Struct_14;
+typedef union Union_24 _Union_24;
+typedef struct Struct_25 _Struct_25;
+typedef struct Struct_26 _Struct_26;
+typedef struct Struct_27 _Struct_27;
+typedef struct Struct_28 _Struct_28;
+typedef struct Struct_33 _Struct_33;
+typedef struct Struct_34 _Struct_34;
+typedef struct Struct_35 _Struct_35;
+typedef struct Struct_36 _Struct_36;
+typedef struct Struct_37 _Struct_37;
+typedef struct Struct_38 _Struct_38;
+typedef struct Struct_19 _Struct_19;
+typedef [unique] /* unique */ _Struct_19* _TYPEDEF_NAME_51;
+typedef struct Struct_29 _Struct_29;
+typedef [unique] /* unique */ _Struct_29* _TYPEDEF_NAME_53;
+typedef union Union_30 _Union_30;
+typedef struct Struct_23 _Struct_23;
+typedef struct Struct_31 _Struct_31;
+typedef [unique] /* unique */ _Struct_31* _TYPEDEF_NAME_57;
+typedef [unique, string] /* unique */ char* _TYPEDEF_NAME_58;
+typedef [unique, string] /* unique */ wchar_t* _TYPEDEF_NAME_59;
+typedef struct Struct_0 _Struct_0;
+typedef struct Struct_3 _Struct_3;
+typedef struct Struct_4 _Struct_4;
+typedef struct Struct_13 _Struct_13;
+typedef struct Struct_61 _Struct_61;
+typedef struct Struct_62 _Struct_62;
+typedef struct Struct_63 _Struct_63;
+typedef [unique, string] /* unique */ wchar_t* _TYPEDEF_NAME_67;
+typedef struct Struct_64 _Struct_64;
+typedef struct Struct_65 _Struct_65;
+typedef struct Struct_66 _Struct_66;
+typedef [context_handle] void* _TYPE_STRICT_CONTEXT_HANDLE_0;
+typedef [context_handle] void* _TYPE_STRICT_CONTEXT_HANDLE_1;
+typedef [context_handle] void* _TYPE_STRICT_CONTEXT_HANDLE_2;
+typedef [context_handle] void* _TYPE_STRICT_CONTEXT_HANDLE_3;
+typedef [context_handle] void* _TYPE_STRICT_CONTEXT_HANDLE_4;
+typedef [context_handle] void* _TYPE_STRICT_CONTEXT_HANDLE_5;
+typedef [context_handle] void* _TYPE_STRICT_CONTEXT_HANDLE_6;
+typedef [context_handle] void* _TYPE_STRICT_CONTEXT_HANDLE_7;
+
+
+struct Struct_0 {
+    GUID Member0;
+    GUID Member10;
+    GUID Member20;
+    int Member30;
+    short Member34;
+    int Member38;
+    short Member3C;
+    int Member40;
+    int Member44;
+    _Struct_2 Member48;
+    int Member80;
+    int Member84;
+    int Member88;
+    int Member8C;
+    int Member90;
+    __int64 Member98;
+    short MemberA0;
+    __int64 MemberA8;
+    int MemberB0;
+    int MemberB4;
+};
+
+struct Struct_2 {
+    int Member0;
+    int Member4;
+    int Member8;
+    int MemberC;
+    int Member10;
+    int Member14;
+    GUID Member18;
+    int Member28;
+    [unique, size_is(Member28)] byte Member30[];
+};
+
+struct Struct_3 {
+    short Member0;
+    short Member2;
+    int Member4;
+    int Member8;
+    short MemberC;
+    short MemberE;
+    short Member10;
+    [size_is(Member10)] byte Member12[];
+};
+
+struct Struct_4 {
+    GUID Member0;
+    int Member10;
+    [system_handle(sh_file)] /* FC_SYSTEM_HANDLE File */ HANDLE Member18;
+    __int64 Member20;
+    __int64 Member28;
+    _Struct_5 Member30;
+    _Struct_5 Member158;
+    _Struct_5 Member280;
+    int Member3A8;
+    int Member3AC;
+    _Struct_9 Member3B0;
+    int Member4D8;
+    int Member4DC;
+    float Member4E0;
+    int Member4E4;
+};
+
+struct Struct_5 {
+    short Member0;
+    [switch_is(Member0)] _Union_6 Member8;
+};
+
+[switch_type(unsigned int)] union Union_6 {
+    [case(1)]
+    _Struct_7 Arm_1;
+    [case(2)]
+    _Struct_8 Arm_2;
+    [default]
+    ;
+};
+
+struct Struct_7 {
+    [system_handle(sh_event)] /* FC_SYSTEM_HANDLE Event */ HANDLE Member0;
+};
+
+struct Struct_8 {
+    GUID Member0;
+    GUID Member10;
+    byte Member20[256];
+};
+
+struct Struct_9 {
+    short Member0;
+    [switch_is(Member0)] _Union_10 Member8;
+};
+
+[switch_type(unsigned int)] union Union_10 {
+    [case(1)]
+    _Struct_11 Arm_1;
+    [case(2)]
+    _Struct_11 Arm_2;
+    [case(3)]
+    _Struct_8 Arm_3;
+    [default]
+    ;
+};
+
+struct Struct_11 {
+    [system_handle(sh_section)] /* FC_SYSTEM_HANDLE Section */ HANDLE Member0;
+};
+
+union Union_12 switch (int Selector) Union_12_UNION {
+    case 1215587415:
+    int Arm_1215587415;
+    case 1383359575:
+    int Arm_1383359575;
+};
+
+struct Struct_13 {
+    GUID Member0;
+    int Member10;
+};
+
+struct Struct_14 {
+    short Member0;
+    byte Member2;
+    byte Member3;
+    int Member4;
+    [switch_is((unsigned short)Member0)] _Union_15 Member8;
+};
+
+[switch_type(unsigned short)] union Union_15 {
+    [case(0)]
+    FC_ZERO Arm_0;
+    [case(1)]
+    FC_ZERO Arm_1;
+    [case(16)]
+    byte Arm_16;
+    [case(17)]
+    byte Arm_17;
+    [case(2)]
+    short Arm_2;
+    [case(18)]
+    short Arm_18;
+    [case(3)]
+    int Arm_3;
+    [case(19)]
+    int Arm_19;
+    [case(22)]
+    int Arm_22;
+    [case(23)]
+    int Arm_23;
+    [case(14)]
+    _Struct_16 Arm_14;
+    [case(20)]
+    _Struct_16 Arm_20;
+    [case(21)]
+    _Struct_16 Arm_21;
+    [case(4)]
+    float Arm_4;
+    [case(5)]
+    double Arm_5;
+    [case(11)]
+    short Arm_11;
+    [case(65535)]
+    short Arm_65535;
+    [case(10)]
+    int Arm_10;
+    [case(6)]
+    _Struct_16 Arm_6;
+    [case(7)]
+    double Arm_7;
+    [case(64)]
+    _Struct_17 Arm_64;
+    [case(72)]
+    [unique] /* unique */ GUID* Arm_72;
+    [case(71)]
+    [unique] /* unique */ _Struct_18* Arm_71;
+    [case(8)]
+    BSTR Arm_8;
+    [case(4095)]
+    _Struct_20 Arm_4095;
+    [case(65)]
+    _Struct_21 Arm_65;
+    [case(70)]
+    _Struct_21 Arm_70;
+    [case(30)]
+    [unique, string] /* unique */ char* Arm_30;
+    [case(31)]
+    [unique, string] /* unique */ wchar_t* Arm_31;
+    [case(13)]
+    IUnknown* Arm_13;
+    [case(9)]
+    IDispatch* Arm_9;
+    [case(66)]
+    /* Unknown IID: 0000000c-0000-0000-c000-000000000046 */ IUnknown* Arm_66;
+    [case(68)]
+    /* Unknown IID: 0000000c-0000-0000-c000-000000000046 */ IUnknown* Arm_68;
+    [case(67)]
+    /* Unknown IID: 0000000b-0000-0000-c000-000000000046 */ IUnknown* Arm_67;
+    [case(69)]
+    /* Unknown IID: 0000000b-0000-0000-c000-000000000046 */ IUnknown* Arm_69;
+    [case(73)]
+    [unique] /* unique */ _Struct_22* Arm_73;
+    [case(8208)]
+    LPSAFEARRAY Arm_8208;
+    [case(8209)]
+    LPSAFEARRAY Arm_8209;
+    [case(8194)]
+    LPSAFEARRAY Arm_8194;
+    [case(8210)]
+    LPSAFEARRAY Arm_8210;
+    [case(8195)]
+    LPSAFEARRAY Arm_8195;
+    [case(8211)]
+    LPSAFEARRAY Arm_8211;
+    [case(8214)]
+    LPSAFEARRAY Arm_8214;
+    [case(8215)]
+    LPSAFEARRAY Arm_8215;
+    [case(8196)]
+    LPSAFEARRAY Arm_8196;
+    [case(8197)]
+    LPSAFEARRAY Arm_8197;
+    [case(8198)]
+    LPSAFEARRAY Arm_8198;
+    [case(8199)]
+    LPSAFEARRAY Arm_8199;
+    [case(8200)]
+    LPSAFEARRAY Arm_8200;
+    [case(8203)]
+    LPSAFEARRAY Arm_8203;
+    [case(8206)]
+    LPSAFEARRAY Arm_8206;
+    [case(8201)]
+    LPSAFEARRAY Arm_8201;
+    [case(8205)]
+    LPSAFEARRAY Arm_8205;
+    [case(8202)]
+    LPSAFEARRAY Arm_8202;
+    [case(8204)]
+    LPSAFEARRAY Arm_8204;
+    [case(4112)]
+    _Struct_39 Arm_4112;
+    [case(4113)]
+    _Struct_40 Arm_4113;
+    [case(4098)]
+    _Struct_41 Arm_4098;
+    [case(4114)]
+    _Struct_42 Arm_4114;
+    [case(4099)]
+    _Struct_43 Arm_4099;
+    [case(4115)]
+    _Struct_44 Arm_4115;
+    [case(4116)]
+    _Struct_45 Arm_4116;
+    [case(4117)]
+    _Struct_46 Arm_4117;
+    [case(4100)]
+    _Struct_47 Arm_4100;
+    [case(4101)]
+    _Struct_48 Arm_4101;
+    [case(4107)]
+    _Struct_49 Arm_4107;
+    [case(4106)]
+    _Struct_50 Arm_4106;
+    [case(4102)]
+    _Struct_51 Arm_4102;
+    [case(4103)]
+    _Struct_52 Arm_4103;
+    [case(4160)]
+    _Struct_53 Arm_4160;
+    [case(4168)]
+    _Struct_54 Arm_4168;
+    [case(4167)]
+    _Struct_55 Arm_4167;
+    [case(4104)]
+    _Struct_56 Arm_4104;
+    [case(8191)]
+    _Struct_57 Arm_8191;
+    [case(4126)]
+    _Struct_58 Arm_4126;
+    [case(4127)]
+    _Struct_59 Arm_4127;
+    [case(4108)]
+    _Struct_60 Arm_4108;
+    [case(16400)]
+    [unique] /* unique */ byte* Arm_16400;
+    [case(16401)]
+    [unique] /* unique */ byte* Arm_16401;
+    [case(16386)]
+    [unique] /* unique */ short* Arm_16386;
+    [case(16402)]
+    [unique] /* unique */ short* Arm_16402;
+    [case(16387)]
+    [unique] /* unique */ int* Arm_16387;
+    [case(16403)]
+    [unique] /* unique */ int* Arm_16403;
+    [case(16406)]
+    [unique] /* unique */ int* Arm_16406;
+    [case(16407)]
+    [unique] /* unique */ int* Arm_16407;
+    [case(16388)]
+    [unique] /* unique */ float* Arm_16388;
+    [case(16389)]
+    [unique] /* unique */ double* Arm_16389;
+    [case(16395)]
+    [unique] /* unique */ short* Arm_16395;
+    [case(16398)]
+    [unique] /* unique */ _Struct_32* Arm_16398;
+    [case(16394)]
+    [unique] /* unique */ int* Arm_16394;
+    [case(16390)]
+    [unique] /* unique */ _Struct_16* Arm_16390;
+    [case(16391)]
+    [unique] /* unique */ double* Arm_16391;
+    [case(16392)]
+    [unique] /* unique */ BSTR* Arm_16392;
+    [case(16397)]
+    [unique] /* unique */ IUnknown** Arm_16397;
+    [case(16393)]
+    [unique] /* unique */ IDispatch** Arm_16393;
+    [case(24576)]
+    [unique] /* unique */ LPSAFEARRAY* Arm_24576;
+    [case(16396)]
+    [unique] /* unique */ _Struct_14* Arm_16396;
+};
+
+struct Struct_16 {
+    __int64 Member0;
+};
+
+struct Struct_17 {
+    int Member0;
+    int Member4;
+};
+
+struct Struct_18 {
+    int Member0;
+    int Member4;
+    [unique, size_is((Member0 - 4))] byte Member8[];
+};
+
+struct Struct_19 {
+    int Member0;
+    int Member4;
+    [size_is(Member4)] short Member8[];
+};
+
+struct Struct_20 {
+    int Member0;
+    [unique, size_is(Member0)] byte Member8[];
+};
+
+struct Struct_21 {
+    int Member0;
+    [unique, size_is(Member0)] byte Member8[];
+};
+
+struct Struct_22 {
+    GUID Member0;
+    /* Unknown IID: 0000000c-0000-0000-c000-000000000046 */ IUnknown* Member10;
+};
+
+struct Struct_23 {
+    short Member0;
+    short Member2;
+    int Member4;
+    int Member8;
+    _Union_24 Member10;
+    [size_is(Member0)] _Struct_17 Member38[];
+};
+
+union Union_24 switch (unsigned int Selector) Union_24_UNION {
+    case 8:
+    _Struct_25 Arm_8;
+    case 13:
+    _Struct_26 Arm_13;
+    case 9:
+    _Struct_27 Arm_9;
+    case 12:
+    _Struct_28 Arm_12;
+    case 36:
+    _Struct_33 Arm_36;
+    case 32781:
+    _Struct_34 Arm_32781;
+    case 16:
+    _Struct_35 Arm_16;
+    case 2:
+    _Struct_36 Arm_2;
+    case 3:
+    _Struct_37 Arm_3;
+    case 20:
+    _Struct_38 Arm_20;
+};
+
+struct Struct_25 {
+    int Member0;
+    [size_is(Member0)] _TYPEDEF_NAME_51 Member8;
+};
+
+struct Struct_26 {
+    int Member0;
+    [size_is(Member0)] IUnknown* Member8[];
+};
+
+struct Struct_27 {
+    int Member0;
+    [size_is(Member0)] IDispatch* Member8[];
+};
+
+struct Struct_28 {
+    int Member0;
+    [size_is(Member0)] _TYPEDEF_NAME_53 Member8;
+};
+
+struct Struct_29 {
+    int Member0;
+    int Member4;
+    short Member8;
+    short MemberA;
+    short MemberC;
+    short MemberE;
+    [switch_is(Member8)] _Union_30 Member10;
+};
+
+[switch_type(unsigned int)] union Union_30 {
+    [case(20)]
+    __int64 Arm_20;
+    [case(3)]
+    int Arm_3;
+    [case(17)]
+    byte Arm_17;
+    [case(2)]
+    short Arm_2;
+    [case(4)]
+    float Arm_4;
+    [case(5)]
+    double Arm_5;
+    [case(11)]
+    short Arm_11;
+    [case(10)]
+    int Arm_10;
+    [case(6)]
+    _Struct_16 Arm_6;
+    [case(7)]
+    double Arm_7;
+    [case(8)]
+    [unique] /* unique */ _Struct_19* Arm_8;
+    [case(13)]
+    IUnknown* Arm_13;
+    [case(9)]
+    IDispatch* Arm_9;
+    [case(8192)]
+    [unique] /* unique */ /* unique */ _Struct_23** Arm_8192;
+    [case(36)]
+    [unique] /* unique */ _Struct_31* Arm_36;
+    [case(16420)]
+    [unique] /* unique */ _Struct_31* Arm_16420;
+    [case(16401)]
+    [unique] /* unique */ byte* Arm_16401;
+    [case(16386)]
+    [unique] /* unique */ short* Arm_16386;
+    [case(16387)]
+    [unique] /* unique */ int* Arm_16387;
+    [case(16404)]
+    [unique] /* unique */ __int64* Arm_16404;
+    [case(16388)]
+    [unique] /* unique */ float* Arm_16388;
+    [case(16389)]
+    [unique] /* unique */ double* Arm_16389;
+    [case(16395)]
+    [unique] /* unique */ short* Arm_16395;
+    [case(16394)]
+    [unique] /* unique */ int* Arm_16394;
+    [case(16390)]
+    [unique] /* unique */ _Struct_16* Arm_16390;
+    [case(16391)]
+    [unique] /* unique */ double* Arm_16391;
+    [case(16392)]
+    [unique] /* unique */ /* unique */ _Struct_19** Arm_16392;
+    [case(16397)]
+    [unique] /* unique */ IUnknown** Arm_16397;
+    [case(16393)]
+    [unique] /* unique */ IDispatch** Arm_16393;
+    [case(24576)]
+    [unique] /* unique */ /* unique */ /* unique */ _Struct_23*** Arm_24576;
+    [case(16396)]
+    [unique] /* unique */ /* unique */ _Struct_29** Arm_16396;
+    [case(16)]
+    byte Arm_16;
+    [case(18)]
+    short Arm_18;
+    [case(19)]
+    int Arm_19;
+    [case(21)]
+    __int64 Arm_21;
+    [case(22)]
+    int Arm_22;
+    [case(23)]
+    int Arm_23;
+    [case(14)]
+    _Struct_32 Arm_14;
+    [case(16398)]
+    [unique] /* unique */ _Struct_32* Arm_16398;
+    [case(16400)]
+    [unique] /* unique */ byte* Arm_16400;
+    [case(16402)]
+    [unique] /* unique */ short* Arm_16402;
+    [case(16403)]
+    [unique] /* unique */ int* Arm_16403;
+    [case(16405)]
+    [unique] /* unique */ __int64* Arm_16405;
+    [case(16406)]
+    [unique] /* unique */ int* Arm_16406;
+    [case(16407)]
+    [unique] /* unique */ int* Arm_16407;
+    [case(0)]
+    FC_ZERO Arm_0;
+    [case(1)]
+    FC_ZERO Arm_1;
+};
+
+struct Struct_31 {
+    int Member0;
+    int Member4;
+    /* Unknown IID: 0000002f-0000-0000-c000-000000000046 */ IUnknown* Member8;
+    [unique, size_is(Member4)] byte Member10[];
+};
+
+struct Struct_32 {
+    short Member0;
+    byte Member2;
+    byte Member3;
+    int Member4;
+    __int64 Member8;
+};
+
+struct Struct_33 {
+    int Member0;
+    [size_is(Member0)] _TYPEDEF_NAME_57 Member8;
+};
+
+struct Struct_34 {
+    int Member0;
+    [size_is(Member0)] IUnknown* Member8[];
+    GUID Member10;
+};
+
+struct Struct_35 {
+    int Member0;
+    [unique, size_is(Member0)] byte Member8[];
+};
+
+struct Struct_36 {
+    int Member0;
+    [unique, size_is(Member0)] short Member8[];
+};
+
+struct Struct_37 {
+    int Member0;
+    [unique, size_is(Member0)] int Member8[];
+};
+
+struct Struct_38 {
+    int Member0;
+    [unique, size_is(Member0)] __int64 Member8[];
+};
+
+struct Struct_39 {
+    int Member0;
+    [unique, size_is(Member0)] byte Member8[];
+};
+
+struct Struct_40 {
+    int Member0;
+    [unique, size_is(Member0)] byte Member8[];
+};
+
+struct Struct_41 {
+    int Member0;
+    [unique, size_is(Member0)] short Member8[];
+};
+
+struct Struct_42 {
+    int Member0;
+    [unique, size_is(Member0)] short Member8[];
+};
+
+struct Struct_43 {
+    int Member0;
+    [unique, size_is(Member0)] int Member8[];
+};
+
+struct Struct_44 {
+    int Member0;
+    [unique, size_is(Member0)] int Member8[];
+};
+
+struct Struct_45 {
+    int Member0;
+    [unique, size_is(Member0)] _Struct_16 Member8[];
+};
+
+struct Struct_46 {
+    int Member0;
+    [unique, size_is(Member0)] _Struct_16 Member8[];
+};
+
+struct Struct_47 {
+    int Member0;
+    [unique, size_is(Member0)] float Member8[];
+};
+
+struct Struct_48 {
+    int Member0;
+    [unique, size_is(Member0)] double Member8[];
+};
+
+struct Struct_49 {
+    int Member0;
+    [unique, size_is(Member0)] short Member8[];
+};
+
+struct Struct_50 {
+    int Member0;
+    [unique, size_is(Member0)] int Member8[];
+};
+
+struct Struct_51 {
+    int Member0;
+    [unique, size_is(Member0)] _Struct_16 Member8[];
+};
+
+struct Struct_52 {
+    int Member0;
+    [unique, size_is(Member0)] double Member8[];
+};
+
+struct Struct_53 {
+    int Member0;
+    [unique, size_is(Member0)] _Struct_17 Member8[];
+};
+
+struct Struct_54 {
+    int Member0;
+    [unique, size_is(Member0)] GUID Member8[];
+};
+
+struct Struct_55 {
+    int Member0;
+    [unique, size_is(Member0)] _Struct_18 Member8[];
+};
+
+struct Struct_56 {
+    int Member0;
+    [unique, size_is(Member0)] BSTR Member8[];
+};
+
+struct Struct_57 {
+    int Member0;
+    [unique, size_is(Member0)] _Struct_20 Member8[];
+};
+
+struct Struct_58 {
+    int Member0;
+    [unique, size_is(Member0)] _TYPEDEF_NAME_58 Member8;
+};
+
+struct Struct_59 {
+    int Member0;
+    [unique, size_is(Member0)] _TYPEDEF_NAME_59 Member8;
+};
+
+struct Struct_60 {
+    int Member0;
+    [unique, size_is(Member0)] _Struct_14 Member8[];
+};
+
+struct Struct_61 {
+    int Member0;
+    int Member4;
+    int Member8;
+    GUID MemberC;
+    GUID Member1C;
+    GUID Member2C;
+    int Member3C;
+    short Member40;
+    short Member44;
+};
+
+struct Struct_62 {
+    wchar_t Member0[256];
+    wchar_t Member200[128];
+    GUID Member300;
+    int Member310;
+    int Member314;
+    int Member318;
+    int Member31C;
+    int Member320;
+    int Member324;
+    int Member328;
+    GUID Member32C;
+    short Member33C;
+    short Member33E;
+    short Member340;
+};
+
+struct Struct_63 {
+    short Member0;
+    short Member4;
+    short Member8;
+    short MemberC;
+    int Member10;
+    wchar_t Member14[128];
+};
+
+struct Struct_64 {
+    int Member0;
+    int Member4;
+    short Member8;
+    short MemberC;
+    short Member10;
+    int Member14;
+    int Member18;
+    [unique, size_is(Member18)] int Member20[];
+};
+
+struct Struct_65 {
+    GUID Member0;
+    int Member10;
+    int Member14;
+    int Member18;
+    int Member1C;
+    __int64 Member20;
+    int Member28;
+    wchar_t Member2C[65];
+    wchar_t MemberAE[65];
+};
+
+struct Struct_66 {
+    short Member0;
+    short Member4;
+    int Member8;
+};
+
+[
+  uuid(D574D111-6126-49D7-9B86-4DE6B650D4FC),
+  version(2.8)
+]
+interface intf_d574d111_6126_49d7_9b86_4de6b650d4fc {
+    int AudioServerGetMixFormat([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] _Struct_0* p1, [out] /* unique */ _Struct_3** p2);
+    int AudioServerIsFormatSupported([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] short p1, [in] _Struct_0* p2, [in] _Struct_3* p3, [in, out, unique] /* unique */ /* unique */ _Struct_3** p4);
+    int AudioServerGetDevicePeriod([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] _Struct_0* p1, [in] int p2, [in, out, unique] /* unique */ __int64* p3, [in, out, unique] /* unique */ __int64* p4);
+    int AudioServerIsOffloadCapable([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] int p1, [out] int* p2);
+    int AudioServerInitialize([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] short p1, [in] int p2, [in] _Struct_3* p3, [in] GUID* p4, [in] _Struct_0* p5, [out, string] /* unique */ wchar_t** p6, [out] _TYPE_STRICT_CONTEXT_HANDLE_0* p7);
+    int AudioServerDisconnect([in, out] _TYPE_STRICT_CONTEXT_HANDLE_0* p0);
+    int AudioServerGetAudioSession([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [out] _TYPE_STRICT_CONTEXT_HANDLE_1* p1);
+    int AudioServerCreateStream([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] short p1, [in] __int64 p2, [in] __int64 p3, [in] int p4, [out] _Struct_4* p5);
+    int AudioServerStartStream([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] __int64 p1, [in] short p2);
+    int AudioServerStopStream([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] __int64 p1, [in] short p2);
+    int AudioServerPreStartStream([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0);
+    int AudioServerStartStreamAborted([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0);
+    int AudioServerResetEndpoint([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] __int64 p1);
+    int AudioServerDestroyStream([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] __int64 p1);
+    int AudioServerGetStreamLatency([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] __int64 p1, [out] __int64* p2);
+    int AudioServerSetStreamSampleRate([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] __int64 p1, [in] float p2);
+    int AudioServerGetChannelCount([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [out] int* p1);
+    int AudioServerSetChannelVolume([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] int p1, [in] float p2, [in, out, unique] /* unique */ int* p3);
+    int AudioServerGetChannelVolume([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] int p1, [out] float* p2);
+    int AudioServerSetAllVolumes([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] int p1, [in, size_is(p1)] float* p2[], [in, out, unique] /* unique */ int* p3);
+    int AudioServerSetAudioStreamWindow([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] HWND p1);
+    int AudioServerGetAllVolumes([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in, range(0, 32)] /* range: 0,32 */ int p1, [out, size_is(p1)] float* p2[]);
+    int AudioServerSetAllInitialVolumesWithRamp([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] int p1, [in, size_is(p1)] float* p2[], [in] __int64 p3);
+    int AudioSessionGetId([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out, string] /* unique */ wchar_t** p1);
+    int AudioSessionGetInstanceId([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out, string] /* unique */ wchar_t** p1);
+    int AudioSessionGetStreamSwitchId([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out, string] /* unique */ wchar_t** p1);
+    int AudioSessionGetProcessId([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] int* p1);
+    int AudioSessionGetState([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] short* p1);
+    int AudioSessionGetLastActivation([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] double* p1);
+    int AudioSessionGetLastInactivation([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] double* p1);
+    int AudioSessionIsSystemSoundsSession([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0);
+    int AudioSessionGetDisplayOptions([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] int* p1);
+    int AudioSessionGetDisplayName([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out, string] /* unique */ wchar_t** p1);
+    int AudioSessionSetDisplayName([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in, string] wchar_t* p1, [in, unique] /* unique */ GUID* p2);
+    int AudioSessionGetIconPath([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out, string] /* unique */ wchar_t** p1);
+    int AudioSessionSetIconPath([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in, string] wchar_t* p1, [in, unique] /* unique */ GUID* p2);
+    int AudioSessionGetGroupingParam([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] GUID* p1);
+    int AudioSessionSetGroupingParam([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in] GUID* p1, [in, unique] /* unique */ GUID* p2);
+    int AudioSessionGetVolume([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] float* p1);
+    int AudioSessionSetVolume([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in] float p1, [in, unique] /* unique */ GUID* p2, [in, out, unique] /* unique */ int* p3);
+    int AudioSessionGetMute([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] int* p1);
+    int AudioSessionSetMute([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in] int p1, [in, unique] /* unique */ GUID* p2, [in, out, unique] /* unique */ int* p3);
+    int AudioSessionGetChannelCount([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] int* p1);
+    int AudioSessionSetChannelVolume([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in] int p1, [in] float p2, [in, unique] /* unique */ GUID* p3, [in, out, unique] /* unique */ int* p4);
+    int AudioSessionGetChannelVolume([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in] int p1, [out] float* p2);
+    int AudioSessionSetAllVolumes([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in] int p1, [in, size_is(p1)] float* p2[], [in, unique] /* unique */ GUID* p3, [in, out, unique] /* unique */ int* p4);
+    int AudioSessionGetAllVolumes([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in, range(0, 32)] /* range: 0,32 */ int p1, [out, size_is(p1)] float* p2[]);
+    int AudioSessionPropertyStoreCommit([in] _TYPE_STRICT_CONTEXT_HANDLE_1* p0);
+    int AudioSessionPropertyStoreGetAt([in] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in] int p1, [out] _Struct_13* p2);
+    int AudioSessionPropertyStoreGetCount([in] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] int* p1);
+    int AudioSessionPropertyStoreGetValue([in] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in] _Struct_13* p1, [out] _Struct_14* p2);
+    int AudioSessionPropertyStoreSetValue([in] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in] _Struct_13* p1, [in] _Struct_14* p2);
+    int AudioSessionSetDuckingPreference([in] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in] byte p1);
+    int AudioSessionGetDuckingState([in] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] float* p1);
+    int AudioSessionGetIsComms([in] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] int* p1);
+    int AudioSessionDestroy([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0);
+    int AudioSessionMeterGetPeakValue([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] float* p1);
+    int AudioSessionMeterGetMeteringChannelCount([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [out] int* p1);
+    int AudioSessionMeterGetChannelsPeakValues([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in, range(0, 32)] /* range: 0,32 */ int p1, [out, size_is(p1)] float* p2[]);
+    int AudioSessionSetWindowId([in, out] _TYPE_STRICT_CONTEXT_HANDLE_1* p0, [in] int p1);
+    int PolicyConfigGetMixFormat([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [out] /* unique */ _Struct_3** p1);
+    int PolicyConfigGetDeviceFormat([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] int p1, [out] /* unique */ _Struct_3** p2);
+    int PolicyConfigGetDeviceFormatForConnector([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] short p1, [in] int p2, [out] /* unique */ _Struct_3** p3);
+    int PolicyConfigSetDeviceFormat([in] handle_t _hProcHandle, [in] GUID* p0, [in, string] wchar_t* p1, [in, unique] /* unique */ _Struct_3* p2, [in, unique] /* unique */ _Struct_3* p3);
+    int PolicyConfigResetDeviceFormat([in] handle_t _hProcHandle, [in] GUID* p0, [in, string] wchar_t* p1);
+    int PolicyConfigGetProcessingPeriod([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] int p1, [in, out, unique] /* unique */ __int64* p2, [in, out, unique] /* unique */ __int64* p3);
+    int PolicyConfigSetProcessingPeriod([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] __int64* p1);
+    int PolicyConfigGetShareMode([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [out] short* p1);
+    int PolicyConfigSetShareMode([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] short p1);
+    int PolicyConfigGetPropertyValue([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] int p1, [in] _Struct_13* p2, [out] _Struct_14* p3);
+    int PolicyConfigSetPropertyValue([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] int p1, [in] _Struct_13* p2, [in] _Struct_14* p3);
+    int PolicyConfigSetDefaultEndpoint([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] short p1);
+    int PolicyConfigSetEndpointVisibility([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] int p1);
+    int PolicyConfigSetEndpointAbilityToBeDefault([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] int p1);
+    int PolicyConfigSetAccessibilityAudioMonoMixState([in] handle_t _hProcHandle, [in] int p0);
+    int PolicyConfigGetAccessibilityAudioMonoMixState([in] handle_t _hProcHandle, [out] int* p0);
+    int PolicyConfigValidateSpatialAudioSettings([in] handle_t _hProcHandle);
+    int PolicyConfigReportSpatialLicenseChanged([in] handle_t _hProcHandle, [in, string] wchar_t* p0);
+    int PolicyConfigSetMixedRealitySpatialAudioFormatPolicy([in] handle_t _hProcHandle, [in] int p0);
+    int PolicyConfigGetDeviceFormatAndSpatialSettings([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] int p1, [out] /* unique */ _Struct_3** p2, [out] /* unique */ _Struct_61** p3, [out] int* p4, [out, size_is(*p4)] _Struct_62* p5[]);
+    int PolicyConfigSetDeviceSpatialSettings([in] handle_t _hProcHandle, [in] GUID* p0, [in, string] wchar_t* p1, [in, unique] /* unique */ _Struct_61* p2, [in, unique] /* unique */ _Struct_3* p3);
+    int PolicyConfigAddDynamicRoutingRule([in] handle_t _hProcHandle, [in] _Struct_63* p0, [out] __int64* p1);
+    int PolicyConfigRemoveDynamicRoutingRule([in] handle_t _hProcHandle, [in] __int64 p0);
+    int PolicyConfigUpdateDynamicRoutingRule([in] handle_t _hProcHandle, [in] __int64 p0, [in] _Struct_63* p1);
+    int PolicyConfigGetDynamicRoutingRule([in] handle_t _hProcHandle, [in] __int64 p0, [out] _Struct_63* p1);
+    int GetAudioSessionManager([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [out] _TYPE_STRICT_CONTEXT_HANDLE_2* p1, [out] int* p2);
+    int AudioSessionManagerDestroy([in, out] _TYPE_STRICT_CONTEXT_HANDLE_2* p0);
+    int AudioSessionManagerGetAudioSessions([in, out] _TYPE_STRICT_CONTEXT_HANDLE_2* p0, [out] int* p1, [out, size_is(*p1)] _TYPE_STRICT_CONTEXT_HANDLE_1* p2[], [out, size_is(*p1)] _TYPEDEF_NAME_67* p3);
+    int AudioSessionManagerGetCurrentSession([in, out] _TYPE_STRICT_CONTEXT_HANDLE_2* p0, [in] GUID* p1, [in] int p2, [out] _TYPE_STRICT_CONTEXT_HANDLE_1* p3, [out, string] /* unique */ wchar_t** p4);
+    int AudioSessionManagerGetExistingSession([in, out] _TYPE_STRICT_CONTEXT_HANDLE_2* p0, [in, string] wchar_t* p1, [out] _TYPE_STRICT_CONTEXT_HANDLE_1* p2);
+    int AudioSessionManagerGetSessionForStreamSwitch([in, out] _TYPE_STRICT_CONTEXT_HANDLE_2* p0, [in, string] wchar_t* p1, [out] _TYPE_STRICT_CONTEXT_HANDLE_1* p2);
+    int AudioSessionManagerAddAudioSessionClientNotification([in, out] _TYPE_STRICT_CONTEXT_HANDLE_2* p0);
+    int AudioSessionManagerDeleteAudioSessionClientNotification([in, out] _TYPE_STRICT_CONTEXT_HANDLE_2* p0);
+    int AudioSessionManagerAddVolumeDuckNotification([in, out] _TYPE_STRICT_CONTEXT_HANDLE_2* p0, [in] __int64 p1, [in, unique, string] /* unique */ wchar_t* p2);
+    int AudioSessionManagerDeleteVolumeDuckNotification([in, out] _TYPE_STRICT_CONTEXT_HANDLE_2* p0, [in] __int64 p1);
+    int AudioVolumeConnect([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [out] _TYPE_STRICT_CONTEXT_HANDLE_3* p1);
+    int AudioVolumeDisconnect([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0);
+    int AudioVolumeQueryHardwareSupport([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [out] int* p1);
+    int AudioVolumeGetVolumeRange([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [in] int p1, [out] float* p2, [out] float* p3, [out] float* p4);
+    int AudioVolumeGetChannelCount([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [out] int* p1);
+    int AudioVolumeSetMasterVolumeLevel([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [in] GUID* p1, [in] float p2, [in, unique] /* unique */ GUID* p3, [in, out, unique] /* unique */ int* p4);
+    int AudioVolumeSetMasterVolumeLevelScalar([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [in] GUID* p1, [in] float p2, [in, unique] /* unique */ GUID* p3, [in, out, unique] /* unique */ int* p4);
+    int AudioVolumeGetMasterVolumeLevel([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [out] float* p1);
+    int AudioVolumeGetMasterVolumeLevelScalar([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [out] float* p1);
+    int AudioVolumeSetChannelVolumeLevel([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [in] GUID* p1, [in] int p2, [in] float p3, [in, unique] /* unique */ GUID* p4, [in, out, unique] /* unique */ int* p5);
+    int AudioVolumeSetChannelVolumeLevelScalar([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [in] GUID* p1, [in] int p2, [in] float p3, [in, unique] /* unique */ GUID* p4, [in, out, unique] /* unique */ int* p5);
+    int AudioVolumeGetChannelVolumeLevel([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [in] int p1, [out] float* p2);
+    int AudioVolumeGetChannelVolumeLevelScalar([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [in] int p1, [out] float* p2);
+    int AudioVolumeSetMute([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [in] GUID* p1, [in] int p2, [in, unique] /* unique */ GUID* p3, [in, out, unique] /* unique */ int* p4);
+    int AudioVolumeGetMute([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [out] int* p1);
+    int AudioVolumeAddMasterVolumeNotification([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0);
+    int AudioVolumeDeleteMasterVolumeNotification([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0);
+    int AudioMeterGetPeakValue([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [out] float* p1);
+    int AudioMeterGetMeteringChannelCount([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [out] int* p1);
+    int AudioMeterGetChannelsPeakValues([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [in, range(0, 32)] /* range: 0,32 */ int p1, [out, size_is(p1)] float* p2[]);
+    int AudioVolumeGetStepInfo([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [out] int* p1, [out] int* p2);
+    int AudioVolumeStepUp([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [in] GUID* p1, [in, unique] /* unique */ GUID* p2, [in, out, unique] /* unique */ int* p3);
+    int AudioVolumeStepDown([in, out] _TYPE_STRICT_CONTEXT_HANDLE_3* p0, [in] GUID* p1, [in, unique] /* unique */ GUID* p2, [in, out, unique] /* unique */ int* p3);
+    int AudioServerGetBufferSizeLimits([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] _Struct_3* p1, [in] int p2, [out] __int64* p3, [out] __int64* p4);
+    int AudioServerSetLastBufferInProgress([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0);
+    int AudioServerIsRawStreamSupported([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] short p1, [out] int* p2);
+    int AudioServerIsPostVolumeLoopbackSupported([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [out] int* p1);
+    int AudioServerDeriveStreamCategory([in] handle_t _hProcHandle, [in] short p0, [in] int p1, [out] int* p2);
+    int AudioServerGetStreamVpoContext([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [out] int* p1, [out] _TYPE_STRICT_CONTEXT_HANDLE_4* p2);
+    int AudioServerGetEndpointVpoContext([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [out] int* p1, [out] _TYPE_STRICT_CONTEXT_HANDLE_4* p2);
+    int AudioServerCloseVpoContext([in, out] _TYPE_STRICT_CONTEXT_HANDLE_4* p0);
+    int AudioServerGetCurrentSharedModeEnginePeriod([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] _Struct_0* p1, [out] /* unique */ _Struct_3** p2, [out] int* p3);
+    int AudioServerGetSharedModeEnginePeriod([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in] _Struct_0* p1, [in] _Struct_3* p2, [in] int p3, [out] int* p4, [out] int* p5, [out] int* p6, [out] int* p7);
+    int AudioServerRequestSpatialDynamicObjects([in] handle_t _hProcHandle, [in] __int64 p0, [in] int p1, [in] int p2);
+    int AudioServerSetAmbMetadata([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] __int64 p1, [in] _Struct_64* p2);
+    int AudioServerSetAmbHeadTracking([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] __int64 p1, [in] int p2);
+    int AudioServerGetAmbHeadTracking([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] __int64 p1, [out] int* p2);
+    int AudioServerSetAmbRotation([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] __int64 p1, [in] float p2, [in] float p3, [in] float p4, [in] float p5);
+    int asm_GetApplicationSubmixContext([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [out] _TYPE_STRICT_CONTEXT_HANDLE_5* p1, [out] __int64* p2);
+    int asm_GetApplicationSubmixContextFromPID([in] handle_t _hProcHandle, [in] int p0, [out] _TYPE_STRICT_CONTEXT_HANDLE_5* p1, [out] __int64* p2);
+    int asm_GetApplicationSubmixContextForProcessTree([in] handle_t _hProcHandle, [in] int p0, [out] _TYPE_STRICT_CONTEXT_HANDLE_5* p1, [out] __int64* p2);
+    int asm_GetApplicationSubmixContextForExcludedProcessTree([in] handle_t _hProcHandle, [in] int p0, [out] _TYPE_STRICT_CONTEXT_HANDLE_5* p1, [out] __int64* p2);
+    int asm_ApplicationSubmixContextDestroy([in, out] _TYPE_STRICT_CONTEXT_HANDLE_5* p0);
+    int asm_GetApplicationSubmixes([in] _TYPE_STRICT_CONTEXT_HANDLE_5 p0, [out] __int64* p1, [out] int* p2, [out, size_is(*p2)] __int64* p3[]);
+    int asm_ApplicationSubmixDestroy([in, out] _TYPE_STRICT_CONTEXT_HANDLE_6* p0);
+    int asm_AudioServerGetApplicationSubmixPeriod([in] _TYPE_STRICT_CONTEXT_HANDLE_6 p0, [out] __int64* p1);
+    int asm_GetApplicationSubmixFromId([in] _TYPE_STRICT_CONTEXT_HANDLE_5 p0, [in] __int64 p1, [out] _TYPE_STRICT_CONTEXT_HANDLE_6* p2);
+    int asm_AudioServerInitializeStream([in] handle_t _hProcHandle, [in] _TYPE_STRICT_CONTEXT_HANDLE_6 p0, [in] int p1, [in] _Struct_3* p2, [in] GUID* p3, [in] _Struct_0* p4, [out] _TYPE_STRICT_CONTEXT_HANDLE_0* p5);
+    int AudioServerGetAudioStreamHandle([in] handle_t _hProcHandle, [in] __int64 p0, [out] _TYPE_STRICT_CONTEXT_HANDLE_0* p1);
+    int AudioServerReleaseAudioStreamHandle([in, out] _TYPE_STRICT_CONTEXT_HANDLE_0* p0);
+    int AudioServerGetAudioStreamInfo([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [out] _Struct_0* p1, [out] __int64* p2, [out] __int64* p3, [out, string] /* unique */ wchar_t** p4, [out] /* unique */ _Struct_3** p5);
+    int AudioServerPopulateAudioHistoryForStream([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] _TYPE_STRICT_CONTEXT_HANDLE_0 p1, [in] __int64 p2, [in] __int64 p3);
+    int PolicyConfigGetEndpointExtendedSpatialLicenseInfo([in] handle_t _hProcHandle, [in, unique, string] /* unique */ wchar_t* p0, [in, range(1, 100)] /* range: 1,100 */ int p1, [out, size_is(p1)] _Struct_65 p2[]);
+    int PolicyConfigIsSpatialFormatOwner([in] handle_t _hProcHandle, [in] GUID* p0, [in, string] wchar_t* p1, [out] int* p2);
+    int AudioServerCreateStreamConnection([in] handle_t _hProcHandle, [in, string] wchar_t* p0, [in, string] wchar_t* p1, [in, unique] /* unique */ _Struct_66* p2, [out] _TYPE_STRICT_CONTEXT_HANDLE_7* p3);
+    int AudioServerReleaseStreamConnection([in, out] _TYPE_STRICT_CONTEXT_HANDLE_7* p0);
+    int AudioServerStartStopStreamConnection([in] _TYPE_STRICT_CONTEXT_HANDLE_7 p0, [in] int p1, [in] int p2);
+    int AudioServerSetDuckingOptionsForCurrentStream([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] int p1);
+    int AudioServerSetAudioEffect([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] GUID* p1, [in] int p2);
+    int AudioServerGetAudioEffectsChangedWnfStateName([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [out] __int64* p1);
+    int AudioServerSetEchoCancellationRenderEndpoint([in] _TYPE_STRICT_CONTEXT_HANDLE_0 p0, [in] __int64 p1, [in, unique, string] /* unique */ wchar_t* p2);
+}
+
+
+
