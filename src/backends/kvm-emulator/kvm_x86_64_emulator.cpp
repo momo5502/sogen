@@ -4,6 +4,8 @@
 
 #include <fcntl.h>
 #include <linux/kvm.h>
+#include <pthread.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -60,6 +62,36 @@ namespace sogen::kvm
             {
                 throw_errno(action);
             }
+        }
+
+        // No-op handler whose only purpose is to interrupt a blocking KVM_RUN ioctl so the
+        // run loop can observe a pending stop request. Installed without SA_RESTART so the
+        // ioctl returns EINTR instead of being silently restarted.
+        void vcpu_kick_handler(int)
+        {
+        }
+
+        int install_vcpu_kick_signal()
+        {
+            const int signal_number = SIGRTMIN;
+
+            struct sigaction action{};
+            action.sa_handler = vcpu_kick_handler;
+            sigemptyset(&action.sa_mask);
+            action.sa_flags = 0;
+
+            if (sigaction(signal_number, &action, nullptr) != 0)
+            {
+                throw_errno("sigaction");
+            }
+
+            return signal_number;
+        }
+
+        int vcpu_kick_signal()
+        {
+            static const int signal_number = install_vcpu_kick_signal();
+            return signal_number;
         }
 
         class file_descriptor
@@ -327,6 +359,8 @@ namespace sogen::kvm
             uint64_t next_internal_gpa_ = internal_page_table_base;
             std::atomic_bool stop_requested_ = false;
             std::atomic_bool run_active_ = false;
+            pthread_t vcpu_thread_{};
+            int kick_signal_ = 0;
             uint64_t syscall_hook_page_ = 0;
             size_t next_hook_id_ = 1;
 
@@ -524,6 +558,7 @@ namespace sogen::kvm
 
         kvm_x86_64_emulator::kvm_x86_64_emulator()
         {
+            this->kick_signal_ = vcpu_kick_signal();
             this->ensure_platform_support();
             this->configure_partition();
             this->configure_virtual_processor();
@@ -797,6 +832,8 @@ namespace sogen::kvm
             }
 
             this->stop_requested_ = false;
+            this->vcpu_thread_ = pthread_self();
+            this->run_->immediate_exit = 0;
 
             while (!this->stop_requested_)
             {
@@ -879,9 +916,19 @@ namespace sogen::kvm
         void kvm_x86_64_emulator::stop()
         {
             this->stop_requested_ = true;
-            if (this->run_active_ && this->run_ != nullptr)
+
+            if (this->run_ != nullptr)
             {
+                // Honoured at the next KVM_RUN entry; covers the race where the vCPU has not
+                // entered guest mode yet.
                 this->run_->immediate_exit = 1;
+            }
+
+            if (this->run_active_)
+            {
+                // The vCPU may already be executing guest code, where immediate_exit no longer
+                // applies. Signal the vCPU thread to force the in-flight KVM_RUN to return EINTR.
+                pthread_kill(this->vcpu_thread_, this->kick_signal_);
             }
         }
 
