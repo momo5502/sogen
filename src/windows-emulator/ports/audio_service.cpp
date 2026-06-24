@@ -23,8 +23,11 @@ namespace sogen
 
         constexpr uint32_t k_audio_opnum_get_default_endpoint = 25; // {923F85B3}
         constexpr uint32_t k_audio_opnum_get_mix_format = 0;        // {D574D111}
+        constexpr uint32_t k_audio_opnum_is_format_supported = 1;   // {D574D111} AudioServerIsFormatSupported
+        constexpr uint32_t k_audio_opnum_get_device_period = 2;     // {D574D111} AudioServerGetDevicePeriod
         constexpr uint32_t k_audio_opnum_open_stream = 4;           // {D574D111} (Initialize prep)
         constexpr uint32_t k_audio_opnum_create_stream = 7;         // {D574D111} CreateRemoteStream
+        constexpr uint32_t k_audio_opnum_destroy_stream = 13;       // {D574D111} AudioServerDestroyStream
         constexpr uint32_t k_audio_opnum_post_create_a = 8;         // {D574D111} post-CreateRemoteStream (returns S_OK)
         constexpr uint32_t k_audio_opnum_post_create_b = 9;         // {D574D111} post-CreateRemoteStream (returns S_OK)
 
@@ -139,6 +142,12 @@ namespace sogen
                     {
                     case k_audio_opnum_get_mix_format:
                         return handle_get_mix_format(writer);
+                    case k_audio_opnum_is_format_supported:
+                        return handle_is_format_supported(writer);
+                    case k_audio_opnum_get_device_period:
+                        return handle_get_device_period(writer);
+                    case k_audio_opnum_destroy_stream:
+                        return handle_post_create(writer);
                     case k_audio_opnum_open_stream:
                         return handle_open_stream(writer);
                     case k_audio_opnum_create_stream:
@@ -209,6 +218,35 @@ namespace sogen
 
                 writer.align_to(sizeof(uint32_t));
                 writer.write(k_hr_ok); // return HRESULT
+                return STATUS_SUCCESS;
+            }
+
+            // {D574D111} opnum 1: AudioServerIsFormatSupported(endpointId, shareMode, mixParams, format,
+            //   [in,out,unique] closestMatch). DirectSound probes its buffer format here before activating the
+            //   render client; failing (or not answering) the call makes audioses map the RPC error to
+            //   AUDCLNT_E_DEVICE_INVALIDATED. The emulated shared-mode engine accepts the requested format, so
+            //   report S_OK with no suggested closest match.
+            static NTSTATUS handle_is_format_supported(utils::aligned_binary_writer& writer)
+            {
+                writer.write_ndr_pointer(false); // [out] closest-match format: null (format accepted as-is)
+                writer.align_to(sizeof(uint32_t));
+                writer.write(k_hr_ok);           // return S_OK
+                return STATUS_SUCCESS;
+            }
+
+            // {D574D111} opnum 2: AudioServerGetDevicePeriod(endpointId, mixParams, flags,
+            //   [in,out,unique] *defaultPeriod, [in,out,unique] *minimumPeriod), both in 100-ns units. Report the
+            //   standard shared-mode engine periods (10 ms default, 3 ms minimum).
+            static NTSTATUS handle_get_device_period(utils::aligned_binary_writer& writer)
+            {
+                constexpr int64_t default_period = 100000; // 10 ms
+                constexpr int64_t minimum_period = 30000;   // 3 ms
+                writer.write_ndr_pointer(true);             // defaultPeriod referent
+                writer.write_ndr_pointer(true);             // minimumPeriod referent
+                writer.write<int64_t>(default_period);
+                writer.write<int64_t>(minimum_period);
+                writer.align_to(sizeof(uint32_t));
+                writer.write(k_hr_ok);
                 return STATUS_SUCCESS;
             }
 
