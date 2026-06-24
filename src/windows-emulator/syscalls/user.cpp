@@ -2411,6 +2411,8 @@ namespace sogen
             win.height = height;
             win.thread_id = c.win_emu.current_thread().id;
             win.handle = handle.bits;
+            // Record the owning thread in the shared handle entry so client-side GetWindowThreadProcessId works.
+            c.proc.user_handles.set_owner(static_cast<uint32_t>(handle.value.id), win.thread_id);
             if (!is_message_only)
             {
                 win.parent_handle = has_child_parent ? parent : c.proc.default_desktop_window_handle.bits;

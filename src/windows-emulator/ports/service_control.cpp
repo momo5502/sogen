@@ -28,6 +28,7 @@ namespace sogen
         constexpr uint32_t k_svcctl_open_sc_manager_w = 64;     // ROpenSCManagerW (database string + access)
 
         constexpr uint32_t k_error_success = 0;
+        constexpr uint32_t k_error_access_denied = 5; // mmdevapi treats this from the subscribe as non-fatal
 
         // Fabricated SC_RPC_HANDLEs. The SCM is fully stubbed, so the bytes only need to round-trip: the client
         // stores the handle from Open* and hands it back on the follow-on Open/Close/Notify calls.
@@ -81,15 +82,26 @@ namespace sogen
 
                 case k_svcctl_subscribe:
                     // I_ScQueryServiceConfig, the worker behind SubscribeServiceChangeNotifications. Its [out]
-                    // is (classic NDR) a non-encapsulated UNION discriminated by the change-mask; the selected
-                    // arm is a unique pointer to a struct carrying a WNF state name, which the client then
-                    // subscribes to via RtlSubscribeWnfStateChangeNotification. Marshalling that nested
-                    // union/pointer/struct (and modelling the service-state WNF) is not implemented yet, so the
-                    // subscribe currently fails and mmdevapi aborts the render-client setup here. The
-                    // OpenSCManager / OpenService / CloseServiceHandle handlers above already round-trip
-                    // correctly. TODO: marshal the union arm to finish DirectSound device creation.
-                    win_emu.log.error("[svcctl] SubscribeServiceChangeNotifications ([out] union) not implemented\n");
-                    return STATUS_NOT_SUPPORTED;
+                    // (classic NDR) is a non-encapsulated union discriminated by the change-mask; for the masks
+                    // used here the arm is a unique pointer to an 8-byte WNF_STATE_NAME the client would
+                    // subscribe to. NDR order is: the pointer referent, then the return value, then the deferred
+                    // pointee. We return ERROR_ACCESS_DENIED, which SubscribeServiceChangeNotifications passes
+                    // straight back without dereferencing the (unused) WNF name, and mmdevapi treats that as a
+                    // non-fatal "no notifications" and proceeds with the render audio client. The union arm is
+                    // selected by the change-mask, which the client passes in right after the 20-byte service
+                    // handle - echo it back as the discriminant.
+                    {
+                        uint32_t change_mask = 0;
+                        if (c.send_buffer_length >= 24)
+                        {
+                            change_mask = win_emu.emu().read_memory<uint32_t>(c.send_buffer + 20);
+                        }
+                        writer.write<uint32_t>(change_mask);           // union discriminant (the change-mask)
+                        writer.write<uint32_t>(0x00020000);            // union arm: unique pointer referent (non-null)
+                        writer.write<uint32_t>(k_error_access_denied); // return value
+                        writer.write<uint64_t>(0);                     // deferred pointee: WNF_STATE_NAME (8 bytes)
+                    }
+                    return STATUS_SUCCESS;
 
                 case k_svcctl_close_handle:
                     // [in, out] SC_RPC_HANDLE: the client expects the handle nulled out on a successful close.

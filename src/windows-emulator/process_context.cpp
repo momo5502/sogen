@@ -876,6 +876,20 @@ namespace sogen
         emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;
+
+        // The desktop window is created during process setup, before any thread exists, so it has no owning
+        // thread. GetWindowThreadProcessId(GetDesktopWindow()) must return a real thread id (DirectSound, for
+        // one, stores it as the buffer's focus thread and rejects a zero id), so attribute the desktop window
+        // to the initial thread once it exists.
+        if (initial_thread)
+        {
+            if (auto* desktop = this->windows.get(this->default_desktop_window_handle))
+            {
+                desktop->thread_id = thread_id;
+            }
+            this->user_handles.set_owner(static_cast<uint32_t>(this->default_desktop_window_handle.value.id), thread_id);
+        }
+
         this->callbacks_->on_thread_create(h, *thr);
         return h;
     }
