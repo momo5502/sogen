@@ -7,6 +7,7 @@
 #include "ports/core_messaging_registrar.hpp"
 #include "ports/dns_resolver.hpp"
 #include "ports/lsa_policy_lookup.hpp"
+#include "ports/service_control.hpp"
 #include "binary_writer.hpp"
 
 #include <platform/unicode.hpp>
@@ -35,15 +36,6 @@ namespace sogen
         struct noop_port : port
         {
             lpc_request_result handle_request(windows_emulator& /*win_emu*/, const lpc_request_context&) override
-            {
-                return STATUS_SUCCESS;
-            }
-        };
-
-        struct noop_rpc_port : rpc_port
-        {
-            NTSTATUS handle_rpc(windows_emulator& /*win_emu*/, const uint32_t /*procedure_id*/, const lpc_request_context&,
-                                utils::aligned_binary_writer& /*writer*/, std::vector<alpc_reply_handle>& /*reply_handles*/) override
             {
                 return STATUS_SUCCESS;
             }
@@ -86,10 +78,10 @@ namespace sogen
 
         if (port == u"\\RPC Control\\ntsvcs")
         {
-            // Service-control RPC is probed during network stack initialization.
-            // A zero-payload RPC success is enough for the current callers to continue
-            // instead of turning the probe into a hard network failure.
-            return std::make_unique<noop_rpc_port>();
+            // Hosts the svcctl (Service Control Manager) and PnP RPC interfaces. mmdevapi opens the AudioSrv
+            // service through svcctl while creating a render audio client, so the open/close calls must return
+            // a real context handle; other interfaces on this port fall back to a zero-payload success.
+            return create_service_control_port();
         }
 
         return std::make_unique<dummy_port>(std::u16string(port));
