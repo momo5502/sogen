@@ -3,6 +3,9 @@
 Reference material for finishing the emulated Windows Audio Service (`src/windows-emulator/ports/audio_service.cpp`).
 The full design notes live in the assistant memory file `project_audio_wasapi.md`.
 
+DirectSound layers on this same audio service (plus the registry endpoint database, the svcctl SCM port, and
+window/thread queries); its bring-up is documented in [`../directsound.md`](../directsound.md).
+
 ## State
 
 Working (committed): MMDevice enumeration (`GetDefaultAudioEndpoint`), `IAudioClient::GetMixFormat`, and
