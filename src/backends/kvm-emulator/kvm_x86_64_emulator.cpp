@@ -49,6 +49,33 @@ namespace sogen::kvm
         constexpr uint32_t vp_index = 0;
         constexpr int invalid_opcode_interrupt = 6;
 
+        // Synthetic exception delivery: guest exceptions are routed through an internal IDT whose
+        // gates point at single-HLT stubs running at CPL0. The HLT exit identifies the vector, and
+        // the run loop reconstructs the faulting context from the pushed exception frame.
+        constexpr uint32_t exception_vector_count = 32;
+        constexpr uint64_t exception_stub_stride = 8;
+        constexpr uint16_t kernel_code_selector = 0x08; // 64-bit ring-0 code segment in the guest GDT
+        constexpr uint16_t task_state_selector = 0x38;
+        constexpr uint8_t exception_ist_index = 1;
+
+        bool exception_has_error_code(const uint32_t vector)
+        {
+            switch (vector)
+            {
+            case 8:  // #DF
+            case 10: // #TS
+            case 11: // #NP
+            case 12: // #SS
+            case 13: // #GP
+            case 14: // #PF
+            case 17: // #AC
+            case 21: // #CP
+                return true;
+            default:
+                return false;
+            }
+        }
+
         [[noreturn]] void throw_errno(const char* action)
         {
             std::ostringstream stream;
@@ -302,6 +329,7 @@ namespace sogen::kvm
             void initialize_cpuid();
             void initialize_virtual_processor_state();
             void initialize_syscall_intercept_page();
+            void initialize_exception_handling();
             void initialize_long_mode_page_tables();
             uint64_t allocate_internal_page(bool executable = false, bool map_into_guest = true);
             void ensure_virtual_mapping(uint64_t guest_address);
@@ -315,7 +343,8 @@ namespace sogen::kvm
             bool handle_instruction_hook(x86_hookable_instructions type, uint64_t instruction_size);
             bool handle_invalid_instruction_hook();
             bool handle_mmio_exit();
-            bool handle_exception(uint32_t exception);
+            bool handle_exception(uint32_t exception, uint64_t error_code);
+            bool handle_exception_trap(uint64_t stub_rip);
             bool handle_debug_exit();
             bool handle_syscall_halt();
             void advance_rip(uint64_t amount);
@@ -362,6 +391,10 @@ namespace sogen::kvm
             pthread_t vcpu_thread_{};
             int kick_signal_ = 0;
             uint64_t syscall_hook_page_ = 0;
+            uint64_t exception_stub_page_ = 0;
+            uint64_t exception_idt_page_ = 0;
+            uint64_t exception_tss_page_ = 0;
+            uint64_t exception_stack_page_ = 0;
             size_t next_hook_id_ = 1;
 
             std::unordered_map<emulator_hook*, instruction_hook_entry> instruction_hooks_{};
@@ -565,6 +598,7 @@ namespace sogen::kvm
             this->initialize_long_mode_page_tables();
             this->initialize_virtual_processor_state();
             this->initialize_syscall_intercept_page();
+            this->initialize_exception_handling();
         }
 
         kvm_x86_64_emulator::~kvm_x86_64_emulator()
@@ -680,6 +714,59 @@ namespace sogen::kvm
             auto* code = static_cast<uint8_t*>(this->mapped_pages_.at(this->syscall_hook_page_)->host_page);
             code[0] = 0xF4;
             this->set_msr(MSR_LSTAR, this->syscall_hook_page_);
+        }
+
+        void kvm_x86_64_emulator::initialize_exception_handling()
+        {
+            this->exception_stub_page_ = this->allocate_internal_page(true);
+            this->exception_idt_page_ = this->allocate_internal_page(false);
+            this->exception_tss_page_ = this->allocate_internal_page(false);
+            this->exception_stack_page_ = this->allocate_internal_page(false);
+
+            // One HLT per vector; the faulting vector is derived from the trapping RIP.
+            auto* stubs = static_cast<uint8_t*>(this->mapped_pages_.at(this->exception_stub_page_)->host_page);
+            for (uint32_t vector = 0; vector < exception_vector_count; ++vector)
+            {
+                stubs[vector * exception_stub_stride] = 0xF4;
+            }
+
+            // 64-bit interrupt gates (DPL 3 so software int instructions are also trapped) using IST1.
+            auto* idt = static_cast<uint8_t*>(this->mapped_pages_.at(this->exception_idt_page_)->host_page);
+            for (uint32_t vector = 0; vector < exception_vector_count; ++vector)
+            {
+                const auto handler = this->exception_stub_page_ + vector * exception_stub_stride;
+                const uint64_t low = (handler & 0xFFFF) | (static_cast<uint64_t>(kernel_code_selector) << 16) |
+                                     (static_cast<uint64_t>(exception_ist_index & 0x7) << 32) | (static_cast<uint64_t>(0xEE) << 40) |
+                                     (((handler >> 16) & 0xFFFF) << 48);
+                const uint64_t high = (handler >> 32) & 0xFFFFFFFF;
+                std::memcpy(idt + vector * 16, &low, sizeof(low));
+                std::memcpy(idt + vector * 16 + 8, &high, sizeof(high));
+            }
+
+            // 64-bit TSS providing the stack the CPU switches to on a privilege-changing exception.
+            const auto stack_top = this->exception_stack_page_ + page_size;
+            auto* tss = static_cast<uint8_t*>(this->mapped_pages_.at(this->exception_tss_page_)->host_page);
+            std::memcpy(tss + 0x04, &stack_top, sizeof(stack_top)); // RSP0
+            std::memcpy(tss + 0x24, &stack_top, sizeof(stack_top)); // IST1
+            const uint16_t io_map_base = 0x68;
+            std::memcpy(tss + 0x66, &io_map_base, sizeof(io_map_base));
+
+            auto sregs = this->get_sregs();
+            sregs.idt.base = this->exception_idt_page_;
+            sregs.idt.limit = exception_vector_count * 16 - 1;
+            sregs.tr.selector = task_state_selector;
+            sregs.tr.base = this->exception_tss_page_;
+            sregs.tr.limit = 0x67;
+            sregs.tr.type = 11; // busy 64-bit TSS
+            sregs.tr.s = 0;
+            sregs.tr.present = 1;
+            sregs.tr.dpl = 0;
+            sregs.tr.db = 0;
+            sregs.tr.l = 0;
+            sregs.tr.g = 0;
+            sregs.tr.avl = 0;
+            sregs.tr.unusable = 0;
+            this->set_sregs(sregs);
         }
 
         void kvm_x86_64_emulator::initialize_long_mode_page_tables()
@@ -863,16 +950,29 @@ namespace sogen::kvm
 
                 switch (this->run_->exit_reason)
                 {
-                case KVM_EXIT_HLT:
-                    if (this->syscall_hook_ && this->read_instruction_pointer() == (this->syscall_hook_page_ + 1))
+                case KVM_EXIT_HLT: {
+                    const auto rip = this->read_instruction_pointer();
+                    if (this->syscall_hook_ && rip == (this->syscall_hook_page_ + 1))
                     {
                         if (this->handle_syscall_halt())
+                        {
+                            continue;
+                        }
+
+                        return;
+                    }
+
+                    const auto stub_end = this->exception_stub_page_ + exception_vector_count * exception_stub_stride;
+                    if (rip > this->exception_stub_page_ && rip <= stub_end)
+                    {
+                        if (this->handle_exception_trap(rip))
                         {
                             continue;
                         }
                     }
 
                     return;
+                }
                 case KVM_EXIT_MMIO:
                     if (this->handle_mmio_exit())
                     {
@@ -881,7 +981,7 @@ namespace sogen::kvm
 
                     return;
                 case KVM_EXIT_EXCEPTION:
-                    if (this->handle_exception(this->run_->ex.exception))
+                    if (this->handle_exception(this->run_->ex.exception, this->run_->ex.error_code))
                     {
                         continue;
                     }
@@ -1063,17 +1163,8 @@ namespace sogen::kvm
             return false;
         }
 
-        bool kvm_x86_64_emulator::handle_exception(const uint32_t exception)
+        bool kvm_x86_64_emulator::handle_exception(const uint32_t exception, const uint64_t error_code)
         {
-            if (exception == 3 && this->syscall_hook_ != nullptr)
-            {
-                const auto rip = this->read_instruction_pointer();
-                if (rip == this->syscall_hook_page_ || rip == (this->syscall_hook_page_ + 1))
-                {
-                    return this->handle_syscall_halt();
-                }
-            }
-
             if (exception == invalid_opcode_interrupt && this->handle_invalid_instruction_hook())
             {
                 return true;
@@ -1082,9 +1173,11 @@ namespace sogen::kvm
             if (exception == 14 && !this->memory_violation_hooks_.empty())
             {
                 const auto fault_address = this->reg<uint64_t>(x86_register::cr2);
+                const auto operation = (error_code & 0x2) ? memory_operation::write : memory_operation::read;
+                const auto type = (error_code & 0x1) ? memory_violation_type::protection : memory_violation_type::unmapped;
                 for (auto& [_, hook] : this->memory_violation_hooks_)
                 {
-                    const auto result = hook(fault_address, 1, memory_operation::read, memory_violation_type::unmapped);
+                    const auto result = hook(fault_address, 1, operation, type);
                     if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                     {
                         return true;
@@ -1099,6 +1192,46 @@ namespace sogen::kvm
             }
 
             return false;
+        }
+
+        bool kvm_x86_64_emulator::handle_exception_trap(const uint64_t stub_rip)
+        {
+            const auto vector = static_cast<uint32_t>((stub_rip - 1 - this->exception_stub_page_) / exception_stub_stride);
+
+            // The CPU pushed the exception frame onto the IST stack; RSP now points at its base.
+            auto regs = this->get_regs();
+            auto frame_address = regs.rsp;
+
+            uint64_t error_code = 0;
+            if (exception_has_error_code(vector))
+            {
+                this->read_memory(frame_address, &error_code, sizeof(error_code));
+                frame_address += sizeof(uint64_t);
+            }
+
+            struct exception_frame
+            {
+                uint64_t rip;
+                uint64_t cs;
+                uint64_t rflags;
+                uint64_t rsp;
+                uint64_t ss;
+            } frame{};
+            this->read_memory(frame_address, &frame, sizeof(frame));
+
+            // Undo the exception entry so the emulator's handlers observe the faulting context, and
+            // a resumed instruction re-executes from where it faulted.
+            regs.rip = frame.rip;
+            regs.rsp = frame.rsp;
+            regs.rflags = frame.rflags;
+            this->set_regs(regs);
+
+            auto sregs = this->get_sregs();
+            sregs.cs = make_segment(static_cast<uint16_t>(frame.cs), true);
+            sregs.ss = make_segment(static_cast<uint16_t>(frame.ss), false);
+            this->set_sregs(sregs);
+
+            return this->handle_exception(vector, error_code);
         }
 
         bool kvm_x86_64_emulator::handle_syscall_halt()
