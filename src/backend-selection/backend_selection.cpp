@@ -11,6 +11,10 @@
 #include <whp_x86_64_emulator.hpp>
 #endif
 
+#if defined(__linux__) && (defined(__x86_64__) || defined(__amd64__))
+#include <kvm_x86_64_emulator.hpp>
+#endif
+
 using namespace std::literals;
 
 namespace sogen
@@ -35,6 +39,11 @@ namespace sogen
 #if defined(_WIN64) && !defined(__MINGW64__)
             case backend_type::whp:
                 return whp::create_x86_64_emulator();
+#endif
+
+#if defined(__linux__) && (defined(__x86_64__) || defined(__amd64__))
+            case backend_type::kvm:
+                return kvm::create_x86_64_emulator();
 #endif
 
             default:
@@ -70,6 +79,14 @@ namespace sogen
                 // icicle does not support automatic cross-architecture conversion from x64 to x86.
                 // therefore WOW64 programs are naturally not supported to run.
                 backend = backend_type::icicle;
+            }
+        }
+
+        {
+            const auto* env = getenv("EMULATOR_KVM");
+            if (env && (env == "1"sv || env == "true"sv))
+            {
+                backend = backend_type::kvm;
             }
         }
 
