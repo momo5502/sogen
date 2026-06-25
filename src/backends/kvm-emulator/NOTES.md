@@ -67,64 +67,52 @@ CMake gates the backend to `Linux AND NOT ANDROID AND x86_64`; `backend-selectio
    from the read callback and refreshed before each guest entry (`refresh_mmio_pages`), so
    reads (incl. SSE/AVX) execute natively; only writes trap and go to the write callback.
 
-## Current blocker — ROOT CAUSE IDENTIFIED: preemption is too coarse
+## Current blocker — a thread-readiness / timing sensitivity (NOT preemption coarseness)
 
-The multi-threaded failure is a **scheduling / thread-interleaving problem**, not a
-register or context bug.
+The multi-threaded failure is a **scheduling / thread-interleaving problem**, not a register
+or context bug. A thread-pool worker (`TppWorkerThread` at `0x180075bc0`) takes an ntdll
+fatal path (`STATUS_UNSUCCESSFUL` at `0x18008c4e0`) and runs into the `int3` padding at
+`0x18008c50f` (the breakpoint is a *symptom*; the breakpoint dispatch itself is fine), ending
+in an `NtRaiseException` and a premature stop at ~782 syscalls.
 
-The scheduler (`windows_emulator::start`) drives thread time-slicing two ways:
-- instruction-precise backends (unicorn): run exactly `MAX_INSTRUCTIONS_PER_TIME_SLICE`
-  (`0x20000` = 131072) instructions per slice, then switch — **deterministic**.
-- non-instruction-precise backends (WHP, KVM): a helper thread fires every 20ms wall-clock
-  and calls `emu().stop()` to preempt — **non-deterministic and coarse**.
+### What was tried and what it ruled out
+An earlier hypothesis was "20ms wall-clock preemption is too coarse for near-native KVM."
+That was **implemented and disproven**:
+- A full **PMU-driven instruction-count preemption** was built (and works): `perf_event_open`
+  `PERF_COUNT_HW_INSTRUCTIONS` with `exclude_host`, overflow signal via `fcntl`
+  `F_SETSIG`/`F_SETOWN_EX` so `KVM_RUN` returns `EINTR` after a fixed number of retired guest
+  instructions, plus `cpu_interface::self_preempts()`/`take_pending_reschedule()` and a small
+  `windows_emulator::start` hook to skip the wall-clock helper and reschedule on overflow. The
+  PMU counter is exact (standalone test: 2001 for ~2002 expected) and the overflow signal
+  fires and reschedules correctly. **Requires `--privileged`/`CAP_PERFMON`.**
+- Result: with the PMU slice at `0x20000`, `0x8000`, `0x2000`, `0x800`, and even `0x40` (64
+  instructions!), the run still fails at **~780 syscalls** — *no change*. So finer
+  instruction-count preemption does **not** fix it.
+- Yet shortening the **wall-clock** interrupt from 20ms to 50µs *did* move the run to **~2946
+  syscalls** (before dying later in a `__chkstk` stack probe at `0x180167007`).
 
-KVM runs **near-native**, so a 20ms slice is *millions* of guest instructions. A thread (e.g.
-a thread-pool worker, `TppWorkerThread` at `0x180075bc0`) monopolizes the single vCPU and runs
-far ahead of where the cooperative model expects, so other threads never get to publish state
-the worker depends on. The worker then takes an ntdll fatal path (`STATUS_UNSUCCESSFUL` at
-`0x18008c4e0`) and runs into the `int3` padding at `0x18008c50f` (the breakpoint is a
-*symptom*). WHP avoids this only because it is much slower than KVM, so it executes far fewer
-instructions per 20ms.
+**Conclusion:** during syscall-heavy init the main thread is usually the only *runnable*
+thread (the pool workers are blocked waiting for work), so preempting it — at any granularity
+— just resumes it; preemption granularity is irrelevant there. The 50µs wall-clock helped only
+as an **incidental timing side-effect** (far more frequent scheduler iterations change when
+time-based waits resolve and when workers become runnable), not via finer preemption. The real
+blocker is a **thread-readiness / timing sensitivity** in the cooperative scheduler: a specific
+ordering of when workers become runnable vs. when the main thread publishes the state they
+read. unicorn's deterministic instruction-precise per-thread scheduling happens to produce an
+ordering that works; KVM's does not. So the PMU work was reverted (correct mechanism, needs
+privilege, doesn't fix the goal).
 
-**Evidence:** shortening the interval from 20ms to 50µs took the run from **782 → ~2946
-syscalls** (then plateaus, because 50µs of near-native KVM is still a lot of instructions, and
-the interleaving is still non-deterministic — it later dies in `__chkstk` stack-probe at
-`0x180167007` after an `NtRaiseException` storm from threads still hitting error paths).
-
-### The proper fix
-The goal is to preempt each thread after a fixed *instruction count* (≈`0x20000`, matching
-the deterministic interleaving the instruction-precise backends use) instead of after a
-wall-clock interval. Use the host PMU to count retired guest instructions:
-`perf_event_open(PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS, exclude_host=1, pinned)`
-on the vCPU thread, `sample_period = slice`, with overflow delivering a signal (`fcntl`
-`F_SETOWN`/`F_SETSIG`, like the existing `SIGRTMIN` kick) so `KVM_RUN` returns `EINTR` after
-~`slice` retired guest instructions. PMU skid is fine — retired-instruction counts are
-deterministic for the same code, so the schedule stays reproducible.
-
-**Important nuance — do NOT just flip `uses_instruction_precision()` on.** That path
-(`windows_emulator::on_instruction_execution`) relies on a **per-instruction hook** that
-increments `executed_instructions_` and yields every `MAX_INSTRUCTIONS_PER_TIME_SLICE`. KVM
-cannot deliver per-instruction callbacks without single-stepping (an exit per instruction —
-unusably slow), so the existing instruction-precise path does not fit KVM. Two viable
-integrations instead:
-- **(A) PMU-driven preemption trigger (smaller change):** keep the non-precise scheduler
-  path, but replace/augment the 20ms wall-clock helper in `windows_emulator::start` so the
-  preemption is driven by the PMU instruction-count overflow rather than wall-clock. The
-  overflow must still set `switch_thread_` and stop the vCPU (same as today's timer), so the
-  trigger has to feed back into `windows_emulator` (e.g. a backend-provided "instruction
-  budget" the scheduler arms before each `start`, or a callback the backend invokes on
-  overflow). Net effect: fine-grained, deterministic interleaving without per-instruction
-  hooks.
-- **(B) Count-based `start(count)` (larger change):** make `start(count)` run ≈`count`
-  instructions via the PMU and have the backend report the actual retired count back so the
-  scheduler can advance `executed_instructions_` from it (rather than from the per-instruction
-  hook). This needs a scheduler path that updates `executed_instructions_` from a
-  backend-reported delta when `supports_instruction_counting()` is true but per-instruction
-  hooks are unavailable.
-
-(A) is the recommended first step. The current `SIGRTMIN`-based `stop()` kick already proves
-the vCPU can be interrupted out of `KVM_RUN`; the PMU just changes *when* that fires from
-wall-clock to instruction-count.
+### Where to look next
+- Instrument **thread readiness**: when does each pool worker (`gs` base identifies the thread)
+  become runnable relative to the main thread's worker-factory setup syscalls
+  (`NtSetInformationWorkerFactory`, `NtSetEvent`, `NtAssociateWaitCompletionPacket`)? Compare
+  KVM vs unicorn ordering of *which thread runs each syscall*, not just the syscall sequence.
+- The worker reaches `0x18008c4e0` (a fatal stub) from inside `TppWorkerThread`; find which
+  thread-pool field/work-item it reads that is not yet published — likely a TP_POOL / work-queue
+  field the main thread initializes slightly later under KVM's ordering.
+- Consider whether the emulator's wait/event/worker-factory syscall handlers have an
+  ordering assumption that only the instruction-precise interleaving satisfies (a latent race
+  exposed by any other valid interleaving, KVM or WHP-fast).
 
 ### Things ruled out along the way
 - It is **not** a register/context-restore bug: the crashing worker's `NtContinue` context is
@@ -143,10 +131,9 @@ wall-clock to instruction-count.
   run-to-run) — ignore them; use `rsp`/`rbp`/`rsi`/`r12`–`r15`/`gs` base. Group dumps by `gs`
   base to separate threads.
 - `NtContinue` context dump in `handle_NtContinueEx`.
-
-Candidate areas still open: x87/FP state (not just XMM), EFLAGS handling, segment
-selector/base restore on context switch, debug registers, and the thread save/restore path
-(`emulator_thread::save`/`restore` → `cpu_context`).
+- Group per-syscall dumps by `gs` base to see which thread runs each syscall; the divergence
+  is in thread *ordering/readiness*, so compare the (thread, syscall) sequence between KVM and
+  unicorn, not just the syscall sequence.
 
 ## Build & test (Docker, from a Windows host)
 
