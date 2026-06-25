@@ -1273,8 +1273,11 @@ namespace sogen::kvm
             {
                 regs.rip = post_syscall_rcx;
             }
-            else if (regs.rip == pre_syscall_rip)
+            else
             {
+                // Advance past the syscall instruction. This also covers handlers that moved RIP and
+                // expect the syscall length to be added back (e.g. the instrumentation-callback
+                // redirect sets RIP to callback-2). Matches the WHP backend.
                 regs.rip += 2;
             }
 
