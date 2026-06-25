@@ -285,100 +285,1542 @@ namespace sogen::kvm
         class kvm_x86_64_emulator final : public x86_64_emulator
         {
           public:
-            kvm_x86_64_emulator();
-            ~kvm_x86_64_emulator() override;
+            kvm_x86_64_emulator()
+            {
+                this->kick_signal_ = vcpu_kick_signal();
+                this->ensure_platform_support();
+                this->configure_partition();
+                this->configure_virtual_processor();
+                this->initialize_long_mode_page_tables();
+                this->initialize_virtual_processor_state();
+                this->initialize_syscall_intercept_page();
+                this->initialize_exception_handling();
+            }
+            ~kvm_x86_64_emulator() override
+            {
+                utils::reset_object_with_delayed_destruction(this->memory_write_hooks_);
+                utils::reset_object_with_delayed_destruction(this->memory_read_hooks_);
+                utils::reset_object_with_delayed_destruction(this->memory_execution_hooks_);
+                utils::reset_object_with_delayed_destruction(this->memory_violation_hooks_);
+                utils::reset_object_with_delayed_destruction(this->interrupt_hooks_);
+                utils::reset_object_with_delayed_destruction(this->basic_block_hooks_);
+                utils::reset_object_with_delayed_destruction(this->instruction_hooks_);
 
-            bool read_descriptor_table(int reg, descriptor_table_register& table) override;
-            void start(size_t count) override;
-            void stop() override;
-            size_t read_raw_register(int reg, void* value, size_t size) override;
-            size_t write_raw_register(int reg, const void* value, size_t size) override;
-            std::vector<std::byte> save_registers() const override;
-            void restore_registers(const std::vector<std::byte>& register_data) override;
-            bool has_violation() const override;
-            bool supports_instruction_counting() const override;
-            std::string get_name() const override;
-            void set_segment_base(x86_register base, pointer_type value) override;
-            pointer_type get_segment_base(x86_register base) override;
-            void load_gdt(pointer_type address, uint32_t limit) override;
+                if (this->run_ != nullptr)
+                {
+                    ::munmap(this->run_, this->vcpu_mmap_size_);
+                }
+            }
 
-            void read_memory(uint64_t address, void* data, size_t size) const override;
-            bool try_read_memory(uint64_t address, void* data, size_t size) const override;
-            void write_memory(uint64_t address, const void* data, size_t size) override;
-            bool try_write_memory(uint64_t address, const void* data, size_t size) override;
+            bool read_descriptor_table(int reg, descriptor_table_register& table) override
+            {
+                if (reg != static_cast<int>(x86_register::gdtr) && reg != static_cast<int>(x86_register::idtr))
+                {
+                    return false;
+                }
 
-            emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override;
-            emulator_hook* hook_memory_execution(uint64_t address, memory_execution_hook_callback callback) override;
-            emulator_hook* hook_memory_range_execution(uint64_t address, uint64_t size, memory_execution_hook_callback callback) override;
-            emulator_hook* hook_memory_read(uint64_t address, uint64_t size, memory_access_hook_callback callback) override;
-            emulator_hook* hook_memory_write(uint64_t address, uint64_t size, memory_access_hook_callback callback) override;
-            emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override;
-            emulator_hook* hook_interrupt(interrupt_hook_callback callback) override;
-            emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) override;
-            emulator_hook* hook_basic_block(basic_block_hook_callback callback) override;
-            void delete_hook(emulator_hook* hook) override;
+                const auto sregs = this->get_sregs();
+                const auto& value =
+                    get_table_register(sregs, reg == static_cast<int>(x86_register::gdtr) ? register_name::gdtr : register_name::idtr);
+                table.base = value.base;
+                table.limit = value.limit;
+                return true;
+            }
+            void start(size_t count) override
+            {
+                if (count != 0)
+                {
+                    throw std::runtime_error("KVM backend does not support exact instruction counts yet");
+                }
 
-            void serialize_state(utils::buffer_serializer& buffer, bool) const override;
-            void deserialize_state(utils::buffer_deserializer& buffer, bool) override;
+                this->stop_requested_ = false;
+                this->vcpu_thread_ = pthread_self();
+                this->run_->immediate_exit = 0;
+
+                while (!this->stop_requested_)
+                {
+                    if (this->handle_pre_run_instruction())
+                    {
+                        continue;
+                    }
+
+                    this->refresh_mmio_pages();
+
+                    this->run_active_ = true;
+                    const auto rc = ::ioctl(this->vcpu_fd_.get(), KVM_RUN, 0);
+                    this->run_active_ = false;
+
+                    if (rc < 0)
+                    {
+                        if (errno == EINTR && this->stop_requested_)
+                        {
+                            return;
+                        }
+
+                        if (errno == EINTR)
+                        {
+                            continue;
+                        }
+
+                        throw_errno("KVM_RUN");
+                    }
+
+                    switch (this->run_->exit_reason)
+                    {
+                    case KVM_EXIT_HLT: {
+                        const auto rip = this->read_instruction_pointer();
+                        if (this->syscall_hook_ && rip == (this->syscall_hook_page_ + 1))
+                        {
+                            if (this->handle_syscall_halt())
+                            {
+                                continue;
+                            }
+
+                            return;
+                        }
+
+                        const auto stub_end = this->exception_stub_page_ + exception_vector_count * exception_stub_stride;
+                        if (rip > this->exception_stub_page_ && rip <= stub_end)
+                        {
+                            if (this->handle_exception_trap(rip))
+                            {
+                                continue;
+                            }
+                        }
+
+                        return;
+                    }
+                    case KVM_EXIT_MMIO:
+                        if (this->handle_mmio_exit())
+                        {
+                            continue;
+                        }
+
+                        return;
+                    case KVM_EXIT_EXCEPTION:
+                        if (this->handle_exception(this->run_->ex.exception, this->run_->ex.error_code))
+                        {
+                            continue;
+                        }
+
+                        return;
+                    case KVM_EXIT_DEBUG:
+                        if (this->handle_debug_exit())
+                        {
+                            continue;
+                        }
+
+                        return;
+                    case KVM_EXIT_INTR:
+                        if (this->stop_requested_)
+                        {
+                            return;
+                        }
+
+                        continue;
+                    case KVM_EXIT_SHUTDOWN:
+                        return;
+                    case KVM_EXIT_FAIL_ENTRY:
+                        throw std::runtime_error("KVM vCPU failed to enter guest mode");
+                    case KVM_EXIT_INTERNAL_ERROR:
+                        throw std::runtime_error("KVM reported an internal error");
+                    default:
+                        throw std::runtime_error("Unhandled KVM exit reason: " + std::to_string(this->run_->exit_reason));
+                    }
+                }
+            }
+            void stop() override
+            {
+                this->stop_requested_ = true;
+
+                if (this->run_ != nullptr)
+                {
+                    // Honoured at the next KVM_RUN entry; covers the race where the vCPU has not
+                    // entered guest mode yet.
+                    this->run_->immediate_exit = 1;
+                }
+
+                if (this->run_active_)
+                {
+                    // The vCPU may already be executing guest code, where immediate_exit no longer
+                    // applies. Signal the vCPU thread to force the in-flight KVM_RUN to return EINTR.
+                    pthread_kill(this->vcpu_thread_, this->kick_signal_);
+                }
+            }
+            size_t read_raw_register(int reg, void* value, size_t size) override
+            {
+                const auto xreg = static_cast<x86_register>(reg);
+                const auto mapping = map_register(xreg);
+
+                switch (mapping.kind)
+                {
+                case register_kind::reg64: {
+                    if (mapping.name == register_name::efer || mapping.name == register_name::cr0 || mapping.name == register_name::cr2 ||
+                        mapping.name == register_name::cr3 || mapping.name == register_name::cr4)
+                    {
+                        const auto sregs = this->get_sregs();
+                        const void* source = nullptr;
+                        switch (mapping.name)
+                        {
+                        case register_name::efer:
+                            source = &sregs.efer;
+                            break;
+                        case register_name::cr0:
+                            source = &sregs.cr0;
+                            break;
+                        case register_name::cr2:
+                            source = &sregs.cr2;
+                            break;
+                        case register_name::cr3:
+                            source = &sregs.cr3;
+                            break;
+                        case register_name::cr4:
+                            source = &sregs.cr4;
+                            break;
+                        default:
+                            break;
+                        }
+                        std::memcpy(value, source, (std::min)(size, sizeof(uint64_t)));
+                        return size;
+                    }
+
+                    if (mapping.name == register_name::dr0 || mapping.name == register_name::dr1 || mapping.name == register_name::dr2 ||
+                        mapping.name == register_name::dr3 || mapping.name == register_name::dr6 || mapping.name == register_name::dr7)
+                    {
+                        const auto debugregs = this->get_debugregs();
+                        const void* source = nullptr;
+                        switch (mapping.name)
+                        {
+                        case register_name::dr0:
+                            source = &debugregs.db[0];
+                            break;
+                        case register_name::dr1:
+                            source = &debugregs.db[1];
+                            break;
+                        case register_name::dr2:
+                            source = &debugregs.db[2];
+                            break;
+                        case register_name::dr3:
+                            source = &debugregs.db[3];
+                            break;
+                        case register_name::dr6:
+                            source = &debugregs.dr6;
+                            break;
+                        case register_name::dr7:
+                            source = &debugregs.dr7;
+                            break;
+                        default:
+                            break;
+                        }
+                        std::memcpy(value, source, (std::min)(size, sizeof(uint64_t)));
+                        return size;
+                    }
+
+                    const auto regs = this->get_regs();
+                    const auto* reg_ptr = get_gp_register_pointer(regs, mapping.name);
+                    if (const auto access = classify_gp_register_access(xreg))
+                    {
+                        const auto narrowed = *reg_ptr >> (access->offset * 8);
+                        std::memcpy(value, &narrowed, (std::min)(size, access->width));
+                    }
+                    else
+                    {
+                        std::memcpy(value, reg_ptr, (std::min)(size, sizeof(*reg_ptr)));
+                    }
+                    return size;
+                }
+                case register_kind::segment: {
+                    const auto sregs = this->get_sregs();
+                    const auto& segment = get_segment_register(sregs, mapping.name);
+                    if (xreg == x86_register::fs_base || xreg == x86_register::gs_base)
+                    {
+                        std::memcpy(value, &segment.base, (std::min)(size, sizeof(segment.base)));
+                    }
+                    else
+                    {
+                        std::memcpy(value, &segment.selector, (std::min)(size, sizeof(segment.selector)));
+                    }
+                    return size;
+                }
+                case register_kind::table: {
+                    const auto sregs = this->get_sregs();
+                    const auto& table = get_table_register(sregs, mapping.name);
+                    std::memcpy(value, &table, (std::min)(size, sizeof(table)));
+                    return size;
+                }
+                case register_kind::fp: {
+                    const auto fpu = this->get_fpu();
+                    const auto* fp = get_fp_register_pointer(fpu, mapping.name);
+                    std::memcpy(value, fp, (std::min)(size, size_t{16}));
+                    return size;
+                }
+                case register_kind::fp_control: {
+                    const auto fpu = this->get_fpu();
+                    if (xreg == x86_register::fpcw)
+                    {
+                        std::memcpy(value, &fpu.fcw, (std::min)(size, sizeof(fpu.fcw)));
+                    }
+                    else if (xreg == x86_register::fpsw)
+                    {
+                        std::memcpy(value, &fpu.fsw, (std::min)(size, sizeof(fpu.fsw)));
+                    }
+                    else
+                    {
+                        const auto fp_tag = static_cast<uint16_t>(fpu.ftwx);
+                        std::memcpy(value, &fp_tag, (std::min)(size, sizeof(fp_tag)));
+                    }
+                    return size;
+                }
+                case register_kind::xmm_control: {
+                    const auto fpu = this->get_fpu();
+                    std::memcpy(value, &fpu.mxcsr, (std::min)(size, sizeof(fpu.mxcsr)));
+                    return size;
+                }
+                case register_kind::reg128: {
+                    const auto fpu = this->get_fpu();
+                    const auto* xmm = get_xmm_register_pointer(fpu, mapping.name);
+                    std::memcpy(value, xmm, (std::min)(size, size_t{16}));
+                    return size;
+                }
+                }
+
+                return size;
+            }
+            size_t write_raw_register(int reg, const void* value, size_t size) override
+            {
+                const auto xreg = static_cast<x86_register>(reg);
+                const auto mapping = map_register(xreg);
+
+                switch (mapping.kind)
+                {
+                case register_kind::reg64: {
+                    if (mapping.name == register_name::efer || mapping.name == register_name::cr0 || mapping.name == register_name::cr2 ||
+                        mapping.name == register_name::cr3 || mapping.name == register_name::cr4)
+                    {
+                        auto sregs = this->get_sregs();
+                        void* target = nullptr;
+                        switch (mapping.name)
+                        {
+                        case register_name::efer:
+                            target = &sregs.efer;
+                            break;
+                        case register_name::cr0:
+                            target = &sregs.cr0;
+                            break;
+                        case register_name::cr2:
+                            target = &sregs.cr2;
+                            break;
+                        case register_name::cr3:
+                            target = &sregs.cr3;
+                            break;
+                        case register_name::cr4:
+                            target = &sregs.cr4;
+                            break;
+                        default:
+                            break;
+                        }
+                        std::memcpy(target, value, (std::min)(size, sizeof(uint64_t)));
+                        this->set_sregs(sregs);
+                        return size;
+                    }
+
+                    if (mapping.name == register_name::dr0 || mapping.name == register_name::dr1 || mapping.name == register_name::dr2 ||
+                        mapping.name == register_name::dr3 || mapping.name == register_name::dr6 || mapping.name == register_name::dr7)
+                    {
+                        auto debugregs = this->get_debugregs();
+                        void* target = nullptr;
+                        switch (mapping.name)
+                        {
+                        case register_name::dr0:
+                            target = &debugregs.db[0];
+                            break;
+                        case register_name::dr1:
+                            target = &debugregs.db[1];
+                            break;
+                        case register_name::dr2:
+                            target = &debugregs.db[2];
+                            break;
+                        case register_name::dr3:
+                            target = &debugregs.db[3];
+                            break;
+                        case register_name::dr6:
+                            target = &debugregs.dr6;
+                            break;
+                        case register_name::dr7:
+                            target = &debugregs.dr7;
+                            break;
+                        default:
+                            break;
+                        }
+                        std::memcpy(target, value, (std::min)(size, sizeof(uint64_t)));
+                        this->set_debugregs(debugregs);
+                        return size;
+                    }
+
+                    auto regs = this->get_regs();
+                    auto* reg_ptr = get_gp_register_pointer(regs, mapping.name);
+                    if (const auto access = classify_gp_register_access(xreg))
+                    {
+                        uint64_t incoming = 0;
+                        std::memcpy(&incoming, value, (std::min)(size, access->width));
+
+                        if (access->zero_extend_32)
+                        {
+                            *reg_ptr = static_cast<uint32_t>(incoming);
+                        }
+                        else if (access->width >= sizeof(*reg_ptr))
+                        {
+                            *reg_ptr = incoming;
+                        }
+                        else
+                        {
+                            const auto mask = ((uint64_t{1} << (access->width * 8)) - 1) << (access->offset * 8);
+                            *reg_ptr = (*reg_ptr & ~mask) | ((incoming << (access->offset * 8)) & mask);
+                        }
+                    }
+                    else
+                    {
+                        std::memcpy(reg_ptr, value, (std::min)(size, sizeof(*reg_ptr)));
+                    }
+
+                    this->set_regs(regs);
+                    return size;
+                }
+                case register_kind::segment: {
+                    auto sregs = this->get_sregs();
+                    auto& segment = get_segment_register(sregs, mapping.name);
+                    if (xreg == x86_register::fs_base || xreg == x86_register::gs_base)
+                    {
+                        std::memcpy(&segment.base, value, (std::min)(size, sizeof(segment.base)));
+                    }
+                    else
+                    {
+                        std::memcpy(&segment.selector, value, (std::min)(size, sizeof(segment.selector)));
+                    }
+                    this->set_sregs(sregs);
+                    return size;
+                }
+                case register_kind::table: {
+                    auto sregs = this->get_sregs();
+                    auto& table = get_table_register(sregs, mapping.name);
+                    std::memcpy(&table, value, (std::min)(size, sizeof(table)));
+                    this->set_sregs(sregs);
+                    return size;
+                }
+                case register_kind::fp: {
+                    auto fpu = this->get_fpu();
+                    auto* fp = get_fp_register_pointer(fpu, mapping.name);
+                    std::memcpy(fp, value, (std::min)(size, size_t{16}));
+                    this->set_fpu(fpu);
+                    return size;
+                }
+                case register_kind::fp_control: {
+                    auto fpu = this->get_fpu();
+                    if (xreg == x86_register::fpcw)
+                    {
+                        std::memcpy(&fpu.fcw, value, (std::min)(size, sizeof(fpu.fcw)));
+                    }
+                    else if (xreg == x86_register::fpsw)
+                    {
+                        std::memcpy(&fpu.fsw, value, (std::min)(size, sizeof(fpu.fsw)));
+                    }
+                    else
+                    {
+                        uint16_t fp_tag{};
+                        std::memcpy(&fp_tag, value, (std::min)(size, sizeof(fp_tag)));
+                        fpu.ftwx = static_cast<uint8_t>(fp_tag);
+                    }
+                    this->set_fpu(fpu);
+                    return size;
+                }
+                case register_kind::xmm_control: {
+                    auto fpu = this->get_fpu();
+                    std::memcpy(&fpu.mxcsr, value, (std::min)(size, sizeof(fpu.mxcsr)));
+                    this->set_fpu(fpu);
+                    return size;
+                }
+                case register_kind::reg128: {
+                    auto fpu = this->get_fpu();
+                    auto* xmm = get_xmm_register_pointer(fpu, mapping.name);
+                    std::memcpy(xmm, value, (std::min)(size, size_t{16}));
+                    this->set_fpu(fpu);
+                    return size;
+                }
+                }
+
+                return size;
+            }
+            std::vector<std::byte> save_registers() const override
+            {
+                register_snapshot snapshot{};
+                snapshot.regs = this->get_regs();
+                snapshot.sregs = this->get_sregs();
+                snapshot.xsave = this->get_xsave();
+                snapshot.star = this->get_msr(MSR_STAR);
+                snapshot.lstar = this->get_msr(MSR_LSTAR);
+                snapshot.sfmask = this->get_msr(MSR_SYSCALL_MASK);
+
+                std::vector<std::byte> bytes(sizeof(snapshot));
+                std::memcpy(bytes.data(), &snapshot, sizeof(snapshot));
+                return bytes;
+            }
+            void restore_registers(const std::vector<std::byte>& register_data) override
+            {
+                if (register_data.size() != sizeof(register_snapshot))
+                {
+                    throw std::runtime_error("Unexpected KVM register snapshot size");
+                }
+
+                register_snapshot snapshot{};
+                std::memcpy(&snapshot, register_data.data(), sizeof(snapshot));
+                this->set_regs(snapshot.regs);
+                this->set_sregs(snapshot.sregs);
+                this->set_xsave(snapshot.xsave);
+                this->set_msr(MSR_STAR, snapshot.star);
+                this->set_msr(MSR_LSTAR, snapshot.lstar);
+                this->set_msr(MSR_SYSCALL_MASK, snapshot.sfmask);
+            }
+            bool has_violation() const override
+            {
+                return false;
+            }
+            bool supports_instruction_counting() const override
+            {
+                return false;
+            }
+            std::string get_name() const override
+            {
+                return "Linux KVM";
+            }
+            void set_segment_base(x86_register base, pointer_type value) override
+            {
+                auto sregs = this->get_sregs();
+                auto& segment = get_segment_register(sregs, map_register(base).name);
+                segment.base = value;
+                this->set_sregs(sregs);
+            }
+            pointer_type get_segment_base(x86_register base) override
+            {
+                const auto sregs = this->get_sregs();
+                return get_segment_register(sregs, map_register(base).name).base;
+            }
+            void load_gdt(pointer_type address, uint32_t limit) override
+            {
+                auto sregs = this->get_sregs();
+                sregs.gdt.base = address;
+                sregs.gdt.limit = static_cast<uint16_t>(limit);
+                this->set_sregs(sregs);
+            }
+
+            void read_memory(uint64_t address, void* data, size_t size) const override
+            {
+                if (!this->try_read_memory(address, data, size))
+                {
+                    throw std::runtime_error("Failed to read KVM guest memory");
+                }
+            }
+            bool try_read_memory(uint64_t address, void* data, size_t size) const override
+            {
+                return detail::access_memory(this->mapped_pages_, address, data, size, false);
+            }
+            void write_memory(uint64_t address, const void* data, size_t size) override
+            {
+                if (!this->try_write_memory(address, data, size))
+                {
+                    throw std::runtime_error("Failed to write KVM guest memory");
+                }
+            }
+            bool try_write_memory(uint64_t address, const void* data, size_t size) override
+            {
+                return detail::access_memory(this->mapped_pages_, address, const_cast<void*>(data), size, true);
+            }
+
+            emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->memory_execution_hooks_[hook] =
+                    execution_hook_entry{.address = std::nullopt, .size = 0, .callback = std::move(callback)};
+                return hook;
+            }
+            emulator_hook* hook_memory_execution(uint64_t address, memory_execution_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->memory_execution_hooks_[hook] = execution_hook_entry{.address = address, .size = 1, .callback = std::move(callback)};
+                return hook;
+            }
+            emulator_hook* hook_memory_range_execution(uint64_t address, uint64_t size, memory_execution_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->memory_execution_hooks_[hook] =
+                    execution_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
+                return hook;
+            }
+            emulator_hook* hook_memory_read(uint64_t address, uint64_t size, memory_access_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->memory_read_hooks_[hook] =
+                    memory_access_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
+                return hook;
+            }
+            emulator_hook* hook_memory_write(uint64_t address, uint64_t size, memory_access_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->memory_write_hooks_[hook] =
+                    memory_access_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
+                return hook;
+            }
+            emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                auto& entry = this->instruction_hooks_[hook];
+                entry.type = static_cast<x86_hookable_instructions>(instruction_type);
+                entry.callback = std::move(callback);
+                if (entry.type == x86_hookable_instructions::syscall)
+                {
+                    this->syscall_hook_ = &entry;
+                }
+                return hook;
+            }
+            emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->interrupt_hooks_[hook] = std::move(callback);
+                return hook;
+            }
+            emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->memory_violation_hooks_[hook] = std::move(callback);
+                return hook;
+            }
+            emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
+            {
+                auto* hook = this->make_hook();
+                this->basic_block_hooks_[hook] = std::move(callback);
+                return hook;
+            }
+            void delete_hook(emulator_hook* hook) override
+            {
+                const auto instruction_it = this->instruction_hooks_.find(hook);
+                if (instruction_it != this->instruction_hooks_.end() && &instruction_it->second == this->syscall_hook_)
+                {
+                    this->syscall_hook_ = nullptr;
+                }
+
+                this->instruction_hooks_.erase(hook);
+                this->basic_block_hooks_.erase(hook);
+                this->interrupt_hooks_.erase(hook);
+                this->memory_violation_hooks_.erase(hook);
+                this->memory_execution_hooks_.erase(hook);
+                this->memory_read_hooks_.erase(hook);
+                this->memory_write_hooks_.erase(hook);
+            }
+
+            void serialize_state(utils::buffer_serializer& buffer, bool) const override
+            {
+                buffer.write_vector(this->save_registers());
+            }
+            void deserialize_state(utils::buffer_deserializer& buffer, bool) override
+            {
+                this->restore_registers(buffer.read_vector<std::byte>());
+            }
 
           private:
-            void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) override;
-            void map_memory(uint64_t address, size_t size, memory_permission permissions) override;
-            void unmap_memory(uint64_t address, size_t size) override;
-            void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) override;
+            void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("KVM MMIO mappings must be page aligned");
+                }
 
-            void ensure_platform_support();
-            void configure_partition();
-            void configure_virtual_processor();
-            void initialize_cpuid();
-            void initialize_virtual_processor_state();
-            void initialize_syscall_intercept_page();
-            void initialize_exception_handling();
-            void initialize_long_mode_page_tables();
-            uint64_t allocate_internal_page(bool executable = false, bool map_into_guest = true);
-            void ensure_virtual_mapping(uint64_t guest_address);
-            void rebuild_mappings();
-            void clear_all_mappings();
-            int allocate_slot();
-            uint32_t to_kvm_map_flags(memory_permission permissions) const;
-            void map_region(uint64_t guest_address, size_t size, void* host_base, uint32_t flags);
-            void refresh_mmio_pages();
+                mmio_region region{.address = address, .size = size, .read_cb = std::move(read_cb), .write_cb = std::move(write_cb)};
 
-            bool handle_pre_run_instruction();
-            bool handle_instruction_hook(x86_hookable_instructions type, uint64_t instruction_size);
-            bool handle_invalid_instruction_hook();
-            bool handle_mmio_exit();
-            bool handle_exception(uint32_t exception, uint64_t error_code);
-            bool handle_exception_trap(uint64_t stub_rip);
-            bool handle_debug_exit();
-            bool handle_syscall_halt();
-            void advance_rip(uint64_t amount);
+                // Back MMIO with a read-only guest mapping rather than relying on KVM_EXIT_MMIO. KVM
+                // services unmapped accesses by emulating the faulting instruction, but its emulator does
+                // not support SSE/AVX, so a vectorized access (e.g. an SSE wcslen over a string in
+                // KUSER_SHARED_DATA) would fault with #UD. A read-only memslot lets reads execute
+                // natively; only writes trap and are routed through the write callback.
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    auto& page = this->mapped_pages_[guest_address];
+                    if (!page)
+                    {
+                        page = std::make_unique<mapped_page>();
+                    }
 
-            emulator_hook* make_hook();
+                    if (page->host_page == nullptr)
+                    {
+                        auto backing = allocate_backing_memory(page_size);
+                        page->owned_page = std::move(backing);
+                        page->host_page = page->owned_page.get();
+                    }
 
-            uint64_t get_msr(uint32_t msr) const;
-            void set_msr(uint32_t msr, uint64_t value);
-            kvm_regs get_regs() const;
-            void set_regs(const kvm_regs& regs);
-            kvm_sregs get_sregs() const;
-            void set_sregs(const kvm_sregs& sregs);
-            kvm_fpu get_fpu() const;
-            void set_fpu(const kvm_fpu& fpu);
-            xsave_area get_xsave() const;
-            void set_xsave(const xsave_area& xsave);
-            kvm_debugregs get_debugregs() const;
-            void set_debugregs(const kvm_debugregs& debugregs);
+                    page->permissions = memory_permission::read;
+                    const auto chunk = (std::min)(static_cast<size_t>(page_size), size - offset);
+                    region.read_cb(offset, page->host_page, chunk);
+                    this->ensure_virtual_mapping(guest_address);
+                }
 
-            static __u64* get_gp_register_pointer(kvm_regs& regs, register_name name);
-            static const __u64* get_gp_register_pointer(const kvm_regs& regs, register_name name);
-            static kvm_segment& get_segment_register(kvm_sregs& sregs, register_name name);
-            static const kvm_segment& get_segment_register(const kvm_sregs& sregs, register_name name);
-            static kvm_dtable& get_table_register(kvm_sregs& sregs, register_name name);
-            static const kvm_dtable& get_table_register(const kvm_sregs& sregs, register_name name);
-            static uint8_t* get_fp_register_pointer(kvm_fpu& fpu, register_name name);
-            static const uint8_t* get_fp_register_pointer(const kvm_fpu& fpu, register_name name);
-            static uint8_t* get_xmm_register_pointer(kvm_fpu& fpu, register_name name);
-            static const uint8_t* get_xmm_register_pointer(const kvm_fpu& fpu, register_name name);
+                this->rebuild_mappings();
+                this->mmio_regions_[address] = std::move(region);
+            }
+            void map_memory(uint64_t address, size_t size, memory_permission permissions) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("KVM memory mappings must be page aligned");
+                }
+
+                bool can_batch_map = true;
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    const auto entry = this->mapped_pages_.find(guest_address);
+                    if (entry != this->mapped_pages_.end() && entry->second && entry->second->host_page != nullptr)
+                    {
+                        can_batch_map = false;
+                        break;
+                    }
+                }
+
+                if (can_batch_map)
+                {
+                    auto backing = allocate_backing_memory(size);
+                    auto* backing_base = backing.get();
+                    for (size_t offset = 0; offset < size; offset += page_size)
+                    {
+                        const auto guest_address = address + offset;
+                        auto& page = this->mapped_pages_[guest_address];
+                        if (!page)
+                        {
+                            page = std::make_unique<mapped_page>();
+                        }
+
+                        page->owned_page = backing;
+                        page->host_page = backing_base + offset;
+                        page->permissions = permissions;
+                        this->ensure_virtual_mapping(guest_address);
+                    }
+
+                    this->rebuild_mappings();
+                    return;
+                }
+
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    auto& page = this->mapped_pages_[guest_address];
+                    if (!page)
+                    {
+                        page = std::make_unique<mapped_page>();
+                    }
+
+                    if (page->host_page == nullptr)
+                    {
+                        auto backing = allocate_backing_memory(page_size);
+                        page->owned_page = std::move(backing);
+                        page->host_page = page->owned_page.get();
+                    }
+
+                    page->permissions = permissions;
+                    this->ensure_virtual_mapping(guest_address);
+                }
+
+                this->rebuild_mappings();
+            }
+            void unmap_memory(uint64_t address, size_t size) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("KVM memory unmappings must be page aligned");
+                }
+
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    this->mapped_pages_.erase(address + offset);
+                }
+
+                const auto mmio = this->mmio_regions_.find(address);
+                if (mmio != this->mmio_regions_.end() && mmio->second.size == size)
+                {
+                    this->mmio_regions_.erase(mmio);
+                }
+
+                this->rebuild_mappings();
+            }
+            void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("KVM protection changes must be page aligned");
+                }
+
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto it = this->mapped_pages_.find(address + offset);
+                    if (it != this->mapped_pages_.end())
+                    {
+                        it->second->permissions = permissions;
+                    }
+                }
+
+                this->rebuild_mappings();
+            }
+
+            void ensure_platform_support()
+            {
+                this->kvm_fd_.reset(::open("/dev/kvm", O_RDWR | O_CLOEXEC));
+                if (!this->kvm_fd_)
+                {
+                    throw_errno("open(/dev/kvm)");
+                }
+
+                const auto api_version = ::ioctl(this->kvm_fd_.get(), KVM_GET_API_VERSION, 0);
+                check_ioctl_result(api_version, "KVM_GET_API_VERSION");
+                if (api_version != KVM_API_VERSION)
+                {
+                    throw std::runtime_error("Unexpected KVM API version");
+                }
+
+                this->max_memslots_ = ::ioctl(this->kvm_fd_.get(), KVM_CHECK_EXTENSION, KVM_CAP_NR_MEMSLOTS);
+                if (this->max_memslots_ <= 0)
+                {
+                    this->max_memslots_ = 32;
+                }
+
+                this->vcpu_mmap_size_ = static_cast<size_t>(::ioctl(this->kvm_fd_.get(), KVM_GET_VCPU_MMAP_SIZE, 0));
+                if (this->vcpu_mmap_size_ < sizeof(kvm_run))
+                {
+                    throw std::runtime_error("KVM vCPU mmap size is invalid");
+                }
+            }
+            void configure_partition()
+            {
+                this->vm_fd_.reset(::ioctl(this->kvm_fd_.get(), KVM_CREATE_VM, 0));
+                check_ioctl_result(this->vm_fd_.get(), "KVM_CREATE_VM");
+                (void)::ioctl(this->vm_fd_.get(), KVM_SET_TSS_ADDR, 0xfffbd000);
+            }
+            void configure_virtual_processor()
+            {
+                this->vcpu_fd_.reset(::ioctl(this->vm_fd_.get(), KVM_CREATE_VCPU, vp_index));
+                check_ioctl_result(this->vcpu_fd_.get(), "KVM_CREATE_VCPU");
+
+                this->run_ = static_cast<kvm_run*>(
+                    ::mmap(nullptr, this->vcpu_mmap_size_, PROT_READ | PROT_WRITE, MAP_SHARED, this->vcpu_fd_.get(), 0));
+                if (this->run_ == MAP_FAILED)
+                {
+                    this->run_ = nullptr;
+                    throw_errno("mmap(KVM_RUN)");
+                }
+
+                this->initialize_cpuid();
+            }
+            void initialize_cpuid()
+            {
+                constexpr uint32_t cpuid_entries = 256;
+                std::vector<std::byte> buffer(sizeof(kvm_cpuid2) + cpuid_entries * sizeof(kvm_cpuid_entry2));
+                auto* cpuid = reinterpret_cast<kvm_cpuid2*>(buffer.data());
+                cpuid->nent = cpuid_entries;
+                check_ioctl_result(::ioctl(this->kvm_fd_.get(), KVM_GET_SUPPORTED_CPUID, cpuid), "KVM_GET_SUPPORTED_CPUID");
+                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_CPUID2, cpuid), "KVM_SET_CPUID2");
+            }
+            void initialize_virtual_processor_state()
+            {
+                auto sregs = this->get_sregs();
+                sregs.cs = make_segment(0x33, true);
+                sregs.ss = make_segment(0x2B, false);
+                sregs.ds = make_segment(0x2B, false);
+                sregs.es = make_segment(0x2B, false);
+                sregs.fs = make_segment(0x53, false);
+                sregs.gs = make_segment(0x2B, false);
+                sregs.cr0 = 0x80000033ull;
+                sregs.cr4 = 0x620ull;
+                sregs.cr3 = this->pml4_gpa_;
+                sregs.efer = (1ull << 0) | (1ull << 8) | (1ull << 10);
+                this->set_sregs(sregs);
+
+                auto regs = this->get_regs();
+                regs.rflags = 0x2ull;
+                this->set_regs(regs);
+
+                kvm_fpu fpu{};
+                fpu.fcw = 0x037Fu;
+                fpu.fsw = 0;
+                fpu.ftwx = 0xFF;
+                fpu.mxcsr = 0x1F80u;
+                this->set_fpu(fpu);
+
+                this->set_msr(MSR_STAR, (0x23ull << 48) | (0x08ull << 32));
+                this->set_msr(MSR_SYSCALL_MASK, 0);
+            }
+            void initialize_syscall_intercept_page()
+            {
+                this->syscall_hook_page_ = this->allocate_internal_page(true);
+                auto* code = static_cast<uint8_t*>(this->mapped_pages_.at(this->syscall_hook_page_)->host_page);
+                code[0] = 0xF4;
+                this->set_msr(MSR_LSTAR, this->syscall_hook_page_);
+            }
+            void initialize_exception_handling()
+            {
+                this->exception_stub_page_ = this->allocate_internal_page(true);
+                this->exception_idt_page_ = this->allocate_internal_page(false);
+                this->exception_tss_page_ = this->allocate_internal_page(false);
+                this->exception_stack_page_ = this->allocate_internal_page(false);
+
+                // One HLT per vector; the faulting vector is derived from the trapping RIP.
+                auto* stubs = static_cast<uint8_t*>(this->mapped_pages_.at(this->exception_stub_page_)->host_page);
+                for (uint32_t vector = 0; vector < exception_vector_count; ++vector)
+                {
+                    stubs[vector * exception_stub_stride] = 0xF4;
+                }
+
+                // 64-bit interrupt gates (DPL 3 so software int instructions are also trapped) using IST1.
+                auto* idt = static_cast<uint8_t*>(this->mapped_pages_.at(this->exception_idt_page_)->host_page);
+                for (uint32_t vector = 0; vector < exception_vector_count; ++vector)
+                {
+                    const auto handler = this->exception_stub_page_ + vector * exception_stub_stride;
+                    const uint64_t low = (handler & 0xFFFF) | (static_cast<uint64_t>(kernel_code_selector) << 16) |
+                                         (static_cast<uint64_t>(exception_ist_index & 0x7) << 32) | (static_cast<uint64_t>(0xEE) << 40) |
+                                         (((handler >> 16) & 0xFFFF) << 48);
+                    const uint64_t high = (handler >> 32) & 0xFFFFFFFF;
+                    std::memcpy(idt + vector * 16, &low, sizeof(low));
+                    std::memcpy(idt + vector * 16 + 8, &high, sizeof(high));
+                }
+
+                // 64-bit TSS providing the stack the CPU switches to on a privilege-changing exception.
+                const auto stack_top = this->exception_stack_page_ + page_size;
+                auto* tss = static_cast<uint8_t*>(this->mapped_pages_.at(this->exception_tss_page_)->host_page);
+                std::memcpy(tss + 0x04, &stack_top, sizeof(stack_top)); // RSP0
+                std::memcpy(tss + 0x24, &stack_top, sizeof(stack_top)); // IST1
+                const uint16_t io_map_base = 0x68;
+                std::memcpy(tss + 0x66, &io_map_base, sizeof(io_map_base));
+
+                auto sregs = this->get_sregs();
+                sregs.idt.base = this->exception_idt_page_;
+                sregs.idt.limit = exception_vector_count * 16 - 1;
+                sregs.tr.selector = task_state_selector;
+                sregs.tr.base = this->exception_tss_page_;
+                sregs.tr.limit = 0x67;
+                sregs.tr.type = 11; // busy 64-bit TSS
+                sregs.tr.s = 0;
+                sregs.tr.present = 1;
+                sregs.tr.dpl = 0;
+                sregs.tr.db = 0;
+                sregs.tr.l = 0;
+                sregs.tr.g = 0;
+                sregs.tr.avl = 0;
+                sregs.tr.unusable = 0;
+                this->set_sregs(sregs);
+            }
+            void initialize_long_mode_page_tables()
+            {
+                this->pml4_gpa_ = this->allocate_internal_page(false, false);
+            }
+            uint64_t allocate_internal_page(bool executable = false, bool map_into_guest = true)
+            {
+                auto backing = allocate_backing_memory(page_size);
+                auto* raw_page = backing.get();
+
+                const auto page_gpa = this->next_internal_gpa_;
+                this->next_internal_gpa_ += page_size;
+
+                auto page = std::make_unique<mapped_page>();
+                page->owned_page = std::move(backing);
+                page->host_page = raw_page;
+                page->permissions = executable ? memory_permission::all : memory_permission::read_write;
+
+                this->mapped_pages_[page_gpa] = std::move(page);
+                this->page_table_views_[page_gpa] = reinterpret_cast<uint64_t*>(raw_page);
+
+                if (map_into_guest)
+                {
+                    this->ensure_virtual_mapping(page_gpa);
+                }
+
+                this->rebuild_mappings();
+                return page_gpa;
+            }
+            void ensure_virtual_mapping(uint64_t guest_address)
+            {
+                detail::ensure_virtual_mapping(
+                    this->page_table_views_, this->pml4_gpa_,
+                    [this](const bool executable, const bool map_into_guest) {
+                        return this->allocate_internal_page(executable, map_into_guest);
+                    },
+                    guest_address);
+            }
+            void rebuild_mappings()
+            {
+                this->clear_all_mappings();
+
+                for (auto it = this->mapped_pages_.begin(); it != this->mapped_pages_.end();)
+                {
+                    if (!it->second || it->second->host_page == nullptr || it->second->permissions == memory_permission::none)
+                    {
+                        ++it;
+                        continue;
+                    }
+
+                    const auto run_address = it->first;
+                    auto* const run_host_base = static_cast<uint8_t*>(it->second->host_page);
+                    const auto run_flags = this->to_kvm_map_flags(it->second->permissions);
+
+                    size_t run_size = page_size;
+                    auto jt = std::next(it);
+                    while (jt != this->mapped_pages_.end())
+                    {
+                        if (!jt->second || jt->second->host_page == nullptr || jt->second->permissions != it->second->permissions ||
+                            jt->first != run_address + run_size || jt->second->host_page != run_host_base + run_size)
+                        {
+                            break;
+                        }
+
+                        run_size += page_size;
+                        ++jt;
+                    }
+
+                    this->map_region(run_address, run_size, run_host_base, run_flags);
+                    for (size_t offset = 0; offset < run_size; offset += page_size)
+                    {
+                        this->mapped_pages_.at(run_address + offset)->map_flags = run_flags;
+                    }
+
+                    it = jt;
+                }
+            }
+            void clear_all_mappings()
+            {
+                for (const auto slot : this->active_slots_)
+                {
+                    kvm_userspace_memory_region region{};
+                    region.slot = static_cast<uint32_t>(slot);
+                    region.memory_size = 0;
+                    check_ioctl_result(::ioctl(this->vm_fd_.get(), KVM_SET_USER_MEMORY_REGION, &region), "KVM_SET_USER_MEMORY_REGION");
+                }
+
+                this->active_slots_.clear();
+                this->free_slots_.clear();
+                this->next_slot_id_ = 0;
+
+                for (auto& [_, page] : this->mapped_pages_)
+                {
+                    if (page)
+                    {
+                        page->map_flags = 0;
+                    }
+                }
+            }
+            int allocate_slot()
+            {
+                if (this->next_slot_id_ >= this->max_memslots_)
+                {
+                    throw std::runtime_error("Exhausted KVM memory slots");
+                }
+
+                const auto slot = this->next_slot_id_++;
+                this->active_slots_.insert(slot);
+                return slot;
+            }
+            uint32_t to_kvm_map_flags(memory_permission permissions) const
+            {
+                if (permissions == memory_permission::none)
+                {
+                    return 0;
+                }
+
+                uint32_t flags = 0;
+                if ((permissions & memory_permission::write) == memory_permission::none)
+                {
+                    flags |= KVM_MEM_READONLY;
+                }
+
+                return flags;
+            }
+            void map_region(uint64_t guest_address, size_t size, void* host_base, uint32_t flags)
+            {
+                kvm_userspace_memory_region region{};
+                region.slot = static_cast<uint32_t>(this->allocate_slot());
+                region.flags = flags;
+                region.guest_phys_addr = guest_address;
+                region.memory_size = size;
+                region.userspace_addr = reinterpret_cast<uint64_t>(host_base);
+                check_ioctl_result(::ioctl(this->vm_fd_.get(), KVM_SET_USER_MEMORY_REGION, &region), "KVM_SET_USER_MEMORY_REGION");
+            }
+            void refresh_mmio_pages()
+            {
+                for (auto& [base, region] : this->mmio_regions_)
+                {
+                    for (size_t offset = 0; offset < region.size; offset += page_size)
+                    {
+                        const auto it = this->mapped_pages_.find(base + offset);
+                        if (it != this->mapped_pages_.end() && it->second && it->second->host_page != nullptr)
+                        {
+                            const auto chunk = (std::min)(static_cast<size_t>(page_size), region.size - offset);
+                            region.read_cb(offset, it->second->host_page, chunk);
+                        }
+                    }
+                }
+            }
+
+            bool handle_pre_run_instruction()
+            {
+                std::array<std::byte, 3> opcode{};
+                const auto rip = this->read_instruction_pointer();
+                if (!detail::access_memory(this->mapped_pages_, rip, opcode.data(), opcode.size(), false))
+                {
+                    return false;
+                }
+
+                if (opcode[0] == std::byte{0x0F} && opcode[1] == std::byte{0xA2})
+                {
+                    return this->handle_instruction_hook(x86_hookable_instructions::cpuid, 2);
+                }
+
+                if (opcode[0] == std::byte{0x0F} && opcode[1] == std::byte{0x31})
+                {
+                    return this->handle_instruction_hook(x86_hookable_instructions::rdtsc, 2);
+                }
+
+                if (opcode[0] == std::byte{0x0F} && opcode[1] == std::byte{0x01} && opcode[2] == std::byte{0xF9})
+                {
+                    return this->handle_instruction_hook(x86_hookable_instructions::rdtscp, 3);
+                }
+
+                if (opcode[0] == std::byte{0x0F} && opcode[1] == std::byte{0x0B})
+                {
+                    return this->handle_invalid_instruction_hook();
+                }
+
+                return false;
+            }
+            bool handle_instruction_hook(x86_hookable_instructions type, uint64_t instruction_size)
+            {
+                bool handled = false;
+                bool skip = false;
+                for (auto& [_, hook] : this->instruction_hooks_)
+                {
+                    if (hook.type != type)
+                    {
+                        continue;
+                    }
+
+                    handled = true;
+                    if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
+                    {
+                        skip = true;
+                    }
+                }
+
+                if (handled && skip)
+                {
+                    const auto rip = this->read_instruction_pointer();
+                    if (this->read_instruction_pointer() == rip)
+                    {
+                        this->advance_rip(instruction_size);
+                    }
+
+                    return true;
+                }
+
+                return false;
+            }
+            bool handle_invalid_instruction_hook()
+            {
+                bool consumed = false;
+                const auto rip = this->read_instruction_pointer();
+                for (auto& [_, hook] : this->instruction_hooks_)
+                {
+                    if (hook.type != x86_hookable_instructions::invalid)
+                    {
+                        continue;
+                    }
+
+                    if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
+                    {
+                        consumed = true;
+                    }
+                }
+
+                if (consumed && this->read_instruction_pointer() == rip)
+                {
+                    this->advance_rip(2);
+                }
+
+                return consumed;
+            }
+            bool handle_mmio_exit()
+            {
+                const auto& mmio = this->run_->mmio;
+                if (auto* region = detail::find_mmio_region(this->mmio_regions_, mmio.phys_addr))
+                {
+                    const auto offset = mmio.phys_addr - region->address;
+                    if (mmio.is_write)
+                    {
+                        region->write_cb(offset, mmio.data, mmio.len);
+                    }
+                    else
+                    {
+                        region->read_cb(offset, this->run_->mmio.data, mmio.len);
+                    }
+
+                    return true;
+                }
+
+                const auto operation = mmio.is_write ? memory_operation::write : memory_operation::read;
+                for (auto& [_, hook] : this->memory_violation_hooks_)
+                {
+                    const auto result = hook(mmio.phys_addr, mmio.len, operation, memory_violation_type::unmapped);
+                    if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+            bool handle_exception(uint32_t exception, uint64_t error_code)
+            {
+                if (exception == invalid_opcode_interrupt && this->handle_invalid_instruction_hook())
+                {
+                    return true;
+                }
+
+                if (exception == 14 && !this->memory_violation_hooks_.empty())
+                {
+                    const auto fault_address = this->reg<uint64_t>(x86_register::cr2);
+                    const auto operation = (error_code & 0x2) ? memory_operation::write : memory_operation::read;
+                    const auto type = (error_code & 0x1) ? memory_violation_type::protection : memory_violation_type::unmapped;
+                    for (auto& [_, hook] : this->memory_violation_hooks_)
+                    {
+                        const auto result = hook(fault_address, 1, operation, type);
+                        if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                for (auto& [_, hook] : this->interrupt_hooks_)
+                {
+                    hook(static_cast<int>(exception));
+                    return true;
+                }
+
+                return false;
+            }
+            bool handle_exception_trap(uint64_t stub_rip)
+            {
+                const auto vector = static_cast<uint32_t>((stub_rip - 1 - this->exception_stub_page_) / exception_stub_stride);
+
+                // The CPU pushed the exception frame onto the IST stack; RSP now points at its base.
+                auto regs = this->get_regs();
+                auto frame_address = regs.rsp;
+
+                uint64_t error_code = 0;
+                if (exception_has_error_code(vector))
+                {
+                    this->read_memory(frame_address, &error_code, sizeof(error_code));
+                    frame_address += sizeof(uint64_t);
+                }
+
+                struct exception_frame
+                {
+                    uint64_t rip;
+                    uint64_t cs;
+                    uint64_t rflags;
+                    uint64_t rsp;
+                    uint64_t ss;
+                } frame{};
+                this->read_memory(frame_address, &frame, sizeof(frame));
+
+                // Undo the exception entry so the emulator's handlers observe the faulting context, and
+                // a resumed instruction re-executes from where it faulted.
+                regs.rip = frame.rip;
+                regs.rsp = frame.rsp;
+                regs.rflags = frame.rflags;
+                this->set_regs(regs);
+
+                auto sregs = this->get_sregs();
+                sregs.cs = make_segment(static_cast<uint16_t>(frame.cs), true);
+                sregs.ss = make_segment(static_cast<uint16_t>(frame.ss), false);
+                this->set_sregs(sregs);
+
+                return this->handle_exception(vector, error_code);
+            }
+            bool handle_debug_exit()
+            {
+                for (auto& [_, hook] : this->interrupt_hooks_)
+                {
+                    hook(1);
+                    return true;
+                }
+
+                return false;
+            }
+            bool handle_syscall_halt()
+            {
+                if (!this->syscall_hook_)
+                {
+                    return false;
+                }
+
+                auto regs = this->get_regs();
+                auto sregs = this->get_sregs();
+
+                const auto post_syscall_rcx = regs.rcx;
+                const auto post_syscall_r10 = regs.r10;
+                const auto saved_rflags = regs.r11;
+                const auto pre_syscall_rip = post_syscall_rcx - 2;
+
+                regs.rip = pre_syscall_rip;
+                regs.rcx = post_syscall_r10;
+                regs.rflags = saved_rflags;
+                sregs.cs = make_segment(0x33, true);
+                sregs.ss = make_segment(0x2B, false);
+                this->set_regs(regs);
+                this->set_sregs(sregs);
+
+                const auto continuation = this->syscall_hook_->callback(0);
+
+                regs = this->get_regs();
+                if (continuation == instruction_hook_continuation::skip_instruction && regs.rip == pre_syscall_rip)
+                {
+                    regs.rip = post_syscall_rcx;
+                }
+                else
+                {
+                    // Advance past the syscall instruction. This also covers handlers that moved RIP and
+                    // expect the syscall length to be added back (e.g. the instrumentation-callback
+                    // redirect sets RIP to callback-2). Matches the WHP backend.
+                    regs.rip += 2;
+                }
+
+                sregs = this->get_sregs();
+                sregs.cs = make_segment(0x33, true);
+                sregs.ss = make_segment(0x2B, false);
+                this->set_regs(regs);
+                this->set_sregs(sregs);
+                return true;
+            }
+            void advance_rip(uint64_t amount)
+            {
+                auto regs = this->get_regs();
+                regs.rip += amount;
+                this->set_regs(regs);
+            }
+
+            emulator_hook* make_hook()
+            {
+                return reinterpret_cast<emulator_hook*>(this->next_hook_id_++);
+            }
+
+            uint64_t get_msr(uint32_t msr) const
+            {
+                alignas(kvm_msrs) std::array<std::byte, sizeof(kvm_msrs) + sizeof(kvm_msr_entry)> storage{};
+                auto* msrs = reinterpret_cast<kvm_msrs*>(storage.data());
+                auto* entry = reinterpret_cast<kvm_msr_entry*>(storage.data() + offsetof(kvm_msrs, entries));
+                msrs->nmsrs = 1;
+                entry->index = msr;
+
+                const auto rc = ::ioctl(this->vcpu_fd_.get(), KVM_GET_MSRS, msrs);
+                if (rc != 1)
+                {
+                    throw std::runtime_error("KVM_GET_MSRS failed");
+                }
+
+                return entry->data;
+            }
+            void set_msr(uint32_t msr, uint64_t value)
+            {
+                alignas(kvm_msrs) std::array<std::byte, sizeof(kvm_msrs) + sizeof(kvm_msr_entry)> storage{};
+                auto* msrs = reinterpret_cast<kvm_msrs*>(storage.data());
+                auto* entry = reinterpret_cast<kvm_msr_entry*>(storage.data() + offsetof(kvm_msrs, entries));
+                msrs->nmsrs = 1;
+                entry->index = msr;
+                entry->data = value;
+
+                const auto rc = ::ioctl(this->vcpu_fd_.get(), KVM_SET_MSRS, msrs);
+                if (rc != 1)
+                {
+                    throw std::runtime_error("KVM_SET_MSRS failed");
+                }
+            }
+            kvm_regs get_regs() const
+            {
+                kvm_regs regs{};
+                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_REGS, &regs), "KVM_GET_REGS");
+                return regs;
+            }
+            void set_regs(const kvm_regs& regs)
+            {
+                auto mutable_regs = regs;
+                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_REGS, &mutable_regs), "KVM_SET_REGS");
+            }
+            kvm_sregs get_sregs() const
+            {
+                kvm_sregs sregs{};
+                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_SREGS, &sregs), "KVM_GET_SREGS");
+                return sregs;
+            }
+            void set_sregs(const kvm_sregs& sregs)
+            {
+                auto mutable_sregs = sregs;
+                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_SREGS, &mutable_sregs), "KVM_SET_SREGS");
+            }
+            kvm_fpu get_fpu() const
+            {
+                kvm_fpu fpu{};
+                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_FPU, &fpu), "KVM_GET_FPU");
+                return fpu;
+            }
+            void set_fpu(const kvm_fpu& fpu)
+            {
+                auto mutable_fpu = fpu;
+                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_FPU, &mutable_fpu), "KVM_SET_FPU");
+            }
+            xsave_area get_xsave() const
+            {
+                // Captures the full extended state (x87, SSE, and the AVX YMM upper halves), unlike
+                // KVM_GET_FPU which only sees the legacy fxsave area. Required so a thread preempted
+                // mid-AVX keeps its complete vector state across a context switch.
+                xsave_area xsave{};
+                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_XSAVE, xsave.data()), "KVM_GET_XSAVE");
+                return xsave;
+            }
+            void set_xsave(const xsave_area& xsave)
+            {
+                auto mutable_xsave = xsave;
+                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_XSAVE, mutable_xsave.data()), "KVM_SET_XSAVE");
+            }
+            kvm_debugregs get_debugregs() const
+            {
+                kvm_debugregs debugregs{};
+                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_DEBUGREGS, &debugregs), "KVM_GET_DEBUGREGS");
+                return debugregs;
+            }
+            void set_debugregs(const kvm_debugregs& debugregs)
+            {
+                auto mutable_debugregs = debugregs;
+                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_DEBUGREGS, &mutable_debugregs), "KVM_SET_DEBUGREGS");
+            }
+
+            static __u64* get_gp_register_pointer(kvm_regs& regs, register_name name)
+            {
+                switch (name)
+                {
+                case register_name::rax:
+                    return &regs.rax;
+                case register_name::rbx:
+                    return &regs.rbx;
+                case register_name::rcx:
+                    return &regs.rcx;
+                case register_name::rdx:
+                    return &regs.rdx;
+                case register_name::rsi:
+                    return &regs.rsi;
+                case register_name::rdi:
+                    return &regs.rdi;
+                case register_name::rbp:
+                    return &regs.rbp;
+                case register_name::rsp:
+                    return &regs.rsp;
+                case register_name::rip:
+                    return &regs.rip;
+                case register_name::r8:
+                    return &regs.r8;
+                case register_name::r9:
+                    return &regs.r9;
+                case register_name::r10:
+                    return &regs.r10;
+                case register_name::r11:
+                    return &regs.r11;
+                case register_name::r12:
+                    return &regs.r12;
+                case register_name::r13:
+                    return &regs.r13;
+                case register_name::r14:
+                    return &regs.r14;
+                case register_name::r15:
+                    return &regs.r15;
+                case register_name::rflags:
+                    return &regs.rflags;
+                default:
+                    throw std::runtime_error("Unsupported KVM GP register");
+                }
+            }
+            static const __u64* get_gp_register_pointer(const kvm_regs& regs, register_name name)
+            {
+                return get_gp_register_pointer(const_cast<kvm_regs&>(regs), name);
+            }
+            static kvm_segment& get_segment_register(kvm_sregs& sregs, register_name name)
+            {
+                switch (name)
+                {
+                case register_name::cs:
+                    return sregs.cs;
+                case register_name::ss:
+                    return sregs.ss;
+                case register_name::ds:
+                    return sregs.ds;
+                case register_name::es:
+                    return sregs.es;
+                case register_name::fs:
+                    return sregs.fs;
+                case register_name::gs:
+                    return sregs.gs;
+                default:
+                    throw std::runtime_error("Unsupported KVM segment register");
+                }
+            }
+            static const kvm_segment& get_segment_register(const kvm_sregs& sregs, register_name name)
+            {
+                return get_segment_register(const_cast<kvm_sregs&>(sregs), name);
+            }
+            static kvm_dtable& get_table_register(kvm_sregs& sregs, register_name name)
+            {
+                switch (name)
+                {
+                case register_name::gdtr:
+                    return sregs.gdt;
+                case register_name::idtr:
+                    return sregs.idt;
+                default:
+                    throw std::runtime_error("Unsupported KVM table register");
+                }
+            }
+            static const kvm_dtable& get_table_register(const kvm_sregs& sregs, register_name name)
+            {
+                return get_table_register(const_cast<kvm_sregs&>(sregs), name);
+            }
+            static uint8_t* get_fp_register_pointer(kvm_fpu& fpu, register_name name)
+            {
+                const auto index = static_cast<int>(name) - static_cast<int>(register_name::fp0);
+                if (index < 0 || index >= 8)
+                {
+                    throw std::runtime_error("Unsupported KVM FP register");
+                }
+
+                return fpu.fpr[index];
+            }
+            static const uint8_t* get_fp_register_pointer(const kvm_fpu& fpu, register_name name)
+            {
+                return get_fp_register_pointer(const_cast<kvm_fpu&>(fpu), name);
+            }
+            static uint8_t* get_xmm_register_pointer(kvm_fpu& fpu, register_name name)
+            {
+                const auto index = static_cast<int>(name) - static_cast<int>(register_name::xmm0);
+                if (index < 0 || index >= 16)
+                {
+                    throw std::runtime_error("Unsupported KVM XMM register");
+                }
+
+                return fpu.xmm[index];
+            }
+            static const uint8_t* get_xmm_register_pointer(const kvm_fpu& fpu, register_name name)
+            {
+                return get_xmm_register_pointer(const_cast<kvm_fpu&>(fpu), name);
+            }
 
             file_descriptor kvm_fd_{};
             file_descriptor vm_fd_{};
@@ -596,1613 +2038,6 @@ namespace sogen::kvm
             throw std::runtime_error("Unsupported KVM register");
         }
 
-        kvm_x86_64_emulator::kvm_x86_64_emulator()
-        {
-            this->kick_signal_ = vcpu_kick_signal();
-            this->ensure_platform_support();
-            this->configure_partition();
-            this->configure_virtual_processor();
-            this->initialize_long_mode_page_tables();
-            this->initialize_virtual_processor_state();
-            this->initialize_syscall_intercept_page();
-            this->initialize_exception_handling();
-        }
-
-        kvm_x86_64_emulator::~kvm_x86_64_emulator()
-        {
-            utils::reset_object_with_delayed_destruction(this->memory_write_hooks_);
-            utils::reset_object_with_delayed_destruction(this->memory_read_hooks_);
-            utils::reset_object_with_delayed_destruction(this->memory_execution_hooks_);
-            utils::reset_object_with_delayed_destruction(this->memory_violation_hooks_);
-            utils::reset_object_with_delayed_destruction(this->interrupt_hooks_);
-            utils::reset_object_with_delayed_destruction(this->basic_block_hooks_);
-            utils::reset_object_with_delayed_destruction(this->instruction_hooks_);
-
-            if (this->run_ != nullptr)
-            {
-                ::munmap(this->run_, this->vcpu_mmap_size_);
-            }
-        }
-
-        void kvm_x86_64_emulator::ensure_platform_support()
-        {
-            this->kvm_fd_.reset(::open("/dev/kvm", O_RDWR | O_CLOEXEC));
-            if (!this->kvm_fd_)
-            {
-                throw_errno("open(/dev/kvm)");
-            }
-
-            const auto api_version = ::ioctl(this->kvm_fd_.get(), KVM_GET_API_VERSION, 0);
-            check_ioctl_result(api_version, "KVM_GET_API_VERSION");
-            if (api_version != KVM_API_VERSION)
-            {
-                throw std::runtime_error("Unexpected KVM API version");
-            }
-
-            this->max_memslots_ = ::ioctl(this->kvm_fd_.get(), KVM_CHECK_EXTENSION, KVM_CAP_NR_MEMSLOTS);
-            if (this->max_memslots_ <= 0)
-            {
-                this->max_memslots_ = 32;
-            }
-
-            this->vcpu_mmap_size_ = static_cast<size_t>(::ioctl(this->kvm_fd_.get(), KVM_GET_VCPU_MMAP_SIZE, 0));
-            if (this->vcpu_mmap_size_ < sizeof(kvm_run))
-            {
-                throw std::runtime_error("KVM vCPU mmap size is invalid");
-            }
-        }
-
-        void kvm_x86_64_emulator::configure_partition()
-        {
-            this->vm_fd_.reset(::ioctl(this->kvm_fd_.get(), KVM_CREATE_VM, 0));
-            check_ioctl_result(this->vm_fd_.get(), "KVM_CREATE_VM");
-            (void)::ioctl(this->vm_fd_.get(), KVM_SET_TSS_ADDR, 0xfffbd000);
-        }
-
-        void kvm_x86_64_emulator::configure_virtual_processor()
-        {
-            this->vcpu_fd_.reset(::ioctl(this->vm_fd_.get(), KVM_CREATE_VCPU, vp_index));
-            check_ioctl_result(this->vcpu_fd_.get(), "KVM_CREATE_VCPU");
-
-            this->run_ =
-                static_cast<kvm_run*>(::mmap(nullptr, this->vcpu_mmap_size_, PROT_READ | PROT_WRITE, MAP_SHARED, this->vcpu_fd_.get(), 0));
-            if (this->run_ == MAP_FAILED)
-            {
-                this->run_ = nullptr;
-                throw_errno("mmap(KVM_RUN)");
-            }
-
-            this->initialize_cpuid();
-        }
-
-        void kvm_x86_64_emulator::initialize_cpuid()
-        {
-            constexpr uint32_t cpuid_entries = 256;
-            std::vector<std::byte> buffer(sizeof(kvm_cpuid2) + cpuid_entries * sizeof(kvm_cpuid_entry2));
-            auto* cpuid = reinterpret_cast<kvm_cpuid2*>(buffer.data());
-            cpuid->nent = cpuid_entries;
-            check_ioctl_result(::ioctl(this->kvm_fd_.get(), KVM_GET_SUPPORTED_CPUID, cpuid), "KVM_GET_SUPPORTED_CPUID");
-            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_CPUID2, cpuid), "KVM_SET_CPUID2");
-        }
-
-        void kvm_x86_64_emulator::initialize_virtual_processor_state()
-        {
-            auto sregs = this->get_sregs();
-            sregs.cs = make_segment(0x33, true);
-            sregs.ss = make_segment(0x2B, false);
-            sregs.ds = make_segment(0x2B, false);
-            sregs.es = make_segment(0x2B, false);
-            sregs.fs = make_segment(0x53, false);
-            sregs.gs = make_segment(0x2B, false);
-            sregs.cr0 = 0x80000033ull;
-            sregs.cr4 = 0x620ull;
-            sregs.cr3 = this->pml4_gpa_;
-            sregs.efer = (1ull << 0) | (1ull << 8) | (1ull << 10);
-            this->set_sregs(sregs);
-
-            auto regs = this->get_regs();
-            regs.rflags = 0x2ull;
-            this->set_regs(regs);
-
-            kvm_fpu fpu{};
-            fpu.fcw = 0x037Fu;
-            fpu.fsw = 0;
-            fpu.ftwx = 0xFF;
-            fpu.mxcsr = 0x1F80u;
-            this->set_fpu(fpu);
-
-            this->set_msr(MSR_STAR, (0x23ull << 48) | (0x08ull << 32));
-            this->set_msr(MSR_SYSCALL_MASK, 0);
-        }
-
-        void kvm_x86_64_emulator::initialize_syscall_intercept_page()
-        {
-            this->syscall_hook_page_ = this->allocate_internal_page(true);
-            auto* code = static_cast<uint8_t*>(this->mapped_pages_.at(this->syscall_hook_page_)->host_page);
-            code[0] = 0xF4;
-            this->set_msr(MSR_LSTAR, this->syscall_hook_page_);
-        }
-
-        void kvm_x86_64_emulator::initialize_exception_handling()
-        {
-            this->exception_stub_page_ = this->allocate_internal_page(true);
-            this->exception_idt_page_ = this->allocate_internal_page(false);
-            this->exception_tss_page_ = this->allocate_internal_page(false);
-            this->exception_stack_page_ = this->allocate_internal_page(false);
-
-            // One HLT per vector; the faulting vector is derived from the trapping RIP.
-            auto* stubs = static_cast<uint8_t*>(this->mapped_pages_.at(this->exception_stub_page_)->host_page);
-            for (uint32_t vector = 0; vector < exception_vector_count; ++vector)
-            {
-                stubs[vector * exception_stub_stride] = 0xF4;
-            }
-
-            // 64-bit interrupt gates (DPL 3 so software int instructions are also trapped) using IST1.
-            auto* idt = static_cast<uint8_t*>(this->mapped_pages_.at(this->exception_idt_page_)->host_page);
-            for (uint32_t vector = 0; vector < exception_vector_count; ++vector)
-            {
-                const auto handler = this->exception_stub_page_ + vector * exception_stub_stride;
-                const uint64_t low = (handler & 0xFFFF) | (static_cast<uint64_t>(kernel_code_selector) << 16) |
-                                     (static_cast<uint64_t>(exception_ist_index & 0x7) << 32) | (static_cast<uint64_t>(0xEE) << 40) |
-                                     (((handler >> 16) & 0xFFFF) << 48);
-                const uint64_t high = (handler >> 32) & 0xFFFFFFFF;
-                std::memcpy(idt + vector * 16, &low, sizeof(low));
-                std::memcpy(idt + vector * 16 + 8, &high, sizeof(high));
-            }
-
-            // 64-bit TSS providing the stack the CPU switches to on a privilege-changing exception.
-            const auto stack_top = this->exception_stack_page_ + page_size;
-            auto* tss = static_cast<uint8_t*>(this->mapped_pages_.at(this->exception_tss_page_)->host_page);
-            std::memcpy(tss + 0x04, &stack_top, sizeof(stack_top)); // RSP0
-            std::memcpy(tss + 0x24, &stack_top, sizeof(stack_top)); // IST1
-            const uint16_t io_map_base = 0x68;
-            std::memcpy(tss + 0x66, &io_map_base, sizeof(io_map_base));
-
-            auto sregs = this->get_sregs();
-            sregs.idt.base = this->exception_idt_page_;
-            sregs.idt.limit = exception_vector_count * 16 - 1;
-            sregs.tr.selector = task_state_selector;
-            sregs.tr.base = this->exception_tss_page_;
-            sregs.tr.limit = 0x67;
-            sregs.tr.type = 11; // busy 64-bit TSS
-            sregs.tr.s = 0;
-            sregs.tr.present = 1;
-            sregs.tr.dpl = 0;
-            sregs.tr.db = 0;
-            sregs.tr.l = 0;
-            sregs.tr.g = 0;
-            sregs.tr.avl = 0;
-            sregs.tr.unusable = 0;
-            this->set_sregs(sregs);
-        }
-
-        void kvm_x86_64_emulator::initialize_long_mode_page_tables()
-        {
-            this->pml4_gpa_ = this->allocate_internal_page(false, false);
-        }
-
-        uint64_t kvm_x86_64_emulator::allocate_internal_page(const bool executable, const bool map_into_guest)
-        {
-            auto backing = allocate_backing_memory(page_size);
-            auto* raw_page = backing.get();
-
-            const auto page_gpa = this->next_internal_gpa_;
-            this->next_internal_gpa_ += page_size;
-
-            auto page = std::make_unique<mapped_page>();
-            page->owned_page = std::move(backing);
-            page->host_page = raw_page;
-            page->permissions = executable ? memory_permission::all : memory_permission::read_write;
-
-            this->mapped_pages_[page_gpa] = std::move(page);
-            this->page_table_views_[page_gpa] = reinterpret_cast<uint64_t*>(raw_page);
-
-            if (map_into_guest)
-            {
-                this->ensure_virtual_mapping(page_gpa);
-            }
-
-            this->rebuild_mappings();
-            return page_gpa;
-        }
-
-        void kvm_x86_64_emulator::ensure_virtual_mapping(const uint64_t guest_address)
-        {
-            detail::ensure_virtual_mapping(
-                this->page_table_views_, this->pml4_gpa_,
-                [this](const bool executable, const bool map_into_guest) {
-                    return this->allocate_internal_page(executable, map_into_guest);
-                },
-                guest_address);
-        }
-
-        uint32_t kvm_x86_64_emulator::to_kvm_map_flags(const memory_permission permissions) const
-        {
-            if (permissions == memory_permission::none)
-            {
-                return 0;
-            }
-
-            uint32_t flags = 0;
-            if ((permissions & memory_permission::write) == memory_permission::none)
-            {
-                flags |= KVM_MEM_READONLY;
-            }
-
-            return flags;
-        }
-
-        void kvm_x86_64_emulator::clear_all_mappings()
-        {
-            for (const auto slot : this->active_slots_)
-            {
-                kvm_userspace_memory_region region{};
-                region.slot = static_cast<uint32_t>(slot);
-                region.memory_size = 0;
-                check_ioctl_result(::ioctl(this->vm_fd_.get(), KVM_SET_USER_MEMORY_REGION, &region), "KVM_SET_USER_MEMORY_REGION");
-            }
-
-            this->active_slots_.clear();
-            this->free_slots_.clear();
-            this->next_slot_id_ = 0;
-
-            for (auto& [_, page] : this->mapped_pages_)
-            {
-                if (page)
-                {
-                    page->map_flags = 0;
-                }
-            }
-        }
-
-        int kvm_x86_64_emulator::allocate_slot()
-        {
-            if (this->next_slot_id_ >= this->max_memslots_)
-            {
-                throw std::runtime_error("Exhausted KVM memory slots");
-            }
-
-            const auto slot = this->next_slot_id_++;
-            this->active_slots_.insert(slot);
-            return slot;
-        }
-
-        void kvm_x86_64_emulator::map_region(const uint64_t guest_address, const size_t size, void* host_base, const uint32_t flags)
-        {
-            kvm_userspace_memory_region region{};
-            region.slot = static_cast<uint32_t>(this->allocate_slot());
-            region.flags = flags;
-            region.guest_phys_addr = guest_address;
-            region.memory_size = size;
-            region.userspace_addr = reinterpret_cast<uint64_t>(host_base);
-            check_ioctl_result(::ioctl(this->vm_fd_.get(), KVM_SET_USER_MEMORY_REGION, &region), "KVM_SET_USER_MEMORY_REGION");
-        }
-
-        void kvm_x86_64_emulator::rebuild_mappings()
-        {
-            this->clear_all_mappings();
-
-            for (auto it = this->mapped_pages_.begin(); it != this->mapped_pages_.end();)
-            {
-                if (!it->second || it->second->host_page == nullptr || it->second->permissions == memory_permission::none)
-                {
-                    ++it;
-                    continue;
-                }
-
-                const auto run_address = it->first;
-                auto* const run_host_base = static_cast<uint8_t*>(it->second->host_page);
-                const auto run_flags = this->to_kvm_map_flags(it->second->permissions);
-
-                size_t run_size = page_size;
-                auto jt = std::next(it);
-                while (jt != this->mapped_pages_.end())
-                {
-                    if (!jt->second || jt->second->host_page == nullptr || jt->second->permissions != it->second->permissions ||
-                        jt->first != run_address + run_size || jt->second->host_page != run_host_base + run_size)
-                    {
-                        break;
-                    }
-
-                    run_size += page_size;
-                    ++jt;
-                }
-
-                this->map_region(run_address, run_size, run_host_base, run_flags);
-                for (size_t offset = 0; offset < run_size; offset += page_size)
-                {
-                    this->mapped_pages_.at(run_address + offset)->map_flags = run_flags;
-                }
-
-                it = jt;
-            }
-        }
-
-        void kvm_x86_64_emulator::start(const size_t count)
-        {
-            if (count != 0)
-            {
-                throw std::runtime_error("KVM backend does not support exact instruction counts yet");
-            }
-
-            this->stop_requested_ = false;
-            this->vcpu_thread_ = pthread_self();
-            this->run_->immediate_exit = 0;
-
-            while (!this->stop_requested_)
-            {
-                if (this->handle_pre_run_instruction())
-                {
-                    continue;
-                }
-
-                this->refresh_mmio_pages();
-
-                this->run_active_ = true;
-                const auto rc = ::ioctl(this->vcpu_fd_.get(), KVM_RUN, 0);
-                this->run_active_ = false;
-
-                if (rc < 0)
-                {
-                    if (errno == EINTR && this->stop_requested_)
-                    {
-                        return;
-                    }
-
-                    if (errno == EINTR)
-                    {
-                        continue;
-                    }
-
-                    throw_errno("KVM_RUN");
-                }
-
-                switch (this->run_->exit_reason)
-                {
-                case KVM_EXIT_HLT: {
-                    const auto rip = this->read_instruction_pointer();
-                    if (this->syscall_hook_ && rip == (this->syscall_hook_page_ + 1))
-                    {
-                        if (this->handle_syscall_halt())
-                        {
-                            continue;
-                        }
-
-                        return;
-                    }
-
-                    const auto stub_end = this->exception_stub_page_ + exception_vector_count * exception_stub_stride;
-                    if (rip > this->exception_stub_page_ && rip <= stub_end)
-                    {
-                        if (this->handle_exception_trap(rip))
-                        {
-                            continue;
-                        }
-                    }
-
-                    return;
-                }
-                case KVM_EXIT_MMIO:
-                    if (this->handle_mmio_exit())
-                    {
-                        continue;
-                    }
-
-                    return;
-                case KVM_EXIT_EXCEPTION:
-                    if (this->handle_exception(this->run_->ex.exception, this->run_->ex.error_code))
-                    {
-                        continue;
-                    }
-
-                    return;
-                case KVM_EXIT_DEBUG:
-                    if (this->handle_debug_exit())
-                    {
-                        continue;
-                    }
-
-                    return;
-                case KVM_EXIT_INTR:
-                    if (this->stop_requested_)
-                    {
-                        return;
-                    }
-
-                    continue;
-                case KVM_EXIT_SHUTDOWN:
-                    return;
-                case KVM_EXIT_FAIL_ENTRY:
-                    throw std::runtime_error("KVM vCPU failed to enter guest mode");
-                case KVM_EXIT_INTERNAL_ERROR:
-                    throw std::runtime_error("KVM reported an internal error");
-                default:
-                    throw std::runtime_error("Unhandled KVM exit reason: " + std::to_string(this->run_->exit_reason));
-                }
-            }
-        }
-
-        void kvm_x86_64_emulator::stop()
-        {
-            this->stop_requested_ = true;
-
-            if (this->run_ != nullptr)
-            {
-                // Honoured at the next KVM_RUN entry; covers the race where the vCPU has not
-                // entered guest mode yet.
-                this->run_->immediate_exit = 1;
-            }
-
-            if (this->run_active_)
-            {
-                // The vCPU may already be executing guest code, where immediate_exit no longer
-                // applies. Signal the vCPU thread to force the in-flight KVM_RUN to return EINTR.
-                pthread_kill(this->vcpu_thread_, this->kick_signal_);
-            }
-        }
-
-        bool kvm_x86_64_emulator::handle_pre_run_instruction()
-        {
-            std::array<std::byte, 3> opcode{};
-            const auto rip = this->read_instruction_pointer();
-            if (!detail::access_memory(this->mapped_pages_, rip, opcode.data(), opcode.size(), false))
-            {
-                return false;
-            }
-
-            if (opcode[0] == std::byte{0x0F} && opcode[1] == std::byte{0xA2})
-            {
-                return this->handle_instruction_hook(x86_hookable_instructions::cpuid, 2);
-            }
-
-            if (opcode[0] == std::byte{0x0F} && opcode[1] == std::byte{0x31})
-            {
-                return this->handle_instruction_hook(x86_hookable_instructions::rdtsc, 2);
-            }
-
-            if (opcode[0] == std::byte{0x0F} && opcode[1] == std::byte{0x01} && opcode[2] == std::byte{0xF9})
-            {
-                return this->handle_instruction_hook(x86_hookable_instructions::rdtscp, 3);
-            }
-
-            if (opcode[0] == std::byte{0x0F} && opcode[1] == std::byte{0x0B})
-            {
-                return this->handle_invalid_instruction_hook();
-            }
-
-            return false;
-        }
-
-        bool kvm_x86_64_emulator::handle_instruction_hook(const x86_hookable_instructions type, const uint64_t instruction_size)
-        {
-            bool handled = false;
-            bool skip = false;
-            for (auto& [_, hook] : this->instruction_hooks_)
-            {
-                if (hook.type != type)
-                {
-                    continue;
-                }
-
-                handled = true;
-                if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
-                {
-                    skip = true;
-                }
-            }
-
-            if (handled && skip)
-            {
-                const auto rip = this->read_instruction_pointer();
-                if (this->read_instruction_pointer() == rip)
-                {
-                    this->advance_rip(instruction_size);
-                }
-
-                return true;
-            }
-
-            return false;
-        }
-
-        bool kvm_x86_64_emulator::handle_invalid_instruction_hook()
-        {
-            bool consumed = false;
-            const auto rip = this->read_instruction_pointer();
-            for (auto& [_, hook] : this->instruction_hooks_)
-            {
-                if (hook.type != x86_hookable_instructions::invalid)
-                {
-                    continue;
-                }
-
-                if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
-                {
-                    consumed = true;
-                }
-            }
-
-            if (consumed && this->read_instruction_pointer() == rip)
-            {
-                this->advance_rip(2);
-            }
-
-            return consumed;
-        }
-
-        bool kvm_x86_64_emulator::handle_mmio_exit()
-        {
-            const auto& mmio = this->run_->mmio;
-            if (auto* region = detail::find_mmio_region(this->mmio_regions_, mmio.phys_addr))
-            {
-                const auto offset = mmio.phys_addr - region->address;
-                if (mmio.is_write)
-                {
-                    region->write_cb(offset, mmio.data, mmio.len);
-                }
-                else
-                {
-                    region->read_cb(offset, this->run_->mmio.data, mmio.len);
-                }
-
-                return true;
-            }
-
-            const auto operation = mmio.is_write ? memory_operation::write : memory_operation::read;
-            for (auto& [_, hook] : this->memory_violation_hooks_)
-            {
-                const auto result = hook(mmio.phys_addr, mmio.len, operation, memory_violation_type::unmapped);
-                if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        bool kvm_x86_64_emulator::handle_debug_exit()
-        {
-            for (auto& [_, hook] : this->interrupt_hooks_)
-            {
-                hook(1);
-                return true;
-            }
-
-            return false;
-        }
-
-        bool kvm_x86_64_emulator::handle_exception(const uint32_t exception, const uint64_t error_code)
-        {
-            if (exception == invalid_opcode_interrupt && this->handle_invalid_instruction_hook())
-            {
-                return true;
-            }
-
-            if (exception == 14 && !this->memory_violation_hooks_.empty())
-            {
-                const auto fault_address = this->reg<uint64_t>(x86_register::cr2);
-                const auto operation = (error_code & 0x2) ? memory_operation::write : memory_operation::read;
-                const auto type = (error_code & 0x1) ? memory_violation_type::protection : memory_violation_type::unmapped;
-                for (auto& [_, hook] : this->memory_violation_hooks_)
-                {
-                    const auto result = hook(fault_address, 1, operation, type);
-                    if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            for (auto& [_, hook] : this->interrupt_hooks_)
-            {
-                hook(static_cast<int>(exception));
-                return true;
-            }
-
-            return false;
-        }
-
-        bool kvm_x86_64_emulator::handle_exception_trap(const uint64_t stub_rip)
-        {
-            const auto vector = static_cast<uint32_t>((stub_rip - 1 - this->exception_stub_page_) / exception_stub_stride);
-
-            // The CPU pushed the exception frame onto the IST stack; RSP now points at its base.
-            auto regs = this->get_regs();
-            auto frame_address = regs.rsp;
-
-            uint64_t error_code = 0;
-            if (exception_has_error_code(vector))
-            {
-                this->read_memory(frame_address, &error_code, sizeof(error_code));
-                frame_address += sizeof(uint64_t);
-            }
-
-            struct exception_frame
-            {
-                uint64_t rip;
-                uint64_t cs;
-                uint64_t rflags;
-                uint64_t rsp;
-                uint64_t ss;
-            } frame{};
-            this->read_memory(frame_address, &frame, sizeof(frame));
-
-            // Undo the exception entry so the emulator's handlers observe the faulting context, and
-            // a resumed instruction re-executes from where it faulted.
-            regs.rip = frame.rip;
-            regs.rsp = frame.rsp;
-            regs.rflags = frame.rflags;
-            this->set_regs(regs);
-
-            auto sregs = this->get_sregs();
-            sregs.cs = make_segment(static_cast<uint16_t>(frame.cs), true);
-            sregs.ss = make_segment(static_cast<uint16_t>(frame.ss), false);
-            this->set_sregs(sregs);
-
-            return this->handle_exception(vector, error_code);
-        }
-
-        bool kvm_x86_64_emulator::handle_syscall_halt()
-        {
-            if (!this->syscall_hook_)
-            {
-                return false;
-            }
-
-            auto regs = this->get_regs();
-            auto sregs = this->get_sregs();
-
-            const auto post_syscall_rcx = regs.rcx;
-            const auto post_syscall_r10 = regs.r10;
-            const auto saved_rflags = regs.r11;
-            const auto pre_syscall_rip = post_syscall_rcx - 2;
-
-            regs.rip = pre_syscall_rip;
-            regs.rcx = post_syscall_r10;
-            regs.rflags = saved_rflags;
-            sregs.cs = make_segment(0x33, true);
-            sregs.ss = make_segment(0x2B, false);
-            this->set_regs(regs);
-            this->set_sregs(sregs);
-
-            const auto continuation = this->syscall_hook_->callback(0);
-
-            regs = this->get_regs();
-            if (continuation == instruction_hook_continuation::skip_instruction && regs.rip == pre_syscall_rip)
-            {
-                regs.rip = post_syscall_rcx;
-            }
-            else
-            {
-                // Advance past the syscall instruction. This also covers handlers that moved RIP and
-                // expect the syscall length to be added back (e.g. the instrumentation-callback
-                // redirect sets RIP to callback-2). Matches the WHP backend.
-                regs.rip += 2;
-            }
-
-            sregs = this->get_sregs();
-            sregs.cs = make_segment(0x33, true);
-            sregs.ss = make_segment(0x2B, false);
-            this->set_regs(regs);
-            this->set_sregs(sregs);
-            return true;
-        }
-
-        void kvm_x86_64_emulator::advance_rip(const uint64_t amount)
-        {
-            auto regs = this->get_regs();
-            regs.rip += amount;
-            this->set_regs(regs);
-        }
-
-        bool kvm_x86_64_emulator::read_descriptor_table(const int reg, descriptor_table_register& table)
-        {
-            if (reg != static_cast<int>(x86_register::gdtr) && reg != static_cast<int>(x86_register::idtr))
-            {
-                return false;
-            }
-
-            const auto sregs = this->get_sregs();
-            const auto& value =
-                get_table_register(sregs, reg == static_cast<int>(x86_register::gdtr) ? register_name::gdtr : register_name::idtr);
-            table.base = value.base;
-            table.limit = value.limit;
-            return true;
-        }
-
-        void kvm_x86_64_emulator::load_gdt(const pointer_type address, const uint32_t limit)
-        {
-            auto sregs = this->get_sregs();
-            sregs.gdt.base = address;
-            sregs.gdt.limit = static_cast<uint16_t>(limit);
-            this->set_sregs(sregs);
-        }
-
-        void kvm_x86_64_emulator::set_segment_base(const x86_register base, const pointer_type value)
-        {
-            auto sregs = this->get_sregs();
-            auto& segment = get_segment_register(sregs, map_register(base).name);
-            segment.base = value;
-            this->set_sregs(sregs);
-        }
-
-        kvm_x86_64_emulator::pointer_type kvm_x86_64_emulator::get_segment_base(const x86_register base)
-        {
-            const auto sregs = this->get_sregs();
-            return get_segment_register(sregs, map_register(base).name).base;
-        }
-
-        void kvm_x86_64_emulator::read_memory(const uint64_t address, void* data, const size_t size) const
-        {
-            if (!this->try_read_memory(address, data, size))
-            {
-                throw std::runtime_error("Failed to read KVM guest memory");
-            }
-        }
-
-        bool kvm_x86_64_emulator::try_read_memory(const uint64_t address, void* data, const size_t size) const
-        {
-            return detail::access_memory(this->mapped_pages_, address, data, size, false);
-        }
-
-        void kvm_x86_64_emulator::write_memory(const uint64_t address, const void* data, const size_t size)
-        {
-            if (!this->try_write_memory(address, data, size))
-            {
-                throw std::runtime_error("Failed to write KVM guest memory");
-            }
-        }
-
-        bool kvm_x86_64_emulator::try_write_memory(const uint64_t address, const void* data, const size_t size)
-        {
-            return detail::access_memory(this->mapped_pages_, address, const_cast<void*>(data), size, true);
-        }
-
-        void kvm_x86_64_emulator::map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb,
-                                           mmio_write_callback write_cb)
-        {
-            if (!is_page_aligned(address) || !is_page_aligned(size))
-            {
-                throw std::runtime_error("KVM MMIO mappings must be page aligned");
-            }
-
-            mmio_region region{.address = address, .size = size, .read_cb = std::move(read_cb), .write_cb = std::move(write_cb)};
-
-            // Back MMIO with a read-only guest mapping rather than relying on KVM_EXIT_MMIO. KVM
-            // services unmapped accesses by emulating the faulting instruction, but its emulator does
-            // not support SSE/AVX, so a vectorized access (e.g. an SSE wcslen over a string in
-            // KUSER_SHARED_DATA) would fault with #UD. A read-only memslot lets reads execute
-            // natively; only writes trap and are routed through the write callback.
-            for (size_t offset = 0; offset < size; offset += page_size)
-            {
-                const auto guest_address = address + offset;
-                auto& page = this->mapped_pages_[guest_address];
-                if (!page)
-                {
-                    page = std::make_unique<mapped_page>();
-                }
-
-                if (page->host_page == nullptr)
-                {
-                    auto backing = allocate_backing_memory(page_size);
-                    page->owned_page = std::move(backing);
-                    page->host_page = page->owned_page.get();
-                }
-
-                page->permissions = memory_permission::read;
-                const auto chunk = (std::min)(static_cast<size_t>(page_size), size - offset);
-                region.read_cb(offset, page->host_page, chunk);
-                this->ensure_virtual_mapping(guest_address);
-            }
-
-            this->rebuild_mappings();
-            this->mmio_regions_[address] = std::move(region);
-        }
-
-        void kvm_x86_64_emulator::refresh_mmio_pages()
-        {
-            for (auto& [base, region] : this->mmio_regions_)
-            {
-                for (size_t offset = 0; offset < region.size; offset += page_size)
-                {
-                    const auto it = this->mapped_pages_.find(base + offset);
-                    if (it != this->mapped_pages_.end() && it->second && it->second->host_page != nullptr)
-                    {
-                        const auto chunk = (std::min)(static_cast<size_t>(page_size), region.size - offset);
-                        region.read_cb(offset, it->second->host_page, chunk);
-                    }
-                }
-            }
-        }
-
-        void kvm_x86_64_emulator::map_memory(const uint64_t address, const size_t size, const memory_permission permissions)
-        {
-            if (!is_page_aligned(address) || !is_page_aligned(size))
-            {
-                throw std::runtime_error("KVM memory mappings must be page aligned");
-            }
-
-            bool can_batch_map = true;
-            for (size_t offset = 0; offset < size; offset += page_size)
-            {
-                const auto guest_address = address + offset;
-                const auto entry = this->mapped_pages_.find(guest_address);
-                if (entry != this->mapped_pages_.end() && entry->second && entry->second->host_page != nullptr)
-                {
-                    can_batch_map = false;
-                    break;
-                }
-            }
-
-            if (can_batch_map)
-            {
-                auto backing = allocate_backing_memory(size);
-                auto* backing_base = backing.get();
-                for (size_t offset = 0; offset < size; offset += page_size)
-                {
-                    const auto guest_address = address + offset;
-                    auto& page = this->mapped_pages_[guest_address];
-                    if (!page)
-                    {
-                        page = std::make_unique<mapped_page>();
-                    }
-
-                    page->owned_page = backing;
-                    page->host_page = backing_base + offset;
-                    page->permissions = permissions;
-                    this->ensure_virtual_mapping(guest_address);
-                }
-
-                this->rebuild_mappings();
-                return;
-            }
-
-            for (size_t offset = 0; offset < size; offset += page_size)
-            {
-                const auto guest_address = address + offset;
-                auto& page = this->mapped_pages_[guest_address];
-                if (!page)
-                {
-                    page = std::make_unique<mapped_page>();
-                }
-
-                if (page->host_page == nullptr)
-                {
-                    auto backing = allocate_backing_memory(page_size);
-                    page->owned_page = std::move(backing);
-                    page->host_page = page->owned_page.get();
-                }
-
-                page->permissions = permissions;
-                this->ensure_virtual_mapping(guest_address);
-            }
-
-            this->rebuild_mappings();
-        }
-
-        void kvm_x86_64_emulator::unmap_memory(const uint64_t address, const size_t size)
-        {
-            if (!is_page_aligned(address) || !is_page_aligned(size))
-            {
-                throw std::runtime_error("KVM memory unmappings must be page aligned");
-            }
-
-            for (size_t offset = 0; offset < size; offset += page_size)
-            {
-                this->mapped_pages_.erase(address + offset);
-            }
-
-            const auto mmio = this->mmio_regions_.find(address);
-            if (mmio != this->mmio_regions_.end() && mmio->second.size == size)
-            {
-                this->mmio_regions_.erase(mmio);
-            }
-
-            this->rebuild_mappings();
-        }
-
-        void kvm_x86_64_emulator::apply_memory_protection(const uint64_t address, const size_t size, const memory_permission permissions)
-        {
-            if (!is_page_aligned(address) || !is_page_aligned(size))
-            {
-                throw std::runtime_error("KVM protection changes must be page aligned");
-            }
-
-            for (size_t offset = 0; offset < size; offset += page_size)
-            {
-                const auto it = this->mapped_pages_.find(address + offset);
-                if (it != this->mapped_pages_.end())
-                {
-                    it->second->permissions = permissions;
-                }
-            }
-
-            this->rebuild_mappings();
-        }
-
-        emulator_hook* kvm_x86_64_emulator::make_hook()
-        {
-            return reinterpret_cast<emulator_hook*>(this->next_hook_id_++);
-        }
-
-        emulator_hook* kvm_x86_64_emulator::hook_instruction(const int instruction_type, instruction_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            auto& entry = this->instruction_hooks_[hook];
-            entry.type = static_cast<x86_hookable_instructions>(instruction_type);
-            entry.callback = std::move(callback);
-            if (entry.type == x86_hookable_instructions::syscall)
-            {
-                this->syscall_hook_ = &entry;
-            }
-            return hook;
-        }
-
-        emulator_hook* kvm_x86_64_emulator::hook_basic_block(basic_block_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->basic_block_hooks_[hook] = std::move(callback);
-            return hook;
-        }
-
-        emulator_hook* kvm_x86_64_emulator::hook_interrupt(interrupt_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->interrupt_hooks_[hook] = std::move(callback);
-            return hook;
-        }
-
-        emulator_hook* kvm_x86_64_emulator::hook_memory_violation(memory_violation_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->memory_violation_hooks_[hook] = std::move(callback);
-            return hook;
-        }
-
-        emulator_hook* kvm_x86_64_emulator::hook_memory_execution(memory_execution_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->memory_execution_hooks_[hook] = execution_hook_entry{.address = std::nullopt, .size = 0, .callback = std::move(callback)};
-            return hook;
-        }
-
-        emulator_hook* kvm_x86_64_emulator::hook_memory_execution(const uint64_t address, memory_execution_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->memory_execution_hooks_[hook] = execution_hook_entry{.address = address, .size = 1, .callback = std::move(callback)};
-            return hook;
-        }
-
-        emulator_hook* kvm_x86_64_emulator::hook_memory_range_execution(const uint64_t address, const uint64_t size,
-                                                                        memory_execution_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->memory_execution_hooks_[hook] = execution_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
-            return hook;
-        }
-
-        emulator_hook* kvm_x86_64_emulator::hook_memory_read(const uint64_t address, const uint64_t size,
-                                                             memory_access_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->memory_read_hooks_[hook] = memory_access_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
-            return hook;
-        }
-
-        emulator_hook* kvm_x86_64_emulator::hook_memory_write(const uint64_t address, const uint64_t size,
-                                                              memory_access_hook_callback callback)
-        {
-            auto* hook = this->make_hook();
-            this->memory_write_hooks_[hook] = memory_access_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
-            return hook;
-        }
-
-        void kvm_x86_64_emulator::delete_hook(emulator_hook* hook)
-        {
-            const auto instruction_it = this->instruction_hooks_.find(hook);
-            if (instruction_it != this->instruction_hooks_.end() && &instruction_it->second == this->syscall_hook_)
-            {
-                this->syscall_hook_ = nullptr;
-            }
-
-            this->instruction_hooks_.erase(hook);
-            this->basic_block_hooks_.erase(hook);
-            this->interrupt_hooks_.erase(hook);
-            this->memory_violation_hooks_.erase(hook);
-            this->memory_execution_hooks_.erase(hook);
-            this->memory_read_hooks_.erase(hook);
-            this->memory_write_hooks_.erase(hook);
-        }
-
-        void kvm_x86_64_emulator::serialize_state(utils::buffer_serializer& buffer, const bool) const
-        {
-            buffer.write_vector(this->save_registers());
-        }
-
-        void kvm_x86_64_emulator::deserialize_state(utils::buffer_deserializer& buffer, const bool)
-        {
-            this->restore_registers(buffer.read_vector<std::byte>());
-        }
-
-        std::vector<std::byte> kvm_x86_64_emulator::save_registers() const
-        {
-            register_snapshot snapshot{};
-            snapshot.regs = this->get_regs();
-            snapshot.sregs = this->get_sregs();
-            snapshot.xsave = this->get_xsave();
-            snapshot.star = this->get_msr(MSR_STAR);
-            snapshot.lstar = this->get_msr(MSR_LSTAR);
-            snapshot.sfmask = this->get_msr(MSR_SYSCALL_MASK);
-
-            std::vector<std::byte> bytes(sizeof(snapshot));
-            std::memcpy(bytes.data(), &snapshot, sizeof(snapshot));
-            return bytes;
-        }
-
-        void kvm_x86_64_emulator::restore_registers(const std::vector<std::byte>& register_data)
-        {
-            if (register_data.size() != sizeof(register_snapshot))
-            {
-                throw std::runtime_error("Unexpected KVM register snapshot size");
-            }
-
-            register_snapshot snapshot{};
-            std::memcpy(&snapshot, register_data.data(), sizeof(snapshot));
-            this->set_regs(snapshot.regs);
-            this->set_sregs(snapshot.sregs);
-            this->set_xsave(snapshot.xsave);
-            this->set_msr(MSR_STAR, snapshot.star);
-            this->set_msr(MSR_LSTAR, snapshot.lstar);
-            this->set_msr(MSR_SYSCALL_MASK, snapshot.sfmask);
-        }
-
-        bool kvm_x86_64_emulator::has_violation() const
-        {
-            return false;
-        }
-
-        bool kvm_x86_64_emulator::supports_instruction_counting() const
-        {
-            return false;
-        }
-
-        std::string kvm_x86_64_emulator::get_name() const
-        {
-            return "Linux KVM";
-        }
-
-        uint64_t kvm_x86_64_emulator::get_msr(const uint32_t msr) const
-        {
-            alignas(kvm_msrs) std::array<std::byte, sizeof(kvm_msrs) + sizeof(kvm_msr_entry)> storage{};
-            auto* msrs = reinterpret_cast<kvm_msrs*>(storage.data());
-            auto* entry = reinterpret_cast<kvm_msr_entry*>(storage.data() + offsetof(kvm_msrs, entries));
-            msrs->nmsrs = 1;
-            entry->index = msr;
-
-            const auto rc = ::ioctl(this->vcpu_fd_.get(), KVM_GET_MSRS, msrs);
-            if (rc != 1)
-            {
-                throw std::runtime_error("KVM_GET_MSRS failed");
-            }
-
-            return entry->data;
-        }
-
-        void kvm_x86_64_emulator::set_msr(const uint32_t msr, const uint64_t value)
-        {
-            alignas(kvm_msrs) std::array<std::byte, sizeof(kvm_msrs) + sizeof(kvm_msr_entry)> storage{};
-            auto* msrs = reinterpret_cast<kvm_msrs*>(storage.data());
-            auto* entry = reinterpret_cast<kvm_msr_entry*>(storage.data() + offsetof(kvm_msrs, entries));
-            msrs->nmsrs = 1;
-            entry->index = msr;
-            entry->data = value;
-
-            const auto rc = ::ioctl(this->vcpu_fd_.get(), KVM_SET_MSRS, msrs);
-            if (rc != 1)
-            {
-                throw std::runtime_error("KVM_SET_MSRS failed");
-            }
-        }
-
-        kvm_regs kvm_x86_64_emulator::get_regs() const
-        {
-            kvm_regs regs{};
-            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_REGS, &regs), "KVM_GET_REGS");
-            return regs;
-        }
-
-        void kvm_x86_64_emulator::set_regs(const kvm_regs& regs)
-        {
-            auto mutable_regs = regs;
-            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_REGS, &mutable_regs), "KVM_SET_REGS");
-        }
-
-        kvm_sregs kvm_x86_64_emulator::get_sregs() const
-        {
-            kvm_sregs sregs{};
-            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_SREGS, &sregs), "KVM_GET_SREGS");
-            return sregs;
-        }
-
-        void kvm_x86_64_emulator::set_sregs(const kvm_sregs& sregs)
-        {
-            auto mutable_sregs = sregs;
-            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_SREGS, &mutable_sregs), "KVM_SET_SREGS");
-        }
-
-        kvm_fpu kvm_x86_64_emulator::get_fpu() const
-        {
-            kvm_fpu fpu{};
-            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_FPU, &fpu), "KVM_GET_FPU");
-            return fpu;
-        }
-
-        void kvm_x86_64_emulator::set_fpu(const kvm_fpu& fpu)
-        {
-            auto mutable_fpu = fpu;
-            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_FPU, &mutable_fpu), "KVM_SET_FPU");
-        }
-
-        xsave_area kvm_x86_64_emulator::get_xsave() const
-        {
-            // Captures the full extended state (x87, SSE, and the AVX YMM upper halves), unlike
-            // KVM_GET_FPU which only sees the legacy fxsave area. Required so a thread preempted
-            // mid-AVX keeps its complete vector state across a context switch.
-            xsave_area xsave{};
-            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_XSAVE, xsave.data()), "KVM_GET_XSAVE");
-            return xsave;
-        }
-
-        void kvm_x86_64_emulator::set_xsave(const xsave_area& xsave)
-        {
-            auto mutable_xsave = xsave;
-            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_XSAVE, mutable_xsave.data()), "KVM_SET_XSAVE");
-        }
-
-        kvm_debugregs kvm_x86_64_emulator::get_debugregs() const
-        {
-            kvm_debugregs debugregs{};
-            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_DEBUGREGS, &debugregs), "KVM_GET_DEBUGREGS");
-            return debugregs;
-        }
-
-        void kvm_x86_64_emulator::set_debugregs(const kvm_debugregs& debugregs)
-        {
-            auto mutable_debugregs = debugregs;
-            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_DEBUGREGS, &mutable_debugregs), "KVM_SET_DEBUGREGS");
-        }
-
-        __u64* kvm_x86_64_emulator::get_gp_register_pointer(kvm_regs& regs, const register_name name)
-        {
-            switch (name)
-            {
-            case register_name::rax:
-                return &regs.rax;
-            case register_name::rbx:
-                return &regs.rbx;
-            case register_name::rcx:
-                return &regs.rcx;
-            case register_name::rdx:
-                return &regs.rdx;
-            case register_name::rsi:
-                return &regs.rsi;
-            case register_name::rdi:
-                return &regs.rdi;
-            case register_name::rbp:
-                return &regs.rbp;
-            case register_name::rsp:
-                return &regs.rsp;
-            case register_name::rip:
-                return &regs.rip;
-            case register_name::r8:
-                return &regs.r8;
-            case register_name::r9:
-                return &regs.r9;
-            case register_name::r10:
-                return &regs.r10;
-            case register_name::r11:
-                return &regs.r11;
-            case register_name::r12:
-                return &regs.r12;
-            case register_name::r13:
-                return &regs.r13;
-            case register_name::r14:
-                return &regs.r14;
-            case register_name::r15:
-                return &regs.r15;
-            case register_name::rflags:
-                return &regs.rflags;
-            default:
-                throw std::runtime_error("Unsupported KVM GP register");
-            }
-        }
-
-        const __u64* kvm_x86_64_emulator::get_gp_register_pointer(const kvm_regs& regs, const register_name name)
-        {
-            return get_gp_register_pointer(const_cast<kvm_regs&>(regs), name);
-        }
-
-        kvm_segment& kvm_x86_64_emulator::get_segment_register(kvm_sregs& sregs, const register_name name)
-        {
-            switch (name)
-            {
-            case register_name::cs:
-                return sregs.cs;
-            case register_name::ss:
-                return sregs.ss;
-            case register_name::ds:
-                return sregs.ds;
-            case register_name::es:
-                return sregs.es;
-            case register_name::fs:
-                return sregs.fs;
-            case register_name::gs:
-                return sregs.gs;
-            default:
-                throw std::runtime_error("Unsupported KVM segment register");
-            }
-        }
-
-        const kvm_segment& kvm_x86_64_emulator::get_segment_register(const kvm_sregs& sregs, const register_name name)
-        {
-            return get_segment_register(const_cast<kvm_sregs&>(sregs), name);
-        }
-
-        kvm_dtable& kvm_x86_64_emulator::get_table_register(kvm_sregs& sregs, const register_name name)
-        {
-            switch (name)
-            {
-            case register_name::gdtr:
-                return sregs.gdt;
-            case register_name::idtr:
-                return sregs.idt;
-            default:
-                throw std::runtime_error("Unsupported KVM table register");
-            }
-        }
-
-        const kvm_dtable& kvm_x86_64_emulator::get_table_register(const kvm_sregs& sregs, const register_name name)
-        {
-            return get_table_register(const_cast<kvm_sregs&>(sregs), name);
-        }
-
-        uint8_t* kvm_x86_64_emulator::get_fp_register_pointer(kvm_fpu& fpu, const register_name name)
-        {
-            const auto index = static_cast<int>(name) - static_cast<int>(register_name::fp0);
-            if (index < 0 || index >= 8)
-            {
-                throw std::runtime_error("Unsupported KVM FP register");
-            }
-
-            return fpu.fpr[index];
-        }
-
-        const uint8_t* kvm_x86_64_emulator::get_fp_register_pointer(const kvm_fpu& fpu, const register_name name)
-        {
-            return get_fp_register_pointer(const_cast<kvm_fpu&>(fpu), name);
-        }
-
-        uint8_t* kvm_x86_64_emulator::get_xmm_register_pointer(kvm_fpu& fpu, const register_name name)
-        {
-            const auto index = static_cast<int>(name) - static_cast<int>(register_name::xmm0);
-            if (index < 0 || index >= 16)
-            {
-                throw std::runtime_error("Unsupported KVM XMM register");
-            }
-
-            return fpu.xmm[index];
-        }
-
-        const uint8_t* kvm_x86_64_emulator::get_xmm_register_pointer(const kvm_fpu& fpu, const register_name name)
-        {
-            return get_xmm_register_pointer(const_cast<kvm_fpu&>(fpu), name);
-        }
-
-        size_t kvm_x86_64_emulator::write_raw_register(const int reg, const void* value, const size_t size)
-        {
-            const auto xreg = static_cast<x86_register>(reg);
-            const auto mapping = map_register(xreg);
-
-            switch (mapping.kind)
-            {
-            case register_kind::reg64: {
-                if (mapping.name == register_name::efer || mapping.name == register_name::cr0 || mapping.name == register_name::cr2 ||
-                    mapping.name == register_name::cr3 || mapping.name == register_name::cr4)
-                {
-                    auto sregs = this->get_sregs();
-                    void* target = nullptr;
-                    switch (mapping.name)
-                    {
-                    case register_name::efer:
-                        target = &sregs.efer;
-                        break;
-                    case register_name::cr0:
-                        target = &sregs.cr0;
-                        break;
-                    case register_name::cr2:
-                        target = &sregs.cr2;
-                        break;
-                    case register_name::cr3:
-                        target = &sregs.cr3;
-                        break;
-                    case register_name::cr4:
-                        target = &sregs.cr4;
-                        break;
-                    default:
-                        break;
-                    }
-                    std::memcpy(target, value, (std::min)(size, sizeof(uint64_t)));
-                    this->set_sregs(sregs);
-                    return size;
-                }
-
-                if (mapping.name == register_name::dr0 || mapping.name == register_name::dr1 || mapping.name == register_name::dr2 ||
-                    mapping.name == register_name::dr3 || mapping.name == register_name::dr6 || mapping.name == register_name::dr7)
-                {
-                    auto debugregs = this->get_debugregs();
-                    void* target = nullptr;
-                    switch (mapping.name)
-                    {
-                    case register_name::dr0:
-                        target = &debugregs.db[0];
-                        break;
-                    case register_name::dr1:
-                        target = &debugregs.db[1];
-                        break;
-                    case register_name::dr2:
-                        target = &debugregs.db[2];
-                        break;
-                    case register_name::dr3:
-                        target = &debugregs.db[3];
-                        break;
-                    case register_name::dr6:
-                        target = &debugregs.dr6;
-                        break;
-                    case register_name::dr7:
-                        target = &debugregs.dr7;
-                        break;
-                    default:
-                        break;
-                    }
-                    std::memcpy(target, value, (std::min)(size, sizeof(uint64_t)));
-                    this->set_debugregs(debugregs);
-                    return size;
-                }
-
-                auto regs = this->get_regs();
-                auto* reg_ptr = get_gp_register_pointer(regs, mapping.name);
-                if (const auto access = classify_gp_register_access(xreg))
-                {
-                    uint64_t incoming = 0;
-                    std::memcpy(&incoming, value, (std::min)(size, access->width));
-
-                    if (access->zero_extend_32)
-                    {
-                        *reg_ptr = static_cast<uint32_t>(incoming);
-                    }
-                    else if (access->width >= sizeof(*reg_ptr))
-                    {
-                        *reg_ptr = incoming;
-                    }
-                    else
-                    {
-                        const auto mask = ((uint64_t{1} << (access->width * 8)) - 1) << (access->offset * 8);
-                        *reg_ptr = (*reg_ptr & ~mask) | ((incoming << (access->offset * 8)) & mask);
-                    }
-                }
-                else
-                {
-                    std::memcpy(reg_ptr, value, (std::min)(size, sizeof(*reg_ptr)));
-                }
-
-                this->set_regs(regs);
-                return size;
-            }
-            case register_kind::segment: {
-                auto sregs = this->get_sregs();
-                auto& segment = get_segment_register(sregs, mapping.name);
-                if (xreg == x86_register::fs_base || xreg == x86_register::gs_base)
-                {
-                    std::memcpy(&segment.base, value, (std::min)(size, sizeof(segment.base)));
-                }
-                else
-                {
-                    std::memcpy(&segment.selector, value, (std::min)(size, sizeof(segment.selector)));
-                }
-                this->set_sregs(sregs);
-                return size;
-            }
-            case register_kind::table: {
-                auto sregs = this->get_sregs();
-                auto& table = get_table_register(sregs, mapping.name);
-                std::memcpy(&table, value, (std::min)(size, sizeof(table)));
-                this->set_sregs(sregs);
-                return size;
-            }
-            case register_kind::fp: {
-                auto fpu = this->get_fpu();
-                auto* fp = get_fp_register_pointer(fpu, mapping.name);
-                std::memcpy(fp, value, (std::min)(size, size_t{16}));
-                this->set_fpu(fpu);
-                return size;
-            }
-            case register_kind::fp_control: {
-                auto fpu = this->get_fpu();
-                if (xreg == x86_register::fpcw)
-                {
-                    std::memcpy(&fpu.fcw, value, (std::min)(size, sizeof(fpu.fcw)));
-                }
-                else if (xreg == x86_register::fpsw)
-                {
-                    std::memcpy(&fpu.fsw, value, (std::min)(size, sizeof(fpu.fsw)));
-                }
-                else
-                {
-                    uint16_t fp_tag{};
-                    std::memcpy(&fp_tag, value, (std::min)(size, sizeof(fp_tag)));
-                    fpu.ftwx = static_cast<uint8_t>(fp_tag);
-                }
-                this->set_fpu(fpu);
-                return size;
-            }
-            case register_kind::xmm_control: {
-                auto fpu = this->get_fpu();
-                std::memcpy(&fpu.mxcsr, value, (std::min)(size, sizeof(fpu.mxcsr)));
-                this->set_fpu(fpu);
-                return size;
-            }
-            case register_kind::reg128: {
-                auto fpu = this->get_fpu();
-                auto* xmm = get_xmm_register_pointer(fpu, mapping.name);
-                std::memcpy(xmm, value, (std::min)(size, size_t{16}));
-                this->set_fpu(fpu);
-                return size;
-            }
-            }
-
-            return size;
-        }
-
-        size_t kvm_x86_64_emulator::read_raw_register(const int reg, void* value, const size_t size)
-        {
-            const auto xreg = static_cast<x86_register>(reg);
-            const auto mapping = map_register(xreg);
-
-            switch (mapping.kind)
-            {
-            case register_kind::reg64: {
-                if (mapping.name == register_name::efer || mapping.name == register_name::cr0 || mapping.name == register_name::cr2 ||
-                    mapping.name == register_name::cr3 || mapping.name == register_name::cr4)
-                {
-                    const auto sregs = this->get_sregs();
-                    const void* source = nullptr;
-                    switch (mapping.name)
-                    {
-                    case register_name::efer:
-                        source = &sregs.efer;
-                        break;
-                    case register_name::cr0:
-                        source = &sregs.cr0;
-                        break;
-                    case register_name::cr2:
-                        source = &sregs.cr2;
-                        break;
-                    case register_name::cr3:
-                        source = &sregs.cr3;
-                        break;
-                    case register_name::cr4:
-                        source = &sregs.cr4;
-                        break;
-                    default:
-                        break;
-                    }
-                    std::memcpy(value, source, (std::min)(size, sizeof(uint64_t)));
-                    return size;
-                }
-
-                if (mapping.name == register_name::dr0 || mapping.name == register_name::dr1 || mapping.name == register_name::dr2 ||
-                    mapping.name == register_name::dr3 || mapping.name == register_name::dr6 || mapping.name == register_name::dr7)
-                {
-                    const auto debugregs = this->get_debugregs();
-                    const void* source = nullptr;
-                    switch (mapping.name)
-                    {
-                    case register_name::dr0:
-                        source = &debugregs.db[0];
-                        break;
-                    case register_name::dr1:
-                        source = &debugregs.db[1];
-                        break;
-                    case register_name::dr2:
-                        source = &debugregs.db[2];
-                        break;
-                    case register_name::dr3:
-                        source = &debugregs.db[3];
-                        break;
-                    case register_name::dr6:
-                        source = &debugregs.dr6;
-                        break;
-                    case register_name::dr7:
-                        source = &debugregs.dr7;
-                        break;
-                    default:
-                        break;
-                    }
-                    std::memcpy(value, source, (std::min)(size, sizeof(uint64_t)));
-                    return size;
-                }
-
-                const auto regs = this->get_regs();
-                const auto* reg_ptr = get_gp_register_pointer(regs, mapping.name);
-                if (const auto access = classify_gp_register_access(xreg))
-                {
-                    const auto narrowed = *reg_ptr >> (access->offset * 8);
-                    std::memcpy(value, &narrowed, (std::min)(size, access->width));
-                }
-                else
-                {
-                    std::memcpy(value, reg_ptr, (std::min)(size, sizeof(*reg_ptr)));
-                }
-                return size;
-            }
-            case register_kind::segment: {
-                const auto sregs = this->get_sregs();
-                const auto& segment = get_segment_register(sregs, mapping.name);
-                if (xreg == x86_register::fs_base || xreg == x86_register::gs_base)
-                {
-                    std::memcpy(value, &segment.base, (std::min)(size, sizeof(segment.base)));
-                }
-                else
-                {
-                    std::memcpy(value, &segment.selector, (std::min)(size, sizeof(segment.selector)));
-                }
-                return size;
-            }
-            case register_kind::table: {
-                const auto sregs = this->get_sregs();
-                const auto& table = get_table_register(sregs, mapping.name);
-                std::memcpy(value, &table, (std::min)(size, sizeof(table)));
-                return size;
-            }
-            case register_kind::fp: {
-                const auto fpu = this->get_fpu();
-                const auto* fp = get_fp_register_pointer(fpu, mapping.name);
-                std::memcpy(value, fp, (std::min)(size, size_t{16}));
-                return size;
-            }
-            case register_kind::fp_control: {
-                const auto fpu = this->get_fpu();
-                if (xreg == x86_register::fpcw)
-                {
-                    std::memcpy(value, &fpu.fcw, (std::min)(size, sizeof(fpu.fcw)));
-                }
-                else if (xreg == x86_register::fpsw)
-                {
-                    std::memcpy(value, &fpu.fsw, (std::min)(size, sizeof(fpu.fsw)));
-                }
-                else
-                {
-                    const auto fp_tag = static_cast<uint16_t>(fpu.ftwx);
-                    std::memcpy(value, &fp_tag, (std::min)(size, sizeof(fp_tag)));
-                }
-                return size;
-            }
-            case register_kind::xmm_control: {
-                const auto fpu = this->get_fpu();
-                std::memcpy(value, &fpu.mxcsr, (std::min)(size, sizeof(fpu.mxcsr)));
-                return size;
-            }
-            case register_kind::reg128: {
-                const auto fpu = this->get_fpu();
-                const auto* xmm = get_xmm_register_pointer(fpu, mapping.name);
-                std::memcpy(value, xmm, (std::min)(size, size_t{16}));
-                return size;
-            }
-            }
-
-            return size;
-        }
     }
 
     std::unique_ptr<x86_64_emulator> create_x86_64_emulator()
