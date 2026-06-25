@@ -11,7 +11,7 @@
 #include <whp_x86_64_emulator.hpp>
 #endif
 
-#if defined(__linux__) && (defined(__x86_64__) || defined(__amd64__))
+#if defined(__linux__) && !defined(__ANDROID__) && (defined(__x86_64__) || defined(__amd64__))
 #include <kvm_x86_64_emulator.hpp>
 #endif
 
@@ -41,7 +41,7 @@ namespace sogen
                 return whp::create_x86_64_emulator();
 #endif
 
-#if defined(__linux__) && (defined(__x86_64__) || defined(__amd64__))
+#if defined(__linux__) && !defined(__ANDROID__) && (defined(__x86_64__) || defined(__amd64__))
             case backend_type::kvm:
                 return kvm::create_x86_64_emulator();
 #endif
