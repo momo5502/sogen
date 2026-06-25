@@ -265,11 +265,15 @@ namespace sogen::kvm
             size_t logical_size = sizeof(uint64_t);
         };
 
+        // 4 KiB matches the base KVM_GET_XSAVE region (kvm_xsave::region[1024]); large enough for
+        // x87 + SSE + AVX state. uint32_t keeps it 4-byte aligned for the ioctl copy.
+        using xsave_area = std::array<uint32_t, 1024>;
+
         struct register_snapshot
         {
             kvm_regs regs{};
             kvm_sregs sregs{};
-            kvm_fpu fpu{};
+            xsave_area xsave{};
             uint64_t lstar{};
             uint64_t star{};
             uint64_t sfmask{};
@@ -360,6 +364,8 @@ namespace sogen::kvm
             void set_sregs(const kvm_sregs& sregs);
             kvm_fpu get_fpu() const;
             void set_fpu(const kvm_fpu& fpu);
+            xsave_area get_xsave() const;
+            void set_xsave(const xsave_area& xsave);
             kvm_debugregs get_debugregs() const;
             void set_debugregs(const kvm_debugregs& debugregs);
 
@@ -1621,7 +1627,7 @@ namespace sogen::kvm
             register_snapshot snapshot{};
             snapshot.regs = this->get_regs();
             snapshot.sregs = this->get_sregs();
-            snapshot.fpu = this->get_fpu();
+            snapshot.xsave = this->get_xsave();
             snapshot.star = this->get_msr(MSR_STAR);
             snapshot.lstar = this->get_msr(MSR_LSTAR);
             snapshot.sfmask = this->get_msr(MSR_SYSCALL_MASK);
@@ -1642,7 +1648,7 @@ namespace sogen::kvm
             std::memcpy(&snapshot, register_data.data(), sizeof(snapshot));
             this->set_regs(snapshot.regs);
             this->set_sregs(snapshot.sregs);
-            this->set_fpu(snapshot.fpu);
+            this->set_xsave(snapshot.xsave);
             this->set_msr(MSR_STAR, snapshot.star);
             this->set_msr(MSR_LSTAR, snapshot.lstar);
             this->set_msr(MSR_SYSCALL_MASK, snapshot.sfmask);
@@ -1733,6 +1739,22 @@ namespace sogen::kvm
         {
             auto mutable_fpu = fpu;
             check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_FPU, &mutable_fpu), "KVM_SET_FPU");
+        }
+
+        xsave_area kvm_x86_64_emulator::get_xsave() const
+        {
+            // Captures the full extended state (x87, SSE, and the AVX YMM upper halves), unlike
+            // KVM_GET_FPU which only sees the legacy fxsave area. Required so a thread preempted
+            // mid-AVX keeps its complete vector state across a context switch.
+            xsave_area xsave{};
+            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_XSAVE, xsave.data()), "KVM_GET_XSAVE");
+            return xsave;
+        }
+
+        void kvm_x86_64_emulator::set_xsave(const xsave_area& xsave)
+        {
+            auto mutable_xsave = xsave;
+            check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_XSAVE, mutable_xsave.data()), "KVM_SET_XSAVE");
         }
 
         kvm_debugregs kvm_x86_64_emulator::get_debugregs() const

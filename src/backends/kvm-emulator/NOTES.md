@@ -115,15 +115,26 @@ privilege, doesn't fix the goal).
   exposed by any other valid interleaving, KVM or WHP-fast).
 
 ### Things ruled out along the way
-- It is **not** a register/context-restore bug: the crashing worker's `NtContinue` context is
-  byte-identical to unicorn's (`Rip=0x18008c510`, correct start params), and thread switch uses
-  the backend's `save_registers`/`restore_registers` (full kvm_regs+sregs+fpu+MSRs — complete),
-  not `cpu_context`.
-- **FP/XMM/MxCsr** save-restore: disabling `CONTEXT_XSTATE` in `cpu_context.cpp` did not change
-  the failure.
-- **Wall-clock time**: running with `-rep` (reproducible time) did not change it; not a KUSD
-  time-refresh issue.
-- Host/nested-virt, CPL3, CPUID, CR0/CR4/XCR0 were ruled out for the earlier MMIO `#UD`.
+- The crashing thread is **tid 16, the loader worker** (`TppWorkerThread` at `0x180075bc0`,
+  param `0x103901d30`). At its `NtContinue` start, **every input is byte-identical to unicorn**:
+  registers/`Rip=0x18008c510`, the param context memory (`0x103901d30`, first 0x100 bytes), the
+  global it branches on (`[0x1801d3730]=0x103c1e8c0`), and `TEB.FiberData=0`. It still diverges
+  *during* execution → it must read **shared state that other threads mutate while it is yielded**
+  (it yields at `NtContinue` with `TEST_ALERT`, other threads run, then it resumes and crashes).
+  This is the interleaving/ordering sensitivity, not a bad input.
+- **Not** a register/context-restore bug: thread switch uses the backend's
+  `save_registers`/`restore_registers` (full kvm_regs+sregs+xsave+MSRs), not `cpu_context`.
+- **FP/XMM/MxCsr** save-restore: disabling `CONTEXT_XSTATE` in `cpu_context.cpp` did not change it.
+- **AVX/YMM vector state**: switching thread-switch save/restore from `KVM_GET_FPU` (legacy,
+  XMM-only) to `KVM_GET_XSAVE` (full YMM) — a real correctness improvement, kept — did **not**
+  change the failure.
+- **CPUID feature set**: masking AVX/AVX2 out of the guest CPUID (to match the emulator's
+  documented SSE-only set) did **not** change it. (Left CPUID at host features; the
+  AVX-vs-emulator-intent question is open but not the cause here.)
+- **Processor count**: forcing 1 CPU did **not** disable the parallel loader (tid 16 is still
+  created) and did **not** change the failure.
+- **Wall-clock time**: `-rep` (reproducible time) did not change it.
+- Host/nested-virt, CPL3, CR0/CR4/XCR0 were ruled out earlier for the MMIO `#UD`.
 
 ### Diagnostic helpers used (re-add if continuing)
 - Per-syscall register dump in the backend-agnostic `syscall_dispatcher::dispatch` (gated on a
