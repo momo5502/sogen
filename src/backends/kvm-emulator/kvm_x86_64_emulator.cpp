@@ -338,6 +338,7 @@ namespace sogen::kvm
             int allocate_slot();
             uint32_t to_kvm_map_flags(memory_permission permissions) const;
             void map_region(uint64_t guest_address, size_t size, void* host_base, uint32_t flags);
+            void refresh_mmio_pages();
 
             bool handle_pre_run_instruction();
             bool handle_instruction_hook(x86_hookable_instructions type, uint64_t instruction_size);
@@ -929,6 +930,8 @@ namespace sogen::kvm
                     continue;
                 }
 
+                this->refresh_mmio_pages();
+
                 this->run_active_ = true;
                 const auto rc = ::ioctl(this->vcpu_fd_.get(), KVM_RUN, 0);
                 this->run_active_ = false;
@@ -1357,6 +1360,11 @@ namespace sogen::kvm
 
             mmio_region region{.address = address, .size = size, .read_cb = std::move(read_cb), .write_cb = std::move(write_cb)};
 
+            // Back MMIO with a read-only guest mapping rather than relying on KVM_EXIT_MMIO. KVM
+            // services unmapped accesses by emulating the faulting instruction, but its emulator does
+            // not support SSE/AVX, so a vectorized access (e.g. an SSE wcslen over a string in
+            // KUSER_SHARED_DATA) would fault with #UD. A read-only memslot lets reads execute
+            // natively; only writes trap and are routed through the write callback.
             for (size_t offset = 0; offset < size; offset += page_size)
             {
                 const auto guest_address = address + offset;
@@ -1373,12 +1381,30 @@ namespace sogen::kvm
                     page->host_page = page->owned_page.get();
                 }
 
-                page->permissions = memory_permission::none;
+                page->permissions = memory_permission::read;
+                const auto chunk = (std::min)(static_cast<size_t>(page_size), size - offset);
+                region.read_cb(offset, page->host_page, chunk);
                 this->ensure_virtual_mapping(guest_address);
             }
 
             this->rebuild_mappings();
             this->mmio_regions_[address] = std::move(region);
+        }
+
+        void kvm_x86_64_emulator::refresh_mmio_pages()
+        {
+            for (auto& [base, region] : this->mmio_regions_)
+            {
+                for (size_t offset = 0; offset < region.size; offset += page_size)
+                {
+                    const auto it = this->mapped_pages_.find(base + offset);
+                    if (it != this->mapped_pages_.end() && it->second && it->second->host_page != nullptr)
+                    {
+                        const auto chunk = (std::min)(static_cast<size_t>(page_size), region.size - offset);
+                        region.read_cb(offset, it->second->host_page, chunk);
+                    }
+                }
+            }
         }
 
         void kvm_x86_64_emulator::map_memory(const uint64_t address, const size_t size, const memory_permission permissions)
