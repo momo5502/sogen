@@ -669,6 +669,53 @@ jobs:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
 
+  smoke-test-kvm:
+    name: Smoke Test KVM x86_64
+    runs-on: ubuntu-24.04
+    needs: [create-emulation-root, build]
+    steps:
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Linux x86_64 GCC Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Windows Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 2022 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      - name: Print KVM Diagnostics
+        run: |
+          echo "KVM diagnostics"
+          ls -l /dev/kvm || true
+          lscpu | grep -iE 'Virtualization|Hypervisor|Model name' || true
+          grep -m1 -oE 'vmx|svm' /proc/cpuinfo || true
+
+      - name: CMake Test
+        run: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer -e root c:/test-sample.exe
+        env:
+          EMULATOR_KVM: "1"
+          LD_LIBRARY_PATH: ${{github.workspace}}/build/release/artifacts
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ inputs.verbose }}
+
   smoke-test-win32:
     name: Smoke Test Windows x86
     runs-on: windows-latest
@@ -1057,6 +1104,7 @@ jobs:
         clang-tidy,
         build-apiset-dumper,
         smoke-test-whp,
+        smoke-test-kvm,
         smoke-test-node,
         smoke-test-mingw,
         smoke-test-win32,
