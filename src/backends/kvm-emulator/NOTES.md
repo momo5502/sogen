@@ -92,17 +92,39 @@ the interleaving is still non-deterministic — it later dies in `__chkstk` stac
 `0x180167007` after an `NtRaiseException` storm from threads still hitting error paths).
 
 ### The proper fix
-Make KVM **instruction-precise** like unicorn, so the scheduler uses the deterministic
-count-based path. Implement guest instruction counting via the host PMU:
-`perf_event_open(PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS, exclude_host=1)` attached to
-the vCPU thread, with `sample_period = count` and overflow delivering a signal (or a KVM
-exit) so `KVM_RUN` returns after ~`count` retired guest instructions. Then implement
-`start(count)` to run that many instructions, make `supports_instruction_counting()` /
-`uses_instruction_precision()` return true, and the scheduler will slice by instruction count
-(matching unicorn's working `0x20000`-instruction interleaving). PMU skid (off by a few
-instructions) is fine — retired-instruction counts are deterministic for the same code, so
-the schedule stays reproducible. This removes the wall-clock helper thread and the
-`SIGRTMIN` kick for the preemption case entirely.
+The goal is to preempt each thread after a fixed *instruction count* (≈`0x20000`, matching
+the deterministic interleaving the instruction-precise backends use) instead of after a
+wall-clock interval. Use the host PMU to count retired guest instructions:
+`perf_event_open(PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS, exclude_host=1, pinned)`
+on the vCPU thread, `sample_period = slice`, with overflow delivering a signal (`fcntl`
+`F_SETOWN`/`F_SETSIG`, like the existing `SIGRTMIN` kick) so `KVM_RUN` returns `EINTR` after
+~`slice` retired guest instructions. PMU skid is fine — retired-instruction counts are
+deterministic for the same code, so the schedule stays reproducible.
+
+**Important nuance — do NOT just flip `uses_instruction_precision()` on.** That path
+(`windows_emulator::on_instruction_execution`) relies on a **per-instruction hook** that
+increments `executed_instructions_` and yields every `MAX_INSTRUCTIONS_PER_TIME_SLICE`. KVM
+cannot deliver per-instruction callbacks without single-stepping (an exit per instruction —
+unusably slow), so the existing instruction-precise path does not fit KVM. Two viable
+integrations instead:
+- **(A) PMU-driven preemption trigger (smaller change):** keep the non-precise scheduler
+  path, but replace/augment the 20ms wall-clock helper in `windows_emulator::start` so the
+  preemption is driven by the PMU instruction-count overflow rather than wall-clock. The
+  overflow must still set `switch_thread_` and stop the vCPU (same as today's timer), so the
+  trigger has to feed back into `windows_emulator` (e.g. a backend-provided "instruction
+  budget" the scheduler arms before each `start`, or a callback the backend invokes on
+  overflow). Net effect: fine-grained, deterministic interleaving without per-instruction
+  hooks.
+- **(B) Count-based `start(count)` (larger change):** make `start(count)` run ≈`count`
+  instructions via the PMU and have the backend report the actual retired count back so the
+  scheduler can advance `executed_instructions_` from it (rather than from the per-instruction
+  hook). This needs a scheduler path that updates `executed_instructions_` from a
+  backend-reported delta when `supports_instruction_counting()` is true but per-instruction
+  hooks are unavailable.
+
+(A) is the recommended first step. The current `SIGRTMIN`-based `stop()` kick already proves
+the vCPU can be interrupted out of `KVM_RUN`; the PMU just changes *when* that fires from
+wall-clock to instruction-count.
 
 ### Things ruled out along the way
 - It is **not** a register/context-restore bug: the crashing worker's `NtContinue` context is
