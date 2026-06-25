@@ -67,41 +67,60 @@ CMake gates the backend to `Linux AND NOT ANDROID AND x86_64`; `backend-selectio
    from the read callback and refreshed before each guest entry (`refresh_mmio_pages`), so
    reads (incl. SSE/AVX) execute natively; only writes trap and go to the write callback.
 
-## Current blocker (unfixed)
+## Current blocker — ROOT CAUSE IDENTIFIED: preemption is too coarse
 
-A **deterministic, zero-page-fault, multi-threaded context/state divergence**.
+The multi-threaded failure is a **scheduling / thread-interleaving problem**, not a
+register or context bug.
 
-- Deterministic: 782 syscalls, same failure every run.
-- **Zero page faults** the entire run — so it is a pure data/state divergence, not a fault.
-- The syscall trace matches the unicorn backend **exactly for 773 syscalls** (same names and
-  caller addresses), then the **thread interleaving** diverges. This is partly expected: KVM
-  preempts on a 20ms wall-clock while unicorn time-slices by instruction count, so the
-  interleaving differs. But WHP also preempts on wall-clock and runs the sample fine, so
-  there is a real KVM-specific bug exposed by the multi-threaded schedule, not just the
-  interleaving.
-- A thread then enters an ntdll fatal path (`STATUS_UNSUCCESSFUL` at ntdll `0x18008c4e0`,
-  which reads `gs:[0x20]` then `[rax+0xa8]`), calls a no-return fail-fast, and runs into the
-  `int3` alignment padding at `0x18008c50f` → `NtRaiseException` → "Emulation terminated
-  without status." So the `int3` is a **symptom**; the breakpoint dispatch itself is fine.
-- It happens right after an **APC dispatch → `NtContinue`** cycle, which does a full
-  `cpu_context::save`/`restore` of all registers.
+The scheduler (`windows_emulator::start`) drives thread time-slicing two ways:
+- instruction-precise backends (unicorn): run exactly `MAX_INSTRUCTIONS_PER_TIME_SLICE`
+  (`0x20000` = 131072) instructions per slice, then switch — **deterministic**.
+- non-instruction-precise backends (WHP, KVM): a helper thread fires every 20ms wall-clock
+  and calls `emu().stop()` to preempt — **non-deterministic and coarse**.
 
-### Ruled out
-- **FP/XMM/MxCsr save-restore**: disabling the `CONTEXT_XSTATE` block in
-  `src/windows-emulator/cpu_context.cpp` (both save and restore) did **not** change the
-  failure. So XMM/MxCsr is not the cause.
-- Host / nested-virt limitation, CPL3, CPUID (XSAVE/SSE bits), and CR0/CR4/XCR0 static state
-  were all ruled out for the earlier MMIO `#UD` via standalone KVM test programs; SSE works
-  fine in a minimal long-mode CPL3 KVM guest on this host.
+KVM runs **near-native**, so a 20ms slice is *millions* of guest instructions. A thread (e.g.
+a thread-pool worker, `TppWorkerThread` at `0x180075bc0`) monopolizes the single vCPU and runs
+far ahead of where the cooperative model expects, so other threads never get to publish state
+the worker depends on. The worker then takes an ntdll fatal path (`STATUS_UNSUCCESSFUL` at
+`0x18008c4e0`) and runs into the `int3` padding at `0x18008c50f` (the breakpoint is a
+*symptom*). WHP avoids this only because it is much slower than KVM, so it executes far fewer
+instructions per 20ms.
 
-### Diagnostic approach for next time
-Dump callee-saved registers per syscall in the **backend-agnostic** dispatcher
-(`syscall_dispatcher::dispatch`) for both KVM and unicorn, then diff the aligned traces to
-find the first register that diverges (the first 773 syscalls align 1:1). Caveat: some
-registers hold **security cookies / high-entropy random values** (observed in `rdi` and
-`rbx` at the very first syscalls) that differ run-to-run and between backends; ignore those
-and focus on deterministic registers (`rsp`, `rbp`, `rsi`, `r12`–`r15`, `gs` base). The
-divergence in a *deterministic* register pinpoints the bug.
+**Evidence:** shortening the interval from 20ms to 50µs took the run from **782 → ~2946
+syscalls** (then plateaus, because 50µs of near-native KVM is still a lot of instructions, and
+the interleaving is still non-deterministic — it later dies in `__chkstk` stack-probe at
+`0x180167007` after an `NtRaiseException` storm from threads still hitting error paths).
+
+### The proper fix
+Make KVM **instruction-precise** like unicorn, so the scheduler uses the deterministic
+count-based path. Implement guest instruction counting via the host PMU:
+`perf_event_open(PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS, exclude_host=1)` attached to
+the vCPU thread, with `sample_period = count` and overflow delivering a signal (or a KVM
+exit) so `KVM_RUN` returns after ~`count` retired guest instructions. Then implement
+`start(count)` to run that many instructions, make `supports_instruction_counting()` /
+`uses_instruction_precision()` return true, and the scheduler will slice by instruction count
+(matching unicorn's working `0x20000`-instruction interleaving). PMU skid (off by a few
+instructions) is fine — retired-instruction counts are deterministic for the same code, so
+the schedule stays reproducible. This removes the wall-clock helper thread and the
+`SIGRTMIN` kick for the preemption case entirely.
+
+### Things ruled out along the way
+- It is **not** a register/context-restore bug: the crashing worker's `NtContinue` context is
+  byte-identical to unicorn's (`Rip=0x18008c510`, correct start params), and thread switch uses
+  the backend's `save_registers`/`restore_registers` (full kvm_regs+sregs+fpu+MSRs — complete),
+  not `cpu_context`.
+- **FP/XMM/MxCsr** save-restore: disabling `CONTEXT_XSTATE` in `cpu_context.cpp` did not change
+  the failure.
+- **Wall-clock time**: running with `-rep` (reproducible time) did not change it; not a KUSD
+  time-refresh issue.
+- Host/nested-virt, CPL3, CPUID, CR0/CR4/XCR0 were ruled out for the earlier MMIO `#UD`.
+
+### Diagnostic helpers used (re-add if continuing)
+- Per-syscall register dump in the backend-agnostic `syscall_dispatcher::dispatch` (gated on a
+  `SCDUMP` env var), diffed KVM vs unicorn. Caveat: `rdi`/`rbx` hold security cookies (random
+  run-to-run) — ignore them; use `rsp`/`rbp`/`rsi`/`r12`–`r15`/`gs` base. Group dumps by `gs`
+  base to separate threads.
+- `NtContinue` context dump in `handle_NtContinueEx`.
 
 Candidate areas still open: x87/FP state (not just XMM), EFLAGS handling, segment
 selector/base restore on context switch, debug registers, and the thread save/restore path
