@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <linux/kvm.h>
 #include <pthread.h>
+// NOLINTNEXTLINE(hicpp-deprecated-headers,modernize-deprecated-headers): POSIX sigaction/SIGRTMIN are not in <csignal>
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -44,7 +45,18 @@ namespace sogen::kvm
 {
     namespace
     {
-        using namespace detail;
+        using detail::access_memory;
+        using detail::classify_gp_register_access;
+        using detail::ensure_virtual_mapping;
+        using detail::execution_hook_entry;
+        using detail::find_mmio_region;
+        using detail::instruction_hook_entry;
+        using detail::internal_page_table_base;
+        using detail::is_page_aligned;
+        using detail::mapped_page;
+        using detail::memory_access_hook_entry;
+        using detail::mmio_region;
+        using detail::page_size;
 
         constexpr uint32_t vp_index = 0;
         constexpr uint32_t breakpoint_interrupt = 3;
@@ -280,7 +292,7 @@ namespace sogen::kvm
             uint64_t sfmask{};
         };
 
-        kvm_segment make_segment(const uint16_t selector, const bool is_code);
+        kvm_segment make_segment(uint16_t selector, bool is_code);
         register_mapping map_register(x86_register reg);
 
         class kvm_x86_64_emulator final : public x86_64_emulator
@@ -1268,7 +1280,7 @@ namespace sogen::kvm
 
                     const auto run_address = it->first;
                     auto* const run_host_base = static_cast<uint8_t*>(it->second->host_page);
-                    const auto run_flags = this->to_kvm_map_flags(it->second->permissions);
+                    const auto run_flags = to_kvm_map_flags(it->second->permissions);
 
                     size_t run_size = page_size;
                     auto jt = std::next(it);
@@ -1326,7 +1338,7 @@ namespace sogen::kvm
                 this->active_slots_.insert(slot);
                 return slot;
             }
-            uint32_t to_kvm_map_flags(memory_permission permissions) const
+            static uint32_t to_kvm_map_flags(memory_permission permissions)
             {
                 if (permissions == memory_permission::none)
                 {
@@ -1922,139 +1934,139 @@ namespace sogen::kvm
             case x86_register::ax:
             case x86_register::eax:
             case x86_register::rax:
-                return {register_name::rax, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::rax, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::bl:
             case x86_register::bh:
             case x86_register::bx:
             case x86_register::ebx:
             case x86_register::rbx:
-                return {register_name::rbx, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::rbx, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::cl:
             case x86_register::ch:
             case x86_register::cx:
             case x86_register::ecx:
             case x86_register::rcx:
-                return {register_name::rcx, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::rcx, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::dl:
             case x86_register::dh:
             case x86_register::dx:
             case x86_register::edx:
             case x86_register::rdx:
-                return {register_name::rdx, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::rdx, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::si:
             case x86_register::sil:
             case x86_register::esi:
             case x86_register::rsi:
-                return {register_name::rsi, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::rsi, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::di:
             case x86_register::dil:
             case x86_register::edi:
             case x86_register::rdi:
-                return {register_name::rdi, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::rdi, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::bp:
             case x86_register::bpl:
             case x86_register::ebp:
             case x86_register::rbp:
-                return {register_name::rbp, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::rbp, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::sp:
             case x86_register::spl:
             case x86_register::esp:
             case x86_register::rsp:
-                return {register_name::rsp, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::rsp, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::ip:
             case x86_register::eip:
             case x86_register::rip:
-                return {register_name::rip, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::rip, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::r8:
             case x86_register::r8d:
             case x86_register::r8w:
             case x86_register::r8b:
-                return {register_name::r8, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::r8, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::r9:
             case x86_register::r9d:
             case x86_register::r9w:
             case x86_register::r9b:
-                return {register_name::r9, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::r9, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::r10:
             case x86_register::r10d:
             case x86_register::r10w:
             case x86_register::r10b:
-                return {register_name::r10, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::r10, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::r11:
             case x86_register::r11d:
             case x86_register::r11w:
             case x86_register::r11b:
-                return {register_name::r11, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::r11, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::r12:
             case x86_register::r12d:
             case x86_register::r12w:
             case x86_register::r12b:
-                return {register_name::r12, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::r12, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::r13:
             case x86_register::r13d:
             case x86_register::r13w:
             case x86_register::r13b:
-                return {register_name::r13, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::r13, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::r14:
             case x86_register::r14d:
             case x86_register::r14w:
             case x86_register::r14b:
-                return {register_name::r14, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::r14, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::r15:
             case x86_register::r15d:
             case x86_register::r15w:
             case x86_register::r15b:
-                return {register_name::r15, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::r15, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::flags:
             case x86_register::eflags:
             case x86_register::rflags:
-                return {register_name::rflags, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::rflags, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::cs:
-                return {register_name::cs, register_kind::segment, sizeof(uint16_t)};
+                return {.name = register_name::cs, .kind = register_kind::segment, .logical_size = sizeof(uint16_t)};
             case x86_register::ss:
-                return {register_name::ss, register_kind::segment, sizeof(uint16_t)};
+                return {.name = register_name::ss, .kind = register_kind::segment, .logical_size = sizeof(uint16_t)};
             case x86_register::ds:
-                return {register_name::ds, register_kind::segment, sizeof(uint16_t)};
+                return {.name = register_name::ds, .kind = register_kind::segment, .logical_size = sizeof(uint16_t)};
             case x86_register::es:
-                return {register_name::es, register_kind::segment, sizeof(uint16_t)};
+                return {.name = register_name::es, .kind = register_kind::segment, .logical_size = sizeof(uint16_t)};
             case x86_register::fs:
             case x86_register::fs_base:
-                return {register_name::fs, register_kind::segment, sizeof(uint16_t)};
+                return {.name = register_name::fs, .kind = register_kind::segment, .logical_size = sizeof(uint16_t)};
             case x86_register::gs:
             case x86_register::gs_base:
-                return {register_name::gs, register_kind::segment, sizeof(uint16_t)};
+                return {.name = register_name::gs, .kind = register_kind::segment, .logical_size = sizeof(uint16_t)};
             case x86_register::gdtr:
-                return {register_name::gdtr, register_kind::table, sizeof(kvm_dtable)};
+                return {.name = register_name::gdtr, .kind = register_kind::table, .logical_size = sizeof(kvm_dtable)};
             case x86_register::idtr:
-                return {register_name::idtr, register_kind::table, sizeof(kvm_dtable)};
+                return {.name = register_name::idtr, .kind = register_kind::table, .logical_size = sizeof(kvm_dtable)};
             case x86_register::cr0:
-                return {register_name::cr0, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::cr0, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::cr2:
-                return {register_name::cr2, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::cr2, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::cr3:
-                return {register_name::cr3, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::cr3, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::cr4:
-                return {register_name::cr4, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::cr4, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::dr0:
-                return {register_name::dr0, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::dr0, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::dr1:
-                return {register_name::dr1, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::dr1, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::dr2:
-                return {register_name::dr2, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::dr2, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::dr3:
-                return {register_name::dr3, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::dr3, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::dr6:
-                return {register_name::dr6, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::dr6, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::dr7:
-                return {register_name::dr7, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::dr7, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             case x86_register::fpcw:
             case x86_register::fpsw:
             case x86_register::fptag:
-                return {register_name::fp_control_status, register_kind::fp_control, sizeof(uint16_t)};
+                return {.name = register_name::fp_control_status, .kind = register_kind::fp_control, .logical_size = sizeof(uint16_t)};
             case x86_register::mxcsr:
-                return {register_name::xmm_control_status, register_kind::xmm_control, sizeof(uint32_t)};
+                return {.name = register_name::xmm_control_status, .kind = register_kind::xmm_control, .logical_size = sizeof(uint32_t)};
             case x86_register::msr:
-                return {register_name::efer, register_kind::reg64, sizeof(uint64_t)};
+                return {.name = register_name::efer, .kind = register_kind::reg64, .logical_size = sizeof(uint64_t)};
             default:
                 break;
             }
