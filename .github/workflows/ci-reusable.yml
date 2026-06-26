@@ -915,9 +915,11 @@ jobs:
           - runner: macos-latest
             display: macOS arm64
             artifact: macos-arm64
+            macos-deployment-target: "11.0"
           - runner: macos-15-intel
             display: macOS x86_64
             artifact: macos-x86_64
+            macos-deployment-target: "10.13"
     steps:
       - name: Checkout Source
         uses: actions/checkout@v7
@@ -956,6 +958,12 @@ jobs:
         run: python -m build "${{ github.workspace }}" --wheel --outdir dist
         env:
           CMAKE_ARGS: ${{ inputs.enable_deploy && '-DSOGEN_DISABLE_NANOBIND_LEAK_WARNINGS=ON' || '' }}
+          # Pin the macOS platform tag so it doesn't float with the runner OS
+          # version. Without this the wheel is tagged with whatever macOS the
+          # build runner happens to be on (e.g. macosx_26_0 during the
+          # macos-latest migration), which the test job then can't install if it
+          # lands on an older runner.
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deployment-target }}
 
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v7
