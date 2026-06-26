@@ -142,7 +142,7 @@ export function LandingPage() {
       icon: <Boxes className="h-6 w-6" />,
       title: "Pluggable Backends",
       description:
-        "Switch between the Unicorn, icicle, Hyper-V and KVM backends. Pick the right trade-off between speed and accuracy.",
+        "Switch between Unicorn, icicle, Hyper-V and KVM backends. Pick the right trade-off between speed and accuracy.",
       accent: "from-[#a974ff] to-[#5a13c4]",
     },
     {
