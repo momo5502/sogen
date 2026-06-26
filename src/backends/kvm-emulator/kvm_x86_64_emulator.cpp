@@ -355,10 +355,12 @@ namespace sogen::kvm
                     }
 
                     this->refresh_mmio_pages();
+                    this->flush_register_cache();
 
                     this->run_active_ = true;
                     const auto rc = ::ioctl(this->vcpu_fd_.get(), KVM_RUN, 0);
                     this->run_active_ = false;
+                    this->invalidate_register_cache();
 
                     if (rc < 0)
                     {
@@ -1046,6 +1048,38 @@ namespace sogen::kvm
 
                 this->rebuild_mappings();
             }
+            void map_host_memory(uint64_t address, size_t size, void* host_pointer, memory_permission permissions) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("KVM host memory mappings must be page aligned");
+                }
+                if ((reinterpret_cast<uintptr_t>(host_pointer) % page_size) != 0)
+                {
+                    throw std::runtime_error("KVM host memory mappings require a page-aligned host pointer");
+                }
+
+                // Alias the guest pages directly onto the caller's host memory (e.g. a GPU-shared buffer).
+                // owned_page stays null so unmap never frees it; the KVM memslot maps the guest physical
+                // page straight onto the host page, so guest and host see it coherently.
+                auto* host_base = static_cast<uint8_t*>(host_pointer);
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    auto& page = this->mapped_pages_[guest_address];
+                    if (!page)
+                    {
+                        page = std::make_unique<mapped_page>();
+                    }
+
+                    page->owned_page = nullptr;
+                    page->host_page = host_base + offset;
+                    page->permissions = permissions;
+                    this->ensure_virtual_mapping(guest_address);
+                }
+
+                this->rebuild_mappings();
+            }
             void unmap_memory(uint64_t address, size_t size) override
             {
                 if (!is_page_aligned(address) || !is_page_aligned(size))
@@ -1284,8 +1318,12 @@ namespace sogen::kvm
             }
             void rebuild_mappings()
             {
-                this->clear_all_mappings();
-
+                // Project mapped_pages_ onto the desired memslot layout (contiguous, same-permission,
+                // host-contiguous runs of pages become one memslot), then reconcile it against the slots
+                // that are already installed, only deleting/creating the ones that actually change. Every
+                // KVM_SET_USER_MEMORY_REGION forces an NPT/TLB rebuild, so leaving unchanged slots in
+                // place is what keeps a memory operation from costing O(total mappings) each time.
+                std::map<uint64_t, installed_memslot> desired{};
                 for (auto it = this->mapped_pages_.begin(); it != this->mapped_pages_.end();)
                 {
                     if (!it->second || it->second->host_page == nullptr || it->second->permissions == memory_permission::none)
@@ -1312,46 +1350,67 @@ namespace sogen::kvm
                         ++jt;
                     }
 
-                    this->map_region(run_address, run_size, run_host_base, run_flags);
-                    for (size_t offset = 0; offset < run_size; offset += page_size)
-                    {
-                        this->mapped_pages_.at(run_address + offset)->map_flags = run_flags;
-                    }
-
+                    desired[run_address] = installed_memslot{.size = run_size, .host = run_host_base, .flags = run_flags};
                     it = jt;
                 }
-            }
-            void clear_all_mappings()
-            {
-                for (const auto slot : this->active_slots_)
-                {
-                    kvm_userspace_memory_region region{};
-                    region.slot = static_cast<uint32_t>(slot);
-                    region.memory_size = 0;
-                    check_ioctl_result(::ioctl(this->vm_fd_.get(), KVM_SET_USER_MEMORY_REGION, &region), "KVM_SET_USER_MEMORY_REGION");
-                }
 
-                this->active_slots_.clear();
-                this->next_slot_id_ = 0;
-
-                for (auto& [_, page] : this->mapped_pages_)
+                for (auto it = this->current_slots_.begin(); it != this->current_slots_.end();)
                 {
-                    if (page)
+                    const auto entry = desired.find(it->first);
+                    if (entry != desired.end() && entry->second.size == it->second.size && entry->second.host == it->second.host &&
+                        entry->second.flags == it->second.flags)
                     {
-                        page->map_flags = 0;
+                        desired.erase(entry);
+                        ++it;
+                    }
+                    else
+                    {
+                        this->delete_memslot(it->second.id);
+                        it = this->current_slots_.erase(it);
                     }
                 }
+
+                for (const auto& [run_address, run] : desired)
+                {
+                    const auto slot = this->allocate_slot_id();
+                    this->set_memslot(slot, run_address, run.size, run.host, run.flags);
+                    this->current_slots_[run_address] =
+                        installed_memslot{.id = slot, .size = run.size, .host = run.host, .flags = run.flags};
+                }
             }
-            int allocate_slot()
+            int allocate_slot_id()
             {
+                if (!this->free_slot_ids_.empty())
+                {
+                    const auto slot = this->free_slot_ids_.back();
+                    this->free_slot_ids_.pop_back();
+                    return slot;
+                }
+
                 if (this->next_slot_id_ >= this->max_memslots_)
                 {
                     throw std::runtime_error("Exhausted KVM memory slots");
                 }
 
-                const auto slot = this->next_slot_id_++;
-                this->active_slots_.insert(slot);
-                return slot;
+                return this->next_slot_id_++;
+            }
+            void set_memslot(int slot, uint64_t guest_address, size_t size, void* host_base, uint32_t flags)
+            {
+                kvm_userspace_memory_region region{};
+                region.slot = static_cast<uint32_t>(slot);
+                region.flags = flags;
+                region.guest_phys_addr = guest_address;
+                region.memory_size = size;
+                region.userspace_addr = reinterpret_cast<uint64_t>(host_base);
+                check_ioctl_result(::ioctl(this->vm_fd_.get(), KVM_SET_USER_MEMORY_REGION, &region), "KVM_SET_USER_MEMORY_REGION");
+            }
+            void delete_memslot(int slot)
+            {
+                kvm_userspace_memory_region region{};
+                region.slot = static_cast<uint32_t>(slot);
+                region.memory_size = 0;
+                check_ioctl_result(::ioctl(this->vm_fd_.get(), KVM_SET_USER_MEMORY_REGION, &region), "KVM_SET_USER_MEMORY_REGION");
+                this->free_slot_ids_.push_back(slot);
             }
             static uint32_t to_kvm_map_flags(memory_permission permissions)
             {
@@ -1367,16 +1426,6 @@ namespace sogen::kvm
                 }
 
                 return flags;
-            }
-            void map_region(uint64_t guest_address, size_t size, void* host_base, uint32_t flags)
-            {
-                kvm_userspace_memory_region region{};
-                region.slot = static_cast<uint32_t>(this->allocate_slot());
-                region.flags = flags;
-                region.guest_phys_addr = guest_address;
-                region.memory_size = size;
-                region.userspace_addr = reinterpret_cast<uint64_t>(host_base);
-                check_ioctl_result(::ioctl(this->vm_fd_.get(), KVM_SET_USER_MEMORY_REGION, &region), "KVM_SET_USER_MEMORY_REGION");
             }
             void refresh_mmio_pages()
             {
@@ -1714,27 +1763,59 @@ namespace sogen::kvm
                     throw std::runtime_error("KVM_SET_MSRS failed");
                 }
             }
+            // The general and segment registers are accessed many times per exit (syscall arguments,
+            // results, the run loop's RIP checks, ...). KVM_GET_REGS/KVM_SET_REGS fetch and store the
+            // whole register file, so doing one ioctl per single-register access is the dominant cost.
+            // Cache both register sets: read fetches once and serves subsequent reads from the cache,
+            // write updates the cache and marks it dirty, and the run loop flushes dirty state once
+            // before KVM_RUN and invalidates the cache afterwards (the guest may have changed it).
             kvm_regs get_regs() const
             {
-                kvm_regs regs{};
-                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_REGS, &regs), "KVM_GET_REGS");
-                return regs;
+                if (!this->regs_cache_valid_)
+                {
+                    check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_REGS, &this->regs_cache_), "KVM_GET_REGS");
+                    this->regs_cache_valid_ = true;
+                }
+                return this->regs_cache_;
             }
             void set_regs(const kvm_regs& regs)
             {
-                auto mutable_regs = regs;
-                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_REGS, &mutable_regs), "KVM_SET_REGS");
+                this->regs_cache_ = regs;
+                this->regs_cache_valid_ = true;
+                this->regs_cache_dirty_ = true;
             }
             kvm_sregs get_sregs() const
             {
-                kvm_sregs sregs{};
-                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_SREGS, &sregs), "KVM_GET_SREGS");
-                return sregs;
+                if (!this->sregs_cache_valid_)
+                {
+                    check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_GET_SREGS, &this->sregs_cache_), "KVM_GET_SREGS");
+                    this->sregs_cache_valid_ = true;
+                }
+                return this->sregs_cache_;
             }
             void set_sregs(const kvm_sregs& sregs)
             {
-                auto mutable_sregs = sregs;
-                check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_SREGS, &mutable_sregs), "KVM_SET_SREGS");
+                this->sregs_cache_ = sregs;
+                this->sregs_cache_valid_ = true;
+                this->sregs_cache_dirty_ = true;
+            }
+            void flush_register_cache()
+            {
+                if (this->regs_cache_dirty_)
+                {
+                    check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_REGS, &this->regs_cache_), "KVM_SET_REGS");
+                    this->regs_cache_dirty_ = false;
+                }
+                if (this->sregs_cache_dirty_)
+                {
+                    check_ioctl_result(::ioctl(this->vcpu_fd_.get(), KVM_SET_SREGS, &this->sregs_cache_), "KVM_SET_SREGS");
+                    this->sregs_cache_dirty_ = false;
+                }
+            }
+            void invalidate_register_cache()
+            {
+                this->regs_cache_valid_ = false;
+                this->sregs_cache_valid_ = false;
             }
             kvm_fpu get_fpu() const
             {
@@ -1895,9 +1976,26 @@ namespace sogen::kvm
             file_descriptor vcpu_fd_{};
             size_t vcpu_mmap_size_ = 0;
             kvm_run* run_ = nullptr;
+
+            mutable kvm_regs regs_cache_{};
+            mutable kvm_sregs sregs_cache_{};
+            mutable bool regs_cache_valid_ = false;
+            mutable bool sregs_cache_valid_ = false;
+            bool regs_cache_dirty_ = false;
+            bool sregs_cache_dirty_ = false;
+
+            struct installed_memslot
+            {
+                int id = -1;
+                size_t size = 0;
+                void* host = nullptr;
+                uint32_t flags = 0;
+            };
+
             int max_memslots_ = 0;
             int next_slot_id_ = 0;
-            std::set<int> active_slots_{};
+            std::map<uint64_t, installed_memslot> current_slots_{};
+            std::vector<int> free_slot_ids_{};
             std::map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
             std::unordered_map<uint64_t, uint64_t*> page_table_views_{};
             uint64_t pml4_gpa_ = 0;
