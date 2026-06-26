@@ -45,11 +45,8 @@ namespace sogen::kvm
 {
     namespace
     {
-        using detail::access_memory;
         using detail::classify_gp_register_access;
-        using detail::ensure_virtual_mapping;
         using detail::execution_hook_entry;
-        using detail::find_mmio_region;
         using detail::instruction_hook_entry;
         using detail::internal_page_table_base;
         using detail::is_page_aligned;
@@ -2073,16 +2070,18 @@ namespace sogen::kvm
 
             if (reg >= x86_register::xmm0 && reg <= x86_register::xmm15)
             {
-                return {static_cast<register_name>(static_cast<int>(register_name::xmm0) +
-                                                   (static_cast<int>(reg) - static_cast<int>(x86_register::xmm0))),
-                        register_kind::reg128, 16};
+                return {.name = static_cast<register_name>(static_cast<int>(register_name::xmm0) +
+                                                           (static_cast<int>(reg) - static_cast<int>(x86_register::xmm0))),
+                        .kind = register_kind::reg128,
+                        .logical_size = 16};
             }
 
             if (reg >= x86_register::st0 && reg <= x86_register::st7)
             {
-                return {static_cast<register_name>(static_cast<int>(register_name::fp0) +
-                                                   (static_cast<int>(reg) - static_cast<int>(x86_register::st0))),
-                        register_kind::fp, 16};
+                return {.name = static_cast<register_name>(static_cast<int>(register_name::fp0) +
+                                                           (static_cast<int>(reg) - static_cast<int>(x86_register::st0))),
+                        .kind = register_kind::fp,
+                        .logical_size = 16};
             }
 
             throw std::runtime_error("Unsupported KVM register");
