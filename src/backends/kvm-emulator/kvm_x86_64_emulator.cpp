@@ -47,6 +47,7 @@ namespace sogen::kvm
         using namespace detail;
 
         constexpr uint32_t vp_index = 0;
+        constexpr uint32_t breakpoint_interrupt = 3;
         constexpr int invalid_opcode_interrupt = 6;
 
         // Synthetic exception delivery: guest exceptions are routed through an internal IDT whose
@@ -384,6 +385,7 @@ namespace sogen::kvm
                         {
                             if (this->handle_exception_trap(rip))
                             {
+                                this->clear_pending_exception_state();
                                 continue;
                             }
                         }
@@ -400,6 +402,7 @@ namespace sogen::kvm
                     case KVM_EXIT_EXCEPTION:
                         if (this->handle_exception(this->run_->ex.exception, this->run_->ex.error_code))
                         {
+                            this->clear_pending_exception_state();
                             continue;
                         }
 
@@ -419,7 +422,8 @@ namespace sogen::kvm
 
                         continue;
                     case KVM_EXIT_SHUTDOWN:
-                        return;
+                        throw std::runtime_error("KVM guest triple-faulted (SHUTDOWN) at " +
+                                                 std::to_string(this->read_instruction_pointer()));
                     case KVM_EXIT_FAIL_ENTRY:
                         throw std::runtime_error("KVM vCPU failed to enter guest mode");
                     case KVM_EXIT_INTERNAL_ERROR:
@@ -1537,6 +1541,14 @@ namespace sogen::kvm
                 // Undo the exception entry so the emulator's handlers observe the faulting context, and
                 // a resumed instruction re-executes from where it faulted.
                 regs.rip = frame.rip;
+                if (vector == breakpoint_interrupt)
+                {
+                    // int3 is a trap: the CPU pushes the address *after* the 0xCC. The emulator's
+                    // exception dispatch (and Windows) reports the breakpoint at the int3 itself and
+                    // expects RIP to point there (e.g. to recognise the int-2Dh debug-service pattern),
+                    // so rewind one byte. Instruction-precise backends naturally report this address.
+                    regs.rip -= 1;
+                }
                 regs.rsp = frame.rsp;
                 regs.rflags = frame.rflags;
                 this->set_regs(regs);
@@ -1547,6 +1559,32 @@ namespace sogen::kvm
                 this->set_sregs(sregs);
 
                 return this->handle_exception(vector, error_code);
+            }
+            void clear_pending_exception_state()
+            {
+                // After the synthetic IDT has delivered an exception and we have rewound the vCPU to the
+                // faulting context, KVM may still hold a pending exception/interrupt event. On AMD (SVM)
+                // that stale event gets re-injected on the next entry, cascading into a triple fault;
+                // Intel (VMX) happens to tolerate it. Drop the pending event explicitly. Mirrors the WHP
+                // backend fix for AMD hosts (PR #808).
+                kvm_vcpu_events events{};
+                if (::ioctl(this->vcpu_fd_.get(), KVM_GET_VCPU_EVENTS, &events) < 0)
+                {
+                    return;
+                }
+
+                events.exception.injected = 0;
+                events.exception.pending = 0;
+                events.exception.has_error_code = 0;
+                events.exception.error_code = 0;
+                events.exception_has_payload = 0;
+                events.exception_payload = 0;
+                events.interrupt.injected = 0;
+                events.interrupt.shadow = 0;
+                events.nmi.injected = 0;
+                events.nmi.pending = 0;
+
+                (void)::ioctl(this->vcpu_fd_.get(), KVM_SET_VCPU_EVENTS, &events);
             }
             bool handle_debug_exit()
             {
