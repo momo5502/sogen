@@ -10,6 +10,7 @@ namespace sogen::py
             .value("unicorn", backend_type::unicorn)
             .value("icicle", backend_type::icicle)
             .value("whp", backend_type::whp)
+            .value("kvm", backend_type::kvm)
             .export_values();
 
         nb::enum_<memory_permission>(m, "MemoryPermission")

@@ -84,7 +84,8 @@ Available values:
 
 - `sogen.Backend.unicorn`
 - `sogen.Backend.icicle`
-- `sogen.Backend.whp`
+- `sogen.Backend.whp` (Windows)
+- `sogen.Backend.kvm` (Linux x86_64)
 
 Default is `sogen.Backend.unicorn`.
 
