@@ -289,7 +289,7 @@ namespace sogen::kvm
             uint64_t sfmask{};
         };
 
-        kvm_segment make_segment(uint16_t selector, bool is_code);
+        kvm_segment make_segment(uint16_t selector, bool is_code, bool is_user);
         register_mapping map_register(x86_register reg);
 
         class kvm_x86_64_emulator final : public x86_64_emulator
@@ -344,7 +344,7 @@ namespace sogen::kvm
                 }
 
                 this->stop_requested_ = false;
-                this->vcpu_thread_ = pthread_self();
+                this->vcpu_thread_.store(pthread_self(), std::memory_order_release);
                 this->run_->immediate_exit = 0;
 
                 while (!this->stop_requested_)
@@ -457,7 +457,7 @@ namespace sogen::kvm
                 {
                     // The vCPU may already be executing guest code, where immediate_exit no longer
                     // applies. Signal the vCPU thread to force the in-flight KVM_RUN to return EINTR.
-                    pthread_kill(this->vcpu_thread_, this->kick_signal_);
+                    pthread_kill(this->vcpu_thread_.load(std::memory_order_acquire), this->kick_signal_);
                 }
             }
             size_t read_raw_register(int reg, void* value, size_t size) override
@@ -848,6 +848,10 @@ namespace sogen::kvm
                 return detail::access_memory(this->mapped_pages_, address, const_cast<void*>(data), size, true);
             }
 
+            // Fine-grained memory read/write/execution and basic-block hooks are registered for API
+            // compatibility but never fire: the guest runs natively in the vCPU, so there is no
+            // per-access/per-instruction instrumentation point without prohibitive single-stepping.
+            // Callers that need these (some analyzer features) are unsupported under the KVM backend.
             emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
             {
                 auto* hook = this->make_hook();
@@ -1054,10 +1058,19 @@ namespace sogen::kvm
                     this->mapped_pages_.erase(address + offset);
                 }
 
-                const auto mmio = this->mmio_regions_.find(address);
-                if (mmio != this->mmio_regions_.end() && mmio->second.size == size)
+                // Drop any MMIO region whose backing pages were just removed. Regions are mapped and
+                // unmapped wholesale, so erase by overlap rather than requiring an exact size match;
+                // otherwise a stale region would keep routing exits to a callback over dead pages.
+                for (auto it = this->mmio_regions_.begin(); it != this->mmio_regions_.end();)
                 {
-                    this->mmio_regions_.erase(mmio);
+                    if (it->first >= address && it->first < address + size)
+                    {
+                        it = this->mmio_regions_.erase(it);
+                    }
+                    else
+                    {
+                        ++it;
+                    }
                 }
 
                 this->rebuild_mappings();
@@ -1102,6 +1115,12 @@ namespace sogen::kvm
                     this->max_memslots_ = 32;
                 }
 
+                // The thread-switch register snapshot relies on KVM_GET_XSAVE/KVM_SET_XSAVE.
+                if (::ioctl(this->kvm_fd_.get(), KVM_CHECK_EXTENSION, KVM_CAP_XSAVE) <= 0)
+                {
+                    throw std::runtime_error("KVM does not support the required KVM_CAP_XSAVE extension");
+                }
+
                 this->vcpu_mmap_size_ = static_cast<size_t>(::ioctl(this->kvm_fd_.get(), KVM_GET_VCPU_MMAP_SIZE, 0));
                 if (this->vcpu_mmap_size_ < sizeof(kvm_run))
                 {
@@ -1141,16 +1160,16 @@ namespace sogen::kvm
             void initialize_virtual_processor_state()
             {
                 auto sregs = this->get_sregs();
-                sregs.cs = make_segment(0x33, true);
-                sregs.ss = make_segment(0x2B, false);
-                sregs.ds = make_segment(0x2B, false);
-                sregs.es = make_segment(0x2B, false);
-                sregs.fs = make_segment(0x53, false);
-                sregs.gs = make_segment(0x2B, false);
-                sregs.cr0 = 0x80000033ull;
-                sregs.cr4 = 0x620ull;
+                sregs.cs = make_segment(0x33, true, true);
+                sregs.ss = make_segment(0x2B, false, true);
+                sregs.ds = make_segment(0x2B, false, true);
+                sregs.es = make_segment(0x2B, false, true);
+                sregs.fs = make_segment(0x53, false, true);
+                sregs.gs = make_segment(0x2B, false, true);
+                sregs.cr0 = 0x80000033ull; // PE | MP | ET | NE | PG
+                sregs.cr4 = 0x620ull;      // PAE | OSFXSR | OSXMMEXCPT
                 sregs.cr3 = this->pml4_gpa_;
-                sregs.efer = (1ull << 0) | (1ull << 8) | (1ull << 10);
+                sregs.efer = (1ull << 0) | (1ull << 8) | (1ull << 10); // SCE | LME | LMA
                 this->set_sregs(sregs);
 
                 auto regs = this->get_regs();
@@ -1313,7 +1332,6 @@ namespace sogen::kvm
                 }
 
                 this->active_slots_.clear();
-                this->free_slots_.clear();
                 this->next_slot_id_ = 0;
 
                 for (auto& [_, page] : this->mapped_pages_)
@@ -1563,8 +1581,8 @@ namespace sogen::kvm
                 this->set_regs(regs);
 
                 auto sregs = this->get_sregs();
-                sregs.cs = make_segment(static_cast<uint16_t>(frame.cs), true);
-                sregs.ss = make_segment(static_cast<uint16_t>(frame.ss), false);
+                sregs.cs = make_segment(static_cast<uint16_t>(frame.cs), true, (frame.cs & 3) == 3);
+                sregs.ss = make_segment(static_cast<uint16_t>(frame.ss), false, (frame.ss & 3) == 3);
                 this->set_sregs(sregs);
 
                 return this->handle_exception(vector, error_code);
@@ -1623,8 +1641,8 @@ namespace sogen::kvm
                 regs.rip = pre_syscall_rip;
                 regs.rcx = post_syscall_r10;
                 regs.rflags = saved_rflags;
-                sregs.cs = make_segment(0x33, true);
-                sregs.ss = make_segment(0x2B, false);
+                sregs.cs = make_segment(0x33, true, true);
+                sregs.ss = make_segment(0x2B, false, true);
                 this->set_regs(regs);
                 this->set_sregs(sregs);
 
@@ -1644,8 +1662,8 @@ namespace sogen::kvm
                 }
 
                 sregs = this->get_sregs();
-                sregs.cs = make_segment(0x33, true);
-                sregs.ss = make_segment(0x2B, false);
+                sregs.cs = make_segment(0x33, true, true);
+                sregs.ss = make_segment(0x2B, false, true);
                 this->set_regs(regs);
                 this->set_sregs(sregs);
                 return true;
@@ -1877,14 +1895,13 @@ namespace sogen::kvm
             int max_memslots_ = 0;
             int next_slot_id_ = 0;
             std::set<int> active_slots_{};
-            std::set<int> free_slots_{};
             std::map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
             std::unordered_map<uint64_t, uint64_t*> page_table_views_{};
             uint64_t pml4_gpa_ = 0;
             uint64_t next_internal_gpa_ = internal_page_table_base;
             std::atomic_bool stop_requested_ = false;
             std::atomic_bool run_active_ = false;
-            pthread_t vcpu_thread_{};
+            std::atomic<pthread_t> vcpu_thread_{};
             int kick_signal_ = 0;
             uint64_t syscall_hook_page_ = 0;
             uint64_t exception_stub_page_ = 0;
@@ -1904,7 +1921,7 @@ namespace sogen::kvm
             instruction_hook_entry* syscall_hook_ = nullptr;
         };
 
-        kvm_segment make_segment(const uint16_t selector, const bool is_code)
+        kvm_segment make_segment(const uint16_t selector, const bool is_code, const bool is_user)
         {
             kvm_segment segment{};
             segment.base = 0;
@@ -1912,7 +1929,7 @@ namespace sogen::kvm
             segment.selector = selector;
             segment.type = is_code ? 0xB : 0x3;
             segment.present = 1;
-            segment.dpl = selector == 0x33 || selector == 0x2B || selector == 0x53 ? 3 : 0;
+            segment.dpl = is_user ? 3 : 0;
             segment.db = is_code ? 0 : 1;
             segment.s = 1;
             segment.l = is_code ? 1 : 0;
