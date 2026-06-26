@@ -1427,6 +1427,10 @@ namespace sogen::kvm
             }
             bool handle_instruction_hook(x86_hookable_instructions type, uint64_t instruction_size)
             {
+                // Capture RIP before the callbacks so the post-callback comparison can tell whether a
+                // callback redirected execution; only advance past the instruction if it did not.
+                const auto rip = this->read_instruction_pointer();
+
                 bool handled = false;
                 bool skip = false;
                 for (auto& [_, hook] : this->instruction_hooks_)
@@ -1445,7 +1449,6 @@ namespace sogen::kvm
 
                 if (handled && skip)
                 {
-                    const auto rip = this->read_instruction_pointer();
                     if (this->read_instruction_pointer() == rip)
                     {
                         this->advance_rip(instruction_size);
