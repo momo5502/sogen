@@ -118,9 +118,23 @@ if(LINUX OR APPLE)
   )
 
   if(NOT SOGEN_ENABLE_SANITIZER)
-    add_compile_definitions(
-      _FORTIFY_SOURCE=2
-    )
+    # Hardened toolchains (e.g. Gentoo hardened) predefine _FORTIFY_SOURCE via
+    # their spec files. Redefining it triggers a -Werror "redefined" failure, so
+    # only set it when the compiler hasn't already done so. This also lets users
+    # keep their own (often stronger) level.
+    include(CheckCXXSourceCompiles)
+    check_cxx_source_compiles([[
+#ifdef _FORTIFY_SOURCE
+#error _FORTIFY_SOURCE already defined
+#endif
+int main() { return 0; }
+]] SOGEN_FORTIFY_SOURCE_UNSET)
+
+    if(SOGEN_FORTIFY_SOURCE_UNSET)
+      add_compile_definitions(
+        _FORTIFY_SOURCE=2
+      )
+    endif()
   endif()
 
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie")
