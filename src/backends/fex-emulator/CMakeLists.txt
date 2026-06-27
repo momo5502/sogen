@@ -17,9 +17,9 @@ target_include_directories(fex-emulator INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 target_link_libraries(fex-emulator PUBLIC emulator)
 target_link_libraries(fex-emulator PRIVATE emulator-common)
 
-# FEXCore is built in-tree from the deps/FEX submodule (see deps/CMakeLists.txt). Link its static
-# library target; it carries the FEXCore public include directory and transitive deps PUBLICly.
-target_include_directories(fex-emulator PRIVATE "${CMAKE_SOURCE_DIR}/deps/FEX/FEXCore/include")
-target_link_libraries(fex-emulator PRIVATE FEXCore_Base)
+# FEXCore is built standalone via ExternalProject (see deps/CMakeLists.txt) and consumed as the
+# imported libFEXCore.so. The dependency forces the ExternalProject to build before this target.
+target_link_libraries(fex-emulator PRIVATE fexcore)
+add_dependencies(fex-emulator fex_external)
 
 sogen_strip_target(fex-emulator)

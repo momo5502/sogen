@@ -110,20 +110,45 @@ include(zstd.cmake)
 
 ##########################################
 
-# FEX-Emu (x86 -> AArch64 JIT). Only built when the FEX backend is enabled (ARM64 Linux + Clang,
-# resolved at the top level). FEX is a full CMake project of its own; add it EXCLUDE_FROM_ALL so only
-# the FEXCore_Base library and its transitive dependencies build when fex-emulator links them - not
-# FEX's FEXLoader/FEXServer tools. Optional/embedder-hostile features are trimmed off.
+# FEX-Emu (x86 -> AArch64 JIT). Built only when the FEX backend is enabled (ARM64 Linux + Clang,
+# resolved at the top level). FEX is not designed to be embedded via add_subdirectory: it assumes it
+# is the top-level project (~60 uses of CMAKE_SOURCE_DIR) and configures its whole loader/tools tree.
+# Instead build it standalone via ExternalProject and consume the resulting self-contained
+# libFEXCore.so (the FEXCore_shared target). Only that target is built - not the FEX tools.
 if(SOGEN_ENABLE_FEX)
-  set(BUILD_FEXCONFIG OFF CACHE BOOL "" FORCE)
-  set(BUILD_THUNKS OFF CACHE BOOL "" FORCE)
-  set(BUILD_FEX_LINUX_TESTS OFF CACHE BOOL "" FORCE)
-  set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-  set(ENABLE_LTO OFF CACHE BOOL "" FORCE)
-  set(ENABLE_CCACHE OFF CACHE BOOL "" FORCE)
-  set(ENABLE_OFFLINE_TELEMETRY OFF CACHE BOOL "" FORCE)
-  # Do not let FEX replace the process allocator; sogen owns it when FEXCore is embedded.
-  set(ENABLE_FEX_ALLOCATOR OFF CACHE BOOL "" FORCE)
-  set(ENABLE_JEMALLOC_GLIBC_ALLOC OFF CACHE BOOL "" FORCE)
-  add_subdirectory(FEX EXCLUDE_FROM_ALL)
+  include(ExternalProject)
+
+  set(_FEX_SRC "${CMAKE_CURRENT_SOURCE_DIR}/FEX")
+
+  ExternalProject_Add(fex_external
+    SOURCE_DIR "${_FEX_SRC}"
+    CMAKE_GENERATOR "Ninja"
+    CMAKE_ARGS
+      -DCMAKE_BUILD_TYPE=Release
+      -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+      -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
+      -DENABLE_LTO=OFF
+      -DENABLE_CCACHE=OFF
+      -DBUILD_FEXCONFIG=OFF
+      -DBUILD_THUNKS=OFF
+      -DBUILD_FEX_LINUX_TESTS=OFF
+      -DBUILD_TESTING=OFF
+      -DENABLE_OFFLINE_TELEMETRY=OFF
+      # Do not let FEX replace the process allocator; sogen owns it when FEXCore is embedded.
+      -DENABLE_FEX_ALLOCATOR=OFF
+      -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF
+    # Build only the self-contained shared core library, not FEX's loader/server tools.
+    BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target FEXCore_shared
+    INSTALL_COMMAND ""
+    BUILD_BYPRODUCTS <BINARY_DIR>/FEXCore/Source/libFEXCore.so
+  )
+
+  ExternalProject_Get_property(fex_external BINARY_DIR)
+
+  # Imported view of libFEXCore.so for consumers (fex-emulator). The consuming target must also
+  # add_dependencies(... fex_external) so the ExternalProject builds first.
+  add_library(fexcore SHARED IMPORTED GLOBAL)
+  set_target_properties(fexcore PROPERTIES
+    IMPORTED_LOCATION "${BINARY_DIR}/FEXCore/Source/libFEXCore.so"
+    INTERFACE_INCLUDE_DIRECTORIES "${_FEX_SRC}/FEXCore/include")
 endif()

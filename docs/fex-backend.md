@@ -76,11 +76,12 @@ toggle. The top-level CMake enables the backend automatically when all of these 
 - the compiler is **Clang** (FEX rejects GCC/MSVC), and
 - the `deps/FEX` submodule is checked out.
 
-Otherwise the backend is silently skipped, so all other builds are unaffected. FEX is added to the
-build with `EXCLUDE_FROM_ALL` and only its `FEXCore_Base` library (plus transitive deps) is compiled
-when `fex-emulator` links it — FEX's FEXLoader/FEXServer tools are not built. Embedder-hostile FEX
-options (its custom allocator/jemalloc, LTO, telemetry, tools, tests) are disabled in
-`deps/CMakeLists.txt`.
+Otherwise the backend is silently skipped, so all other builds are unaffected. FEX is **not** added
+via `add_subdirectory` — it assumes it is the top-level project (~60 uses of `CMAKE_SOURCE_DIR`) and
+would configure its whole loader/tools tree. Instead `deps/CMakeLists.txt` builds it standalone with
+`ExternalProject` (only the `FEXCore_shared` target → a self-contained `libFEXCore.so`) and exposes it
+as the imported `fexcore` target that `fex-emulator` links. Embedder-hostile FEX options (its custom
+allocator/jemalloc, LTO, telemetry, tools, tests) are disabled.
 
 ```sh
 # On an arm64 Linux host with Clang:
