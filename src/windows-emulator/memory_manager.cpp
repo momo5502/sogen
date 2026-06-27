@@ -947,6 +947,16 @@ namespace sogen
         this->memory_->map_host_memory(address, size, host_pointer, permissions);
     }
 
+    bool memory_manager::host_memory_aliasing_is_coherent() const
+    {
+        return this->memory_->host_memory_aliasing_is_coherent();
+    }
+
+    void memory_manager::flush_host_memory_cache(const void* host_pointer, const size_t size)
+    {
+        this->memory_->flush_host_memory_cache(host_pointer, size);
+    }
+
     void memory_manager::unmap_memory(const uint64_t address, const size_t size)
     {
         this->memory_->unmap_memory(address, size);
