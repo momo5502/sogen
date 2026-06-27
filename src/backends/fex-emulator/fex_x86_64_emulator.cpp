@@ -116,7 +116,7 @@ namespace sogen::fex
 
         uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* frame, FEXCore::HLE::SyscallArguments* args) override;
         FEXCore::HLE::ExecutableRangeInfo QueryGuestExecutableRange(FEXCore::Core::InternalThreadState* thread, uint64_t address) override;
-        std::optional<FEXCore::HLE::ExecutableFileSectionInfo> LookupExecutableFileSection(FEXCore::Core::InternalThreadState* thread,
+        std::optional<FEXCore::ExecutableFileSectionInfo> LookupExecutableFileSection(FEXCore::Core::InternalThreadState* thread,
                                                                                            uint64_t guest_addr) override;
 
       private:
@@ -858,7 +858,7 @@ namespace sogen::fex
         return {}; // TODO(fex): report the containing mapped range for better cache invalidation.
     }
 
-    std::optional<FEXCore::HLE::ExecutableFileSectionInfo> fex_syscall_handler::LookupExecutableFileSection(
+    std::optional<FEXCore::ExecutableFileSectionInfo> fex_syscall_handler::LookupExecutableFileSection(
         FEXCore::Core::InternalThreadState* /*thread*/, uint64_t /*guest_addr*/)
     {
         // We do not back guest code by host file sections, so there is nothing to look up.
