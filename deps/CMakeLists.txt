@@ -147,8 +147,14 @@ if(SOGEN_ENABLE_FEX)
 
   # Imported view of libFEXCore.so for consumers (fex-emulator). The consuming target must also
   # add_dependencies(... fex_external) so the ExternalProject builds first.
+  #
+  # FEXCore's public headers transitively include FEX's vendored fmt (LogManager.h) and
+  # unordered_dense (fextl/robin_map.h), so consumers need those include dirs too. FMT_HEADER_ONLY
+  # keeps fmt fully inline in the consumer TU, avoiding a link dependency on fmt symbols that the
+  # hidden-visibility libFEXCore.so does not re-export.
   add_library(fexcore SHARED IMPORTED GLOBAL)
   set_target_properties(fexcore PROPERTIES
     IMPORTED_LOCATION "${BINARY_DIR}/FEXCore/Source/libFEXCore.so"
-    INTERFACE_INCLUDE_DIRECTORIES "${_FEX_SRC}/FEXCore/include")
+    INTERFACE_INCLUDE_DIRECTORIES "${_FEX_SRC}/FEXCore/include;${_FEX_SRC}/External/fmt/include;${_FEX_SRC}/External/unordered_dense/include"
+    INTERFACE_COMPILE_DEFINITIONS "FMT_HEADER_ONLY=1")
 endif()
