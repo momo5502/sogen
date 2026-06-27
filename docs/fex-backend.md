@@ -7,11 +7,12 @@ Android support (see issue #1045).
 
 ## Status
 
-> **Experimental scaffold.** This is a first-pass implementation that establishes the structure,
-> register/memory model, and syscall bridge. It is **not yet known to build or run**: it depends on
-> an external FEXCore that is not vendored, only compiles for ARM64, and several integration points
-> with FEX internals are marked `TODO(fex)` in the source. It is intentionally merged as a starting
-> point to iterate on, not as a working backend.
+> **Experimental.** The backend **builds and links** in CI on ARM64 Linux: FEXCore is built from the
+> `deps/FEX` submodule via ExternalProject and `fex-emulator` compiles and links against the resulting
+> `libFEXCore.so` (see the `Build FEX Backend (Linux arm64)` job). It has **not been run** yet —
+> several integration points with FEX internals are still marked `TODO(fex)` in the source (notably the
+> SignalDelegator and FEX config/static-table init), so it is not yet a working backend at runtime.
+> The register/memory model and syscall bridge are validated only at compile time.
 
 What is in place:
 
@@ -19,7 +20,8 @@ What is in place:
 - `x86_register` ↔ `FEXCore::Core::CPUState` mapping (`fex_x86_64_common.hpp`).
 - A `FEXCore::HLE::SyscallHandler` that routes guest `syscall` instructions to the registered
   syscall instruction-hook (the path the Windows emulation layer uses to service NT syscalls).
-- Build, backend-selection, and Python-binding wiring (auto-enabled on ARM64 hosts with FEXCore).
+- Build, backend-selection, and Python-binding wiring (auto-enabled on ARM64 Linux + Clang); FEXCore
+  built via ExternalProject and linked — green in CI.
 
 What still needs work (the `TODO(fex)` markers):
 
