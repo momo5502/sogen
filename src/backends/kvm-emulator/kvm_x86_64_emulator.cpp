@@ -11,6 +11,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <emmintrin.h>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -1079,6 +1081,29 @@ namespace sogen::kvm
                 }
 
                 this->rebuild_mappings();
+            }
+            bool host_memory_aliasing_is_coherent() const override
+            {
+                // KVM aliases the host pages into the guest as write-back cacheable, but a device sharing the
+                // same physical memory (e.g. a GPU reading a DXVK buffer) may map it write-combined. The
+                // guest's cached writes are therefore not guaranteed visible without an explicit flush.
+                return false;
+            }
+            void flush_host_memory_cache(const void* host_pointer, size_t size) override
+            {
+                if (host_pointer == nullptr || size == 0)
+                {
+                    return;
+                }
+
+                constexpr uintptr_t cache_line = 64;
+                const auto first = reinterpret_cast<uintptr_t>(host_pointer);
+                const auto last = first + size;
+                for (auto line = first & ~(cache_line - 1); line < last; line += cache_line)
+                {
+                    _mm_clflush(reinterpret_cast<const void*>(line));
+                }
+                _mm_sfence();
             }
             void unmap_memory(uint64_t address, size_t size) override
             {

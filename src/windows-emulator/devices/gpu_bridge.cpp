@@ -251,6 +251,26 @@ namespace sogen
             };
             std::unordered_map<uint64_t, direct_mapping> direct_mappings_{};
 
+            // Before the host GPU reads guest-produced data, make the guest's writes to every directly-aliased
+            // buffer visible. On backends that alias host memory non-coherently (KVM: guest writes are
+            // write-back cached while the GPU may read write-combined memory) this evicts the CPU cache for the
+            // aliased ranges; on coherent backends it is a no-op skipped by the capability check.
+            void flush_aliased_memory_for_device(windows_emulator& win_emu) const
+            {
+                if (win_emu.memory.host_memory_aliasing_is_coherent())
+                {
+                    return;
+                }
+
+                for (const auto& [id, mapping] : this->direct_mappings_)
+                {
+                    if (mapping.host_ptr != nullptr && mapping.size != 0)
+                    {
+                        win_emu.memory.flush_host_memory_cache(mapping.host_ptr, static_cast<size_t>(mapping.size));
+                    }
+                }
+            }
+
             static void set_information(const io_device_context& context, const ULONG bytes)
             {
                 if (context.io_status_block)
@@ -1017,6 +1037,8 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                this->flush_aliased_memory_for_device(win_emu);
+
                 const int32_t result =
                     this->vulkan_.queue_submit2(request.queue, request.fence, waits.data(), request.wait_count, command_buffers.data(),
                                                 request.command_buffer_count, signals.data(), request.signal_count);
@@ -1069,6 +1091,8 @@ namespace sogen
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
+
+                this->flush_aliased_memory_for_device(win_emu);
 
                 const int32_t result = this->vulkan_.queue_submit(request.queue, request.command_buffer, request.fence);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});

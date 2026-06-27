@@ -42,6 +42,24 @@ namespace sogen
 
         virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
 
+        // Appended after the existing virtuals so no vtable slot of a pre-existing method moves.
+        //
+        // Whether memory aliased via map_host_memory is cache-coherent with external devices (e.g. a GPU)
+        // without explicit cache maintenance. KVM aliases host memory write-back into the guest while the GPU
+        // may read the same physical pages through a write-combined mapping, so it reports false and callers
+        // must flush the CPU cache (flush_host_memory_cache) for an aliased range before device access.
+        virtual bool host_memory_aliasing_is_coherent() const
+        {
+            return true;
+        }
+
+        // Evicts the CPU cache for a host range previously passed to map_host_memory, making the guest's
+        // pending writes visible to a device that reads the same physical memory non-coherently. No-op when
+        // aliasing is already coherent.
+        virtual void flush_host_memory_cache(const void* /*host_pointer*/, size_t /*size*/)
+        {
+        }
+
       public:
         template <typename T>
         T read_memory(const uint64_t address) const
