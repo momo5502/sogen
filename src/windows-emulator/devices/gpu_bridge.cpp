@@ -1218,6 +1218,7 @@ namespace sogen
                 if (const auto it = this->direct_mappings_.find(request.memory); it != this->direct_mappings_.end())
                 {
                     win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
+                    this->vulkan_.unmap_memory(it->second.device, request.memory);
                     this->direct_mappings_.erase(it);
                 }
 

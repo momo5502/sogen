@@ -42,7 +42,9 @@ namespace sogen
 
         virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
 
-        // Appended after the existing virtuals so no vtable slot of a pre-existing method moves.
+        // Add new virtuals at the end of the class so the vtable slots of existing methods never move; this
+        // keeps separately built backends (e.g. the dynamically loaded KVM/unicorn backends) ABI-compatible
+        // with the analyzer that calls through this interface.
         //
         // Whether memory aliased via map_host_memory is cache-coherent with external devices (e.g. a GPU)
         // without explicit cache maintenance. KVM aliases host memory write-back into the guest while the GPU

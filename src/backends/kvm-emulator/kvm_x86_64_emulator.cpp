@@ -11,7 +11,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
-#include <emmintrin.h>
+#include <immintrin.h>
 
 #include <algorithm>
 #include <array>
@@ -60,6 +60,52 @@ namespace sogen::kvm
         constexpr uint32_t vp_index = 0;
         constexpr uint32_t breakpoint_interrupt = 3;
         constexpr int invalid_opcode_interrupt = 6;
+
+        constexpr uintptr_t cache_line_size = 64;
+
+        // clflushopt is unordered, so consecutive evictions pipeline instead of serializing like clflush does
+        // on every line; for the bulk flushes the GPU bridge issues before each submit that is a meaningful
+        // win. It needs a target attribute to compile on a generic x86-64 build and is only selected when the
+        // CPU advertises it at runtime. Both variants leave ordering to the caller's sfence.
+        __attribute__((target("clflushopt"))) void flush_cache_lines_clflushopt(uintptr_t first, uintptr_t last)
+        {
+            for (auto line = first; line < last; line += cache_line_size)
+            {
+                _mm_clflushopt(reinterpret_cast<void*>(line));
+            }
+        }
+
+        void flush_cache_lines_clflush(uintptr_t first, uintptr_t last)
+        {
+            for (auto line = first; line < last; line += cache_line_size)
+            {
+                _mm_clflush(reinterpret_cast<const void*>(line));
+            }
+        }
+
+        // Evict the CPU cache for [base, base + size) and order the evictions before subsequent device access.
+        void flush_cache_line_range(const void* base, size_t size)
+        {
+            if (base == nullptr || size == 0)
+            {
+                return;
+            }
+
+            const auto first = reinterpret_cast<uintptr_t>(base) & ~(cache_line_size - 1);
+            const auto last = reinterpret_cast<uintptr_t>(base) + size;
+
+            static const bool has_clflushopt = __builtin_cpu_supports("clflushopt");
+            if (has_clflushopt)
+            {
+                flush_cache_lines_clflushopt(first, last);
+            }
+            else
+            {
+                flush_cache_lines_clflush(first, last);
+            }
+
+            _mm_sfence();
+        }
 
         // Synthetic exception delivery: guest exceptions are routed through an internal IDT whose
         // gates point at single-HLT stubs running at CPL0. The HLT exit identifies the vector, and
@@ -1091,19 +1137,7 @@ namespace sogen::kvm
             }
             void flush_host_memory_cache(const void* host_pointer, size_t size) override
             {
-                if (host_pointer == nullptr || size == 0)
-                {
-                    return;
-                }
-
-                constexpr uintptr_t cache_line = 64;
-                const auto first = reinterpret_cast<uintptr_t>(host_pointer);
-                const auto last = first + size;
-                for (auto line = first & ~(cache_line - 1); line < last; line += cache_line)
-                {
-                    _mm_clflush(reinterpret_cast<const void*>(line));
-                }
-                _mm_sfence();
+                flush_cache_line_range(host_pointer, size);
             }
             void unmap_memory(uint64_t address, size_t size) override
             {
