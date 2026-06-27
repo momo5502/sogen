@@ -8,9 +8,6 @@ option(SOGEN_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(SOGEN_ENABLE_LTO "Enable interprocedural optimization (LTO/IPO)" ON)
 option(SOGEN_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
 option(SOGEN_ENABLE_REFLECTION "Enable reflection using the reflect library" ON)
-# FEX-Emu backend (AArch64 Linux/Android only). Off by default: FEXCore is a large external
-# dependency that is not vendored. See docs/fex-backend.md for how to point the build at FEXCore.
-option(SOGEN_ENABLE_FEX "Enable the FEX-Emu (x86 -> AArch64) backend" OFF)
 # SDL3 provides the host UI backend on every non-Emscripten platform, so it is
 # required and enabled by default everywhere. Emscripten uses the web UI backend
 # instead and skips SDL in deps/CMakeLists.txt. project() runs after this block,
@@ -54,6 +51,28 @@ add_compile_definitions(SOGEN_REFLECTION_LEVEL=${SOGEN_REFLECTION_LEVEL})
 
 if(SOGEN_ENABLE_REFLECTION)
   add_compile_definitions(SOGEN_ENABLE_REFLECTION=1)
+endif()
+
+##########################################
+
+# FEX-Emu backend (x86/x86-64 -> AArch64). FEX only JITs to ARM64, so the backend is restricted to
+# ARM64 Linux/Android hosts. It is enabled automatically on those hosts whenever FEXCore is available.
+# FEXCore is a large, ARM64-host-specific dependency that is not vendored, so we *probe* for it and
+# skip the backend (rather than hard-failing) when absent - otherwise every arm64 build without FEX
+# installed (e.g. the Android CI job) would break. Point -DSOGEN_FEX_ROOT=<path> at a FEX checkout/
+# install, or make FEXCore discoverable via find_package(FEXCore), to enable it.
+if((CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID) AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+  find_package(FEXCore CONFIG QUIET)
+  if(FEXCore_FOUND OR SOGEN_FEX_ROOT)
+    set(SOGEN_ENABLE_FEX ON)
+    message(STATUS "FEX backend: enabled (FEXCore found)")
+  else()
+    set(SOGEN_ENABLE_FEX OFF)
+    message(STATUS "FEX backend: ARM64 host detected but FEXCore was not found - skipping. "
+                   "Set -DSOGEN_FEX_ROOT=<path to FEX> to enable it.")
+  endif()
+else()
+  set(SOGEN_ENABLE_FEX OFF)
 endif()
 
 ##########################################

@@ -19,7 +19,7 @@ What is in place:
 - `x86_register` ↔ `FEXCore::Core::CPUState` mapping (`fex_x86_64_common.hpp`).
 - A `FEXCore::HLE::SyscallHandler` that routes guest `syscall` instructions to the registered
   syscall instruction-hook (the path the Windows emulation layer uses to service NT syscalls).
-- Build, backend-selection, and Python-binding wiring behind `SOGEN_ENABLE_FEX`.
+- Build, backend-selection, and Python-binding wiring (auto-enabled on ARM64 hosts with FEXCore).
 
 What still needs work (the `TODO(fex)` markers):
 
@@ -66,20 +66,24 @@ the NT status in `RAX`; the handler returns that value so FEX preserves it.
 
 ## Build
 
-The backend is off by default and gated to ARM64 Linux/Android:
+The backend is **enabled automatically on ARM64 Linux/Android hosts whenever FEXCore is available** —
+there is no manual `SOGEN_ENABLE_FEX` toggle to flip. FEXCore is **not** vendored as a submodule (it is
+large and ARM64-host-specific), so the top-level CMake probes for it:
+
+- If `find_package(FEXCore)` succeeds, or `SOGEN_FEX_ROOT` is set, the backend is built.
+- Otherwise it is **skipped with a status message** (not a hard error), so arm64 builds that don't have
+  FEX installed — e.g. the Android CI job — keep working.
 
 ```sh
-cmake --preset=release \
-  -DSOGEN_ENABLE_FEX=ON \
-  -DSOGEN_FEX_ROOT=/path/to/fex/install   # or make FEXCore discoverable via find_package(FEXCore)
+# On an arm64 Linux/Android host, point the build at a FEX checkout/install:
+cmake --preset=release -DSOGEN_FEX_ROOT=/path/to/fex/install
+# ...or just have FEXCore discoverable via find_package(FEXCore) and it is picked up automatically.
 ```
 
-CMake (`src/backends/CMakeLists.txt`) only adds the subdirectory when `SOGEN_ENABLE_FEX` is set and
-the host is `aarch64`/`arm64`. `backend-selection` links `fex-emulator`, defines `SOGEN_ENABLE_FEX`,
-adds `backend_type::fex`, and honors `EMULATOR_FEX=1`. The Python `Backend` enum gains `fex`.
-
-FEXCore itself is **not** vendored as a submodule (it is large and ARM64-host-specific); the build
-locates it via `find_package(FEXCore)` or `SOGEN_FEX_ROOT`.
+Internally the top-level CMake resolves an effective `SOGEN_ENABLE_FEX` from (ARM64 host + FEXCore
+availability); `src/backends/CMakeLists.txt` adds the subdirectory and `backend-selection` links
+`fex-emulator`, defines `SOGEN_ENABLE_FEX`, adds `backend_type::fex`, and honors `EMULATOR_FEX=1`. The
+Python `Backend` enum gains `fex`.
 
 ## Selecting the backend
 

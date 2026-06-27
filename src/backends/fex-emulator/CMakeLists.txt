@@ -26,8 +26,10 @@ if(FEXCore_FOUND)
   target_link_libraries(fex-emulator PRIVATE FEXCore::FEXCore)
 else()
   if(NOT SOGEN_FEX_ROOT)
+    # The top-level CMake only adds this subdirectory once FEXCore is known to be available, so this
+    # path should be unreachable; keep it as a guard in case the target is built standalone.
     message(FATAL_ERROR
-      "SOGEN_ENABLE_FEX is ON but FEXCore was not found. Set -DSOGEN_FEX_ROOT=<path to FEX install/checkout> "
+      "FEX backend requested but FEXCore was not found. Set -DSOGEN_FEX_ROOT=<path to FEX install/checkout> "
       "or make FEXCore discoverable via find_package(FEXCore).")
   endif()
 
