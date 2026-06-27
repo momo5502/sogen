@@ -20,7 +20,10 @@ namespace sogen
 
         static bool is_subpath(const std::filesystem::path& normal_root, const std::filesystem::path& normal_target)
         {
-            const auto relative_path = relative(normal_target, normal_root);
+            // Lexical containment: structural check only, so it does not follow symlinks (unlike
+            // std::filesystem::relative, which canonicalizes). Callers pass lexically-normalized
+            // paths so that ".." escapes are still caught.
+            const auto relative_path = normal_target.lexically_relative(normal_root);
             return !is_escaping_relative_path(relative_path);
         }
 
@@ -83,10 +86,13 @@ namespace sogen
             auto root = this->root_ / root_drive.data();
 
             auto path = this->root_ / win_path.to_portable_path();
-            path = weakly_canonical(path);
-            if (is_subpath(root, path))
+            // Confine the guest-controlled path to the drive root by resolving "." and ".."
+            // lexically, without following symlinks, so a crafted path cannot escape. Host-side
+            // symlinks placed inside the root may still point elsewhere (e.g. a mounted game
+            // directory); the OS resolves them when the file is opened.
+            if (is_subpath(root, path.lexically_normal()))
             {
-                return path;
+                return weakly_canonical(path);
             }
 
             return root;
