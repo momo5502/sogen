@@ -565,6 +565,56 @@ namespace sogen
                 return surface != nullptr;
             }
 
+            bool sync_surface_from_guest_dib(const syscall_context& c, gdi_bitmap_surface& surface)
+            {
+                if (surface.guest_bits == 0 || surface.guest_stride == 0 || surface.width == 0 || surface.height == 0)
+                {
+                    return false;
+                }
+
+                const size_t row_bytes = static_cast<size_t>(surface.width) * sizeof(uint32_t);
+                if (surface.guest_stride < row_bytes || surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
+                {
+                    return false;
+                }
+
+                for (uint32_t y = 0; y < surface.height; ++y)
+                {
+                    const uint32_t guest_row = surface.guest_top_down ? y : (surface.height - 1 - y);
+                    auto* dst = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
+                    if (!c.emu.try_read_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, dst,
+                                               row_bytes))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            bool sync_surface_to_guest_dib(const syscall_context& c, const gdi_bitmap_surface& surface)
+            {
+                if (surface.guest_bits == 0 || surface.guest_stride == 0 || surface.width == 0 || surface.height == 0)
+                {
+                    return false;
+                }
+
+                const size_t row_bytes = static_cast<size_t>(surface.width) * sizeof(uint32_t);
+                if (surface.guest_stride < row_bytes || surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
+                {
+                    return false;
+                }
+
+                for (uint32_t y = 0; y < surface.height; ++y)
+                {
+                    const uint32_t guest_row = surface.guest_top_down ? y : (surface.height - 1 - y);
+                    const auto* src = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
+                    c.emu.write_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, src, row_bytes);
+                }
+
+                return true;
+            }
+
             void set_surface_pixel(gdi_bitmap_surface& surface, const int x, const int y, const uint32_t color)
             {
                 if (x < 0 || y < 0 || x >= static_cast<int>(surface.width) || y >= static_cast<int>(surface.height))
@@ -1897,7 +1947,11 @@ namespace sogen
                 return 0;
             }
 
-            // TODO: Tie the allocated memory with the surface.
+            auto& surface = c.proc.gdi_bitmap_surfaces[handle_value];
+            surface.guest_bits = guest_bits;
+            surface.guest_stride = stride;
+            surface.guest_top_down = header.biHeight < 0;
+            surface.guest_owns_memory = true;
 
             bits.write(guest_bits);
             return handle_value;
@@ -2247,6 +2301,12 @@ namespace sogen
             if (handle_value == c.proc.gdi_default_dc_handle)
             {
                 c.proc.gdi_default_dc_handle = 0;
+            }
+
+            if (const auto bmp_it = c.proc.gdi_bitmap_surfaces.find(handle_value);
+                bmp_it != c.proc.gdi_bitmap_surfaces.end() && bmp_it->second.guest_owns_memory && bmp_it->second.guest_bits != 0)
+            {
+                c.win_emu.memory.release_memory(bmp_it->second.guest_bits, 0);
             }
 
             c.proc.gdi_dc_states.erase(handle_value);
@@ -2898,6 +2958,8 @@ namespace sogen
                 return FALSE;
             }
 
+            (void)sync_surface_from_guest_dib(c, *dst_surface);
+
             const auto rop3 = static_cast<uint8_t>((rop >> 16) & 0xFFu);
             const bool needs_source = rop3_uses_source(rop3);
 
@@ -2918,6 +2980,8 @@ namespace sogen
                 {
                     return FALSE;
                 }
+
+                (void)sync_surface_from_guest_dib(c, *src_surface);
             }
 
             auto dx = static_cast<int64_t>(x_dst) + dst_origin_x;
@@ -3030,6 +3094,8 @@ namespace sogen
                     dst_row[col] = apply_rop3(rop3, src, dst, pattern) | 0xFF000000u;
                 }
             }
+
+            (void)sync_surface_to_guest_dib(c, *dst_surface);
 
             if (present_handle != 0 && dst_surface->width > 0 && dst_surface->height > 0 && !dst_surface->pixels.empty())
             {
@@ -3255,6 +3321,11 @@ namespace sogen
 
             c.emu.write_memory(entry_ptr, &entry, sizeof(entry));
             return STATUS_SUCCESS;
+        }
+
+        int32_t handle_NtGdiSetIcmMode()
+        {
+            return 0;
         }
 
         NTSTATUS handle_NtGdiSetLayout()

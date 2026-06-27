@@ -469,6 +469,7 @@ namespace sogen
         hdc handle_NtUserBeginPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
         BOOL handle_NtUserEndPaint(const syscall_context& c, hwnd window, emulator_object<EMU_PAINTSTRUCT> paint_struct);
         BOOL handle_NtUserGetCursorPos(const syscall_context& c, emulator_pointer point_ptr);
+        BOOL handle_NtUserGetClipCursor(const syscall_context& c, emulator_pointer rect_ptr);
         BOOL handle_NtUserTransformPoint(const syscall_context& c, emulator_pointer point, uint32_t from_dpi, uint32_t to_dpi,
                                          uint32_t flags);
         int32_t handle_NtUserShowCursor(const syscall_context& c, BOOL show);
@@ -523,6 +524,7 @@ namespace sogen
         BOOL handle_NtUserSetProp(const syscall_context& c, hwnd window, uint16_t atom, uint64_t data);
         BOOL handle_NtUserSetProp2(const syscall_context& c, hwnd window, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str,
                                    uint64_t data);
+        uint64_t handle_NtUserGetProp2(const syscall_context& c, hwnd window, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str);
         uint64_t handle_NtUserChangeWindowMessageFilterEx();
         BOOL handle_NtUserShowWindow(const syscall_context& c, hwnd hwnd, LONG cmd_show);
         BOOL completion_NtUserShowWindow(const syscall_context& c, hwnd hwnd, LONG cmd_show);
@@ -631,6 +633,10 @@ namespace sogen
         NTSTATUS handle_NtUserSelectPalette();
         BOOL handle_NtUserSwapMouseButton();
         hwnd handle_NtUserWindowFromPoint(const syscall_context& c, int32_t x, int32_t y);
+        BOOL handle_NtUserGetKeyboardState(const syscall_context& c, emulator_pointer key_state);
+        uint32_t handle_NtUserGetDoubleClickTime();
+        BOOL handle_NtUserModifyWindowTouchCapability();
+        uint32_t handle_NtUserGetClipboardSequenceNumber();
 
         // syscalls/gdi.cpp:
         NTSTATUS handle_NtDxgkIsFeatureEnabled();
@@ -713,6 +719,7 @@ namespace sogen
                                      emulator_pointer text, UINT count, emulator_pointer dx, DWORD code_page);
         BOOL handle_NtGdiGetRealizationInfo(const syscall_context& c, hdc dc, emulator_pointer realization_info, uint64_t font);
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, uint32_t handle_value, emulator_pointer entry_ptr);
+        int32_t handle_NtGdiSetIcmMode();
         NTSTATUS handle_NtGdiSetLayout();
         NTSTATUS handle_NtGdiGetDCObject();
         BOOL handle_NtGdiMoveToEx(const syscall_context& c, hdc dc, LONG x, LONG y, emulator_pointer old_point_ptr);
@@ -1334,6 +1341,7 @@ namespace sogen
         add_handler(NtGetNextThread);
         add_handler(NtSetInformationObject);
         add_handler(NtUserGetCursorPos);
+        add_handler(NtUserGetClipCursor);
         add_handler(NtUserTransformPoint);
         add_handler(NtUserShowCursor);
         add_handler(NtUserClipCursor);
@@ -1401,6 +1409,7 @@ namespace sogen
         add_handler(NtUserEnumDisplayMonitors);
         add_handler(NtUserSetProp);
         add_handler(NtUserSetProp2);
+        add_handler(NtUserGetProp2);
         add_handler(NtUserChangeWindowMessageFilterEx);
         add_handler(NtUserDestroyWindow);
         add_handler(NtQueryInformationByName);
@@ -1538,6 +1547,11 @@ namespace sogen
         add_handler(NtUserGetKeyNameText);
         add_handler(NtUserWindowFromPoint);
         add_handler(NtUserSwapMouseButton);
+        add_handler(NtUserGetDoubleClickTime);
+        add_handler(NtGdiSetIcmMode);
+        add_handler(NtUserGetKeyboardState);
+        add_handler(NtUserModifyWindowTouchCapability);
+        add_handler(NtUserGetClipboardSequenceNumber);
 
 #undef add_handler
     }

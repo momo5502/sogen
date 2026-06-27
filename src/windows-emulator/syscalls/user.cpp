@@ -1874,6 +1874,24 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserGetClipCursor(const syscall_context& c, const emulator_pointer rect_ptr)
+        {
+            if (rect_ptr == 0)
+            {
+                return FALSE;
+            }
+
+            RECT rect{0, 0, 1920, 1080};
+            const auto display_info = c.proc.user_handles.get_display_info().read();
+            if (const emulator_object<USER_MONITOR> monitor_obj(c.emu, display_info.pPrimaryMonitor); monitor_obj)
+            {
+                rect = monitor_obj.read().rcMonitor;
+            }
+
+            c.emu.write_memory(rect_ptr, &rect, sizeof(rect));
+            return TRUE;
+        }
+
         // user32 coordinate helpers (ScreenToClient/ClientToScreen/MapWindowPoints) call this to convert a
         // point between per-monitor DPI spaces before applying the window-origin offset they do themselves.
         // The emulated desktop is a single 96-DPI space, so the conversion is the identity: leave the point.
@@ -2741,6 +2759,25 @@ namespace sogen
             win->props[std::move(prop)] = data;
 
             return TRUE;
+        }
+
+        uint64_t handle_NtUserGetProp2(const syscall_context& c, const hwnd window,
+                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str)
+        {
+            const auto* win = c.proc.windows.get(window);
+            if (!win || !str)
+            {
+                return 0;
+            }
+
+            const auto prop = read_unicode_string_or_atom(c, str);
+            if (prop.empty())
+            {
+                return 0;
+            }
+
+            const auto entry = win->props.find(prop);
+            return entry != win->props.end() ? entry->second : 0;
         }
 
         uint64_t handle_NtUserChangeWindowMessageFilterEx()
@@ -4797,6 +4834,36 @@ namespace sogen
             //       screen point, walking child windows in z-order; this stub just returns the
             //       current foreground window.
             return c.proc.foreground_window;
+        }
+
+        BOOL handle_NtUserGetKeyboardState(const syscall_context& c, const emulator_pointer key_state)
+        {
+            if (key_state == 0)
+            {
+                return FALSE;
+            }
+
+            if (!c.win_emu.memory.try_write_memory(key_state, c.proc.key_state.data(), c.proc.key_state.size()))
+            {
+                return FALSE;
+            }
+
+            return TRUE;
+        }
+
+        uint32_t handle_NtUserGetDoubleClickTime()
+        {
+            return 500;
+        }
+
+        BOOL handle_NtUserModifyWindowTouchCapability()
+        {
+            return TRUE;
+        }
+
+        uint32_t handle_NtUserGetClipboardSequenceNumber()
+        {
+            return 0xBEEFC00L;
         }
     }
 

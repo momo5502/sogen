@@ -2113,7 +2113,7 @@ namespace sogen
             const auto attributes = object_attributes.read();
             const auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
-            if (!filename.starts_with(u"\\Device\\NamedPipe"))
+            if (!is_named_pipe_path(filename))
             {
                 return STATUS_NOT_SUPPORTED;
             }
