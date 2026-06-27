@@ -462,6 +462,27 @@ namespace sogen
                 return addr != 0;
             }
 
+            void sync_surface_from_guest_dib(const syscall_context& c, gdi_bitmap_surface& surface)
+            {
+                if (surface.guest_bits == 0 || surface.guest_stride == 0 || surface.width == 0 || surface.height == 0)
+                {
+                    return;
+                }
+
+                const size_t row_bytes = static_cast<size_t>(surface.width) * sizeof(uint32_t);
+                if (surface.guest_stride < row_bytes || surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
+                {
+                    return;
+                }
+
+                for (uint32_t y = 0; y < surface.height; ++y)
+                {
+                    const uint32_t guest_row = surface.guest_top_down ? y : (surface.height - 1 - y);
+                    auto* dst = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
+                    c.emu.read_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, dst, row_bytes);
+                }
+            }
+
             uint32_t window_surface_fill_color(const syscall_context& c, const window& win);
 
             // Resolves the bitmap surface a DC draws into, plus the offset from DC-local coordinates to surface
@@ -490,6 +511,7 @@ namespace sogen
                     }
 
                     present_handle = static_cast<uint32_t>(dc_state.target_window);
+                    sync_surface_from_guest_dib(c, bmp_it->second);
                     return &bmp_it->second;
                 }
 
@@ -534,6 +556,7 @@ namespace sogen
                 origin_x = off_x;
                 origin_y = off_y;
                 present_handle = top_handle;
+                sync_surface_from_guest_dib(c, surface);
                 return &surface;
             }
 
@@ -565,44 +588,17 @@ namespace sogen
                 return surface != nullptr;
             }
 
-            bool sync_surface_from_guest_dib(const syscall_context& c, gdi_bitmap_surface& surface)
+            void sync_surface_to_guest_dib(const syscall_context& c, const gdi_bitmap_surface& surface)
             {
                 if (surface.guest_bits == 0 || surface.guest_stride == 0 || surface.width == 0 || surface.height == 0)
                 {
-                    return false;
+                    return;
                 }
 
                 const size_t row_bytes = static_cast<size_t>(surface.width) * sizeof(uint32_t);
                 if (surface.guest_stride < row_bytes || surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
                 {
-                    return false;
-                }
-
-                for (uint32_t y = 0; y < surface.height; ++y)
-                {
-                    const uint32_t guest_row = surface.guest_top_down ? y : (surface.height - 1 - y);
-                    auto* dst = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
-                    if (!c.emu.try_read_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, dst,
-                                               row_bytes))
-                    {
-                        return false;
-                    }
-                }
-
-                return true;
-            }
-
-            bool sync_surface_to_guest_dib(const syscall_context& c, const gdi_bitmap_surface& surface)
-            {
-                if (surface.guest_bits == 0 || surface.guest_stride == 0 || surface.width == 0 || surface.height == 0)
-                {
-                    return false;
-                }
-
-                const size_t row_bytes = static_cast<size_t>(surface.width) * sizeof(uint32_t);
-                if (surface.guest_stride < row_bytes || surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
-                {
-                    return false;
+                    return;
                 }
 
                 for (uint32_t y = 0; y < surface.height; ++y)
@@ -611,8 +607,28 @@ namespace sogen
                     const auto* src = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
                     c.emu.write_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, src, row_bytes);
                 }
+            }
 
-                return true;
+            void present_win_surface(const syscall_context& c, uint32_t present_handle, gdi_bitmap_surface* surface)
+            {
+                if (surface == nullptr)
+                {
+                    return;
+                }
+
+                sync_surface_to_guest_dib(c, *surface);
+
+                if (present_handle == 0 || surface->width <= 0 || surface->height <= 0 || surface->pixels.empty())
+                {
+                    return;
+                }
+
+                c.win_emu.ui().present_surface(present_handle,
+                                               ui_surface_desc{.width = static_cast<int>(surface->width),
+                                                               .height = static_cast<int>(surface->height),
+                                                               .stride = static_cast<int>(surface->width * sizeof(uint32_t)),
+                                                               .format = ui_surface_format::bgra8,
+                                                               .pixels = surface->pixels.data()});
             }
 
             void set_surface_pixel(gdi_bitmap_surface& surface, const int x, const int y, const uint32_t color)
@@ -2269,15 +2285,7 @@ namespace sogen
                 }
             }
 
-            if (present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
-            {
-                c.win_emu.ui().present_surface(present_handle,
-                                               ui_surface_desc{.width = static_cast<int>(surface->width),
-                                                               .height = static_cast<int>(surface->height),
-                                                               .stride = static_cast<int>(surface->width * sizeof(uint32_t)),
-                                                               .format = ui_surface_format::bgra8,
-                                                               .pixels = surface->pixels.data()});
-            }
+            present_win_surface(c, present_handle, surface);
 
             return static_cast<int>(img_height);
         }
@@ -2958,8 +2966,6 @@ namespace sogen
                 return FALSE;
             }
 
-            (void)sync_surface_from_guest_dib(c, *dst_surface);
-
             const auto rop3 = static_cast<uint8_t>((rop >> 16) & 0xFFu);
             const bool needs_source = rop3_uses_source(rop3);
 
@@ -2980,8 +2986,6 @@ namespace sogen
                 {
                     return FALSE;
                 }
-
-                (void)sync_surface_from_guest_dib(c, *src_surface);
             }
 
             auto dx = static_cast<int64_t>(x_dst) + dst_origin_x;
@@ -3095,17 +3099,7 @@ namespace sogen
                 }
             }
 
-            (void)sync_surface_to_guest_dib(c, *dst_surface);
-
-            if (present_handle != 0 && dst_surface->width > 0 && dst_surface->height > 0 && !dst_surface->pixels.empty())
-            {
-                c.win_emu.ui().present_surface(present_handle,
-                                               ui_surface_desc{.width = static_cast<int>(dst_surface->width),
-                                                               .height = static_cast<int>(dst_surface->height),
-                                                               .stride = static_cast<int>(dst_surface->width * sizeof(uint32_t)),
-                                                               .format = ui_surface_format::bgra8,
-                                                               .pixels = dst_surface->pixels.data()});
-            }
+            present_win_surface(c, present_handle, dst_surface);
 
             return TRUE;
         }
@@ -4242,16 +4236,7 @@ namespace sogen
 
             const auto bgra = colorref_to_bgra(color);
             set_surface_pixel(*surface, surface_x, surface_y, bgra);
-            if (present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
-            {
-                c.win_emu.ui().present_surface(present_handle, {
-                                                                   .width = static_cast<int32_t>(surface->width),
-                                                                   .height = static_cast<int32_t>(surface->height),
-                                                                   .stride = static_cast<int32_t>(surface->width * sizeof(uint32_t)),
-                                                                   .format = ui_surface_format::bgra8,
-                                                                   .pixels = surface->pixels.data(),
-                                                               });
-            }
+            present_win_surface(c, present_handle, surface);
 
             return bgra_to_colorref(bgra);
         }

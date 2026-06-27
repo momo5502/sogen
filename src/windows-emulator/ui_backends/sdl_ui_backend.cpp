@@ -462,239 +462,6 @@ namespace sogen
 
             return scan_code;
         }
-
-        uint64_t map_sdl_scancode_to_vk(const SDL_Scancode scancode)
-        {
-            switch (scancode)
-            {
-            case SDL_SCANCODE_A:
-                return 'A';
-            case SDL_SCANCODE_B:
-                return 'B';
-            case SDL_SCANCODE_C:
-                return 'C';
-            case SDL_SCANCODE_D:
-                return 'D';
-            case SDL_SCANCODE_E:
-                return 'E';
-            case SDL_SCANCODE_F:
-                return 'F';
-            case SDL_SCANCODE_G:
-                return 'G';
-            case SDL_SCANCODE_H:
-                return 'H';
-            case SDL_SCANCODE_I:
-                return 'I';
-            case SDL_SCANCODE_J:
-                return 'J';
-            case SDL_SCANCODE_K:
-                return 'K';
-            case SDL_SCANCODE_L:
-                return 'L';
-            case SDL_SCANCODE_M:
-                return 'M';
-            case SDL_SCANCODE_N:
-                return 'N';
-            case SDL_SCANCODE_O:
-                return 'O';
-            case SDL_SCANCODE_P:
-                return 'P';
-            case SDL_SCANCODE_Q:
-                return 'Q';
-            case SDL_SCANCODE_R:
-                return 'R';
-            case SDL_SCANCODE_S:
-                return 'S';
-            case SDL_SCANCODE_T:
-                return 'T';
-            case SDL_SCANCODE_U:
-                return 'U';
-            case SDL_SCANCODE_V:
-                return 'V';
-            case SDL_SCANCODE_W:
-                return 'W';
-            case SDL_SCANCODE_X:
-                return 'X';
-            case SDL_SCANCODE_Y:
-                return 'Y';
-            case SDL_SCANCODE_Z:
-                return 'Z';
-
-            case SDL_SCANCODE_1:
-                return '1';
-            case SDL_SCANCODE_2:
-                return '2';
-            case SDL_SCANCODE_3:
-                return '3';
-            case SDL_SCANCODE_4:
-                return '4';
-            case SDL_SCANCODE_5:
-                return '5';
-            case SDL_SCANCODE_6:
-                return '6';
-            case SDL_SCANCODE_7:
-                return '7';
-            case SDL_SCANCODE_8:
-                return '8';
-            case SDL_SCANCODE_9:
-                return '9';
-            case SDL_SCANCODE_0:
-                return '0';
-
-            case SDL_SCANCODE_RETURN:
-                return VK_RETURN;
-            case SDL_SCANCODE_ESCAPE:
-                return VK_ESCAPE;
-            case SDL_SCANCODE_BACKSPACE:
-                return VK_BACK;
-            case SDL_SCANCODE_TAB:
-                return VK_TAB;
-            case SDL_SCANCODE_SPACE:
-                return VK_SPACE;
-
-            case SDL_SCANCODE_LSHIFT:
-                return VK_SHIFT;
-            case SDL_SCANCODE_RSHIFT:
-                return VK_SHIFT;
-            case SDL_SCANCODE_LCTRL:
-                return VK_CONTROL;
-            case SDL_SCANCODE_RCTRL:
-                return VK_CONTROL;
-            case SDL_SCANCODE_LALT:
-                return VK_MENU;
-            case SDL_SCANCODE_RALT:
-                return VK_MENU;
-            case SDL_SCANCODE_LGUI:
-                return VK_LWIN;
-            case SDL_SCANCODE_RGUI:
-                return VK_RWIN;
-            case SDL_SCANCODE_APPLICATION:
-                return VK_APPS;
-
-            case SDL_SCANCODE_INSERT:
-                return VK_INSERT;
-            case SDL_SCANCODE_DELETE:
-                return VK_DELETE;
-            case SDL_SCANCODE_HOME:
-                return VK_HOME;
-            case SDL_SCANCODE_END:
-                return VK_END;
-            case SDL_SCANCODE_PAGEUP:
-                return VK_PRIOR;
-            case SDL_SCANCODE_PAGEDOWN:
-                return VK_NEXT;
-            case SDL_SCANCODE_LEFT:
-                return VK_LEFT;
-            case SDL_SCANCODE_UP:
-                return VK_UP;
-            case SDL_SCANCODE_RIGHT:
-                return VK_RIGHT;
-            case SDL_SCANCODE_DOWN:
-                return VK_DOWN;
-
-            case SDL_SCANCODE_CAPSLOCK:
-                return VK_CAPITAL;
-            case SDL_SCANCODE_NUMLOCKCLEAR:
-                return VK_NUMLOCK;
-            case SDL_SCANCODE_SCROLLLOCK:
-                return VK_SCROLL;
-
-            case SDL_SCANCODE_GRAVE:
-                return VK_OEM_3;
-            case SDL_SCANCODE_MINUS:
-                return VK_OEM_MINUS;
-            case SDL_SCANCODE_EQUALS:
-                return VK_OEM_PLUS;
-            case SDL_SCANCODE_LEFTBRACKET:
-                return VK_OEM_4;
-            case SDL_SCANCODE_RIGHTBRACKET:
-                return VK_OEM_6;
-            case SDL_SCANCODE_BACKSLASH:
-                return VK_OEM_5;
-            case SDL_SCANCODE_NONUSHASH:
-                return VK_OEM_5;
-            case SDL_SCANCODE_SEMICOLON:
-                return VK_OEM_1;
-            case SDL_SCANCODE_APOSTROPHE:
-                return VK_OEM_7;
-            case SDL_SCANCODE_COMMA:
-                return VK_OEM_COMMA;
-            case SDL_SCANCODE_PERIOD:
-                return VK_OEM_PERIOD;
-            case SDL_SCANCODE_SLASH:
-                return VK_OEM_2;
-            case SDL_SCANCODE_NONUSBACKSLASH:
-                return VK_OEM_102;
-
-            case SDL_SCANCODE_F1:
-                return VK_F1;
-            case SDL_SCANCODE_F2:
-                return VK_F2;
-            case SDL_SCANCODE_F3:
-                return VK_F3;
-            case SDL_SCANCODE_F4:
-                return VK_F4;
-            case SDL_SCANCODE_F5:
-                return VK_F5;
-            case SDL_SCANCODE_F6:
-                return VK_F6;
-            case SDL_SCANCODE_F7:
-                return VK_F7;
-            case SDL_SCANCODE_F8:
-                return VK_F8;
-            case SDL_SCANCODE_F9:
-                return VK_F9;
-            case SDL_SCANCODE_F10:
-                return VK_F10;
-            case SDL_SCANCODE_F11:
-                return VK_F11;
-            case SDL_SCANCODE_F12:
-                return VK_F12;
-
-            case SDL_SCANCODE_KP_0:
-                return VK_NUMPAD0;
-            case SDL_SCANCODE_KP_1:
-                return VK_NUMPAD1;
-            case SDL_SCANCODE_KP_2:
-                return VK_NUMPAD2;
-            case SDL_SCANCODE_KP_3:
-                return VK_NUMPAD3;
-            case SDL_SCANCODE_KP_4:
-                return VK_NUMPAD4;
-            case SDL_SCANCODE_KP_5:
-                return VK_NUMPAD5;
-            case SDL_SCANCODE_KP_6:
-                return VK_NUMPAD6;
-            case SDL_SCANCODE_KP_7:
-                return VK_NUMPAD7;
-            case SDL_SCANCODE_KP_8:
-                return VK_NUMPAD8;
-            case SDL_SCANCODE_KP_9:
-                return VK_NUMPAD9;
-            case SDL_SCANCODE_KP_PERIOD:
-                return VK_DECIMAL;
-            case SDL_SCANCODE_KP_PLUS:
-                return VK_ADD;
-            case SDL_SCANCODE_KP_MINUS:
-                return VK_SUBTRACT;
-            case SDL_SCANCODE_KP_MULTIPLY:
-                return VK_MULTIPLY;
-            case SDL_SCANCODE_KP_DIVIDE:
-                return VK_DIVIDE;
-            case SDL_SCANCODE_KP_ENTER:
-                return VK_RETURN;
-
-            case SDL_SCANCODE_PRINTSCREEN:
-                return VK_SNAPSHOT;
-            case SDL_SCANCODE_PAUSE:
-                return VK_PAUSE;
-            case SDL_SCANCODE_MENU:
-                return VK_APPS;
-
-            default:
-                return 0;
-            }
-        }
 #endif
 
         class sdl_ui_backend final : public ui_backend
@@ -775,12 +542,9 @@ namespace sogen
                         this->set_window_active(this->resolve_guest(event.window.windowID), true);
                         break;
 
-                    case SDL_EVENT_WINDOW_FOCUS_LOST: {
-                        const auto guest = this->resolve_guest(event.window.windowID);
-                        this->release_all_pressed_keys(guest);
-                        this->set_window_active(guest, false);
+                    case SDL_EVENT_WINDOW_FOCUS_LOST:
+                        this->set_window_active(this->resolve_guest(event.window.windowID), false);
                         break;
-                    }
 
                     case SDL_EVENT_KEY_DOWN: {
                         const auto guest = this->resolve_guest(event.key.windowID);
@@ -814,7 +578,7 @@ namespace sogen
                         context.key_up = false;
                         context.was_down = was_down;
                         context.alt_context = alt_context;
-                        context.repeat_count = 1;
+                        context.repeat_count = 1; // TODO: Track repeat count
 
                         const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYDOWN : WM_KEYDOWN;
 
@@ -851,7 +615,7 @@ namespace sogen
                         context.key_up = true;
                         context.was_down = true;
                         context.alt_context = alt_context;
-                        context.repeat_count = 1;
+                        context.repeat_count = 1; // TODO: Track repeat count
 
                         const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYUP : WM_KEYUP;
 
@@ -1314,46 +1078,6 @@ namespace sogen
                     this->active_window_ = 0;
                     this->post_event(window, WM_ACTIVATE, WA_INACTIVE, 0);
                     this->post_event(window, WM_KILLFOCUS, 0, 0);
-                }
-            }
-
-            void release_all_pressed_keys(const hwnd window)
-            {
-                const bool alt_was_down = key_down_[SDL_SCANCODE_LALT] || key_down_[SDL_SCANCODE_RALT];
-
-                if (window == 0)
-                {
-                    this->key_down_.fill(false);
-                    return;
-                }
-
-                for (size_t i = 0; i < this->key_down_.size(); ++i)
-                {
-                    if (!this->key_down_[i])
-                    {
-                        continue;
-                    }
-
-                    this->key_down_[i] = false;
-
-                    const auto scancode = static_cast<SDL_Scancode>(i);
-                    const auto vk = map_sdl_scancode_to_vk(scancode);
-                    if (vk == 0)
-                    {
-                        continue;
-                    }
-
-                    const bool is_alt = vk == VK_MENU;
-                    const bool alt_context = !is_alt && alt_was_down;
-
-                    scan_code_context context{};
-                    context.key_up = true;
-                    context.was_down = true;
-                    context.alt_context = alt_context;
-
-                    const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYUP : wm_keyup;
-
-                    this->post_event(window, message, vk, map_sdl_scancode(scancode, context));
                 }
             }
 #endif

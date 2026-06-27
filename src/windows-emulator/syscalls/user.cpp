@@ -1881,6 +1881,7 @@ namespace sogen
                 return FALSE;
             }
 
+            // TODO: This should return the clip cursor. For simplicity, we return a best effort derived from the screen size.
             RECT rect{0, 0, 1920, 1080};
             const auto display_info = c.proc.user_handles.get_display_info().read();
             if (const emulator_object<USER_MONITOR> monitor_obj(c.emu, display_info.pPrimaryMonitor); monitor_obj)
