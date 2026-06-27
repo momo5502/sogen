@@ -712,7 +712,6 @@ jobs:
         run: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer -e root c:/test-sample.exe
         env:
           EMULATOR_KVM: "1"
-          LD_LIBRARY_PATH: ${{github.workspace}}/build/release/artifacts
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
 

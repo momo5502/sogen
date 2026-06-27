@@ -138,6 +138,26 @@ int main() { return 0; }
   endif()
 
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie")
+
+  # Embed an rpath so binaries find their colocated shared libraries without
+  # requiring LD_LIBRARY_PATH / DYLD_LIBRARY_PATH. All sogen artifacts (the
+  # executables and the shared libs they depend on) share one output directory,
+  # so an $ORIGIN/@loader_path rpath lets every binary locate its libraries
+  # relative to itself. CMAKE_BUILD_RPATH adds it on top of the auto-computed
+  # build-tree rpath, which also covers transitive dependencies the linker only
+  # records as (non-transitive) DT_RUNPATH. It keeps working after the output
+  # directory is copied elsewhere.
+  set(CMAKE_BUILD_WITH_INSTALL_RPATH OFF)
+  set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
+  set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
+
+  if(APPLE)
+    set(CMAKE_BUILD_RPATH "@loader_path")
+    set(CMAKE_INSTALL_RPATH "@loader_path")
+  else()
+    set(CMAKE_BUILD_RPATH "$ORIGIN")
+    set(CMAKE_INSTALL_RPATH "$ORIGIN")
+  endif()
 endif()
 
 ##########################################
