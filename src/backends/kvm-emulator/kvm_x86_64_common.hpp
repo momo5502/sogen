@@ -30,7 +30,6 @@ namespace sogen::kvm::detail
     struct mapped_page
     {
         void* host_page = nullptr;
-        uint32_t map_flags = 0;
         memory_permission permissions = memory_permission::none;
         std::shared_ptr<uint8_t> owned_page{};
     };
