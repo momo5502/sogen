@@ -1211,6 +1211,16 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                // If this allocation was aliased into the guest, tear the alias down and forget the host
+                // pointer before vkFreeMemory invalidates it. Otherwise the guest keeps a stale alias of freed
+                // memory and direct_mappings_ retains a dangling pointer that the pre-submit cache flush would
+                // dereference (e.g. while DXVK frees buffers during shutdown).
+                if (const auto it = this->direct_mappings_.find(request.memory); it != this->direct_mappings_.end())
+                {
+                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
+                    this->direct_mappings_.erase(it);
+                }
+
                 this->vulkan_.free_memory(request.device, request.memory);
                 return STATUS_SUCCESS;
             }
