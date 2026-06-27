@@ -28,6 +28,9 @@ What still needs work (the `TODO(fex)` markers):
 - Confirming the exact `InternalThreadState` → `CPUState` access path for the pinned FEX version.
 - Making an in-flight `ExecuteThread()` return on `stop()` (cooperative cancellation).
 - Snapshot of mapped memory in `serialize_state` (currently registers only).
+- Host-memory cache coherency: `host_memory_aliasing_is_coherent`/`flush_host_memory_cache` use the
+  base defaults (coherent, no-op). Like KVM, FEX aliases write-back host memory, so the GPU-bridge path
+  will eventually need an ARM cache-maintenance flush here.
 
 ## Architecture
 
