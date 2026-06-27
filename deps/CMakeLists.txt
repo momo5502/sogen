@@ -55,6 +55,15 @@ if(SOGEN_ENABLE_SDL3 AND NOT EMSCRIPTEN)
     set(SDL_TESTS OFF CACHE BOOL "" FORCE)
     set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
     set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT SDL_UNIX_CONSOLE_BUILD)
+      # Require both display backends on Linux: Wayland for desktop sessions, and X11 for environments
+      # that only expose Xwayland (e.g. the Steam Deck's Gaming Mode under gamescope, which does not set
+      # WAYLAND_DISPLAY). Forcing them on turns a missing dev package into a hard configure error instead
+      # of a silently dropped backend that leaves the app with no window at runtime. The Python wheel build
+      # opts out via SDL_UNIX_CONSOLE_BUILD, since it intentionally builds without these dev libraries.
+      set(SDL_WAYLAND ON CACHE BOOL "" FORCE)
+      set(SDL_X11 ON CACHE BOOL "" FORCE)
+    endif()
     add_subdirectory(SDL)
     message(STATUS "Using vendored SDL3 submodule (deps/SDL)")
   endif()
