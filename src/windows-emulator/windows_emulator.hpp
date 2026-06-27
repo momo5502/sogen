@@ -325,6 +325,7 @@ namespace sogen
         void install_section_first_execution_hook(const mapped_module& mod, size_t section_index);
         void install_section_first_execution_hooks();
         void track_section_first_execution(uint64_t address);
+        void restore_ui_backend();
 
         void register_factories(utils::buffer_deserializer& buffer);
     };

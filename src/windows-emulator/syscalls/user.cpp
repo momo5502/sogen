@@ -152,39 +152,6 @@ namespace sogen
             return name;
         }
 
-        std::u16string_view normalize_builtin_window_class_name(const std::u16string_view class_name)
-        {
-            if (class_name == u"#1" || class_name == u"BUTTON" || class_name == u"Button")
-            {
-                return u"Button";
-            }
-            if (class_name == u"#2" || class_name == u"EDIT" || class_name == u"Edit")
-            {
-                return u"Edit";
-            }
-            // Build-specific integer atoms for the control classes are resolved to their canonical names
-            // earlier, via SERVERINFO.atomSysClass (see resolve_builtin_class_atom), so only the literal
-            // class names and the stable ordinal aliases need to be handled here.
-            if (class_name == u"#3" || class_name == u"STATIC" || class_name == u"Static")
-            {
-                return u"Static";
-            }
-            if (class_name == u"#4" || class_name == u"LISTBOX" || class_name == u"ListBox")
-            {
-                return u"ListBox";
-            }
-            if (class_name == u"#5" || class_name == u"SCROLLBAR" || class_name == u"ScrollBar")
-            {
-                return u"ScrollBar";
-            }
-            if (class_name == u"#6" || class_name == u"COMBOBOX" || class_name == u"ComboBox")
-            {
-                return u"ComboBox";
-            }
-
-            return class_name;
-        }
-
         bool is_builtin_window_class_name(const std::u16string_view class_name)
         {
             const auto normalized = normalize_builtin_window_class_name(class_name);
