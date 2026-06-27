@@ -35,6 +35,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -50,6 +51,7 @@
 #include <FEXCore/Core/HostFeatures.h>
 #include <FEXCore/Core/SignalDelegator.h>
 #include <FEXCore/HLE/SyscallHandler.h>
+#include <FEXCore/Debug/InternalThreadState.h>
 
 namespace sogen::fex
 {
@@ -107,11 +109,15 @@ namespace sogen::fex
         explicit fex_syscall_handler(fex_x86_64_emulator& emulator)
             : emulator_(emulator)
         {
+            // OS_GENERIC: FEX does no JIT-side syscall argument handling and spills/fills all registers,
+            // which is what we want since the syscall is serviced entirely by sogen's own hook.
+            this->OSABI = FEXCore::HLE::SyscallOSABI::OS_GENERIC;
         }
 
         uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* frame, FEXCore::HLE::SyscallArguments* args) override;
-        FEXCore::HLE::SyscallABI GetSyscallABI(uint64_t syscall) override;
         FEXCore::HLE::ExecutableRangeInfo QueryGuestExecutableRange(FEXCore::Core::InternalThreadState* thread, uint64_t address) override;
+        std::optional<FEXCore::HLE::ExecutableFileSectionInfo> LookupExecutableFileSection(FEXCore::Core::InternalThreadState* thread,
+                                                                                           uint64_t guest_addr) override;
 
       private:
         fex_x86_64_emulator& emulator_;
@@ -846,16 +852,17 @@ namespace sogen::fex
         return this->emulator_.cpu_state().gregs[detail::greg_rax];
     }
 
-    FEXCore::HLE::SyscallABI fex_syscall_handler::GetSyscallABI(uint64_t /*syscall*/)
-    {
-        // Everything is handled inside HandleSyscall; -1 marks "no host syscall passthrough".
-        return FEXCore::HLE::SyscallABI{.NumArgs = 6, .HasReturn = true, .HostSyscallNumber = -1};
-    }
-
     FEXCore::HLE::ExecutableRangeInfo fex_syscall_handler::QueryGuestExecutableRange(FEXCore::Core::InternalThreadState* /*thread*/,
                                                                                      uint64_t /*address*/)
     {
         return {}; // TODO(fex): report the containing mapped range for better cache invalidation.
+    }
+
+    std::optional<FEXCore::HLE::ExecutableFileSectionInfo> fex_syscall_handler::LookupExecutableFileSection(
+        FEXCore::Core::InternalThreadState* /*thread*/, uint64_t /*guest_addr*/)
+    {
+        // We do not back guest code by host file sections, so there is nothing to look up.
+        return std::nullopt;
     }
 
     std::unique_ptr<x86_64_emulator> create_x86_64_emulator()
