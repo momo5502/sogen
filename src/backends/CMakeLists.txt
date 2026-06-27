@@ -11,3 +11,8 @@ endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
   add_subdirectory(kvm-emulator)
 endif()
+
+# FEX only JITs to AArch64, so the backend is restricted to ARM64 Linux/Android hosts.
+if (SOGEN_ENABLE_FEX AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID) AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+  add_subdirectory(fex-emulator)
+endif()

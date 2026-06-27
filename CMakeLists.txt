@@ -8,6 +8,9 @@ option(SOGEN_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(SOGEN_ENABLE_LTO "Enable interprocedural optimization (LTO/IPO)" ON)
 option(SOGEN_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
 option(SOGEN_ENABLE_REFLECTION "Enable reflection using the reflect library" ON)
+# FEX-Emu backend (AArch64 Linux/Android only). Off by default: FEXCore is a large external
+# dependency that is not vendored. See docs/fex-backend.md for how to point the build at FEXCore.
+option(SOGEN_ENABLE_FEX "Enable the FEX-Emu (x86 -> AArch64) backend" OFF)
 # SDL3 provides the host UI backend on every non-Emscripten platform, so it is
 # required and enabled by default everywhere. Emscripten uses the web UI backend
 # instead and skips SDL in deps/CMakeLists.txt. project() runs after this block,

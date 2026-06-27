@@ -33,3 +33,10 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID AND CMAKE_SYSTEM_PROCESSO
     kvm-emulator
   )
 endif()
+
+if (SOGEN_ENABLE_FEX AND (CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID) AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+  target_compile_definitions(backend-selection PRIVATE SOGEN_ENABLE_FEX=1)
+  target_link_libraries(backend-selection PRIVATE
+    fex-emulator
+  )
+endif()
