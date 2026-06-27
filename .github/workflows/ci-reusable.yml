@@ -430,6 +430,58 @@ jobs:
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
           retention-days: 1
 
+  build-fex:
+    name: Build FEX Backend (Linux arm64)
+    runs-on: ubuntu-24.04-arm
+    env:
+      LLVM_VERSION: 21
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Clang
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 20
+          retry_wait_seconds: 60
+          command: |
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh ${{ env.LLVM_VERSION }}
+            sudo apt install -y clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }}
+            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ env.LLVM_VERSION }} 100
+            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ env.LLVM_VERSION }} 100
+            sudo update-alternatives --set cc /usr/bin/clang-${{ env.LLVM_VERSION }}
+            sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
+
+      - name: Install Build Dependencies
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              ninja-build python3 \
+              libasound2-dev libpulse-dev libjack-jackd2-dev libsndio-dev \
+              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+              libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+              libdrm-dev libgbm-dev libgl1-mesa-dev libegl-dev libgles-dev \
+              libdbus-1-dev libudev-dev \
+              libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
+
+      # Build only the FEX backend (and its FEXCore_Base dependency). FEX is added EXCLUDE_FROM_ALL,
+      # so this does not build FEX's loader/server tools.
+      - name: CMake Configure
+        run: cmake --preset=release
+
+      - name: Build FEX backend
+        run: cmake --build --preset=release --target fex-emulator
+
   test:
     name: Test
     runs-on: ${{ matrix.runner }}
@@ -1120,6 +1172,7 @@ jobs:
         create-emulation-root,
         build,
         build-isolate,
+        build-fex,
         test,
         win-test,
         verify-formatting,

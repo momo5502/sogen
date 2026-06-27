@@ -69,24 +69,29 @@ the NT status in `RAX`; the handler returns that value so FEX preserves it.
 
 ## Build
 
-The backend is **enabled automatically on ARM64 Linux/Android hosts whenever FEXCore is available** —
-there is no manual `SOGEN_ENABLE_FEX` toggle to flip. FEXCore is **not** vendored as a submodule (it is
-large and ARM64-host-specific), so the top-level CMake probes for it:
+FEX is vendored as a git submodule (`deps/FEX`) and built **in-tree** from source — there is no manual
+toggle. The top-level CMake enables the backend automatically when all of these hold:
 
-- If `find_package(FEXCore)` succeeds, or `SOGEN_FEX_ROOT` is set, the backend is built.
-- Otherwise it is **skipped with a status message** (not a hard error), so arm64 builds that don't have
-  FEX installed — e.g. the Android CI job — keep working.
+- target is **ARM64 Linux** (not Android: the NDK's libc++ lacks `std::atomic_ref`, which FEX needs),
+- the compiler is **Clang** (FEX rejects GCC/MSVC), and
+- the `deps/FEX` submodule is checked out.
+
+Otherwise the backend is silently skipped, so all other builds are unaffected. FEX is added to the
+build with `EXCLUDE_FROM_ALL` and only its `FEXCore_Base` library (plus transitive deps) is compiled
+when `fex-emulator` links it — FEX's FEXLoader/FEXServer tools are not built. Embedder-hostile FEX
+options (its custom allocator/jemalloc, LTO, telemetry, tools, tests) are disabled in
+`deps/CMakeLists.txt`.
 
 ```sh
-# On an arm64 Linux/Android host, point the build at a FEX checkout/install:
-cmake --preset=release -DSOGEN_FEX_ROOT=/path/to/fex/install
-# ...or just have FEXCore discoverable via find_package(FEXCore) and it is picked up automatically.
+# On an arm64 Linux host with Clang:
+git submodule update --init --recursive deps/FEX
+cmake --preset=release   # FEX backend auto-enables
+cmake --build --preset=release --target fex-emulator
 ```
 
-Internally the top-level CMake resolves an effective `SOGEN_ENABLE_FEX` from (ARM64 host + FEXCore
-availability); `src/backends/CMakeLists.txt` adds the subdirectory and `backend-selection` links
-`fex-emulator`, defines `SOGEN_ENABLE_FEX`, adds `backend_type::fex`, and honors `EMULATOR_FEX=1`. The
-Python `Backend` enum gains `fex`.
+CI builds it via the `Build FEX Backend (Linux arm64)` job on an `ubuntu-24.04-arm` runner with Clang.
+`backend-selection` links `fex-emulator`, defines `SOGEN_ENABLE_FEX`, adds `backend_type::fex`, and
+honors `EMULATOR_FEX=1`; the Python `Backend` enum gains `fex`.
 
 ## Selecting the backend
 

@@ -61,16 +61,14 @@ endif()
 # skip the backend (rather than hard-failing) when absent - otherwise every arm64 build without FEX
 # installed (e.g. the Android CI job) would break. Point -DSOGEN_FEX_ROOT=<path> at a FEX checkout/
 # install, or make FEXCore discoverable via find_package(FEXCore), to enable it.
-if((CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID) AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
-  find_package(FEXCore CONFIG QUIET)
-  if(FEXCore_FOUND OR SOGEN_FEX_ROOT)
-    set(SOGEN_ENABLE_FEX ON)
-    message(STATUS "FEX backend: enabled (FEXCore found)")
-  else()
-    set(SOGEN_ENABLE_FEX OFF)
-    message(STATUS "FEX backend: ARM64 host detected but FEXCore was not found - skipping. "
-                   "Set -DSOGEN_FEX_ROOT=<path to FEX> to enable it.")
-  endif()
+# FEX is vendored as a submodule (deps/FEX) and built in-tree. It requires Clang and only JITs to
+# AArch64, and its headers need a libstdc++ with std::atomic_ref (the Android NDK's libc++ lacks it),
+# so it is restricted to ARM64 Linux + Clang (not Android/NDK). Enabled automatically when those hold
+# and the submodule is checked out.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64"
+   AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/FEX/CMakeLists.txt")
+  set(SOGEN_ENABLE_FEX ON)
+  message(STATUS "FEX backend: enabled (ARM64 Linux + Clang, deps/FEX present)")
 else()
   set(SOGEN_ENABLE_FEX OFF)
 endif()

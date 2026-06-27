@@ -107,3 +107,23 @@ add_subdirectory(capstone)
 
 include(googletest.cmake)
 include(zstd.cmake)
+
+##########################################
+
+# FEX-Emu (x86 -> AArch64 JIT). Only built when the FEX backend is enabled (ARM64 Linux + Clang,
+# resolved at the top level). FEX is a full CMake project of its own; add it EXCLUDE_FROM_ALL so only
+# the FEXCore_Base library and its transitive dependencies build when fex-emulator links them - not
+# FEX's FEXLoader/FEXServer tools. Optional/embedder-hostile features are trimmed off.
+if(SOGEN_ENABLE_FEX)
+  set(BUILD_FEXCONFIG OFF CACHE BOOL "" FORCE)
+  set(BUILD_THUNKS OFF CACHE BOOL "" FORCE)
+  set(BUILD_FEX_LINUX_TESTS OFF CACHE BOOL "" FORCE)
+  set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+  set(ENABLE_LTO OFF CACHE BOOL "" FORCE)
+  set(ENABLE_CCACHE OFF CACHE BOOL "" FORCE)
+  set(ENABLE_OFFLINE_TELEMETRY OFF CACHE BOOL "" FORCE)
+  # Do not let FEX replace the process allocator; sogen owns it when FEXCore is embedded.
+  set(ENABLE_FEX_ALLOCATOR OFF CACHE BOOL "" FORCE)
+  set(ENABLE_JEMALLOC_GLIBC_ALLOC OFF CACHE BOOL "" FORCE)
+  add_subdirectory(FEX EXCLUDE_FROM_ALL)
+endif()

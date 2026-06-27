@@ -17,36 +17,9 @@ target_include_directories(fex-emulator INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 target_link_libraries(fex-emulator PUBLIC emulator)
 target_link_libraries(fex-emulator PRIVATE emulator-common)
 
-# FEXCore is not vendored as a submodule (it is a large, ARM64-host-specific dependency). Locate a
-# prebuilt/installed FEXCore. Either point SOGEN_FEX_ROOT at a FEX checkout/install prefix, or have
-# FEXCore discoverable via CMake's package config / pkg-config.
-find_package(FEXCore CONFIG QUIET)
-
-if(FEXCore_FOUND)
-  target_link_libraries(fex-emulator PRIVATE FEXCore::FEXCore)
-else()
-  if(NOT SOGEN_FEX_ROOT)
-    # The top-level CMake only adds this subdirectory once FEXCore is known to be available, so this
-    # path should be unreachable; keep it as a guard in case the target is built standalone.
-    message(FATAL_ERROR
-      "FEX backend requested but FEXCore was not found. Set -DSOGEN_FEX_ROOT=<path to FEX install/checkout> "
-      "or make FEXCore discoverable via find_package(FEXCore).")
-  endif()
-
-  find_path(FEXCORE_INCLUDE_DIR
-    NAMES FEXCore/Core/Context.h
-    HINTS "${SOGEN_FEX_ROOT}/include" "${SOGEN_FEX_ROOT}/FEXCore/include")
-
-  find_library(FEXCORE_LIBRARY
-    NAMES FEXCore
-    HINTS "${SOGEN_FEX_ROOT}/lib" "${SOGEN_FEX_ROOT}/build" "${SOGEN_FEX_ROOT}")
-
-  if(NOT FEXCORE_INCLUDE_DIR OR NOT FEXCORE_LIBRARY)
-    message(FATAL_ERROR "Could not locate FEXCore headers/library under SOGEN_FEX_ROOT=${SOGEN_FEX_ROOT}")
-  endif()
-
-  target_include_directories(fex-emulator PRIVATE "${FEXCORE_INCLUDE_DIR}")
-  target_link_libraries(fex-emulator PRIVATE "${FEXCORE_LIBRARY}")
-endif()
+# FEXCore is built in-tree from the deps/FEX submodule (see deps/CMakeLists.txt). Link its static
+# library target; it carries the FEXCore public include directory and transitive deps PUBLICly.
+target_include_directories(fex-emulator PRIVATE "${CMAKE_SOURCE_DIR}/deps/FEX/FEXCore/include")
+target_link_libraries(fex-emulator PRIVATE FEXCore_Base)
 
 sogen_strip_target(fex-emulator)
