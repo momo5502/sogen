@@ -201,6 +201,11 @@ namespace sogen
 #define WM_KEYDOWN           0x0100
 #define WM_KEYUP             0x0101
 #define WM_CHAR              0x0102
+#define WM_DEADCHAR          0x0103
+#define WM_SYSKEYDOWN        0x0104
+#define WM_SYSKEYUP          0x0105
+#define WM_SYSCHAR           0x0106
+#define WM_SYSDEADCHAR       0x0107
 #define WM_MOUSEMOVE         0x0200
 #define WM_LBUTTONDOWN       0x0201
 #define WM_LBUTTONUP         0x0202

@@ -13,9 +13,6 @@ namespace sogen
     namespace
     {
 #ifdef SOGEN_HAS_SDL3
-        constexpr uint32_t wm_keyup = 0x0101;
-        constexpr uint32_t wm_char = 0x0102;
-
 #ifdef _WIN32
         void apply_application_icon(SDL_Window* window)
         {
@@ -629,7 +626,7 @@ namespace sogen
                             const auto text = u8_to_u16(event.text.text ? std::string_view{event.text.text} : std::string_view{});
                             for (const auto ch : text)
                             {
-                                this->post_event(guest, wm_char, ch, 0);
+                                this->post_event(guest, WM_CHAR, ch, 0);
                             }
                         }
                         break;
