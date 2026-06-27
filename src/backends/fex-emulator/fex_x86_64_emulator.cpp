@@ -111,8 +111,7 @@ namespace sogen::fex
 
         uint64_t HandleSyscall(FEXCore::Core::CpuStateFrame* frame, FEXCore::HLE::SyscallArguments* args) override;
         FEXCore::HLE::SyscallABI GetSyscallABI(uint64_t syscall) override;
-        FEXCore::HLE::ExecutableRangeInfo QueryGuestExecutableRange(FEXCore::Core::InternalThreadState* thread,
-                                                                    uint64_t address) override;
+        FEXCore::HLE::ExecutableRangeInfo QueryGuestExecutableRange(FEXCore::Core::InternalThreadState* thread, uint64_t address) override;
 
       private:
         fex_x86_64_emulator& emulator_;
@@ -552,8 +551,7 @@ namespace sogen::fex
 
         // --[ memory_interface (private) ]-----------------------------------------------------------
 
-        void map_mmio(uint64_t /*address*/, size_t /*size*/, mmio_read_callback /*read_cb*/,
-                      mmio_write_callback /*write_cb*/) override
+        void map_mmio(uint64_t /*address*/, size_t /*size*/, mmio_read_callback /*read_cb*/, mmio_write_callback /*write_cb*/) override
         {
             // FEX has no trap-and-emulate path for arbitrary MMIO since the guest runs natively. This
             // would need a no-access guard page plus a SIGSEGV handler that decodes the faulting access.
@@ -682,8 +680,8 @@ namespace sogen::fex
         void create_thread()
         {
             // Seed the FEX thread from the staged CPUState the loader populated before the first start().
-            this->thread_ = this->context_->CreateThread(this->staged_state_.rip, this->staged_state_.gregs[detail::greg_rsp],
-                                                         &this->staged_state_);
+            this->thread_ =
+                this->context_->CreateThread(this->staged_state_.rip, this->staged_state_.gregs[detail::greg_rsp], &this->staged_state_);
         }
 
         // CPUState is owned by the thread frame once a thread exists. Before the thread is created we
@@ -724,13 +722,20 @@ namespace sogen::fex
             const auto& state = this->cpu_state();
             switch (index)
             {
-            case 0: return state.es_idx;
-            case 1: return state.cs_idx;
-            case 2: return state.ss_idx;
-            case 3: return state.ds_idx;
-            case 4: return state.fs_idx;
-            case 5: return state.gs_idx;
-            default: return 0;
+            case 0:
+                return state.es_idx;
+            case 1:
+                return state.cs_idx;
+            case 2:
+                return state.ss_idx;
+            case 3:
+                return state.ds_idx;
+            case 4:
+                return state.fs_idx;
+            case 5:
+                return state.gs_idx;
+            default:
+                return 0;
             }
         }
 
@@ -741,13 +746,26 @@ namespace sogen::fex
             auto& state = this->cpu_state();
             switch (index)
             {
-            case 0: state.es_idx = selector; break;
-            case 1: state.cs_idx = selector; break;
-            case 2: state.ss_idx = selector; break;
-            case 3: state.ds_idx = selector; break;
-            case 4: state.fs_idx = selector; break;
-            case 5: state.gs_idx = selector; break;
-            default: break;
+            case 0:
+                state.es_idx = selector;
+                break;
+            case 1:
+                state.cs_idx = selector;
+                break;
+            case 2:
+                state.ss_idx = selector;
+                break;
+            case 3:
+                state.ds_idx = selector;
+                break;
+            case 4:
+                state.fs_idx = selector;
+                break;
+            case 5:
+                state.gs_idx = selector;
+                break;
+            default:
+                break;
             }
         }
 
@@ -808,8 +826,7 @@ namespace sogen::fex
     // fex_syscall_handler method bodies (fex_x86_64_emulator is now complete).
     // -----------------------------------------------------------------------------------------------
 
-    uint64_t fex_syscall_handler::HandleSyscall(FEXCore::Core::CpuStateFrame* /*frame*/,
-                                                FEXCore::HLE::SyscallArguments* /*args*/)
+    uint64_t fex_syscall_handler::HandleSyscall(FEXCore::Core::CpuStateFrame* /*frame*/, FEXCore::HLE::SyscallArguments* /*args*/)
     {
         auto* hook = this->emulator_.syscall_hook_;
         if (hook != nullptr && hook->callback)
@@ -835,8 +852,8 @@ namespace sogen::fex
         return FEXCore::HLE::SyscallABI{.NumArgs = 6, .HasReturn = true, .HostSyscallNumber = -1};
     }
 
-    FEXCore::HLE::ExecutableRangeInfo fex_syscall_handler::QueryGuestExecutableRange(
-        FEXCore::Core::InternalThreadState* /*thread*/, uint64_t /*address*/)
+    FEXCore::HLE::ExecutableRangeInfo fex_syscall_handler::QueryGuestExecutableRange(FEXCore::Core::InternalThreadState* /*thread*/,
+                                                                                     uint64_t /*address*/)
     {
         return {}; // TODO(fex): report the containing mapped range for better cache invalidation.
     }

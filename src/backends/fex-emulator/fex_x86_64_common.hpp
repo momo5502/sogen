@@ -31,14 +31,14 @@ namespace sogen::fex::detail
     enum class register_kind : uint8_t
     {
         unsupported,
-        gpr,    // general purpose register (gregs[index], possibly a sub-register)
-        rip,    // instruction pointer
-        flags,  // (r/e)flags - reconstructed via the FEX context
-        xmm,    // xmm0..xmm15 (128 bit, held in CPUState::xmm)
-        mm,     // mm0..mm7 / st0..st7 mantissa (CPUState::mm)
-        mxcsr,  //
-        fcw,    // x87 control word
-        fsw,    // x87 status word
+        gpr,   // general purpose register (gregs[index], possibly a sub-register)
+        rip,   // instruction pointer
+        flags, // (r/e)flags - reconstructed via the FEX context
+        xmm,   // xmm0..xmm15 (128 bit, held in CPUState::xmm)
+        mm,    // mm0..mm7 / st0..st7 mantissa (CPUState::mm)
+        mxcsr, //
+        fcw,   // x87 control word
+        fsw,   // x87 status word
         fs_base,
         gs_base,
         segment, // segment selector (cs/ds/es/fs/gs/ss index)
@@ -47,9 +47,9 @@ namespace sogen::fex::detail
     // Access description for a (sub-)register that lives inside a 64 bit greg slot.
     struct gpr_access
     {
-        int index = greg_invalid; // index into gregs[]
-        size_t byte_offset = 0;   // 0 for low part, 1 for the *h byte registers
-        size_t width = 8;         // access width in bytes
+        int index = greg_invalid;    // index into gregs[]
+        size_t byte_offset = 0;      // 0 for low part, 1 for the *h byte registers
+        size_t width = 8;            // access width in bytes
         bool zero_extend_32 = false; // 32 bit writes clear the upper 32 bits (x86-64 semantics)
     };
 
@@ -65,60 +65,105 @@ namespace sogen::fex::detail
         switch (reg)
         {
         // 64 bit
-        case x86_register::rax: return gpr_access{greg_rax, 0, 8};
-        case x86_register::rcx: return gpr_access{greg_rcx, 0, 8};
-        case x86_register::rdx: return gpr_access{greg_rdx, 0, 8};
-        case x86_register::rbx: return gpr_access{greg_rbx, 0, 8};
-        case x86_register::rsp: return gpr_access{greg_rsp, 0, 8};
-        case x86_register::rbp: return gpr_access{greg_rbp, 0, 8};
-        case x86_register::rsi: return gpr_access{greg_rsi, 0, 8};
-        case x86_register::rdi: return gpr_access{greg_rdi, 0, 8};
-        case x86_register::r8: return gpr_access{greg_r8 + 0, 0, 8};
-        case x86_register::r9: return gpr_access{greg_r8 + 1, 0, 8};
-        case x86_register::r10: return gpr_access{greg_r8 + 2, 0, 8};
-        case x86_register::r11: return gpr_access{greg_r8 + 3, 0, 8};
-        case x86_register::r12: return gpr_access{greg_r8 + 4, 0, 8};
-        case x86_register::r13: return gpr_access{greg_r8 + 5, 0, 8};
-        case x86_register::r14: return gpr_access{greg_r8 + 6, 0, 8};
-        case x86_register::r15: return gpr_access{greg_r8 + 7, 0, 8};
+        case x86_register::rax:
+            return gpr_access{greg_rax, 0, 8};
+        case x86_register::rcx:
+            return gpr_access{greg_rcx, 0, 8};
+        case x86_register::rdx:
+            return gpr_access{greg_rdx, 0, 8};
+        case x86_register::rbx:
+            return gpr_access{greg_rbx, 0, 8};
+        case x86_register::rsp:
+            return gpr_access{greg_rsp, 0, 8};
+        case x86_register::rbp:
+            return gpr_access{greg_rbp, 0, 8};
+        case x86_register::rsi:
+            return gpr_access{greg_rsi, 0, 8};
+        case x86_register::rdi:
+            return gpr_access{greg_rdi, 0, 8};
+        case x86_register::r8:
+            return gpr_access{greg_r8 + 0, 0, 8};
+        case x86_register::r9:
+            return gpr_access{greg_r8 + 1, 0, 8};
+        case x86_register::r10:
+            return gpr_access{greg_r8 + 2, 0, 8};
+        case x86_register::r11:
+            return gpr_access{greg_r8 + 3, 0, 8};
+        case x86_register::r12:
+            return gpr_access{greg_r8 + 4, 0, 8};
+        case x86_register::r13:
+            return gpr_access{greg_r8 + 5, 0, 8};
+        case x86_register::r14:
+            return gpr_access{greg_r8 + 6, 0, 8};
+        case x86_register::r15:
+            return gpr_access{greg_r8 + 7, 0, 8};
 
         // 32 bit (writes zero-extend to 64 bit)
-        case x86_register::eax: return gpr_access{greg_rax, 0, 4, true};
-        case x86_register::ecx: return gpr_access{greg_rcx, 0, 4, true};
-        case x86_register::edx: return gpr_access{greg_rdx, 0, 4, true};
-        case x86_register::ebx: return gpr_access{greg_rbx, 0, 4, true};
-        case x86_register::esp: return gpr_access{greg_rsp, 0, 4, true};
-        case x86_register::ebp: return gpr_access{greg_rbp, 0, 4, true};
-        case x86_register::esi: return gpr_access{greg_rsi, 0, 4, true};
-        case x86_register::edi: return gpr_access{greg_rdi, 0, 4, true};
+        case x86_register::eax:
+            return gpr_access{greg_rax, 0, 4, true};
+        case x86_register::ecx:
+            return gpr_access{greg_rcx, 0, 4, true};
+        case x86_register::edx:
+            return gpr_access{greg_rdx, 0, 4, true};
+        case x86_register::ebx:
+            return gpr_access{greg_rbx, 0, 4, true};
+        case x86_register::esp:
+            return gpr_access{greg_rsp, 0, 4, true};
+        case x86_register::ebp:
+            return gpr_access{greg_rbp, 0, 4, true};
+        case x86_register::esi:
+            return gpr_access{greg_rsi, 0, 4, true};
+        case x86_register::edi:
+            return gpr_access{greg_rdi, 0, 4, true};
 
         // 16 bit
-        case x86_register::ax: return gpr_access{greg_rax, 0, 2};
-        case x86_register::cx: return gpr_access{greg_rcx, 0, 2};
-        case x86_register::dx: return gpr_access{greg_rdx, 0, 2};
-        case x86_register::bx: return gpr_access{greg_rbx, 0, 2};
-        case x86_register::sp: return gpr_access{greg_rsp, 0, 2};
-        case x86_register::bp: return gpr_access{greg_rbp, 0, 2};
-        case x86_register::si: return gpr_access{greg_rsi, 0, 2};
-        case x86_register::di: return gpr_access{greg_rdi, 0, 2};
+        case x86_register::ax:
+            return gpr_access{greg_rax, 0, 2};
+        case x86_register::cx:
+            return gpr_access{greg_rcx, 0, 2};
+        case x86_register::dx:
+            return gpr_access{greg_rdx, 0, 2};
+        case x86_register::bx:
+            return gpr_access{greg_rbx, 0, 2};
+        case x86_register::sp:
+            return gpr_access{greg_rsp, 0, 2};
+        case x86_register::bp:
+            return gpr_access{greg_rbp, 0, 2};
+        case x86_register::si:
+            return gpr_access{greg_rsi, 0, 2};
+        case x86_register::di:
+            return gpr_access{greg_rdi, 0, 2};
 
         // 8 bit low
-        case x86_register::al: return gpr_access{greg_rax, 0, 1};
-        case x86_register::cl: return gpr_access{greg_rcx, 0, 1};
-        case x86_register::dl: return gpr_access{greg_rdx, 0, 1};
-        case x86_register::bl: return gpr_access{greg_rbx, 0, 1};
-        case x86_register::spl: return gpr_access{greg_rsp, 0, 1};
-        case x86_register::bpl: return gpr_access{greg_rbp, 0, 1};
-        case x86_register::sil: return gpr_access{greg_rsi, 0, 1};
-        case x86_register::dil: return gpr_access{greg_rdi, 0, 1};
+        case x86_register::al:
+            return gpr_access{greg_rax, 0, 1};
+        case x86_register::cl:
+            return gpr_access{greg_rcx, 0, 1};
+        case x86_register::dl:
+            return gpr_access{greg_rdx, 0, 1};
+        case x86_register::bl:
+            return gpr_access{greg_rbx, 0, 1};
+        case x86_register::spl:
+            return gpr_access{greg_rsp, 0, 1};
+        case x86_register::bpl:
+            return gpr_access{greg_rbp, 0, 1};
+        case x86_register::sil:
+            return gpr_access{greg_rsi, 0, 1};
+        case x86_register::dil:
+            return gpr_access{greg_rdi, 0, 1};
 
         // 8 bit high
-        case x86_register::ah: return gpr_access{greg_rax, 1, 1};
-        case x86_register::ch: return gpr_access{greg_rcx, 1, 1};
-        case x86_register::dh: return gpr_access{greg_rdx, 1, 1};
-        case x86_register::bh: return gpr_access{greg_rbx, 1, 1};
+        case x86_register::ah:
+            return gpr_access{greg_rax, 1, 1};
+        case x86_register::ch:
+            return gpr_access{greg_rcx, 1, 1};
+        case x86_register::dh:
+            return gpr_access{greg_rdx, 1, 1};
+        case x86_register::bh:
+            return gpr_access{greg_rbx, 1, 1};
 
-        default: return std::nullopt;
+        default:
+            return std::nullopt;
         }
     }
 
@@ -128,13 +173,20 @@ namespace sogen::fex::detail
         // matching *_idx field; base registers are handled separately via fs_base/gs_base.
         switch (reg)
         {
-        case x86_register::es: return 0;
-        case x86_register::cs: return 1;
-        case x86_register::ss: return 2;
-        case x86_register::ds: return 3;
-        case x86_register::fs: return 4;
-        case x86_register::gs: return 5;
-        default: return -1;
+        case x86_register::es:
+            return 0;
+        case x86_register::cs:
+            return 1;
+        case x86_register::ss:
+            return 2;
+        case x86_register::ds:
+            return 3;
+        case x86_register::fs:
+            return 4;
+        case x86_register::gs:
+            return 5;
+        default:
+            return -1;
         }
     }
 
@@ -175,8 +227,7 @@ namespace sogen::fex::detail
 
         if (reg >= x86_register::xmm0 && reg <= x86_register::xmm15)
         {
-            return register_mapping{.kind = register_kind::xmm,
-                                    .index = static_cast<int>(reg) - static_cast<int>(x86_register::xmm0)};
+            return register_mapping{.kind = register_kind::xmm, .index = static_cast<int>(reg) - static_cast<int>(x86_register::xmm0)};
         }
 
         if (reg >= x86_register::mm0 && reg <= x86_register::mm7)
