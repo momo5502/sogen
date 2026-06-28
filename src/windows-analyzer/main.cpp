@@ -63,6 +63,8 @@ namespace sogen
             std::filesystem::path report_path{};
             std::string report_format{"jsonl"};
             std::string whp_execution_hook_mode{"auto"};
+            std::optional<backend_type> backend{};
+            bool disable_instruction_precision{false};
             std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
             std::filesystem::path emulation_root{};
             std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
@@ -464,10 +466,36 @@ namespace sogen
         {
             return {
                 .use_relative_time = options.reproducible,
+                .use_instruction_precision = !options.disable_instruction_precision,
                 .emulation_root = options.emulation_root,
                 .registry_directory = options.registry_path,
                 .path_mappings = options.path_mappings,
             };
+        }
+
+        backend_type parse_backend_type(const std::string_view name)
+        {
+            if (name == "unicorn")
+            {
+                return backend_type::unicorn;
+            }
+
+            if (name == "icicle")
+            {
+                return backend_type::icicle;
+            }
+
+            if (name == "whp")
+            {
+                return backend_type::whp;
+            }
+
+            if (name == "kvm")
+            {
+                return backend_type::kvm;
+            }
+
+            throw std::runtime_error("Unknown backend '" + std::string(name) + "' (supported: unicorn, icicle, whp, kvm)");
         }
 
         hook_interface::memory_execution_hook_mode parse_memory_execution_hook_mode(const std::string_view mode)
@@ -507,7 +535,7 @@ namespace sogen
 
         std::unique_ptr<x86_64_emulator> create_configured_backend(const analysis_options& options)
         {
-            auto emu = create_x86_64_emulator_from_environment();
+            auto emu = options.backend ? create_x86_64_emulator(*options.backend) : create_x86_64_emulator_from_environment();
             emu->set_memory_execution_hook_mode(parse_memory_execution_hook_mode(options.whp_execution_hook_mode));
             return emu;
         }
@@ -846,6 +874,8 @@ namespace sogen
             printf("  --report <path>            Write machine-readable analysis events to a file\n");
             printf("  --report-format <format>   Report format (supported: jsonl)\n");
             printf("  --whp-exec-hook <mode>     WHP memory execution hook mode: auto or int3 (default: auto)\n");
+            printf("  --backend <name>           Select CPU backend: unicorn, icicle, whp or kvm (overrides env)\n");
+            printf("  -nip, --no-inst-precision  Disable per-instruction precision (faster, less precise)\n");
             printf("  --call-count               Prefix function and syscall lines with a traced-call count\n");
             printf("  -t, --tenet-trace          Enable Tenet tracer\n");
             printf("  -i, --ignore <funcs>       Comma-separated list of functions to ignore\n");
@@ -1034,6 +1064,20 @@ namespace sogen
                     {
                         throw std::runtime_error("WHP memory execution hook mode must be auto or int3");
                     }
+                }
+                else if (arg == "--backend")
+                {
+                    if (args.size() < 2)
+                    {
+                        throw std::runtime_error("No backend provided after --backend");
+                    }
+
+                    arg_it = args.erase(arg_it);
+                    options.backend = parse_backend_type(args[0]);
+                }
+                else if (arg == "-nip" || arg == "--no-inst-precision")
+                {
+                    options.disable_instruction_precision = true;
                 }
                 else if (arg == "-i" || arg == "--ignore")
                 {
