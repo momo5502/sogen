@@ -173,6 +173,23 @@ namespace sogen
         }
     };
 
+    struct window_update_state : completion_state
+    {
+        // Window handles still to be painted (WM_PAINT), back() is dispatched next.
+        std::vector<uint64_t> pending{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write_vector(this->pending);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read_vector(this->pending);
+        }
+    };
+
     class windows_emulator;
 
     class syscall_dispatcher

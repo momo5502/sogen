@@ -543,6 +543,7 @@ namespace sogen
         BOOL handle_NtUserInvalidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
         BOOL handle_NtUserValidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect);
         BOOL handle_NtUserUpdateWindow(const syscall_context& c, hwnd hwnd);
+        BOOL completion_NtUserUpdateWindow(const syscall_context& c, hwnd hwnd);
         int32_t handle_NtUserGetKeyNameText(const syscall_context& c, int32_t l_param, emulator_pointer buffer, int32_t character_count);
         BOOL handle_NtUserPostMessage(const syscall_context& c, hwnd hwnd, UINT msg, uint64_t wParam, uint64_t lParam);
         BOOL handle_NtUserPostThreadMessage(const syscall_context& c, DWORD id_thread, UINT msg, uint64_t wParam, uint64_t lParam);
@@ -721,6 +722,8 @@ namespace sogen
         COLORREF handle_NtGdiGetPixel(const syscall_context& c, hdc dc, int x, int y);
         BOOL handle_NtGdiBitBlt(const syscall_context& c, hdc dst_dc, int x_dst, int y_dst, int width, int height, hdc src_dc, int x_src,
                                 int y_src, DWORD rop, DWORD cr_back_color, FLONG fl);
+        BOOL handle_NtGdiStretchBlt(const syscall_context& c, hdc dst_dc, int x_dst, int y_dst, int dst_width, int dst_height, hdc src_dc,
+                                    int x_src, int y_src, int src_width, int src_height, DWORD rop, DWORD cr_back_color);
         BOOL handle_NtGdiPolyPatBlt(const syscall_context& c, hdc dc, DWORD rop, emulator_pointer poly, DWORD count, DWORD mode);
         BOOL handle_NtGdiExtTextOutW(const syscall_context& c, hdc dc, LONG x, LONG y, UINT options, emulator_pointer rect,
                                      emulator_pointer text, UINT count, emulator_pointer dx, DWORD code_page);
@@ -1252,6 +1255,7 @@ namespace sogen
         add_handler(NtGdiRectangle);
         add_handler(NtGdiPatBlt);
         add_handler(NtGdiBitBlt);
+        add_handler(NtGdiStretchBlt);
         add_handler(NtGdiPolyPatBlt);
         add_handler(NtGdiExtTextOutW);
         add_handler(NtGdiGetRealizationInfo);
@@ -1590,6 +1594,7 @@ namespace sogen
         add_callback(NtUserDestroyWindow, window_destroy_state);
         add_callback(NtUserShowWindow, window_show_state);
         add_callback(NtUserMessageCall, message_call_state);
+        add_callback(NtUserUpdateWindow, window_update_state);
         add_stateless_callback(NtUserEnumDisplayMonitors);
 
 #undef add_callback

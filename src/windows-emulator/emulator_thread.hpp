@@ -184,6 +184,7 @@ namespace sogen
         NtUserDestroyWindow,
         NtUserShowWindow,
         NtUserMessageCall,
+        NtUserUpdateWindow,
         NtUserEnumDisplayMonitors,
     };
 

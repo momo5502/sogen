@@ -3141,6 +3141,37 @@ namespace sogen
             return TRUE;
         }
 
+        void collect_pending_paint_tree(const syscall_context& c, window& win, std::vector<uint64_t>& order)
+        {
+            if (win.update_pending && win.thread_id == c.proc.active_thread->id)
+            {
+                order.push_back(static_cast<uint64_t>(win.handle));
+            }
+
+            for (auto& [index, child] : c.proc.windows)
+            {
+                (void)index;
+                if (child.parent_handle == win.handle && (child.style & WS_VISIBLE) != 0)
+                {
+                    collect_pending_paint_tree(c, child, order);
+                }
+            }
+        }
+
+        BOOL dispatch_pending_window_paint(const syscall_context& c, window_update_state state)
+        {
+            while (!state.pending.empty())
+            {
+                if (auto* win = c.proc.windows.get(static_cast<hwnd>(state.pending.back())))
+                {
+                    dispatch_window_message(c, callback_id::NtUserUpdateWindow, std::move(state), *win, WM_PAINT);
+                    return {};
+                }
+                state.pending.pop_back();
+            }
+            return TRUE;
+        }
+
         BOOL handle_NtUserUpdateWindow(const syscall_context& c, const hwnd hwnd)
         {
             auto* win = c.proc.windows.get(hwnd);
@@ -3149,11 +3180,50 @@ namespace sogen
                 return FALSE;
             }
 
-            if (win->update_pending)
+            // UpdateWindow paints synchronously, bypassing the message queue. Apps such as the open-iw5 splash
+            // rely on this to display content without running a message loop, so a merely queued WM_PAINT would
+            // never be pumped. Dispatch WM_PAINT now to the window and its invalid visible child controls.
+            // Cross-thread windows cannot be painted on this thread, so fall back to posting the paint.
+            if (win->thread_id != c.proc.active_thread->id)
             {
-                queue_window_paint(c, *win);
+                if (win->update_pending)
+                {
+                    queue_window_paint(c, *win);
+                }
+                return TRUE;
             }
-            return TRUE;
+
+            std::vector<uint64_t> order;
+            collect_pending_paint_tree(c, *win, order);
+            if (order.empty())
+            {
+                return TRUE;
+            }
+
+            // back() is dispatched first, so reverse the parent-first paint order into the queue.
+            window_update_state state{};
+            state.pending.assign(order.rbegin(), order.rend());
+            return dispatch_pending_window_paint(c, std::move(state));
+        }
+
+        BOOL completion_NtUserUpdateWindow(const syscall_context& c, const hwnd /*hwnd*/)
+        {
+            auto& state = c.get_completion_state<window_update_state>();
+
+            if (!state.pending.empty())
+            {
+                const auto painted = state.pending.back();
+                state.pending.pop_back();
+
+                if (auto* win = c.proc.windows.get(static_cast<hwnd>(painted)))
+                {
+                    (void)handle_NtGdiFlush(c);
+                    present_existing_guest_window_surface(c, *win);
+                    validate_window(*win);
+                }
+            }
+
+            return dispatch_pending_window_paint(c, std::move(state));
         }
 
         BOOL handle_NtUserPostMessage(const syscall_context& c, const hwnd hwnd, const UINT msg, const uint64_t wParam,
