@@ -758,6 +758,12 @@ namespace sogen
         char NumberOfProcessors;
     } SYSTEM_BASIC_INFORMATION64, *PSYSTEM_BASIC_INFORMATION64;
 
+    typedef struct _SYSTEM_CODEINTEGRITY_INFORMATION
+    {
+        ULONG Length;
+        ULONG CodeIntegrityOptions;
+    } SYSTEM_CODEINTEGRITY_INFORMATION, *PSYSTEM_CODEINTEGRITY_INFORMATION;
+
     typedef struct _SYSTEM_DEVICE_INFORMATION
     {
         ULONG NumberOfDisks;

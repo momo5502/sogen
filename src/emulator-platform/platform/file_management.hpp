@@ -526,6 +526,25 @@ namespace sogen
         char16_t FileName[1];
     } FILE_BOTH_DIR_INFORMATION, *PFILE_BOTH_DIR_INFORMATION;
 
+    typedef struct _FILE_ID_BOTH_DIR_INFORMATION
+    {
+        ULONG NextEntryOffset;
+        ULONG FileIndex;
+        LARGE_INTEGER CreationTime;
+        LARGE_INTEGER LastAccessTime;
+        LARGE_INTEGER LastWriteTime;
+        LARGE_INTEGER ChangeTime;
+        LARGE_INTEGER EndOfFile;
+        LARGE_INTEGER AllocationSize;
+        ULONG FileAttributes;
+        ULONG FileNameLength;
+        ULONG EaSize;
+        char ShortNameLength;
+        char16_t ShortName[12];
+        LARGE_INTEGER FileId;
+        char16_t FileName[1];
+    } FILE_ID_BOTH_DIR_INFORMATION, *PFILE_ID_BOTH_DIR_INFORMATION;
+
     typedef struct _FILE_RENAME_INFORMATION
     {
         BOOLEAN ReplaceIfExists;
