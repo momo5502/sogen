@@ -21,7 +21,21 @@ target_link_libraries(windows-analyzer PRIVATE
   windows-emulator
   windows-gdb-stub
   backend-selection
+  cli11
 )
+
+if(WIN)
+  # CLI11's ensure_utf8() resolves the UTF-8 command line through CommandLineToArgvW (shell32).
+  target_link_libraries(windows-analyzer PRIVATE shell32)
+endif()
+
+# main.cpp is a large translation unit (CLI11 plus the analysis code) that exceeds the COFF section
+# limit in Debug builds without the large-object format.
+if(MSVC)
+  target_compile_options(windows-analyzer PRIVATE /bigobj)
+elseif(MINGW)
+  target_compile_options(windows-analyzer PRIVATE -Wa,-mbig-obj)
+endif()
 
 if(SOGEN_ENABLE_REFLECTION)
   target_link_libraries(windows-analyzer PRIVATE

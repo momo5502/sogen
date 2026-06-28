@@ -4,7 +4,7 @@
 #include <utils/interupt_handler.hpp>
 #include <utils/win.hpp>
 
-#include <shellapi.h>
+#include <CLI/CLI.hpp>
 
 #include <array>
 #include <atomic>
@@ -45,11 +45,6 @@ namespace sogen::sandbox
             }
 
             return wide_args;
-        }
-
-        void print_help()
-        {
-            printf("Usage: sandbox <application> [args...]\n");
         }
 
         int run(const std::span<const std::string_view> args)
@@ -94,29 +89,29 @@ namespace sogen::sandbox
             return static_cast<int>(*exit_status);
         }
 
-        int run_main(const int argc, wchar_t** wargv)
+        int run_main(int argc, char** argv)
         {
+            CLI::App app{"Sogen Sandbox"};
+
+            // On Windows this resolves the UTF-8 arguments from the wide command line.
+            argv = app.ensure_utf8(argv);
+
+            // Stop parsing at the first positional (the application) and forward everything after it to the
+            // emulated program.
+            app.prefix_command();
+
+            CLI11_PARSE(app, argc, argv);
+
             try
             {
-                std::vector<std::string> args{};
-                for (int i = 1; i < argc; ++i)
+                const auto application = app.remaining();
+                if (application.empty())
                 {
-                    args.emplace_back(w_to_u8(wargv[i]));
-                }
-
-                std::vector<std::string_view> views{};
-                views.reserve(args.size());
-                for (const auto& str : args)
-                {
-                    views.push_back(str);
-                }
-
-                if (args.empty())
-                {
-                    print_help();
+                    puts(app.help().c_str());
                     return 1;
                 }
 
+                const std::vector<std::string_view> views{application.begin(), application.end()};
                 return run(views);
             }
             catch (const std::exception& e)
@@ -130,31 +125,10 @@ namespace sogen::sandbox
 
             return 1;
         }
-
-        int run_current_command_line()
-        {
-            int argc = 0;
-            auto** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-            if (!argv)
-            {
-                return 1;
-            }
-
-            const auto result = run_main(argc, argv);
-            LocalFree(argv);
-            return result;
-        }
     }
 }
 
-int wmain(const int argc, wchar_t** argv)
+int main(int argc, char** argv)
 {
-    (void)argc;
-    (void)argv;
-    return sogen::sandbox::run_current_command_line();
-}
-
-int WINAPI WinMain(HINSTANCE, HINSTANCE, PSTR, int)
-{
-    return sogen::sandbox::run_current_command_line();
+    return sogen::sandbox::run_main(argc, argv);
 }
