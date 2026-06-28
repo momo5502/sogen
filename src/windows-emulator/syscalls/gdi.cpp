@@ -6,6 +6,7 @@
 #include <array>
 #include <bit>
 #include <limits>
+#include <utils/buffer_accessor.hpp>
 
 // #define ENABLE_DXGK_LOGGING
 
@@ -469,17 +470,49 @@ namespace sogen
                     return;
                 }
 
-                const size_t row_bytes = static_cast<size_t>(surface.width) * sizeof(uint32_t);
-                if (surface.guest_stride < row_bytes || surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
+                if (surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
                 {
                     return;
                 }
 
-                for (uint32_t y = 0; y < surface.height; ++y)
+                if (surface.guest_bpp == 32)
                 {
-                    const uint32_t guest_row = surface.guest_top_down ? y : (surface.height - 1 - y);
-                    auto* dst = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
-                    c.emu.read_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, dst, row_bytes);
+                    const size_t row_bytes = static_cast<size_t>(surface.width) * sizeof(uint32_t);
+                    if (surface.guest_stride < row_bytes)
+                    {
+                        return;
+                    }
+
+                    for (uint32_t y = 0; y < surface.height; ++y)
+                    {
+                        const uint32_t guest_row = surface.guest_top_down ? y : (surface.height - 1 - y);
+                        auto* dst = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
+                        c.emu.read_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, dst, row_bytes);
+                    }
+                }
+                else if (surface.guest_bpp == 24)
+                {
+                    const size_t row_bytes = static_cast<size_t>(surface.width) * 3;
+                    if (surface.guest_stride < row_bytes)
+                    {
+                        return;
+                    }
+
+                    std::vector<uint8_t> row(row_bytes);
+                    for (uint32_t y = 0; y < surface.height; ++y)
+                    {
+                        const uint32_t guest_row = surface.guest_top_down ? y : (surface.height - 1 - y);
+                        c.emu.read_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, row.data(),
+                                          row_bytes);
+
+                        auto* dst = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
+                        for (uint32_t x = 0; x < surface.width; ++x)
+                        {
+                            const uint8_t* px = row.data() + static_cast<size_t>(x) * 3;
+                            dst[x] = static_cast<uint32_t>(px[0]) | (static_cast<uint32_t>(px[1]) << 8) |
+                                     (static_cast<uint32_t>(px[2]) << 16) | 0xFF000000u;
+                        }
+                    }
                 }
             }
 
@@ -595,17 +628,41 @@ namespace sogen
                     return;
                 }
 
-                const size_t row_bytes = static_cast<size_t>(surface.width) * sizeof(uint32_t);
-                if (surface.guest_stride < row_bytes || surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
+                if (surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
                 {
                     return;
                 }
 
+                if (surface.guest_bpp != 24 && surface.guest_bpp != 32)
+                {
+                    return;
+                }
+
+                const size_t bytes_per_pixel = surface.guest_bpp / 8;
+                const size_t row_bytes = static_cast<size_t>(surface.width) * bytes_per_pixel;
+                if (surface.guest_stride < row_bytes)
+                {
+                    return;
+                }
+
+                std::vector<uint8_t> row(row_bytes);
                 for (uint32_t y = 0; y < surface.height; ++y)
                 {
                     const uint32_t guest_row = surface.guest_top_down ? y : (surface.height - 1 - y);
                     const auto* src = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
-                    c.emu.write_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, src, row_bytes);
+                    for (uint32_t x = 0; x < surface.width; ++x)
+                    {
+                        uint8_t* px = row.data() + static_cast<size_t>(x) * bytes_per_pixel;
+                        const uint32_t pixel = src[x];
+                        px[0] = static_cast<uint8_t>(pixel & 0xFF);
+                        px[1] = static_cast<uint8_t>((pixel >> 8) & 0xFF);
+                        px[2] = static_cast<uint8_t>((pixel >> 16) & 0xFF);
+                        if (bytes_per_pixel == 4)
+                        {
+                            px[3] = static_cast<uint8_t>((pixel >> 24) & 0xFF);
+                        }
+                    }
+                    c.emu.write_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, row.data(), row_bytes);
                 }
             }
 
@@ -1966,6 +2023,7 @@ namespace sogen
             auto& surface = c.proc.gdi_bitmap_surfaces[handle_value];
             surface.guest_bits = guest_bits;
             surface.guest_stride = stride;
+            surface.guest_bpp = header.biBitCount;
             surface.guest_top_down = header.biHeight < 0;
             surface.guest_owns_memory = true;
 
@@ -2084,7 +2142,7 @@ namespace sogen
             c.emu.read_memory(info + 16, &compression, sizeof(compression));
 
             constexpr uint32_t bi_rgb = 0;
-            if (bit_count != 32 || compression != bi_rgb || bi_width <= 0)
+            if ((bit_count != 32 && bit_count != 24) || compression != bi_rgb || bi_width <= 0)
             {
                 c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count,
                                    compression, bi_width);
@@ -2095,7 +2153,9 @@ namespace sogen
             const auto src_width = static_cast<uint32_t>(bi_width);
             const auto src_height = static_cast<uint32_t>(top_down ? -bi_height : bi_height);
             const auto stored_rows = std::min(scan_lines, src_height);
-            const size_t stride = static_cast<size_t>(src_width) * sizeof(uint32_t);
+            const size_t bytes_per_pixel = bit_count / 8;
+            // DIB scanlines are DWORD-aligned, not tightly packed.
+            const size_t stride = ((static_cast<size_t>(src_width) * bit_count + 31u) / 32u) * 4u;
 
             std::vector<uint8_t> data(stride * stored_rows);
             if (data.empty())
@@ -2131,8 +2191,9 @@ namespace sogen
                     {
                         break;
                     }
-                    uint32_t pixel = 0;
-                    std::memcpy(&pixel, row + static_cast<size_t>(src_x) * sizeof(uint32_t), sizeof(pixel));
+                    const uint8_t* px = row + static_cast<size_t>(src_x) * bytes_per_pixel;
+                    const uint32_t pixel =
+                        static_cast<uint32_t>(px[0]) | (static_cast<uint32_t>(px[1]) << 8) | (static_cast<uint32_t>(px[2]) << 16);
                     set_surface_pixel(*surface, x_dest + origin_x + static_cast<int>(i), y_dest + origin_y + static_cast<int>(j),
                                       pixel | 0xFF000000u);
                 }
@@ -2183,7 +2244,7 @@ namespace sogen
             c.emu.read_memory(info + 0, &bi_size, sizeof(bi_size));
             c.emu.read_memory(info + 32, &clr_used, sizeof(clr_used)); // BITMAPINFOHEADER.biClrUsed
 
-            if ((bit_count != 4 && bit_count != 32) || compression != bi_rgb || bi_width <= 0 || bi_height == 0)
+            if ((bit_count != 4 && bit_count != 24 && bit_count != 32) || compression != bi_rgb || bi_width <= 0 || bi_height == 0)
             {
                 c.win_emu.log.warn("NtGdiStretchDIBitsInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count, compression,
                                    bi_width);
@@ -2269,6 +2330,12 @@ namespace sogen
                     {
                         std::memcpy(&pixel, row + static_cast<size_t>(img_x) * sizeof(uint32_t), sizeof(pixel));
                         pixel |= 0xFF000000u;
+                    }
+                    else if (bit_count == 24)
+                    {
+                        const uint8_t* px = row + static_cast<size_t>(img_x) * 3;
+                        pixel = static_cast<uint32_t>(px[0]) | (static_cast<uint32_t>(px[1]) << 8) | (static_cast<uint32_t>(px[2]) << 16) |
+                                0xFF000000u;
                     }
                     else // 4bpp BI_RGB
                     {
@@ -2435,8 +2502,32 @@ namespace sogen
                 return 0;
             }
 
-            std::vector<uint8_t> zeroed(object_size, 0);
-            c.emu.write_memory(buffer, zeroed.data(), zeroed.size());
+            std::vector<uint8_t> object_data(object_size, 0);
+
+            if (entry.Type == k_gdi_bitmap_type)
+            {
+                const auto bmp_it = c.proc.gdi_bitmap_surfaces.find(handle_value);
+                if (bmp_it != c.proc.gdi_bitmap_surfaces.end())
+                {
+                    const auto& surface = bmp_it->second;
+                    const auto bpp = static_cast<uint16_t>(surface.guest_bpp != 0 ? surface.guest_bpp : 32u);
+                    const auto width_bytes = surface.guest_stride != 0
+                                                 ? surface.guest_stride
+                                                 : static_cast<uint32_t>(((static_cast<uint64_t>(surface.width) * bpp + 31u) / 32u) * 4u);
+
+                    // BITMAP (32-bit layout): bmType@0, bmWidth@4, bmHeight@8, bmWidthBytes@12,
+                    // bmPlanes@16 (WORD), bmBitsPixel@18 (WORD), bmBits@20 (PVOID32).
+                    const utils::safe_buffer_accessor<uint8_t> bitmap{object_data};
+                    bitmap.as<int32_t>(4).set(static_cast<int32_t>(surface.width));
+                    bitmap.as<int32_t>(8).set(static_cast<int32_t>(surface.height));
+                    bitmap.as<int32_t>(12).set(static_cast<int32_t>(width_bytes));
+                    bitmap.as<uint16_t>(16).set(1);
+                    bitmap.as<uint16_t>(18).set(bpp);
+                    bitmap.as<uint32_t>(20).set(static_cast<uint32_t>(surface.guest_bits));
+                }
+            }
+
+            c.emu.write_memory(buffer, object_data.data(), object_data.size());
             return object_size;
         }
 
@@ -3101,6 +3192,111 @@ namespace sogen
 
             present_win_surface(c, present_handle, dst_surface);
 
+            return TRUE;
+        }
+
+        // Like BitBlt, but nearest-neighbour scales the source rectangle onto the destination rectangle.
+        // Used by the user32 SS_BITMAP static control to paint its image (e.g. the open-iw5 splash).
+        BOOL handle_NtGdiStretchBlt(const syscall_context& c, const hdc dst_dc, const int x_dst, const int y_dst, const int dst_width,
+                                    const int dst_height, const hdc src_dc, const int x_src, const int y_src, const int src_width,
+                                    const int src_height, const DWORD rop, const DWORD /*cr_back_color*/)
+        {
+            if (dst_dc == 0 || dst_width == 0 || dst_height == 0 || src_width == 0 || src_height == 0)
+            {
+                return FALSE;
+            }
+
+            (void)handle_NtGdiFlush(c);
+
+            int32_t dst_origin_x = 0;
+            int32_t dst_origin_y = 0;
+            uint32_t present_handle = 0;
+            gdi_bitmap_surface* dst_surface = resolve_dc_surface(c, dst_dc, dst_origin_x, dst_origin_y, present_handle);
+            if (!dst_surface || dst_surface->width == 0 || dst_surface->height == 0 || dst_surface->pixels.empty())
+            {
+                return FALSE;
+            }
+
+            const auto rop3 = static_cast<uint8_t>((rop >> 16) & 0xFFu);
+            const bool needs_source = rop3_uses_source(rop3);
+
+            int32_t src_origin_x = 0;
+            int32_t src_origin_y = 0;
+            gdi_bitmap_surface* src_surface = nullptr;
+            if (needs_source)
+            {
+                if (src_dc == 0)
+                {
+                    return FALSE;
+                }
+
+                uint32_t unused_present_handle = 0;
+                src_surface = resolve_dc_surface(c, src_dc, src_origin_x, src_origin_y, unused_present_handle);
+                if (!src_surface || src_surface->width == 0 || src_surface->height == 0 || src_surface->pixels.empty())
+                {
+                    return FALSE;
+                }
+            }
+
+            const int dst_w = std::abs(dst_width);
+            const int dst_h = std::abs(dst_height);
+            const int src_w = std::abs(src_width);
+            const int src_h = std::abs(src_height);
+            const bool flip_x = dst_width < 0;
+            const bool flip_y = dst_height < 0;
+            // Negative source extents mirror the source image (GDI semantics), independently of the
+            // destination flip; sample the mirrored position within the (absolute) source rectangle.
+            const bool flip_src_x = src_width < 0;
+            const bool flip_src_y = src_height < 0;
+
+            const uint32_t pattern = get_dc_brush_color(c, dst_dc);
+
+            for (int dy = 0; dy < dst_h; ++dy)
+            {
+                const int out_y = y_dst + dst_origin_y + (flip_y ? (dst_h - 1 - dy) : dy);
+                if (out_y < 0 || out_y >= static_cast<int>(dst_surface->height))
+                {
+                    continue;
+                }
+
+                int sy = 0;
+                if (needs_source)
+                {
+                    const int src_dy = static_cast<int>(static_cast<int64_t>(dy) * src_h / dst_h);
+                    sy = y_src + src_origin_y + (flip_src_y ? (src_h - 1 - src_dy) : src_dy);
+                    if (sy < 0 || sy >= static_cast<int>(src_surface->height))
+                    {
+                        continue;
+                    }
+                }
+
+                auto* dst_row = dst_surface->pixels.data() + static_cast<size_t>(out_y) * dst_surface->width;
+
+                for (int dx = 0; dx < dst_w; ++dx)
+                {
+                    const int out_x = x_dst + dst_origin_x + (flip_x ? (dst_w - 1 - dx) : dx);
+                    if (out_x < 0 || out_x >= static_cast<int>(dst_surface->width))
+                    {
+                        continue;
+                    }
+
+                    uint32_t src = 0;
+                    if (needs_source)
+                    {
+                        const int src_dx = static_cast<int>(static_cast<int64_t>(dx) * src_w / dst_w);
+                        const int sx = x_src + src_origin_x + (flip_src_x ? (src_w - 1 - src_dx) : src_dx);
+                        if (sx < 0 || sx >= static_cast<int>(src_surface->width))
+                        {
+                            continue;
+                        }
+                        src = src_surface->pixels[static_cast<size_t>(sy) * src_surface->width + static_cast<size_t>(sx)];
+                    }
+
+                    dst_row[out_x] = apply_rop3(rop3, src, dst_row[out_x], pattern) | 0xFF000000u;
+                }
+            }
+
+            present_win_surface(c, present_handle, dst_surface);
             return TRUE;
         }
 

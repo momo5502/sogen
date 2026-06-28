@@ -711,7 +711,14 @@ namespace sogen
                 {
                     flags &= ~SDL_WINDOW_HIDDEN;
                 }
-                if ((desc.style & WS_CHILD) == 0)
+                // A window without a full caption (e.g. a WS_POPUP splash screen) has no title bar and no
+                // minimize/maximize/close controls; mirror that on the host window.
+                if ((desc.style & WS_CAPTION) != WS_CAPTION)
+                {
+                    flags |= SDL_WINDOW_BORDERLESS;
+                }
+                // Only windows with a sizing border (WS_THICKFRAME) can be resized by the user.
+                if ((desc.style & WS_CHILD) == 0 && (desc.style & WS_THICKFRAME) != 0)
                 {
                     flags |= SDL_WINDOW_RESIZABLE;
                 }

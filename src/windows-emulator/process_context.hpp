@@ -91,6 +91,7 @@ namespace sogen
 
         emulator_pointer guest_bits{};
         uint32_t guest_stride{};
+        uint32_t guest_bpp{32};
         bool guest_top_down{};
         bool guest_owns_memory{};
 
@@ -101,6 +102,7 @@ namespace sogen
             buffer.write_vector(this->pixels);
             buffer.write(this->guest_bits);
             buffer.write(this->guest_stride);
+            buffer.write(this->guest_bpp);
             buffer.write(this->guest_top_down);
             buffer.write(this->guest_owns_memory);
         }
@@ -112,6 +114,7 @@ namespace sogen
             buffer.read_vector(this->pixels);
             buffer.read(this->guest_bits);
             buffer.read(this->guest_stride);
+            buffer.read(this->guest_bpp);
             buffer.read(this->guest_top_down);
             buffer.read(this->guest_owns_memory);
         }
