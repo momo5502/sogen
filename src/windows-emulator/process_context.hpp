@@ -89,11 +89,20 @@ namespace sogen
         uint32_t height{};
         std::vector<uint32_t> pixels{};
 
+        emulator_pointer guest_bits{};
+        uint32_t guest_stride{};
+        bool guest_top_down{};
+        bool guest_owns_memory{};
+
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->width);
             buffer.write(this->height);
             buffer.write_vector(this->pixels);
+            buffer.write(this->guest_bits);
+            buffer.write(this->guest_stride);
+            buffer.write(this->guest_top_down);
+            buffer.write(this->guest_owns_memory);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -101,6 +110,10 @@ namespace sogen
             buffer.read(this->width);
             buffer.read(this->height);
             buffer.read_vector(this->pixels);
+            buffer.read(this->guest_bits);
+            buffer.read(this->guest_stride);
+            buffer.read(this->guest_top_down);
+            buffer.read(this->guest_owns_memory);
         }
     };
 

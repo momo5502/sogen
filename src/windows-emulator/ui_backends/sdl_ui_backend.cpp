@@ -13,9 +13,6 @@ namespace sogen
     namespace
     {
 #ifdef SOGEN_HAS_SDL3
-        constexpr uint32_t wm_keyup = 0x0101;
-        constexpr uint32_t wm_char = 0x0102;
-
 #ifdef _WIN32
         void apply_application_icon(SDL_Window* window)
         {
@@ -113,6 +110,38 @@ namespace sogen
                 return VK_OEM_PERIOD;
             case SDLK_SLASH:
                 return VK_OEM_2;
+            case SDLK_KP_0:
+                return VK_NUMPAD0;
+            case SDLK_KP_1:
+                return VK_NUMPAD1;
+            case SDLK_KP_2:
+                return VK_NUMPAD2;
+            case SDLK_KP_3:
+                return VK_NUMPAD3;
+            case SDLK_KP_4:
+                return VK_NUMPAD4;
+            case SDLK_KP_5:
+                return VK_NUMPAD5;
+            case SDLK_KP_6:
+                return VK_NUMPAD6;
+            case SDLK_KP_7:
+                return VK_NUMPAD7;
+            case SDLK_KP_8:
+                return VK_NUMPAD8;
+            case SDLK_KP_9:
+                return VK_NUMPAD9;
+            case SDLK_KP_PERIOD:
+                return VK_DECIMAL;
+            case SDLK_KP_PLUS:
+                return VK_ADD;
+            case SDLK_KP_MINUS:
+                return VK_SUBTRACT;
+            case SDLK_KP_MULTIPLY:
+                return VK_MULTIPLY;
+            case SDLK_KP_DIVIDE:
+                return VK_DIVIDE;
+            case SDLK_KP_ENTER:
+                return VK_RETURN;
             default:
                 if (key >= SDLK_F1 && key <= SDLK_F12)
                 {
@@ -120,6 +149,315 @@ namespace sogen
                 }
                 return 0;
             }
+        }
+
+        struct scancode_context
+        {
+            bool key_up = false;
+            bool was_down = false;
+            bool alt_context = false;
+            uint16_t repeat_count = 1;
+        };
+
+        uint64_t map_sdl_scancode(const SDL_Scancode scancode, const scancode_context context = {})
+        {
+            struct scan_result
+            {
+                uint8_t scan_code = 0;
+                bool extended = false;
+            };
+
+            const auto scan = [&]() -> scan_result {
+                switch (scancode)
+                {
+                // Letters
+                case SDL_SCANCODE_A:
+                    return {.scan_code = 0x1E};
+                case SDL_SCANCODE_B:
+                    return {.scan_code = 0x30};
+                case SDL_SCANCODE_C:
+                    return {.scan_code = 0x2E};
+                case SDL_SCANCODE_D:
+                    return {.scan_code = 0x20};
+                case SDL_SCANCODE_E:
+                    return {.scan_code = 0x12};
+                case SDL_SCANCODE_F:
+                    return {.scan_code = 0x21};
+                case SDL_SCANCODE_G:
+                    return {.scan_code = 0x22};
+                case SDL_SCANCODE_H:
+                    return {.scan_code = 0x23};
+                case SDL_SCANCODE_I:
+                    return {.scan_code = 0x17};
+                case SDL_SCANCODE_J:
+                    return {.scan_code = 0x24};
+                case SDL_SCANCODE_K:
+                    return {.scan_code = 0x25};
+                case SDL_SCANCODE_L:
+                    return {.scan_code = 0x26};
+                case SDL_SCANCODE_M:
+                    return {.scan_code = 0x32};
+                case SDL_SCANCODE_N:
+                    return {.scan_code = 0x31};
+                case SDL_SCANCODE_O:
+                    return {.scan_code = 0x18};
+                case SDL_SCANCODE_P:
+                    return {.scan_code = 0x19};
+                case SDL_SCANCODE_Q:
+                    return {.scan_code = 0x10};
+                case SDL_SCANCODE_R:
+                    return {.scan_code = 0x13};
+                case SDL_SCANCODE_S:
+                    return {.scan_code = 0x1F};
+                case SDL_SCANCODE_T:
+                    return {.scan_code = 0x14};
+                case SDL_SCANCODE_U:
+                    return {.scan_code = 0x16};
+                case SDL_SCANCODE_V:
+                    return {.scan_code = 0x2F};
+                case SDL_SCANCODE_W:
+                    return {.scan_code = 0x11};
+                case SDL_SCANCODE_X:
+                    return {.scan_code = 0x2D};
+                case SDL_SCANCODE_Y:
+                    return {.scan_code = 0x15};
+                case SDL_SCANCODE_Z:
+                    return {.scan_code = 0x2C};
+
+                // Number row
+                case SDL_SCANCODE_1:
+                    return {.scan_code = 0x02};
+                case SDL_SCANCODE_2:
+                    return {.scan_code = 0x03};
+                case SDL_SCANCODE_3:
+                    return {.scan_code = 0x04};
+                case SDL_SCANCODE_4:
+                    return {.scan_code = 0x05};
+                case SDL_SCANCODE_5:
+                    return {.scan_code = 0x06};
+                case SDL_SCANCODE_6:
+                    return {.scan_code = 0x07};
+                case SDL_SCANCODE_7:
+                    return {.scan_code = 0x08};
+                case SDL_SCANCODE_8:
+                    return {.scan_code = 0x09};
+                case SDL_SCANCODE_9:
+                    return {.scan_code = 0x0A};
+                case SDL_SCANCODE_0:
+                    return {.scan_code = 0x0B};
+
+                // Basic keys
+                case SDL_SCANCODE_ESCAPE:
+                    return {.scan_code = 0x01};
+                case SDL_SCANCODE_BACKSPACE:
+                    return {.scan_code = 0x0E};
+                case SDL_SCANCODE_TAB:
+                    return {.scan_code = 0x0F};
+                case SDL_SCANCODE_RETURN:
+                    return {.scan_code = 0x1C};
+                case SDL_SCANCODE_SPACE:
+                    return {.scan_code = 0x39};
+
+                // Modifiers
+                case SDL_SCANCODE_LSHIFT:
+                    return {.scan_code = 0x2A};
+                case SDL_SCANCODE_RSHIFT:
+                    return {.scan_code = 0x36};
+                case SDL_SCANCODE_LCTRL:
+                    return {.scan_code = 0x1D};
+                case SDL_SCANCODE_RCTRL:
+                    return {.scan_code = 0x1D, .extended = true};
+                case SDL_SCANCODE_LALT:
+                    return {.scan_code = 0x38};
+                case SDL_SCANCODE_RALT:
+                    return {.scan_code = 0x38, .extended = true};
+                case SDL_SCANCODE_LGUI:
+                    return {.scan_code = 0x5B, .extended = true};
+                case SDL_SCANCODE_RGUI:
+                    return {.scan_code = 0x5C, .extended = true};
+                case SDL_SCANCODE_APPLICATION:
+                    return {.scan_code = 0x5D, .extended = true};
+
+                // Navigation cluster: extended
+                case SDL_SCANCODE_INSERT:
+                    return {.scan_code = 0x52, .extended = true};
+                case SDL_SCANCODE_DELETE:
+                    return {.scan_code = 0x53, .extended = true};
+                case SDL_SCANCODE_HOME:
+                    return {.scan_code = 0x47, .extended = true};
+                case SDL_SCANCODE_END:
+                    return {.scan_code = 0x4F, .extended = true};
+                case SDL_SCANCODE_PAGEUP:
+                    return {.scan_code = 0x49, .extended = true};
+                case SDL_SCANCODE_PAGEDOWN:
+                    return {.scan_code = 0x51, .extended = true};
+
+                // Arrow keys: extended
+                case SDL_SCANCODE_LEFT:
+                    return {.scan_code = 0x4B, .extended = true};
+                case SDL_SCANCODE_UP:
+                    return {.scan_code = 0x48, .extended = true};
+                case SDL_SCANCODE_RIGHT:
+                    return {.scan_code = 0x4D, .extended = true};
+                case SDL_SCANCODE_DOWN:
+                    return {.scan_code = 0x50, .extended = true};
+
+                // Locks
+                case SDL_SCANCODE_CAPSLOCK:
+                    return {.scan_code = 0x3A};
+                case SDL_SCANCODE_NUMLOCKCLEAR:
+                    return {.scan_code = 0x45};
+                case SDL_SCANCODE_SCROLLLOCK:
+                    return {.scan_code = 0x46};
+
+                // Punctuation, US keyboard physical positions
+                case SDL_SCANCODE_GRAVE:
+                    return {.scan_code = 0x29};
+                case SDL_SCANCODE_MINUS:
+                    return {.scan_code = 0x0C};
+                case SDL_SCANCODE_EQUALS:
+                    return {.scan_code = 0x0D};
+                case SDL_SCANCODE_LEFTBRACKET:
+                    return {.scan_code = 0x1A};
+                case SDL_SCANCODE_RIGHTBRACKET:
+                    return {.scan_code = 0x1B};
+                case SDL_SCANCODE_BACKSLASH:
+                    return {.scan_code = 0x2B};
+                case SDL_SCANCODE_NONUSHASH:
+                    return {.scan_code = 0x2B};
+                case SDL_SCANCODE_SEMICOLON:
+                    return {.scan_code = 0x27};
+                case SDL_SCANCODE_APOSTROPHE:
+                    return {.scan_code = 0x28};
+                case SDL_SCANCODE_COMMA:
+                    return {.scan_code = 0x33};
+                case SDL_SCANCODE_PERIOD:
+                    return {.scan_code = 0x34};
+                case SDL_SCANCODE_SLASH:
+                    return {.scan_code = 0x35};
+                case SDL_SCANCODE_NONUSBACKSLASH:
+                    return {.scan_code = 0x56};
+
+                // Function keys
+                case SDL_SCANCODE_F1:
+                    return {.scan_code = 0x3B};
+                case SDL_SCANCODE_F2:
+                    return {.scan_code = 0x3C};
+                case SDL_SCANCODE_F3:
+                    return {.scan_code = 0x3D};
+                case SDL_SCANCODE_F4:
+                    return {.scan_code = 0x3E};
+                case SDL_SCANCODE_F5:
+                    return {.scan_code = 0x3F};
+                case SDL_SCANCODE_F6:
+                    return {.scan_code = 0x40};
+                case SDL_SCANCODE_F7:
+                    return {.scan_code = 0x41};
+                case SDL_SCANCODE_F8:
+                    return {.scan_code = 0x42};
+                case SDL_SCANCODE_F9:
+                    return {.scan_code = 0x43};
+                case SDL_SCANCODE_F10:
+                    return {.scan_code = 0x44};
+                case SDL_SCANCODE_F11:
+                    return {.scan_code = 0x57};
+                case SDL_SCANCODE_F12:
+                    return {.scan_code = 0x58};
+
+                // Extended F keys, usually not needed for older Win32 games,
+                // but harmless if something asks for them.
+                case SDL_SCANCODE_F13:
+                    return {.scan_code = 0x64};
+                case SDL_SCANCODE_F14:
+                    return {.scan_code = 0x65};
+                case SDL_SCANCODE_F15:
+                    return {.scan_code = 0x66};
+
+                // Keypad
+                case SDL_SCANCODE_KP_7:
+                    return {.scan_code = 0x47};
+                case SDL_SCANCODE_KP_8:
+                    return {.scan_code = 0x48};
+                case SDL_SCANCODE_KP_9:
+                    return {.scan_code = 0x49};
+                case SDL_SCANCODE_KP_MINUS:
+                    return {.scan_code = 0x4A};
+                case SDL_SCANCODE_KP_4:
+                    return {.scan_code = 0x4B};
+                case SDL_SCANCODE_KP_5:
+                    return {.scan_code = 0x4C};
+                case SDL_SCANCODE_KP_6:
+                    return {.scan_code = 0x4D};
+                case SDL_SCANCODE_KP_PLUS:
+                    return {.scan_code = 0x4E};
+                case SDL_SCANCODE_KP_1:
+                    return {.scan_code = 0x4F};
+                case SDL_SCANCODE_KP_2:
+                    return {.scan_code = 0x50};
+                case SDL_SCANCODE_KP_3:
+                    return {.scan_code = 0x51};
+                case SDL_SCANCODE_KP_0:
+                    return {.scan_code = 0x52};
+                case SDL_SCANCODE_KP_PERIOD:
+                    return {.scan_code = 0x53};
+                case SDL_SCANCODE_KP_MULTIPLY:
+                    return {.scan_code = 0x37};
+                case SDL_SCANCODE_KP_DIVIDE:
+                    return {.scan_code = 0x35, .extended = true};
+                case SDL_SCANCODE_KP_ENTER:
+                    return {.scan_code = 0x1C, .extended = true};
+
+                // Special keys
+                case SDL_SCANCODE_PRINTSCREEN:
+                    return {.scan_code = 0x37, .extended = true};
+                case SDL_SCANCODE_PAUSE:
+                    return {.scan_code = 0x45};
+                case SDL_SCANCODE_MENU:
+                    return {.scan_code = 0x5D, .extended = true};
+
+                default:
+                    return {};
+                }
+            }();
+
+            if (scan.scan_code == 0)
+            {
+                return 0;
+            }
+
+            uint64_t scan_code = 0;
+
+            // bits 0-15: repeat count
+            scan_code |= static_cast<uint64_t>(context.repeat_count == 0 ? 1 : context.repeat_count);
+
+            // bits 16-23: scan code
+            scan_code |= static_cast<uint64_t>(scan.scan_code) << 16;
+
+            // bit 24: extended key
+            if (scan.extended)
+            {
+                scan_code |= 1ull << 24;
+            }
+
+            // bit 29: context code, normally ALT/syskey context
+            if (context.alt_context)
+            {
+                scan_code |= 1ull << 29;
+            }
+
+            // bit 30: previous key state
+            if (context.was_down)
+            {
+                scan_code |= 1ull << 30;
+            }
+
+            // bit 31: transition state, set for key release
+            if (context.key_up)
+            {
+                scan_code |= 1ull << 31;
+            }
+
+            return scan_code;
         }
 #endif
 
@@ -162,6 +500,8 @@ namespace sogen
 
                 this->windows_.clear();
                 this->guest_by_window_id_.clear();
+                this->active_window_ = 0;
+                this->key_down_.fill(false);
 
                 if (this->initialized_)
                 {
@@ -215,28 +555,85 @@ namespace sogen
                         this->set_window_active(this->resolve_guest(event.window.windowID), false);
                         break;
 
-                    case SDL_EVENT_KEY_DOWN:
-                        if (!event.key.repeat)
+                    case SDL_EVENT_KEY_DOWN: {
+                        const auto guest = this->resolve_guest(event.key.windowID);
+                        if (guest == 0)
                         {
-                            if (const auto guest = this->resolve_guest(event.key.windowID); guest != 0)
-                            {
-                                if (const auto key = map_sdl_keycode(event.key.key); key != 0)
-                                {
-                                    this->post_event(guest, WM_KEYDOWN, key, 0);
-                                }
-                            }
+                            break;
                         }
-                        break;
 
-                    case SDL_EVENT_KEY_UP:
-                        if (const auto guest = this->resolve_guest(event.key.windowID); guest != 0)
+                        const auto vk = map_sdl_keycode(event.key.key);
+                        if (vk == 0)
                         {
-                            if (const auto key = map_sdl_keycode(event.key.key); key != 0)
-                            {
-                                this->post_event(guest, wm_keyup, key, 0);
-                            }
+                            break;
                         }
+
+                        bool was_down = event.key.repeat;
+                        const auto scancode_index = static_cast<size_t>(event.key.scancode);
+
+                        if (scancode_index < key_down_.size())
+                        {
+                            was_down = was_down || key_down_[scancode_index];
+                        }
+
+                        const bool is_alt = vk == VK_MENU;
+                        const bool alt_down = (event.key.mod & SDL_KMOD_ALT) != 0;
+                        const bool alt_context = !is_alt && alt_down;
+
+                        // TODO: Track repeat count
+                        scancode_context context{.was_down = was_down, .alt_context = alt_context};
+                        const auto scan = map_sdl_scancode(event.key.scancode, context);
+                        if (scan == 0)
+                        {
+                            break;
+                        }
+
+                        if (scancode_index < key_down_.size())
+                        {
+                            key_down_[scancode_index] = true;
+                        }
+
+                        const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYDOWN : WM_KEYDOWN;
+
+                        this->post_event(guest, message, vk, scan);
                         break;
+                    }
+
+                    case SDL_EVENT_KEY_UP: {
+                        const auto guest = this->resolve_guest(event.key.windowID);
+                        if (guest == 0)
+                        {
+                            break;
+                        }
+
+                        const auto vk = map_sdl_keycode(event.key.key);
+                        if (vk == 0)
+                        {
+                            break;
+                        }
+
+                        const bool is_alt = vk == VK_MENU;
+                        const bool alt_down = (event.key.mod & SDL_KMOD_ALT) != 0;
+                        const bool alt_context = !is_alt && alt_down;
+
+                        scancode_context context{.key_up = true, .was_down = true, .alt_context = alt_context};
+                        const auto scan = map_sdl_scancode(event.key.scancode, context);
+                        if (scan == 0)
+                        {
+                            break;
+                        }
+
+                        const auto scancode_index = static_cast<size_t>(event.key.scancode);
+                        if (scancode_index < key_down_.size())
+                        {
+                            key_down_[scancode_index] = false;
+                        }
+
+                        const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYUP : WM_KEYUP;
+
+                        this->post_event(guest, message, vk, scan);
+                        break;
+                    }
 
                     case SDL_EVENT_TEXT_INPUT:
                         if (const auto guest = this->resolve_guest(event.text.windowID); guest != 0)
@@ -244,7 +641,7 @@ namespace sogen
                             const auto text = u8_to_u16(event.text.text ? std::string_view{event.text.text} : std::string_view{});
                             for (const auto ch : text)
                             {
-                                this->post_event(guest, wm_char, ch, 0);
+                                this->post_event(guest, WM_CHAR, ch, 0);
                             }
                         }
                         break;
@@ -710,6 +1107,7 @@ namespace sogen
 #ifdef SOGEN_HAS_SDL3
             bool initialized_{};
             hwnd active_window_{};
+            std::array<bool, SDL_SCANCODE_COUNT> key_down_{};
             std::unordered_map<hwnd, window_state> windows_{};
             std::unordered_map<SDL_WindowID, hwnd> guest_by_window_id_{};
 #endif
