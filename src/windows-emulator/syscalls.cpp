@@ -638,6 +638,12 @@ namespace sogen
         uint32_t handle_NtUserGetDoubleClickTime();
         BOOL handle_NtUserModifyWindowTouchCapability();
         uint32_t handle_NtUserGetClipboardSequenceNumber();
+        BOOL handle_NtUserOpenClipboard();
+        BOOL handle_NtUserCloseClipboard();
+        BOOL handle_NtUserEmptyClipboard();
+        uint64_t handle_NtUserGetClipboardData();
+        uint64_t handle_NtUserConvertMemHandle();
+        uint64_t handle_NtUserSetClipboardData();
 
         // syscalls/gdi.cpp:
         NTSTATUS handle_NtDxgkIsFeatureEnabled();
@@ -1554,6 +1560,12 @@ namespace sogen
         add_handler(NtUserGetKeyboardState);
         add_handler(NtUserModifyWindowTouchCapability);
         add_handler(NtUserGetClipboardSequenceNumber);
+        add_handler(NtUserOpenClipboard);
+        add_handler(NtUserCloseClipboard);
+        add_handler(NtUserEmptyClipboard);
+        add_handler(NtUserGetClipboardData);
+        add_handler(NtUserConvertMemHandle);
+        add_handler(NtUserSetClipboardData);
 
 #undef add_handler
     }

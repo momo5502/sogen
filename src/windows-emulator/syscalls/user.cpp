@@ -4833,6 +4833,38 @@ namespace sogen
         {
             return 1;
         }
+
+        BOOL handle_NtUserOpenClipboard()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserCloseClipboard()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserEmptyClipboard()
+        {
+            return TRUE;
+        }
+
+        uint64_t handle_NtUserGetClipboardData()
+        {
+            return 0;
+        }
+
+        uint64_t handle_NtUserConvertMemHandle()
+        {
+            // Return a non-null placeholder clipboard handle so SetClipboardData succeeds. The contents are
+            // not stored; reads via NtUserGetClipboardData report an empty clipboard.
+            return 1;
+        }
+
+        uint64_t handle_NtUserSetClipboardData()
+        {
+            return 1;
+        }
     }
 
 } // namespace sogen
