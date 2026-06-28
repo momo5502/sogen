@@ -2084,7 +2084,7 @@ namespace sogen
             c.emu.read_memory(info + 16, &compression, sizeof(compression));
 
             constexpr uint32_t bi_rgb = 0;
-            if (bit_count != 32 || compression != bi_rgb || bi_width <= 0)
+            if ((bit_count != 32 && bit_count != 24) || compression != bi_rgb || bi_width <= 0)
             {
                 c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count,
                                    compression, bi_width);
@@ -2095,7 +2095,9 @@ namespace sogen
             const auto src_width = static_cast<uint32_t>(bi_width);
             const auto src_height = static_cast<uint32_t>(top_down ? -bi_height : bi_height);
             const auto stored_rows = std::min(scan_lines, src_height);
-            const size_t stride = static_cast<size_t>(src_width) * sizeof(uint32_t);
+            const size_t bytes_per_pixel = bit_count / 8;
+            // DIB scanlines are DWORD-aligned, not tightly packed.
+            const size_t stride = ((static_cast<size_t>(src_width) * bit_count + 31u) / 32u) * 4u;
 
             std::vector<uint8_t> data(stride * stored_rows);
             if (data.empty())
@@ -2131,8 +2133,9 @@ namespace sogen
                     {
                         break;
                     }
-                    uint32_t pixel = 0;
-                    std::memcpy(&pixel, row + static_cast<size_t>(src_x) * sizeof(uint32_t), sizeof(pixel));
+                    const uint8_t* px = row + static_cast<size_t>(src_x) * bytes_per_pixel;
+                    const uint32_t pixel =
+                        static_cast<uint32_t>(px[0]) | (static_cast<uint32_t>(px[1]) << 8) | (static_cast<uint32_t>(px[2]) << 16);
                     set_surface_pixel(*surface, x_dest + origin_x + static_cast<int>(i), y_dest + origin_y + static_cast<int>(j),
                                       pixel | 0xFF000000u);
                 }
