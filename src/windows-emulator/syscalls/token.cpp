@@ -492,6 +492,11 @@ namespace sogen
         {
             return STATUS_NOT_SUPPORTED;
         }
+
+        NTSTATUS handle_NtQuerySecurityPolicy()
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
     }
 
 } // namespace sogen

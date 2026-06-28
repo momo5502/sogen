@@ -429,6 +429,7 @@ namespace sogen
                                                        ULONG number_of_attributes, uint64_t buffer, ULONG buffer_length,
                                                        emulator_object<ULONG> return_length);
         NTSTATUS handle_NtAdjustPrivilegesToken();
+        NTSTATUS handle_NtQuerySecurityPolicy();
         NTSTATUS handle_NtFlushInstructionCache(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
                                                 uint64_t region_size);
 
@@ -1165,6 +1166,7 @@ namespace sogen
         add_handler(NtOpenProcessTokenEx);
         add_handler(NtQuerySecurityAttributesToken);
         add_handler(NtAdjustPrivilegesToken);
+        add_handler(NtQuerySecurityPolicy);
         add_handler(NtQueryLicenseValue);
         add_handler(NtTestAlert);
         add_handler(NtContinue);
