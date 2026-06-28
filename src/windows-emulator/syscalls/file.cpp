@@ -448,6 +448,12 @@ namespace sogen
                                                                           file_name, f);
             }
 
+            if (info_class == FileIdBothDirectoryInformation)
+            {
+                return handle_file_enumeration<FILE_ID_BOTH_DIR_INFORMATION>(c, io_status_block, file_information, length, query_flags,
+                                                                             file_name, f);
+            }
+
             c.win_emu.log.error("Unsupported query directory file info class: %X\n", info_class);
             c.emu.stop();
 
