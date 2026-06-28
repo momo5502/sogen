@@ -1734,6 +1734,11 @@ namespace sogen::whp
                 return false;
             }
 
+            bool is_stop_thread_safe() const override
+            {
+                return true;
+            }
+
             bool supports_global_memory_execution_hooks() const override
             {
                 return false;

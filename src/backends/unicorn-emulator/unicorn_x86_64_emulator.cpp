@@ -716,6 +716,11 @@ namespace sogen::unicorn
                 return true;
             }
 
+            bool is_stop_thread_safe() const override
+            {
+                return false;
+            }
+
             std::string get_name() const override
             {
                 return "Unicorn Engine";

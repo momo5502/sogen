@@ -319,6 +319,7 @@ namespace sogen
         void setup_hooks();
         void setup_process();
         void on_instruction_execution(uint64_t address);
+        void on_basic_block_execution(const basic_block& block);
 
         bool uses_section_first_execution_hooks() const;
         void clear_section_first_execution_hooks();

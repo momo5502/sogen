@@ -18,6 +18,7 @@
 namespace sogen
 {
     constexpr auto MAX_INSTRUCTIONS_PER_TIME_SLICE = 0x20000;
+    constexpr auto MAX_BASIC_BLOCKS_PER_TIME_SLICE = 0x8000;
 
     namespace
     {
@@ -989,6 +990,30 @@ namespace sogen
                 this->on_instruction_execution(address); //
             });
         }
+        else if (!this->emu().is_stop_thread_safe())
+        {
+            // The backend cannot be stopped safely from another thread, so the interrupt thread in start()
+            // is not available for time-slicing. Preempt cooperatively from the CPU thread via a basic-block
+            // hook instead.
+            this->emu().hook_basic_block([&](const basic_block& block) {
+                this->on_basic_block_execution(block); //
+            });
+        }
+    }
+
+    void windows_emulator::on_basic_block_execution(const basic_block&)
+    {
+        auto& thread = this->current_thread();
+
+        // This path deliberately trades instruction precision for speed (one callback per block instead of
+        // one per instruction), so we cannot account for individual instructions. Time-slice on a fixed number
+        // of executed blocks instead.
+        ++this->executed_instructions_;
+
+        if (++thread.executed_blocks % MAX_BASIC_BLOCKS_PER_TIME_SLICE == 0)
+        {
+            this->yield_thread();
+        }
     }
 
     void windows_emulator::start(size_t count)
@@ -1020,7 +1045,7 @@ namespace sogen
             }
         });
 
-        if (!this->uses_instruction_precision())
+        if (!this->uses_instruction_precision() && this->emu().is_stop_thread_safe())
         {
             interrupt_thread = std::thread([&] {
                 while (!this->should_stop)
