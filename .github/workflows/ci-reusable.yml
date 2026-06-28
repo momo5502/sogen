@@ -166,13 +166,13 @@ jobs:
       - name: Stage Vulkan Shims
         shell: pwsh
         run: |
-          Copy-Item build/release/artifacts/vulkan-shim.dll build/release/artifacts/vulkan-shim-x64.dll -Force
+          Move-Item build/release/artifacts/vulkan-shim.dll build/release/artifacts/vulkan-shim-x64.dll -Force
           Copy-Item shims/vulkan-shim-x86.dll build/release/artifacts/vulkan-shim-x86.dll -Force
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v7
         with:
-          name: Temp API Set Dumper
+          name: Temp Root Build Tools
           working-directory: build/release/artifacts/
           path: "*"
           retention-days: 1
@@ -208,10 +208,10 @@ jobs:
       - name: Install DirectX Runtime
         run: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
 
-      - name: Download API Set Dumper
+      - name: Download Root Build Tools
         uses: pyTooling/download-artifact@v8
         with:
-          name: Temp API Set Dumper
+          name: Temp Root Build Tools
           path: build/release/artifacts
 
       - name: Create Emulation Root
