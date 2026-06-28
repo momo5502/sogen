@@ -478,8 +478,8 @@ jobs:
           - Unicorn
           - Icicle
         emulation-root:
-          #- Windows 2025
-          - Windows 2022
+          - Windows 2025
+          #- Windows 2022
           #- Windows 2019
         configuration:
           #- Debug
@@ -638,7 +638,7 @@ jobs:
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v8
         with:
-          name: Windows 2022 Emulation Root
+          name: Windows 2025 Emulation Root
           path: build/release/artifacts/root
 
       - name: Copy Test Sample
@@ -664,7 +664,7 @@ jobs:
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v8
         with:
-          name: Windows 2022 Emulation Root
+          name: Windows 2025 Emulation Root
           path: build/release/artifacts/root
 
       - name: Copy Test Sample
@@ -724,7 +724,7 @@ jobs:
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v8
         with:
-          name: Windows 2022 Emulation Root
+          name: Windows 2025 Emulation Root
           path: build/release/artifacts/root
 
       - name: Copy Test Sample
@@ -758,7 +758,7 @@ jobs:
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v8
         with:
-          name: Windows 2022 Emulation Root
+          name: Windows 2025 Emulation Root
           path: build/release/artifacts/root
 
       - name: Copy Test Sample
@@ -784,7 +784,7 @@ jobs:
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v8
         with:
-          name: Windows 2022 Emulation Root
+          name: Windows 2025 Emulation Root
           path: build/release/artifacts/root
 
       - name: Copy Test Sample
@@ -810,8 +810,8 @@ jobs:
           - Unicorn
           - Icicle
         emulation-root:
-          #- Windows 2025
-          - Windows 2022
+          - Windows 2025
+          #- Windows 2022
           #- Windows 2019
         configuration:
           #- Debug
@@ -895,7 +895,7 @@ jobs:
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v8
         with:
-          name: Windows 2022 Emulation Root
+          name: Windows 2025 Emulation Root
           path: build/release/artifacts/root
 
       - name: Copy Sample
@@ -1050,7 +1050,7 @@ jobs:
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v8
         with:
-          name: Windows 2022 Emulation Root
+          name: Windows 2025 Emulation Root
           path: build/release/artifacts/root
 
       - name: Copy Test Sample
