@@ -11,6 +11,12 @@
 namespace sogen
 {
 
+    struct linux_auxv_entry
+    {
+        uint64_t type{};
+        uint64_t value{};
+    };
+
     struct linux_process_context
     {
         linux_fd_table fds{};
@@ -36,6 +42,7 @@ namespace sogen
         // Stored for procfs emulation
         std::vector<std::string> argv{};
         std::vector<std::string> envp{};
+        std::vector<linux_auxv_entry> auxv{};
 
         uint32_t create_thread(uint64_t stack_base, uint64_t stack_size, uint64_t entry_point, uint64_t fs_base = 0)
         {

@@ -1063,6 +1063,24 @@ jobs:
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/release/artifacts/test-sample.exe
 
+      - name: Run Python Linux Unicorn Test Script
+        if: ${{ startsWith(matrix.runner, 'ubuntu') }}
+        run: python src/python-bindings/test_linux.py
+        env:
+          LINUX_PYTHON_TEST_BINARY: /bin/true
+          LINUX_PYTHON_TEST_ROOT: /
+          LINUX_PYTHON_TEST_BACKEND: unicorn
+
+      - name: Run Python Linux KVM Test Script
+        if: ${{ startsWith(matrix.runner, 'ubuntu') }}
+        shell: bash
+        run: |
+          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+            LINUX_PYTHON_TEST_BINARY=/bin/true LINUX_PYTHON_TEST_ROOT=/ LINUX_PYTHON_TEST_BACKEND=kvm python src/python-bindings/test_linux.py
+          else
+            echo "Skipping KVM smoke: /dev/kvm is unavailable on this runner"
+          fi
+
   build-python-sdist:
     name: Build Python Sdist
     runs-on: ubuntu-24.04

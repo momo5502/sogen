@@ -71,6 +71,44 @@ namespace sogen
             }
 #endif
         }
+
+        bool host_file_has_remaining_data(FILE* handle)
+        {
+            if (!handle)
+            {
+                return false;
+            }
+
+            const auto pos = ftell(handle);
+            if (pos < 0)
+            {
+                return true;
+            }
+
+            if (fseek(handle, 0, SEEK_END) != 0)
+            {
+                return true;
+            }
+
+            const auto end = ftell(handle);
+            (void)fseek(handle, pos, SEEK_SET);
+            return end < 0 || pos < end;
+        }
+
+        bool fd_has_readable_data(const linux_fd& fd)
+        {
+            if (fd.type == fd_type::memory_file)
+            {
+                return fd.memory_file && fd.memory_file->offset < fd.memory_file->content.size();
+            }
+
+            if (fd.type == fd_type::file)
+            {
+                return host_file_has_remaining_data(fd.handle);
+            }
+
+            return false;
+        }
     }
 
     void sys_pipe(const linux_syscall_context& c)
@@ -375,21 +413,9 @@ namespace sogen
 
             uint32_t ready_events = 0;
 
-            // Files/pipes with data: check if readable
-            if ((entry.events & EPOLLIN) && fd_entry->handle)
+            if ((entry.events & EPOLLIN) && fd_has_readable_data(*fd_entry))
             {
-                // Check if there's data available
-                if (fd_entry->type == fd_type::file && fd_entry->handle)
-                {
-                    const auto pos = ftell(fd_entry->handle);
-                    fseek(fd_entry->handle, 0, SEEK_END);
-                    const auto end = ftell(fd_entry->handle);
-                    fseek(fd_entry->handle, pos, SEEK_SET);
-                    if (pos < end)
-                    {
-                        ready_events |= EPOLLIN;
-                    }
-                }
+                ready_events |= EPOLLIN;
             }
 
             // Most fds are writable
@@ -465,22 +491,9 @@ namespace sogen
                 continue;
             }
 
-            // Check readiness
-            if (pfd.events & POLLIN)
+            if ((pfd.events & POLLIN) && fd_has_readable_data(*fd_entry))
             {
-                if (fd_entry->type == fd_type::file && fd_entry->handle)
-                {
-                    const auto pos = ftell(fd_entry->handle);
-                    fseek(fd_entry->handle, 0, SEEK_END);
-                    const auto end = ftell(fd_entry->handle);
-                    fseek(fd_entry->handle, pos, SEEK_SET);
-                    if (pos < end)
-                    {
-                        pfd.revents |= POLLIN;
-                    }
-                }
-                // stdin: report not ready (would block)
-                // pipes: could check but simplified for now
+                pfd.revents |= POLLIN;
             }
 
             if (pfd.events & POLLOUT)
@@ -589,20 +602,10 @@ namespace sogen
                 ++ready_count;
             }
 
-            if (want_read && fd_entry->handle)
+            if (want_read && fd_has_readable_data(*fd_entry))
             {
-                if (fd_entry->type == fd_type::file)
-                {
-                    const auto pos = ftell(fd_entry->handle);
-                    fseek(fd_entry->handle, 0, SEEK_END);
-                    const auto end = ftell(fd_entry->handle);
-                    fseek(fd_entry->handle, pos, SEEK_SET);
-                    if (pos < end)
-                    {
-                        fd_set_bit(fd, out_read);
-                        ++ready_count;
-                    }
-                }
+                fd_set_bit(fd, out_read);
+                ++ready_count;
             }
 
             // No exceptions

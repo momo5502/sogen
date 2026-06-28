@@ -3,6 +3,7 @@
 #include "std_include.hpp"
 
 #include <cstdio>
+#include <memory>
 #include <utility>
 
 #if defined(_WIN32)
@@ -17,6 +18,7 @@ namespace sogen
     enum class fd_type
     {
         file,
+        memory_file,
         pipe_read,
         pipe_write,
         socket,
@@ -24,11 +26,18 @@ namespace sogen
         directory,
     };
 
+    struct linux_memory_fd
+    {
+        std::string content{};
+        size_t offset{};
+    };
+
     struct linux_fd
     {
         fd_type type{fd_type::file};
         std::string host_path{};
         FILE* handle{};
+        std::shared_ptr<linux_memory_fd> memory_file{};
         int flags{};
         bool close_on_exec{};
 
@@ -42,6 +51,7 @@ namespace sogen
             : type(other.type),
               host_path(std::move(other.host_path)),
               handle(std::exchange(other.handle, nullptr)),
+              memory_file(std::move(other.memory_file)),
               flags(other.flags),
               close_on_exec(other.close_on_exec)
         {
@@ -54,6 +64,7 @@ namespace sogen
                 type = other.type;
                 host_path = std::move(other.host_path);
                 handle = std::exchange(other.handle, nullptr);
+                memory_file = std::move(other.memory_file);
                 flags = other.flags;
                 close_on_exec = other.close_on_exec;
             }
@@ -271,6 +282,7 @@ namespace sogen
             new_entry.close_on_exec = false; // dup clears close-on-exec
 
             new_entry.handle = duplicate_handle(existing.handle, get_stream_mode(existing));
+            new_entry.memory_file = existing.memory_file;
             if (existing.handle && !new_entry.handle)
             {
                 return std::nullopt;

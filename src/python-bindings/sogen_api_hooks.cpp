@@ -1,4 +1,5 @@
 #include "sogen_internal.hpp"
+#include <windows_emulator.hpp>
 
 #include <cstdio>
 

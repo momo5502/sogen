@@ -103,6 +103,72 @@ namespace sogen
 #endif
         }
 
+        linux_fd make_memory_file_fd(std::string path, std::string content, const int flags)
+        {
+            linux_fd fd{};
+            fd.type = fd_type::memory_file;
+            fd.host_path = std::move(path);
+            fd.memory_file = std::make_shared<linux_memory_fd>();
+            fd.memory_file->content = std::move(content);
+            fd.flags = flags;
+            fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
+            return fd;
+        }
+
+        size_t read_memory_file_at(const linux_fd& fd, uint8_t* buffer, const size_t count, const size_t offset)
+        {
+            const auto& content = fd.memory_file->content;
+            if (count == 0)
+            {
+                return 0;
+            }
+
+            if (offset >= content.size())
+            {
+                return 0;
+            }
+
+            const auto bytes_read = std::min(count, content.size() - offset);
+            memcpy(buffer, content.data() + offset, bytes_read);
+            return bytes_read;
+        }
+
+        size_t read_memory_file(linux_fd& fd, uint8_t* buffer, const size_t count)
+        {
+            const auto bytes_read = read_memory_file_at(fd, buffer, count, fd.memory_file->offset);
+            fd.memory_file->offset += bytes_read;
+            return bytes_read;
+        }
+
+        std::optional<size_t> seek_memory_file(linux_fd& fd, const int64_t offset, const int whence)
+        {
+            const auto content_size = static_cast<int64_t>(fd.memory_file->content.size());
+            auto base = int64_t{0};
+            if (whence == 1)
+            {
+                base = static_cast<int64_t>(fd.memory_file->offset);
+            }
+            else if (whence == 2)
+            {
+                base = content_size;
+            }
+
+            if ((offset > 0 && base > std::numeric_limits<int64_t>::max() - offset) ||
+                (offset < 0 && base < std::numeric_limits<int64_t>::min() - offset))
+            {
+                return std::nullopt;
+            }
+
+            const auto target = base + offset;
+            if (target < 0)
+            {
+                return std::nullopt;
+            }
+
+            fd.memory_file->offset = static_cast<size_t>(target);
+            return fd.memory_file->offset;
+        }
+
         uint8_t file_type_to_d_type(const std::filesystem::file_type type)
         {
             // Linux DT_* values
@@ -515,6 +581,29 @@ namespace sogen
 
             return true;
         }
+
+        bool fill_memory_file_stat(const linux_syscall_context& c, const linux_fd& fd, linux_stat& ls)
+        {
+            if (!fd.memory_file)
+            {
+                return false;
+            }
+
+            const auto content_size = fd.memory_file->content.size();
+            if (!procfs::stat_procfs(c.emu_ref, fd.host_path, ls))
+            {
+                ls.st_mode = 0100444;
+                ls.st_nlink = 1;
+                ls.st_uid = c.proc.uid;
+                ls.st_gid = c.proc.gid;
+                ls.st_ino = static_cast<uint64_t>(std::hash<std::string>{}(fd.host_path));
+            }
+
+            ls.st_size = static_cast<int64_t>(content_size);
+            ls.st_blksize = 1024;
+            ls.st_blocks = static_cast<int64_t>((content_size + 511) / 512);
+            return true;
+        }
     }
 
     void sys_read(const linux_syscall_context& c)
@@ -530,10 +619,29 @@ namespace sogen
             return;
         }
 
-        if (fd == 0)
+        if (fd_entry->host_path == "/dev/stdin")
         {
             // stdin: return 0 (EOF) for now
             write_linux_syscall_result(c, 0);
+            return;
+        }
+
+        if (fd_entry->type == fd_type::memory_file)
+        {
+            if (!fd_entry->memory_file)
+            {
+                write_linux_syscall_result(c, -LINUX_EBADF);
+                return;
+            }
+
+            std::vector<uint8_t> buffer(count);
+            const auto bytes_read = read_memory_file(*fd_entry, buffer.data(), count);
+            if (bytes_read > 0)
+            {
+                c.emu.write_memory(buf_addr, buffer.data(), bytes_read);
+            }
+
+            write_linux_syscall_result(c, static_cast<int64_t>(bytes_read));
             return;
         }
 
@@ -670,18 +778,14 @@ namespace sogen
         // Intercept procfs paths
         if (procfs::is_procfs_path(guest_path))
         {
-            auto* handle = procfs::open_procfs_file(c.emu_ref, guest_path);
-            if (!handle)
+            auto content = procfs::generate_content(c.emu_ref, guest_path);
+            if (!content)
             {
                 write_linux_syscall_result(c, -LINUX_ENOENT);
                 return;
             }
 
-            linux_fd new_fd{};
-            new_fd.type = fd_type::file;
-            new_fd.host_path = guest_path;
-            new_fd.handle = handle;
-            new_fd.flags = flags;
+            auto new_fd = make_memory_file_fd(guest_path, std::move(*content), flags);
 
             const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
             write_linux_syscall_result(c, fd_num);
@@ -764,7 +868,15 @@ namespace sogen
 
         linux_stat ls{};
 
-        if (!fd_entry->host_path.empty())
+        if (fd_entry->type == fd_type::memory_file)
+        {
+            if (!fill_memory_file_stat(c, *fd_entry, ls))
+            {
+                write_linux_syscall_result(c, -LINUX_EBADF);
+                return;
+            }
+        }
+        else if (!fd_entry->host_path.empty())
         {
             fill_linux_stat(ls, fd_entry->host_path);
         }
@@ -784,9 +896,28 @@ namespace sogen
         const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
         const auto offset = static_cast<int64_t>(get_linux_syscall_argument(c.emu, 1));
         const auto whence = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
-
         auto* fd_entry = c.proc.fds.get(fd);
-        if (!fd_entry || !fd_entry->handle)
+
+        if (!fd_entry)
+        {
+            write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
+        if (fd_entry->type == fd_type::memory_file)
+        {
+            if (!fd_entry->memory_file)
+            {
+                write_linux_syscall_result(c, -LINUX_EBADF);
+                return;
+            }
+
+            const auto pos = seek_memory_file(*fd_entry, offset, whence);
+            write_linux_syscall_result(c, pos.has_value() ? static_cast<int64_t>(*pos) : -LINUX_EINVAL);
+            return;
+        }
+
+        if (!fd_entry->handle)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
             return;
@@ -850,18 +981,14 @@ namespace sogen
         // Intercept procfs paths
         if (procfs::is_procfs_path(guest_path))
         {
-            auto* handle = procfs::open_procfs_file(c.emu_ref, guest_path);
-            if (!handle)
+            auto content = procfs::generate_content(c.emu_ref, guest_path);
+            if (!content)
             {
                 write_linux_syscall_result(c, -LINUX_ENOENT);
                 return;
             }
 
-            linux_fd new_fd{};
-            new_fd.type = fd_type::file;
-            new_fd.host_path = guest_path;
-            new_fd.handle = handle;
-            new_fd.flags = flags;
+            auto new_fd = make_memory_file_fd(guest_path, std::move(*content), flags);
 
             const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
             write_linux_syscall_result(c, fd_num);
@@ -1003,7 +1130,37 @@ namespace sogen
         const auto offset = static_cast<int64_t>(get_linux_syscall_argument(c.emu, 3));
 
         auto* fd_entry = c.proc.fds.get(fd);
-        if (!fd_entry || !fd_entry->handle)
+        if (!fd_entry)
+        {
+            write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
+        if (fd_entry->type == fd_type::memory_file)
+        {
+            if (!fd_entry->memory_file)
+            {
+                write_linux_syscall_result(c, -LINUX_EBADF);
+                return;
+            }
+            if (offset < 0)
+            {
+                write_linux_syscall_result(c, -LINUX_EINVAL);
+                return;
+            }
+
+            std::vector<uint8_t> buffer(count);
+            const auto bytes_read = read_memory_file_at(*fd_entry, buffer.data(), count, static_cast<size_t>(offset));
+            if (bytes_read > 0)
+            {
+                c.emu.write_memory(buf_addr, buffer.data(), bytes_read);
+            }
+
+            write_linux_syscall_result(c, static_cast<int64_t>(bytes_read));
+            return;
+        }
+
+        if (!fd_entry->handle)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
             return;
@@ -1427,7 +1584,15 @@ namespace sogen
             }
 
             linux_stat ls{};
-            if (!fd_entry->host_path.empty())
+            if (fd_entry->type == fd_type::memory_file)
+            {
+                if (!fill_memory_file_stat(c, *fd_entry, ls))
+                {
+                    write_linux_syscall_result(c, -LINUX_EBADF);
+                    return;
+                }
+            }
+            else if (!fd_entry->host_path.empty())
             {
                 fill_linux_stat(ls, fd_entry->host_path);
             }
@@ -1904,10 +2069,33 @@ namespace sogen
                 continue;
             }
 
-            if (fd == 0)
+            if (fd_entry->host_path == "/dev/stdin")
             {
                 // stdin: EOF
                 break;
+            }
+
+            if (fd_entry->type == fd_type::memory_file)
+            {
+                if (!fd_entry->memory_file)
+                {
+                    write_linux_syscall_result(c, -LINUX_EBADF);
+                    return;
+                }
+
+                std::vector<uint8_t> buffer(static_cast<size_t>(iov_len));
+                const auto bytes_read = read_memory_file(*fd_entry, buffer.data(), static_cast<size_t>(iov_len));
+                if (bytes_read > 0)
+                {
+                    c.emu.write_memory(iov_base, buffer.data(), bytes_read);
+                    total_read += static_cast<int64_t>(bytes_read);
+                }
+
+                if (bytes_read < iov_len)
+                {
+                    break;
+                }
+                continue;
             }
 
             if (!fd_entry->handle)
