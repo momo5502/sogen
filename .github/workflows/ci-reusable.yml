@@ -131,8 +131,8 @@ jobs:
       - name: Verify Page Formatting
         run: cd page && npx --yes prettier . --check
 
-  build-apiset-dumper:
-    name: Build API Set Dumper
+  build-root-tools:
+    name: Build Root Tools
     runs-on: windows-latest
     steps:
       - name: Checkout Source
@@ -180,7 +180,7 @@ jobs:
   create-emulation-root:
     name: Create Emulation Root
     runs-on: ${{ matrix.runner }}
-    needs: [build-apiset-dumper]
+    needs: [build-root-tools]
     strategy:
       fail-fast: false
       matrix:
@@ -1138,7 +1138,7 @@ jobs:
         build-python-sdist,
         test-python-sdist,
         clang-tidy,
-        build-apiset-dumper,
+        build-root-tools,
         smoke-test-whp,
         smoke-test-kvm,
         smoke-test-node,
