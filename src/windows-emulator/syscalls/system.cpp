@@ -575,6 +575,17 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            case SystemCodeIntegrityInformation: {
+                // Report a normal retail configuration: code integrity (driver signature enforcement) enabled,
+                // test-signing/debug off, so anti-tamper checks observe a non-tampered system.
+                constexpr ULONG CODEINTEGRITY_OPTION_ENABLED = 0x1;
+                return handle_query<SYSTEM_CODEINTEGRITY_INFORMATION>(c.emu, system_information, system_information_length, return_length,
+                                                                      [&](SYSTEM_CODEINTEGRITY_INFORMATION& ci) {
+                                                                          ci.Length = sizeof(ci);
+                                                                          ci.CodeIntegrityOptions = CODEINTEGRITY_OPTION_ENABLED;
+                                                                      });
+            }
+
             default:
                 c.win_emu.log.error("Unsupported system info class: 0x%X\n", info_class);
                 c.emu.stop();
