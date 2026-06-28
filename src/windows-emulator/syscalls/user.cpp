@@ -3164,6 +3164,8 @@ namespace sogen
             {
                 if (auto* win = c.proc.windows.get(static_cast<hwnd>(state.pending.back())))
                 {
+                    // Painting continues asynchronously through completion_NtUserUpdateWindow; the guest is
+                    // suspended here, so this immediate return value is unused (matches handle_NtUserShowWindow).
                     dispatch_window_message(c, callback_id::NtUserUpdateWindow, std::move(state), *win, WM_PAINT);
                     return {};
                 }

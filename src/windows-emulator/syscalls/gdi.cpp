@@ -3240,8 +3240,14 @@ namespace sogen
 
             const int dst_w = std::abs(dst_width);
             const int dst_h = std::abs(dst_height);
+            const int src_w = std::abs(src_width);
+            const int src_h = std::abs(src_height);
             const bool flip_x = dst_width < 0;
             const bool flip_y = dst_height < 0;
+            // Negative source extents mirror the source image (GDI semantics), independently of the
+            // destination flip; sample the mirrored position within the (absolute) source rectangle.
+            const bool flip_src_x = src_width < 0;
+            const bool flip_src_y = src_height < 0;
 
             const uint32_t pattern = get_dc_brush_color(c, dst_dc);
 
@@ -3256,7 +3262,8 @@ namespace sogen
                 int sy = 0;
                 if (needs_source)
                 {
-                    sy = y_src + src_origin_y + static_cast<int>(static_cast<int64_t>(dy) * src_height / dst_h);
+                    const int src_dy = static_cast<int>(static_cast<int64_t>(dy) * src_h / dst_h);
+                    sy = y_src + src_origin_y + (flip_src_y ? (src_h - 1 - src_dy) : src_dy);
                     if (sy < 0 || sy >= static_cast<int>(src_surface->height))
                     {
                         continue;
@@ -3276,7 +3283,8 @@ namespace sogen
                     uint32_t src = 0;
                     if (needs_source)
                     {
-                        const int sx = x_src + src_origin_x + static_cast<int>(static_cast<int64_t>(dx) * src_width / dst_w);
+                        const int src_dx = static_cast<int>(static_cast<int64_t>(dx) * src_w / dst_w);
+                        const int sx = x_src + src_origin_x + (flip_src_x ? (src_w - 1 - src_dx) : src_dx);
                         if (sx < 0 || sx >= static_cast<int>(src_surface->width))
                         {
                             continue;
