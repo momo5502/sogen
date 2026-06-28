@@ -2501,8 +2501,44 @@ namespace sogen
                 return 0;
             }
 
-            std::vector<uint8_t> zeroed(object_size, 0);
-            c.emu.write_memory(buffer, zeroed.data(), zeroed.size());
+            std::vector<uint8_t> object_data(object_size, 0);
+
+            if (entry.Type == k_gdi_bitmap_type)
+            {
+                const auto bmp_it = c.proc.gdi_bitmap_surfaces.find(handle_value);
+                if (bmp_it != c.proc.gdi_bitmap_surfaces.end())
+                {
+                    const auto& surface = bmp_it->second;
+                    const auto bpp = static_cast<uint16_t>(surface.guest_bpp != 0 ? surface.guest_bpp : 32u);
+                    const auto width_bytes = surface.guest_stride != 0
+                                                 ? surface.guest_stride
+                                                 : static_cast<uint32_t>(((static_cast<uint64_t>(surface.width) * bpp + 31u) / 32u) * 4u);
+
+                    // BITMAP (32-bit layout): bmType@0, bmWidth@4, bmHeight@8, bmWidthBytes@12,
+                    // bmPlanes@16 (WORD), bmBitsPixel@18 (WORD), bmBits@20 (PVOID32).
+                    const auto put32 = [&](const size_t off, const uint32_t v) {
+                        if (off + sizeof(v) <= object_data.size())
+                        {
+                            std::memcpy(object_data.data() + off, &v, sizeof(v));
+                        }
+                    };
+                    const auto put16 = [&](const size_t off, const uint16_t v) {
+                        if (off + sizeof(v) <= object_data.size())
+                        {
+                            std::memcpy(object_data.data() + off, &v, sizeof(v));
+                        }
+                    };
+
+                    put32(4, surface.width);
+                    put32(8, surface.height);
+                    put32(12, width_bytes);
+                    put16(16, 1);
+                    put16(18, bpp);
+                    put32(20, static_cast<uint32_t>(surface.guest_bits));
+                }
+            }
+
+            c.emu.write_memory(buffer, object_data.data(), object_data.size());
             return object_size;
         }
 
