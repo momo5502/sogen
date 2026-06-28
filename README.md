@@ -46,7 +46,8 @@ The debugger runs at the emulator level, outside the process, so it stays invisi
 ## Run Games in a Sandbox
 
 Native GUI apps run, with working windows, dialogs and controls.  
-GPU paravirtualization enables 3D acceleration on your real GPU, while the Hyper-V backend runs the code natively on your CPU. Fast enough for games.
+GPU paravirtualization enables 3D acceleration on your real GPU, while the Hyper-V backend runs the code natively on your CPU. Fast enough for games.  
+DirectX titles run through [DXVK](https://github.com/doitsujin/dxvk), which translates Direct3D to Vulkan on top of the GPU bridge.
 
 <img src="https://momo5502.com/sogen/game.png" width="650" alt="A game running inside the Sogen emulator" />
 &nbsp;  

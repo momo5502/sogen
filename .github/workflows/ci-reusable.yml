@@ -140,11 +140,34 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Enable Developer Command Prompt
+      - name: Enable Developer Command Prompt (x86)
         uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x86
 
-      - name: CMake Build
-        run: cmake --preset=release && cmake --build --preset=release -t dump-apiset
+      - name: Build 32-bit Vulkan Shim
+        run: cmake --preset=release && cmake --build --preset=release -t vulkan-shim
+
+      - name: Stash 32-bit Vulkan Shim
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path shims -Force | Out-Null
+          Copy-Item build/release/artifacts/vulkan-shim.dll shims/vulkan-shim-x86.dll -Force
+          Remove-Item build/release -Recurse -Force
+
+      - name: Enable Developer Command Prompt (x64)
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+
+      - name: Build API Set Dumper and 64-bit Vulkan Shim
+        run: cmake --preset=release && cmake --build --preset=release -t dump-apiset vulkan-shim
+
+      - name: Stage Vulkan Shims
+        shell: pwsh
+        run: |
+          Copy-Item build/release/artifacts/vulkan-shim.dll build/release/artifacts/vulkan-shim-x64.dll -Force
+          Copy-Item shims/vulkan-shim-x86.dll build/release/artifacts/vulkan-shim-x86.dll -Force
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v7
@@ -196,6 +219,12 @@ jobs:
 
       - name: Dump API Set
         run: cd root && ../build/release/artifacts/dump-apiset.exe
+
+      - name: Install DXVK and Vulkan Shim
+        shell: pwsh
+        run: ./src/tools/install-gpu-runtime.ps1 -WindowsDir root/filesys/c/windows -Shim64 build/release/artifacts/vulkan-shim-x64.dll -Shim32 build/release/artifacts/vulkan-shim-x86.dll
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v7
