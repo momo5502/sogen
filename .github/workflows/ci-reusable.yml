@@ -131,8 +131,8 @@ jobs:
       - name: Verify Page Formatting
         run: cd page && npx --yes prettier . --check
 
-  build-apiset-dumper:
-    name: Build API Set Dumper
+  build-root-tools:
+    name: Build Root Tools
     runs-on: windows-latest
     steps:
       - name: Checkout Source
@@ -140,16 +140,39 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Enable Developer Command Prompt
+      - name: Enable Developer Command Prompt (x86)
         uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x86
 
-      - name: CMake Build
-        run: cmake --preset=release && cmake --build --preset=release -t dump-apiset
+      - name: Build 32-bit Vulkan Shim
+        run: cmake --preset=release && cmake --build --preset=release -t vulkan-shim
+
+      - name: Stash 32-bit Vulkan Shim
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path shims -Force | Out-Null
+          Copy-Item build/release/artifacts/vulkan-shim.dll shims/vulkan-shim-x86.dll -Force
+          Remove-Item build/release -Recurse -Force
+
+      - name: Enable Developer Command Prompt (x64)
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: x64
+
+      - name: Build API Set Dumper and 64-bit Vulkan Shim
+        run: cmake --preset=release && cmake --build --preset=release -t dump-apiset vulkan-shim
+
+      - name: Stage Vulkan Shims
+        shell: pwsh
+        run: |
+          Move-Item build/release/artifacts/vulkan-shim.dll build/release/artifacts/vulkan-shim-x64.dll -Force
+          Copy-Item shims/vulkan-shim-x86.dll build/release/artifacts/vulkan-shim-x86.dll -Force
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v7
         with:
-          name: Temp API Set Dumper
+          name: Temp Root Build Tools
           working-directory: build/release/artifacts/
           path: "*"
           retention-days: 1
@@ -157,7 +180,7 @@ jobs:
   create-emulation-root:
     name: Create Emulation Root
     runs-on: ${{ matrix.runner }}
-    needs: [build-apiset-dumper]
+    needs: [build-root-tools]
     strategy:
       fail-fast: false
       matrix:
@@ -185,10 +208,10 @@ jobs:
       - name: Install DirectX Runtime
         run: "cmd /c \"start /wait .\\dxrt\\dxsetup.exe /silent\""
 
-      - name: Download API Set Dumper
+      - name: Download Root Build Tools
         uses: pyTooling/download-artifact@v8
         with:
-          name: Temp API Set Dumper
+          name: Temp Root Build Tools
           path: build/release/artifacts
 
       - name: Create Emulation Root
@@ -196,6 +219,12 @@ jobs:
 
       - name: Dump API Set
         run: cd root && ../build/release/artifacts/dump-apiset.exe
+
+      - name: Install DXVK and Vulkan Shim
+        shell: pwsh
+        run: ./src/tools/install-gpu-runtime.ps1 -WindowsDir root/filesys/c/windows -Shim64 build/release/artifacts/vulkan-shim-x64.dll -Shim32 build/release/artifacts/vulkan-shim-x86.dll
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v7
@@ -1109,7 +1138,7 @@ jobs:
         build-python-sdist,
         test-python-sdist,
         clang-tidy,
-        build-apiset-dumper,
+        build-root-tools,
         smoke-test-whp,
         smoke-test-kvm,
         smoke-test-node,
