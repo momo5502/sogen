@@ -4864,7 +4864,7 @@ namespace sogen
 
         uint32_t handle_NtUserGetClipboardSequenceNumber()
         {
-            return 0xBEEFC00L;
+            return 1;
         }
     }
 

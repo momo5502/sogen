@@ -151,7 +151,7 @@ namespace sogen
             }
         }
 
-        struct scan_code_context
+        struct scancode_context
         {
             bool key_up = false;
             bool was_down = false;
@@ -159,7 +159,7 @@ namespace sogen
             uint16_t repeat_count = 1;
         };
 
-        uint64_t map_sdl_scancode(const SDL_Scancode scancode, const scan_code_context context = {})
+        uint64_t map_sdl_scancode(const SDL_Scancode scancode, const scancode_context context = {})
         {
             struct scan_result
             {
@@ -551,35 +551,39 @@ namespace sogen
                         }
 
                         const auto vk = map_sdl_keycode(event.key.key);
-                        const auto scan = map_sdl_scancode(event.key.scancode);
-
-                        if (vk == 0 || scan == 0)
+                        if (vk == 0)
                         {
                             break;
                         }
 
-                        const auto scancode_index = static_cast<size_t>(event.key.scancode);
                         bool was_down = event.key.repeat;
+                        const auto scancode_index = static_cast<size_t>(event.key.scancode);
 
                         if (scancode_index < key_down_.size())
                         {
                             was_down = was_down || key_down_[scancode_index];
-                            key_down_[scancode_index] = true;
                         }
 
                         const bool is_alt = vk == VK_MENU;
                         const bool alt_down = (event.key.mod & SDL_KMOD_ALT) != 0;
                         const bool alt_context = !is_alt && alt_down;
 
-                        scan_code_context context{};
-                        context.key_up = false;
-                        context.was_down = was_down;
-                        context.alt_context = alt_context;
-                        context.repeat_count = 1; // TODO: Track repeat count
+                        // TODO: Track repeat count
+                        scancode_context context{.was_down = was_down, .alt_context = alt_context};
+                        const auto scan = map_sdl_scancode(event.key.scancode, context);
+                        if (scan == 0)
+                        {
+                            break;
+                        }
+
+                        if (scancode_index < key_down_.size())
+                        {
+                            key_down_[scancode_index] = true;
+                        }
 
                         const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYDOWN : WM_KEYDOWN;
 
-                        this->post_event(guest, message, vk, map_sdl_scancode(event.key.scancode, context));
+                        this->post_event(guest, message, vk, scan);
                         break;
                     }
 
@@ -591,9 +595,18 @@ namespace sogen
                         }
 
                         const auto vk = map_sdl_keycode(event.key.key);
-                        const auto scan = map_sdl_scancode(event.key.scancode);
+                        if (vk == 0)
+                        {
+                            break;
+                        }
 
-                        if (vk == 0 || scan == 0)
+                        const bool is_alt = vk == VK_MENU;
+                        const bool alt_down = (event.key.mod & SDL_KMOD_ALT) != 0;
+                        const bool alt_context = !is_alt && alt_down;
+
+                        scancode_context context{.key_up = true, .was_down = true, .alt_context = alt_context};
+                        const auto scan = map_sdl_scancode(event.key.scancode, context);
+                        if (scan == 0)
                         {
                             break;
                         }
@@ -604,19 +617,9 @@ namespace sogen
                             key_down_[scancode_index] = false;
                         }
 
-                        const bool is_alt = vk == VK_MENU;
-                        const bool alt_down = (event.key.mod & SDL_KMOD_ALT) != 0;
-                        const bool alt_context = !is_alt && alt_down;
-
-                        scan_code_context context{};
-                        context.key_up = true;
-                        context.was_down = true;
-                        context.alt_context = alt_context;
-                        context.repeat_count = 1; // TODO: Track repeat count
-
                         const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYUP : WM_KEYUP;
 
-                        this->post_event(guest, message, vk, map_sdl_scancode(event.key.scancode, context));
+                        this->post_event(guest, message, vk, scan);
                         break;
                     }
 
