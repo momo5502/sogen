@@ -271,6 +271,15 @@ namespace sogen
                 this->drain_events();
             }
 
+            void reset() override
+            {
+                {
+                    std::scoped_lock lock{g_web_ui_event_mutex};
+                    g_web_ui_events.clear();
+                }
+                post_ui_message("reset", 0);
+            }
+
             void deliver_external_event(const ui_event& event)
             {
                 // Always enqueue. Browser 'message' callbacks fire during emscripten_sleep(0), i.e. on the

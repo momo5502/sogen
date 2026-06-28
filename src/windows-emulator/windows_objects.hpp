@@ -77,6 +77,36 @@ namespace sogen
     // resolved through SERVERINFO.atomSysClass), so matching this canonical name is portable.
     inline constexpr std::u16string_view builtin_dialog_class_name = u"#32770";
 
+    inline std::u16string_view normalize_builtin_window_class_name(const std::u16string_view class_name)
+    {
+        if (class_name == u"#1" || class_name == u"BUTTON" || class_name == u"Button")
+        {
+            return u"Button";
+        }
+        if (class_name == u"#2" || class_name == u"EDIT" || class_name == u"Edit")
+        {
+            return u"Edit";
+        }
+        if (class_name == u"#3" || class_name == u"STATIC" || class_name == u"Static")
+        {
+            return u"Static";
+        }
+        if (class_name == u"#4" || class_name == u"LISTBOX" || class_name == u"ListBox")
+        {
+            return u"ListBox";
+        }
+        if (class_name == u"#5" || class_name == u"SCROLLBAR" || class_name == u"ScrollBar")
+        {
+            return u"ScrollBar";
+        }
+        if (class_name == u"#6" || class_name == u"COMBOBOX" || class_name == u"ComboBox")
+        {
+            return u"ComboBox";
+        }
+
+        return class_name;
+    }
+
     struct window : user_object<USER_WINDOW>
     {
         uint32_t thread_id{};

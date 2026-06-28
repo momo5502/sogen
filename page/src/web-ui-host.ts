@@ -661,6 +661,15 @@ export function attachSogenUiHost(
       return;
     }
 
+    if (message.command === "reset") {
+      windows.clear();
+      focusedWindow = 0;
+      viewportPinnedByUser = false;
+      notifyWindowCount();
+      composite();
+      return;
+    }
+
     const hwnd = message.hwnd ?? 0;
     if (!hwnd) {
       return;

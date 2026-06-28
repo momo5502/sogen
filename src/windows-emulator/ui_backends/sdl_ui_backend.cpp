@@ -142,6 +142,18 @@ namespace sogen
             ~sdl_ui_backend() override
             {
 #ifdef SOGEN_HAS_SDL3
+                this->reset();
+
+                if (this->initialized_)
+                {
+                    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+                }
+#endif
+            }
+
+            void reset() override
+            {
+#ifdef SOGEN_HAS_SDL3
                 for (auto& [guest, state] : this->windows_)
                 {
                     (void)guest;
@@ -153,7 +165,7 @@ namespace sogen
 
                 if (this->initialized_)
                 {
-                    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+                    SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
                 }
 #endif
             }
@@ -481,6 +493,7 @@ namespace sogen
             {
                 if (!this->initialized_)
                 {
+                    SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
                     this->initialized_ = SDL_InitSubSystem(SDL_INIT_VIDEO);
                 }
 

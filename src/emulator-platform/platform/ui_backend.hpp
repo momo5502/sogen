@@ -68,6 +68,9 @@ namespace sogen
 
         virtual void set_event_sink(event_sink sink) = 0;
         virtual void pump_events() = 0;
+        virtual void reset()
+        {
+        }
 
         virtual void create_window(const ui_window_desc& /*desc*/)
         {
@@ -108,6 +111,9 @@ namespace sogen
         {
         }
         void pump_events() override
+        {
+        }
+        void reset() override
         {
         }
     };
