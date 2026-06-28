@@ -865,13 +865,11 @@ namespace sogen
                 ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm"}));
 
             std::vector<std::string> tracked_modules{};
-            app.add_option("-m,--module", tracked_modules, "Specify module(s) to track");
+            app.add_option("-m,--module", tracked_modules, "Specify module(s) to track")->allow_extra_args(false);
 
             std::vector<std::string> ignored_functions{};
-            app.add_option("-i,--ignore", ignored_functions, "Comma-separated list of functions to ignore");
+            app.add_option("-i,--ignore", ignored_functions, "Comma-separated list of functions to ignore")->allow_extra_args(false);
 
-            // allow_extra_args(false) makes each occurrence consume exactly the pair (2 tokens) instead of
-            // greedily eating following tokens (which would otherwise swallow the application positional).
             std::vector<std::pair<std::string, std::string>> path_mappings{};
             app.add_option("-p,--path", path_mappings, "Map a Windows path to a host path")->type_name("SRC DST")->allow_extra_args(false);
 
