@@ -18,6 +18,7 @@ target_link_libraries(sandbox PRIVATE
   windows-emulator
   whp-emulator
   emulator-common
+  cli11
   shell32
 )
 

@@ -38,6 +38,20 @@ target_include_directories(vulkan-headers INTERFACE
 
 ##########################################
 
+add_library(cli11 INTERFACE)
+target_include_directories(cli11 INTERFACE
+  "${CMAKE_CURRENT_LIST_DIR}/CLI11/include"
+)
+
+if(NOT WIN)
+  # CLI11's codecvt conversion path uses the deprecated std::wstring_convert, which fails under
+  # -Werror on non-Windows toolchains (e.g. Emscripten). It is only needed for the Windows wide
+  # command line, so use CLI11's locale-based fallback everywhere else.
+  target_compile_definitions(cli11 INTERFACE CLI11_HAS_CODECVT=0)
+endif()
+
+##########################################
+
 if(SOGEN_ENABLE_SDL3 AND NOT EMSCRIPTEN)
   # Prefer a system-installed SDL3 (find_package) when allowed and present;
   # otherwise build the vendored submodule. Emscripten uses the web UI backend
