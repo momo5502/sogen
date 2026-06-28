@@ -469,17 +469,49 @@ namespace sogen
                     return;
                 }
 
-                const size_t row_bytes = static_cast<size_t>(surface.width) * sizeof(uint32_t);
-                if (surface.guest_stride < row_bytes || surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
+                if (surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
                 {
                     return;
                 }
 
-                for (uint32_t y = 0; y < surface.height; ++y)
+                if (surface.guest_bpp == 32)
                 {
-                    const uint32_t guest_row = surface.guest_top_down ? y : (surface.height - 1 - y);
-                    auto* dst = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
-                    c.emu.read_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, dst, row_bytes);
+                    const size_t row_bytes = static_cast<size_t>(surface.width) * sizeof(uint32_t);
+                    if (surface.guest_stride < row_bytes)
+                    {
+                        return;
+                    }
+
+                    for (uint32_t y = 0; y < surface.height; ++y)
+                    {
+                        const uint32_t guest_row = surface.guest_top_down ? y : (surface.height - 1 - y);
+                        auto* dst = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
+                        c.emu.read_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, dst, row_bytes);
+                    }
+                }
+                else if (surface.guest_bpp == 24)
+                {
+                    const size_t row_bytes = static_cast<size_t>(surface.width) * 3;
+                    if (surface.guest_stride < row_bytes)
+                    {
+                        return;
+                    }
+
+                    std::vector<uint8_t> row(row_bytes);
+                    for (uint32_t y = 0; y < surface.height; ++y)
+                    {
+                        const uint32_t guest_row = surface.guest_top_down ? y : (surface.height - 1 - y);
+                        c.emu.read_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, row.data(),
+                                          row_bytes);
+
+                        auto* dst = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
+                        for (uint32_t x = 0; x < surface.width; ++x)
+                        {
+                            const uint8_t* px = row.data() + static_cast<size_t>(x) * 3;
+                            dst[x] = static_cast<uint32_t>(px[0]) | (static_cast<uint32_t>(px[1]) << 8) |
+                                     (static_cast<uint32_t>(px[2]) << 16) | 0xFF000000u;
+                        }
+                    }
                 }
             }
 
@@ -595,17 +627,41 @@ namespace sogen
                     return;
                 }
 
-                const size_t row_bytes = static_cast<size_t>(surface.width) * sizeof(uint32_t);
-                if (surface.guest_stride < row_bytes || surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
+                if (surface.pixels.size() < static_cast<size_t>(surface.width) * surface.height)
                 {
                     return;
                 }
 
+                if (surface.guest_bpp != 24 && surface.guest_bpp != 32)
+                {
+                    return;
+                }
+
+                const size_t bytes_per_pixel = surface.guest_bpp / 8;
+                const size_t row_bytes = static_cast<size_t>(surface.width) * bytes_per_pixel;
+                if (surface.guest_stride < row_bytes)
+                {
+                    return;
+                }
+
+                std::vector<uint8_t> row(row_bytes);
                 for (uint32_t y = 0; y < surface.height; ++y)
                 {
                     const uint32_t guest_row = surface.guest_top_down ? y : (surface.height - 1 - y);
                     const auto* src = surface.pixels.data() + static_cast<size_t>(y) * surface.width;
-                    c.emu.write_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, src, row_bytes);
+                    for (uint32_t x = 0; x < surface.width; ++x)
+                    {
+                        uint8_t* px = row.data() + static_cast<size_t>(x) * bytes_per_pixel;
+                        const uint32_t pixel = src[x];
+                        px[0] = static_cast<uint8_t>(pixel & 0xFF);
+                        px[1] = static_cast<uint8_t>((pixel >> 8) & 0xFF);
+                        px[2] = static_cast<uint8_t>((pixel >> 16) & 0xFF);
+                        if (bytes_per_pixel == 4)
+                        {
+                            px[3] = static_cast<uint8_t>((pixel >> 24) & 0xFF);
+                        }
+                    }
+                    c.emu.write_memory(surface.guest_bits + static_cast<uint64_t>(guest_row) * surface.guest_stride, row.data(), row_bytes);
                 }
             }
 
@@ -1966,6 +2022,7 @@ namespace sogen
             auto& surface = c.proc.gdi_bitmap_surfaces[handle_value];
             surface.guest_bits = guest_bits;
             surface.guest_stride = stride;
+            surface.guest_bpp = header.biBitCount;
             surface.guest_top_down = header.biHeight < 0;
             surface.guest_owns_memory = true;
 
@@ -2186,7 +2243,7 @@ namespace sogen
             c.emu.read_memory(info + 0, &bi_size, sizeof(bi_size));
             c.emu.read_memory(info + 32, &clr_used, sizeof(clr_used)); // BITMAPINFOHEADER.biClrUsed
 
-            if ((bit_count != 4 && bit_count != 32) || compression != bi_rgb || bi_width <= 0 || bi_height == 0)
+            if ((bit_count != 4 && bit_count != 24 && bit_count != 32) || compression != bi_rgb || bi_width <= 0 || bi_height == 0)
             {
                 c.win_emu.log.warn("NtGdiStretchDIBitsInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count, compression,
                                    bi_width);
@@ -2272,6 +2329,12 @@ namespace sogen
                     {
                         std::memcpy(&pixel, row + static_cast<size_t>(img_x) * sizeof(uint32_t), sizeof(pixel));
                         pixel |= 0xFF000000u;
+                    }
+                    else if (bit_count == 24)
+                    {
+                        const uint8_t* px = row + static_cast<size_t>(img_x) * 3;
+                        pixel = static_cast<uint32_t>(px[0]) | (static_cast<uint32_t>(px[1]) << 8) | (static_cast<uint32_t>(px[2]) << 16) |
+                                0xFF000000u;
                     }
                     else // 4bpp BI_RGB
                     {
