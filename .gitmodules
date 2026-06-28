@@ -50,3 +50,6 @@
 	path = deps/Vulkan-Headers
 	url = https://github.com/KhronosGroup/Vulkan-Headers.git
 	shallow = true
+[submodule "deps/CLI11"]
+	path = deps/CLI11
+	url = https://github.com/CLIUtils/CLI11.git
