@@ -555,6 +555,19 @@ namespace sogen
                         this->set_window_active(this->resolve_guest(event.window.windowID), false);
                         break;
 
+                    // The guest renders at its own fixed resolution; the host window can be any size. On a
+                    // host resize/expose, re-present the last frame so the letterbox (aspect-preserving fit
+                    // with black bars) updates immediately, even if the guest has not produced a new frame.
+                    case SDL_EVENT_WINDOW_RESIZED:
+                    case SDL_EVENT_WINDOW_MAXIMIZED:
+                    case SDL_EVENT_WINDOW_RESTORED:
+                    case SDL_EVENT_WINDOW_EXPOSED:
+                        if (auto* state = this->resolve_window(this->resolve_guest(event.window.windowID)))
+                        {
+                            render_window(*state);
+                        }
+                        break;
+
                     case SDL_EVENT_KEY_DOWN: {
                         const auto guest = this->resolve_guest(event.key.windowID);
                         if (guest == 0)
@@ -653,7 +666,7 @@ namespace sogen
                             {
                                 this->set_window_active(guest, true);
                                 this->post_event(guest, WM_LBUTTONDOWN, MK_LBUTTON,
-                                                 pack_point(static_cast<int>(event.button.x), static_cast<int>(event.button.y)));
+                                                 this->map_window_point(guest, event.button.x, event.button.y));
                             }
                         }
                         break;
@@ -663,8 +676,7 @@ namespace sogen
                         {
                             if (const auto guest = this->resolve_guest(event.button.windowID); guest != 0)
                             {
-                                this->post_event(guest, WM_LBUTTONUP, 0,
-                                                 pack_point(static_cast<int>(event.button.x), static_cast<int>(event.button.y)));
+                                this->post_event(guest, WM_LBUTTONUP, 0, this->map_window_point(guest, event.button.x, event.button.y));
                             }
                         }
                         break;
@@ -674,8 +686,7 @@ namespace sogen
                         {
                             this->set_window_active(guest, true);
                             const uint64_t keys = (event.motion.state & SDL_BUTTON_LMASK) ? MK_LBUTTON : 0;
-                            this->post_event(guest, WM_MOUSEMOVE, keys,
-                                             pack_point(static_cast<int>(event.motion.x), static_cast<int>(event.motion.y)));
+                            this->post_event(guest, WM_MOUSEMOVE, keys, this->map_window_point(guest, event.motion.x, event.motion.y));
                         }
                         break;
 
@@ -1027,6 +1038,11 @@ namespace sogen
             {
                 if (state.has_surface && state.texture)
                 {
+                    // The guest renders at a fixed resolution; fit it into the (independently sized) host window
+                    // preserving aspect ratio, with black bars on the mismatched axis. Letterbox presentation also
+                    // makes SDL_RenderCoordinatesFromWindow map host mouse positions back to guest pixels.
+                    SDL_SetRenderLogicalPresentation(state.renderer, state.texture_width, state.texture_height,
+                                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
                     SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, 255);
                     SDL_RenderClear(state.renderer);
                     SDL_RenderTexture(state.renderer, state.texture, nullptr, nullptr);
@@ -1034,6 +1050,7 @@ namespace sogen
                     return;
                 }
 
+                SDL_SetRenderLogicalPresentation(state.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
                 SDL_SetRenderDrawColor(state.renderer, 224, 224, 224, 255);
                 SDL_RenderClear(state.renderer);
                 SDL_RenderPresent(state.renderer);
@@ -1070,6 +1087,19 @@ namespace sogen
             {
                 const auto it = this->guest_by_window_id_.find(window_id);
                 return it == this->guest_by_window_id_.end() ? 0 : it->second;
+            }
+
+            // Map a host-window mouse position to guest client coordinates. With letterbox logical presentation,
+            // SDL_RenderCoordinatesFromWindow undoes the fit-and-center transform so clicks land on the right pixel.
+            uint64_t map_window_point(const hwnd guest, const float window_x, const float window_y) const
+            {
+                float render_x = window_x;
+                float render_y = window_y;
+                if (const auto* state = this->resolve_window(guest); state && state->renderer)
+                {
+                    SDL_RenderCoordinatesFromWindow(state->renderer, window_x, window_y, &render_x, &render_y);
+                }
+                return pack_point(static_cast<int>(render_x), static_cast<int>(render_y));
             }
 
             void set_window_active(const hwnd window, const bool active)
