@@ -25,18 +25,6 @@ namespace sogen
         LONG y;
     } POINTL;
 
-    typedef struct _FIXED
-    {
-        uint16_t fract;
-        int16_t value;
-    } FIXED;
-
-    typedef struct tagPOINTFX
-    {
-        FIXED x;
-        FIXED y;
-    } POINTFX;
-
     typedef struct tagSIZE
     {
         LONG cx;
