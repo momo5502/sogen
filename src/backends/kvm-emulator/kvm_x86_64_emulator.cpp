@@ -17,6 +17,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <iterator>
 #include <map>
@@ -1217,6 +1218,12 @@ namespace sogen::kvm
                 }
 
                 this->readonly_mem_supported_ = ::ioctl(this->kvm_fd_.get(), KVM_CHECK_EXTENSION, KVM_CAP_READONLY_MEM) > 0;
+                static std::atomic_bool readonly_mem_warning_emitted{false};
+                if (!this->readonly_mem_supported_ && !readonly_mem_warning_emitted.exchange(true, std::memory_order_relaxed))
+                {
+                    std::fputs("[WARN] KVM_CAP_READONLY_MEM is unavailable; MMIO writes and read-only memory protections may not trap.\n",
+                               stderr);
+                }
 
                 // The thread-switch register snapshot relies on KVM_GET_XSAVE/KVM_SET_XSAVE.
                 if (::ioctl(this->kvm_fd_.get(), KVM_CHECK_EXTENSION, KVM_CAP_XSAVE) <= 0)
