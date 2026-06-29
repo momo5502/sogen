@@ -388,6 +388,7 @@ namespace sogen
 #endif
 
 #define WM_UAHDESTROYWINDOW 0x0090
+#define WM_SYSTIMER         0x0118
 
     struct EMU_DISPLAY_DEVICEW
     {

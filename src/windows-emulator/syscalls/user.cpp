@@ -4310,8 +4310,8 @@ namespace sogen
             return 2;
         }
 
-        uint64_t handle_NtUserSetTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id, const uint32_t elapsed_ms,
-                                       const uint64_t timer_proc)
+        uint64_t set_user_timer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id, const uint32_t elapsed_ms,
+                                const uint64_t timer_proc, const bool is_system)
         {
             auto interval = std::chrono::milliseconds{elapsed_ms};
             if (interval < k_user_timer_minimum)
@@ -4346,10 +4346,23 @@ namespace sogen
                 timer->interval = interval;
                 timer->due_time = now + interval;
                 timer->timer_proc = timer_proc;
+                timer->is_system = is_system;
                 return timer_id;
             }
 
-            return target_thread->create_user_timer(c.proc, hwnd, timer_id, timer_proc, interval, now).timer_id;
+            return target_thread->create_user_timer(c.proc, hwnd, timer_id, timer_proc, interval, now, is_system).timer_id;
+        }
+
+        uint64_t handle_NtUserSetTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id, const uint32_t elapsed_ms,
+                                       const uint64_t timer_proc)
+        {
+            return set_user_timer(c, hwnd, timer_id, elapsed_ms, timer_proc, false);
+        }
+
+        uint64_t handle_NtUserSetSystemTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id,
+                                             const uint32_t elapsed_ms)
+        {
+            return set_user_timer(c, hwnd, timer_id, elapsed_ms, 0, true);
         }
 
         BOOL handle_NtUserKillTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id)

@@ -602,6 +602,7 @@ namespace sogen
         BOOL handle_NtUserDrainThreadCoreMessagingCompletions2();
         uint64_t handle_NtUserScheduleDispatchNotification(const syscall_context& c, hwnd hwnd);
         uint64_t handle_NtUserSetTimer(const syscall_context& c, hwnd hwnd, uint64_t timer_id, uint32_t elapsed_ms, uint64_t timer_proc);
+        uint64_t handle_NtUserSetSystemTimer(const syscall_context& c, hwnd hwnd, uint64_t timer_id, uint32_t elapsed_ms);
         BOOL handle_NtUserKillTimer(const syscall_context& c, hwnd hwnd, uint64_t timer_id);
         BOOL handle_NtUserValidateTimerCallback(const syscall_context& c, uint64_t timer_proc);
         uint32_t handle_NtUserGetQueueStatusReadonly(const syscall_context& c, UINT flags);
@@ -1513,6 +1514,7 @@ namespace sogen
         add_handler(NtUserInitThreadCoreMessagingIocp2);
         add_handler(NtUserDrainThreadCoreMessagingCompletions2);
         add_handler(NtUserSetTimer);
+        add_handler(NtUserSetSystemTimer);
         add_handler(NtUserKillTimer);
         add_handler(NtUserValidateTimerCallback);
         add_handler(NtAllocateReserveObject);
