@@ -9,6 +9,7 @@
 #include <utils/file_handle.hpp>
 #include <platform/synchronisation.hpp>
 #include <platform/win_pefile.hpp>
+#include <platform/window.hpp>
 
 namespace sogen
 {
@@ -139,6 +140,27 @@ namespace sogen
         bool is_dialog() const
         {
             return this->class_name == builtin_dialog_class_name;
+        }
+
+        // The guest sizes its window via AdjustWindowRect, which inflates the client rect it wants to render
+        // into by the non-client frame. user32 always adds a 1px border for framed windows (SM_CXBORDER/
+        // SM_CYBORDER are hardcoded to 1) and our system metrics for the sizing frame and caption are zero, so
+        // the only inset is that 1px border. Mirror it so the client size we report (GetClientRect, the Vulkan
+        // surface extent, the presented surface) matches what the guest actually renders -- otherwise the
+        // layer (DXVK) renders its whole frame onto a 1px-larger surface and the upscaled image softens.
+        int32_t nonclient_border() const
+        {
+            return (this->style & (WS_BORDER | WS_DLGFRAME | WS_THICKFRAME)) != 0 ? 1 : 0;
+        }
+
+        int32_t client_width() const
+        {
+            return std::max(0, this->width - 2 * this->nonclient_border());
+        }
+
+        int32_t client_height() const
+        {
+            return std::max(0, this->height - 2 * this->nonclient_border());
         }
 
         void serialize_object(utils::buffer_serializer& buffer) const override

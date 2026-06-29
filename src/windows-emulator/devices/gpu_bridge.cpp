@@ -2947,10 +2947,13 @@ namespace sogen
                 if (const uint64_t surface_hwnd = this->vulkan_.get_surface_hwnd(request.surface); surface_hwnd != 0)
                 {
                     if (const auto* win = win_emu.process.windows.get(static_cast<hwnd>(surface_hwnd));
-                        win && win->width > 0 && win->height > 0)
+                        win && win->client_width() > 0 && win->client_height() > 0)
                     {
-                        window_width = static_cast<uint32_t>(win->width);
-                        window_height = static_cast<uint32_t>(win->height);
+                        // Report the client size, not the outer window size: DXVK pins its swapchain to this
+                        // extent, and if it exceeds the client-sized backbuffer the present blit upscales (a 1px
+                        // border alone softens the whole frame).
+                        window_width = static_cast<uint32_t>(win->client_width());
+                        window_height = static_cast<uint32_t>(win->client_height());
                     }
                 }
 
