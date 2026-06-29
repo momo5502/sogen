@@ -18,6 +18,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -1673,6 +1674,24 @@ namespace sogen::kvm
 
                 return std::nullopt;
             }
+            std::optional<uint64_t> translate_guest_physical_address(uint64_t physical_address)
+            {
+                for (auto& [guest_page, page] : this->mapped_pages_)
+                {
+                    if (!page || !page->physical_page)
+                    {
+                        continue;
+                    }
+
+                    const auto page_gpa = *page->physical_page;
+                    if (physical_address >= page_gpa && physical_address < page_gpa + page_size)
+                    {
+                        return guest_page + (physical_address - page_gpa);
+                    }
+                }
+
+                return std::nullopt;
+            }
             bool handle_mmio_exit()
             {
                 const auto& mmio = this->run_->mmio;
@@ -1692,10 +1711,13 @@ namespace sogen::kvm
                     return true;
                 }
 
+                const auto translated_guest_address = this->translate_guest_physical_address(mmio.phys_addr);
+                const auto violation_address = translated_guest_address.value_or(mmio.phys_addr);
+                const auto violation_type = translated_guest_address ? memory_violation_type::protection : memory_violation_type::unmapped;
                 const auto operation = mmio.is_write ? memory_operation::write : memory_operation::read;
                 for (auto& [_, hook] : this->memory_violation_hooks_)
                 {
-                    const auto result = hook(mmio.phys_addr, mmio.len, operation, memory_violation_type::unmapped);
+                    const auto result = hook(violation_address, mmio.len, operation, violation_type);
                     if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                     {
                         return true;
