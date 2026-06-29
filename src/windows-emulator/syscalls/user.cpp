@@ -1904,17 +1904,28 @@ namespace sogen
             return (c.proc.key_state[static_cast<uint32_t>(virtual_key) & 0xFF] & 0x80) ? 0x8000u : 0u;
         }
 
+        // The host pointer is shown only when the display count is non-negative and the current cursor has a
+        // visible shape; mirror that to the UI so a captured (hidden + recentered) cursor stops flickering.
+        void apply_cursor_visibility(const syscall_context& c)
+        {
+            c.win_emu.ui().set_cursor_visibility(c.proc.cursor_show_count >= 0 && c.proc.cursor_shape_visible);
+        }
+
         // ShowCursor(bShow) adjusts the cursor display counter (+1 to show, -1 to hide) and returns the new
         // value. Games spin on it to drive the count to a target (e.g. IN_ActivateMouse hides the cursor), so
         // it must actually track and return the running count or those loops never terminate.
         int32_t handle_NtUserShowCursor(const syscall_context& c, const BOOL show)
         {
             c.proc.cursor_show_count += show ? 1 : -1;
+            apply_cursor_visibility(c);
             return c.proc.cursor_show_count;
         }
 
         hcursor handle_NtUserSetCursor(const syscall_context& c, const hcursor cursor)
         {
+            // SetCursor(NULL) removes the cursor shape (hides it); a non-null handle restores it.
+            c.proc.cursor_shape_visible = cursor != 0;
+            apply_cursor_visibility(c);
             return std::exchange(c.proc.current_cursor, cursor);
         }
 

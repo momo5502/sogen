@@ -405,6 +405,11 @@ namespace sogen
         int32_t cursor_y{};
         hcursor current_cursor{};
         int32_t cursor_show_count{};
+        // Whether the current cursor has a visible shape. SetCursor(NULL) clears it to hide the pointer
+        // without touching the show count (some games hide the cursor that way). Defaults to true since a
+        // window without an explicit SetCursor still shows its class cursor. The host pointer is shown only
+        // when cursor_show_count >= 0 and this is set.
+        bool cursor_shape_visible{true};
         // Per-virtual-key pressed state (0x80 = down), updated from key/mouse-button events and reported by
         // GetKeyState; games poll this for in-game input (movement, etc.) rather than window messages.
         std::array<uint8_t, 256> key_state{};

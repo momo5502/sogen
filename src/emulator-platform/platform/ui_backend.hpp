@@ -102,6 +102,12 @@ namespace sogen
         virtual void set_cursor_position(const hwnd /*window*/, const int32_t /*screen_x*/, const int32_t /*screen_y*/)
         {
         }
+        // Show or hide the host cursor. Games that capture the mouse hide it (ShowCursor(FALSE) /
+        // SetCursor(NULL)) and recenter every frame; without honoring this the host cursor stays visible
+        // and flickers as the guest warps it back to the center.
+        virtual void set_cursor_visibility(const bool /*visible*/)
+        {
+        }
     };
 
     class null_ui_backend final : public ui_backend
