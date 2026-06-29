@@ -888,12 +888,19 @@ namespace sogen
             {
 #ifdef SOGEN_HAS_SDL3
                 // Top-levels are positioned at their emulated rect (SDL_SetWindowPosition), so emulated screen
-                // coordinates map to window-local by subtracting that origin.
+                // coordinates map to guest client pixels by subtracting that origin.
                 const auto top = this->get_top_level_ancestor(window);
                 if (auto* state = this->resolve_window(top); state && state->window)
                 {
-                    SDL_WarpMouseInWindow(state->window, static_cast<float>(screen_x - state->desc.rect.left),
-                                          static_cast<float>(screen_y - state->desc.rect.top));
+                    auto window_x = static_cast<float>(screen_x - state->desc.rect.left);
+                    auto window_y = static_cast<float>(screen_y - state->desc.rect.top);
+                    // The frame is letterboxed into the window, so guest pixels are not at the same position in
+                    // the host window; map through the same transform map_window_point inverts.
+                    if (state->renderer)
+                    {
+                        SDL_RenderCoordinatesToWindow(state->renderer, window_x, window_y, &window_x, &window_y);
+                    }
+                    SDL_WarpMouseInWindow(state->window, window_x, window_y);
                 }
 #else
                 (void)window;
@@ -1074,6 +1081,7 @@ namespace sogen
                                                               .stride = width * static_cast<int>(sizeof(uint32_t)),
                                                               .format = ui_surface_format::bgra8,
                                                               .pixels = pixels.data()});
+                SDL_SetRenderLogicalPresentation(state.renderer, 0, 0, SDL_LOGICAL_PRESENTATION_DISABLED);
                 SDL_SetRenderDrawColor(state.renderer, 0, 0, 0, 255);
                 SDL_RenderClear(state.renderer);
                 if (state.texture)
