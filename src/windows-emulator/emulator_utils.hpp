@@ -435,7 +435,7 @@ namespace sogen
         }
 
         const auto ansi_string = read_string<char>(*str_obj.get_memory_interface(), str.Buffer, str.Length);
-        return u8_to_u16(ansi_string);
+        return cp1252_to_u16(ansi_string);
     }
 
     inline uint64_t get_function_argument_x64_fastcall(x86_64_emulator& emu, const size_t index)

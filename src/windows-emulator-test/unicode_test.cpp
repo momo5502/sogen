@@ -257,4 +257,48 @@ namespace sogen::test
             EXPECT_TRUE(u8_byte_len == u8_conv.length() && memcmp(u8_str, u8_conv.data(), u8_byte_len) == 0);
         }
     }
+
+    TEST(UnicodeConversionsTest, test_cp1252_to_u16)
+    {
+        // Plain ASCII passes through unchanged.
+        EXPECT_EQ(cp1252_to_u16("\x47\x61\x6d\x65"), std::u16string(u"Game"));
+
+        // The copyright sign is byte 0xA9 in CP-1252 (an invalid UTF-8 lead byte) -> U+00A9.
+        EXPECT_EQ(cp1252_to_u16("\xA9\x20\x32\x30\x32\x34"), (std::u16string{0x00A9, 0x20, 0x32, 0x30, 0x32, 0x34}));
+
+        // 0xA0-0xFF map identically to Latin-1 (0xE9 -> U+00E9, 0xAE -> U+00AE).
+        EXPECT_EQ(cp1252_to_u16("\x63\x61\x66\xE9"), (std::u16string{0x63, 0x61, 0x66, 0x00E9}));
+        EXPECT_EQ(cp1252_to_u16("\xAE"), (std::u16string{0x00AE}));
+
+        // The 0x80-0x9F block is remapped: 0x80 -> U+20AC, 0x99 -> U+2122, 0x93/0x94 -> smart quotes.
+        EXPECT_EQ(cp1252_to_u16("\x80"), (std::u16string{0x20AC}));
+        EXPECT_EQ(cp1252_to_u16("\x99"), (std::u16string{0x2122}));
+        EXPECT_EQ(cp1252_to_u16("\x93\x68\x69\x94"), (std::u16string{0x201C, 0x68, 0x69, 0x201D}));
+
+        // The five unassigned slots pass through as their raw byte value (0x81 -> U+0081).
+        EXPECT_EQ(cp1252_to_u16("\x81"), (std::u16string{0x0081}));
+    }
+
+    TEST(UnicodeConversionsTest, test_u16_to_cp1252)
+    {
+        // Plain ASCII passes through unchanged.
+        EXPECT_EQ(u16_to_cp1252(u"Game"), std::string("\x47\x61\x6d\x65"));
+
+        // Inverse of cp1252_to_u16: U+00A9 -> byte 0xA9, Latin-1 0xA0-0xFF identity.
+        EXPECT_EQ(u16_to_cp1252(std::u16string{0x00A9, 0x20, 0x32, 0x30, 0x32, 0x34}), std::string("\xA9\x20\x32\x30\x32\x34"));
+        EXPECT_EQ(u16_to_cp1252(std::u16string{0x63, 0x61, 0x66, 0x00E9}), std::string("\x63\x61\x66\xE9"));
+        EXPECT_EQ(u16_to_cp1252(std::u16string{0x00AE}), std::string("\xAE"));
+
+        // The remapped 0x80-0x9F block reverses: U+20AC -> 0x80, U+2122 -> 0x99, smart quotes -> 0x93/0x94.
+        EXPECT_EQ(u16_to_cp1252(std::u16string{0x20AC}), std::string("\x80"));
+        EXPECT_EQ(u16_to_cp1252(std::u16string{0x2122}), std::string("\x99"));
+        EXPECT_EQ(u16_to_cp1252(std::u16string{0x201C, 0x68, 0x69, 0x201D}), std::string("\x93\x68\x69\x94"));
+
+        // The five unassigned slots reverse to their raw byte (U+0081 -> 0x81).
+        EXPECT_EQ(u16_to_cp1252(std::u16string{0x0081}), std::string("\x81"));
+
+        // Code points with no CP-1252 representation map to the default char (U+4E2D, U+0080).
+        EXPECT_EQ(u16_to_cp1252(std::u16string{0x4E2D}), std::string("\x3F"));
+        EXPECT_EQ(u16_to_cp1252(std::u16string{0x0080}), std::string("\x3F"));
+    }
 } // namespace sogen::test
