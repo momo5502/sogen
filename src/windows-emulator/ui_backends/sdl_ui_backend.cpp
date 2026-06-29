@@ -891,6 +891,23 @@ namespace sogen
 #endif
             }
 
+            void set_cursor_visibility(const bool visible) override
+            {
+#ifdef SOGEN_HAS_SDL3
+                // SDL cursor visibility is process-global, which matches the single foreground guest game.
+                if (visible)
+                {
+                    SDL_ShowCursor();
+                }
+                else
+                {
+                    SDL_HideCursor();
+                }
+#else
+                (void)visible;
+#endif
+            }
+
           private:
 #ifdef SOGEN_HAS_SDL3
             bool ensure_initialized()
