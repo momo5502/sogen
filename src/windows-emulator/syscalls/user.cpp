@@ -593,10 +593,10 @@ namespace sogen
             case WM_GETTEXT:
                 return copy_def_window_text(c, win, w_param, l_param, ansi != FALSE);
 
-            case WM_GETTEXTLENGTH: {
-                const auto text = read_guest_window_text(c, win);
-                return ansi ? u16_to_cp1252(text).size() : text.size();
-            }
+            case WM_GETTEXTLENGTH:
+                // CP-1252 is 1:1 with UTF-16 code units, so the ANSI byte count equals the code-unit
+                // count; no need to encode just to measure it.
+                return read_guest_window_text(c, win).size();
 
             case WM_ERASEBKGND:
                 return TRUE;
