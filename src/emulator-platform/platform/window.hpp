@@ -102,6 +102,15 @@ namespace sogen
         hicon hIconSm;
     };
 
+    struct EMU_ICONINFO
+    {
+        BOOL fIcon;
+        DWORD xHotspot;
+        DWORD yHotspot;
+        hbitmap hbmMask;
+        hbitmap hbmColor;
+    };
+
     struct EMU_MINMAXINFO
     {
         POINT ptReserved;
@@ -388,6 +397,7 @@ namespace sogen
 #endif
 
 #define WM_UAHDESTROYWINDOW 0x0090
+#define WM_SYSTIMER         0x0118
 
     struct EMU_DISPLAY_DEVICEW
     {

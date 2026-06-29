@@ -289,6 +289,7 @@ namespace sogen
             switch (queued_message.message)
             {
             case WM_TIMER:
+            case WM_SYSTIMER:
                 return QS_TIMER;
 
             case WM_PAINT:
@@ -641,7 +642,7 @@ namespace sogen
 
     user_timer& emulator_thread::create_user_timer(process_context& process, const hwnd hwnd, uint64_t timer_id, const uint64_t timer_proc,
                                                    const std::chrono::milliseconds interval,
-                                                   const std::chrono::steady_clock::time_point now)
+                                                   const std::chrono::steady_clock::time_point now, const bool is_system)
     {
         if (hwnd == 0)
         {
@@ -672,6 +673,7 @@ namespace sogen
         timer.hwnd = hwnd;
         timer.timer_id = timer_id;
         timer.timer_proc = timer_proc;
+        timer.is_system = is_system;
         timer.interval = interval;
         timer.due_time = now + interval;
 
@@ -719,7 +721,7 @@ namespace sogen
 
             msg timer_message{};
             timer_message.window = user_timer.hwnd;
-            timer_message.message = WM_TIMER;
+            timer_message.message = user_timer.is_system ? WM_SYSTIMER : WM_TIMER;
             timer_message.wParam = user_timer.timer_id;
             timer_message.lParam = user_timer.timer_proc;
 
@@ -852,6 +854,7 @@ namespace sogen
             return true;
 
         case WM_TIMER:
+        case WM_SYSTIMER:
             return tail_msg.wParam == msg.wParam && tail_msg.lParam == msg.lParam;
 
         default:

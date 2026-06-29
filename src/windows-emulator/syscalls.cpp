@@ -489,6 +489,10 @@ namespace sogen
         hicon handle_NtUserGetCursorFrameInfo(const syscall_context& c, hicon icon, UINT frame, emulator_object<uint32_t> rate_jiffies,
                                               emulator_object<uint32_t> frame_count);
         BOOL handle_NtUserGetIconSize(const syscall_context& c, hicon icon, UINT frame, emulator_object<int> cx, emulator_object<int> cy);
+        BOOL handle_NtUserGetIconInfo(const syscall_context& c, hicon icon, emulator_object<EMU_ICONINFO> icon_info,
+                                      emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> inst_name,
+                                      emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> res_name, emulator_object<uint32_t> bpp,
+                                      BOOL internal);
         BOOL handle_NtUserDrawIconEx(const syscall_context& c, hdc dc, int x, int y, hicon icon, int cx, int cy, UINT istep,
                                      uint64_t flicker_brush, UINT di_flags);
         BOOL handle_NtUserMessageBeep();
@@ -602,6 +606,7 @@ namespace sogen
         BOOL handle_NtUserDrainThreadCoreMessagingCompletions2();
         uint64_t handle_NtUserScheduleDispatchNotification(const syscall_context& c, hwnd hwnd);
         uint64_t handle_NtUserSetTimer(const syscall_context& c, hwnd hwnd, uint64_t timer_id, uint32_t elapsed_ms, uint64_t timer_proc);
+        uint64_t handle_NtUserSetSystemTimer(const syscall_context& c, hwnd hwnd, uint64_t timer_id, uint32_t elapsed_ms);
         BOOL handle_NtUserKillTimer(const syscall_context& c, hwnd hwnd, uint64_t timer_id);
         BOOL handle_NtUserValidateTimerCallback(const syscall_context& c, uint64_t timer_proc);
         uint32_t handle_NtUserGetQueueStatusReadonly(const syscall_context& c, UINT flags);
@@ -1369,6 +1374,7 @@ namespace sogen
         add_handler(NtUserDestroyCursor);
         add_handler(NtUserGetCursorFrameInfo);
         add_handler(NtUserGetIconSize);
+        add_handler(NtUserGetIconInfo);
         add_handler(NtUserDrawIconEx);
         add_handler(NtUserMessageBeep);
         add_handler(NtSetContextThread);
@@ -1513,6 +1519,7 @@ namespace sogen
         add_handler(NtUserInitThreadCoreMessagingIocp2);
         add_handler(NtUserDrainThreadCoreMessagingCompletions2);
         add_handler(NtUserSetTimer);
+        add_handler(NtUserSetSystemTimer);
         add_handler(NtUserKillTimer);
         add_handler(NtUserValidateTimerCallback);
         add_handler(NtAllocateReserveObject);

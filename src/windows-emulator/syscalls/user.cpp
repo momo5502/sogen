@@ -1979,6 +1979,43 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserGetIconInfo(const syscall_context& c, const hicon icon, const emulator_object<EMU_ICONINFO> icon_info,
+                                      const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> inst_name,
+                                      const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> res_name,
+                                      const emulator_object<uint32_t> bpp, const BOOL /*internal*/)
+        {
+            if (icon == 0 || !icon_info)
+            {
+                set_guest_last_error(c, 1414); // ERROR_INVALID_CURSOR_HANDLE
+                return FALSE;
+            }
+
+            // The emulator's icons/cursors are bare pseudo-handles with no backing pixel data, so report a
+            // standard 32x32 icon with a centered hotspot and no mask/color bitmaps.
+            const EMU_ICONINFO info{
+                .fIcon = TRUE,
+                .xHotspot = 16,
+                .yHotspot = 16,
+                .hbmMask = 0,
+                .hbmColor = 0,
+            };
+            icon_info.write(info);
+
+            const auto clear_name = [&](const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>& name) {
+                if (name)
+                {
+                    auto value = name.read();
+                    value.Length = 0;
+                    name.write(value);
+                }
+            };
+            clear_name(inst_name);
+            clear_name(res_name);
+
+            bpp.write_if_valid(32);
+            return TRUE;
+        }
+
         BOOL handle_NtUserMessageBeep()
         {
             return TRUE;
@@ -4310,8 +4347,8 @@ namespace sogen
             return 2;
         }
 
-        uint64_t handle_NtUserSetTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id, const uint32_t elapsed_ms,
-                                       const uint64_t timer_proc)
+        uint64_t set_user_timer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id, const uint32_t elapsed_ms,
+                                const uint64_t timer_proc, const bool is_system)
         {
             auto interval = std::chrono::milliseconds{elapsed_ms};
             if (interval < k_user_timer_minimum)
@@ -4346,10 +4383,22 @@ namespace sogen
                 timer->interval = interval;
                 timer->due_time = now + interval;
                 timer->timer_proc = timer_proc;
+                timer->is_system = is_system;
                 return timer_id;
             }
 
-            return target_thread->create_user_timer(c.proc, hwnd, timer_id, timer_proc, interval, now).timer_id;
+            return target_thread->create_user_timer(c.proc, hwnd, timer_id, timer_proc, interval, now, is_system).timer_id;
+        }
+
+        uint64_t handle_NtUserSetTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id, const uint32_t elapsed_ms,
+                                       const uint64_t timer_proc)
+        {
+            return set_user_timer(c, hwnd, timer_id, elapsed_ms, timer_proc, false);
+        }
+
+        uint64_t handle_NtUserSetSystemTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id, const uint32_t elapsed_ms)
+        {
+            return set_user_timer(c, hwnd, timer_id, elapsed_ms, 0, true);
         }
 
         BOOL handle_NtUserKillTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id)
