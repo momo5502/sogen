@@ -1588,9 +1588,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_threads, "Threads")
     RUN_TEST(test_threads_winapi, "Threads WinAPI")
     RUN_TEST(test_env, "Environment")
-#ifdef _WIN64
     RUN_TEST(test_lookup_account_sid, "LSA")
-#endif
     RUN_TEST(test_exceptions, "Exceptions")
 #ifndef __MINGW64__
     RUN_TEST(test_native_exceptions, "Native Exceptions")

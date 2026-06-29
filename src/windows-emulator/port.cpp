@@ -253,7 +253,7 @@ namespace sogen
         std::memcpy(header.data() + 12, &call_id, sizeof(call_id));
 
         std::vector<uint8_t> payload;
-        utils::aligned_binary_writer writer(payload);
+        utils::aligned_binary_writer writer(payload, win_emu.process.is_wow64_process ? sizeof(uint32_t) : sizeof(uint64_t));
         writer.write(header.data(), header.size());
 
         lpc_request_context rpc_context{};
