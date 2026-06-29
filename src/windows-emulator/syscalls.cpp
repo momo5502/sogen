@@ -489,6 +489,10 @@ namespace sogen
         hicon handle_NtUserGetCursorFrameInfo(const syscall_context& c, hicon icon, UINT frame, emulator_object<uint32_t> rate_jiffies,
                                               emulator_object<uint32_t> frame_count);
         BOOL handle_NtUserGetIconSize(const syscall_context& c, hicon icon, UINT frame, emulator_object<int> cx, emulator_object<int> cy);
+        BOOL handle_NtUserGetIconInfo(const syscall_context& c, hicon icon, emulator_object<EMU_ICONINFO> icon_info,
+                                      emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> inst_name,
+                                      emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> res_name, emulator_object<uint32_t> bpp,
+                                      BOOL internal);
         BOOL handle_NtUserDrawIconEx(const syscall_context& c, hdc dc, int x, int y, hicon icon, int cx, int cy, UINT istep,
                                      uint64_t flicker_brush, UINT di_flags);
         BOOL handle_NtUserMessageBeep();
@@ -1370,6 +1374,7 @@ namespace sogen
         add_handler(NtUserDestroyCursor);
         add_handler(NtUserGetCursorFrameInfo);
         add_handler(NtUserGetIconSize);
+        add_handler(NtUserGetIconInfo);
         add_handler(NtUserDrawIconEx);
         add_handler(NtUserMessageBeep);
         add_handler(NtSetContextThread);

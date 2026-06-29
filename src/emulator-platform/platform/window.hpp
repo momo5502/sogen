@@ -102,6 +102,15 @@ namespace sogen
         hicon hIconSm;
     };
 
+    struct EMU_ICONINFO
+    {
+        BOOL fIcon;
+        DWORD xHotspot;
+        DWORD yHotspot;
+        hbitmap hbmMask;
+        hbitmap hbmColor;
+    };
+
     struct EMU_MINMAXINFO
     {
         POINT ptReserved;
