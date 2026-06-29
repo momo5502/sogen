@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -75,17 +76,17 @@ namespace
 
         // Resolve <system>\vulkan-1.dll. In a 32-bit (WOW64) process the file-system redirector maps
         // System32 to SysWOW64, so this picks up the matching-bitness loader automatically.
-        wchar_t path[MAX_PATH];
-        const auto length = GetSystemDirectoryW(path, MAX_PATH);
-        constexpr wchar_t suffix[] = L"\\vulkan-1.dll";
-        constexpr auto suffix_count = sizeof(suffix) / sizeof(suffix[0]);
-        if (length == 0 || length + suffix_count > MAX_PATH)
+        std::array<wchar_t, MAX_PATH> path{};
+        const auto length = GetSystemDirectoryW(path.data(), static_cast<UINT>(path.size()));
+        constexpr std::wstring_view suffix = L"\\vulkan-1.dll";
+        if (length == 0 || length + suffix.size() + 1 > path.size())
         {
             return;
         }
-        std::memcpy(path + length, suffix, sizeof(suffix));
+        // Copy the suffix plus its null terminator (data() points at a null-terminated literal).
+        std::memcpy(path.data() + length, suffix.data(), (suffix.size() + 1) * sizeof(wchar_t));
 
-        HMODULE real = LoadLibraryW(path);
+        HMODULE real = LoadLibraryW(path.data());
         if (!real)
         {
             return;
