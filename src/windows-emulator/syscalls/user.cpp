@@ -4396,8 +4396,7 @@ namespace sogen
             return set_user_timer(c, hwnd, timer_id, elapsed_ms, timer_proc, false);
         }
 
-        uint64_t handle_NtUserSetSystemTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id,
-                                             const uint32_t elapsed_ms)
+        uint64_t handle_NtUserSetSystemTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id, const uint32_t elapsed_ms)
         {
             return set_user_timer(c, hwnd, timer_id, elapsed_ms, 0, true);
         }
