@@ -80,7 +80,7 @@ namespace sogen
             return domain_sid;
         }
 
-        void write_lsa_unicode_string(utils::aligned_binary_writer& writer, const std::u16string_view value)
+        void write_lsa_unicode_string_header(utils::aligned_binary_writer& writer, const std::u16string_view value)
         {
             writer.write(static_cast<uint16_t>(value.size() * sizeof(char16_t)));
             writer.write(static_cast<uint16_t>((value.size() + 1) * sizeof(char16_t)));
@@ -91,9 +91,11 @@ namespace sogen
         {
             writer.write(k_sid_type_user);
             writer.align_to(writer.pointer_size());
-            write_lsa_unicode_string(writer, value);
+            write_lsa_unicode_string_header(writer, value);
+            writer.write<int32_t>(0);
             writer.write<int32_t>(0);
             writer.align_to(writer.pointer_size());
+            writer.write_ndr_u16string(value, false);
         }
 
         void write_lookup_sids_success_reply(utils::aligned_binary_writer& writer, const std::u16string_view domain,
@@ -106,9 +108,8 @@ namespace sogen
             writer.write(k_lsa_max_referenced_domains);
 
             writer.write_pointer_sized(1);
-            write_lsa_unicode_string(writer, domain);
+            write_lsa_unicode_string_header(writer, domain);
             writer.write_ndr_pointer(true);
-
             writer.write_ndr_u16string(domain, false);
             writer.align_to(writer.pointer_size());
 
@@ -120,10 +121,7 @@ namespace sogen
             writer.write<uint32_t>(1);
             writer.write_ndr_pointer(true);
             writer.write_pointer_sized(1);
-
             write_lsa_translated_name(writer, user);
-            writer.align_to(utils::aligned_binary_writer::pointer_size_64);
-            writer.write_ndr_u16string(user, false);
 
             writer.write<uint32_t>(1);
             writer.write(STATUS_SUCCESS);
@@ -139,6 +137,10 @@ namespace sogen
 
         struct lsa_policy_lookup_port : rpc_port
         {
+            /*
+             * The layout for this RPC port seems to be all documented here:
+             * https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-lsad/1b5471ef-4c33-4a91-b079-dfcbb82f05cc
+             */
             NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c,
                                 utils::aligned_binary_writer& writer) override
             {
