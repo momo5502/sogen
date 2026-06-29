@@ -3,7 +3,6 @@
 #include "std_include.hpp"
 #include "linux_stat.hpp"
 
-#include <cstdio>
 #include <optional>
 
 // Forward declarations
@@ -13,9 +12,8 @@ namespace sogen
     class linux_emulator;
 
     // Synthesizes /proc filesystem content from emulator state.
-    // All generated content is returned as strings or byte vectors.
-    // The caller (syscall handlers) is responsible for creating fds
-    // backed by tmpfile() with the generated content.
+    // All generated content is returned as strings or byte vectors for
+    // memory-backed descriptors owned by the syscall layer.
     class procfs
     {
       public:
@@ -36,11 +34,6 @@ namespace sogen
         // Resolve a procfs symlink target (e.g., /proc/self/exe -> /path/to/binary).
         // Returns the target string, or std::nullopt if not a symlink.
         static std::optional<std::string> resolve_symlink(const linux_emulator& emu, std::string_view path);
-
-        // Create a FILE* handle backed by tmpfile() containing the generated content.
-        // The caller takes ownership of the returned handle.
-        // Returns nullptr if the path is not recognized.
-        static FILE* open_procfs_file(const linux_emulator& emu, std::string_view path);
 
         // Fill a synthetic stat buffer for a procfs path.
         // Returns true if the path was recognized, false otherwise.

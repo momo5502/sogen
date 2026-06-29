@@ -31,6 +31,7 @@ namespace sogen::kvm::detail
     {
         void* host_page = nullptr;
         memory_permission permissions = memory_permission::none;
+        std::optional<uint64_t> physical_page{};
         std::shared_ptr<uint8_t> owned_page{};
     };
 
@@ -196,7 +197,8 @@ namespace sogen::kvm::detail
 
     template <typename PageTableViews, typename AllocateInternalPageFn>
     inline void ensure_virtual_mapping(PageTableViews& page_table_views, const uint64_t pml4_gpa,
-                                       AllocateInternalPageFn&& allocate_internal_page, const uint64_t guest_address)
+                                       AllocateInternalPageFn&& allocate_internal_page, const uint64_t guest_address,
+                                       const uint64_t physical_page_base)
     {
         const auto page_base = align_down_to_page(guest_address);
         const auto pml4_index = static_cast<size_t>((page_base >> 39) & 0x1FF);
@@ -209,7 +211,7 @@ namespace sogen::kvm::detail
         const auto pt_gpa = ensure_child_table(page_table_views, allocate_internal_page, pd_gpa, pd_index);
 
         auto* const pt_entries = get_page_table_entries(page_table_views, pt_gpa);
-        pt_entries[pt_index] = page_base | page_table_entry_present | page_table_entry_writable | page_table_entry_user;
+        pt_entries[pt_index] = physical_page_base | page_table_entry_present | page_table_entry_writable | page_table_entry_user;
     }
 
     template <typename PageMap>

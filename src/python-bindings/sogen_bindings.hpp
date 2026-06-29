@@ -1,5 +1,15 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <map>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/filesystem.h>
 #include <nanobind/stl/map.h>
@@ -11,12 +21,31 @@
 #include <nanobind/stl/unordered_map.h>
 #include <nanobind/stl/vector.h>
 
-#include <disassembler.hpp>
 #include <backend_selection.hpp>
-#include <windows_emulator.hpp>
+#include <function_calling_convention.hpp>
+#include <hook_interface.hpp>
+#include <memory_interface.hpp>
+#include <memory_permission.hpp>
+#include <platform/status.hpp>
 #include <x86_register.hpp>
 
 namespace nb = nanobind;
+
+namespace sogen
+{
+    class emulator_thread;
+    class linux_emulator;
+    class linux_memory_manager;
+    class memory_manager;
+    class windows_emulator;
+    enum class memory_region_kind : uint8_t;
+    enum class stop_reason : uint8_t;
+    struct linux_process_context;
+    struct linux_thread;
+    struct mapped_module;
+    struct nt_memory_permission;
+    struct process_context;
+}
 
 namespace sogen::py
 {
@@ -25,6 +54,10 @@ namespace sogen::py
     using sogen::emulator_thread;
     using sogen::function_calling_convention;
     using sogen::instruction_hook_continuation;
+    using sogen::linux_emulator;
+    using sogen::linux_memory_manager;
+    using sogen::linux_process_context;
+    using sogen::linux_thread;
     using sogen::mapped_module;
     using sogen::memory_interface;
     using sogen::memory_manager;
@@ -34,7 +67,6 @@ namespace sogen::py
     using sogen::nt_memory_permission;
     using sogen::process_context;
     using sogen::stop_reason;
-    using sogen::u16_to_u8;
     using sogen::windows_emulator;
     using sogen::x86_register;
 
@@ -53,6 +85,9 @@ namespace sogen::py
     struct callback_registry;
     struct sogen_process_context;
     struct sogen_windows_emulator;
+    struct linux_callback_registry;
+    struct sogen_linux_process_context;
+    struct sogen_linux_emulator;
 
     // ----- helpers -----
     std::string stop_reason_to_string(stop_reason reason);
@@ -70,8 +105,11 @@ namespace sogen::py
     std::unique_ptr<windows_emulator> create_empty_emulator(const nb::kwargs& kwargs);
     std::unique_ptr<windows_emulator> create_application_emulator(const nb::object& application, const nb::object& args,
                                                                   const nb::kwargs& kwargs);
+    std::unique_ptr<linux_emulator> create_linux_application_emulator(const nb::object& application, const nb::object& args,
+                                                                      const nb::kwargs& kwargs);
 
     void register_types_bindings(nb::module_& m);
     void register_windows_runtime_bindings(nb::module_& m);
+    void register_linux_runtime_bindings(nb::module_& m);
     void register_runtime_bindings(nb::module_& m);
 }

@@ -103,14 +103,14 @@ namespace sogen
             envp_addrs.push_back(write_string_to_memory(memory, string_cursor, env));
         }
 
-        // Write 16 random bytes for AT_RANDOM
         const auto random_addr = string_cursor;
         {
             std::array<uint8_t, 16> random_bytes{};
-            // Fill with deterministic pseudo-random data
-            for (size_t i = 0; i < random_bytes.size(); ++i)
+            uint32_t byte_index = 0;
+            for (auto& byte : random_bytes)
             {
-                random_bytes[i] = static_cast<uint8_t>((i * 73 + 0xAB) & 0xFF);
+                byte = static_cast<uint8_t>((byte_index * 73U + 0xABU) & 0xFFU);
+                ++byte_index;
             }
             memory.write_memory(string_cursor, random_bytes.data(), random_bytes.size());
             string_cursor += random_bytes.size();
@@ -137,36 +137,30 @@ namespace sogen
         // Total entries: argc(1) + argv_ptrs(argc) + null(1) + envp_ptrs(envp.size()) + null(1) + auxv entries
         // Each auxv entry is 2 uint64_t values
 
-        struct auxv_entry
-        {
-            uint64_t type;
-            uint64_t value;
-        };
-
-        std::vector<auxv_entry> auxv{};
-        auxv.push_back({.type = AT_PHDR, .value = exe.phdr_vaddr});
-        auxv.push_back({.type = AT_PHENT, .value = exe.phdr_entry_size});
-        auxv.push_back({.type = AT_PHNUM, .value = exe.phdr_count});
-        auxv.push_back({.type = AT_PAGESZ, .value = 4096});
-        auxv.push_back({.type = AT_BASE, .value = interpreter_base}); // Interpreter load address (0 if static)
-        auxv.push_back({.type = AT_ENTRY, .value = exe.entry_point});
-        auxv.push_back({.type = AT_UID, .value = this->uid});
-        auxv.push_back({.type = AT_EUID, .value = this->euid});
-        auxv.push_back({.type = AT_GID, .value = this->gid});
-        auxv.push_back({.type = AT_EGID, .value = this->egid});
-        auxv.push_back({.type = AT_SECURE, .value = 0});
-        auxv.push_back({.type = AT_RANDOM, .value = random_addr});
-        auxv.push_back({.type = AT_PLATFORM, .value = platform_addr});
-        auxv.push_back({.type = AT_CLKTCK, .value = 100});
+        this->auxv.clear();
+        this->auxv.push_back({.type = AT_PHDR, .value = exe.phdr_vaddr});
+        this->auxv.push_back({.type = AT_PHENT, .value = exe.phdr_entry_size});
+        this->auxv.push_back({.type = AT_PHNUM, .value = exe.phdr_count});
+        this->auxv.push_back({.type = AT_PAGESZ, .value = 4096});
+        this->auxv.push_back({.type = AT_BASE, .value = interpreter_base}); // Interpreter load address (0 if static)
+        this->auxv.push_back({.type = AT_ENTRY, .value = exe.entry_point});
+        this->auxv.push_back({.type = AT_UID, .value = this->uid});
+        this->auxv.push_back({.type = AT_EUID, .value = this->euid});
+        this->auxv.push_back({.type = AT_GID, .value = this->gid});
+        this->auxv.push_back({.type = AT_EGID, .value = this->egid});
+        this->auxv.push_back({.type = AT_SECURE, .value = 0});
+        this->auxv.push_back({.type = AT_RANDOM, .value = random_addr});
+        this->auxv.push_back({.type = AT_PLATFORM, .value = platform_addr});
+        this->auxv.push_back({.type = AT_CLKTCK, .value = 100});
         if (vdso_base != 0)
         {
-            auxv.push_back({.type = AT_SYSINFO_EHDR, .value = vdso_base});
+            this->auxv.push_back({.type = AT_SYSINFO_EHDR, .value = vdso_base});
         }
-        auxv.push_back({.type = AT_NULL, .value = 0});
+        this->auxv.push_back({.type = AT_NULL, .value = 0});
 
         // Total stack frame size (in uint64_t units):
         // 1 (argc) + argc (argv ptrs) + 1 (null) + envp.size() (envp ptrs) + 1 (null) + auxv.size()*2
-        const auto total_u64s = 1 + argc + 1 + envp_values.size() + 1 + auxv.size() * 2;
+        const auto total_u64s = 1 + argc + 1 + envp_values.size() + 1 + this->auxv.size() * 2;
         const auto frame_size = total_u64s * sizeof(uint64_t);
 
         // Position sp so the frame fits
@@ -211,7 +205,7 @@ namespace sogen
         }
 
         // auxiliary vector
-        for (const auto& entry : auxv)
+        for (const auto& entry : this->auxv)
         {
             memory.write_memory(write_ptr, &entry.type, sizeof(entry.type));
             write_ptr += sizeof(uint64_t);

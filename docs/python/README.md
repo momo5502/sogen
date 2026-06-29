@@ -2,7 +2,7 @@
   <a href="https://github.com/momo5502/sogen"><img src="https://momo5502.com/sogen/banner.png" height="220" alt="Sogen" /></a>
 </p>
 
-Sogen exposes Python bindings for its Windows userspace emulator. The Python API is meant for scripting runs, building small analysis helpers, and quickly iterating on callbacks and hooks without rebuilding C++.
+Sogen exposes Python bindings for Windows and Linux userspace emulation. The Python API is meant for scripting runs, building small analysis helpers, and quickly iterating on callbacks; Windows bindings also expose hooks for deeper analysis.
 
 Install from PyPI:
 
@@ -49,6 +49,23 @@ app.start()
 print("exit status:", app.process.exit_status)
 ```
 
+Linux quick start:
+
+```python
+import sogen
+
+app = sogen.linux.create_application(
+    "/bin/true",
+    emulation_root="/",
+    backend=sogen.Backend.unicorn,
+)
+
+app.start()
+print("exit status:", app.process.exit_status)
+```
+
+`sogen.linux` does not use the root-level `sogen.create_application(...)` compatibility alias.
+
 ## Minimal example with file + port mappings
 
 ```python
@@ -69,7 +86,7 @@ print("exit status:", app.process.exit_status)
 
 ## Choosing backend
 
-`sogen.windows.create_empty()` and `sogen.windows.create_application()` accept an explicit backend.
+`sogen.windows.create_empty()`, `sogen.windows.create_application()`, and `sogen.linux.create_application()` accept `backend=sogen.Backend.unicorn`.
 
 ```python
 import sogen
@@ -91,17 +108,21 @@ Default is `sogen.Backend.unicorn`.
 
 ## High-level structure
 
-Main entry points:
+Windows entry points:
 
 - `sogen.windows.create_empty(...)`
 - `sogen.windows.create_application(...)`
 
-Compatibility aliases currently remain at top level:
+Linux entry point:
+
+- `sogen.linux.create_application(...)`
+
+Windows compatibility aliases currently remain at top level:
 
 - `sogen.create_empty(...)`
 - `sogen.create_application(...)`
 
-Common objects exposed by the bindings:
+Objects exposed by the Windows bindings:
 
 - `sogen.windows.Emulator` / `sogen.windows.WindowsEmulator`
 - `ProcessContext`
@@ -110,7 +131,14 @@ Common objects exposed by the bindings:
 - `Hooks`
 - `Callbacks`
 
-Common things you will do:
+Linux-specific objects exposed by the bindings:
+
+- `sogen.linux.Emulator` / `sogen.linux.LinuxEmulator`
+- `sogen.linux.ProcessContext`
+- `sogen.linux.MemoryManager`
+- `sogen.linux.Callbacks`
+
+Common Windows workflows:
 
 - run application with `app.start()`
 - watch output with `app.callbacks.on_stdout`
@@ -231,9 +259,10 @@ emu.restore_snapshot()
 
 ## Examples
 
-Small runnable example:
+Small runnable examples:
 
-- `examples/python/basic_usage.py`
+- `examples/python/basic_usage.py` for Windows
+- `examples/python/linux_true.py` for Linux
 
 Example setup notes:
 
@@ -241,7 +270,7 @@ Example setup notes:
 
 ## Current limitations / expectations
 
-- bindings require an emulation root
-- samples in this repo assume Windows-style guest paths like `c:/...`
-- some workflows are easiest to validate against repo sample binaries such as `test-sample.exe` and `hook-sample.exe`
+- Windows bindings require an emulation root
+- Windows samples in this repo assume Windows-style guest paths like `c:/...`
+- Windows workflows are easiest to validate against repo sample binaries such as `test-sample.exe` and `hook-sample.exe`
 - backend availability depends on platform and how Sogen was built

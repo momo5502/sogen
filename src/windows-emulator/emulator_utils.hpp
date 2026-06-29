@@ -1,6 +1,7 @@
 #pragma once
 
 #include <arch_emulator.hpp>
+#include <function_calling_convention.hpp>
 
 #include "memory_manager.hpp"
 #include "memory_utils.hpp"
@@ -205,14 +206,6 @@ namespace sogen
 
             this->write(obj, index);
         }
-    };
-
-    enum class function_calling_convention
-    {
-        x86_cdecl,
-        x86_stdcall,
-        x64_fastcall,
-        x64_syscall,
     };
 
     // TODO: warning emulator_utils is hardcoded for 64bit unicode_string usage

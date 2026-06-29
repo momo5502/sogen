@@ -1,6 +1,7 @@
 #pragma once
 
 #include "sogen_bindings.hpp"
+#include <utils/function.hpp>
 
 namespace sogen::py
 {
@@ -61,6 +62,8 @@ namespace sogen::py
     {
         function_calling_convention cc{function_calling_convention::x64_fastcall};
         nb::object params = nb::none();
+
+        api_hook_signature() = default;
     };
 
     struct api_hook_hit
@@ -195,30 +198,12 @@ namespace sogen::py
 
         sogen_process_context(process_context& context, std::shared_ptr<callback_registry> callback_registry, nb::object owner);
 
-        bool is_wow64_process() const
-        {
-            return this->ctx->is_wow64_process;
-        }
-        std::optional<NTSTATUS> exit_status() const
-        {
-            return this->ctx->exit_status;
-        }
-        size_t live_thread_count() const
-        {
-            return this->ctx->get_live_thread_count();
-        }
-        uint32_t spawned_thread_count() const
-        {
-            return this->ctx->spawned_thread_count;
-        }
-        emulator_thread* active_thread() const
-        {
-            return this->ctx->active_thread;
-        }
-        callback_registry& callback_view() const
-        {
-            return *this->callbacks;
-        }
+        bool is_wow64_process() const;
+        std::optional<NTSTATUS> exit_status() const;
+        size_t live_thread_count() const;
+        uint32_t spawned_thread_count() const;
+        emulator_thread* active_thread() const;
+        callback_registry& callback_view() const;
     };
 
     struct sogen_windows_emulator
@@ -229,92 +214,102 @@ namespace sogen::py
 
         explicit sogen_windows_emulator(std::unique_ptr<windows_emulator> emulator);
 
-        windows_emulator& native() const
-        {
-            return *this->emu;
-        }
+        ~sogen_windows_emulator();
 
-        void start(size_t count = 0) const
-        {
-            this->emu->start(count);
-        }
-        void stop() const
-        {
-            this->emu->stop();
-        }
-        void save_snapshot() const
-        {
-            this->emu->save_snapshot();
-        }
-        void restore_snapshot() const
-        {
-            this->emu->restore_snapshot();
-        }
-        nb::bytes serialize_state() const
-        {
-            return serialize_state_bytes(*this->emu);
-        }
-        void deserialize_state(const nb::bytes& buffer) const
-        {
-            deserialize_state_bytes(*this->emu, buffer);
-        }
-        void setup_process_if_necessary() const
-        {
-            this->emu->setup_process_if_necessary();
-        }
-        void yield_thread(bool alertable = false) const
-        {
-            this->emu->yield_thread(alertable);
-        }
-        bool perform_thread_switch() const
-        {
-            return this->emu->perform_thread_switch();
-        }
-        bool activate_thread(uint32_t id) const
-        {
-            return this->emu->activate_thread(id);
-        }
+        sogen_windows_emulator(const sogen_windows_emulator&) = delete;
+        sogen_windows_emulator& operator=(const sogen_windows_emulator&) = delete;
+        sogen_windows_emulator(sogen_windows_emulator&&) noexcept;
+        sogen_windows_emulator& operator=(sogen_windows_emulator&&) noexcept;
+
+        windows_emulator& native() const;
+
+        void start(size_t count = 0) const;
+        void stop() const;
+        void save_snapshot() const;
+        void restore_snapshot() const;
+        nb::bytes serialize_state() const;
+        void deserialize_state(const nb::bytes& buffer) const;
+        void setup_process_if_necessary() const;
+        void yield_thread(bool alertable = false) const;
+        bool perform_thread_switch() const;
+        bool activate_thread(uint32_t id) const;
 
         sogen_process_context process();
 
-        memory_manager& memory() const
-        {
-            return this->emu->memory;
-        }
-        emulator_thread* current_thread() const
-        {
-            return this->emu->process.active_thread;
-        }
+        memory_manager& memory() const;
+        emulator_thread* current_thread() const;
         std::optional<uint32_t> current_thread_id() const;
 
-        nb::bytes read_memory(uint64_t address, size_t size) const
-        {
-            return read_memory_bytes(this->emu->memory, address, size);
-        }
-        void write_memory(uint64_t address, const nb::bytes& buffer) const
-        {
-            write_memory_bytes(this->emu->memory, address, buffer);
-        }
-        uint64_t read_register(x86_register reg) const
-        {
-            return this->emu->emu().reg<uint64_t>(reg);
-        }
-        void write_register(x86_register reg, uint64_t value) const
-        {
-            this->emu->emu().reg<uint64_t>(reg, value);
-        }
+        nb::bytes read_memory(uint64_t address, size_t size) const;
+        void write_memory(uint64_t address, const nb::bytes& buffer) const;
+        uint64_t read_register(x86_register reg) const;
+        void write_register(x86_register reg, uint64_t value) const;
 
-        uint16_t get_host_port(uint16_t emulator_port) const
-        {
-            return this->emu->get_host_port(emulator_port);
-        }
-        uint16_t get_emulator_port(uint16_t host_port) const
-        {
-            return this->emu->get_emulator_port(host_port);
-        }
-        void map_port(uint16_t emulator_port, uint16_t host_port) const
-        {
-            this->emu->map_port(emulator_port, host_port);
-        }
+        uint16_t get_host_port(uint16_t emulator_port) const;
+        uint16_t get_emulator_port(uint16_t host_port) const;
+        void map_port(uint16_t emulator_port, uint16_t host_port) const;
+    };
+
+    struct linux_callback_registry
+    {
+        linux_emulator* emu{};
+        nb::object stdout_cb = nb::none();
+        nb::object stderr_cb = nb::none();
+
+        explicit linux_callback_registry(linux_emulator& emulator);
+
+        void set(std::string_view name, nb::object callable);
+        void clear(std::string_view name);
+
+        static nb::object linux_callback_registry::* slot_for(std::string_view name);
+    };
+
+    struct sogen_linux_process_context
+    {
+        linux_process_context* ctx{};
+        nb::object owner = nb::none();
+
+        sogen_linux_process_context(linux_process_context& context, nb::object owner);
+
+        std::optional<int> exit_status() const;
+        uint32_t pid() const;
+        uint32_t ppid() const;
+        uint32_t uid() const;
+        uint32_t gid() const;
+        uint32_t euid() const;
+        uint32_t egid() const;
+        size_t thread_count() const;
+        linux_thread* active_thread() const;
+    };
+
+    struct sogen_linux_emulator
+    {
+        std::unique_ptr<linux_emulator> emu{};
+        std::shared_ptr<linux_callback_registry> callbacks{};
+
+        explicit sogen_linux_emulator(std::unique_ptr<linux_emulator> emulator);
+
+        ~sogen_linux_emulator();
+
+        sogen_linux_emulator(const sogen_linux_emulator&) = delete;
+        sogen_linux_emulator& operator=(const sogen_linux_emulator&) = delete;
+        sogen_linux_emulator(sogen_linux_emulator&&) noexcept;
+        sogen_linux_emulator& operator=(sogen_linux_emulator&&) noexcept;
+
+        linux_emulator& native() const;
+
+        void start(size_t count = 0) const;
+        void stop() const;
+
+        sogen_linux_process_context process();
+
+        linux_memory_manager& memory() const;
+        nb::bytes read_memory(uint64_t address, size_t size) const;
+        void write_memory(uint64_t address, const nb::bytes& buffer) const;
+        uint64_t read_register(x86_register reg) const;
+        void write_register(x86_register reg, uint64_t value) const;
+        uint64_t executed_instructions() const;
+        std::string backend_name() const;
+        std::filesystem::path emulation_root() const;
     };
 }

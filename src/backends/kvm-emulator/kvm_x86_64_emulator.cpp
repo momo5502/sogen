@@ -17,7 +17,9 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <optional>
@@ -62,6 +64,7 @@ namespace sogen::kvm
         constexpr int invalid_opcode_interrupt = 6;
 
         constexpr uintptr_t cache_line_size = 64;
+        constexpr uint64_t guest_physical_page_base = 0x0000000100000000ull;
 
         // clflushopt is unordered, so consecutive evictions pipeline instead of serializing like clflush does
         // on every line; for the bulk flushes the GPU bridge issues before each submit that is a meaningful
@@ -1032,7 +1035,7 @@ namespace sogen::kvm
                     page->permissions = memory_permission::read;
                     const auto chunk = (std::min)(static_cast<size_t>(page_size), size - offset);
                     region.read_cb(offset, page->host_page, chunk);
-                    this->ensure_virtual_mapping(guest_address);
+                    this->ensure_virtual_mapping(guest_address, this->ensure_guest_physical_page(*page));
                 }
 
                 this->rebuild_mappings();
@@ -1073,7 +1076,7 @@ namespace sogen::kvm
                         page->owned_page = backing;
                         page->host_page = backing_base + offset;
                         page->permissions = permissions;
-                        this->ensure_virtual_mapping(guest_address);
+                        this->ensure_virtual_mapping(guest_address, this->ensure_guest_physical_page(*page));
                     }
 
                     this->rebuild_mappings();
@@ -1097,7 +1100,7 @@ namespace sogen::kvm
                     }
 
                     page->permissions = permissions;
-                    this->ensure_virtual_mapping(guest_address);
+                    this->ensure_virtual_mapping(guest_address, this->ensure_guest_physical_page(*page));
                 }
 
                 this->rebuild_mappings();
@@ -1129,7 +1132,7 @@ namespace sogen::kvm
                     page->owned_page = nullptr;
                     page->host_page = host_base + offset;
                     page->permissions = permissions;
-                    this->ensure_virtual_mapping(guest_address);
+                    this->ensure_virtual_mapping(guest_address, this->ensure_guest_physical_page(*page));
                 }
 
                 this->rebuild_mappings();
@@ -1212,6 +1215,14 @@ namespace sogen::kvm
                 if (this->max_memslots_ <= 0)
                 {
                     this->max_memslots_ = 32;
+                }
+
+                this->readonly_mem_supported_ = ::ioctl(this->kvm_fd_.get(), KVM_CHECK_EXTENSION, KVM_CAP_READONLY_MEM) > 0;
+                static std::atomic_bool readonly_mem_warning_emitted{false};
+                if (!this->readonly_mem_supported_ && !readonly_mem_warning_emitted.exchange(true, std::memory_order_relaxed))
+                {
+                    std::fputs("[WARN] KVM_CAP_READONLY_MEM is unavailable; MMIO writes and read-only memory protections may not trap.\n",
+                               stderr);
                 }
 
                 // The thread-switch register snapshot relies on KVM_GET_XSAVE/KVM_SET_XSAVE.
@@ -1360,53 +1371,98 @@ namespace sogen::kvm
                 page->owned_page = std::move(backing);
                 page->host_page = raw_page;
                 page->permissions = executable ? memory_permission::all : memory_permission::read_write;
+                page->physical_page = page_gpa;
 
                 this->mapped_pages_[page_gpa] = std::move(page);
                 this->page_table_views_[page_gpa] = reinterpret_cast<uint64_t*>(raw_page);
 
                 if (map_into_guest)
                 {
-                    this->ensure_virtual_mapping(page_gpa);
+                    this->ensure_virtual_mapping(page_gpa, page_gpa);
                 }
 
                 this->rebuild_mappings();
                 return page_gpa;
             }
-            void ensure_virtual_mapping(uint64_t guest_address)
+            uint64_t allocate_guest_physical_page()
+            {
+                const auto page_gpa = this->next_guest_physical_page_;
+                if (page_gpa >= internal_page_table_base || internal_page_table_base - page_gpa < page_size)
+                {
+                    throw std::runtime_error("Exhausted KVM guest physical page range");
+                }
+
+                this->next_guest_physical_page_ += page_size;
+                return page_gpa;
+            }
+            uint64_t ensure_guest_physical_page(mapped_page& page)
+            {
+                if (!page.physical_page)
+                {
+                    page.physical_page = this->allocate_guest_physical_page();
+                }
+
+                return *page.physical_page;
+            }
+            void ensure_virtual_mapping(uint64_t guest_address, uint64_t physical_page)
             {
                 detail::ensure_virtual_mapping(
                     this->page_table_views_, this->pml4_gpa_,
                     [this](const bool executable, const bool map_into_guest) {
                         return this->allocate_internal_page(executable, map_into_guest);
                     },
-                    guest_address);
+                    guest_address, physical_page);
             }
             void rebuild_mappings()
             {
-                // Project mapped_pages_ onto the desired memslot layout (contiguous, same-permission,
-                // host-contiguous runs of pages become one memslot), then reconcile it against the slots
-                // that are already installed, only deleting/creating the ones that actually change. Every
-                // KVM_SET_USER_MEMORY_REGION forces an NPT/TLB rebuild, so leaving unchanged slots in
-                // place is what keeps a memory operation from costing O(total mappings) each time.
-                std::map<uint64_t, installed_memslot> desired{};
-                for (auto it = this->mapped_pages_.begin(); it != this->mapped_pages_.end();)
+                // Project mapped_pages_ onto the desired memslot layout (physically contiguous,
+                // host-contiguous runs of pages with the same flags become one memslot), then reconcile it
+                // against the slots that are already installed, only deleting/creating the ones that
+                // actually change. Every KVM_SET_USER_MEMORY_REGION forces an NPT/TLB rebuild, so leaving
+                // unchanged slots in place is what keeps a memory operation from costing O(total mappings)
+                // each time.
+                struct desired_page
                 {
-                    if (!it->second || it->second->host_page == nullptr || it->second->permissions == memory_permission::none)
+                    uint8_t* host = nullptr;
+                    uint32_t flags = 0;
+                };
+
+                std::map<uint64_t, desired_page> pages{};
+                for (const auto& entry : this->mapped_pages_)
+                {
+                    const auto& page = entry.second;
+                    if (!page || page->host_page == nullptr || page->permissions == memory_permission::none)
                     {
-                        ++it;
                         continue;
                     }
+                    if (!page->physical_page)
+                    {
+                        throw std::logic_error("KVM mapped page is missing a guest physical address");
+                    }
 
-                    const auto run_address = it->first;
-                    auto* const run_host_base = static_cast<uint8_t*>(it->second->host_page);
-                    const auto run_flags = to_kvm_map_flags(it->second->permissions);
+                    const auto inserted =
+                        pages
+                            .emplace(*page->physical_page, desired_page{.host = static_cast<uint8_t*>(page->host_page),
+                                                                        .flags = this->to_kvm_map_flags(page->permissions)})
+                            .second;
+                    if (!inserted)
+                    {
+                        throw std::logic_error("Duplicate KVM guest physical page");
+                    }
+                }
+
+                std::map<uint64_t, installed_memslot> desired{};
+                for (auto it = pages.begin(); it != pages.end();)
+                {
+                    const auto run_gpa = it->first;
+                    auto* const run_host_base = it->second.host;
+                    const auto run_flags = it->second.flags;
 
                     size_t run_size = page_size;
                     auto jt = std::next(it);
-                    while (jt != this->mapped_pages_.end())
+                    while (jt != pages.end())
                     {
-                        if (!jt->second || jt->second->host_page == nullptr || jt->second->permissions != it->second->permissions ||
-                            jt->first != run_address + run_size || jt->second->host_page != run_host_base + run_size)
+                        if (jt->first != run_gpa + run_size || jt->second.host != run_host_base + run_size || jt->second.flags != run_flags)
                         {
                             break;
                         }
@@ -1415,7 +1471,7 @@ namespace sogen::kvm
                         ++jt;
                     }
 
-                    desired[run_address] = installed_memslot{.size = run_size, .host = run_host_base, .flags = run_flags};
+                    desired[run_gpa] = installed_memslot{.size = run_size, .host = run_host_base, .flags = run_flags};
                     it = jt;
                 }
 
@@ -1435,12 +1491,11 @@ namespace sogen::kvm
                     }
                 }
 
-                for (const auto& [run_address, run] : desired)
+                for (const auto& [run_gpa, run] : desired)
                 {
                     const auto slot = this->allocate_slot_id();
-                    this->set_memslot(slot, run_address, run.size, run.host, run.flags);
-                    this->current_slots_[run_address] =
-                        installed_memslot{.id = slot, .size = run.size, .host = run.host, .flags = run.flags};
+                    this->set_memslot(slot, run_gpa, run.size, run.host, run.flags);
+                    this->current_slots_[run_gpa] = installed_memslot{.id = slot, .size = run.size, .host = run.host, .flags = run.flags};
                 }
             }
             int allocate_slot_id()
@@ -1467,7 +1522,14 @@ namespace sogen::kvm
                 region.guest_phys_addr = guest_address;
                 region.memory_size = size;
                 region.userspace_addr = reinterpret_cast<uint64_t>(host_base);
-                check_ioctl_result(::ioctl(this->vm_fd_.get(), KVM_SET_USER_MEMORY_REGION, &region), "KVM_SET_USER_MEMORY_REGION");
+                if (::ioctl(this->vm_fd_.get(), KVM_SET_USER_MEMORY_REGION, &region) < 0)
+                {
+                    std::ostringstream stream;
+                    stream << "KVM_SET_USER_MEMORY_REGION failed for slot " << slot << " gpa 0x" << std::hex << guest_address << " size 0x"
+                           << size << " host 0x" << reinterpret_cast<uintptr_t>(host_base) << " flags 0x" << flags << ": "
+                           << std::strerror(errno);
+                    throw std::runtime_error(stream.str());
+                }
             }
             void delete_memslot(int slot)
             {
@@ -1477,7 +1539,7 @@ namespace sogen::kvm
                 check_ioctl_result(::ioctl(this->vm_fd_.get(), KVM_SET_USER_MEMORY_REGION, &region), "KVM_SET_USER_MEMORY_REGION");
                 this->free_slot_ids_.push_back(slot);
             }
-            static uint32_t to_kvm_map_flags(memory_permission permissions)
+            uint32_t to_kvm_map_flags(memory_permission permissions) const
             {
                 if (permissions == memory_permission::none)
                 {
@@ -1485,7 +1547,7 @@ namespace sogen::kvm
                 }
 
                 uint32_t flags = 0;
-                if ((permissions & memory_permission::write) == memory_permission::none)
+                if (this->readonly_mem_supported_ && (permissions & memory_permission::write) == memory_permission::none)
                 {
                     flags |= KVM_MEM_READONLY;
                 }
@@ -1597,12 +1659,53 @@ namespace sogen::kvm
 
                 return consumed;
             }
+            std::optional<std::pair<mmio_region*, uint64_t>> find_mmio_region_for_physical_address(uint64_t physical_address)
+            {
+                for (auto& [base, region] : this->mmio_regions_)
+                {
+                    for (size_t offset = 0; offset < region.size; offset += page_size)
+                    {
+                        const auto it = this->mapped_pages_.find(base + offset);
+                        if (it == this->mapped_pages_.end() || !it->second || !it->second->physical_page)
+                        {
+                            continue;
+                        }
+
+                        const auto page_gpa = *it->second->physical_page;
+                        if (physical_address >= page_gpa && physical_address < page_gpa + page_size)
+                        {
+                            return std::make_pair(&region, offset + (physical_address - page_gpa));
+                        }
+                    }
+                }
+
+                return std::nullopt;
+            }
+            std::optional<uint64_t> translate_guest_physical_address(uint64_t physical_address)
+            {
+                for (auto& [guest_page, page] : this->mapped_pages_)
+                {
+                    if (!page || !page->physical_page)
+                    {
+                        continue;
+                    }
+
+                    const auto page_gpa = *page->physical_page;
+                    if (physical_address >= page_gpa && physical_address < page_gpa + page_size)
+                    {
+                        return guest_page + (physical_address - page_gpa);
+                    }
+                }
+
+                return std::nullopt;
+            }
             bool handle_mmio_exit()
             {
                 const auto& mmio = this->run_->mmio;
-                if (auto* region = detail::find_mmio_region(this->mmio_regions_, mmio.phys_addr))
+                if (const auto mapping = this->find_mmio_region_for_physical_address(mmio.phys_addr))
                 {
-                    const auto offset = mmio.phys_addr - region->address;
+                    auto* const region = mapping->first;
+                    const auto offset = mapping->second;
                     if (mmio.is_write)
                     {
                         region->write_cb(offset, mmio.data, mmio.len);
@@ -1615,10 +1718,13 @@ namespace sogen::kvm
                     return true;
                 }
 
+                const auto translated_guest_address = this->translate_guest_physical_address(mmio.phys_addr);
+                const auto violation_address = translated_guest_address.value_or(mmio.phys_addr);
+                const auto violation_type = translated_guest_address ? memory_violation_type::protection : memory_violation_type::unmapped;
                 const auto operation = mmio.is_write ? memory_operation::write : memory_operation::read;
                 for (auto& [_, hook] : this->memory_violation_hooks_)
                 {
-                    const auto result = hook(mmio.phys_addr, mmio.len, operation, memory_violation_type::unmapped);
+                    const auto result = hook(violation_address, mmio.len, operation, violation_type);
                     if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                     {
                         return true;
@@ -2058,12 +2164,14 @@ namespace sogen::kvm
             };
 
             int max_memslots_ = 0;
+            bool readonly_mem_supported_ = false;
             int next_slot_id_ = 0;
             std::map<uint64_t, installed_memslot> current_slots_{};
             std::vector<int> free_slot_ids_{};
             std::map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
             std::unordered_map<uint64_t, uint64_t*> page_table_views_{};
             uint64_t pml4_gpa_ = 0;
+            uint64_t next_guest_physical_page_ = guest_physical_page_base;
             uint64_t next_internal_gpa_ = internal_page_table_base;
             std::atomic_bool stop_requested_ = false;
             std::atomic_bool run_active_ = false;

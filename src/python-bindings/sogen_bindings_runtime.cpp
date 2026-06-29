@@ -1,6 +1,7 @@
 #include <nanobind/nanobind.h>
 
 #include "sogen_internal.hpp"
+#include <windows_emulator.hpp>
 
 namespace sogen::py
 {
