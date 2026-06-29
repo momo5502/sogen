@@ -538,7 +538,7 @@ namespace sogen
             const auto text = read_guest_window_text(c, win);
             if (ansi)
             {
-                const auto narrow = u16_to_u8(text);
+                const auto narrow = u16_to_cp1252(text);
                 const auto copy_count = std::min<uint64_t>(narrow.size(), character_count - 1);
                 if (copy_count != 0 && !c.win_emu.memory.try_write_memory(buffer, narrow.data(), static_cast<size_t>(copy_count)))
                 {
@@ -582,7 +582,7 @@ namespace sogen
                 }
                 else if (ansi)
                 {
-                    update_window_title(c, win, u8_to_u16(read_string<char>(c.win_emu.memory, l_param)));
+                    update_window_title(c, win, cp1252_to_u16(read_string<char>(c.win_emu.memory, l_param)));
                 }
                 else
                 {
@@ -593,10 +593,10 @@ namespace sogen
             case WM_GETTEXT:
                 return copy_def_window_text(c, win, w_param, l_param, ansi != FALSE);
 
-            case WM_GETTEXTLENGTH: {
-                const auto text = read_guest_window_text(c, win);
-                return ansi ? u16_to_u8(text).size() : text.size();
-            }
+            case WM_GETTEXTLENGTH:
+                // CP-1252 is 1:1 with UTF-16 code units, so the ANSI byte count equals the code-unit
+                // count; no need to encode just to measure it.
+                return read_guest_window_text(c, win).size();
 
             case WM_ERASEBKGND:
                 return TRUE;
@@ -1104,7 +1104,7 @@ namespace sogen
                     // mis-handle non-ASCII Unicode such as a CJK title).
                     if (str->bAnsi)
                     {
-                        return u8_to_u16(read_string<char>(c.win_emu.memory, str->Buffer, length));
+                        return cp1252_to_u16(read_string<char>(c.win_emu.memory, str->Buffer, length));
                     }
 
                     return read_string<char16_t>(c.win_emu.memory, str->Buffer, length / sizeof(char16_t));
@@ -1124,7 +1124,7 @@ namespace sogen
 
             if (first_bytes[0] >= 0x20 && first_bytes[0] < 0x7F)
             {
-                return u8_to_u16(read_string<char>(c.win_emu.memory, text.value()));
+                return cp1252_to_u16(read_string<char>(c.win_emu.memory, text.value()));
             }
 
             return read_string<char16_t>(c.win_emu.memory, text.value());
@@ -2945,7 +2945,7 @@ namespace sogen
                 }
                 else if (ansi)
                 {
-                    update_window_title(c, *win, u8_to_u16(read_string<char>(c.win_emu.memory, l_param)));
+                    update_window_title(c, *win, cp1252_to_u16(read_string<char>(c.win_emu.memory, l_param)));
                 }
                 else
                 {
@@ -2960,7 +2960,7 @@ namespace sogen
                 {
                     if (win->unicode_proc)
                     {
-                        const auto wide = u8_to_u16(read_string<char>(c.win_emu.memory, l_param));
+                        const auto wide = cp1252_to_u16(read_string<char>(c.win_emu.memory, l_param));
                         const auto bytes = (wide.size() + 1) * sizeof(char16_t);
                         scratch_text =
                             c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(bytes)), memory_permission::read_write);
@@ -2968,7 +2968,7 @@ namespace sogen
                     }
                     else
                     {
-                        const auto narrow = u16_to_u8(read_string<char16_t>(c.win_emu.memory, l_param));
+                        const auto narrow = u16_to_cp1252(read_string<char16_t>(c.win_emu.memory, l_param));
                         const auto bytes = narrow.size() + 1;
                         scratch_text =
                             c.win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(bytes)), memory_permission::read_write);
