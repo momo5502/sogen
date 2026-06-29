@@ -99,14 +99,18 @@ namespace
             return;
         }
 
-        auto* const gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(real, "vkGetInstanceProcAddr"));
+        // Cast through void* (GetProcAddress returns FARPROC): a direct function-pointer cast trips
+        // GCC/MinGW's -Wcast-function-type.
+        auto* const gipa =
+            reinterpret_cast<PFN_vkGetInstanceProcAddr>(reinterpret_cast<void*>(GetProcAddress(real, "vkGetInstanceProcAddr")));
         if (!gipa)
         {
             FreeLibrary(real);
             return;
         }
 
-        g_real_get_device_proc_addr = reinterpret_cast<PFN_vkGetDeviceProcAddr>(GetProcAddress(real, "vkGetDeviceProcAddr"));
+        g_real_get_device_proc_addr =
+            reinterpret_cast<PFN_vkGetDeviceProcAddr>(reinterpret_cast<void*>(GetProcAddress(real, "vkGetDeviceProcAddr")));
         g_real_get_instance_proc_addr = gipa; // published last: this is what passthrough_active() tests
 
         shim_log("vulkan-shim: \\\\.\\SogenGpu unavailable; forwarding to the system vulkan-1.dll\n");
@@ -349,8 +353,7 @@ extern "C"
     {
         if (passthrough_active())
         {
-            if (auto* const fn =
-                    real_global_command<PFN_vkEnumerateInstanceExtensionProperties>("vkEnumerateInstanceExtensionProperties"))
+            if (auto* const fn = real_global_command<PFN_vkEnumerateInstanceExtensionProperties>("vkEnumerateInstanceExtensionProperties"))
             {
                 return fn(pLayerName, pPropertyCount, pProperties);
             }
@@ -4983,7 +4986,7 @@ extern "C"
         if (passthrough_active())
         {
             return g_real_get_device_proc_addr ? g_real_get_device_proc_addr(device, pName)
-                                                : g_real_get_instance_proc_addr(VK_NULL_HANDLE, pName);
+                                               : g_real_get_instance_proc_addr(VK_NULL_HANDLE, pName);
         }
 
         return vkGetInstanceProcAddr(VK_NULL_HANDLE, pName);
