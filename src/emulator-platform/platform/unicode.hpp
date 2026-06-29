@@ -4,6 +4,7 @@
 #include <share.h>
 #endif
 
+#include <array>
 #include <string>
 #include <filesystem>
 #include <type_traits>
@@ -271,13 +272,13 @@ namespace sogen
     // The five unassigned slots (0x81, 0x8D, 0x8F, 0x90, 0x9D) pass through as their raw byte value.
     constexpr char16_t cp1252_high_to_u16(const uint8_t ch)
     {
-        constexpr char16_t table[0x20] = {
+        constexpr std::array<char16_t, 0x20> table = {
             0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, // 0x80-0x87
             0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F, // 0x88-0x8F
             0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 0x90-0x97
             0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178, // 0x98-0x9F
         };
-        return table[ch - 0x80];
+        return table[static_cast<size_t>(ch - 0x80)];
     }
 
     // Decodes a Windows-1252 (ANSI default codepage) byte string to UTF-16. Unlike u8_to_u16,
