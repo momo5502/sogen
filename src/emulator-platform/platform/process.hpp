@@ -1228,6 +1228,24 @@ namespace sogen
     };
 
     template <typename Traits>
+    struct SYSTEM_MEMORY_USAGE
+    {
+        typename Traits::PVOID Name;
+        USHORT Valid;
+        USHORT Standby;
+        USHORT Modified;
+        USHORT PageTables;
+    };
+
+    template <typename Traits>
+    struct SYSTEM_MEMORY_USAGE_INFORMATION
+    {
+        ULONG Reserved;
+        typename Traits::PVOID EndOfData;
+        SYSTEM_MEMORY_USAGE<Traits> MemoryUsage[1];
+    };
+
+    template <typename Traits>
     struct SYSTEM_PROCESS_INFORMATION
     {
         ULONG NextEntryOffset;
