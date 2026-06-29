@@ -2484,7 +2484,10 @@ namespace sogen
                 guest_win.dwExStyle = ex_style;
                 guest_win.dwStyle = style;
                 guest_win.rcWindow = {.left = x, .top = y, .right = x + width, .bottom = y + height};
-                guest_win.rcClient = guest_win.rcWindow;
+                // The client rect is the window minus its non-client frame (see window::nonclient_border). The
+                // guest reads rcClient client-side to size its render target/backbuffer, so seeding it with the
+                // outer rect here makes a framed window render 2px too large and rescale (softening the frame).
+                guest_win.rcClient = {.left = x, .top = y, .right = x + win.client_width(), .bottom = y + win.client_height()};
                 if (parent_win && has_child_parent)
                 {
                     guest_win.spwndParent = parent_win->guest.value();
