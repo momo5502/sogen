@@ -1,18 +1,15 @@
 #include "../std_include.hpp"
 #include <platform/ui_backend.hpp>
 
-#ifdef SOGEN_HAS_SDL3
 #include <SDL3/SDL.h>
 #ifdef _WIN32
 #include <windows.h>
-#endif
 #endif
 
 namespace sogen
 {
     namespace
     {
-#ifdef SOGEN_HAS_SDL3
 #ifdef _WIN32
         void apply_application_icon(SDL_Window* window)
         {
@@ -459,12 +456,10 @@ namespace sogen
 
             return scan_code;
         }
-#endif
 
         class sdl_ui_backend final : public ui_backend
         {
           public:
-#ifdef SOGEN_HAS_SDL3
             struct window_state
             {
                 ui_window_desc desc{};
@@ -476,22 +471,18 @@ namespace sogen
                 ui_surface_format texture_format{ui_surface_format::bgra8};
                 bool has_surface{};
             };
-#endif
             ~sdl_ui_backend() override
             {
-#ifdef SOGEN_HAS_SDL3
                 this->reset();
 
                 if (this->initialized_)
                 {
                     SDL_QuitSubSystem(SDL_INIT_VIDEO);
                 }
-#endif
             }
 
             void reset() override
             {
-#ifdef SOGEN_HAS_SDL3
                 for (auto& [guest, state] : this->windows_)
                 {
                     (void)guest;
@@ -507,7 +498,6 @@ namespace sogen
                 {
                     SDL_FlushEvents(SDL_EVENT_FIRST, SDL_EVENT_LAST);
                 }
-#endif
             }
 
             void set_event_sink(event_sink sink) override
@@ -517,7 +507,6 @@ namespace sogen
 
             void pump_events() override
             {
-#ifdef SOGEN_HAS_SDL3
                 if (!this->ensure_initialized())
                 {
                     return;
@@ -694,12 +683,10 @@ namespace sogen
                         break;
                     }
                 }
-#endif
             }
 
             void create_window(const ui_window_desc& desc) override
             {
-#ifdef SOGEN_HAS_SDL3
                 if (!this->ensure_initialized())
                 {
                     return;
@@ -763,12 +750,10 @@ namespace sogen
                 state.renderer = renderer;
                 this->guest_by_window_id_[SDL_GetWindowID(window)] = desc.handle;
                 render_window(state);
-#endif
             }
 
             void destroy_window(const hwnd window) override
             {
-#ifdef SOGEN_HAS_SDL3
                 if (const auto it = this->windows_.find(window); it != this->windows_.end())
                 {
                     // Child (non-top-level) windows have no SDL window; only top-level windows do.
@@ -780,14 +765,10 @@ namespace sogen
                     destroy_window_resources(it->second);
                     this->windows_.erase(it);
                 }
-#else
-                (void)window;
-#endif
             }
 
             void set_window_rect(const hwnd window, const RECT& rect) override
             {
-#ifdef SOGEN_HAS_SDL3
                 if (auto* state = this->resolve_window(window))
                 {
                     state->desc.rect = rect;
@@ -798,15 +779,10 @@ namespace sogen
                     }
                     this->redraw_related(window);
                 }
-#else
-                (void)window;
-                (void)rect;
-#endif
             }
 
             void set_window_visible(const hwnd window, const bool visible) override
             {
-#ifdef SOGEN_HAS_SDL3
                 if (auto* state = this->resolve_window(window))
                 {
                     state->desc.visible = visible;
@@ -823,29 +799,19 @@ namespace sogen
                     }
                     this->redraw_related(window);
                 }
-#else
-                (void)window;
-                (void)visible;
-#endif
             }
 
             void set_window_enabled(const hwnd window, const bool enabled) override
             {
-#ifdef SOGEN_HAS_SDL3
                 if (auto* state = this->resolve_window(window))
                 {
                     state->desc.enabled = enabled;
                     this->redraw_related(window);
                 }
-#else
-                (void)window;
-                (void)enabled;
-#endif
             }
 
             void set_window_title(const hwnd window, std::u16string_view title) override
             {
-#ifdef SOGEN_HAS_SDL3
                 if (auto* state = this->resolve_window(window))
                 {
                     state->desc.title = std::u16string{title};
@@ -856,15 +822,10 @@ namespace sogen
                     }
                     this->redraw_related(window);
                 }
-#else
-                (void)window;
-                (void)title;
-#endif
             }
 
             void present_surface(const hwnd window, const ui_surface_desc& surface) override
             {
-#ifdef SOGEN_HAS_SDL3
                 // The render target is frequently a child window (e.g. a D3D/Vulkan swap-chain child),
                 // which has no SDL renderer of its own. Composite its surface onto the top-level
                 // ancestor -- the window that actually owns the on-screen SDL window and renderer.
@@ -878,15 +839,10 @@ namespace sogen
                     update_surface_texture(*state, surface);
                     render_window(*state);
                 }
-#else
-                (void)window;
-                (void)surface;
-#endif
             }
 
             void set_cursor_position(const hwnd window, const int32_t screen_x, const int32_t screen_y) override
             {
-#ifdef SOGEN_HAS_SDL3
                 // Top-levels are positioned at their emulated rect (SDL_SetWindowPosition), so emulated screen
                 // coordinates map to guest client pixels by subtracting that origin.
                 const auto top = this->get_top_level_ancestor(window);
@@ -902,16 +858,10 @@ namespace sogen
                     }
                     SDL_WarpMouseInWindow(state->window, window_x, window_y);
                 }
-#else
-                (void)window;
-                (void)screen_x;
-                (void)screen_y;
-#endif
             }
 
             void set_cursor_visibility(const bool visible) override
             {
-#ifdef SOGEN_HAS_SDL3
                 // SDL cursor visibility is process-global, which matches the single foreground guest game.
                 if (visible)
                 {
@@ -921,13 +871,9 @@ namespace sogen
                 {
                     SDL_HideCursor();
                 }
-#else
-                (void)visible;
-#endif
             }
 
           private:
-#ifdef SOGEN_HAS_SDL3
             bool ensure_initialized()
             {
                 if (!this->initialized_)
@@ -1155,7 +1101,6 @@ namespace sogen
                     this->post_event(window, WM_KILLFOCUS, 0, 0);
                 }
             }
-#endif
 
             void post_event(const hwnd window, const uint32_t message, const uint64_t w_param, const uint64_t l_param) const
             {
@@ -1166,13 +1111,11 @@ namespace sogen
             }
 
             event_sink sink_{};
-#ifdef SOGEN_HAS_SDL3
             bool initialized_{};
             hwnd active_window_{};
             std::array<bool, SDL_SCANCODE_COUNT> key_down_{};
             std::unordered_map<hwnd, window_state> windows_{};
             std::unordered_map<SDL_WindowID, hwnd> guest_by_window_id_{};
-#endif
         };
     }
 
