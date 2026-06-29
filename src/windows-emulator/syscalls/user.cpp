@@ -1992,12 +1992,13 @@ namespace sogen
 
             // The emulator's icons/cursors are bare pseudo-handles with no backing pixel data, so report a
             // standard 32x32 icon with a centered hotspot and no mask/color bitmaps.
-            EMU_ICONINFO info{};
-            info.fIcon = TRUE;
-            info.xHotspot = 16;
-            info.yHotspot = 16;
-            info.hbmMask = 0;
-            info.hbmColor = 0;
+            const EMU_ICONINFO info{
+                .fIcon = TRUE,
+                .xHotspot = 16,
+                .yHotspot = 16,
+                .hbmMask = 0,
+                .hbmColor = 0,
+            };
             icon_info.write(info);
 
             const auto clear_name = [&](const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>& name) {
