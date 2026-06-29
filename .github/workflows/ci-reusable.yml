@@ -1071,6 +1071,13 @@ jobs:
           LINUX_PYTHON_TEST_ROOT: /
           LINUX_PYTHON_TEST_BACKEND: unicorn
 
+      - name: Enable KVM
+        if: ${{ startsWith(matrix.runner, 'ubuntu') }}
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       - name: Run Python Linux KVM Test Script
         if: ${{ startsWith(matrix.runner, 'ubuntu') }}
         run: python src/python-bindings/test_linux.py
