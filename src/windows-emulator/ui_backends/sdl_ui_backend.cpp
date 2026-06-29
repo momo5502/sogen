@@ -721,9 +721,7 @@ namespace sogen
                     flags |= SDL_WINDOW_RESIZABLE;
                 }
 
-                // Size the host window to the client area (outer rect minus the non-client frame). We don't
-                // render a frame, so the client is what the guest paints/presents into; sizing to the client
-                // keeps the presented frame 1:1 instead of fitting it into the slightly larger outer rect.
+                // Size the host window to the client area; we render no frame, so sizing to it keeps the present 1:1.
                 const auto width = std::max<int>(1, static_cast<int>(desc.rect.right - desc.rect.left) - desc.client_insets.left -
                                                         desc.client_insets.right);
                 const auto height = std::max<int>(1, static_cast<int>(desc.rect.bottom - desc.rect.top) - desc.client_insets.top -

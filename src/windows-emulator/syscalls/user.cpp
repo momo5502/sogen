@@ -349,10 +349,6 @@ namespace sogen
 
         ui_insets get_host_ui_client_insets(const window& win)
         {
-            // The host window shows only the client area (we don't draw a non-client frame), so report the
-            // window's non-client border as insets. This keeps the host window sized to the client area the
-            // guest renders into, so the presented frame maps 1:1 instead of being stretched onto the slightly
-            // larger outer rect.
             const auto border = win.nonclient_border();
             return {.left = border, .top = border, .right = border, .bottom = border};
         }
@@ -360,8 +356,7 @@ namespace sogen
         void sync_guest_window_rects(window& win)
         {
             const auto window_rect = get_window_rect(win);
-            // The client rect is the window minus its non-client frame; report it top-left aligned with the
-            // window origin (we don't render a frame) so client-side GetClientRect matches the syscall path.
+            // Frameless: the client sits at the window origin, so it shares the top-left and shrinks by the frame.
             const RECT client_rect{.left = win.x, .top = win.y, .right = win.x + win.client_width(), .bottom = win.y + win.client_height()};
 
             win.guest.access([&](USER_WINDOW& guest_win) {
