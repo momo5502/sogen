@@ -721,8 +721,11 @@ namespace sogen
                     flags |= SDL_WINDOW_RESIZABLE;
                 }
 
-                const auto width = std::max<int>(1, static_cast<int>(desc.rect.right - desc.rect.left));
-                const auto height = std::max<int>(1, static_cast<int>(desc.rect.bottom - desc.rect.top));
+                // Size the host window to the client area; we render no frame, so sizing to it keeps the present 1:1.
+                const auto width = std::max<int>(1, static_cast<int>(desc.rect.right - desc.rect.left) - desc.client_insets.left -
+                                                        desc.client_insets.right);
+                const auto height = std::max<int>(1, static_cast<int>(desc.rect.bottom - desc.rect.top) - desc.client_insets.top -
+                                                         desc.client_insets.bottom);
                 const auto title = u16_to_u8(desc.title);
                 auto* window = SDL_CreateWindow(title.c_str(), static_cast<int>(width), static_cast<int>(height), flags);
                 if (!window)
@@ -774,8 +777,10 @@ namespace sogen
                     state->desc.rect = rect;
                     if (state->desc.top_level)
                     {
+                        const auto& insets = state->desc.client_insets;
                         SDL_SetWindowPosition(state->window, rect.left, rect.top);
-                        SDL_SetWindowSize(state->window, rect.right - rect.left, rect.bottom - rect.top);
+                        SDL_SetWindowSize(state->window, std::max<int>(1, (rect.right - rect.left) - insets.left - insets.right),
+                                          std::max<int>(1, (rect.bottom - rect.top) - insets.top - insets.bottom));
                     }
                     this->redraw_related(window);
                 }
@@ -981,6 +986,10 @@ namespace sogen
                 if (state.texture)
                 {
                     SDL_SetTextureBlendMode(state.texture, SDL_BLENDMODE_NONE);
+                    // Nearest-neighbour keeps the guest frame crisp when the window is resized larger than the
+                    // guest resolution (the letterbox fit would otherwise blur it with linear filtering). At the
+                    // default 1:1 size this is identical to linear.
+                    SDL_SetTextureScaleMode(state.texture, SDL_SCALEMODE_NEAREST);
                     state.texture_width = surface.width;
                     state.texture_height = surface.height;
                     state.texture_format = surface.format;

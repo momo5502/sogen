@@ -339,7 +339,7 @@ namespace sogen
 
         RECT get_client_rect(const window& win)
         {
-            return RECT{.left = 0, .top = 0, .right = win.width, .bottom = win.height};
+            return RECT{.left = 0, .top = 0, .right = win.client_width(), .bottom = win.client_height()};
         }
 
         RECT get_window_rect(const window& win)
@@ -347,18 +347,21 @@ namespace sogen
             return RECT{.left = win.x, .top = win.y, .right = win.x + win.width, .bottom = win.y + win.height};
         }
 
-        ui_insets get_host_ui_client_insets(const window& /*win*/)
+        ui_insets get_host_ui_client_insets(const window& win)
         {
-            return {};
+            const auto border = win.nonclient_border();
+            return {.left = border, .top = border, .right = border, .bottom = border};
         }
 
         void sync_guest_window_rects(window& win)
         {
             const auto window_rect = get_window_rect(win);
+            // Frameless: the client sits at the window origin, so it shares the top-left and shrinks by the frame.
+            const RECT client_rect{.left = win.x, .top = win.y, .right = win.x + win.client_width(), .bottom = win.y + win.client_height()};
 
             win.guest.access([&](USER_WINDOW& guest_win) {
                 guest_win.rcWindow = window_rect;
-                guest_win.rcClient = window_rect;
+                guest_win.rcClient = client_rect;
             });
         }
 
