@@ -170,24 +170,36 @@ namespace sogen
     {
         auto& e = emu_ref.emu();
         const auto syscall_id = e.reg(x86_register::rax);
+        const auto* entry = this->get_entry(syscall_id);
+        const auto syscall_name = (entry != nullptr && !entry->name.empty()) ? std::string_view{entry->name.data(), entry->name.size()}
+                                                                             : std::string_view{"<unknown>"};
 
-        if (syscall_id >= this->handlers_.size())
+        if (emu_ref.on_syscall)
+        {
+            const auto res = emu_ref.on_syscall(syscall_id, syscall_name);
+            if (res == instruction_hook_continuation::skip_instruction)
+            {
+                return;
+            }
+        }
+
+        if (entry == nullptr)
         {
             emu_ref.log.warn("Unimplemented syscall: %" PRIu64 "\n", syscall_id);
             e.reg(x86_register::rax, static_cast<uint64_t>(-LINUX_ENOSYS));
             return;
         }
 
-        const auto& entry = this->handlers_[static_cast<size_t>(syscall_id)];
-        if (!entry.handler)
+        if (!entry->handler)
         {
-            emu_ref.log.warn("Unimplemented syscall: %" PRIu64 " (%s)\n", syscall_id, entry.name.empty() ? "unknown" : entry.name.c_str());
+            emu_ref.log.warn("Unimplemented syscall: %" PRIu64 " (%s)\n", syscall_id,
+                             entry->name.empty() ? "unknown" : entry->name.c_str());
             e.reg(x86_register::rax, static_cast<uint64_t>(-LINUX_ENOSYS));
             return;
         }
 
         linux_syscall_context ctx{.emu_ref = emu_ref, .emu = e, .proc = emu_ref.process};
-        entry.handler(ctx);
+        entry->handler(ctx);
     }
 
     void linux_syscall_dispatcher::add_handlers()

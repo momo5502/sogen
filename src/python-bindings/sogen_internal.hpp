@@ -255,6 +255,7 @@ namespace sogen::py
         linux_emulator* emu{};
         nb::object stdout_cb = nb::none();
         nb::object stderr_cb = nb::none();
+        nb::object syscall_cb = nb::none();
 
         explicit linux_callback_registry(linux_emulator& emulator);
 

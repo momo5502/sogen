@@ -55,9 +55,9 @@ namespace sogen
             return *this->emu_;
         }
 
-        // Callbacks for emulated stdout/stderr output
         std::function<void(std::string_view data)> on_stdout{};
         std::function<void(std::string_view data)> on_stderr{};
+        std::function<instruction_hook_continuation(uint64_t syscall_id, std::string_view syscall_name)> on_syscall{};
 
         // Callback invoked periodically during emulation (every 0x20000 instructions).
         // Used by the web debugger for ASYNCIFY yield and event handling.

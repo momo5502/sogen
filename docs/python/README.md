@@ -54,14 +54,24 @@ Linux quick start:
 ```python
 import sogen
 
+syscalls = []
+
+
+def on_syscall(syscall_id, syscall_name):
+    syscalls.append((syscall_id, syscall_name))
+    return sogen.HookContinuation.run
+
+
 app = sogen.linux.create_application(
     "/bin/true",
     emulation_root="/",
     backend=sogen.Backend.unicorn,
 )
 
+app.callbacks.on_syscall = on_syscall
 app.start()
 print("exit status:", app.process.exit_status)
+print("syscalls observed:", len(syscalls))
 ```
 
 `sogen.linux` does not use the root-level `sogen.create_application(...)` compatibility alias.
@@ -138,6 +148,12 @@ Linux-specific objects exposed by the bindings:
 - `sogen.linux.MemoryManager`
 - `sogen.linux.Callbacks`
 
+Linux callback slots:
+
+- `app.callbacks.on_stdout`
+- `app.callbacks.on_stderr`
+- `app.callbacks.on_syscall`
+
 Common Windows workflows:
 
 - run application with `app.start()`
@@ -168,13 +184,23 @@ app.callbacks.on_module_load = on_module_load
 app.start()
 ```
 
-Useful callback slots include:
+Useful Linux callback slots:
+
+- `app.callbacks.on_stdout`
+- `app.callbacks.on_stderr`
+- `app.callbacks.on_syscall`
+
+Useful Windows callback slots:
 
 - `app.callbacks.on_stdout`
 - `app.callbacks.on_syscall`
 - `app.callbacks.on_memory_violate`
 - `app.callbacks.on_module_load`
 - `app.callbacks.on_module_unload`
+
+Linux `on_syscall` callbacks use `callback(syscall_id: int, syscall_name: str) -> sogen.HookContinuation | bool | None`.
+`None`, `False`, and `sogen.HookContinuation.run` continue the built-in syscall handler.
+`True` and `sogen.HookContinuation.skip` suppress the built-in handler, so an intercepting callback must update guest registers and memory itself.
 
 ## API hooks
 

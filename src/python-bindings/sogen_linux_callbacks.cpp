@@ -28,6 +28,7 @@ namespace sogen::py
         constexpr std::array linux_callback_slots{
             linux_callback_slot{.name = "stdout", .member = &linux_callback_registry::stdout_cb},
             linux_callback_slot{.name = "stderr", .member = &linux_callback_registry::stderr_cb},
+            linux_callback_slot{.name = "syscall", .member = &linux_callback_registry::syscall_cb},
         };
     }
 
@@ -49,6 +50,16 @@ namespace sogen::py
     {
         this->emu->on_stdout = [this](std::string_view data) { invoke_linux_callback(this->stdout_cb, data); };
         this->emu->on_stderr = [this](std::string_view data) { invoke_linux_callback(this->stderr_cb, data); };
+        this->emu->on_syscall = [this](const uint64_t syscall_id, const std::string_view syscall_name) {
+            if (this->syscall_cb.is_none())
+            {
+                return instruction_hook_continuation::run_instruction;
+            }
+
+            nb::gil_scoped_acquire gil{};
+            const auto result = this->syscall_cb(syscall_id, std::string(syscall_name));
+            return coerce_instruction_continuation(result);
+        };
     }
 
     void linux_callback_registry::set(const std::string_view name, nb::object callable)

@@ -28,6 +28,7 @@ backend, expected_backend_name = backends[requested_backend]
 
 stdout_chunks = []
 stderr_chunks = []
+syscall_events = []
 
 
 def capture_output(chunks):
@@ -39,6 +40,16 @@ def capture_output(chunks):
 
     return capture
 
+def capture_syscall(syscall_id, syscall_name):
+    assert isinstance(syscall_id, int), f"syscall id is not int: {syscall_id!r}"
+    assert syscall_id >= 0, f"negative syscall id: {syscall_id!r}"
+    assert isinstance(syscall_name, str), f"syscall name is not str: {syscall_name!r}"
+    assert syscall_name, "empty syscall name"
+    syscall_events.append((syscall_id, syscall_name))
+    if len(syscall_events) == 1:
+        return sogen.HookContinuation.run
+    return None
+
 
 app = linux.create_application(
     binary,
@@ -46,18 +57,33 @@ app = linux.create_application(
     backend=backend,
     disable_logging=True,
 )
+assert hasattr(app.callbacks, "on_syscall")
+app.callbacks.on_syscall = capture_syscall
+app.callbacks.clear("on_syscall")
+app.callbacks.set("on_syscall", capture_syscall)
+app.callbacks.clear("syscall")
 app.callbacks.on_stdout = capture_output(stdout_chunks)
 app.callbacks.on_stderr = capture_output(stderr_chunks)
+app.callbacks.set("syscall", capture_syscall)
 app.start()
 
 stdout_data = b"".join(stdout_chunks)
 stderr_data = b"".join(stderr_chunks)
 
+syscall_names = [name for _, name in syscall_events]
+
 print(f"exit_status={app.process.exit_status}", flush=True)
 print(f"backend={app.backend_name}", flush=True)
 print(f"requested_backend={requested_backend}", flush=True)
 print(f"executed_instructions={app.executed_instructions}", flush=True)
+print(f"syscall_count={len(syscall_events)}", flush=True)
+print(f"syscall_names={','.join(syscall_names[:20])}", flush=True)
 
+
+assert syscall_events, "syscall callback did not fire"
+assert "exit_group" in syscall_names or "exit" in syscall_names, (
+    f"exit syscall not observed: {syscall_names!r}"
+)
 assert app.process.exit_status == 0, f"non-zero exit: {app.process.exit_status}"
 assert stdout_data == b"", f"unexpected stdout: {stdout_data!r}"
 assert stderr_data == b"", f"unexpected stderr: {stderr_data!r}"

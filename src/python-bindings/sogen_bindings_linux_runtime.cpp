@@ -23,6 +23,7 @@ namespace sogen::py
         auto callbacks_class = nb::class_<linux_callback_registry>(m, "Callbacks");
         bind_linux_callback_property<&linux_callback_registry::stdout_cb>(callbacks_class, "on_stdout", "stdout");
         bind_linux_callback_property<&linux_callback_registry::stderr_cb>(callbacks_class, "on_stderr", "stderr");
+        bind_linux_callback_property<&linux_callback_registry::syscall_cb>(callbacks_class, "on_syscall", "syscall");
         callbacks_class.def("set", &linux_callback_registry::set).def("clear", &linux_callback_registry::clear);
 
         nb::class_<linux_thread>(m, "Thread")
