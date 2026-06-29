@@ -2,11 +2,14 @@
 #include "../linux_emulator.hpp"
 #include "../linux_syscall_dispatcher.hpp"
 
+#include <array>
 #include <algorithm>
 #include <fcntl.h>
 #if defined(_WIN32)
 #include <io.h>
+#include <windows.h>
 #else
+#include <sys/select.h>
 #include <unistd.h>
 #endif
 
@@ -17,16 +20,25 @@ namespace sogen
 
     // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
-    // --- Phase 4b: I/O syscalls (pipe, eventfd) ---
-
     namespace
     {
-        int host_create_pipe(int (&pipefd)[2])
+        constexpr int EPOLL_CTL_ADD = 1;
+        constexpr int EPOLL_CTL_DEL = 2;
+        constexpr int EPOLL_CTL_MOD = 3;
+
+        constexpr uint32_t EPOLLIN = 0x001;
+        constexpr uint32_t EPOLLOUT = 0x004;
+
+        constexpr int16_t POLLIN = 0x0001;
+        constexpr int16_t POLLOUT = 0x0004;
+        constexpr int16_t POLLNVAL = 0x0020;
+
+        int host_create_pipe(std::array<int, 2>& pipefd)
         {
 #if defined(_WIN32)
-            return _pipe(pipefd, 4096, _O_BINARY);
+            return _pipe(pipefd.data(), 4096, _O_BINARY);
 #else
-            return ::pipe(pipefd);
+            return ::pipe(pipefd.data());
 #endif
         }
 
@@ -39,7 +51,7 @@ namespace sogen
 #endif
         }
 
-        void apply_pipe2_host_flags(const int (&pipefd)[2], const bool nonblock, const bool cloexec)
+        void apply_pipe2_host_flags(const std::array<int, 2>& pipefd, const bool nonblock, const bool cloexec)
         {
 #if defined(_WIN32)
             (void)pipefd;
@@ -95,19 +107,118 @@ namespace sogen
             return end < 0 || pos < end;
         }
 
-        bool fd_has_readable_data(const linux_fd& fd)
+        bool host_pipe_has_readable_data(FILE* handle)
         {
-            if (fd.type == fd_type::memory_file)
+            if (!handle)
             {
-                return fd.memory_file && fd.memory_file->offset < fd.memory_file->content.size();
+                return false;
             }
 
-            if (fd.type == fd_type::file)
+#if defined(_WIN32)
+            auto* const os_handle = reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(handle)));
+            if (os_handle == INVALID_HANDLE_VALUE)
             {
-                return host_file_has_remaining_data(fd.handle);
+                return false;
             }
 
-            return false;
+            DWORD available = 0;
+            if (PeekNamedPipe(os_handle, nullptr, 0, nullptr, &available, nullptr) != 0)
+            {
+                return available > 0;
+            }
+
+            return GetLastError() == ERROR_BROKEN_PIPE;
+#else
+            const auto fd = fileno(handle);
+            if (fd < 0 || fd >= FD_SETSIZE)
+            {
+                return false;
+            }
+
+            fd_set read_fds{};
+            FD_ZERO(&read_fds);
+            FD_SET(fd, &read_fds);
+            timeval timeout{};
+            const auto result = ::select(fd + 1, &read_fds, nullptr, nullptr, &timeout);
+            return result > 0 && FD_ISSET(fd, &read_fds);
+#endif
+        }
+
+        bool epoll_instance_has_ready_entries(linux_process_context& proc, const linux_epoll_instance& instance,
+                                              std::vector<int>& epoll_stack);
+
+        bool fd_has_readable_data(linux_process_context& proc, const int fd, const linux_fd& fd_entry, std::vector<int>& epoll_stack)
+        {
+            if (fd_entry.type == fd_type::memory_file)
+            {
+                return fd_entry.memory_file && fd_entry.memory_file->offset < fd_entry.memory_file->content.size();
+            }
+
+            if (fd_entry.type == fd_type::file)
+            {
+                return host_file_has_remaining_data(fd_entry.handle);
+            }
+
+            if (fd_entry.type == fd_type::pipe_read)
+            {
+                return host_pipe_has_readable_data(fd_entry.handle);
+            }
+
+            if (fd_entry.type != fd_type::epoll)
+            {
+                return false;
+            }
+
+            if (std::ranges::find(epoll_stack, fd) != epoll_stack.end())
+            {
+                return false;
+            }
+
+            auto it = proc.epoll_instances.find(fd);
+            if (it == proc.epoll_instances.end() || !it->second)
+            {
+                return false;
+            }
+
+            epoll_stack.push_back(fd);
+            const auto has_ready_entries = epoll_instance_has_ready_entries(proc, *it->second, epoll_stack);
+            epoll_stack.pop_back();
+            return has_ready_entries;
+        }
+
+        bool fd_accepts_write_ready(const linux_fd& fd)
+        {
+            return fd.type == fd_type::file || fd.type == fd_type::pipe_write || fd.type == fd_type::socket;
+        }
+
+        uint32_t ready_events_for_entry(linux_process_context& proc, const linux_epoll_entry& entry, std::vector<int>& epoll_stack)
+        {
+            auto* fd_entry = proc.fds.get(entry.fd);
+            if (!fd_entry)
+            {
+                return 0;
+            }
+
+            uint32_t ready_events = 0;
+            if ((entry.events & EPOLLIN) && fd_has_readable_data(proc, entry.fd, *fd_entry, epoll_stack))
+            {
+                ready_events |= EPOLLIN;
+            }
+
+            if ((entry.events & EPOLLOUT) && fd_accepts_write_ready(*fd_entry))
+            {
+                ready_events |= EPOLLOUT;
+            }
+
+            return ready_events;
+        }
+
+        bool epoll_instance_has_ready_entries(linux_process_context& proc, const linux_epoll_instance& instance,
+                                              std::vector<int>& epoll_stack)
+        {
+            return std::ranges::any_of(instance.entries, [&proc, &epoll_stack](const linux_epoll_entry& entry) {
+                return ready_events_for_entry(proc, entry, epoll_stack) != 0;
+            });
         }
     }
 
@@ -115,15 +226,15 @@ namespace sogen
     {
         const auto pipefd_addr = get_linux_syscall_argument(c.emu, 0);
 
-        int host_pipe[2] = {-1, -1};
+        std::array<int, 2> host_pipe{-1, -1};
         if (host_create_pipe(host_pipe) != 0)
         {
             write_linux_syscall_result(c, -LINUX_EMFILE);
             return;
         }
 
-        auto* read_stream = fdopen(host_pipe[0], "rb");
-        auto* write_stream = fdopen(host_pipe[1], "wb");
+        auto* read_stream = fdopen(host_pipe.at(0), "rb");
+        auto* write_stream = fdopen(host_pipe.at(1), "wb");
 
         if (!read_stream || !write_stream)
         {
@@ -131,18 +242,18 @@ namespace sogen
             {
                 fclose(read_stream);
             }
-            else if (host_pipe[0] >= 0)
+            else if (host_pipe.at(0) >= 0)
             {
-                host_close(host_pipe[0]);
+                host_close(host_pipe.at(0));
             }
 
             if (write_stream)
             {
                 fclose(write_stream);
             }
-            else if (host_pipe[1] >= 0)
+            else if (host_pipe.at(1) >= 0)
             {
-                host_close(host_pipe[1]);
+                host_close(host_pipe.at(1));
             }
 
             write_linux_syscall_result(c, -LINUX_EMFILE);
@@ -163,8 +274,8 @@ namespace sogen
         const auto read_fd = c.proc.fds.allocate(std::move(read_end));
         const auto write_fd = c.proc.fds.allocate(std::move(write_end));
 
-        int32_t fds[2] = {read_fd, write_fd};
-        c.emu.write_memory(pipefd_addr, fds, sizeof(fds));
+        const std::array<int32_t, 2> fds{read_fd, write_fd};
+        c.emu.write_memory(pipefd_addr, fds.data(), sizeof(int32_t) * fds.size());
 
         write_linux_syscall_result(c, 0);
     }
@@ -177,7 +288,7 @@ namespace sogen
         constexpr int LINUX_O_CLOEXEC = 02000000;
         constexpr int LINUX_O_NONBLOCK = 04000;
 
-        int host_pipe[2] = {-1, -1};
+        std::array<int, 2> host_pipe{-1, -1};
         if (host_create_pipe(host_pipe) != 0)
         {
             write_linux_syscall_result(c, -LINUX_EMFILE);
@@ -189,8 +300,8 @@ namespace sogen
 
         apply_pipe2_host_flags(host_pipe, nonblock, cloexec);
 
-        auto* read_stream = fdopen(host_pipe[0], "rb");
-        auto* write_stream = fdopen(host_pipe[1], "wb");
+        auto* read_stream = fdopen(host_pipe.at(0), "rb");
+        auto* write_stream = fdopen(host_pipe.at(1), "wb");
 
         if (!read_stream || !write_stream)
         {
@@ -198,18 +309,18 @@ namespace sogen
             {
                 fclose(read_stream);
             }
-            else if (host_pipe[0] >= 0)
+            else if (host_pipe.at(0) >= 0)
             {
-                host_close(host_pipe[0]);
+                host_close(host_pipe.at(0));
             }
 
             if (write_stream)
             {
                 fclose(write_stream);
             }
-            else if (host_pipe[1] >= 0)
+            else if (host_pipe.at(1) >= 0)
             {
-                host_close(host_pipe[1]);
+                host_close(host_pipe.at(1));
             }
 
             write_linux_syscall_result(c, -LINUX_EMFILE);
@@ -234,8 +345,8 @@ namespace sogen
         const auto read_fd = c.proc.fds.allocate(std::move(read_end));
         const auto write_fd = c.proc.fds.allocate(std::move(write_end));
 
-        int32_t fds[2] = {read_fd, write_fd};
-        c.emu.write_memory(pipefd_addr, fds, sizeof(fds));
+        const std::array<int32_t, 2> fds{read_fd, write_fd};
+        c.emu.write_memory(pipefd_addr, fds.data(), sizeof(int32_t) * fds.size());
 
         write_linux_syscall_result(c, 0);
     }
@@ -269,23 +380,8 @@ namespace sogen
         write_linux_syscall_result(c, fd_num);
     }
 
-    // --- Phase 4c: I/O multiplexing syscalls ---
-
     namespace
     {
-        // Epoll constants
-        constexpr int EPOLL_CTL_ADD = 1;
-        constexpr int EPOLL_CTL_DEL = 2;
-        constexpr int EPOLL_CTL_MOD = 3;
-
-        // Epoll event flags
-        constexpr uint32_t EPOLLIN = 0x001;
-        constexpr uint32_t EPOLLOUT = 0x004;
-
-        // Poll event flags
-        constexpr int16_t POLLIN = 0x0001;
-        constexpr int16_t POLLOUT = 0x0004;
-        constexpr int16_t POLLNVAL = 0x0020;
 
 #pragma pack(push, 1)
         struct linux_epoll_event
@@ -297,15 +393,6 @@ namespace sogen
 
         static_assert(sizeof(linux_epoll_event) == 12);
 
-        struct epoll_entry
-        {
-            int fd;
-            uint32_t events;
-            uint64_t data;
-        };
-
-        // Epoll instance tracking
-        std::map<int, std::vector<epoll_entry>> g_epoll_instances;
     }
 
     void sys_epoll_create1(const linux_syscall_context& c)
@@ -314,11 +401,11 @@ namespace sogen
         constexpr int LINUX_O_CLOEXEC = 02000000;
 
         linux_fd efd{};
-        efd.type = fd_type::file; // epoll fd
+        efd.type = fd_type::epoll;
         efd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
         const auto fd_num = c.proc.fds.allocate(std::move(efd));
-        g_epoll_instances[fd_num] = {};
+        c.proc.epoll_instances[fd_num] = std::make_shared<linux_epoll_instance>();
 
         write_linux_syscall_result(c, fd_num);
     }
@@ -330,8 +417,9 @@ namespace sogen
         const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
         const auto event_addr = get_linux_syscall_argument(c.emu, 3);
 
-        auto it = g_epoll_instances.find(epfd);
-        if (it == g_epoll_instances.end())
+        auto* epoll_fd = c.proc.fds.get(epfd);
+        auto it = c.proc.epoll_instances.find(epfd);
+        if (!epoll_fd || epoll_fd->type != fd_type::epoll || it == c.proc.epoll_instances.end() || !it->second)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
             return;
@@ -346,22 +434,22 @@ namespace sogen
         switch (op)
         {
         case EPOLL_CTL_ADD: {
-            epoll_entry entry{};
+            linux_epoll_entry entry{};
             entry.fd = fd;
             entry.events = ev.events;
             entry.data = ev.data;
-            it->second.push_back(entry);
+            it->second->entries.push_back(entry);
             write_linux_syscall_result(c, 0);
             break;
         }
         case EPOLL_CTL_DEL: {
-            auto& entries = it->second;
-            entries.erase(std::ranges::remove_if(entries, [fd](const epoll_entry& e) { return e.fd == fd; }).begin(), entries.end());
+            auto& entries = it->second->entries;
+            entries.erase(std::ranges::remove_if(entries, [fd](const linux_epoll_entry& e) { return e.fd == fd; }).begin(), entries.end());
             write_linux_syscall_result(c, 0);
             break;
         }
         case EPOLL_CTL_MOD: {
-            for (auto& entry : it->second)
+            for (auto& entry : it->second->entries)
             {
                 if (entry.fd == fd)
                 {
@@ -388,41 +476,24 @@ namespace sogen
 
         (void)timeout;
 
-        auto it = g_epoll_instances.find(epfd);
-        if (it == g_epoll_instances.end())
+        auto* epoll_fd = c.proc.fds.get(epfd);
+        auto it = c.proc.epoll_instances.find(epfd);
+        if (!epoll_fd || epoll_fd->type != fd_type::epoll || it == c.proc.epoll_instances.end() || !it->second)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
             return;
         }
 
-        // Simulate: check each registered fd for readiness
-        // For emulation purposes, we report writable fds as ready (common for non-blocking sockets)
         int count = 0;
-        for (const auto& entry : it->second)
+        std::vector<int> epoll_stack{epfd};
+        for (const auto& entry : it->second->entries)
         {
             if (count >= maxevents)
             {
                 break;
             }
 
-            auto* fd_entry = c.proc.fds.get(entry.fd);
-            if (!fd_entry)
-            {
-                continue;
-            }
-
-            uint32_t ready_events = 0;
-
-            if ((entry.events & EPOLLIN) && fd_has_readable_data(*fd_entry))
-            {
-                ready_events |= EPOLLIN;
-            }
-
-            // Most fds are writable
-            if (entry.events & EPOLLOUT)
-            {
-                ready_events |= EPOLLOUT;
-            }
+            const auto ready_events = ready_events_for_entry(c.proc, entry, epoll_stack);
 
             if (ready_events != 0)
             {
@@ -491,18 +562,15 @@ namespace sogen
                 continue;
             }
 
-            if ((pfd.events & POLLIN) && fd_has_readable_data(*fd_entry))
+            std::vector<int> epoll_stack{};
+            if ((pfd.events & POLLIN) && fd_has_readable_data(c.proc, pfd.fd, *fd_entry, epoll_stack))
             {
                 pfd.revents |= POLLIN;
             }
 
-            if (pfd.events & POLLOUT)
+            if ((pfd.events & POLLOUT) && fd_accepts_write_ready(*fd_entry))
             {
-                // Most fds are writable
-                if (fd_entry->type == fd_type::file || fd_entry->type == fd_type::pipe_write || fd_entry->type == fd_type::socket)
-                {
-                    pfd.revents |= POLLOUT;
-                }
+                pfd.revents |= POLLOUT;
             }
 
             if (pfd.revents != 0)
@@ -554,13 +622,13 @@ namespace sogen
             {
                 return false;
             }
-            return (bits[fd / 8] & (1 << (fd % 8))) != 0;
+            return (bits.at(static_cast<size_t>(fd / 8)) & (1 << (fd % 8))) != 0;
         };
 
         auto fd_set_bit = [](int fd, std::vector<uint8_t>& bits) {
             if (fd >= 0 && static_cast<size_t>(fd / 8) < bits.size())
             {
-                bits[fd / 8] |= static_cast<uint8_t>(1 << (fd % 8));
+                bits.at(static_cast<size_t>(fd / 8)) |= static_cast<uint8_t>(1 << (fd % 8));
             }
         };
 
@@ -595,14 +663,13 @@ namespace sogen
                 continue;
             }
 
-            if (want_write)
+            if (want_write && fd_accepts_write_ready(*fd_entry))
             {
-                // Most fds are writable
                 fd_set_bit(fd, out_write);
                 ++ready_count;
             }
-
-            if (want_read && fd_has_readable_data(*fd_entry))
+            std::vector<int> epoll_stack{};
+            if (want_read && fd_has_readable_data(c.proc, fd, *fd_entry, epoll_stack))
             {
                 fd_set_bit(fd, out_read);
                 ++ready_count;

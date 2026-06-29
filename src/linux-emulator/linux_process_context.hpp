@@ -17,9 +17,31 @@ namespace sogen
         uint64_t value{};
     };
 
+    struct linux_cached_dir_entry
+    {
+        uint64_t ino{};
+        uint8_t d_type{};
+        std::string name{};
+    };
+
+    struct linux_epoll_entry
+    {
+        int fd{};
+        uint32_t events{};
+        uint64_t data{};
+    };
+
+    struct linux_epoll_instance
+    {
+        std::vector<linux_epoll_entry> entries{};
+    };
+
     struct linux_process_context
     {
         linux_fd_table fds{};
+        std::map<int, std::vector<linux_cached_dir_entry>> directory_entries{};
+        std::map<int, size_t> directory_offsets{};
+        std::map<int, std::shared_ptr<linux_epoll_instance>> epoll_instances{};
 
         uint64_t brk_base{};
         uint64_t brk_current{};

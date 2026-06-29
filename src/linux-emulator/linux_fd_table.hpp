@@ -24,6 +24,7 @@ namespace sogen
         socket,
         eventfd,
         directory,
+        epoll,
     };
 
     struct linux_memory_fd

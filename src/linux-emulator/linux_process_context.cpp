@@ -103,14 +103,14 @@ namespace sogen
             envp_addrs.push_back(write_string_to_memory(memory, string_cursor, env));
         }
 
-        // Write 16 random bytes for AT_RANDOM
         const auto random_addr = string_cursor;
         {
             std::array<uint8_t, 16> random_bytes{};
-            // Fill with deterministic pseudo-random data
-            for (size_t i = 0; i < random_bytes.size(); ++i)
+            uint32_t byte_index = 0;
+            for (auto& byte : random_bytes)
             {
-                random_bytes[i] = static_cast<uint8_t>((i * 73 + 0xAB) & 0xFF);
+                byte = static_cast<uint8_t>((byte_index * 73U + 0xABU) & 0xFFU);
+                ++byte_index;
             }
             memory.write_memory(string_cursor, random_bytes.data(), random_bytes.size());
             string_cursor += random_bytes.size();
