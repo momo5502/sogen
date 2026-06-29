@@ -45,6 +45,88 @@ namespace
         return g_bridge;
     }
 
+    // When the Sogen GPU bridge device (\\.\SogenGpu) is unavailable -- e.g. the same game binary is run
+    // on real Windows, outside the emulator -- transparently forward to the host's real vulkan-1.dll
+    // instead of failing every call, so the shim can stay in place as the game's vulkan-1.dll either way.
+    // Forwarding happens at the vkGetInstanceProcAddr / vkGetDeviceProcAddr level: the real loader's
+    // function pointers are handed straight to the app, so every resolved call (vkCreateInstance,
+    // vkCmdDraw, ...) lands in the real driver directly. The few global commands an app may call through
+    // our exports before it has those pointers (vkCreateInstance, vkEnumerateInstance*) forward explicitly.
+    PFN_vkGetInstanceProcAddr g_real_get_instance_proc_addr = nullptr;
+    PFN_vkGetDeviceProcAddr g_real_get_device_proc_addr = nullptr;
+
+    void shim_log(const char* message); // defined below
+
+    HMODULE self_module()
+    {
+        HMODULE module = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(&self_module), &module);
+        return module;
+    }
+
+    void init_passthrough()
+    {
+        // Bridge is reachable: act as the real shim, no forwarding.
+        if (bridge() != INVALID_HANDLE_VALUE)
+        {
+            return;
+        }
+
+        // Resolve <system>\vulkan-1.dll. In a 32-bit (WOW64) process the file-system redirector maps
+        // System32 to SysWOW64, so this picks up the matching-bitness loader automatically.
+        wchar_t path[MAX_PATH];
+        const auto length = GetSystemDirectoryW(path, MAX_PATH);
+        constexpr wchar_t suffix[] = L"\\vulkan-1.dll";
+        constexpr auto suffix_count = sizeof(suffix) / sizeof(suffix[0]);
+        if (length == 0 || length + suffix_count > MAX_PATH)
+        {
+            return;
+        }
+        std::memcpy(path + length, suffix, sizeof(suffix));
+
+        HMODULE real = LoadLibraryW(path);
+        if (!real)
+        {
+            return;
+        }
+
+        // If the system vulkan-1.dll resolves back to this very shim (it was installed as the system
+        // loader), forwarding would recurse into ourselves -- leave it disabled and behave as before.
+        if (real == self_module())
+        {
+            FreeLibrary(real);
+            return;
+        }
+
+        auto* const gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(GetProcAddress(real, "vkGetInstanceProcAddr"));
+        if (!gipa)
+        {
+            FreeLibrary(real);
+            return;
+        }
+
+        g_real_get_device_proc_addr = reinterpret_cast<PFN_vkGetDeviceProcAddr>(GetProcAddress(real, "vkGetDeviceProcAddr"));
+        g_real_get_instance_proc_addr = gipa; // published last: this is what passthrough_active() tests
+
+        shim_log("vulkan-shim: \\\\.\\SogenGpu unavailable; forwarding to the system vulkan-1.dll\n");
+    }
+
+    // True once we've decided to forward to the real loader. Decided once, on first use.
+    bool passthrough_active()
+    {
+        static std::once_flag once;
+        std::call_once(once, init_passthrough);
+        return g_real_get_instance_proc_addr != nullptr;
+    }
+
+    // Resolves a global (no-instance) command from the real loader, or null if it doesn't expose it.
+    template <typename Fn>
+    Fn real_global_command(const char* name)
+    {
+        return reinterpret_cast<Fn>(g_real_get_instance_proc_addr(VK_NULL_HANDLE, name));
+    }
+
     // Flushes the coalesced descriptor-set updates (see vkUpdateDescriptorSets); defined below.
     void flush_descriptor_updates();
 
@@ -187,9 +269,17 @@ namespace
 
 extern "C"
 {
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo*, const VkAllocationCallbacks*,
-                                                                          VkInstance* pInstance)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(const VkInstanceCreateInfo* pCreateInfo,
+                                                                          const VkAllocationCallbacks* pAllocator, VkInstance* pInstance)
     {
+        if (passthrough_active())
+        {
+            if (auto* const fn = real_global_command<PFN_vkCreateInstance>("vkCreateInstance"))
+            {
+                return fn(pCreateInfo, pAllocator, pInstance);
+            }
+        }
+
         gb::create_instance_response response{};
         if (!bridge_call(gb::ioctl_create_instance, nullptr, 0, &response, sizeof(response)))
         {
@@ -218,6 +308,14 @@ extern "C"
     // instance extensions the bridge supports, and a modern API version.
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceVersion(uint32_t* pApiVersion)
     {
+        if (passthrough_active())
+        {
+            if (auto* const fn = real_global_command<PFN_vkEnumerateInstanceVersion>("vkEnumerateInstanceVersion"))
+            {
+                return fn(pApiVersion);
+            }
+        }
+
         if (pApiVersion)
         {
             *pApiVersion = VK_API_VERSION_1_3;
@@ -225,8 +323,17 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceLayerProperties(uint32_t* pPropertyCount, VkLayerProperties*)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceLayerProperties(uint32_t* pPropertyCount,
+                                                                                            VkLayerProperties* pProperties)
     {
+        if (passthrough_active())
+        {
+            if (auto* const fn = real_global_command<PFN_vkEnumerateInstanceLayerProperties>("vkEnumerateInstanceLayerProperties"))
+            {
+                return fn(pPropertyCount, pProperties);
+            }
+        }
+
         if (!pPropertyCount)
         {
             return VK_INCOMPLETE;
@@ -236,10 +343,19 @@ extern "C"
         return VK_SUCCESS;
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceExtensionProperties(const char* /*pLayerName*/,
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateInstanceExtensionProperties(const char* pLayerName,
                                                                                                 uint32_t* pPropertyCount,
                                                                                                 VkExtensionProperties* pProperties)
     {
+        if (passthrough_active())
+        {
+            if (auto* const fn =
+                    real_global_command<PFN_vkEnumerateInstanceExtensionProperties>("vkEnumerateInstanceExtensionProperties"))
+            {
+                return fn(pLayerName, pPropertyCount, pProperties);
+            }
+        }
+
         static const VkExtensionProperties extensions[] = {
             {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_SURFACE_SPEC_VERSION},
             {VK_KHR_WIN32_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_SPEC_VERSION},
@@ -4544,11 +4660,17 @@ extern "C"
 
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName);
 
-    __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance, const char* pName)
+    __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance, const char* pName)
     {
         if (!pName)
         {
             return nullptr;
+        }
+
+        // Outside the emulator: hand back the real loader's pointers so the app talks to the real driver.
+        if (passthrough_active())
+        {
+            return g_real_get_instance_proc_addr(instance, pName);
         }
 
         struct entry
@@ -4856,8 +4978,14 @@ extern "C"
     }
 
     // Device-level entry points resolve through the same table for this minimal shim.
-    __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName)
+    __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice device, const char* pName)
     {
+        if (passthrough_active())
+        {
+            return g_real_get_device_proc_addr ? g_real_get_device_proc_addr(device, pName)
+                                                : g_real_get_instance_proc_addr(VK_NULL_HANDLE, pName);
+        }
+
         return vkGetInstanceProcAddr(VK_NULL_HANDLE, pName);
     }
 
