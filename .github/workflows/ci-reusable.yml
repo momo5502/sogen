@@ -1073,13 +1073,11 @@ jobs:
 
       - name: Run Python Linux KVM Test Script
         if: ${{ startsWith(matrix.runner, 'ubuntu') }}
-        shell: bash
-        run: |
-          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-            LINUX_PYTHON_TEST_BINARY=/bin/true LINUX_PYTHON_TEST_ROOT=/ LINUX_PYTHON_TEST_BACKEND=kvm python src/python-bindings/test_linux.py
-          else
-            echo "Skipping KVM smoke: /dev/kvm is unavailable on this runner"
-          fi
+        run: python src/python-bindings/test_linux.py
+        env:
+          LINUX_PYTHON_TEST_BINARY: /bin/true
+          LINUX_PYTHON_TEST_ROOT: /
+          LINUX_PYTHON_TEST_BACKEND: kvm
 
   build-python-sdist:
     name: Build Python Sdist
