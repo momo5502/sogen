@@ -1220,7 +1220,8 @@ namespace sogen
 
         // Mirror the foreground window into the shared SERVERINFO so the guest's client-side
         // GetForegroundWindow (which reads gpsi directly, never syscalling) returns the active window.
-        this->process.user_handles.set_foreground_window(static_cast<uint32_t>(this->process.foreground_window));
+        this->process.user_handles.get_server_info().access(
+            [&](USER_SERVERINFO& server_info) { server_info.foregroundWindow = this->process.foreground_window; });
 
         // Maintain the polled key state (reported by GetKeyState) from key and mouse-button transitions, so
         // games that read input by polling rather than via window messages (in-game movement) see it.

@@ -35,6 +35,7 @@ namespace sogen
             worker_factory,
             private_namespace,
             process,
+            accelerator_table,
         };
     };
 

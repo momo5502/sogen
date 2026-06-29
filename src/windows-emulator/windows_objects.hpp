@@ -50,6 +50,14 @@ namespace sogen
         }
     };
 
+    struct accelerator_table_entry
+    {
+        uint8_t flags{};
+        uint16_t key{};
+        uint16_t command{};
+    };
+    static_assert(sizeof(accelerator_table_entry) == 6);
+
     template <typename GuestType>
     struct user_object : ref_counted_object
     {
@@ -69,6 +77,28 @@ namespace sogen
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read(this->guest);
+        }
+    };
+
+    struct accelerator_table : user_object<USER_ACCELERATOR_TABLE>
+    {
+        std::vector<accelerator_table_entry> entries{};
+
+        accelerator_table(memory_interface& memory)
+            : user_object(memory)
+        {
+        }
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            user_object::serialize_object(buffer);
+            buffer.write_vector(this->entries);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            user_object::deserialize_object(buffer);
+            buffer.read_vector(this->entries);
         }
     };
 
@@ -104,7 +134,6 @@ namespace sogen
         {
             return u"ComboBox";
         }
-
         return class_name;
     }
 

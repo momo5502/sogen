@@ -295,12 +295,55 @@ namespace sogen
             case WM_PAINT:
                 return QS_PAINT;
 
+            case WM_HOTKEY:
+                return QS_HOTKEY;
+
             case WM_KEYDOWN:
             case WM_KEYUP:
+            case WM_SYSKEYDOWN:
+            case WM_SYSKEYUP:
+            case WM_CHAR:
+            case WM_DEADCHAR:
+            case WM_SYSCHAR:
+            case WM_SYSDEADCHAR:
+            case WM_UNICHAR:
                 return QS_KEY;
 
             case WM_INPUT:
+            case WM_INPUT_DEVICE_CHANGE:
                 return QS_RAWINPUT;
+
+            case WM_MOUSEMOVE:
+            case WM_NCMOUSEMOVE:
+                return QS_MOUSEMOVE;
+
+            case WM_LBUTTONDOWN:
+            case WM_LBUTTONUP:
+            case WM_LBUTTONDBLCLK:
+            case WM_RBUTTONDOWN:
+            case WM_RBUTTONUP:
+            case WM_RBUTTONDBLCLK:
+            case WM_MBUTTONDOWN:
+            case WM_MBUTTONUP:
+            case WM_MBUTTONDBLCLK:
+            case WM_XBUTTONDOWN:
+            case WM_XBUTTONUP:
+            case WM_XBUTTONDBLCLK:
+            case WM_MOUSEWHEEL:
+            case WM_MOUSEHWHEEL:
+            case WM_NCLBUTTONDOWN:
+            case WM_NCLBUTTONUP:
+            case WM_NCLBUTTONDBLCLK:
+            case WM_NCRBUTTONDOWN:
+            case WM_NCRBUTTONUP:
+            case WM_NCRBUTTONDBLCLK:
+            case WM_NCMBUTTONDOWN:
+            case WM_NCMBUTTONUP:
+            case WM_NCMBUTTONDBLCLK:
+            case WM_NCXBUTTONDOWN:
+            case WM_NCXBUTTONUP:
+            case WM_NCXBUTTONDBLCLK:
+                return QS_MOUSEBUTTON;
 
             default:
                 return QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;

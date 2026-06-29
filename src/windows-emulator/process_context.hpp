@@ -463,6 +463,7 @@ namespace sogen
         user_handle_store<handle_types::window, window> windows{user_handles};
         user_handle_store<handle_types::type::menu, menu> menus{user_handles};
         handle_store<handle_types::timer, timer> timers{};
+        user_handle_store<handle_types::accelerator_table, accelerator_table> accelerator_tables{user_handles};
         handle_store<handle_types::registry, registry_key, 2> registry_keys{};
         std::map<uint32_t, handle> thread_handles_by_id{};
         std::map<uint16_t, atom_entry> atoms{};

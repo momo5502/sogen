@@ -42,24 +42,27 @@ namespace sogen
     {
         DWORD dwSRVIFlags;
         uint64_t cHandleEntries;
-        uint8_t unknown1[0x178];
+        uint8_t pad_10[0x178];
         uint64_t apfnClientA[FNID_ARRAY_SIZE];
         uint64_t apfnClientW[FNID_ARRAY_SIZE];
         uint64_t apfnClientWorker[FNID_ARRAY_SIZE];
-        uint8_t unknown2[0xE90];
+        uint8_t pad_3c8[0xE90];
         uint64_t ahbrSystem[USER_SERVERINFO_BRUSH_SLOT_COUNT];
-        uint8_t unknown3a[0x34];
+        uint8_t pad_1358[0x34];
         int32_t defaultFontHeightScale;
         int32_t defaultFontWidthScale;
-        uint8_t unknown3b[0x7C2];
+        uint8_t pad_1394[0x7C2];
         uint16_t systemDpi;
+        uint8_t pad_1b58[0x286];
+        uint64_t foregroundWindow;
     };
     static_assert(offsetof(USER_SERVERINFO, apfnClientA) == 0x188);
     static_assert(offsetof(USER_SERVERINFO, ahbrSystem) == 0x1258);
     static_assert(offsetof(USER_SERVERINFO, defaultFontHeightScale) == 0x138C);
     static_assert(offsetof(USER_SERVERINFO, defaultFontWidthScale) == 0x1390);
     static_assert(offsetof(USER_SERVERINFO, systemDpi) == 0x1B56);
-    static_assert(sizeof(USER_SERVERINFO) == 0x1B58);
+    static_assert(offsetof(USER_SERVERINFO, foregroundWindow) == 0x1DE0);
+    static_assert(sizeof(USER_SERVERINFO) == 0x1de8);
 
     struct USER_DISPINFO
     {
@@ -314,6 +317,11 @@ namespace sogen
     static_assert(offsetof(USER_MENU, rgItems) == 0x20);
     static_assert(offsetof(USER_MENU, flags) == 0x28);
     static_assert(offsetof(USER_MENU, cItems) == 0x2C);
+
+    struct USER_ACCELERATOR_TABLE
+    {
+        uint8_t padding[1]{};
+    };
 
     struct USER_MENU_ITEM
     {
