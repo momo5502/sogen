@@ -1317,6 +1317,20 @@ namespace sogen::kvm
                     stubs[vector * exception_stub_stride] = 0xF4;
                 }
 
+                // Trampoline used to return into a 32-bit compatibility-mode (WOW64) context past the per-vector
+                // stubs. KVM_SET_SREGS sets segment descriptors but cannot switch the vCPU out of 64-bit mode,
+                // so compat faults are returned through a real IRETQ which performs the hardware mode transition
+                // from the frame's CS (and reloads SS from the GDT). DS/ES are not part of the IRET frame and a
+                // 64-bit data-segment load on this host can leave their cached descriptor with G=0 (1 MB limit),
+                // which faults once compat mode enforces the limit; reload them (KGDT64_R3_DATA 0x2B) from the
+                // GDT here so the flat 4 GB descriptor persists across the IRETQ. Runs at CPL0; RAX is preserved.
+                //   push rax; mov eax,0x2B; mov ds,ax; mov es,ax; pop rax; iretq
+                constexpr uint32_t iretq_stub_offset = exception_vector_count * exception_stub_stride;
+                static constexpr uint8_t iretq_trampoline_code[] = {0x50, 0xB8, 0x2B, 0x00, 0x00, 0x00, 0x8E,
+                                                                    0xD8, 0x8E, 0xC0, 0x58, 0x48, 0xCF};
+                std::memcpy(stubs + iretq_stub_offset, iretq_trampoline_code, sizeof(iretq_trampoline_code));
+                this->iretq_trampoline_ = this->exception_stub_page_ + iretq_stub_offset;
+
                 // 64-bit interrupt gates (DPL 3 so software int instructions are also trapped) using IST1.
                 auto* idt = static_cast<uint8_t*>(this->mapped_pages_.at(this->exception_idt_page_)->host_page);
                 for (uint32_t vector = 0; vector < exception_vector_count; ++vector)
@@ -1788,6 +1802,11 @@ namespace sogen::kvm
                 } frame{};
                 this->read_memory(frame_address, &frame, sizeof(frame));
 
+                // A 32-bit compatibility-mode (WOW64) fault must be resumed through a real IRETQ: KVM_SET_SREGS
+                // applies segment descriptors but cannot switch the vCPU out of 64-bit mode. 64-bit contexts
+                // are resumed directly from the reconstructed state below.
+                const bool compat_mode = (frame.cs | 3u) != 0x33;
+
                 // Undo the exception entry so the emulator's handlers observe the faulting context, and
                 // a resumed instruction re-executes from where it faulted.
                 regs.rip = frame.rip;
@@ -1804,11 +1823,53 @@ namespace sogen::kvm
                 this->set_regs(regs);
 
                 auto sregs = this->get_sregs();
-                sregs.cs = make_segment(static_cast<uint16_t>(frame.cs), true, (frame.cs & 3) == 3);
-                sregs.ss = make_segment(static_cast<uint16_t>(frame.ss), false, (frame.ss & 3) == 3);
+                if (!compat_mode)
+                {
+                    sregs.cs = make_segment(static_cast<uint16_t>(frame.cs), true, (frame.cs & 3) == 3);
+                    sregs.ss = make_segment(static_cast<uint16_t>(frame.ss), false, (frame.ss & 3) == 3);
+                }
+                // Refresh DS/ES from their selectors too. A 64-bit `mov ds` on this host can leave a G=0
+                // (1 MB) cached descriptor; once compatibility mode (WOW64) enforces the limit, a data access
+                // above 1 MB faults. The CPU does not save DS/ES in the exception frame, so rebuild them from
+                // the current selectors as flat 4 GB segments, matching what the GDT describes.
+                if (sregs.ds.selector & ~3u)
+                {
+                    sregs.ds = make_segment(sregs.ds.selector, false, (sregs.ds.selector & 3) == 3);
+                }
+                if (sregs.es.selector & ~3u)
+                {
+                    sregs.es = make_segment(sregs.es.selector, false, (sregs.es.selector & 3) == 3);
+                }
                 this->set_sregs(sregs);
 
-                return this->handle_exception(vector, error_code);
+                if (!this->handle_exception(vector, error_code))
+                {
+                    return false;
+                }
+
+                if (compat_mode)
+                {
+                    // Re-arm the exception frame with the (possibly handler-adjusted) register state and return
+                    // through the CPL0 IRETQ trampoline, which loads CS from the GDT and switches the vCPU back
+                    // into 32-bit compatibility mode. CS/SS stay at the kernel stub segments so the trampoline
+                    // runs at CPL0; the IRETQ transitions to the CPL3 user context. DS/ES (set above) persist.
+                    const auto resumed = this->get_regs();
+                    const exception_frame iret_frame{
+                        .rip = resumed.rip,
+                        .cs = frame.cs,
+                        .rflags = resumed.rflags,
+                        .rsp = resumed.rsp,
+                        .ss = frame.ss,
+                    };
+                    this->write_memory(frame_address, &iret_frame, sizeof(iret_frame));
+
+                    auto trampoline = resumed;
+                    trampoline.rsp = frame_address;
+                    trampoline.rip = this->iretq_trampoline_;
+                    this->set_regs(trampoline);
+                }
+
+                return true;
             }
             void clear_pending_exception_state()
             {
@@ -2179,6 +2240,7 @@ namespace sogen::kvm
             int kick_signal_ = 0;
             uint64_t syscall_hook_page_ = 0;
             uint64_t exception_stub_page_ = 0;
+            uint64_t iretq_trampoline_ = 0;
             uint64_t exception_idt_page_ = 0;
             uint64_t exception_tss_page_ = 0;
             uint64_t exception_stack_page_ = 0;
@@ -2197,6 +2259,12 @@ namespace sogen::kvm
 
         kvm_segment make_segment(const uint16_t selector, const bool is_code, const bool is_user)
         {
+            // A 64-bit code segment runs in long mode (L=1, D=0); 32-bit compatibility-mode code (the WOW64
+            // selector 0x23) and all data segments use D=1, L=0. Deriving this from the selector is required
+            // when reconstructing a faulting WOW64 context: hardcoding L=1 on a 32-bit code selector re-enters
+            // the 32-bit code in 64-bit mode and misdecodes it. Windows x64 uses 0x33 for 64-bit user code.
+            const bool long_mode_code = is_code && ((selector | 3) == 0x33);
+
             kvm_segment segment{};
             segment.base = 0;
             segment.limit = 0xFFFFF;
@@ -2204,9 +2272,9 @@ namespace sogen::kvm
             segment.type = is_code ? 0xB : 0x3;
             segment.present = 1;
             segment.dpl = is_user ? 3 : 0;
-            segment.db = is_code ? 0 : 1;
+            segment.db = long_mode_code ? 0 : 1;
             segment.s = 1;
-            segment.l = is_code ? 1 : 0;
+            segment.l = long_mode_code ? 1 : 0;
             segment.g = 1;
             segment.avl = 0;
             segment.unusable = 0;
