@@ -269,8 +269,9 @@ Linux `on_syscall` callbacks use `callback(syscall_id: int, syscall_name: str) -
 Linux `on_module_load` callbacks use `callback(module: sogen.linux.LinuxMappedModule) -> None`.
 Assigning `app.callbacks.on_module_load` replays modules already mapped during
 application construction in ascending image-base order, then observes future
-native module mappings. Linux currently exposes no module-unload callback because
-there is no native Linux unload event source in the emulator.
+ELF modules discovered from runtime file-backed `mmap()` activity (for example
+libc mapped by the Linux dynamic loader). Linux currently exposes no module-unload
+callback because there is no native Linux unload event source in the emulator.
 
 Linux thread controls expose the active emulated thread and cooperative native
 scheduler hooks:
@@ -373,7 +374,8 @@ Linux `Hooks` exposes Linux symbol hooks as `app.hooks.symbols`. Windows-only
 
 ## Linux modules and symbol hooks
 
-Linux applications expose mapped ELF modules before `app.start()`:
+Linux applications expose initial ELF modules before `app.start()` and append
+runtime-loaded ELF modules as the dynamic loader maps them:
 
 ```python
 import ctypes
@@ -388,7 +390,9 @@ Each `sogen.linux.LinuxMappedModule` has `name`, `path`, `image_base`,
 `size_of_image`, `entry_point`, `exports`, `needed_libraries`, `sections`,
 `rpath`, and `runpath`. Exports are `sogen.linux.ExportedSymbol` objects with
 `name`, `rva`, and `address`; sections are `sogen.linux.MappedSection` objects
-with `name`, `start`, `length`, and `permissions`. Use
+with `name`, `start`, `length`, and `permissions`. Executable ELF sections and
+regions expose composite permissions such as `sogen.MemoryPermission.read_exec`;
+write-execute mappings use `sogen.MemoryPermission.write_exec`. Use
 `app.find_module_by_address(address)` or `app.find_module_by_name(name)` to look
 up one module.
 
@@ -550,7 +554,9 @@ Linux memory managers expose mapped-region introspection through
 `app.memory.get_region_info(address)`, and `app.memory.compute_memory_stats()`.
 `mapped_regions` returns `sogen.linux.MemoryRegionInfo` objects with `start`,
 `length`, `permissions`, `allocation_base`, `allocation_length`, `is_reserved`,
-`is_committed`, `initial_permissions`, and `kind`. Linux does not have the
+`is_committed`, `initial_permissions`, and `kind`. Composite region permissions
+include `sogen.MemoryPermission.read_exec` and
+`sogen.MemoryPermission.write_exec`. Linux does not have the
 Windows reserve/commit split. Each mapped region reports:
 
 - `allocation_base == start`

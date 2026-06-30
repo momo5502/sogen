@@ -124,18 +124,18 @@ namespace sogen::py
             .export_values();
 
         nb::class_<sogen_linux_thread>(m, "Thread")
-            .def_prop_ro("tid", [](const sogen_linux_thread& self) { return self.thread->tid; })
-            .def_prop_ro("stack_base", [](const sogen_linux_thread& self) { return self.thread->stack_base; })
-            .def_prop_ro("stack_size", [](const sogen_linux_thread& self) { return self.thread->stack_size; })
-            .def_prop_ro("fs_base", [](const sogen_linux_thread& self) { return self.thread->fs_base; })
+            .def_prop_ro("tid", [](const sogen_linux_thread& self) { return self.view().tid; })
+            .def_prop_ro("stack_base", [](const sogen_linux_thread& self) { return self.view().stack_base; })
+            .def_prop_ro("stack_size", [](const sogen_linux_thread& self) { return self.view().stack_size; })
+            .def_prop_ro("fs_base", [](const sogen_linux_thread& self) { return self.view().fs_base; })
             .def_prop_ro("current_ip", &sogen_linux_thread::current_ip)
             .def_prop_ro("previous_ip", &sogen_linux_thread::previous_ip)
-            .def_prop_ro("start_address", [](const sogen_linux_thread& self) { return self.thread->saved_regs.rip; })
-            .def_prop_ro("wait_state", [](const sogen_linux_thread& self) { return self.thread->wait_state; })
+            .def_prop_ro("start_address", [](const sogen_linux_thread& self) { return self.view().start_address; })
+            .def_prop_ro("wait_state", [](const sogen_linux_thread& self) { return self.view().wait_state; })
             .def_prop_ro("setup_done", [](const sogen_linux_thread&) { return true; })
-            .def_prop_ro("terminated", [](const sogen_linux_thread& self) { return self.thread->terminated; })
-            .def_prop_ro("exit_code", [](const sogen_linux_thread& self) { return self.thread->exit_code; })
-            .def_prop_ro("executed_instructions", [](const sogen_linux_thread& self) { return self.thread->executed_instructions; });
+            .def_prop_ro("terminated", [](const sogen_linux_thread& self) { return self.view().terminated; })
+            .def_prop_ro("exit_code", [](const sogen_linux_thread& self) { return self.view().exit_code; })
+            .def_prop_ro("executed_instructions", [](const sogen_linux_thread& self) { return self.view().executed_instructions; });
 
         nb::class_<sogen_linux_process_context>(m, "ProcessContext")
             .def_prop_ro("exit_status",
@@ -255,7 +255,15 @@ namespace sogen::py
                              return nb::int_(*tid);
                          })
             .def_prop_ro(
-                "callbacks", [](sogen_linux_emulator& self) -> linux_callback_registry& { return *self.callbacks; },
+                "callbacks",
+                [](sogen_linux_emulator& self) -> linux_callback_registry& {
+                    const auto owner = nb::find(&self);
+                    if (owner.is_valid())
+                    {
+                        self.callbacks->owner = owner.ptr();
+                    }
+                    return *self.callbacks;
+                },
                 nb::rv_policy::reference_internal)
             .def_prop_ro(
                 "hooks", [](sogen_linux_emulator& self) -> linux_hook_registry& { return *self.hooks; }, nb::rv_policy::reference_internal)

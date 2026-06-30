@@ -3,6 +3,7 @@
 #include "sogen_bindings.hpp"
 #include <utils/function.hpp>
 #include <functional>
+#include <optional>
 #include <utility>
 
 namespace sogen::py
@@ -269,6 +270,7 @@ namespace sogen::py
     struct linux_callback_registry
     {
         linux_emulator* emu{};
+        PyObject* owner{};
         nb::object stdout_cb = nb::none();
         nb::object stderr_cb = nb::none();
         nb::object syscall_cb = nb::none();
@@ -298,17 +300,36 @@ namespace sogen::py
         void clear(std::string_view name);
         void refresh_memory_violate_observer();
 
+        nb::object owner_object() const;
         static nb::object linux_callback_registry::* slot_for(std::string_view name);
+    };
+
+    struct sogen_linux_thread_snapshot
+    {
+        uint32_t tid{};
+        uint64_t stack_base{};
+        uint64_t stack_size{};
+        uint64_t fs_base{};
+        uint64_t current_ip{};
+        uint64_t start_address{};
+        thread_wait_state wait_state{};
+        bool terminated{};
+        int exit_code{};
+        uint64_t executed_instructions{};
     };
 
     struct sogen_linux_thread
     {
-        linux_thread* thread{};
+        uint32_t tid{};
         linux_emulator* emu{};
         nb::object owner = nb::none();
+        sogen_linux_thread_snapshot snapshot{};
+        bool resolve_live{true};
 
-        sogen_linux_thread(linux_thread& thread, linux_emulator& emulator, nb::object owner);
+        sogen_linux_thread(linux_thread& thread, linux_emulator& emulator, nb::object owner, bool resolve_live = true);
 
+        const linux_thread* live_thread() const;
+        sogen_linux_thread_snapshot view() const;
         uint64_t current_ip() const;
         nb::object previous_ip() const;
     };

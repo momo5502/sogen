@@ -16,6 +16,7 @@ namespace sogen
         constexpr uint32_t GDT_ENTRY_SIZE = 8;
 
         // GDT entry indices
+        constexpr uint16_t GDT_KERNEL_CODE64_SEL = 0x08;
         constexpr uint16_t GDT_CODE64_SEL = 0x33; // 64-bit code segment (ring 3)
         constexpr uint16_t GDT_DATA64_SEL = 0x2B; // 64-bit data segment (ring 3)
 
@@ -54,6 +55,8 @@ namespace sogen
         {
             // Allocate GDT page
             memory.allocate_memory(GDT_ADDR, GDT_LIMIT, memory_permission::read_write);
+
+            write_gdt_entry(emu, GDT_ADDR, GDT_KERNEL_CODE64_SEL, 0x9B, 0xAF);
 
             // Write flat 64-bit code segment at 0x33
             // Access: present(1) | DPL=3(11) | code(1) | exec(1) | readable(1) = 0xFB
@@ -111,6 +114,30 @@ namespace sogen
             return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
         }
 
+        constexpr uint8_t X86_INT3_OPCODE = 0xCC;
+
+        struct int3_signal_location
+        {
+            uint64_t fault_addr{};
+            uint64_t resume_rip{};
+        };
+
+        int3_signal_location resolve_int3_signal_location(const linux_memory_manager& memory, const uint64_t reported_rip)
+        {
+            uint8_t opcode{};
+            if (memory.try_read_memory(reported_rip, &opcode, sizeof(opcode)) && opcode == X86_INT3_OPCODE)
+            {
+                return {.fault_addr = reported_rip, .resume_rip = reported_rip + 1};
+            }
+
+            if (reported_rip > 0 && memory.try_read_memory(reported_rip - 1, &opcode, sizeof(opcode)) && opcode == X86_INT3_OPCODE)
+            {
+                return {.fault_addr = reported_rip - 1, .resume_rip = reported_rip};
+            }
+
+            return {.fault_addr = reported_rip, .resume_rip = reported_rip};
+        }
+
         struct resolved_application_path
         {
             std::filesystem::path host_path{};
@@ -139,9 +166,21 @@ namespace sogen
         resolved_application_path resolve_application_path(const linux_file_system& file_sys, const std::filesystem::path& executable)
         {
             std::error_code ec{};
-            if (executable.has_root_name() && executable.is_absolute() && std::filesystem::exists(executable, ec))
+            auto host_path = file_sys.translate(executable.string());
+            if (std::filesystem::exists(host_path, ec))
             {
-                auto host_path = executable.lexically_normal();
+                auto guest_path = guest_path_from_root(file_sys, host_path);
+                if (!guest_path)
+                {
+                    guest_path = linux_file_system::normalize_guest_path_string(executable.generic_string());
+                }
+
+                return {.host_path = std::move(host_path), .guest_path = std::move(*guest_path)};
+            }
+
+            if (executable.is_absolute() && std::filesystem::exists(executable, ec))
+            {
+                host_path = executable.lexically_normal();
                 auto guest_path = guest_path_from_root(file_sys, host_path);
                 if (!guest_path)
                 {
@@ -151,7 +190,6 @@ namespace sogen
                 return {.host_path = std::move(host_path), .guest_path = std::move(*guest_path)};
             }
 
-            auto host_path = file_sys.translate(executable.string());
             auto guest_path = guest_path_from_root(file_sys, host_path);
             if (!guest_path)
             {
@@ -212,12 +250,14 @@ namespace sogen
     void linux_emulator::load_application(const std::filesystem::path& executable, std::vector<std::string> argv,
                                           const std::vector<std::string>& envp)
     {
-        // Allow passthrough access to the executable directory so colocated
-        // dependencies (for example RUNPATH=$ORIGIN) can be loaded even when
-        // the executable itself is outside the emulation root.
-        this->file_sys.add_passthrough_prefix(executable.parent_path());
-
         const auto executable_path = resolve_application_path(this->file_sys, executable);
+
+        // Allow passthrough access to the resolved executable directory so
+        // colocated dependencies (for example RUNPATH=$ORIGIN) can be loaded
+        // when the executable itself is outside the emulation root. Resolve
+        // first so a guest path such as /bin/foo prefers <root>/bin/foo over
+        // the host /bin/foo even when both exist.
+        this->file_sys.add_passthrough_prefix(executable_path.host_path.parent_path());
 
         // Load the ELF binary
         this->mod_manager.map_main_modules(executable_path.host_path);
@@ -499,6 +539,52 @@ namespace sogen
         }
     }
 
+    uint64_t linux_emulator::add_interrupt_observer(std::function<void(int)> observer)
+    {
+        const auto id = this->next_interrupt_observer_id_++;
+        this->interrupt_observers_.emplace_back(id, std::make_shared<std::function<void(int)>>(std::move(observer)));
+        return id;
+    }
+
+    void linux_emulator::remove_interrupt_observer(const uint64_t id)
+    {
+        for (auto it = this->interrupt_observers_.begin(); it != this->interrupt_observers_.end(); ++it)
+        {
+            if (it->first == id)
+            {
+                this->interrupt_observers_.erase(it);
+                return;
+            }
+        }
+    }
+
+    void linux_emulator::notify_interrupt_observers(const int interrupt)
+    {
+        std::vector<uint64_t> observer_ids{};
+        observer_ids.reserve(this->interrupt_observers_.size());
+        for (const auto& observer : this->interrupt_observers_)
+        {
+            observer_ids.push_back(observer.first);
+        }
+
+        for (const auto observer_id : observer_ids)
+        {
+            const auto it = std::ranges::find_if(this->interrupt_observers_,
+                                                 [observer_id](const auto& observer) { return observer.first == observer_id; });
+            if (it == this->interrupt_observers_.end())
+            {
+                continue;
+            }
+
+            auto observer = it->second;
+            (*observer)(interrupt);
+            if (this->should_stop)
+            {
+                return;
+            }
+        }
+    }
+
     memory_violation_continuation linux_emulator::notify_memory_violation_observers(const uint64_t address, const size_t size,
                                                                                     const memory_operation operation,
                                                                                     const memory_violation_type type)
@@ -525,6 +611,7 @@ namespace sogen
             if (result == memory_violation_continuation::stop)
             {
                 this->record_stop(stop_reason::unhandled_memory_violation, format_memory_violation_stop_detail(address, size));
+                this->process.exit_status.reset();
                 this->stop();
                 return memory_violation_continuation::stop;
             }
@@ -542,6 +629,21 @@ namespace sogen
     {
         // Hook the syscall instruction
         this->emu().hook_instruction(x86_hookable_instructions::syscall, [this](uint64_t) { return this->dispatcher.dispatch(*this); });
+
+        this->emu().hook_interrupt([this](const int interrupt) {
+            this->notify_interrupt_observers(interrupt);
+            if (this->should_stop)
+            {
+                return;
+            }
+
+            if (interrupt == 3)
+            {
+                const auto trap = resolve_int3_signal_location(this->memory, this->emu().read_instruction_pointer());
+                this->emu().reg(x86_register::rip, trap.resume_rip);
+                this->signals.deliver_signal(*this, linux_signals::LINUX_SIGTRAP, trap.fault_addr, linux_signals::LINUX_TRAP_BRKPT);
+            }
+        });
 
         // Hook memory violations — first give Linux-managed observers a chance
         // to handle the fault, then fall back to SIGSEGV/default termination.
@@ -631,10 +733,28 @@ namespace sogen
         {
             try
             {
-                this->emu().start(count);
+                if (use_count)
+                {
+                    const auto current_instructions = this->executed_instructions_;
+                    if (current_instructions >= target_instructions)
+                    {
+                        break;
+                    }
+
+                    this->emu().start(static_cast<size_t>(target_instructions - current_instructions));
+                }
+                else
+                {
+                    this->emu().start(0);
+                }
             }
             catch (const std::exception& e)
             {
+                if (this->should_stop || this->last_stop_reason_ != stop_reason::none)
+                {
+                    break;
+                }
+
                 const auto fetch_violation = classify_instruction_fetch_violation(this->memory, this->emu().read_instruction_pointer());
                 if (fetch_violation.has_value())
                 {

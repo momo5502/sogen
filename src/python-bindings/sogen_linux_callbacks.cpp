@@ -55,6 +55,16 @@ namespace sogen::py
         return nullptr;
     }
 
+    nb::object linux_callback_registry::owner_object() const
+    {
+        if (!this->owner)
+        {
+            return nb::none();
+        }
+
+        return nb::borrow(nb::handle(this->owner));
+    }
+
     linux_callback_registry::linux_callback_registry(linux_emulator& emulator)
         : emu(&emulator)
     {
@@ -124,7 +134,7 @@ namespace sogen::py
             }
 
             nb::gil_scoped_acquire gil{};
-            this->thread_create_cb(thread);
+            this->thread_create_cb(nb::cast(sogen_linux_thread{thread, *this->emu, this->owner_object()}));
         });
         this->thread_terminated_observer_id = this->emu->on_thread_terminated.add([this](linux_thread& thread) {
             if (this->thread_terminated_cb.is_none())
@@ -133,7 +143,7 @@ namespace sogen::py
             }
 
             nb::gil_scoped_acquire gil{};
-            this->thread_terminated_cb(thread);
+            this->thread_terminated_cb(nb::cast(sogen_linux_thread{thread, *this->emu, this->owner_object(), false}));
         });
         this->thread_switch_observer_id = this->emu->on_thread_switch.add([this](uint32_t old_tid, uint32_t new_tid) {
             if (this->thread_switch_cb.is_none())

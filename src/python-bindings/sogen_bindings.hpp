@@ -45,6 +45,7 @@ namespace sogen
     struct linux_mapped_module;
     struct linux_mapped_section;
     struct linux_thread;
+    enum class thread_wait_state : uint8_t;
     struct mapped_module;
     struct nt_memory_permission;
     struct process_context;
@@ -73,6 +74,7 @@ namespace sogen::py
     using sogen::nt_memory_permission;
     using sogen::process_context;
     using sogen::stop_reason;
+    using sogen::thread_wait_state;
     using sogen::windows_emulator;
     using sogen::x86_register;
 

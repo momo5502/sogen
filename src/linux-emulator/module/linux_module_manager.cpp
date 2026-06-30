@@ -5,11 +5,84 @@
 #include <platform/elf.hpp>
 #include <utils/io.hpp>
 #include <serialization_helper.hpp>
+#include <address_utils.hpp>
 
 namespace sogen
 {
 
     using namespace elf; // NOLINT(google-build-using-namespace)
+
+    namespace
+    {
+        constexpr size_t runtime_module_metadata_read_limit = 16 * 1024 * 1024;
+
+        std::vector<std::byte> read_runtime_module_metadata_prefix(const std::filesystem::path& path)
+        {
+            std::ifstream stream(path, std::ios::binary);
+            if (!stream)
+            {
+                return {};
+            }
+
+            std::array<std::byte, sizeof(Elf64_Ehdr)> header_data{};
+            stream.read(reinterpret_cast<char*>(header_data.data()), static_cast<std::streamsize>(header_data.size()));
+            if (stream.gcount() != static_cast<std::streamsize>(header_data.size()))
+            {
+                return {};
+            }
+
+            const auto header_span = std::span<const std::byte>(header_data.data(), header_data.size());
+            if (!is_valid_elf(header_span) || !is_elf64(header_span) || !is_little_endian(header_span))
+            {
+                return {};
+            }
+
+            const auto* ehdr = get_header(header_span);
+            if (!ehdr || ehdr->e_phentsize != sizeof(Elf64_Phdr) || ehdr->e_phnum == 0)
+            {
+                return {};
+            }
+
+            const auto phdr_bytes = static_cast<uint64_t>(ehdr->e_phnum) * ehdr->e_phentsize;
+            if (phdr_bytes > UINT64_MAX - ehdr->e_phoff)
+            {
+                return {};
+            }
+
+            const auto phdr_end = ehdr->e_phoff + phdr_bytes;
+            if (phdr_end > runtime_module_metadata_read_limit)
+            {
+                return {};
+            }
+
+            auto bytes_to_read = runtime_module_metadata_read_limit;
+            std::error_code ec{};
+            const auto file_size = std::filesystem::file_size(path, ec);
+            if (!ec)
+            {
+                bytes_to_read = static_cast<size_t>(std::min<std::uintmax_t>(file_size, runtime_module_metadata_read_limit));
+            }
+
+            if (bytes_to_read < phdr_end)
+            {
+                return {};
+            }
+
+            std::vector<std::byte> data(bytes_to_read);
+            stream.clear();
+            stream.seekg(0, std::ios::beg);
+            stream.read(reinterpret_cast<char*>(data.data()), static_cast<std::streamsize>(data.size()));
+
+            const auto read_count = stream.gcount();
+            if (read_count < static_cast<std::streamsize>(phdr_end))
+            {
+                return {};
+            }
+
+            data.resize(static_cast<size_t>(read_count));
+            return data;
+        }
+    }
 
     namespace utils
     {
@@ -201,6 +274,106 @@ namespace sogen
             const auto* ehdr = get_header(data_span);
             const int64_t base_delta = static_cast<int64_t>(mod.entry_point) - static_cast<int64_t>(ehdr->e_entry);
             apply_elf_relocations(*this->memory_, mod, data_span, base_delta);
+        }
+
+        return this->insert_module(std::move(mod));
+    }
+
+    linux_mapped_module* linux_module_manager::record_runtime_module_mapping(const std::filesystem::path& path,
+                                                                             const uint64_t mapped_address, const uint64_t file_offset)
+    {
+        if (path.empty() || mapped_address == 0)
+        {
+            return nullptr;
+        }
+
+        for (auto& [_, module] : this->modules_)
+        {
+            if (module.path == path && module.contains(mapped_address))
+            {
+                return &module;
+            }
+        }
+
+        auto file_data = read_runtime_module_metadata_prefix(path);
+        if (file_data.empty())
+        {
+            return nullptr;
+        }
+
+        const auto data_span = std::span<const std::byte>(file_data.data(), file_data.size());
+        if (!is_valid_elf(data_span) || !is_elf64(data_span) || !is_little_endian(data_span))
+        {
+            return nullptr;
+        }
+
+        const auto* ehdr = get_header(data_span);
+        const auto* phdrs = get_program_headers(data_span);
+        if (!ehdr || !phdrs)
+        {
+            return nullptr;
+        }
+
+        uint64_t vaddr_min = UINT64_MAX;
+        for (uint16_t i = 0; i < ehdr->e_phnum; ++i)
+        {
+            const auto& ph = phdrs[i];
+            if (ph.p_type == PT_LOAD)
+            {
+                vaddr_min = std::min(vaddr_min, page_align_down(ph.p_vaddr));
+            }
+        }
+
+        if (vaddr_min == UINT64_MAX)
+        {
+            return nullptr;
+        }
+
+        std::optional<uint64_t> image_base{};
+        for (uint16_t i = 0; i < ehdr->e_phnum; ++i)
+        {
+            const auto& ph = phdrs[i];
+            if (ph.p_type != PT_LOAD || (ph.p_flags & PF_X) == 0)
+            {
+                continue;
+            }
+
+            const auto segment_file_start = page_align_down(ph.p_offset);
+            const auto segment_file_end = page_align_up(ph.p_offset + std::max<uint64_t>(ph.p_filesz, 1));
+            if (file_offset < segment_file_start || file_offset >= segment_file_end)
+            {
+                continue;
+            }
+
+            const auto segment_vaddr_start = page_align_down(ph.p_vaddr);
+            const auto relative_vaddr = (segment_vaddr_start - vaddr_min) + (file_offset - segment_file_start);
+            if (mapped_address < relative_vaddr)
+            {
+                return nullptr;
+            }
+
+            image_base = mapped_address - relative_vaddr;
+            break;
+        }
+
+        if (!image_base)
+        {
+            return nullptr;
+        }
+
+        if (auto existing = this->modules_.find(*image_base); existing != this->modules_.end())
+        {
+            return &existing->second;
+        }
+
+        linux_mapped_module mod{};
+        try
+        {
+            mod = read_elf_module_metadata(data_span, path, *image_base);
+        }
+        catch (...)
+        {
+            return nullptr;
         }
 
         return this->insert_module(std::move(mod));

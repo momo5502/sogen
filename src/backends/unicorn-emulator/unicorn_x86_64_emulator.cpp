@@ -574,8 +574,16 @@ namespace sogen::unicorn
             emulator_hook* hook_memory_range_execution(const uint64_t address, const uint64_t size,
                                                        memory_execution_hook_callback callback) override
             {
-                auto exec_wrapper = [c = std::move(callback)](uc_engine*, const uint64_t address, const uint32_t /*size*/) {
-                    c(address); //
+                auto exec_wrapper = [c = std::move(callback), this](uc_engine*, const uint64_t address, const uint32_t /*size*/) {
+                    const auto old_ip = this->read_instruction_pointer();
+                    c(address);
+
+                    const auto new_ip = this->read_instruction_pointer();
+                    if (new_ip != old_ip)
+                    {
+                        this->violation_ip_ = new_ip;
+                        uce(uc_emu_stop(*this));
+                    }
                 };
 
                 function_wrapper<void, uc_engine*, uint64_t, uint32_t> wrapper(std::move(exec_wrapper));

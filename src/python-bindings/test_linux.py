@@ -22,12 +22,17 @@ assert sogen.create_empty is sogen.windows.create_empty
 
 linux = sogen.linux
 LINUX_SIGSEGV = 11
+LINUX_SIGTRAP = 5
+LINUX_SIGUSR1 = 10
 LINUX_SEGV_MAPERR = 1
+LINUX_TRAP_BRKPT = 1
 
 assert linux.create_application is not sogen.create_application
 assert hasattr(linux, "create_empty")
 assert linux.create_empty is not sogen.create_empty
 assert sogen.MemoryOperation is sogen.MemoryPermission
+assert hasattr(sogen.MemoryPermission, "read_exec")
+assert hasattr(sogen.MemoryPermission, "write_exec")
 assert hasattr(linux, "ExportedSymbol")
 assert hasattr(linux, "MappedSection")
 assert hasattr(linux, "LinuxMappedModule")
@@ -38,8 +43,13 @@ assert hasattr(linux, "symbol_call")
 empty = linux.create_empty(emulation_root="/", backend=sogen.Backend.unicorn)
 exec_base = empty.memory.allocate_memory(0x1000, sogen.MemoryPermission.exec)
 data_base = empty.memory.allocate_memory(0x1000, sogen.MemoryPermission.read_write)
+write_exec_base = empty.memory.allocate_memory(0x1000, sogen.MemoryPermission.write_exec)
 assert isinstance(exec_base, int)
 assert isinstance(data_base, int)
+assert isinstance(write_exec_base, int)
+write_exec_region = empty.memory.get_region_info(write_exec_base)
+assert write_exec_region is not None
+assert write_exec_region.permissions == sogen.MemoryPermission.write_exec
 empty.write_memory(data_base, b"linux-empty")
 assert empty.read_memory(data_base, len(b"linux-empty")) == b"linux-empty"
 empty.write_register(sogen.Register.rip, exec_base)
@@ -250,14 +260,17 @@ assert int_emu.memory.allocate_memory_at(0x100000, 0x1000, sogen.MemoryPermissio
 int_emu.write_memory(0x100000, b"\xcc")
 int_emu.write_register(sogen.Register.rip, 0x100000)
 interrupts = []
+int_handle_box = {}
 
 
 def on_interrupt(interrupt):
     interrupts.append(interrupt)
+    int_handle_box["handle"].remove()
     int_emu.stop()
 
 
 int_handle = int_emu.hooks.interrupt(on_interrupt)
+int_handle_box["handle"] = int_handle
 try:
     int_emu.start(10)
 except Exception as exc:
@@ -267,8 +280,25 @@ assert interrupts == [3], (
     f"interrupt hook did not fire for int3: interrupts={interrupts!r}, "
     f"stop_detail={getattr(int_emu, 'last_stop_detail', '')!r}"
 )
-int_handle.remove()
+assert int_handle.active is False
 int_emu = None
+gc.collect()
+
+trap_signal_emu = linux.create_empty(emulation_root="/", backend=sogen.Backend.unicorn)
+assert trap_signal_emu.memory.allocate_memory_at(0x100000, 0x1000, sogen.MemoryPermission.exec)
+trap_signal_emu.write_memory(0x100000, b"\xcc")
+trap_signal_emu.write_register(sogen.Register.rip, 0x100000)
+trap_signal_events = []
+trap_signal_emu.callbacks.on_exception = lambda signum, fault_addr, si_code: trap_signal_events.append(
+    (signum, fault_addr, si_code)
+)
+trap_signal_emu.start(10)
+assert trap_signal_events, "int3 did not surface through on_exception"
+assert trap_signal_events[0][0] == LINUX_SIGTRAP
+assert trap_signal_events[0][2] == LINUX_TRAP_BRKPT
+assert trap_signal_emu.last_stop_reason == "signal_termination"
+assert trap_signal_emu.process.exit_status == 128 + LINUX_SIGTRAP
+trap_signal_emu = None
 gc.collect()
 fault_address = 0xDEAD0000
 
@@ -414,6 +444,66 @@ assert self_removing_events and self_removing_events[0][0] == fault_address
 assert self_removing_handle.active is False
 self_removing_fault_emu = None
 self_removing_handle = None
+gc.collect()
+
+memory_fault_code_base = 0x100000
+memory_fault_target = 0x200000
+
+
+def rip_relative_memory_instruction(opcode, instruction_address, target_address):
+    displacement = target_address - (instruction_address + len(opcode) + 4)
+    return opcode + int(displacement).to_bytes(4, "little", signed=True)
+
+
+read_fault_emu = linux.create_empty(emulation_root="/", backend=sogen.Backend.unicorn)
+assert read_fault_emu.memory.allocate_memory_at(memory_fault_code_base, 0x1000, sogen.MemoryPermission.exec)
+read_fault_emu.write_memory(
+    memory_fault_code_base,
+    rip_relative_memory_instruction(b"\x48\x8b\x05", memory_fault_code_base, memory_fault_target),
+)
+read_fault_emu.write_register(sogen.Register.rip, memory_fault_code_base)
+read_fault_events = []
+
+
+def on_read_memory_violate(address, size, operation, violation_type):
+    read_fault_events.append((address, size, operation, violation_type))
+    return sogen.MemoryViolationContinuation.stop
+
+
+read_fault_emu.callbacks.on_memory_violate = on_read_memory_violate
+read_fault_emu.start(10)
+assert read_fault_events, "read violation callback did not fire"
+assert read_fault_events[0][0] == memory_fault_target
+assert read_fault_events[0][2] == sogen.MemoryOperation.read
+assert read_fault_emu.last_stop_reason == "unhandled_memory_violation"
+assert read_fault_emu.process.exit_status is None
+read_fault_emu = None
+gc.collect()
+
+write_fault_emu = linux.create_empty(emulation_root="/", backend=sogen.Backend.unicorn)
+assert write_fault_emu.memory.allocate_memory_at(memory_fault_code_base, 0x1000, sogen.MemoryPermission.exec)
+write_fault_emu.write_memory(
+    memory_fault_code_base,
+    rip_relative_memory_instruction(b"\x48\x89\x05", memory_fault_code_base, memory_fault_target),
+)
+write_fault_emu.write_register(sogen.Register.rip, memory_fault_code_base)
+write_fault_events = []
+
+
+def on_write_memory_violate(address, size, operation, violation_type):
+    write_fault_events.append((address, size, operation, violation_type))
+    return sogen.MemoryViolationContinuation.stop
+
+
+write_fault_hook = write_fault_emu.hooks.memory_violation(on_write_memory_violate)
+write_fault_emu.start(10)
+assert write_fault_events, "write violation hook did not fire"
+assert write_fault_events[0][0] == memory_fault_target
+assert write_fault_events[0][2] == sogen.MemoryOperation.write
+assert write_fault_emu.last_stop_reason == "unhandled_memory_violation"
+assert write_fault_emu.process.exit_status is None
+write_fault_hook.remove()
+write_fault_emu = None
 gc.collect()
 
 
@@ -576,6 +666,11 @@ assert modules, "Linux modules are empty before start"
 main_modules = [module for module in modules if "true" in module.name or "true" in str(module.path)]
 assert main_modules, f"main executable module not found in {[module.name for module in modules]!r}"
 main_module = main_modules[0]
+root_path = Path(root)
+if Path(binary).is_absolute() and root and root_path != Path("/"):
+    rooted_binary = root_path / str(Path(binary)).lstrip("/")
+    if rooted_binary.exists():
+        assert Path(str(main_module.path)).resolve() == rooted_binary.resolve()
 for module in modules:
     for attr in (
         "name",
@@ -597,6 +692,16 @@ for module in modules:
         assert isinstance(module.exports[0], linux.ExportedSymbol)
     if module.sections:
         assert isinstance(module.sections[0], linux.MappedSection)
+executable_sections = [
+    section
+    for module in modules
+    for section in module.sections
+    if section.permissions == sogen.MemoryPermission.read_exec
+]
+assert executable_sections, "expected at least one readable executable ELF section"
+rx_region = app.memory.get_region_info(executable_sections[0].start)
+assert rx_region is not None
+assert rx_region.permissions == sogen.MemoryPermission.read_exec
 assert isinstance(main_module, linux.LinuxMappedModule)
 assert app.find_module_by_address(main_module.entry_point) is not None
 assert app.find_module_by_name(main_module.name) is not None
@@ -607,6 +712,7 @@ assert any(module.name == main_module.name for module in module_load_replay), "o
 pre_start_state = app.serialize_state()
 pre_start_mmap_base = app.memory.mmap_base
 pre_start_module_count = len(app.modules)
+pre_start_module_names = {module.name for module in app.modules}
 app.memory.mmap_base = pre_start_mmap_base + 0x100000
 app.deserialize_state(pre_start_state)
 assert app.memory.mmap_base == pre_start_mmap_base
@@ -641,6 +747,13 @@ assert app.backend_name == expected_backend_name, (
 )
 if requested_backend == "unicorn":
     assert app.executed_instructions > 0, "unicorn did not execute any instructions"
+if main_module.needed_libraries:
+    runtime_modules = [module for module in app.modules if module.name not in pre_start_module_names]
+    assert runtime_modules, "dynamic runtime-loaded ELF modules were not recorded from mmap"
+    runtime_module_names = {module.name for module in runtime_modules}
+    assert any(module.name in runtime_module_names for module in module_load_replay), (
+        "on_module_load did not observe runtime-loaded ELF modules"
+    )
 
 app = None
 gc.collect()
@@ -814,6 +927,77 @@ with tempfile.TemporaryDirectory() as tmpdir:
     assert b"".join(mprotect_stdout) == b"enomem\n"
     assert mprotect_app.process.exit_status == 0
 
+    thread_source = tmp_path / "thread_callback_fixture.c"
+    thread_fixture = tmp_path / "thread_callback_fixture"
+    thread_source.write_text(
+        textwrap.dedent(
+            r"""
+            #define _GNU_SOURCE
+            #include <sched.h>
+            #include <sys/syscall.h>
+            #include <unistd.h>
+
+            static unsigned char child_stack[65536] __attribute__((aligned(16)));
+
+            int main(void) {
+                const long flags = CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD;
+                long tid = syscall(SYS_clone, flags, child_stack + sizeof(child_stack), 0, 0, 0);
+                return tid < 0 ? 1 : 0;
+            }
+            """
+        )
+    )
+    subprocess.run([cc, "-O0", str(thread_source), "-o", str(thread_fixture)], check=True)
+    thread_callback_events = []
+    thread_callback_thread_refs = []
+
+    def record_thread_callback(kind):
+        def record(thread):
+            assert isinstance(thread, linux.Thread), f"{kind} callback received {type(thread)!r}"
+            assert isinstance(thread.tid, int), f"{kind} tid is not int: {thread.tid!r}"
+            thread_callback_events.append((kind, thread.tid, thread.terminated))
+            thread_callback_thread_refs.append((kind, thread))
+
+        return record
+
+    thread_app = linux.create_application(
+        str(thread_fixture),
+        emulation_root=root,
+        backend=backend,
+        disable_logging=True,
+    )
+    thread_app.callbacks.on_thread_create = record_thread_callback("create")
+    thread_app.callbacks.on_thread_terminated = record_thread_callback("terminated")
+    thread_app.start()
+    assert thread_app.process.exit_status == 0
+    created_tids = [tid for kind, tid, _ in thread_callback_events if kind == "create"]
+    terminated_tids = [tid for kind, tid, _ in thread_callback_events if kind == "terminated"]
+    assert created_tids, f"thread create callback did not fire: {thread_callback_events!r}"
+    assert set(created_tids).issubset(set(terminated_tids)), (
+        f"created thread did not terminate through callback: {thread_callback_events!r}"
+    )
+    retained_thread = next(thread for kind, thread in thread_callback_thread_refs if kind == "create")
+    retained_terminated_thread = next(thread for kind, thread in thread_callback_thread_refs if kind == "terminated")
+    retained_tid = retained_thread.tid
+    retained_terminated_tid = retained_terminated_thread.tid
+    assert retained_terminated_thread.terminated is True
+    thread_state = thread_app.serialize_state()
+    thread_app.deserialize_state(thread_state)
+    assert retained_thread.tid == retained_tid
+    assert isinstance(retained_thread.current_ip, int)
+    assert retained_terminated_thread.tid == retained_terminated_tid
+    assert retained_terminated_thread.terminated is True
+    thread_app.save_snapshot()
+    thread_app.restore_snapshot()
+    assert retained_thread.tid == retained_tid
+    assert isinstance(retained_thread.current_ip, int)
+    assert retained_terminated_thread.tid == retained_terminated_tid
+    assert retained_terminated_thread.terminated is True
+    thread_app = None
+    gc.collect()
+    assert retained_thread.tid == retained_tid
+    assert retained_terminated_thread.tid == retained_terminated_tid
+
     writeonly_state_path = tmp_path / "writeonly-state.txt"
     writeonly_state_path.write_text("initial")
     writeonly_source = tmp_path / "writeonly_restore_fixture.c"
@@ -917,6 +1101,104 @@ with tempfile.TemporaryDirectory() as tmpdir:
     assert fatal_exception_app.process.exit_status == 143
     assert fatal_signal_app.last_stop_reason == "signal_termination"
     assert fatal_signal_app.process.exit_status == 143
+
+    handled_signal_source = tmp_path / "handled_signal_fixture.c"
+    handled_signal_fixture = tmp_path / "handled_signal_fixture"
+    handled_signal_source.write_text(
+        textwrap.dedent(
+            r"""
+            #include <signal.h>
+            #include <sys/syscall.h>
+            #include <unistd.h>
+
+            static volatile sig_atomic_t handled = 0;
+
+            static void handle_usr1(int signum) {
+                (void)signum;
+                handled++;
+            }
+
+            int main(void) {
+                struct sigaction sa = {0};
+                sa.sa_handler = handle_usr1;
+                sigemptyset(&sa.sa_mask);
+                if (sigaction(SIGUSR1, &sa, 0) != 0) {
+                    return 2;
+                }
+                if (syscall(SYS_kill, getpid(), SIGUSR1) != 0) {
+                    return 3;
+                }
+                if (handled != 1) {
+                    return 4;
+                }
+                if (syscall(SYS_tgkill, getpid(), syscall(SYS_gettid), SIGUSR1) != 0) {
+                    return 5;
+                }
+                return handled == 2 ? 0 : 6;
+            }
+            """
+        )
+    )
+    subprocess.run([cc, "-O0", str(handled_signal_source), "-o", str(handled_signal_fixture)], check=True)
+    handled_signal_events = []
+    handled_signal_app = linux.create_application(
+        str(handled_signal_fixture),
+        emulation_root=root,
+        backend=backend,
+        disable_logging=True,
+    )
+    handled_signal_app.callbacks.on_signal = lambda signum, fault_addr, si_code: handled_signal_events.append(
+        (signum, fault_addr, si_code)
+    )
+    handled_signal_app.start()
+    assert [event[0] for event in handled_signal_events].count(LINUX_SIGUSR1) == 2
+    assert handled_signal_app.last_stop_reason == "normal_exit"
+    assert handled_signal_app.process.exit_status == 0
+
+    handled_trap_source = tmp_path / "handled_trap_fixture.c"
+    handled_trap_fixture = tmp_path / "handled_trap_fixture"
+    handled_trap_source.write_text(
+        textwrap.dedent(
+            r"""
+            #include <signal.h>
+
+            static volatile sig_atomic_t handled = 0;
+
+            static void handle_trap(int signum) {
+                (void)signum;
+                handled++;
+            }
+
+            int main(void) {
+                struct sigaction sa = {0};
+                sa.sa_handler = handle_trap;
+                sigemptyset(&sa.sa_mask);
+                if (sigaction(SIGTRAP, &sa, 0) != 0) {
+                    return 2;
+                }
+                __asm__ volatile("int3");
+                return handled == 1 ? 0 : 3;
+            }
+            """
+        )
+    )
+    subprocess.run([cc, "-O0", str(handled_trap_source), "-o", str(handled_trap_fixture)], check=True)
+    handled_trap_events = []
+    handled_trap_app = linux.create_application(
+        str(handled_trap_fixture),
+        emulation_root=root,
+        backend=backend,
+        disable_logging=True,
+    )
+    handled_trap_app.callbacks.on_signal = lambda signum, fault_addr, si_code: handled_trap_events.append(
+        (signum, fault_addr, si_code)
+    )
+    handled_trap_app.start()
+    assert handled_trap_events, "handled int3 did not surface through on_signal"
+    assert handled_trap_events[0][0] == LINUX_SIGTRAP
+    assert handled_trap_events[0][2] == LINUX_TRAP_BRKPT
+    assert handled_trap_app.last_stop_reason == "normal_exit"
+    assert handled_trap_app.process.exit_status == 0
 
 with tempfile.TemporaryDirectory() as tmpdir:
     tmp_path = Path(tmpdir)
@@ -1083,8 +1365,14 @@ if requested_backend == "unicorn":
                     return (int)a + (int)b + (int)c + (int)d + e + (int)f;
                 }
 
+                __attribute__((noinline, visibility("default")))
+                int intercept_target(int value) {
+                    return value + 1;
+                }
+
                 int main(void) {
                     return target_function(41) == 42 &&
+                           intercept_target(7) == 0x1234 &&
                            target_values((signed char)-2, (unsigned char)250, (short)-1234,
                                          (unsigned short)65000, -123456, 4000000000U) != 0
                                ? 0
@@ -1126,6 +1414,15 @@ if requested_backend == "unicorn":
                 hits.append((call.module.name, call.name, call.address, call.return_address))
                 return sogen.ApiContinuation.run_original
 
+
+            @linux.symbol_call(params=[ctypes.c_int], restype=ctypes.c_int)
+            def on_intercept_target(call, params):
+                assert call.name == "intercept_target"
+                assert list(params) == [7]
+                call.return_value = 0x1234
+                hits.append((call.module.name, call.name, call.return_value))
+                return sogen.ApiContinuation.intercept
+
             @linux.symbol_call(
                 params=[
                     ctypes.c_int8,
@@ -1144,6 +1441,7 @@ if requested_backend == "unicorn":
                 return sogen.ApiContinuation.run_original
 
             target_app.hooks.symbols["target_function"] = on_target_function
+            target_app.hooks.symbols["intercept_target"] = on_intercept_target
             target_app.hooks.symbols["target_values"] = on_target_values
 
         symbol_hits = []
@@ -1153,6 +1451,9 @@ if requested_backend == "unicorn":
         symbol_app.start()
         assert any(hit[1] == "target_function" for hit in symbol_hits), "Linux symbol hook did not fire after deserialize"
         assert any(hit[1] == "target_values" for hit in symbol_hits), "Linux signed/narrow symbol hook did not fire"
+        assert sum(1 for hit in symbol_hits if hit[1] == "intercept_target") == 1, (
+            "Linux symbol hook intercept did not skip the main-executable function exactly once"
+        )
         assert symbol_app.process.exit_status == 0, f"symbol fixture non-zero exit: {symbol_app.process.exit_status}"
 
         snapshot_symbol_app = linux.create_application(
@@ -1168,6 +1469,9 @@ if requested_backend == "unicorn":
         snapshot_symbol_app.start()
         assert any(hit[1] == "target_function" for hit in snapshot_symbol_hits), (
             "Linux symbol hook did not fire after snapshot restore"
+        )
+        assert sum(1 for hit in snapshot_symbol_hits if hit[1] == "intercept_target") == 1, (
+            "Linux symbol hook intercept did not survive snapshot restore"
         )
         assert snapshot_symbol_app.process.exit_status == 0, (
             f"snapshot symbol fixture non-zero exit: {snapshot_symbol_app.process.exit_status}"

@@ -33,6 +33,8 @@ namespace sogen
 
         void map_main_modules(const std::filesystem::path& executable_path);
         linux_mapped_module* map_module(const std::filesystem::path& path, uint64_t forced_base = 0, bool apply_relocations = false);
+        linux_mapped_module* record_runtime_module_mapping(const std::filesystem::path& path, uint64_t mapped_address,
+                                                           uint64_t file_offset);
 
         // Load all DT_NEEDED dependencies of already-loaded modules recursively.
         // Uses DT_RPATH, DT_RUNPATH, configured library paths, and emulation root standard directories.

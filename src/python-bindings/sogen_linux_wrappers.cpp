@@ -407,26 +407,74 @@ namespace sogen::py
         return linux_emu;
     }
 
-    sogen_linux_thread::sogen_linux_thread(linux_thread& thread, linux_emulator& emulator, nb::object owner)
-        : thread(&thread),
-          emu(&emulator),
-          owner(std::move(owner))
+    namespace
     {
+        sogen_linux_thread_snapshot snapshot_linux_thread(const linux_thread& thread)
+        {
+            return sogen_linux_thread_snapshot{
+                .tid = thread.tid,
+                .stack_base = thread.stack_base,
+                .stack_size = thread.stack_size,
+                .fs_base = thread.fs_base,
+                .current_ip = thread.saved_regs.rip,
+                .start_address = thread.saved_regs.rip,
+                .wait_state = thread.wait_state,
+                .terminated = thread.terminated,
+                .exit_code = thread.exit_code,
+                .executed_instructions = thread.executed_instructions,
+            };
+        }
+    }
+
+    sogen_linux_thread::sogen_linux_thread(linux_thread& thread, linux_emulator& emulator, nb::object owner, bool resolve_live)
+        : tid(thread.tid),
+          emu(&emulator),
+          owner(std::move(owner)),
+          snapshot(snapshot_linux_thread(thread)),
+          resolve_live(resolve_live)
+    {
+    }
+
+    const linux_thread* sogen_linux_thread::live_thread() const
+    {
+        if (!this->resolve_live || !this->emu)
+        {
+            return nullptr;
+        }
+
+        const auto it = this->emu->process.threads.find(this->tid);
+        if (it == this->emu->process.threads.end())
+        {
+            return nullptr;
+        }
+
+        return &it->second;
+    }
+
+    sogen_linux_thread_snapshot sogen_linux_thread::view() const
+    {
+        if (const auto* thread = this->live_thread())
+        {
+            return snapshot_linux_thread(*thread);
+        }
+
+        return this->snapshot;
     }
 
     uint64_t sogen_linux_thread::current_ip() const
     {
-        if (!this->thread)
+        const auto* thread = this->live_thread();
+        if (!thread)
         {
-            return 0;
+            return this->snapshot.current_ip;
         }
 
-        if (this->emu && this->emu->process.active_thread == this->thread)
+        if (this->emu && this->emu->process.active_thread && this->emu->process.active_thread->tid == this->tid)
         {
             return this->emu->emu().reg<uint64_t>(x86_register::rip);
         }
 
-        return this->thread->saved_regs.rip;
+        return thread->saved_regs.rip;
     }
 
     // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
@@ -1091,11 +1139,25 @@ namespace sogen::py
 
     hook_handle linux_hook_registry::interrupt(nb::object callback)
     {
-        auto* hook = this->emu->emu().hook_interrupt([cb = std::move(callback)](int interrupt) {
+        auto* emulator = this->emu;
+        auto callback_holder = std::shared_ptr<nb::object>{
+            new nb::object(std::move(callback)),
+            [](nb::object* cb) {
+                nb::gil_scoped_acquire gil{};
+                delete cb;
+            },
+        };
+        const auto observer_id = emulator->add_interrupt_observer([cb = std::move(callback_holder)](int interrupt) {
             nb::gil_scoped_acquire gil{};
-            cb(interrupt);
+            (*cb)(interrupt);
         });
-        return make_hook(hook);
+
+        hook_handle stored{[emulator, observer_id] { emulator->remove_interrupt_observer(observer_id); }, nb::none()};
+        this->active_hooks.emplace_back(stored);
+
+        auto exposed = stored;
+        exposed.owner = nb::cast(this, nb::rv_policy::reference_internal);
+        return exposed;
     }
 
     hook_handle linux_hook_registry::basic_block(nb::object callback)

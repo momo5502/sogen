@@ -145,6 +145,8 @@ namespace sogen
         uint64_t add_memory_violation_observer(
             std::function<memory_violation_continuation(uint64_t, size_t, memory_operation, memory_violation_type)> observer);
         void remove_memory_violation_observer(uint64_t id);
+        uint64_t add_interrupt_observer(std::function<void(int)> observer);
+        void remove_interrupt_observer(uint64_t id);
 
       private:
         std::atomic_bool should_stop{false};
@@ -156,6 +158,9 @@ namespace sogen
             memory_violation_observers_{};
         memory_violation_continuation notify_memory_violation_observers(uint64_t address, size_t size, memory_operation operation,
                                                                         memory_violation_type type);
+        uint64_t next_interrupt_observer_id_{1};
+        std::vector<std::pair<uint64_t, std::shared_ptr<std::function<void(int)>>>> interrupt_observers_{};
+        void notify_interrupt_observers(int interrupt);
         void initialize_cpu_and_filesystem();
         void setup_hooks();
         void on_instruction_execution(uint64_t address);

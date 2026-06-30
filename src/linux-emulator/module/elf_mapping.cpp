@@ -116,6 +116,14 @@ namespace sogen
             }
         }
 
+        void validate_load_segment(const Elf64_Phdr& ph, const std::filesystem::path& path)
+        {
+            if (ph.p_align > 1 && (ph.p_vaddr % ph.p_align) != (ph.p_offset % ph.p_align))
+            {
+                throw std::runtime_error("Invalid PT_LOAD alignment in ELF: " + path.string());
+            }
+        }
+
         void parse_symbols(const std::span<const std::byte> data, linux_mapped_module& mod, uint64_t base)
         {
             const auto* ehdr = get_header(data);
@@ -230,6 +238,114 @@ namespace sogen
         }
     }
 
+    linux_mapped_module read_elf_module_metadata(const std::span<const std::byte> data, const std::filesystem::path& path,
+                                                 const uint64_t image_base)
+    {
+        if (!is_valid_elf(data) || !is_elf64(data) || !is_little_endian(data))
+        {
+            throw std::runtime_error("Invalid ELF64 binary: " + path.string());
+        }
+
+        const auto* ehdr = get_header(data);
+        const auto machine = ehdr->e_machine;
+
+        if (machine != EM_X86_64)
+        {
+            throw std::runtime_error("Unsupported ELF machine type: " + std::to_string(machine));
+        }
+
+        if (ehdr->e_type != ET_EXEC && ehdr->e_type != ET_DYN)
+        {
+            throw std::runtime_error("Unsupported ELF type (expected ET_EXEC or ET_DYN): " + std::to_string(ehdr->e_type));
+        }
+
+        const auto* phdrs = get_program_headers(data);
+        if (!phdrs)
+        {
+            throw std::runtime_error("No program headers in ELF: " + path.string());
+        }
+
+        uint64_t vaddr_min = UINT64_MAX;
+        uint64_t vaddr_max = 0;
+
+        for (uint16_t i = 0; i < ehdr->e_phnum; ++i)
+        {
+            const auto& ph = phdrs[i];
+            if (ph.p_type != PT_LOAD)
+            {
+                continue;
+            }
+            validate_load_segment(ph, path);
+
+            const auto seg_start = page_align_down(ph.p_vaddr);
+            const auto seg_end = page_align_up(ph.p_vaddr + ph.p_memsz);
+
+            vaddr_min = std::min(vaddr_min, seg_start);
+            vaddr_max = std::max(vaddr_max, seg_end);
+        }
+
+        if (vaddr_min >= vaddr_max)
+        {
+            throw std::runtime_error("No PT_LOAD segments in ELF: " + path.string());
+        }
+
+        const auto base = image_base ? image_base : vaddr_min;
+        const auto total_size = static_cast<size_t>(vaddr_max - vaddr_min);
+        const auto base_delta = static_cast<int64_t>(base) - static_cast<int64_t>(vaddr_min);
+
+        linux_mapped_module mod{};
+        mod.name = path.filename().string();
+        mod.path = path;
+        mod.image_base = vaddr_min + static_cast<uint64_t>(base_delta);
+        mod.size_of_image = total_size;
+        mod.entry_point = ehdr->e_entry + static_cast<uint64_t>(base_delta);
+        mod.machine = machine;
+        mod.elf_type = ehdr->e_type;
+
+        for (uint16_t i = 0; i < ehdr->e_phnum; ++i)
+        {
+            if (phdrs[i].p_type == PT_PHDR)
+            {
+                mod.phdr_vaddr = phdrs[i].p_vaddr + static_cast<uint64_t>(base_delta);
+                break;
+            }
+        }
+
+        if (mod.phdr_vaddr == 0)
+        {
+            mod.phdr_vaddr = mod.image_base + ehdr->e_phoff;
+        }
+
+        mod.phdr_count = ehdr->e_phnum;
+        mod.phdr_entry_size = ehdr->e_phentsize;
+
+        for (uint16_t i = 0; i < ehdr->e_phnum; ++i)
+        {
+            if (phdrs[i].p_type == PT_TLS)
+            {
+                mod.tls_image_addr = phdrs[i].p_vaddr + static_cast<uint64_t>(base_delta);
+                mod.tls_image_size = phdrs[i].p_filesz;
+                mod.tls_mem_size = phdrs[i].p_memsz;
+                mod.tls_alignment = phdrs[i].p_align ? phdrs[i].p_align : 1;
+                break;
+            }
+        }
+
+        for (uint16_t i = 0; i < ehdr->e_phnum; ++i)
+        {
+            if (phdrs[i].p_type == PT_DYNAMIC)
+            {
+                parse_dynamic_section(data, phdrs[i], mod, base_delta);
+                break;
+            }
+        }
+
+        parse_symbols(data, mod, static_cast<uint64_t>(base_delta));
+        parse_section_names(data, mod, static_cast<uint64_t>(base_delta));
+
+        return mod;
+    }
+
     linux_mapped_module map_elf_from_data(linux_memory_manager& memory, const std::span<const std::byte> data,
                                           const std::filesystem::path& path, const uint64_t forced_base)
     {
@@ -268,6 +384,7 @@ namespace sogen
             {
                 continue;
             }
+            validate_load_segment(ph, path);
 
             const auto seg_start = page_align_down(ph.p_vaddr);
             const auto seg_end = page_align_up(ph.p_vaddr + ph.p_memsz);
@@ -373,63 +490,7 @@ namespace sogen
             mapped_up_to = std::max(mapped_up_to, seg_end);
         }
 
-        // Build the mapped module info
-        linux_mapped_module mod{};
-        mod.name = path.filename().string();
-        mod.path = path;
-        mod.image_base = vaddr_min + static_cast<uint64_t>(base_delta);
-        mod.size_of_image = total_size;
-        mod.entry_point = ehdr->e_entry + static_cast<uint64_t>(base_delta);
-        mod.machine = machine;
-        mod.elf_type = ehdr->e_type;
-
-        // PHDR info for auxiliary vector
-        for (uint16_t i = 0; i < ehdr->e_phnum; ++i)
-        {
-            if (phdrs[i].p_type == PT_PHDR)
-            {
-                mod.phdr_vaddr = phdrs[i].p_vaddr + static_cast<uint64_t>(base_delta);
-                break;
-            }
-        }
-
-        if (mod.phdr_vaddr == 0)
-        {
-            // If no PT_PHDR, compute from file header
-            mod.phdr_vaddr = mod.image_base + ehdr->e_phoff;
-        }
-
-        mod.phdr_count = ehdr->e_phnum;
-        mod.phdr_entry_size = ehdr->e_phentsize;
-
-        // Parse TLS segment
-        for (uint16_t i = 0; i < ehdr->e_phnum; ++i)
-        {
-            if (phdrs[i].p_type == PT_TLS)
-            {
-                mod.tls_image_addr = phdrs[i].p_vaddr + static_cast<uint64_t>(base_delta);
-                mod.tls_image_size = phdrs[i].p_filesz;
-                mod.tls_mem_size = phdrs[i].p_memsz;
-                mod.tls_alignment = phdrs[i].p_align ? phdrs[i].p_align : 1;
-                break;
-            }
-        }
-
-        // Parse dynamic section for DT_NEEDED
-        for (uint16_t i = 0; i < ehdr->e_phnum; ++i)
-        {
-            if (phdrs[i].p_type == PT_DYNAMIC)
-            {
-                parse_dynamic_section(data, phdrs[i], mod, base_delta);
-                break;
-            }
-        }
-
-        // Parse symbols
-        parse_symbols(data, mod, static_cast<uint64_t>(base_delta));
-
-        // Parse section names
-        parse_section_names(data, mod, static_cast<uint64_t>(base_delta));
+        auto mod = read_elf_module_metadata(data, path, base);
 
         return mod;
     }

@@ -20,6 +20,8 @@ namespace sogen::py
             .value("write", memory_permission::write)
             .value("exec", memory_permission::exec)
             .value("read_write", memory_permission::read_write)
+            .value("read_exec", memory_permission::read_exec)
+            .value("write_exec", memory_permission::write_exec)
             .value("all", memory_permission::all)
             .export_values();
 

@@ -61,6 +61,7 @@ namespace sogen
 
         auto& memory = c.emu_ref.memory;
         uint64_t mapped_addr = 0;
+        const linux_fd* mapped_fd_entry = nullptr;
 
         if (flags & MAP_FIXED_NOREPLACE)
         {
@@ -132,6 +133,8 @@ namespace sogen
                 return;
             }
 
+            mapped_fd_entry = fd_entry;
+
             // Save current file position, seek to offset, read data, restore position
             const auto saved_pos = ftell(fd_entry->handle);
             fseek(fd_entry->handle, static_cast<long>(offset), SEEK_SET); // NOLINT(google-runtime-int)
@@ -154,6 +157,11 @@ namespace sogen
         if (perms != memory_permission::read_write)
         {
             memory.protect_memory(mapped_addr, aligned_length, perms);
+        }
+
+        if (mapped_fd_entry && !mapped_fd_entry->host_path.empty() && (prot & PROT_EXEC))
+        {
+            c.emu_ref.mod_manager.record_runtime_module_mapping(mapped_fd_entry->host_path, mapped_addr, offset);
         }
 
         write_linux_syscall_result(c, static_cast<int64_t>(mapped_addr));

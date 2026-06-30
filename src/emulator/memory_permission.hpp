@@ -11,6 +11,8 @@ namespace sogen
         write = 1 << 1,
         exec = 1 << 2,
         read_write = read | write,
+        read_exec = read | exec,
+        write_exec = write | exec,
         all = read | write | exec
     };
 

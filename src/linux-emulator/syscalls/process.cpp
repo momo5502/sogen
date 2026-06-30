@@ -15,6 +15,7 @@ namespace sogen
         constexpr int ARCH_SET_FS = 0x1002;
         constexpr int ARCH_GET_FS = 0x1003;
         constexpr int ARCH_GET_GS = 0x1004;
+        constexpr uint64_t SYSCALL_INSTRUCTION_SIZE = 2;
 
         // Linux utsname structure
         // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
@@ -36,6 +37,26 @@ namespace sogen
             memset(dest, 0, max_len);
             const auto len = strlen(src);
             memcpy(dest, src, std::min(len, max_len - 1));
+        }
+
+        bool is_valid_signal(const int sig)
+        {
+            return sig >= 0 && sig < 64;
+        }
+
+        void deliver_signal_after_success(const linux_syscall_context& c, const int sig)
+        {
+            write_linux_syscall_result(c, 0);
+
+            // Delivering a handled signal from inside the syscall hook replaces RIP
+            // with the user handler. Finalize the syscall first so the backend does
+            // not apply its normal syscall-length adjustment to the handler address,
+            // and so sigreturn resumes at the instruction after syscall.
+            const auto resume_rip = c.emu.read_instruction_pointer() + SYSCALL_INSTRUCTION_SIZE;
+            c.emu.reg(x86_register::rip, resume_rip);
+            c.mark_instruction_pointer_finalized();
+
+            c.emu_ref.signals.deliver_signal(c.emu_ref, sig, 0, linux_signals::LINUX_SI_USER);
         }
     }
 
@@ -432,6 +453,12 @@ namespace sogen
 
         const auto is_self = (pid >= 0 && static_cast<uint32_t>(pid) == c.proc.pid) || pid == 0 || pid == -1;
 
+        if (!is_valid_signal(sig))
+        {
+            write_linux_syscall_result(c, -LINUX_EINVAL);
+            return;
+        }
+
         // If sending signal 0, it's just a process existence check
         if (sig == 0)
         {
@@ -449,18 +476,7 @@ namespace sogen
         // Sending to ourselves
         if (is_self)
         {
-            if (sig == linux_signals::LINUX_SIGKILL || sig == linux_signals::LINUX_SIGTERM || sig == linux_signals::LINUX_SIGABRT)
-            {
-                c.emu_ref.on_signal(sig, 0, linux_signals::LINUX_SI_USER);
-                c.proc.exit_status = 128 + sig;
-                c.emu_ref.record_stop(stop_reason::signal_termination, "signal=" + std::to_string(sig));
-                c.emu_ref.stop();
-                write_linux_syscall_result(c, 0);
-                return;
-            }
-
-            // For other signals, just succeed (handler dispatch not yet implemented)
-            write_linux_syscall_result(c, 0);
+            deliver_signal_after_success(c, sig);
             return;
         }
 
@@ -479,6 +495,12 @@ namespace sogen
 
         const auto tid_exists =
             (tid >= 0 && static_cast<uint32_t>(tid) == c.proc.pid) || (tid >= 0 && c.proc.threads.contains(static_cast<uint32_t>(tid)));
+
+        if (!is_valid_signal(sig))
+        {
+            write_linux_syscall_result(c, -LINUX_EINVAL);
+            return;
+        }
 
         // Signal 0 is existence check
         if (sig == 0)
@@ -500,19 +522,7 @@ namespace sogen
             return;
         }
 
-        // Sending fatal signal to a thread
-        if (sig == linux_signals::LINUX_SIGKILL || sig == linux_signals::LINUX_SIGTERM || sig == linux_signals::LINUX_SIGABRT)
-        {
-            c.emu_ref.on_signal(sig, 0, linux_signals::LINUX_SI_USER);
-            c.proc.exit_status = 128 + sig;
-            c.emu_ref.record_stop(stop_reason::signal_termination, "signal=" + std::to_string(sig));
-            c.emu_ref.stop();
-            write_linux_syscall_result(c, 0);
-            return;
-        }
-
-        // Other signals: succeed silently
-        write_linux_syscall_result(c, 0);
+        deliver_signal_after_success(c, sig);
     }
 
     void sys_wait4(const linux_syscall_context& c)
