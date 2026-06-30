@@ -1185,16 +1185,38 @@ namespace sogen::kvm
                     throw std::runtime_error("KVM protection changes must be page aligned");
                 }
 
+                // Only presence and writability (read-only vs read-write) are projected into KVM memslots;
+                // finer protection bits (NX, read-vs-execute) are enforced elsewhere and never change a memslot.
+                // A protection change that leaves the memslot projection identical (the common case, e.g. the
+                // game's frequent NtProtectVirtualMemory) needs no reconciliation, so skip the O(total mappings)
+                // rebuild unless a page's memslot contribution actually changes.
+                constexpr uint32_t absent = ~0u;
+                bool memslot_change = false;
                 for (size_t offset = 0; offset < size; offset += page_size)
                 {
                     const auto it = this->mapped_pages_.find(address + offset);
-                    if (it != this->mapped_pages_.end())
+                    if (it == this->mapped_pages_.end() || !it->second)
                     {
-                        it->second->permissions = permissions;
+                        continue;
                     }
+
+                    auto& page = *it->second;
+                    const bool present = page.host_page != nullptr;
+                    const auto old_key =
+                        (present && page.permissions != memory_permission::none) ? this->to_kvm_map_flags(page.permissions) : absent;
+                    const auto new_key = (present && permissions != memory_permission::none) ? this->to_kvm_map_flags(permissions) : absent;
+                    if (old_key != new_key)
+                    {
+                        memslot_change = true;
+                    }
+
+                    page.permissions = permissions;
                 }
 
-                this->rebuild_mappings();
+                if (memslot_change)
+                {
+                    this->rebuild_mappings();
+                }
             }
 
             void ensure_platform_support()
