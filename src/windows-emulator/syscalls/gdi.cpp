@@ -1242,8 +1242,14 @@ namespace sogen
             }
 
             uint32_t create_gdi_bitmap_surface(const syscall_context& c, const uint32_t width, const uint32_t height,
-                                               const uint32_t fill = k_default_bitmap_fill)
+                                               const uint32_t fill = k_default_bitmap_fill,
+                                               gdi_bitmap_surface** const created_surface = nullptr)
             {
+                if (created_surface != nullptr)
+                {
+                    *created_surface = nullptr;
+                }
+
                 const auto handle_value = allocate_gdi_object(c, k_gdi_bitmap_type, k_gdi_bitmap_attr_size);
                 if (handle_value == 0)
                 {
@@ -1254,6 +1260,10 @@ namespace sogen
                 surface.width = width;
                 surface.height = height;
                 surface.pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), fill);
+                if (created_surface != nullptr)
+                {
+                    *created_surface = &surface;
+                }
                 return handle_value;
             }
 
@@ -1947,14 +1957,14 @@ namespace sogen
         uint64_t handle_NtGdiCreateBitmap(const syscall_context& c, const uint32_t width, const uint32_t height, const uint32_t planes,
                                           const uint32_t bits_pixel, const emulator_pointer bits)
         {
-            const auto handle_value = create_gdi_bitmap_surface(c, width, height);
-            if (handle_value != 0)
+            gdi_bitmap_surface* surface = nullptr;
+            const auto handle_value = create_gdi_bitmap_surface(c, width, height, k_default_bitmap_fill, &surface);
+            if (surface != nullptr)
             {
-                auto& surface = c.proc.gdi_bitmap_surfaces[handle_value];
                 if (bits != 0 && planes == 1 && bits_pixel == 32)
                 {
                     const auto byte_count = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(uint32_t);
-                    c.emu.read_memory(bits, surface.pixels.data(), byte_count);
+                    c.emu.read_memory(bits, surface->pixels.data(), byte_count);
                 }
             }
             return handle_value;
@@ -2003,19 +2013,19 @@ namespace sogen
             std::vector<uint8_t> zeroed(static_cast<size_t>(allocation_bytes), 0);
             c.emu.write_memory(guest_bits, zeroed.data(), zeroed.size());
 
-            const auto handle_value = create_gdi_bitmap_surface(c, width, abs_height, 0);
+            gdi_bitmap_surface* surface = nullptr;
+            const auto handle_value = create_gdi_bitmap_surface(c, width, abs_height, 0, &surface);
             if (handle_value == 0)
             {
                 c.win_emu.memory.release_memory(guest_bits, 0);
                 return 0;
             }
 
-            auto& surface = c.proc.gdi_bitmap_surfaces[handle_value];
-            surface.guest_bits = guest_bits;
-            surface.guest_stride = stride;
-            surface.guest_bpp = header.biBitCount;
-            surface.guest_top_down = header.biHeight < 0;
-            surface.guest_owns_memory = true;
+            surface->guest_bits = guest_bits;
+            surface->guest_stride = stride;
+            surface->guest_bpp = header.biBitCount;
+            surface->guest_top_down = header.biHeight < 0;
+            surface->guest_owns_memory = true;
 
             bits.write(guest_bits);
             return handle_value;
@@ -2026,14 +2036,14 @@ namespace sogen
                                                     const uint32_t /*info_header_size*/, const uint32_t /*init*/, const uint32_t /*offset*/,
                                                     const uint32_t /*cj*/, const uint32_t /*i_usage*/)
         {
-            const auto handle_value = create_gdi_bitmap_surface(c, width, height);
-            if (handle_value != 0)
+            gdi_bitmap_surface* surface = nullptr;
+            const auto handle_value = create_gdi_bitmap_surface(c, width, height, k_default_bitmap_fill, &surface);
+            if (surface != nullptr)
             {
-                auto& surface = c.proc.gdi_bitmap_surfaces[handle_value];
                 if (bits != 0)
                 {
                     const auto byte_count = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(uint32_t);
-                    c.emu.read_memory(bits, surface.pixels.data(), byte_count);
+                    c.emu.read_memory(bits, surface->pixels.data(), byte_count);
                 }
             }
             return handle_value;
@@ -4668,14 +4678,9 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            const auto bitmap_handle = create_gdi_bitmap_surface(c, params.Width, params.Height, 0);
+            gdi_bitmap_surface* surface = nullptr;
+            const auto bitmap_handle = create_gdi_bitmap_surface(c, params.Width, params.Height, 0, &surface);
             if (bitmap_handle == 0)
-            {
-                return STATUS_NO_MEMORY;
-            }
-
-            auto surface_it = c.proc.gdi_bitmap_surfaces.find(bitmap_handle);
-            if (surface_it == c.proc.gdi_bitmap_surfaces.end())
             {
                 return STATUS_NO_MEMORY;
             }
@@ -4696,13 +4701,12 @@ namespace sogen
                     return false;
                 }
 
-                auto& surface = surface_it->second;
                 std::vector<uint32_t> row(width);
                 for (size_t y = 0; y < height; ++y)
                 {
                     c.emu.read_memory(params.pMemory + (y * pitch), row.data(), row_bytes);
 
-                    auto* dst = surface.pixels.data() + (y * width);
+                    auto* dst = surface->pixels.data() + (y * width);
                     switch (params.Format)
                     {
                     case k_d3dddifmt_a8r8g8b8:

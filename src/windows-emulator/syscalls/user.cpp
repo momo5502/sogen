@@ -3710,10 +3710,16 @@ namespace sogen
                 return old_parent;
             }
 
-            if (child->handle == effective_parent->handle)
+            auto* ancestor = effective_parent;
+            for (size_t guard = 0; ancestor != nullptr && guard < c.proc.windows.size(); ++guard)
             {
-                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
-                return 0;
+                if (ancestor->handle == child->handle)
+                {
+                    set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                    return 0;
+                }
+
+                ancestor = c.proc.windows.get(ancestor->parent_handle);
             }
 
             const auto child_ptr = child->guest.value();
@@ -4850,12 +4856,9 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtUserSetMenuDefaultItem(const syscall_context& c, const hmenu menu, const UINT item, const UINT by_position)
+        BOOL handle_NtUserSetMenuDefaultItem(const syscall_context& /*c*/, const hmenu /*menu*/, const UINT /*item*/,
+                                             const UINT /*by_position*/)
         {
-            (void)c;
-            (void)menu;
-            (void)item;
-            (void)by_position;
             return TRUE;
         }
 

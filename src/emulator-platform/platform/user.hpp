@@ -320,7 +320,7 @@ namespace sogen
 
     struct USER_ACCELERATOR_TABLE
     {
-        uint8_t padding[1]{};
+        uint8_t padding[0xFF]{};
     };
 
     struct USER_MENU_ITEM

@@ -26,6 +26,7 @@ namespace sogen
 
                 if (info_class == SystemMemoryUsageInformation && system_information_length == sizeof(basic_memory_status_information))
                 {
+                    // Simulated physical memory size (~13 GB).
                     constexpr uint64_t total_physical_bytes = 0x00c9c7ffULL * 0x1000;
 
                     const basic_memory_status_information info{
