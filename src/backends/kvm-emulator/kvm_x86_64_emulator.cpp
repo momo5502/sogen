@@ -406,6 +406,7 @@ namespace sogen::kvm
                     }
 
                     this->refresh_mmio_pages();
+                    this->flush_dirty_mappings();
                     this->flush_register_cache();
 
                     this->run_active_ = true;
@@ -1427,7 +1428,26 @@ namespace sogen::kvm
                     },
                     guest_address, physical_page);
             }
+            // Defer the (O(total mappings)) memslot reconciliation. A single high-level memory operation can
+            // allocate several page-table pages, each of which would otherwise trigger its own full rebuild,
+            // making memory mapping quadratic. Mark the layout dirty here and flush it once before the next
+            // KVM_RUN: the memslots are only consumed by the guest (the emulator accesses guest memory through
+            // host pointers, not memslots), so they need only be current when the vCPU actually runs.
             void rebuild_mappings()
+            {
+                this->mappings_dirty_ = true;
+            }
+            void flush_dirty_mappings()
+            {
+                if (!this->mappings_dirty_)
+                {
+                    return;
+                }
+
+                this->mappings_dirty_ = false;
+                this->synchronize_memslots();
+            }
+            void synchronize_memslots()
             {
                 // Project mapped_pages_ onto the desired memslot layout (physically contiguous,
                 // host-contiguous runs of pages with the same flags become one memslot), then reconcile it
@@ -2228,6 +2248,7 @@ namespace sogen::kvm
             bool readonly_mem_supported_ = false;
             int next_slot_id_ = 0;
             std::map<uint64_t, installed_memslot> current_slots_{};
+            bool mappings_dirty_ = false;
             std::vector<int> free_slot_ids_{};
             std::map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
             std::unordered_map<uint64_t, uint64_t*> page_table_views_{};
