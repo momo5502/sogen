@@ -4,11 +4,103 @@
 
 #include <platform/elf.hpp>
 #include <utils/io.hpp>
+#include <serialization_helper.hpp>
 
 namespace sogen
 {
 
     using namespace elf; // NOLINT(google-build-using-namespace)
+
+    namespace utils
+    {
+        static void serialize(buffer_serializer& buffer, const linux_exported_symbol& symbol)
+        {
+            buffer.write(symbol.name);
+            buffer.write(symbol.rva);
+            buffer.write(symbol.address);
+        }
+
+        static void deserialize(buffer_deserializer& buffer, linux_exported_symbol& symbol)
+        {
+            buffer.read(symbol.name);
+            buffer.read(symbol.rva);
+            buffer.read(symbol.address);
+        }
+
+        static void serialize(buffer_serializer& buffer, const linux_mapped_section& section)
+        {
+            buffer.write(section.name);
+            buffer.write(section.start);
+            buffer.write<uint64_t>(section.length);
+            buffer.write(section.permissions);
+        }
+
+        static void deserialize(buffer_deserializer& buffer, linux_mapped_section& section)
+        {
+            buffer.read(section.name);
+            buffer.read(section.start);
+            section.length = static_cast<size_t>(buffer.read<uint64_t>());
+            buffer.read(section.permissions);
+        }
+
+        static void serialize(buffer_serializer& buffer, const linux_mapped_module& module)
+        {
+            buffer.write(module.name);
+            buffer.write(module.path);
+            buffer.write(module.image_base);
+            buffer.write(module.size_of_image);
+            buffer.write(module.entry_point);
+            buffer.write(module.machine);
+            buffer.write(module.elf_type);
+            buffer.write(module.phdr_vaddr);
+            buffer.write(module.phdr_count);
+            buffer.write(module.phdr_entry_size);
+            buffer.write(module.tls_image_addr);
+            buffer.write(module.tls_image_size);
+            buffer.write(module.tls_mem_size);
+            buffer.write(module.tls_alignment);
+            buffer.write_vector(module.exports);
+            buffer.write_vector(module.needed_libraries);
+            buffer.write_vector(module.sections);
+            buffer.write(module.rpath);
+            buffer.write(module.runpath);
+        }
+
+        static void deserialize(buffer_deserializer& buffer, linux_mapped_module& module)
+        {
+            buffer.read(module.name);
+            buffer.read(module.path);
+            buffer.read(module.image_base);
+            buffer.read(module.size_of_image);
+            buffer.read(module.entry_point);
+            buffer.read(module.machine);
+            buffer.read(module.elf_type);
+            buffer.read(module.phdr_vaddr);
+            buffer.read(module.phdr_count);
+            buffer.read(module.phdr_entry_size);
+            buffer.read(module.tls_image_addr);
+            buffer.read(module.tls_image_size);
+            buffer.read(module.tls_mem_size);
+            buffer.read(module.tls_alignment);
+            buffer.read_vector(module.exports);
+            buffer.read_vector(module.needed_libraries);
+            buffer.read_vector(module.sections);
+            buffer.read(module.rpath);
+            buffer.read(module.runpath);
+        }
+
+        static void serialize(buffer_serializer& buffer, const elf_irelative_entry& entry)
+        {
+            buffer.write(entry.got_addr);
+            buffer.write(entry.resolver_addr);
+        }
+
+        static void deserialize(buffer_deserializer& buffer, elf_irelative_entry& entry)
+        {
+            buffer.read(entry.got_addr);
+            buffer.read(entry.resolver_addr);
+        }
+    }
 
     linux_mapped_module* linux_module_manager::insert_module(linux_mapped_module mod)
     {
@@ -18,6 +110,8 @@ namespace sogen
         {
             throw std::runtime_error("Module already mapped at base 0x" + std::to_string(base));
         }
+
+        this->on_module_load(it->second);
 
         return &it->second;
     }
@@ -317,6 +411,62 @@ namespace sogen
                 pending.emplace_back(needed, loaded);
             }
         }
+    }
+
+    void linux_module_manager::serialize(utils::buffer_serializer& buffer) const
+    {
+        buffer.write_map(this->modules_);
+        buffer.write(this->interpreter_path);
+        buffer.write_vector(this->irelative_entries);
+        buffer.write_vector(this->library_paths_);
+
+        buffer.write(this->executable != nullptr);
+        if (this->executable)
+        {
+            buffer.write(this->executable->image_base);
+        }
+
+        buffer.write(this->interpreter != nullptr);
+        if (this->interpreter)
+        {
+            buffer.write(this->interpreter->image_base);
+        }
+    }
+
+    void linux_module_manager::deserialize(utils::buffer_deserializer& buffer)
+    {
+        auto new_modules = buffer.read_map<std::map<uint64_t, linux_mapped_module>>();
+        auto new_interpreter_path = buffer.read<std::string>();
+        auto new_irelative_entries = buffer.read_vector<elf_irelative_entry>();
+        auto new_library_paths = buffer.read_vector<std::filesystem::path>();
+
+        std::optional<uint64_t> executable_base{};
+        if (buffer.read<bool>())
+        {
+            executable_base = buffer.read<uint64_t>();
+            if (!new_modules.contains(*executable_base))
+            {
+                throw std::runtime_error("Linux module snapshot references a missing executable module");
+            }
+        }
+
+        std::optional<uint64_t> interpreter_base{};
+        if (buffer.read<bool>())
+        {
+            interpreter_base = buffer.read<uint64_t>();
+            if (!new_modules.contains(*interpreter_base))
+            {
+                throw std::runtime_error("Linux module snapshot references a missing interpreter module");
+            }
+        }
+
+        this->modules_ = std::move(new_modules);
+        this->interpreter_path = std::move(new_interpreter_path);
+        this->irelative_entries = std::move(new_irelative_entries);
+        this->library_paths_ = std::move(new_library_paths);
+
+        this->executable = executable_base ? &this->modules_.at(*executable_base) : nullptr;
+        this->interpreter = interpreter_base ? &this->modules_.at(*interpreter_base) : nullptr;
     }
 
 } // namespace sogen

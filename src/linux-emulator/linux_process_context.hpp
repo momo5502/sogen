@@ -59,6 +59,9 @@ namespace sogen
 
         std::optional<int> exit_status{};
 
+        std::string current_working_directory{"/"};
+        std::string executable_path{};
+
         uint32_t next_tid{1};
 
         // Stored for procfs emulation
@@ -83,8 +86,11 @@ namespace sogen
         }
 
         void setup(x86_64_emulator& emu, linux_memory_manager& memory, const linux_mapped_module& exe,
-                   const std::vector<std::string>& argv_values, const std::vector<std::string>& envp_values, uint64_t interpreter_base = 0,
-                   uint64_t initial_rip = 0, uint64_t vdso_base = 0);
+                   const std::vector<std::string>& argv_values, const std::vector<std::string>& envp_values,
+                   std::string process_executable_path, uint64_t interpreter_base = 0, uint64_t initial_rip = 0, uint64_t vdso_base = 0);
+
+        void serialize(utils::buffer_serializer& buffer) const;
+        void deserialize(utils::buffer_deserializer& buffer);
     };
 
 } // namespace sogen

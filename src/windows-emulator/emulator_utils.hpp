@@ -20,7 +20,6 @@ namespace sogen
         struct socket_factory;
     }
 
-    // TODO: Replace with pointer handling structure for future 32 bit support
     using emulator_pointer = uint64_t;
 
     template <typename T>
@@ -208,7 +207,6 @@ namespace sogen
         }
     };
 
-    // TODO: warning emulator_utils is hardcoded for 64bit unicode_string usage
     class emulator_allocator
     {
       public:
@@ -267,8 +265,9 @@ namespace sogen
         void make_unicode_string(UNICODE_STRING<EmulatorTraits<EMU>>& result, const std::u16string_view str,
                                  const std::optional<size_t> maximum_length = std::nullopt)
         {
-            constexpr auto element_size = sizeof(str[0]);
-            constexpr auto required_alignment = alignof(decltype(str[0]));
+            using string_element = std::u16string_view::value_type;
+            constexpr auto element_size = sizeof(string_element);
+            constexpr auto required_alignment = alignof(string_element);
             const auto total_length = str.size() * element_size;
             const auto total_buffer_length = total_length + element_size;
 
@@ -292,9 +291,8 @@ namespace sogen
         {
             const auto unicode_string = this->reserve<UNICODE_STRING<EmulatorTraits<Emu64>>>();
 
-            unicode_string.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& unicode_str) {
-                this->make_unicode_string(unicode_str, str, maximum_length); //
-            });
+            unicode_string.access(
+                [&](UNICODE_STRING<EmulatorTraits<Emu64>>& unicode_str) { this->make_unicode_string(unicode_str, str, maximum_length); });
 
             return unicode_string;
         }
@@ -337,7 +335,6 @@ namespace sogen
         {
             if (this->address_ && this->size_)
             {
-                // TODO: Make all sizes uint64_t
                 manager.release_memory(this->address_, static_cast<size_t>(this->size_));
                 this->address_ = 0;
                 this->size_ = 0;
@@ -598,9 +595,11 @@ namespace sogen
 
     inline void set_function_arguments(x86_64_emulator& emu, const function_calling_convention cc, const std::span<const uint64_t> values)
     {
-        for (size_t i = 0; i < values.size(); ++i)
+        size_t index = 0;
+        for (const auto value : values)
         {
-            set_function_argument(emu, cc, i, values[i]);
+            set_function_argument(emu, cc, index, value);
+            ++index;
         }
     }
 

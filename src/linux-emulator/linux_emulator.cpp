@@ -8,6 +8,8 @@ namespace sogen
 
     namespace
     {
+        constexpr std::string_view LINUX_EMULATOR_STATE_VERSION = "linux-emulator-state-v1";
+
         // GDT constants — same as Windows emulator
         constexpr uint64_t GDT_ADDR = 0x35000;
         constexpr uint32_t GDT_LIMIT = 0x1000;
@@ -72,6 +74,103 @@ namespace sogen
             emu.reg(x86_register::ds, GDT_DATA64_SEL);
             emu.reg(x86_register::es, GDT_DATA64_SEL);
         }
+
+        std::string format_memory_violation_stop_detail(const uint64_t address, const size_t size)
+        {
+            std::array<char, 96> buffer{};
+            std::snprintf(buffer.data(), buffer.size(), "address=0x%" PRIx64 " size=%zu", address, size);
+            return buffer.data();
+        }
+
+        struct instruction_fetch_violation
+        {
+            uint64_t address{};
+            memory_violation_type type{};
+        };
+
+        std::optional<instruction_fetch_violation> classify_instruction_fetch_violation(const linux_memory_manager& memory,
+                                                                                        const uint64_t address)
+        {
+            const auto region = memory.get_region_info(address);
+            if (!region.has_value())
+            {
+                return instruction_fetch_violation{.address = address, .type = memory_violation_type::unmapped};
+            }
+
+            if (!is_executable(region->permissions))
+            {
+                return instruction_fetch_violation{.address = address, .type = memory_violation_type::protection};
+            }
+
+            return std::nullopt;
+        }
+
+        uint64_t current_time_ns()
+        {
+            const auto now = std::chrono::system_clock::now().time_since_epoch();
+            return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
+        }
+
+        struct resolved_application_path
+        {
+            std::filesystem::path host_path{};
+            std::string guest_path{};
+        };
+
+        std::optional<std::string> guest_path_from_root(const linux_file_system& file_sys, const std::filesystem::path& host_path)
+        {
+            const auto& root = file_sys.root();
+            if (root.empty())
+            {
+                return std::nullopt;
+            }
+
+            const auto normalized_root = root.lexically_normal();
+            const auto normalized_host = host_path.lexically_normal();
+            const auto relative = normalized_host.lexically_relative(normalized_root);
+            if (relative.empty() || relative == "." || *relative.begin() == "..")
+            {
+                return std::nullopt;
+            }
+
+            return linux_file_system::normalize_guest_path_string("/" + relative.generic_string());
+        }
+
+        resolved_application_path resolve_application_path(const linux_file_system& file_sys, const std::filesystem::path& executable)
+        {
+            std::error_code ec{};
+            if (executable.has_root_name() && executable.is_absolute() && std::filesystem::exists(executable, ec))
+            {
+                auto host_path = executable.lexically_normal();
+                auto guest_path = guest_path_from_root(file_sys, host_path);
+                if (!guest_path)
+                {
+                    guest_path = linux_file_system::normalize_guest_path_string("/" + host_path.filename().generic_string());
+                }
+
+                return {.host_path = std::move(host_path), .guest_path = std::move(*guest_path)};
+            }
+
+            auto host_path = file_sys.translate(executable.string());
+            auto guest_path = guest_path_from_root(file_sys, host_path);
+            if (!guest_path)
+            {
+                guest_path = linux_file_system::normalize_guest_path_string(executable.generic_string());
+            }
+
+            return {.host_path = std::move(host_path), .guest_path = std::move(*guest_path)};
+        }
+    }
+
+    linux_emulator::linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::filesystem::path& emulation_root)
+        : emu_(std::move(emu)),
+          emulation_root(emulation_root),
+          file_sys(emulation_root),
+          memory(*this->emu_),
+          mod_manager(this->memory)
+    {
+        this->mod_manager.on_module_load.add([this](linux_mapped_module& module) { this->on_module_load(module); });
+        this->initialize_cpu_and_filesystem();
     }
 
     linux_emulator::linux_emulator(std::unique_ptr<x86_64_emulator> emu, const std::filesystem::path& emulation_root,
@@ -83,14 +182,15 @@ namespace sogen
           memory(*this->emu_),
           mod_manager(this->memory)
     {
+        this->mod_manager.on_module_load.add([this](linux_mapped_module& module) { this->on_module_load(module); });
+        this->initialize_cpu_and_filesystem();
+        this->load_application(executable, std::move(argv), envp);
+    }
+
+    void linux_emulator::initialize_cpu_and_filesystem()
+    {
         // Set up GDT for 64-bit long mode
         setup_gdt(*this->emu_, this->memory);
-
-        // Allow passthrough access to the executable directory.
-        // This enables loading colocated test/shared objects (e.g. RUNPATH=$ORIGIN)
-        // even when the executable path itself is outside the emulation root.
-        this->file_sys.add_passthrough_prefix(executable.parent_path());
-        this->file_sys.add_passthrough_prefix(executable.parent_path().parent_path());
 
         // Provision core writable directories expected by many Linux programs.
         // With --root pointing at a minimal sysroot/project tree, /tmp often does
@@ -102,8 +202,25 @@ namespace sogen
             std::filesystem::create_directories(this->file_sys.translate("/var/tmp"), ec);
         }
 
+        // Register syscall handlers
+        this->dispatcher.add_handlers();
+
+        // Install CPU hooks
+        this->setup_hooks();
+    }
+
+    void linux_emulator::load_application(const std::filesystem::path& executable, std::vector<std::string> argv,
+                                          const std::vector<std::string>& envp)
+    {
+        // Allow passthrough access to the executable directory so colocated
+        // dependencies (for example RUNPATH=$ORIGIN) can be loaded even when
+        // the executable itself is outside the emulation root.
+        this->file_sys.add_passthrough_prefix(executable.parent_path());
+
+        const auto executable_path = resolve_application_path(this->file_sys, executable);
+
         // Load the ELF binary
-        this->mod_manager.map_main_modules(executable);
+        this->mod_manager.map_main_modules(executable_path.host_path);
 
         if (!this->mod_manager.executable)
         {
@@ -113,7 +230,7 @@ namespace sogen
         // If argv is empty, use the executable path as argv[0]
         if (argv.empty())
         {
-            argv.push_back(executable.filename().string());
+            argv.push_back(executable_path.guest_path);
         }
 
         // Load the interpreter (dynamic linker) if required
@@ -178,13 +295,8 @@ namespace sogen
         const auto vdso_base = this->vdso.setup(this->memory);
 
         // Bootstrap the process
-        this->process.setup(*this->emu_, this->memory, *this->mod_manager.executable, argv, envp, interpreter_base, initial_rip, vdso_base);
-
-        // Register syscall handlers
-        this->dispatcher.add_handlers();
-
-        // Install CPU hooks
-        this->setup_hooks();
+        this->process.setup(*this->emu_, this->memory, *this->mod_manager.executable, argv, envp, executable_path.guest_path,
+                            interpreter_base, initial_rip, vdso_base);
 
         // Resolve IRELATIVE (IFUNC) relocations eagerly only for static binaries.
         // For dynamically linked binaries, the runtime linker (ld-linux/ld-musl)
@@ -206,17 +318,240 @@ namespace sogen
         }
     }
 
+    linux_thread* linux_emulator::current_thread() const
+    {
+        auto* thread = this->process.active_thread;
+        if (!thread || thread->terminated)
+        {
+            return nullptr;
+        }
+
+        return thread;
+    }
+
+    std::optional<uint32_t> linux_emulator::current_thread_id() const
+    {
+        const auto* thread = this->current_thread();
+        if (!thread)
+        {
+            return std::nullopt;
+        }
+
+        return thread->tid;
+    }
+
+    bool linux_emulator::activate_thread(const uint32_t tid)
+    {
+        auto it = this->process.threads.find(tid);
+        if (it == this->process.threads.end() || it->second.terminated)
+        {
+            return false;
+        }
+
+        auto* old_thread = this->process.active_thread;
+        if (old_thread && !old_thread->terminated)
+        {
+            old_thread->save(this->emu());
+        }
+
+        auto& new_thread = it->second;
+        const auto old_tid = old_thread ? old_thread->tid : 0;
+        this->process.active_thread = &new_thread;
+        new_thread.restore(this->emu());
+
+        if (old_tid != new_thread.tid)
+        {
+            this->on_thread_switch(old_tid, new_thread.tid);
+        }
+
+        return true;
+    }
+
+    bool linux_emulator::perform_thread_switch()
+    {
+        if (this->process.threads.empty())
+        {
+            return false;
+        }
+
+        const auto old_tid = this->process.active_thread ? this->process.active_thread->tid : 0;
+        const auto now = current_time_ns();
+        auto start = this->process.threads.upper_bound(old_tid);
+        for (size_t checked = 0; checked < this->process.threads.size(); ++checked)
+        {
+            if (start == this->process.threads.end())
+            {
+                start = this->process.threads.begin();
+            }
+
+            auto& candidate = start->second;
+            ++start;
+            if (candidate.tid == old_tid || !candidate.is_thread_ready(now))
+            {
+                continue;
+            }
+
+            return this->activate_thread(candidate.tid);
+        }
+
+        return false;
+    }
+
+    void linux_emulator::yield_thread()
+    {
+        if (this->perform_thread_switch())
+        {
+            this->stop();
+        }
+    }
+
+    void linux_emulator::record_stop(const stop_reason reason, std::string detail)
+    {
+        this->last_stop_reason_ = reason;
+        this->last_stop_detail_ = std::move(detail);
+    }
+
+    void linux_emulator::serialize(utils::buffer_serializer& buffer, const bool is_snapshot) const
+    {
+        buffer.write(std::string{LINUX_EMULATOR_STATE_VERSION});
+        this->emu().serialize_state(buffer, is_snapshot);
+        buffer.write(this->executed_instructions_);
+        buffer.write(this->last_stop_reason_);
+        buffer.write(this->last_stop_detail_);
+        this->memory.serialize_memory_state(buffer);
+        this->process.serialize(buffer);
+        this->mod_manager.serialize(buffer);
+        this->signals.serialize(buffer);
+        this->vdso.serialize(buffer);
+    }
+
+    void linux_emulator::deserialize(utils::buffer_deserializer& buffer, const bool is_snapshot)
+    {
+        const auto apply_state = [this, is_snapshot](utils::buffer_deserializer& state_buffer) {
+            const auto version = state_buffer.read<std::string>();
+            if (version != LINUX_EMULATOR_STATE_VERSION)
+            {
+                throw std::runtime_error("Unsupported Linux emulator state version: " + version);
+            }
+
+            this->emu().deserialize_state(state_buffer, is_snapshot);
+            state_buffer.read(this->executed_instructions_);
+            state_buffer.read(this->last_stop_reason_);
+            state_buffer.read(this->last_stop_detail_);
+            this->memory.deserialize_memory_state(state_buffer);
+            this->process.deserialize(state_buffer);
+            this->mod_manager.deserialize(state_buffer);
+            this->signals.deserialize(state_buffer);
+            this->vdso.deserialize(state_buffer);
+            this->should_stop = false;
+        };
+
+        utils::buffer_serializer rollback{};
+        bool have_rollback = false;
+        try
+        {
+            this->serialize(rollback, is_snapshot);
+            have_rollback = true;
+        }
+        catch (...)
+        {
+            have_rollback = false;
+        }
+
+        try
+        {
+            apply_state(buffer);
+        }
+        catch (...)
+        {
+            if (have_rollback)
+            {
+                try
+                {
+                    utils::buffer_deserializer rollback_buffer{rollback};
+                    apply_state(rollback_buffer);
+                }
+                catch (...)
+                {
+                }
+            }
+            throw;
+        }
+    }
+
+    uint64_t linux_emulator::add_memory_violation_observer(
+        std::function<memory_violation_continuation(uint64_t, size_t, memory_operation, memory_violation_type)> observer)
+    {
+        const auto id = this->next_memory_violation_observer_id_++;
+        this->memory_violation_observers_.emplace_back(id, std::move(observer));
+        return id;
+    }
+
+    void linux_emulator::remove_memory_violation_observer(const uint64_t id)
+    {
+        for (auto it = this->memory_violation_observers_.begin(); it != this->memory_violation_observers_.end(); ++it)
+        {
+            if (it->first == id)
+            {
+                this->memory_violation_observers_.erase(it);
+                return;
+            }
+        }
+    }
+
+    memory_violation_continuation linux_emulator::notify_memory_violation_observers(const uint64_t address, const size_t size,
+                                                                                    const memory_operation operation,
+                                                                                    const memory_violation_type type)
+    {
+        auto continuation = memory_violation_continuation::resume;
+        std::vector<uint64_t> observer_ids{};
+        observer_ids.reserve(this->memory_violation_observers_.size());
+        for (const auto& observer : this->memory_violation_observers_)
+        {
+            observer_ids.push_back(observer.first);
+        }
+
+        for (const auto observer_id : observer_ids)
+        {
+            const auto it = std::ranges::find_if(this->memory_violation_observers_,
+                                                 [observer_id](const auto& observer) { return observer.first == observer_id; });
+            if (it == this->memory_violation_observers_.end())
+            {
+                continue;
+            }
+
+            auto observer = it->second;
+            const auto result = observer(address, size, operation, type);
+            if (result == memory_violation_continuation::stop)
+            {
+                this->record_stop(stop_reason::unhandled_memory_violation, format_memory_violation_stop_detail(address, size));
+                this->stop();
+                return memory_violation_continuation::stop;
+            }
+
+            if (result == memory_violation_continuation::restart)
+            {
+                continuation = memory_violation_continuation::restart;
+            }
+        }
+
+        return continuation;
+    }
+
     void linux_emulator::setup_hooks()
     {
         // Hook the syscall instruction
-        this->emu().hook_instruction(x86_hookable_instructions::syscall, [this] {
-            this->dispatcher.dispatch(*this);
-            return instruction_hook_continuation::skip_instruction;
-        });
+        this->emu().hook_instruction(x86_hookable_instructions::syscall, [this](uint64_t) { return this->dispatcher.dispatch(*this); });
 
-        // Hook memory violations — try to deliver as SIGSEGV to user handler
+        // Hook memory violations — first give Linux-managed observers a chance
+        // to handle the fault, then fall back to SIGSEGV/default termination.
         this->emu().hook_memory_violation(
             [this](const uint64_t address, const size_t size, const memory_operation operation, const memory_violation_type type) {
+                if (!this->memory_violation_observers_.empty())
+                {
+                    return this->notify_memory_violation_observers(address, size, operation, type);
+                }
+
                 const char* type_str = (type == memory_violation_type::unmapped) ? "unmapped" : "protection";
                 const char* op_str = "unknown";
 
@@ -249,10 +584,12 @@ namespace sogen
                 // No handler — default action: terminate
                 if (!this->log.is_output_disabled())
                 {
-                    this->log.error("Memory violation at 0x%" PRIx64 ": %s %s (size=%zu, rip=0x%" PRIx64 ")\n", address, type_str, op_str,
-                                    size, rip);
+                    linux_logger::error("Memory violation at 0x%" PRIx64 ": %s %s (size=%zu, rip=0x%" PRIx64 ")\n", address, type_str,
+                                        op_str, size, rip);
                 }
 
+                this->record_stop(stop_reason::unhandled_memory_violation, format_memory_violation_stop_detail(address, size));
+                this->process.exit_status.reset();
                 this->stop();
                 return memory_violation_continuation::stop;
             });
@@ -281,14 +618,65 @@ namespace sogen
     void linux_emulator::start(const size_t count)
     {
         this->should_stop = false;
+        this->last_stop_reason_ = stop_reason::none;
+        this->last_stop_detail_.clear();
 
         const auto use_count = count > 0;
         const auto start_instructions = this->executed_instructions_;
         const auto target_instructions = start_instructions + count;
 
+        std::set<uint64_t> resumed_fetch_faults{};
+
         while (!this->should_stop)
         {
-            this->emu().start(count);
+            try
+            {
+                this->emu().start(count);
+            }
+            catch (const std::exception& e)
+            {
+                const auto fetch_violation = classify_instruction_fetch_violation(this->memory, this->emu().read_instruction_pointer());
+                if (fetch_violation.has_value())
+                {
+                    const auto address = fetch_violation->address;
+                    if (!this->memory_violation_observers_.empty())
+                    {
+                        const auto continuation =
+                            this->notify_memory_violation_observers(address, 1, memory_permission::exec, fetch_violation->type);
+                        if (continuation == memory_violation_continuation::restart && !this->should_stop)
+                        {
+                            continue;
+                        }
+
+                        if (continuation == memory_violation_continuation::resume && !this->should_stop)
+                        {
+                            const auto current_ip = this->emu().read_instruction_pointer();
+                            const auto current_violation = classify_instruction_fetch_violation(this->memory, current_ip);
+                            if (!current_violation.has_value() && resumed_fetch_faults.insert(current_ip).second)
+                            {
+                                continue;
+                            }
+                        }
+                    }
+
+                    if (this->last_stop_reason_ == stop_reason::none)
+                    {
+                        this->record_stop(stop_reason::unhandled_memory_violation, format_memory_violation_stop_detail(address, 1));
+                        this->process.exit_status.reset();
+                        this->stop();
+                    }
+
+                    break;
+                }
+
+                this->record_stop(stop_reason::backend_error, e.what());
+                throw;
+            }
+            catch (...)
+            {
+                this->record_stop(stop_reason::backend_error, "unknown backend error");
+                throw;
+            }
 
             if (!this->emu().has_violation())
             {
@@ -309,10 +697,20 @@ namespace sogen
                 }
             }
         }
+
+        if (use_count && this->executed_instructions_ >= target_instructions && this->last_stop_reason_ == stop_reason::none)
+        {
+            this->record_stop(stop_reason::instruction_limit, "count=" + std::to_string(count));
+        }
     }
 
     void linux_emulator::stop()
     {
+        if (this->last_stop_reason_ == stop_reason::none)
+        {
+            this->record_stop(stop_reason::explicit_stop);
+        }
+
         this->should_stop = true;
         this->emu().stop();
     }

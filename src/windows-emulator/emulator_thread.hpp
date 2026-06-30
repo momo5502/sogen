@@ -239,6 +239,7 @@ namespace sogen
 
     class emulator_process : public ref_counted_object
     {
+      public:
         void serialize_object(utils::buffer_serializer&) const override
         {
         }

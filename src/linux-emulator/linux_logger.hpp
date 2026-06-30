@@ -10,7 +10,7 @@ namespace sogen
       public:
         linux_logger() = default;
 
-        // NOLINTNEXTLINE(cert-dcl50-cpp)
+        // NOLINTNEXTLINE(cert-dcl50-cpp,modernize-avoid-variadic-functions)
         void info(const char* fmt, ...) const
         {
             if (this->disable_output_)
@@ -25,7 +25,7 @@ namespace sogen
             va_end(ap);
         }
 
-        // NOLINTNEXTLINE(cert-dcl50-cpp)
+        // NOLINTNEXTLINE(cert-dcl50-cpp,modernize-avoid-variadic-functions)
         void warn(const char* fmt, ...) const
         {
             if (this->disable_output_)
@@ -41,8 +41,8 @@ namespace sogen
         }
 
         // Errors are always printed, regardless of disable_output_.
-        // NOLINTNEXTLINE(cert-dcl50-cpp,readability-convert-member-functions-to-static)
-        void error(const char* fmt, ...) const
+        // NOLINTNEXTLINE(cert-dcl50-cpp,modernize-avoid-variadic-functions)
+        static void error(const char* fmt, ...)
         {
             va_list ap; // NOLINT(cppcoreguidelines-init-variables)
             va_start(ap, fmt);
@@ -51,7 +51,7 @@ namespace sogen
             va_end(ap);
         }
 
-        // NOLINTNEXTLINE(cert-dcl50-cpp)
+        // NOLINTNEXTLINE(cert-dcl50-cpp,modernize-avoid-variadic-functions)
         void print(const char* fmt, ...) const
         {
             if (this->disable_output_)

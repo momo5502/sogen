@@ -62,6 +62,7 @@ namespace sogen::kvm
         constexpr uint32_t vp_index = 0;
         constexpr uint32_t breakpoint_interrupt = 3;
         constexpr int invalid_opcode_interrupt = 6;
+        constexpr uint64_t syscall_instruction_size = 2;
 
         constexpr uintptr_t cache_line_size = 64;
         constexpr uint64_t guest_physical_page_base = 0x0000000100000000ull;
@@ -1859,7 +1860,7 @@ namespace sogen::kvm
                 const auto post_syscall_rcx = regs.rcx;
                 const auto post_syscall_r10 = regs.r10;
                 const auto saved_rflags = regs.r11;
-                const auto pre_syscall_rip = post_syscall_rcx - 2;
+                const auto pre_syscall_rip = post_syscall_rcx - syscall_instruction_size;
 
                 regs.rip = pre_syscall_rip;
                 regs.rcx = post_syscall_r10;
@@ -1872,16 +1873,16 @@ namespace sogen::kvm
                 const auto continuation = this->syscall_hook_->callback(0);
 
                 regs = this->get_regs();
-                if (continuation == instruction_hook_continuation::skip_instruction && regs.rip == pre_syscall_rip)
+                if (continuation != instruction_hook_continuation::finalized_instruction_pointer)
                 {
-                    regs.rip = post_syscall_rcx;
-                }
-                else
-                {
-                    // Advance past the syscall instruction. This also covers handlers that moved RIP and
-                    // expect the syscall length to be added back (e.g. the instrumentation-callback
-                    // redirect sets RIP to callback-2). Matches the WHP backend.
-                    regs.rip += 2;
+                    if (continuation == instruction_hook_continuation::skip_instruction && regs.rip == pre_syscall_rip)
+                    {
+                        regs.rip = post_syscall_rcx;
+                    }
+                    else
+                    {
+                        regs.rip += syscall_instruction_size;
+                    }
                 }
 
                 sregs = this->get_sregs();

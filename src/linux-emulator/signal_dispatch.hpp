@@ -3,6 +3,7 @@
 #include "std_include.hpp"
 
 #include <arch_emulator.hpp>
+#include <serialization.hpp>
 #include <cstring>
 
 // Forward declarations
@@ -197,6 +198,9 @@ namespace sogen
 
         // Restore context from a signal frame on the stack (called by sys_rt_sigreturn).
         static void sigreturn(linux_emulator& emu);
+
+        void serialize(utils::buffer_serializer& buffer) const;
+        void deserialize(utils::buffer_deserializer& buffer);
     };
 
 } // namespace sogen

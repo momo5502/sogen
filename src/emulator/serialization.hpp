@@ -327,7 +327,7 @@ namespace sogen
                     throw std::runtime_error("Out of bounds read from byte buffer");
                 }
 
-                if (static_cast<uint8_t>(this->buffer_[this->offset_]) != length_rest)
+                if (static_cast<uint8_t>(this->buffer_.subspan(this->offset_, check_size).front()) != length_rest)
                 {
                     throw std::runtime_error("Reading from serialized buffer mismatches written data!");
                 }
@@ -487,8 +487,8 @@ namespace sogen
             template <typename Map>
             void read_map(Map& map)
             {
-                using key_type = typename Map::key_type;
-                using value_type = typename Map::mapped_type;
+                using key_type = Map::key_type;
+                using value_type = Map::mapped_type;
 
                 map.clear();
 

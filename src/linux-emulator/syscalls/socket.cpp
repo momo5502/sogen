@@ -2,7 +2,16 @@
 #include "../linux_emulator.hpp"
 #include "../linux_syscall_dispatcher.hpp"
 
+#include <cerrno>
 #include <cstring>
+#include <array>
+#include <bit>
+#if !defined(_WIN32)
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 namespace sogen
 {
@@ -13,35 +22,38 @@ namespace sogen
     namespace
     {
         // Address families
-        constexpr int AF_UNIX = 1;
-        constexpr int AF_INET = 2;
-        constexpr int AF_INET6 = 10;
+        constexpr int LINUX_AF_UNIX = 1;
+        constexpr int LINUX_AF_INET = 2;
+        constexpr int LINUX_AF_INET6 = 10;
 
         // Socket types (lower bits)
-        constexpr int SOCK_STREAM = 1;
-        constexpr int SOCK_DGRAM = 2;
-        constexpr int SOCK_RAW = 3;
-        constexpr int SOCK_TYPE_MASK = 0xF;
+        constexpr int LINUX_SOCK_STREAM = 1;
+        constexpr int LINUX_SOCK_DGRAM = 2;
+        constexpr int LINUX_SOCK_RAW = 3;
+        constexpr int LINUX_SOCK_TYPE_MASK = 0xF;
 
         // Socket type flags (upper bits)
-        constexpr int SOCK_CLOEXEC = 02000000;
+        constexpr int LINUX_SOCK_CLOEXEC = 02000000;
+#if !defined(_WIN32)
+        constexpr int LINUX_SOCK_NONBLOCK = 04000;
+#endif
 
         // Shutdown how
         // constexpr int SHUT_RD = 0;
         // constexpr int SHUT_WR = 1;
         // constexpr int SHUT_RDWR = 2;
 
-        // SOL_SOCKET
-        constexpr int SOL_SOCKET = 1;
+        // LINUX_SOL_SOCKET
+        constexpr int LINUX_SOL_SOCKET = 1;
 
         // Socket options
-        constexpr int SO_REUSEADDR = 2;
-        constexpr int SO_TYPE = 3;
-        constexpr int SO_ERROR = 4;
-        constexpr int SO_KEEPALIVE = 9;
-        constexpr int SO_REUSEPORT = 15;
-        constexpr int SO_SNDBUF = 7;
-        constexpr int SO_RCVBUF = 8;
+        constexpr int LINUX_SO_REUSEADDR = 2;
+        constexpr int LINUX_SO_TYPE = 3;
+        constexpr int LINUX_SO_ERROR = 4;
+        constexpr int LINUX_SO_KEEPALIVE = 9;
+        constexpr int LINUX_SO_REUSEPORT = 15;
+        constexpr int LINUX_SO_SNDBUF = 7;
+        constexpr int LINUX_SO_RCVBUF = 8;
 
         // Message flags
         // constexpr int MSG_DONTWAIT = 0x40;
@@ -61,28 +73,303 @@ namespace sogen
 
         static_assert(sizeof(linux_sockaddr_in) == 16);
 
-        struct socket_state
+        uint16_t read_network_u16(const uint16_t value)
         {
-            int domain{};
-            int type{};
-            int protocol{};
-            bool listening{};
-            bool connected{};
-            int so_reuseaddr{};
-            int so_keepalive{};
-            int so_reuseport{};
-            int so_sndbuf{65536};
-            int so_rcvbuf{65536};
-            int so_error{};
+            const auto bytes = std::bit_cast<std::array<uint8_t, sizeof(value)>>(value);
+            return static_cast<uint16_t>((static_cast<uint16_t>(bytes.at(0)) << 8U) | static_cast<uint16_t>(bytes.at(1)));
+        }
 
-            // Bound address info
-            uint16_t bound_port{};
-            uint32_t bound_addr{};
-        };
+        uint32_t read_network_u32(const uint32_t value)
+        {
+            const auto bytes = std::bit_cast<std::array<uint8_t, sizeof(value)>>(value);
+            return (static_cast<uint32_t>(bytes.at(0)) << 24U) | (static_cast<uint32_t>(bytes.at(1)) << 16U) |
+                   (static_cast<uint32_t>(bytes.at(2)) << 8U) | static_cast<uint32_t>(bytes.at(3));
+        }
 
-        // Simple socket state storage — maps fd to socket metadata
-        // We store this alongside the fd_table since linux_fd doesn't have socket state
-        std::map<int, socket_state> g_socket_states;
+#if !defined(_WIN32)
+        uint16_t write_network_u16(const uint16_t value)
+        {
+            const std::array<uint8_t, sizeof(value)> bytes{
+                static_cast<uint8_t>((value >> 8U) & 0xFFU),
+                static_cast<uint8_t>(value & 0xFFU),
+            };
+            return std::bit_cast<uint16_t>(bytes);
+        }
+#endif
+
+        uint32_t write_network_u32(const uint32_t value)
+        {
+            const std::array<uint8_t, sizeof(value)> bytes{
+                static_cast<uint8_t>((value >> 24U) & 0xFFU),
+                static_cast<uint8_t>((value >> 16U) & 0xFFU),
+                static_cast<uint8_t>((value >> 8U) & 0xFFU),
+                static_cast<uint8_t>(value & 0xFFU),
+            };
+            return std::bit_cast<uint32_t>(bytes);
+        }
+        linux_socket_state* socket_state_for_fd(linux_fd* fd_entry)
+        {
+            if (!fd_entry || fd_entry->type != fd_type::socket || !fd_entry->socket_state)
+            {
+                return nullptr;
+            }
+
+            return fd_entry->socket_state.get();
+        }
+
+        const linux_socket_state* socket_state_for_fd(const linux_fd* fd_entry)
+        {
+            if (!fd_entry || fd_entry->type != fd_type::socket || !fd_entry->socket_state)
+            {
+                return nullptr;
+            }
+
+            return fd_entry->socket_state.get();
+        }
+    }
+
+    int64_t map_socket_errno_to_linux(const int host_errno)
+    {
+        switch (host_errno)
+        {
+        case EAGAIN:
+#if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
+        case EWOULDBLOCK:
+#endif
+            return LINUX_EAGAIN;
+        case EINTR:
+            return LINUX_EINTR;
+        case EBADF:
+            return LINUX_EBADF;
+        case EINVAL:
+            return LINUX_EINVAL;
+        case EPIPE:
+            return LINUX_EPIPE;
+#if defined(ECONNRESET)
+        case ECONNRESET:
+            return LINUX_ECONNRESET;
+#endif
+#if defined(ECONNREFUSED)
+        case ECONNREFUSED:
+            return LINUX_ECONNREFUSED;
+#endif
+#if defined(ENETUNREACH)
+        case ENETUNREACH:
+            return LINUX_ENETUNREACH;
+#endif
+#if defined(EHOSTUNREACH)
+        case EHOSTUNREACH:
+            return LINUX_EHOSTUNREACH;
+#endif
+#if defined(ETIMEDOUT)
+        case ETIMEDOUT:
+            return LINUX_ETIMEDOUT;
+#endif
+#if defined(ENOTCONN)
+        case ENOTCONN:
+            return LINUX_ENOTCONN;
+#endif
+        default:
+            return LINUX_EIO;
+        }
+    }
+
+    int host_send_flags(const int guest_flags)
+    {
+#if defined(MSG_NOSIGNAL)
+        return guest_flags | MSG_NOSIGNAL;
+#else
+        return guest_flags;
+#endif
+    }
+
+    void apply_host_socket_flags(linux_socket_state& state, const linux_fd& fd_entry)
+    {
+#if !defined(_WIN32)
+        if (state.host_socket < 0)
+        {
+            return;
+        }
+
+        const auto current = ::fcntl(state.host_socket, F_GETFL, 0);
+        if (current < 0)
+        {
+            return;
+        }
+
+        const auto desired = ((fd_entry.flags & LINUX_SOCK_NONBLOCK) != 0) ? (current | O_NONBLOCK) : (current & ~O_NONBLOCK);
+        if (desired != current)
+        {
+            (void)::fcntl(state.host_socket, F_SETFL, desired);
+        }
+#else
+        (void)state;
+        (void)fd_entry;
+#endif
+    }
+
+    bool linux_socket_has_host_socket(const linux_fd& fd_entry)
+    {
+        const auto* state = socket_state_for_fd(&fd_entry);
+        return state != nullptr && state->host_socket >= 0;
+    }
+
+    void linux_socket_apply_fd_flags(const int fd, const linux_fd& fd_entry)
+    {
+        (void)fd;
+        if (fd_entry.type == fd_type::socket && fd_entry.socket_state)
+        {
+            apply_host_socket_flags(*fd_entry.socket_state, fd_entry);
+        }
+    }
+
+    int64_t linux_socket_send_guest_buffer(const linux_syscall_context& c, const int fd, const uint64_t buf_addr, const size_t count,
+                                           const int flags)
+    {
+        auto* fd_entry = c.proc.fds.get(fd);
+        if (!fd_entry)
+        {
+            return -LINUX_EBADF;
+        }
+
+        auto* state = socket_state_for_fd(fd_entry);
+        if (!state || state->host_socket < 0)
+        {
+            return -LINUX_ENOTCONN;
+        }
+        apply_host_socket_flags(*state, *fd_entry);
+
+        std::vector<uint8_t> buffer(count);
+        if (count != 0)
+        {
+            c.emu.read_memory(buf_addr, buffer.data(), count);
+        }
+
+#if defined(_WIN32)
+        (void)flags;
+        return -LINUX_ECONNREFUSED;
+#else
+        errno = 0;
+        const auto written = ::send(state->host_socket, buffer.data(), count, host_send_flags(flags));
+        if (written < 0)
+        {
+            return -map_socket_errno_to_linux(errno);
+        }
+
+        return static_cast<int64_t>(written);
+#endif
+    }
+
+    int64_t linux_socket_recv_guest_buffer(const linux_syscall_context& c, const int fd, const uint64_t buf_addr, const size_t count,
+                                           const int flags)
+    {
+        auto* fd_entry = c.proc.fds.get(fd);
+        if (!fd_entry)
+        {
+            return -LINUX_EBADF;
+        }
+
+        auto* state = socket_state_for_fd(fd_entry);
+        if (!state || state->host_socket < 0)
+        {
+            return -LINUX_ENOTCONN;
+        }
+        apply_host_socket_flags(*state, *fd_entry);
+
+        std::vector<uint8_t> buffer(count);
+#if defined(_WIN32)
+        (void)buf_addr;
+        (void)flags;
+        return -LINUX_ECONNREFUSED;
+#else
+        errno = 0;
+        const auto bytes_read = ::recv(state->host_socket, buffer.data(), count, flags);
+        if (bytes_read < 0)
+        {
+            return -map_socket_errno_to_linux(errno);
+        }
+
+        if (bytes_read > 0)
+        {
+            c.emu.write_memory(buf_addr, buffer.data(), static_cast<size_t>(bytes_read));
+        }
+
+        return static_cast<int64_t>(bytes_read);
+#endif
+    }
+
+    int64_t linux_socket_writev_from_guest_with_flags(const linux_syscall_context& c, const int fd, const uint64_t iov_addr,
+                                                      const int iovcnt, const int flags)
+    {
+        int64_t total_written = 0;
+        for (int i = 0; i < iovcnt; ++i)
+        {
+            const auto entry_addr = iov_addr + static_cast<uint64_t>(i) * 16;
+            uint64_t iov_base{};
+            uint64_t iov_len{};
+            c.emu.read_memory(entry_addr, &iov_base, 8);
+            c.emu.read_memory(entry_addr + 8, &iov_len, 8);
+            if (iov_len == 0)
+            {
+                continue;
+            }
+
+            const auto written = linux_socket_send_guest_buffer(c, fd, iov_base, static_cast<size_t>(iov_len), flags);
+            if (written < 0)
+            {
+                return total_written > 0 ? total_written : written;
+            }
+
+            total_written += written;
+            if (written < static_cast<int64_t>(iov_len))
+            {
+                break;
+            }
+        }
+
+        return total_written;
+    }
+
+    int64_t linux_socket_writev_from_guest(const linux_syscall_context& c, const int fd, const uint64_t iov_addr, const int iovcnt)
+    {
+        return linux_socket_writev_from_guest_with_flags(c, fd, iov_addr, iovcnt, 0);
+    }
+
+    int64_t linux_socket_readv_to_guest_with_flags(const linux_syscall_context& c, const int fd, const uint64_t iov_addr, const int iovcnt,
+                                                   const int flags)
+    {
+        int64_t total_read = 0;
+        for (int i = 0; i < iovcnt; ++i)
+        {
+            const auto entry_addr = iov_addr + static_cast<uint64_t>(i) * 16;
+            uint64_t iov_base{};
+            uint64_t iov_len{};
+            c.emu.read_memory(entry_addr, &iov_base, 8);
+            c.emu.read_memory(entry_addr + 8, &iov_len, 8);
+            if (iov_len == 0)
+            {
+                continue;
+            }
+
+            const auto bytes_read = linux_socket_recv_guest_buffer(c, fd, iov_base, static_cast<size_t>(iov_len), flags);
+            if (bytes_read < 0)
+            {
+                return total_read > 0 ? total_read : bytes_read;
+            }
+
+            total_read += bytes_read;
+            if (bytes_read < static_cast<int64_t>(iov_len))
+            {
+                break;
+            }
+        }
+
+        return total_read;
+    }
+
+    int64_t linux_socket_readv_to_guest(const linux_syscall_context& c, const int fd, const uint64_t iov_addr, const int iovcnt)
+    {
+        return linux_socket_readv_to_guest_with_flags(c, fd, iov_addr, iovcnt, 0);
     }
 
     void sys_socket(const linux_syscall_context& c)
@@ -91,18 +378,18 @@ namespace sogen
         const auto type_raw = static_cast<int>(get_linux_syscall_argument(c.emu, 1));
         const auto protocol = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
 
-        const auto type = type_raw & SOCK_TYPE_MASK;
-        const bool cloexec = (type_raw & SOCK_CLOEXEC) != 0;
+        const auto type = type_raw & LINUX_SOCK_TYPE_MASK;
+        const bool cloexec = (type_raw & LINUX_SOCK_CLOEXEC) != 0;
 
         // Validate domain
-        if (domain != AF_UNIX && domain != AF_INET && domain != AF_INET6)
+        if (domain != LINUX_AF_UNIX && domain != LINUX_AF_INET && domain != LINUX_AF_INET6)
         {
             write_linux_syscall_result(c, -LINUX_EAFNOSUPPORT);
             return;
         }
 
         // Validate type
-        if (type != SOCK_STREAM && type != SOCK_DGRAM && type != SOCK_RAW)
+        if (type != LINUX_SOCK_STREAM && type != LINUX_SOCK_DGRAM && type != LINUX_SOCK_RAW)
         {
             write_linux_syscall_result(c, -LINUX_EINVAL);
             return;
@@ -111,24 +398,27 @@ namespace sogen
         linux_fd new_fd{};
         new_fd.type = fd_type::socket;
         new_fd.close_on_exec = cloexec;
-        new_fd.flags = type_raw & ~SOCK_TYPE_MASK;
+        new_fd.flags = type_raw & ~LINUX_SOCK_TYPE_MASK;
+        new_fd.socket_state = std::make_shared<linux_socket_state>();
+        new_fd.socket_state->domain = domain;
+        new_fd.socket_state->type = type;
+        new_fd.socket_state->protocol = protocol;
 
         const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
 
-        // Track socket state
-        socket_state ss{};
-        ss.domain = domain;
-        ss.type = type;
-        ss.protocol = protocol;
-        g_socket_states[fd_num] = ss;
-
         write_linux_syscall_result(c, fd_num);
+    }
+
+    void cleanup_linux_socket_state(const int fd)
+    {
+        (void)fd;
     }
 
     void sys_connect(const linux_syscall_context& c)
     {
         const auto sockfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
-        // addr is arg 1, addrlen is arg 2
+        const auto addr_ptr = get_linux_syscall_argument(c.emu, 1);
+        const auto addrlen = static_cast<uint32_t>(get_linux_syscall_argument(c.emu, 2));
 
         auto* fd_entry = c.proc.fds.get(sockfd);
         if (!fd_entry || fd_entry->type != fd_type::socket)
@@ -137,9 +427,72 @@ namespace sogen
             return;
         }
 
-        // We don't actually connect anywhere — stub that returns ECONNREFUSED
-        // In a full implementation, we'd proxy to the host's network stack
+        auto* state = socket_state_for_fd(fd_entry);
+        if (!state)
+        {
+            write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
+        if (state->domain != LINUX_AF_INET || state->type != LINUX_SOCK_STREAM || addrlen < sizeof(linux_sockaddr_in))
+        {
+            write_linux_syscall_result(c, -LINUX_ECONNREFUSED);
+            return;
+        }
+
+        linux_sockaddr_in sin{};
+        c.emu.read_memory(addr_ptr, &sin, sizeof(sin));
+        const auto guest_port = read_network_u16(sin.sin_port);
+        const auto guest_addr = read_network_u32(sin.sin_addr);
+        const auto host_port = c.emu_ref.port_mapper.get_host_port(guest_port);
+        if (sin.sin_family != LINUX_AF_INET)
+        {
+            write_linux_syscall_result(c, -LINUX_ECONNREFUSED);
+            return;
+        }
+
+        if (guest_addr != 0x7F000001U)
+        {
+            write_linux_syscall_result(c, -LINUX_ENETUNREACH);
+            return;
+        }
+
+        if (host_port == 0)
+        {
+            write_linux_syscall_result(c, -LINUX_ECONNREFUSED);
+            return;
+        }
+
+#if defined(_WIN32)
         write_linux_syscall_result(c, -LINUX_ECONNREFUSED);
+#else
+        const int host_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (host_fd < 0)
+        {
+            write_linux_syscall_result(c, -LINUX_ECONNREFUSED);
+            return;
+        }
+
+        sockaddr_in host_addr{};
+        host_addr.sin_family = AF_INET;
+        host_addr.sin_port = write_network_u16(host_port);
+        host_addr.sin_addr.s_addr = write_network_u32(0x7F000001U);
+        if (::connect(host_fd, reinterpret_cast<sockaddr*>(&host_addr), sizeof(host_addr)) != 0)
+        {
+            ::close(host_fd);
+            write_linux_syscall_result(c, -LINUX_ECONNREFUSED);
+            return;
+        }
+
+        if (state->host_socket >= 0)
+        {
+            ::close(state->host_socket);
+        }
+        state->host_socket = host_fd;
+        state->connected = true;
+        apply_host_socket_flags(*state, *fd_entry);
+        write_linux_syscall_result(c, 0);
+#endif
     }
 
     void sys_accept(const linux_syscall_context& c)
@@ -175,8 +528,9 @@ namespace sogen
     void sys_sendto(const linux_syscall_context& c)
     {
         const auto sockfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
-        // buf is arg 1, len is arg 2, flags is arg 3, dest_addr is arg 4, addrlen is arg 5
+        const auto buf_addr = get_linux_syscall_argument(c.emu, 1);
         const auto len = static_cast<size_t>(get_linux_syscall_argument(c.emu, 2));
+        const auto flags = static_cast<int>(get_linux_syscall_argument(c.emu, 3));
 
         auto* fd_entry = c.proc.fds.get(sockfd);
         if (!fd_entry || fd_entry->type != fd_type::socket)
@@ -185,20 +539,28 @@ namespace sogen
             return;
         }
 
-        auto it = g_socket_states.find(sockfd);
-        if (it == g_socket_states.end() || !it->second.connected)
+        auto* state = socket_state_for_fd(fd_entry);
+        if (!state || !state->connected)
         {
             write_linux_syscall_result(c, -LINUX_ENOTCONN);
             return;
         }
 
-        // Pretend we sent everything
+        if (state->host_socket >= 0)
+        {
+            write_linux_syscall_result(c, linux_socket_send_guest_buffer(c, sockfd, buf_addr, len, flags));
+            return;
+        }
+
         write_linux_syscall_result(c, static_cast<int64_t>(len));
     }
 
     void sys_recvfrom(const linux_syscall_context& c)
     {
         const auto sockfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+        const auto buf_addr = get_linux_syscall_argument(c.emu, 1);
+        const auto len = static_cast<size_t>(get_linux_syscall_argument(c.emu, 2));
+        const auto flags = static_cast<int>(get_linux_syscall_argument(c.emu, 3));
 
         auto* fd_entry = c.proc.fds.get(sockfd);
         if (!fd_entry || fd_entry->type != fd_type::socket)
@@ -207,18 +569,43 @@ namespace sogen
             return;
         }
 
-        // No data available
+        auto* state = socket_state_for_fd(fd_entry);
+        if (!state || !state->connected)
+        {
+            write_linux_syscall_result(c, -LINUX_ENOTCONN);
+            return;
+        }
+
+        if (state->host_socket >= 0)
+        {
+            write_linux_syscall_result(c, linux_socket_recv_guest_buffer(c, sockfd, buf_addr, len, flags));
+            return;
+        }
+
         write_linux_syscall_result(c, -LINUX_EAGAIN);
     }
 
     void sys_sendmsg(const linux_syscall_context& c)
     {
         const auto sockfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+        const auto msg_addr = get_linux_syscall_argument(c.emu, 1);
+        const auto flags = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
 
         auto* fd_entry = c.proc.fds.get(sockfd);
         if (!fd_entry || fd_entry->type != fd_type::socket)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
+        const auto* state = socket_state_for_fd(fd_entry);
+        if (state != nullptr && state->host_socket >= 0)
+        {
+            uint64_t iov_addr{};
+            uint64_t iovcnt{};
+            c.emu.read_memory(msg_addr + 16, &iov_addr, sizeof(iov_addr));
+            c.emu.read_memory(msg_addr + 24, &iovcnt, sizeof(iovcnt));
+            write_linux_syscall_result(c, linux_socket_writev_from_guest_with_flags(c, sockfd, iov_addr, static_cast<int>(iovcnt), flags));
             return;
         }
 
@@ -228,11 +615,30 @@ namespace sogen
     void sys_recvmsg(const linux_syscall_context& c)
     {
         const auto sockfd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+        const auto msg_addr = get_linux_syscall_argument(c.emu, 1);
+        const auto flags = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
 
         auto* fd_entry = c.proc.fds.get(sockfd);
         if (!fd_entry || fd_entry->type != fd_type::socket)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
+        const auto* state = socket_state_for_fd(fd_entry);
+        if (state != nullptr && state->host_socket >= 0)
+        {
+            uint64_t iov_addr{};
+            uint64_t iovcnt{};
+            c.emu.read_memory(msg_addr + 16, &iov_addr, sizeof(iov_addr));
+            c.emu.read_memory(msg_addr + 24, &iovcnt, sizeof(iovcnt));
+            const auto result = linux_socket_readv_to_guest_with_flags(c, sockfd, iov_addr, static_cast<int>(iovcnt), flags);
+            if (result >= 0)
+            {
+                uint32_t msg_flags = 0;
+                c.emu.write_memory(msg_addr + 48, &msg_flags, sizeof(msg_flags));
+            }
+            write_linux_syscall_result(c, result);
             return;
         }
 
@@ -250,11 +656,17 @@ namespace sogen
             return;
         }
 
-        // Clean up socket state
-        auto it = g_socket_states.find(sockfd);
-        if (it != g_socket_states.end())
+        auto* state = socket_state_for_fd(fd_entry);
+        if (state)
         {
-            it->second.connected = false;
+#if !defined(_WIN32)
+            if (state->host_socket >= 0)
+            {
+                ::close(state->host_socket);
+                state->host_socket = -1;
+            }
+#endif
+            state->connected = false;
         }
 
         write_linux_syscall_result(c, 0);
@@ -273,8 +685,8 @@ namespace sogen
             return;
         }
 
-        auto it = g_socket_states.find(sockfd);
-        if (it == g_socket_states.end())
+        auto* state = socket_state_for_fd(fd_entry);
+        if (!state)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
             return;
@@ -284,12 +696,12 @@ namespace sogen
         uint16_t family{};
         c.emu.read_memory(addr_ptr, &family, sizeof(family));
 
-        if (family == AF_INET && addrlen >= sizeof(linux_sockaddr_in))
+        if (family == LINUX_AF_INET && addrlen >= sizeof(linux_sockaddr_in))
         {
             linux_sockaddr_in sin{};
             c.emu.read_memory(addr_ptr, &sin, sizeof(sin));
-            it->second.bound_port = sin.sin_port;
-            it->second.bound_addr = sin.sin_addr;
+            state->bound_port = sin.sin_port;
+            state->bound_addr = sin.sin_addr;
         }
 
         // Pretend bind succeeded
@@ -308,10 +720,9 @@ namespace sogen
             return;
         }
 
-        auto it = g_socket_states.find(sockfd);
-        if (it != g_socket_states.end())
+        if (auto* state = socket_state_for_fd(fd_entry))
         {
-            it->second.listening = true;
+            state->listening = true;
         }
 
         write_linux_syscall_result(c, 0);
@@ -332,8 +743,8 @@ namespace sogen
             return;
         }
 
-        auto it = g_socket_states.find(sockfd);
-        if (it == g_socket_states.end())
+        auto* state = socket_state_for_fd(fd_entry);
+        if (!state)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
             return;
@@ -345,24 +756,24 @@ namespace sogen
             c.emu.read_memory(optval_addr, &val, sizeof(val));
         }
 
-        if (level == SOL_SOCKET)
+        if (level == LINUX_SOL_SOCKET)
         {
             switch (optname)
             {
-            case SO_REUSEADDR:
-                it->second.so_reuseaddr = val;
+            case LINUX_SO_REUSEADDR:
+                state->so_reuseaddr = val;
                 break;
-            case SO_REUSEPORT:
-                it->second.so_reuseport = val;
+            case LINUX_SO_REUSEPORT:
+                state->so_reuseport = val;
                 break;
-            case SO_KEEPALIVE:
-                it->second.so_keepalive = val;
+            case LINUX_SO_KEEPALIVE:
+                state->so_keepalive = val;
                 break;
-            case SO_SNDBUF:
-                it->second.so_sndbuf = val;
+            case LINUX_SO_SNDBUF:
+                state->so_sndbuf = val;
                 break;
-            case SO_RCVBUF:
-                it->second.so_rcvbuf = val;
+            case LINUX_SO_RCVBUF:
+                state->so_rcvbuf = val;
                 break;
             default:
                 break;
@@ -388,8 +799,8 @@ namespace sogen
             return;
         }
 
-        auto it = g_socket_states.find(sockfd);
-        if (it == g_socket_states.end())
+        auto* state = socket_state_for_fd(fd_entry);
+        if (!state)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
             return;
@@ -397,31 +808,31 @@ namespace sogen
 
         int val = 0;
 
-        if (level == SOL_SOCKET)
+        if (level == LINUX_SOL_SOCKET)
         {
             switch (optname)
             {
-            case SO_REUSEADDR:
-                val = it->second.so_reuseaddr;
+            case LINUX_SO_REUSEADDR:
+                val = state->so_reuseaddr;
                 break;
-            case SO_REUSEPORT:
-                val = it->second.so_reuseport;
+            case LINUX_SO_REUSEPORT:
+                val = state->so_reuseport;
                 break;
-            case SO_KEEPALIVE:
-                val = it->second.so_keepalive;
+            case LINUX_SO_KEEPALIVE:
+                val = state->so_keepalive;
                 break;
-            case SO_SNDBUF:
-                val = it->second.so_sndbuf;
+            case LINUX_SO_SNDBUF:
+                val = state->so_sndbuf;
                 break;
-            case SO_RCVBUF:
-                val = it->second.so_rcvbuf;
+            case LINUX_SO_RCVBUF:
+                val = state->so_rcvbuf;
                 break;
-            case SO_TYPE:
-                val = it->second.type;
+            case LINUX_SO_TYPE:
+                val = state->type;
                 break;
-            case SO_ERROR:
-                val = it->second.so_error;
-                it->second.so_error = 0; // Clear after reading
+            case LINUX_SO_ERROR:
+                val = state->so_error;
+                state->so_error = 0; // Clear after reading
                 break;
             default:
                 val = 0;
@@ -445,50 +856,14 @@ namespace sogen
     void sys_socketpair(const linux_syscall_context& c)
     {
         const auto domain = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
-        const auto type_raw = static_cast<int>(get_linux_syscall_argument(c.emu, 1));
-        const auto protocol = static_cast<int>(get_linux_syscall_argument(c.emu, 2));
-        const auto sv_addr = get_linux_syscall_argument(c.emu, 3);
 
-        const auto type = type_raw & SOCK_TYPE_MASK;
-        const bool cloexec = (type_raw & SOCK_CLOEXEC) != 0;
-
-        if (domain != AF_UNIX)
+        if (domain != LINUX_AF_UNIX)
         {
             write_linux_syscall_result(c, -LINUX_EAFNOSUPPORT);
             return;
         }
 
-        // Create two connected socket fds
-        linux_fd fd1{};
-        fd1.type = fd_type::socket;
-        fd1.close_on_exec = cloexec;
-
-        linux_fd fd2{};
-        fd2.type = fd_type::socket;
-        fd2.close_on_exec = cloexec;
-
-        const auto fd1_num = c.proc.fds.allocate(std::move(fd1));
-        const auto fd2_num = c.proc.fds.allocate(std::move(fd2));
-
-        socket_state ss1{};
-        ss1.domain = domain;
-        ss1.type = type;
-        ss1.protocol = protocol;
-        ss1.connected = true;
-        g_socket_states[fd1_num] = ss1;
-
-        socket_state ss2{};
-        ss2.domain = domain;
-        ss2.type = type;
-        ss2.protocol = protocol;
-        ss2.connected = true;
-        g_socket_states[fd2_num] = ss2;
-
-        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-        int32_t sv[2] = {fd1_num, fd2_num};
-        c.emu.write_memory(sv_addr, sv, sizeof(sv));
-
-        write_linux_syscall_result(c, 0);
+        write_linux_syscall_result(c, -LINUX_EOPNOTSUPP);
     }
 
     void sys_getsockname(const linux_syscall_context& c)
@@ -504,19 +879,19 @@ namespace sogen
             return;
         }
 
-        auto it = g_socket_states.find(sockfd);
-        if (it == g_socket_states.end())
+        auto* state = socket_state_for_fd(fd_entry);
+        if (!state)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
             return;
         }
 
-        if (it->second.domain == AF_INET)
+        if (state->domain == LINUX_AF_INET)
         {
             linux_sockaddr_in sin{};
-            sin.sin_family = AF_INET;
-            sin.sin_port = it->second.bound_port;
-            sin.sin_addr = it->second.bound_addr;
+            sin.sin_family = LINUX_AF_INET;
+            sin.sin_port = state->bound_port;
+            sin.sin_addr = state->bound_addr;
 
             c.emu.write_memory(addr_ptr, &sin, sizeof(sin));
 
@@ -526,7 +901,7 @@ namespace sogen
         else
         {
             // Return a minimal sockaddr with just the family
-            auto family = static_cast<uint16_t>(it->second.domain);
+            auto family = static_cast<uint16_t>(state->domain);
             c.emu.write_memory(addr_ptr, &family, sizeof(family));
 
             uint32_t len = sizeof(uint16_t);
@@ -547,8 +922,8 @@ namespace sogen
             return;
         }
 
-        auto it = g_socket_states.find(sockfd);
-        if (it == g_socket_states.end() || !it->second.connected)
+        auto* state = socket_state_for_fd(fd_entry);
+        if (!state || !state->connected)
         {
             write_linux_syscall_result(c, -LINUX_ENOTCONN);
             return;
@@ -558,12 +933,12 @@ namespace sogen
         const auto addr_ptr = get_linux_syscall_argument(c.emu, 1);
         const auto addrlen_ptr = get_linux_syscall_argument(c.emu, 2);
 
-        if (it->second.domain == AF_INET)
+        if (state->domain == LINUX_AF_INET)
         {
             linux_sockaddr_in sin{};
-            sin.sin_family = AF_INET;
+            sin.sin_family = LINUX_AF_INET;
             sin.sin_port = 0;
-            sin.sin_addr = 0x7F000001; // 127.0.0.1
+            sin.sin_addr = write_network_u32(0x7F000001U);
 
             c.emu.write_memory(addr_ptr, &sin, sizeof(sin));
 
@@ -572,7 +947,7 @@ namespace sogen
         }
         else
         {
-            auto family = static_cast<uint16_t>(it->second.domain);
+            auto family = static_cast<uint16_t>(state->domain);
             c.emu.write_memory(addr_ptr, &family, sizeof(family));
 
             uint32_t len = sizeof(uint16_t);

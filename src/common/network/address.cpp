@@ -1,6 +1,7 @@
 #include "address.hpp"
 
 #include <array>
+#include <charconv>
 #include <stdexcept>
 
 #include "../utils/finally.hpp"
@@ -46,6 +47,7 @@ namespace sogen::network
     }
 
     address::address(const std::string& addr, const uint16_t port)
+        : address()
     {
         this->resolve(addr, std::nullopt);
         this->set_port(port);
@@ -175,9 +177,7 @@ namespace sogen::network
             addr = "[" + std::string(buffer.data()) + "]";
             break;
         default:
-            buffer[0] = '?';
-            buffer[1] = 0;
-            addr = std::string(buffer.data());
+            addr = "?";
             break;
         }
 
@@ -197,19 +197,19 @@ namespace sogen::network
         memcpy(bytes.data(), &this->address4_.sin_addr.s_addr, bytes.size());
 
         // 10.X.X.X
-        if (bytes[0] == 10)
+        if (bytes.at(0) == 10)
         {
             return true;
         }
 
         // 192.168.X.X
-        if (bytes[0] == 192 && bytes[1] == 168)
+        if (bytes.at(0) == 192 && bytes.at(1) == 168)
         {
             return true;
         }
 
         // 172.16.X.X - 172.31.X.X
-        if (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] < 32)
+        if (bytes.at(0) == 172 && bytes.at(1) >= 16 && bytes.at(1) < 32)
         {
             return true;
         }
@@ -302,12 +302,52 @@ namespace sogen::network
     {
         std::optional<uint16_t> port_value{};
 
-        const auto pos = addr.find_last_of(':');
-        if (pos != std::string::npos)
+        const auto parse_port = [](std::string_view port) -> std::optional<uint16_t> {
+            if (port.empty())
+            {
+                return std::nullopt;
+            }
+
+            uint16_t parsed_port{};
+            const auto [ptr, ec] = std::from_chars(port.data(), port.data() + port.size(), parsed_port);
+            if (ec == std::errc{} && ptr == port.data() + port.size())
+            {
+                return parsed_port;
+            }
+
+            return std::nullopt;
+        };
+
+        if (!addr.empty() && addr.front() == '[')
         {
-            const auto port = addr.substr(pos + 1);
-            port_value = static_cast<uint16_t>(atoi(std::string(port).c_str()));
-            addr = addr.substr(0, pos);
+            const auto close = addr.find(']');
+            if (close != std::string_view::npos)
+            {
+                if (close + 1 == addr.size())
+                {
+                    addr = addr.substr(1, close - 1);
+                }
+                else if (addr.at(close + 1) == ':')
+                {
+                    if (const auto parsed_port = parse_port(addr.substr(close + 2)))
+                    {
+                        port_value = parsed_port;
+                        addr = addr.substr(1, close - 1);
+                    }
+                }
+            }
+        }
+        else
+        {
+            const auto first_colon = addr.find(':');
+            if (first_colon != std::string_view::npos && addr.find(':', first_colon + 1) == std::string_view::npos)
+            {
+                if (const auto parsed_port = parse_port(addr.substr(first_colon + 1)))
+                {
+                    port_value = parsed_port;
+                    addr = addr.substr(0, first_colon);
+                }
+            }
         }
 
         this->resolve(std::string(addr), family);

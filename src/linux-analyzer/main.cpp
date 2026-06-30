@@ -2,6 +2,8 @@
 #include <cstdlib>
 #include <cinttypes>
 #include <string>
+#include <optional>
+#include <string_view>
 #include <vector>
 #include <filesystem>
 
@@ -98,7 +100,7 @@ namespace sogen
                 printf("Waiting for GDB connection on %s...\n", address);
 
                 linux_x64_gdb_stub_handler handler{linux_emu};
-                gdb_stub::run_gdb_stub(network::address{address, AF_INET}, handler);
+                gdb_stub::run_gdb_stub(network::address{std::string_view{address}, std::optional<int>{AF_INET}}, handler);
             }
             else
             {

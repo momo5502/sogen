@@ -119,7 +119,7 @@ namespace sogen::linux_test
     {
         if (argv.empty())
         {
-            argv.push_back(binary.string());
+            argv.push_back(binary.generic_string());
         }
 
         if (envp.empty())
@@ -169,7 +169,7 @@ namespace sogen::linux_test
             }
 
             auto emu_backend = create_x86_64_emulator();
-            linux_emulator linux_emu(std::move(emu_backend), emulation_root, fixture, {fixture.string()}, default_envp());
+            linux_emulator linux_emu(std::move(emu_backend), emulation_root, fixture, {fixture.generic_string()}, default_envp());
             linux_emu.log.disable_output(true);
 
             linux_emu.start(instruction_budget);

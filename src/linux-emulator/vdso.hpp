@@ -2,6 +2,7 @@
 
 #include "std_include.hpp"
 #include "linux_memory_manager.hpp"
+#include <serialization.hpp>
 
 // Synthetic vDSO (Virtual Dynamic Shared Object) for the Linux emulator.
 //
@@ -54,6 +55,18 @@ namespace sogen
         size_t get_size() const
         {
             return this->image_size_;
+        }
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->base_address_);
+            buffer.write<uint64_t>(this->image_size_);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->base_address_);
+            this->image_size_ = static_cast<size_t>(buffer.read<uint64_t>());
         }
 
       private:

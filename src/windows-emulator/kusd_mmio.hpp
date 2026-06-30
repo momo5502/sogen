@@ -51,7 +51,7 @@ namespace sogen
 
         bool registered_{};
 
-        KUSER_SHARED_DATA64 kusd_{};
+        KUSER_SHARED_DATA64 kusd_;
 
         void read(uint64_t addr, void* data, size_t size);
 

@@ -30,7 +30,7 @@ namespace sogen
 
         if (!emu.memory.allocate_memory(TRAMPOLINE_ADDR, TRAMPOLINE_SIZE, memory_permission::read_write))
         {
-            emu.log.error("Failed to allocate sigreturn trampoline page\n");
+            linux_logger::error("Failed to allocate sigreturn trampoline page\n");
             return;
         }
 
@@ -57,10 +57,12 @@ namespace sogen
             return false;
         }
 
+        emu.on_signal(signum, fault_addr, si_code);
+
         // Ensure trampoline is set up
         this->setup_trampoline(emu);
 
-        const auto& action = this->actions[signum];
+        const auto& action = this->actions.at(static_cast<size_t>(signum));
         const auto handler = action.linux_sa_handler;
 
         // Check if the signal is ignored
@@ -84,9 +86,10 @@ namespace sogen
                 // Default action: terminate
                 if (!emu.log.is_output_disabled())
                 {
-                    emu.log.error("Signal %d: default action is terminate (fault_addr=0x%" PRIx64 ")\n", signum, fault_addr);
+                    linux_logger::error("Signal %d: default action is terminate (fault_addr=0x%" PRIx64 ")\n", signum, fault_addr);
                 }
                 emu.process.exit_status = 128 + signum;
+                emu.record_stop(stop_reason::signal_termination, "signal=" + std::to_string(signum));
                 emu.stop();
                 return false;
             }
@@ -95,9 +98,7 @@ namespace sogen
         // We have a user handler — build the signal frame and redirect execution
         auto& e = emu.emu();
 
-        // Determine which stack to use
         uint64_t frame_sp = e.reg(x86_register::rsp);
-        // TODO: check SA_ONSTACK and alternate signal stack
 
         // The frame must be 16-byte aligned. The rt_sigframe is pushed below RSP.
         // Compute the size and align
@@ -215,25 +216,35 @@ namespace sogen
         // If SA_RESETHAND, reset handler to SIG_DFL
         if (action.linux_sa_flags & LINUX_SA_RESETHAND)
         {
-            this->actions[signum].linux_sa_handler = LINUX_SIG_DFL;
+            this->actions.at(static_cast<size_t>(signum)).linux_sa_handler = LINUX_SIG_DFL;
         }
 
         return true;
+    }
+
+    void signal_dispatcher::serialize(utils::buffer_serializer& buffer) const
+    {
+        static_assert(std::is_trivially_copyable_v<linux_kernel_sigaction>);
+        buffer.write(this->actions.data(), sizeof(linux_kernel_sigaction) * this->actions.size());
+        buffer.write(this->sigreturn_trampoline_addr);
+        buffer.write(this->trampoline_ready);
+    }
+
+    void signal_dispatcher::deserialize(utils::buffer_deserializer& buffer)
+    {
+        static_assert(std::is_trivially_copyable_v<linux_kernel_sigaction>);
+        buffer.read(this->actions.data(), sizeof(linux_kernel_sigaction) * this->actions.size());
+        buffer.read(this->sigreturn_trampoline_addr);
+        buffer.read(this->trampoline_ready);
     }
 
     void signal_dispatcher::sigreturn(linux_emulator& emu)
     {
         auto& e = emu.emu();
 
-        // The current RSP should point to the rt_sigframe (after the trampoline's 'ret' consumed the pretcode).
-        // Actually, when rt_sigreturn is invoked via 'syscall', RSP still points just past the pretcode.
-        // The frame is at RSP - 8 (the pretcode was at the start of the frame).
-        //
-        // Wait — the layout is: [pretcode][siginfo][ucontext] at frame_addr.
-        // RSP was set to frame_addr. When the handler does 'ret', it pops pretcode from [RSP]
-        // and jumps to the trampoline, RSP is now frame_addr + 8.
-        // The trampoline does 'mov rax, 15; syscall' — RSP is still frame_addr + 8.
-        // So the frame starts at RSP - 8.
+        // The handler returns to pretcode at the beginning of linux_rt_sigframe.
+        // Executing the sigreturn trampoline leaves RSP one word past pretcode,
+        // so the frame begins at RSP - sizeof(pretcode).
 
         const uint64_t rsp = e.reg(x86_register::rsp);
         const uint64_t frame_addr = rsp - 8;
@@ -258,10 +269,7 @@ namespace sogen
         e.reg(x86_register::rax, sc.rax);
         e.reg(x86_register::rcx, sc.rcx);
         e.reg(x86_register::rsp, sc.rsp);
-        // Subtract 2 from the desired RIP to compensate for the CPU backend
-        // automatically advancing past the 2-byte `syscall` instruction (0f 05)
-        // after this hook returns.
-        e.reg(x86_register::rip, sc.rip - 2);
+        e.reg(x86_register::rip, sc.rip);
         e.reg(x86_register::rflags, sc.eflags);
 
         // Restore signal mask

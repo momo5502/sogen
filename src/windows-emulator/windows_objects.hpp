@@ -303,7 +303,7 @@ namespace sogen
             auto next_text = this->text_storage;
             for (size_t i = 0; i < this->items.size(); ++i)
             {
-                const auto& item = this->items[i];
+                const auto& item = this->items.at(i);
                 const auto text_ptr = !item.text.empty() ? next_text : 0;
                 const auto guest_item = make_guest_item(item, text_ptr);
                 write_guest_item_text(memory, item, text_ptr);
@@ -331,7 +331,7 @@ namespace sogen
                 return;
             }
 
-            const auto& item = this->items[index];
+            const auto& item = this->items.at(index);
             const auto text_ptr = this->get_guest_text_ptr(index);
             const auto guest_item = make_guest_item(item, text_ptr);
             write_guest_item_text(memory, item, text_ptr);
@@ -420,13 +420,14 @@ namespace sogen
             auto text_ptr = this->text_storage;
             for (size_t i = 0; i < index; ++i)
             {
-                if (!this->items[i].text.empty())
+                const auto& item = this->items.at(i);
+                if (!item.text.empty())
                 {
-                    text_ptr += (this->items[i].text.size() + 1) * sizeof(char16_t);
+                    text_ptr += (item.text.size() + 1) * sizeof(char16_t);
                 }
             }
 
-            return this->items[index].text.empty() ? 0 : text_ptr;
+            return this->items.at(index).text.empty() ? 0 : text_ptr;
         }
 
         size_t text_storage_size() const

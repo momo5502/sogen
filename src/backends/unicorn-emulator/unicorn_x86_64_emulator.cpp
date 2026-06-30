@@ -23,6 +23,7 @@ namespace sogen::unicorn
 
         constexpr auto IA32_FS_BASE_MSR = 0xC0000100;
         constexpr auto IA32_GS_BASE_MSR = 0xC0000101;
+        constexpr uint64_t syscall_instruction_size = 2;
 
         struct msr_value
         {
@@ -441,7 +442,13 @@ namespace sogen::unicorn
                 }
                 else if (inst_type == x86_hookable_instructions::syscall)
                 {
-                    function_wrapper<void, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) { (void)c(0); });
+                    function_wrapper<void, uc_engine*> wrapper([c = std::move(callback), this](uc_engine*) {
+                        const auto continuation = c(0);
+                        if (continuation == instruction_hook_continuation::finalized_instruction_pointer)
+                        {
+                            this->reg(x86_register::rip, this->read_instruction_pointer() - syscall_instruction_size);
+                        }
+                    });
 
                     const auto uc_instruction = map_hookable_instruction(inst_type);
                     uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INSN, wrapper.get_function(), wrapper.get_user_data(), 0,

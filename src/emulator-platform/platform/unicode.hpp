@@ -20,7 +20,7 @@ namespace sogen
     {
         USHORT Length;
         USHORT MaximumLength;
-        EMULATOR_CAST(typename Traits::PVOID, char16_t*) Buffer;
+        EMULATOR_CAST(Traits::PVOID, char16_t*) Buffer;
     };
 
     template <typename string_type>
@@ -28,7 +28,7 @@ namespace sogen
                  std::is_same_v<string_type, std::wstring>)
     constexpr string_type convert_from_u8(const std::string_view view)
     {
-        using char_type = typename string_type::value_type;
+        using char_type = string_type::value_type;
         constexpr auto char_size = sizeof(char_type);
 
         string_type result_str;
@@ -278,7 +278,7 @@ namespace sogen
             0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 0x90-0x97
             0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178, // 0x98-0x9F
         };
-        return table[static_cast<size_t>(ch - 0x80)];
+        return table.at(static_cast<size_t>(ch - 0x80));
     }
 
     // Decodes a Windows-1252 (ANSI default codepage) byte string to UTF-16. Unlike u8_to_u16,
@@ -338,7 +338,7 @@ namespace sogen
                  std::is_same_v<string_view_type, std::wstring_view>)
     constexpr std::string convert_to_u8(const string_view_type view)
     {
-        using char_type = typename string_view_type::value_type;
+        using char_type = string_view_type::value_type;
         using uchar_type = std::make_unsigned_t<char_type>;
         constexpr auto char_size = sizeof(char_type);
         constexpr auto upper_codepoint = char_size == 2 ? 0xFFFF : 0x10FFFF;

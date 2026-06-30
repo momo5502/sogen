@@ -48,7 +48,7 @@ namespace sogen
             {
                 if (chr == u':' && this->folders_.empty() && !this->drive_.has_value() && folder.size() == 1)
                 {
-                    this->drive_ = static_cast<char>(folder[0]);
+                    this->drive_ = static_cast<char>(*folder.cbegin());
                     folder.clear();
                     continue;
                 }

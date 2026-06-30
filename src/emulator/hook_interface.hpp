@@ -14,10 +14,11 @@ namespace sogen
 
     using memory_operation = memory_permission;
 
-    enum class instruction_hook_continuation : bool
+    enum class instruction_hook_continuation : uint8_t
     {
-        run_instruction = false,
-        skip_instruction = true,
+        run_instruction = 0,
+        skip_instruction = 1,
+        finalized_instruction_pointer = 2,
     };
 
     enum class memory_violation_continuation : uint8_t

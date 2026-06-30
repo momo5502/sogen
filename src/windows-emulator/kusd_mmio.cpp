@@ -121,8 +121,10 @@ namespace sogen
 
     kusd_mmio::kusd_mmio(memory_manager& memory, utils::clock& clock)
         : memory_(&memory),
-          clock_(&clock)
+          clock_(&clock),
+          kusd_{}
     {
+        this->kusd_.NtProductType = NtProductWinNt;
     }
 
     kusd_mmio::~kusd_mmio()

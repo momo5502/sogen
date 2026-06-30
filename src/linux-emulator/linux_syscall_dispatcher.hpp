@@ -93,7 +93,7 @@ namespace sogen
       public:
         linux_syscall_dispatcher() = default;
 
-        void dispatch(linux_emulator& emu);
+        instruction_hook_continuation dispatch(linux_emulator& emu) const;
         void add_handlers();
 
         const linux_syscall_handler_entry* get_entry(uint64_t id) const
@@ -103,10 +103,18 @@ namespace sogen
                 return nullptr;
             }
 
-            return &this->handlers_[static_cast<std::array<linux_syscall_handler_entry, 512>::size_type>(id)];
+            return &this->handlers_.at(static_cast<std::array<linux_syscall_handler_entry, 512>::size_type>(id));
         }
 
       private:
+        void register_handler(uint64_t id, linux_syscall_handler handler, std::string_view name)
+        {
+            this->handlers_.at(static_cast<std::array<linux_syscall_handler_entry, 512>::size_type>(id)) = {
+                .handler = handler,
+                .name = std::string{name},
+            };
+        }
+
         std::array<linux_syscall_handler_entry, 512> handlers_{};
     };
 

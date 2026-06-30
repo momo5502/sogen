@@ -28,6 +28,7 @@ namespace sogen::whp
         constexpr UINT32 vp_index = 0;
         constexpr uint64_t page_size = 0x1000;
         constexpr uint64_t trap_flag_bit = 0x100ull;
+        constexpr uint64_t syscall_instruction_size = 2;
         constexpr uint64_t page_table_entry_present = 1ull << 0;
         constexpr uint64_t page_table_entry_writable = 1ull << 1;
         constexpr uint64_t page_table_entry_user = 1ull << 2;
@@ -1966,7 +1967,7 @@ namespace sogen::whp
                 const auto post_syscall_r10 = entry_values[2].Reg64;
                 const auto saved_rflags = entry_values[3].Reg64;
 
-                const auto pre_syscall_rip = post_syscall_rcx - 2;
+                const auto pre_syscall_rip = post_syscall_rcx - syscall_instruction_size;
 
                 entry_values[0].Reg64 = pre_syscall_rip;
                 entry_values[1].Reg64 = post_syscall_r10;
@@ -1986,13 +1987,16 @@ namespace sogen::whp
 
                 constexpr std::array<WHV_REGISTER_NAME, 1> post_hook_rip_name = {WHvX64RegisterRip};
                 auto post_hook_rip_value = this->get_registers(post_hook_rip_name);
-                if (continuation == instruction_hook_continuation::skip_instruction && post_hook_rip_value[0].Reg64 == pre_syscall_rip)
+                if (continuation != instruction_hook_continuation::finalized_instruction_pointer)
                 {
-                    post_hook_rip_value[0].Reg64 = post_syscall_rcx;
-                }
-                else
-                {
-                    post_hook_rip_value[0].Reg64 += 2;
+                    if (continuation == instruction_hook_continuation::skip_instruction && post_hook_rip_value[0].Reg64 == pre_syscall_rip)
+                    {
+                        post_hook_rip_value[0].Reg64 = post_syscall_rcx;
+                    }
+                    else
+                    {
+                        post_hook_rip_value[0].Reg64 += syscall_instruction_size;
+                    }
                 }
 
                 constexpr std::array<WHV_REGISTER_NAME, 3> post_hook_names = {

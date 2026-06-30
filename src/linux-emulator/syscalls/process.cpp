@@ -45,11 +45,19 @@ namespace sogen
 
         if (c.proc.active_thread)
         {
-            c.proc.active_thread->terminated = true;
-            c.proc.active_thread->exit_code = status;
+            auto& thread = *c.proc.active_thread;
+            thread.terminated = true;
+            thread.exit_code = status;
+            c.emu_ref.on_thread_terminated(thread);
+
+            if (c.emu_ref.perform_thread_switch())
+            {
+                return;
+            }
         }
 
         c.proc.exit_status = status;
+        c.emu_ref.record_stop(stop_reason::normal_exit, std::to_string(status));
         c.emu_ref.stop();
     }
 
@@ -57,7 +65,18 @@ namespace sogen
     {
         const auto status = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
 
+        for (auto& [_, thread] : c.proc.threads)
+        {
+            if (!thread.terminated)
+            {
+                thread.terminated = true;
+                thread.exit_code = status;
+                c.emu_ref.on_thread_terminated(thread);
+            }
+        }
+
         c.proc.exit_status = status;
+        c.emu_ref.record_stop(stop_reason::normal_exit, std::to_string(status));
         c.emu_ref.stop();
     }
 
@@ -210,7 +229,7 @@ namespace sogen
         std::vector<uint8_t> buffer(buflen);
         for (size_t i = 0; i < buflen; ++i)
         {
-            buffer[i] = static_cast<uint8_t>((i * 131 + 0x5A + buflen) & 0xFF);
+            buffer.at(i) = static_cast<uint8_t>((i * 131 + 0x5A + buflen) & 0xFF);
         }
 
         c.emu.write_memory(buf_addr, buffer.data(), buflen);
@@ -233,7 +252,7 @@ namespace sogen
         // Return old action if requested
         if (oldact_addr != 0)
         {
-            const auto& old_action = c.emu_ref.signals.actions[signum];
+            const auto& old_action = c.emu_ref.signals.actions.at(static_cast<size_t>(signum));
             c.emu.write_memory(oldact_addr, &old_action, sizeof(old_action));
         }
 
@@ -242,7 +261,7 @@ namespace sogen
         {
             linux_kernel_sigaction new_action{};
             c.emu.read_memory(act_addr, &new_action, sizeof(new_action));
-            c.emu_ref.signals.actions[signum] = new_action;
+            c.emu_ref.signals.actions.at(static_cast<size_t>(signum)) = new_action;
         }
 
         write_linux_syscall_result(c, 0);
@@ -298,7 +317,7 @@ namespace sogen
         // Emulate a single CPU (bit 0 set)
         const auto write_size = std::min(cpusetsize, static_cast<size_t>(128));
         std::vector<uint8_t> mask(write_size, 0);
-        mask[0] = 1; // CPU 0
+        mask.front() = 1; // CPU 0
 
         c.emu.write_memory(mask_addr, mask.data(), write_size);
         write_linux_syscall_result(c, static_cast<int64_t>(write_size));
@@ -402,9 +421,8 @@ namespace sogen
         // Restore context from the rt_sigframe on the stack.
         // This is called when the signal handler returns via the sigreturn trampoline.
         signal_dispatcher::sigreturn(c.emu_ref);
+        c.mark_instruction_pointer_finalized();
         // Don't write a syscall result — the restored context provides all register values.
-        // Note: sigreturn() adjusts RIP by -2 to compensate for the backend advancing
-        // past the syscall instruction after this hook returns.
     }
 
     void sys_kill(const linux_syscall_context& c)
@@ -431,13 +449,11 @@ namespace sogen
         // Sending to ourselves
         if (is_self)
         {
-            constexpr int LINUX_SIGKILL = 9;
-            constexpr int LINUX_SIGTERM = 15;
-            constexpr int LINUX_SIGABRT = 6;
-
-            if (sig == LINUX_SIGKILL || sig == LINUX_SIGTERM || sig == LINUX_SIGABRT)
+            if (sig == linux_signals::LINUX_SIGKILL || sig == linux_signals::LINUX_SIGTERM || sig == linux_signals::LINUX_SIGABRT)
             {
+                c.emu_ref.on_signal(sig, 0, linux_signals::LINUX_SI_USER);
                 c.proc.exit_status = 128 + sig;
+                c.emu_ref.record_stop(stop_reason::signal_termination, "signal=" + std::to_string(sig));
                 c.emu_ref.stop();
                 write_linux_syscall_result(c, 0);
                 return;
@@ -478,14 +494,18 @@ namespace sogen
             return;
         }
 
-        // Sending fatal signal to a thread
-        constexpr int LINUX_SIGKILL = 9;
-        constexpr int LINUX_SIGTERM = 15;
-        constexpr int LINUX_SIGABRT = 6;
-
-        if (sig == LINUX_SIGKILL || sig == LINUX_SIGTERM || sig == LINUX_SIGABRT)
+        if (!tid_exists)
         {
+            write_linux_syscall_result(c, -LINUX_ESRCH);
+            return;
+        }
+
+        // Sending fatal signal to a thread
+        if (sig == linux_signals::LINUX_SIGKILL || sig == linux_signals::LINUX_SIGTERM || sig == linux_signals::LINUX_SIGABRT)
+        {
+            c.emu_ref.on_signal(sig, 0, linux_signals::LINUX_SI_USER);
             c.proc.exit_status = 128 + sig;
+            c.emu_ref.record_stop(stop_reason::signal_termination, "signal=" + std::to_string(sig));
             c.emu_ref.stop();
             write_linux_syscall_result(c, 0);
             return;

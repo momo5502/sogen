@@ -3,6 +3,7 @@
 
 #include <arch_emulator.hpp>
 
+#include <stop_reason.hpp>
 #include <utils/function.hpp>
 
 #include "syscall_dispatcher.hpp"
@@ -21,6 +22,7 @@ namespace sogen
 
     struct io_device;
 
+    // NOLINTNEXTLINE(misc-multiple-inheritance)
     struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
     {
         template <typename T>
@@ -46,14 +48,6 @@ namespace sogen
         opt_func<void(uint64_t address)> on_instruction{};
         opt_func<void(io_device& device, std::u16string_view device_name, ULONG code)> on_ioctrl{};
         opt_func<void(uint32_t fail_code)> on_fast_fail{};
-    };
-
-    enum class stop_reason : uint8_t
-    {
-        none,
-        unknown_syscall,
-        unimplemented_syscall,
-        syscall_exception,
     };
 
     struct application_settings

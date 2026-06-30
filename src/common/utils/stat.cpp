@@ -21,22 +21,17 @@ namespace sogen
 
     LARGE_INTEGER convert_timespec_to_filetime(const timespec timespec)
     {
-        return {.QuadPart = (timespec.tv_sec * HUNDRED_NANOSECONDS_IN_ONE_SECOND) + timespec.tv_nsec + WINDOWS_EPOCH_DIFFERENCE};
+        return {.QuadPart = (timespec.tv_sec * HUNDRED_NANOSECONDS_IN_ONE_SECOND) + (timespec.tv_nsec / 100) + WINDOWS_EPOCH_DIFFERENCE};
     }
 
 #if defined(_WIN32) && !defined(__MINGW64__)
 
-    static timespec convert_filetime_to_timespec(const FILETIME windows_time, timespec fallback_time = {.tv_sec = 0, .tv_nsec = 0})
+    static timespec convert_filetime_to_timespec(const FILETIME windows_time)
     {
-        if (windows_time.dwHighDateTime == 0 && windows_time.dwLowDateTime == 0)
-        {
-            return fallback_time;
-        }
-
         const LARGE_INTEGER time{.LowPart = windows_time.dwLowDateTime, .HighPart = static_cast<LONG>(windows_time.dwHighDateTime)};
         const auto value = time.QuadPart - WINDOWS_EPOCH_DIFFERENCE;
         return {.tv_sec = value / HUNDRED_NANOSECONDS_IN_ONE_SECOND,
-                .tv_nsec = static_cast<LONG>(value % HUNDRED_NANOSECONDS_IN_ONE_SECOND)};
+                .tv_nsec = static_cast<LONG>((value % HUNDRED_NANOSECONDS_IN_ONE_SECOND) * 100)};
     }
 
     static bool do_stat(HANDLE handle, struct compat_stat* stat)
@@ -66,8 +61,8 @@ namespace sogen
         stat->st_mode = st_mode;
 
         stat->st_mtimespec = convert_filetime_to_timespec(file_info.ftLastWriteTime);
-        stat->st_atimespec = convert_filetime_to_timespec(file_info.ftLastAccessTime, stat->st_mtimespec);
-        stat->st_ctimespec = convert_filetime_to_timespec(file_info.ftCreationTime, stat->st_mtimespec);
+        stat->st_atimespec = convert_filetime_to_timespec(file_info.ftLastAccessTime);
+        stat->st_ctimespec = convert_filetime_to_timespec(file_info.ftCreationTime);
 
         stat->st_size = static_cast<int64_t>((file_info.nFileSizeHigh * 0x100000000ULL) + file_info.nFileSizeLow);
         stat->st_ino = (file_info.nFileIndexHigh * 0x100000000ULL) + file_info.nFileIndexLow;
@@ -114,9 +109,7 @@ namespace sogen
 
     static constexpr timespec time64_to_timespec(int64_t time64)
     {
-        const auto value = (time64 * HUNDRED_NANOSECONDS_IN_ONE_SECOND) + WINDOWS_EPOCH_DIFFERENCE;
-        return {.tv_sec = value / HUNDRED_NANOSECONDS_IN_ONE_SECOND,
-                .tv_nsec = static_cast<LONG>(value % HUNDRED_NANOSECONDS_IN_ONE_SECOND)};
+        return {.tv_sec = time64, .tv_nsec = 0};
     }
 
 #endif
