@@ -41,7 +41,7 @@ namespace sogen
             const auto* clone_entry = linux_emu.dispatcher.get_entry(linux_syscalls::LINUX_SYS_clone);
             ASSERT_NE(clone_entry, nullptr);
             ASSERT_NE(clone_entry->handler, nullptr);
-            clone_entry->handler({linux_emu, linux_emu.emu(), linux_emu.process});
+            clone_entry->handler({.emu_ref = linux_emu, .emu = linux_emu.emu(), .proc = linux_emu.process});
 
             const auto child_tid = static_cast<uint32_t>(linux_emu.emu().reg(x86_register::rax));
             ASSERT_NE(child_tid, parent_tid);
@@ -53,7 +53,7 @@ namespace sogen
             EXPECT_EQ(linux_emu.emu().reg(x86_register::rax), 0U);
             EXPECT_EQ(linux_emu.emu().reg(x86_register::rsp), child_stack);
             ASSERT_EQ(thread_switches.size(), 1U);
-            EXPECT_EQ(thread_switches[0], std::make_pair(parent_tid, child_tid));
+            EXPECT_EQ(thread_switches.at(0), std::make_pair(parent_tid, child_tid));
 
             EXPECT_FALSE(linux_emu.activate_thread(999999));
 
@@ -61,7 +61,7 @@ namespace sogen
             ASSERT_NE(exit_entry, nullptr);
             ASSERT_NE(exit_entry->handler, nullptr);
             linux_emu.emu().reg(x86_register::rdi, 7);
-            exit_entry->handler({linux_emu, linux_emu.emu(), linux_emu.process});
+            exit_entry->handler({.emu_ref = linux_emu, .emu = linux_emu.emu(), .proc = linux_emu.process});
 
             ASSERT_EQ(terminated_threads, std::vector<uint32_t>{child_tid});
             EXPECT_FALSE(linux_emu.process.exit_status.has_value());
@@ -69,10 +69,10 @@ namespace sogen
             EXPECT_FALSE(linux_emu.activate_thread(child_tid));
             ASSERT_EQ(linux_emu.current_thread_id(), parent_tid);
             ASSERT_EQ(thread_switches.size(), 2U);
-            EXPECT_EQ(thread_switches[1], std::make_pair(child_tid, parent_tid));
+            EXPECT_EQ(thread_switches.at(1), std::make_pair(child_tid, parent_tid));
 
             linux_emu.emu().reg(x86_register::rdi, 11);
-            exit_entry->handler({linux_emu, linux_emu.emu(), linux_emu.process});
+            exit_entry->handler({.emu_ref = linux_emu, .emu = linux_emu.emu(), .proc = linux_emu.process});
 
             ASSERT_EQ((terminated_threads), (std::vector<uint32_t>{child_tid, parent_tid}));
             ASSERT_TRUE(linux_emu.process.exit_status.has_value());

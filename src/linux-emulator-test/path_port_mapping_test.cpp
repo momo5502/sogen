@@ -85,7 +85,7 @@ namespace sogen
                 return -1;
             }
 
-            entry->handler({emu, emu.emu(), emu.process});
+            entry->handler({.emu_ref = emu, .emu = emu.emu(), .proc = emu.process});
             return static_cast<int64_t>(emu.emu().reg(x86_register::rax));
         }
 
