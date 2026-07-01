@@ -1158,7 +1158,16 @@ namespace sogen::kvm
 
                 for (size_t offset = 0; offset < size; offset += page_size)
                 {
-                    this->mapped_pages_.erase(address + offset);
+                    const auto entry = this->mapped_pages_.find(address + offset);
+                    if (entry == this->mapped_pages_.end())
+                    {
+                        continue;
+                    }
+                    if (entry->second && entry->second->physical_page)
+                    {
+                        this->gpa_pages_.erase(*entry->second->physical_page);
+                    }
+                    this->mapped_pages_.erase(entry);
                 }
 
                 // Drop any MMIO region whose backing pages were just removed. Regions are mapped and
@@ -1411,6 +1420,7 @@ namespace sogen::kvm
                 page->physical_page = page_gpa;
 
                 this->mapped_pages_[page_gpa] = std::move(page);
+                this->gpa_pages_[page_gpa] = this->mapped_pages_[page_gpa].get();
                 this->page_table_views_[page_gpa] = reinterpret_cast<uint64_t*>(raw_page);
 
                 if (map_into_guest)
@@ -1437,6 +1447,7 @@ namespace sogen::kvm
                 if (!page.physical_page)
                 {
                     page.physical_page = this->allocate_guest_physical_page();
+                    this->gpa_pages_[*page.physical_page] = &page;
                 }
 
                 return *page.physical_page;
@@ -1479,56 +1490,45 @@ namespace sogen::kvm
                 // each time.
                 struct desired_page
                 {
+                    uint64_t gpa = 0;
                     uint8_t* host = nullptr;
                     uint32_t flags = 0;
                 };
 
-                std::map<uint64_t, desired_page> pages{};
-                for (const auto& entry : this->mapped_pages_)
+                // Iterate the GPA-sorted view directly: it is already ordered and deduplicated (unique
+                // physical addresses), so no per-flush sort or std::map rebuild is needed even with
+                // hundreds of thousands of mapped pages.
+                std::vector<desired_page> pages{};
+                pages.reserve(this->gpa_pages_.size());
+                for (const auto& [gpa, page] : this->gpa_pages_)
                 {
-                    const auto& page = entry.second;
                     if (!page || page->host_page == nullptr || page->permissions == memory_permission::none)
                     {
                         continue;
                     }
-                    if (!page->physical_page)
-                    {
-                        throw std::logic_error("KVM mapped page is missing a guest physical address");
-                    }
 
-                    const auto inserted =
-                        pages
-                            .emplace(*page->physical_page, desired_page{.host = static_cast<uint8_t*>(page->host_page),
-                                                                        .flags = this->to_kvm_map_flags(page->permissions)})
-                            .second;
-                    if (!inserted)
-                    {
-                        throw std::logic_error("Duplicate KVM guest physical page");
-                    }
+                    pages.push_back(desired_page{
+                        .gpa = gpa, .host = static_cast<uint8_t*>(page->host_page), .flags = this->to_kvm_map_flags(page->permissions)});
                 }
 
                 std::map<uint64_t, installed_memslot> desired{};
-                for (auto it = pages.begin(); it != pages.end();)
+                for (size_t i = 0; i < pages.size();)
                 {
-                    const auto run_gpa = it->first;
-                    auto* const run_host_base = it->second.host;
-                    const auto run_flags = it->second.flags;
+                    const auto run_gpa = pages[i].gpa;
+                    auto* const run_host_base = pages[i].host;
+                    const auto run_flags = pages[i].flags;
 
                     size_t run_size = page_size;
-                    auto jt = std::next(it);
-                    while (jt != pages.end())
+                    size_t j = i + 1;
+                    while (j < pages.size() && pages[j].gpa == run_gpa + run_size && pages[j].host == run_host_base + run_size &&
+                           pages[j].flags == run_flags)
                     {
-                        if (jt->first != run_gpa + run_size || jt->second.host != run_host_base + run_size || jt->second.flags != run_flags)
-                        {
-                            break;
-                        }
-
                         run_size += page_size;
-                        ++jt;
+                        ++j;
                     }
 
                     desired[run_gpa] = installed_memslot{.size = run_size, .host = run_host_base, .flags = run_flags};
-                    it = jt;
+                    i = j;
                 }
 
                 for (auto it = this->current_slots_.begin(); it != this->current_slots_.end();)
@@ -2273,6 +2273,9 @@ namespace sogen::kvm
             bool mappings_dirty_ = false;
             std::vector<int> free_slot_ids_{};
             std::map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
+            // GPA-sorted view of mapped_pages_ (guest physical address -> page), kept in sync so
+            // synchronize_memslots can project in memslot order without re-sorting every flush.
+            std::map<uint64_t, mapped_page*> gpa_pages_{};
             std::unordered_map<uint64_t, uint64_t*> page_table_views_{};
             uint64_t pml4_gpa_ = 0;
             uint64_t next_guest_physical_page_ = guest_physical_page_base;
