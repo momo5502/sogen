@@ -123,7 +123,6 @@ namespace sogen
         : memory_(&memory),
           clock_(&clock)
     {
-        this->kusd_.NtProductType = NtProductWinNt;
     }
 
     kusd_mmio::~kusd_mmio()
