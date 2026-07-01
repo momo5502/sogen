@@ -10,6 +10,7 @@
 #include "segment_utils.hpp"
 
 #include <utils/time.hpp>
+#include <type_traits>
 #include <vector>
 
 namespace sogen
@@ -265,7 +266,7 @@ namespace sogen
         void make_unicode_string(UNICODE_STRING<EmulatorTraits<EMU>>& result, const std::u16string_view str,
                                  const std::optional<size_t> maximum_length = std::nullopt)
         {
-            using string_element = std::u16string_view::value_type;
+            using string_element = std::remove_cvref_t<decltype(str)>::value_type;
             constexpr auto element_size = sizeof(string_element);
             constexpr auto required_alignment = alignof(string_element);
             const auto total_length = str.size() * element_size;
@@ -291,8 +292,9 @@ namespace sogen
         {
             const auto unicode_string = this->reserve<UNICODE_STRING<EmulatorTraits<Emu64>>>();
 
-            unicode_string.access(
-                [&](UNICODE_STRING<EmulatorTraits<Emu64>>& unicode_str) { this->make_unicode_string(unicode_str, str, maximum_length); });
+            unicode_string.access([&](UNICODE_STRING<EmulatorTraits<Emu64>>& unicode_str) { //
+                this->make_unicode_string(unicode_str, str, maximum_length);
+            });
 
             return unicode_string;
         }
@@ -595,11 +597,10 @@ namespace sogen
 
     inline void set_function_arguments(x86_64_emulator& emu, const function_calling_convention cc, const std::span<const uint64_t> values)
     {
-        size_t index = 0;
-        for (const auto value : values)
+        for (size_t i = 0; i < values.size(); ++i)
         {
-            set_function_argument(emu, cc, index, value);
-            ++index;
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)
+            set_function_argument(emu, cc, i, values[i]);
         }
     }
 

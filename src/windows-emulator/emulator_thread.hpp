@@ -239,11 +239,12 @@ namespace sogen
 
     class emulator_process : public ref_counted_object
     {
-      public:
+        // NOLINTNEXTLINE(misc-override-with-different-visibility)
         void serialize_object(utils::buffer_serializer&) const override
         {
         }
 
+        // NOLINTNEXTLINE(misc-override-with-different-visibility)
         void deserialize_object(utils::buffer_deserializer&) override
         {
         }
