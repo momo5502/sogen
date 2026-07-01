@@ -460,6 +460,10 @@ namespace sogen
         hwnd handle_NtUserSetCapture(const syscall_context& c, hwnd window);
         BOOL handle_NtUserReleaseCapture(const syscall_context& c);
         BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, emulator_pointer devices, uint32_t device_count, uint32_t size);
+        ULONG handle_NtUserGetRawInputDeviceList(const syscall_context& c, emulator_pointer devices, emulator_pointer device_count,
+                                                 uint32_t size);
+        ULONG handle_NtUserGetRawInputDeviceInfo(const syscall_context& c, handle device, uint32_t command, emulator_pointer data,
+                                                 emulator_pointer size);
         uint32_t handle_NtUserGetRawInputData(const syscall_context& c, emulator_pointer raw_input, uint32_t command, emulator_pointer data,
                                               emulator_object<uint32_t> size_ptr, uint32_t header_size);
         BOOL handle_NtUserDefSetText(const syscall_context& c, hwnd window, emulator_object<LARGE_STRING> text);
@@ -1046,11 +1050,6 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
-        ULONG handle_NtUserGetRawInputDeviceList()
-        {
-            return 0;
-        }
-
         ULONG handle_NtUserGetKeyboardType()
         {
             return 0;
@@ -1132,6 +1131,10 @@ namespace sogen
             }
         }
 
+        NTSTATUS handle_NtNotifyChangeDirectoryFile()
+        {
+            return STATUS_SUCCESS;
+        }
     }
 
     // NOLINTNEXTLINE(readability-function-size,hicpp-function-size)
@@ -1443,6 +1446,7 @@ namespace sogen
         add_handler(NtUserToUnicodeEx);
         add_handler(NtUserSetProcessDpiAwarenessContext);
         add_handler(NtUserGetRawInputDeviceList);
+        add_handler(NtUserGetRawInputDeviceInfo);
         add_handler(NtUserGetKeyboardType);
         add_handler(NtUserEnumDisplayDevices);
         add_handler(NtUserEnumDisplaySettings);
@@ -1616,6 +1620,7 @@ namespace sogen
         add_handler(NtUserAttachThreadInput);
         add_handler(NtUserRegisterTouchHitTestingWindow);
         add_handler(NtUserActivateKeyboardLayout);
+        add_handler(NtNotifyChangeDirectoryFile);
 
 #undef add_handler
     }

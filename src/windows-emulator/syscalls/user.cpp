@@ -1640,6 +1640,165 @@ namespace sogen
             return TRUE;
         }
 
+        ULONG handle_NtUserGetRawInputDeviceList(const syscall_context& c, const emulator_pointer devices,
+                                                 const emulator_pointer device_count, const uint32_t size)
+        {
+            constexpr uint32_t required_count = 2;
+            constexpr uint32_t list32_size = 8;
+            constexpr uint32_t list64_size = 16;
+            constexpr uint64_t mouse_handle = 0x10001;
+            constexpr uint64_t keyboard_handle = 0x10002;
+
+            if (device_count == 0 || (size != list32_size && size != list64_size))
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return static_cast<ULONG>(-1);
+            }
+
+            uint32_t capacity = 0;
+            if (!c.emu.try_read_memory(device_count, &capacity, sizeof(capacity)))
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return static_cast<ULONG>(-1);
+            }
+
+            if (devices == 0)
+            {
+                c.emu.write_memory(device_count, &required_count, sizeof(required_count));
+                return 0;
+            }
+
+            if (capacity < required_count)
+            {
+                c.emu.write_memory(device_count, &required_count, sizeof(required_count));
+                set_guest_last_error(c, 122); // ERROR_INSUFFICIENT_BUFFER
+                return static_cast<ULONG>(-1);
+            }
+
+            if (size == list32_size)
+            {
+                struct raw_input_device_list32
+                {
+                    uint32_t device;
+                    uint32_t type;
+                };
+
+                const std::array device_list = {
+                    raw_input_device_list32{.device = static_cast<uint32_t>(mouse_handle), .type = RIM_TYPEMOUSE},
+                    raw_input_device_list32{.device = static_cast<uint32_t>(keyboard_handle), .type = RIM_TYPEKEYBOARD},
+                };
+                c.emu.write_memory(devices, device_list.data(), sizeof(device_list));
+            }
+            else
+            {
+                struct raw_input_device_list64
+                {
+                    uint64_t device;
+                    uint32_t type;
+                };
+
+                const std::array device_list = {
+                    raw_input_device_list64{.device = mouse_handle, .type = RIM_TYPEMOUSE},
+                    raw_input_device_list64{.device = keyboard_handle, .type = RIM_TYPEKEYBOARD},
+                };
+                c.emu.write_memory(devices, device_list.data(), sizeof(device_list));
+            }
+
+            c.emu.write_memory(device_count, &required_count, sizeof(required_count));
+            return required_count;
+        }
+
+        ULONG handle_NtUserGetRawInputDeviceInfo(const syscall_context& c, const handle device, const uint32_t command,
+                                                 const emulator_pointer data, const emulator_pointer size)
+        {
+            constexpr uint64_t mouse_handle = 0x10001;
+            constexpr uint64_t keyboard_handle = 0x10002;
+            constexpr uint32_t ridi_device_name = 0x20000007;
+            constexpr uint32_t ridi_device_info = 0x2000000B;
+            constexpr std::u16string_view mouse_name = u"\\\\?\\HID#SOGEN_MOUSE#0001#{378de44c-56ef-11d1-bc8c-00a0c91405dd}";
+            constexpr std::u16string_view keyboard_name = u"\\\\?\\HID#SOGEN_KEYBOARD#0001#{884b96c3-56ef-11d1-bc8c-00a0c91405dd}";
+
+            if (size == 0 || (device != mouse_handle && device != keyboard_handle))
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return static_cast<ULONG>(-1);
+            }
+
+            uint32_t capacity = 0;
+            if (!c.emu.try_read_memory(size, &capacity, sizeof(capacity)))
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return static_cast<ULONG>(-1);
+            }
+
+            if (command == ridi_device_name)
+            {
+                const auto name = device == mouse_handle ? mouse_name : keyboard_name;
+                const auto required_characters = static_cast<uint32_t>(name.size() + 1);
+                if (data == 0)
+                {
+                    c.emu.write_memory(size, &required_characters, sizeof(required_characters));
+                    return 0;
+                }
+                if (capacity < required_characters)
+                {
+                    c.emu.write_memory(size, &required_characters, sizeof(required_characters));
+                    set_guest_last_error(c, 122); // ERROR_INSUFFICIENT_BUFFER
+                    return static_cast<ULONG>(-1);
+                }
+
+                c.emu.write_memory(data, name.data(), name.size() * sizeof(char16_t));
+                const char16_t terminator = 0;
+                c.emu.write_memory(data + name.size() * sizeof(char16_t), &terminator, sizeof(terminator));
+                c.emu.write_memory(size, &required_characters, sizeof(required_characters));
+                return static_cast<ULONG>(name.size());
+            }
+
+            if (command == ridi_device_info)
+            {
+                struct raw_input_device_info
+                {
+                    uint32_t structure_size;
+                    uint32_t type;
+                    std::array<uint32_t, 6> details;
+                };
+                static_assert(sizeof(raw_input_device_info) == 32);
+
+                constexpr uint32_t required_bytes = sizeof(raw_input_device_info);
+                if (data == 0)
+                {
+                    c.emu.write_memory(size, &required_bytes, sizeof(required_bytes));
+                    return 0;
+                }
+                if (capacity < required_bytes)
+                {
+                    c.emu.write_memory(size, &required_bytes, sizeof(required_bytes));
+                    set_guest_last_error(c, 122); // ERROR_INSUFFICIENT_BUFFER
+                    return static_cast<ULONG>(-1);
+                }
+
+                raw_input_device_info info{};
+                info.structure_size = required_bytes;
+                if (device == mouse_handle)
+                {
+                    info.type = RIM_TYPEMOUSE;
+                    info.details = {1, 3, 100, 0, 0, 0};
+                }
+                else
+                {
+                    info.type = RIM_TYPEKEYBOARD;
+                    info.details = {4, 0, 1, 12, 3, 101};
+                }
+
+                c.emu.write_memory(data, &info, sizeof(info));
+                c.emu.write_memory(size, &required_bytes, sizeof(required_bytes));
+                return required_bytes;
+            }
+
+            set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+            return static_cast<ULONG>(-1);
+        }
+
         // GetRawInputData fetches the payload referenced by a WM_INPUT message's lParam (an HRAWINPUT token we
         // minted in handle_ui_event). We only synthesize relative mouse motion, so reconstruct a RAWINPUT whose
         // mouse delta is the {dx, dy} stored for the token. uiCommand selects the header-only (RID_HEADER) or
