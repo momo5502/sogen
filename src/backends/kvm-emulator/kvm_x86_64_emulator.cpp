@@ -1358,9 +1358,9 @@ namespace sogen::kvm
                 // GDT here so the flat 4 GB descriptor persists across the IRETQ. Runs at CPL0; RAX is preserved.
                 //   push rax; mov eax,0x2B; mov ds,ax; mov es,ax; pop rax; iretq
                 constexpr uint32_t iretq_stub_offset = exception_vector_count * exception_stub_stride;
-                static constexpr uint8_t iretq_trampoline_code[] = {0x50, 0xB8, 0x2B, 0x00, 0x00, 0x00, 0x8E,
-                                                                    0xD8, 0x8E, 0xC0, 0x58, 0x48, 0xCF};
-                std::memcpy(stubs + iretq_stub_offset, iretq_trampoline_code, sizeof(iretq_trampoline_code));
+                static constexpr std::array<uint8_t, 13> iretq_trampoline_code = {0x50, 0xB8, 0x2B, 0x00, 0x00, 0x00, 0x8E,
+                                                                                  0xD8, 0x8E, 0xC0, 0x58, 0x48, 0xCF};
+                std::memcpy(stubs + iretq_stub_offset, iretq_trampoline_code.data(), iretq_trampoline_code.size());
                 this->iretq_trampoline_ = this->exception_stub_page_ + iretq_stub_offset;
 
                 // 64-bit interrupt gates (DPL 3 so software int instructions are also trapped) using IST1.
