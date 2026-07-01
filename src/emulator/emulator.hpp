@@ -9,7 +9,6 @@
 namespace sogen
 {
 
-    // NOLINTNEXTLINE(misc-multiple-inheritance)
     class emulator : public cpu_interface, public memory_interface, public hook_interface
     {
       public:

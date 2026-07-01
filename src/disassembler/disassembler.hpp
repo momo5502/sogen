@@ -212,7 +212,7 @@ namespace sogen
                 return false;
             }
 
-            const auto& inst = static_cast<std::span<cs_insn>>(insts).front();
+            const auto& inst = insts[0];
             if (inst.id != X86_INS_JMP)
             {
                 return true;

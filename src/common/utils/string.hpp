@@ -267,13 +267,11 @@ namespace sogen
         template <class Elem, class Traits>
         int compare_ignore_case(std::basic_string_view<Elem, Traits> lhs, std::basic_string_view<Elem, Traits> rhs)
         {
-            auto lhs_iter = lhs.begin();
-            auto rhs_iter = rhs.begin();
-
-            for (; lhs_iter != lhs.end() && rhs_iter != rhs.end(); ++lhs_iter, ++rhs_iter)
+            const auto count = std::min(lhs.size(), rhs.size());
+            for (size_t i = 0; i < count; ++i)
             {
-                auto c1 = char_to_lower(*lhs_iter);
-                auto c2 = char_to_lower(*rhs_iter);
+                auto c1 = char_to_lower(lhs.at(i));
+                auto c2 = char_to_lower(rhs.at(i));
 
                 if (c1 < c2)
                 {

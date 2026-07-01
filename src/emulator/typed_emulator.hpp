@@ -166,6 +166,7 @@ namespace sogen
             return this->hook_instruction(instruction_type, [c = std::move(callback)](const uint64_t) { return c(); });
         }
 
+      private:
         emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override = 0;
 
         size_t read_raw_register(int reg, void* value, size_t size) override = 0;

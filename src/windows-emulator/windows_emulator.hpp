@@ -22,7 +22,6 @@ namespace sogen
 
     struct io_device;
 
-    // NOLINTNEXTLINE(misc-multiple-inheritance)
     struct emulator_callbacks : module_manager::callbacks, process_context::callbacks
     {
         template <typename T>

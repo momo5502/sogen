@@ -165,13 +165,14 @@ namespace sogen::network
         std::vector<pollfd> pfds{};
         pfds.resize(sockets.size());
 
-        auto pfd = pfds.begin();
-        for (const auto* socket : sockets)
+        for (size_t i = 0; i < sockets.size(); ++i)
         {
-            pfd->fd = socket->get_socket();
-            pfd->events = in_poll ? POLLIN : POLLOUT;
-            pfd->revents = 0;
-            ++pfd;
+            auto& pfd = pfds.at(i);
+            const auto* socket = sockets.subspan(i, 1).front();
+
+            pfd.fd = socket->get_socket();
+            pfd.events = in_poll ? POLLIN : POLLOUT;
+            pfd.revents = 0;
         }
 
         const auto retval = poll(pfds.data(), static_cast<uint32_t>(pfds.size()), static_cast<int>(timeout.count()));

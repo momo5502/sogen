@@ -32,6 +32,26 @@ namespace sogen::network
 #endif
     }
 
+    namespace
+    {
+        std::optional<uint16_t> parse_port(const std::string_view port)
+        {
+            if (port.empty())
+            {
+                return std::nullopt;
+            }
+
+            uint16_t parsed_port{};
+            const auto [ptr, ec] = std::from_chars(port.data(), port.data() + port.size(), parsed_port);
+            if (ec == std::errc{} && ptr == port.data() + port.size())
+            {
+                return parsed_port;
+            }
+
+            return std::nullopt;
+        }
+    }
+
     address::address()
     {
         initialize_wsa();
@@ -301,22 +321,6 @@ namespace sogen::network
     void address::parse(std::string_view addr, const std::optional<int>& family)
     {
         std::optional<uint16_t> port_value{};
-
-        const auto parse_port = [](std::string_view port) -> std::optional<uint16_t> {
-            if (port.empty())
-            {
-                return std::nullopt;
-            }
-
-            uint16_t parsed_port{};
-            const auto [ptr, ec] = std::from_chars(port.data(), port.data() + port.size(), parsed_port);
-            if (ec == std::errc{} && ptr == port.data() + port.size())
-            {
-                return parsed_port;
-            }
-
-            return std::nullopt;
-        };
 
         if (!addr.empty() && addr.front() == '[')
         {

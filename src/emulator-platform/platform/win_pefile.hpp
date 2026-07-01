@@ -184,7 +184,6 @@ namespace sogen
     };
 
     template <typename T>
-    // NOLINTNEXTLINE(misc-multiple-inheritance)
     struct PEOptionalHeaderBasePart3_t : PEOptionalHeaderBasePart1_t<T>, PEOptionalHeaderBasePart2_t<T>
     {
         uint32_t SectionAlignment;
