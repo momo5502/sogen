@@ -686,8 +686,8 @@ namespace sogen
                 // No handler — default action: terminate
                 if (!this->log.is_output_disabled())
                 {
-                    linux_logger::error("Memory violation at 0x%" PRIx64 ": %s %s (size=%zu, rip=0x%" PRIx64 ")\n", address, type_str,
-                                        op_str, size, rip);
+                    this->log.error("Memory violation at 0x%" PRIx64 ": %s %s (size=%zu, rip=0x%" PRIx64 ")\n", address, type_str, op_str,
+                                    size, rip);
                 }
 
                 this->record_stop(stop_reason::unhandled_memory_violation, format_memory_violation_stop_detail(address, size));

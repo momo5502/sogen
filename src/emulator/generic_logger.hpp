@@ -1,5 +1,9 @@
 #pragma once
+#include <utility>
+
 #include <utils/object.hpp>
+
+#include <string_view>
 
 #if (defined(__clang__) || defined(__GNUC__)) && !defined(__MINGW64__)
 #define FORMAT_ATTRIBUTE(fmt_pos, var_pos) __attribute__((format(printf, fmt_pos, var_pos)))

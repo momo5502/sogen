@@ -8,7 +8,7 @@
 #include <platform/compiler.hpp>
 #include <utils/function.hpp>
 
-#include "linux_logger.hpp"
+#include <logger.hpp>
 #include "linux_file_system.hpp"
 #include "linux_memory_manager.hpp"
 #include "linux_process_context.hpp"
@@ -68,7 +68,7 @@ namespace sogen
 
       public:
         std::filesystem::path emulation_root{};
-        linux_logger log{};
+        logger log{};
         linux_file_system file_sys{};
         linux_memory_manager memory;
         linux_module_manager mod_manager;

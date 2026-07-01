@@ -30,7 +30,7 @@ namespace sogen
 
         if (!emu.memory.allocate_memory(TRAMPOLINE_ADDR, TRAMPOLINE_SIZE, memory_permission::read_write))
         {
-            linux_logger::error("Failed to allocate sigreturn trampoline page\n");
+            emu.log.error("Failed to allocate sigreturn trampoline page\n");
             return;
         }
 
@@ -86,7 +86,7 @@ namespace sogen
                 // Default action: terminate
                 if (!emu.log.is_output_disabled())
                 {
-                    linux_logger::error("Signal %d: default action is terminate (fault_addr=0x%" PRIx64 ")\n", signum, fault_addr);
+                    emu.log.error("Signal %d: default action is terminate (fault_addr=0x%" PRIx64 ")\n", signum, fault_addr);
                 }
                 emu.process.exit_status = 128 + signum;
                 emu.record_stop(stop_reason::signal_termination, "signal=" + std::to_string(signum));

@@ -2,7 +2,10 @@
 #include "generic_logger.hpp"
 
 #include <utils/function.hpp>
+#include <utils/win.hpp>
+
 #include <string_view>
+#include <utility>
 
 namespace sogen
 {
@@ -17,7 +20,7 @@ namespace sogen
         // output is disabled, so they observe all log activity.
         using sink = utils::optional_function<void(color c, std::string_view message)>;
 
-#ifdef OS_WINDOWS
+#ifdef _WIN32
         logger();
         ~logger() override;
 #endif
@@ -48,7 +51,7 @@ namespace sogen
         }
 
       private:
-#ifdef OS_WINDOWS
+#ifdef _WIN32
         UINT old_cp{};
 #endif
         bool disable_output_{false};

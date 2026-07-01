@@ -1,6 +1,6 @@
 #include "core_messaging_registrar.hpp"
 
-#include "../logger.hpp"
+#include <logger.hpp>
 #include "../windows_emulator.hpp"
 
 namespace sogen

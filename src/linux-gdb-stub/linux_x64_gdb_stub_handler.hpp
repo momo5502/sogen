@@ -37,7 +37,7 @@ namespace sogen
             }
             catch (const std::exception& e)
             {
-                linux_logger::error("GDB run: %s\n", e.what());
+                this->linux_emu_->log.error("GDB run: %s\n", e.what());
             }
 
             return gdb_stub::action::resume;
@@ -51,7 +51,7 @@ namespace sogen
             }
             catch (const std::exception& e)
             {
-                linux_logger::error("GDB singlestep: %s\n", e.what());
+                this->linux_emu_->log.error("GDB singlestep: %s\n", e.what());
             }
 
             return gdb_stub::action::resume;

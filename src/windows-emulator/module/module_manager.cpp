@@ -2,7 +2,7 @@
 #include "module_manager.hpp"
 #include "module_mapping.hpp"
 #include "platform/win_pefile.hpp"
-#include "windows-emulator/logger.hpp"
+#include <logger.hpp>
 #include "../wow64_heaven_gate.hpp"
 #include "../version/windows_version_manager.hpp"
 #include "../process_context.hpp"
