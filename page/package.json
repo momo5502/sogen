@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
-    "@irori/idbfs": "^0.5.1",
+    "@irori/idbfs": "^6.0.0",
     "@monaco-editor/react": "^4.7.0",
     "@radix-ui/react-checkbox": "^1.3.3",
     "@radix-ui/react-context-menu": "^2.2.16",
