@@ -1420,7 +1420,10 @@ namespace sogen::kvm
                 page->physical_page = page_gpa;
 
                 this->mapped_pages_[page_gpa] = std::move(page);
-                this->gpa_pages_[page_gpa] = this->mapped_pages_[page_gpa].get();
+                if (!this->gpa_pages_.emplace(page_gpa, this->mapped_pages_[page_gpa].get()).second)
+                {
+                    throw std::logic_error("Duplicate KVM guest physical page");
+                }
                 this->page_table_views_[page_gpa] = reinterpret_cast<uint64_t*>(raw_page);
 
                 if (map_into_guest)
@@ -1447,7 +1450,10 @@ namespace sogen::kvm
                 if (!page.physical_page)
                 {
                     page.physical_page = this->allocate_guest_physical_page();
-                    this->gpa_pages_[*page.physical_page] = &page;
+                    if (!this->gpa_pages_.emplace(*page.physical_page, &page).second)
+                    {
+                        throw std::logic_error("Duplicate KVM guest physical page");
+                    }
                 }
 
                 return *page.physical_page;
@@ -1847,7 +1853,7 @@ namespace sogen::kvm
                 // A 32-bit compatibility-mode (WOW64) fault must be resumed through a real IRETQ: KVM_SET_SREGS
                 // applies segment descriptors but cannot switch the vCPU out of 64-bit mode. 64-bit contexts
                 // are resumed directly from the reconstructed state below.
-                const bool compat_mode = (frame.cs | 3u) != 0x33;
+                const bool compat_mode = (static_cast<uint16_t>(frame.cs) | 3u) != 0x33;
 
                 // Undo the exception entry so the emulator's handlers observe the faulting context, and
                 // a resumed instruction re-executes from where it faulted.
@@ -1908,6 +1914,11 @@ namespace sogen::kvm
                     auto trampoline = resumed;
                     trampoline.rsp = frame_address;
                     trampoline.rip = this->iretq_trampoline_;
+                    // Clear TF for the trampoline itself: if the faulting context had single-stepping
+                    // enabled, each trampoline instruction would raise a #DB before IRETQ runs, and since
+                    // every vector shares IST1 that nested trap would overwrite the iret_frame staged
+                    // above. IRETQ still restores the guest's real TF from iret_frame.rflags.
+                    trampoline.rflags &= ~(1ULL << 8);
                     this->set_regs(trampoline);
                 }
 
