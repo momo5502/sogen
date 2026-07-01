@@ -39,6 +39,10 @@ namespace sogen
                 srv.defaultFontHeightScale = -11;
                 srv.defaultFontWidthScale = 0;
                 srv.systemDpi = 96;
+                srv.systemMetrics[19] = 1; // SM_MOUSEPRESENT
+                srv.systemMetrics[43] = 3; // SM_CMOUSEBUTTONS
+                srv.systemMetrics[75] = 1; // SM_MOUSEWHEELPRESENT
+                srv.systemMetrics[91] = 1; // SM_MOUSEHORIZONTALWHEELPRESENT
             });
 
             const auto handle_table_size = static_cast<size_t>(page_align_up(sizeof(USER_HANDLEENTRY) * MAX_HANDLES));

@@ -46,7 +46,9 @@ namespace sogen
         uint64_t apfnClientA[FNID_ARRAY_SIZE];
         uint64_t apfnClientW[FNID_ARRAY_SIZE];
         uint64_t apfnClientWorker[FNID_ARRAY_SIZE];
-        uint8_t pad_3c8[0xE90];
+        uint8_t pad_3c8[0x3A0];
+        int32_t systemMetrics[0x61];
+        uint8_t pad_8ec[0x96C];
         uint64_t ahbrSystem[USER_SERVERINFO_BRUSH_SLOT_COUNT];
         uint8_t pad_1358[0x34];
         int32_t defaultFontHeightScale;
@@ -57,6 +59,7 @@ namespace sogen
         uint64_t foregroundWindow;
     };
     static_assert(offsetof(USER_SERVERINFO, apfnClientA) == 0x188);
+    static_assert(offsetof(USER_SERVERINFO, systemMetrics) == 0x768);
     static_assert(offsetof(USER_SERVERINFO, ahbrSystem) == 0x1258);
     static_assert(offsetof(USER_SERVERINFO, defaultFontHeightScale) == 0x138C);
     static_assert(offsetof(USER_SERVERINFO, defaultFontWidthScale) == 0x1390);
