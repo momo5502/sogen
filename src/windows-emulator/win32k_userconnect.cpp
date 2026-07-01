@@ -148,7 +148,6 @@ namespace sogen
                 return false;
             }
 
-            // Seed after the pfn copy: the worker-array fill above zeroes part of the MBStrings region.
             seed_messagebox_button_strings(memory, process.user_handles.get_server_info().value());
 
             refresh_dispatch_client_message(process);

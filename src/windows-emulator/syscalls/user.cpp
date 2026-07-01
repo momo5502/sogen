@@ -1303,15 +1303,44 @@ namespace sogen
         BOOL handle_NtGdiFlush(const syscall_context& c);
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
         void draw_system_button_glyph(const syscall_context& c, hdc dc, int x, int y, uint32_t index);
+        BOOL handle_NtUserRemoveMenu(const syscall_context& c, hmenu menu, UINT position, UINT flags);
 
         NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
         {
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtUserRegisterWindowMessage()
+        uint32_t handle_NtUserRegisterWindowMessage(const syscall_context& c,
+                                                    const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> message_name)
         {
-            return STATUS_NOT_SUPPORTED;
+            if (!message_name)
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return 0;
+            }
+
+            const auto raw = message_name.try_read();
+            if (!raw || raw->Buffer == 0 || raw->Length == 0 || raw->Length > raw->MaximumLength || (raw->Length & 1) != 0)
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return 0;
+            }
+
+            std::u16string name(raw->Length / sizeof(char16_t), u'\0');
+            if (!c.win_emu.memory.try_read_memory(raw->Buffer, name.data(), raw->Length))
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return 0;
+            }
+
+            const auto message = static_cast<uint32_t>(c.proc.add_or_find_atom(std::move(name)));
+
+            if (c.win_emu.callbacks.on_generic_activity)
+            {
+                c.win_emu.callbacks.on_generic_activity("RegisterWindowMessage atom=#" + std::to_string(message));
+            }
+
+            return message;
         }
 
         uint64_t handle_NtUserGetThreadState(const syscall_context& c, const ULONG routine)
@@ -1500,6 +1529,23 @@ namespace sogen
         hdc handle_NtUserGetWindowDC(const syscall_context& c, const hwnd window)
         {
             return handle_NtUserGetDCEx(c, window, 0, 0);
+        }
+
+        hwnd handle_NtUserWindowFromDC(const syscall_context& c, const hdc dc)
+        {
+            const auto it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
+            if (it == c.proc.gdi_dc_states.end())
+            {
+                return 0;
+            }
+
+            const auto window = it->second.target_window;
+            if (window == 0 || !c.proc.windows.get(window))
+            {
+                return 0;
+            }
+
+            return window;
         }
 
         uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd /*window*/, hdc /*dc*/, uint32_t control_type)
@@ -1841,6 +1887,22 @@ namespace sogen
             // POINT is { LONG x; LONG y; }. Report the last tracked cursor position in screen coordinates.
             const std::array<int32_t, 2> pt = {c.proc.cursor_x, c.proc.cursor_y};
             c.emu.write_memory(point_ptr, pt.data(), sizeof(pt));
+            return TRUE;
+        }
+
+        BOOL handle_NtUserGetCursorInfo(const syscall_context& c, const emulator_object<EMU_CURSORINFO> cursor_info)
+        {
+            if (!cursor_info)
+            {
+                return FALSE;
+            }
+
+            cursor_info.write({
+                .cbSize = sizeof(EMU_CURSORINFO),
+                .flags = c.proc.cursor_show_count >= 0 && c.proc.cursor_shape_visible ? 1u : 0u,
+                .hCursor = c.proc.current_cursor,
+                .ptScreenPos = {.x = c.proc.cursor_x, .y = c.proc.cursor_y},
+            });
             return TRUE;
         }
 
@@ -2783,6 +2845,20 @@ namespace sogen
             return TRUE;
         }
 
+        uint64_t handle_NtUserGetProp(const syscall_context& c, const hwnd window, const uint16_t atom)
+        {
+            const auto* win = c.proc.windows.get(window);
+            const auto prop = c.proc.get_atom_name(atom);
+
+            if (!win || !prop)
+            {
+                return 0;
+            }
+
+            const auto entry = win->props.find(*prop);
+            return entry != win->props.end() ? entry->second : 0;
+        }
+
         uint64_t handle_NtUserGetProp2(const syscall_context& c, const hwnd window,
                                        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str)
         {
@@ -2800,6 +2876,26 @@ namespace sogen
 
             const auto entry = win->props.find(prop);
             return entry != win->props.end() ? entry->second : 0;
+        }
+
+        uint64_t handle_NtUserRemoveProp(const syscall_context& c, const hwnd window, const uint16_t atom)
+        {
+            auto* win = c.proc.windows.get(window);
+            const auto prop = c.proc.get_atom_name(atom);
+            if (!win || !prop)
+            {
+                return 0;
+            }
+
+            const auto entry = win->props.find(*prop);
+            if (entry == win->props.end())
+            {
+                return 0;
+            }
+
+            const auto data = entry->second;
+            win->props.erase(entry);
+            return data;
         }
 
         uint64_t handle_NtUserChangeWindowMessageFilterEx()
@@ -3510,6 +3606,11 @@ namespace sogen
             return c.get_callback_result<BOOL>();
         }
 
+        BOOL handle_NtUserInheritWindowMonitor(const syscall_context& c, const hwnd hwnd_tgt, const hwnd hwnd_inherit)
+        {
+            return c.proc.windows.get(hwnd_tgt) != nullptr && (hwnd_inherit == 0 || c.proc.windows.get(hwnd_inherit) != nullptr);
+        }
+
         BOOL handle_NtUserGetHDevName(const syscall_context& c, handle hdev, emulator_pointer device_name)
         {
             if (hdev != c.proc.default_monitor_handle)
@@ -3570,6 +3671,136 @@ namespace sogen
 
             rect.write(get_window_rect(*win));
             return TRUE;
+        }
+
+        hwnd handle_NtUserSetParent(const syscall_context& c, const hwnd hwnd_child, const hwnd hwnd_new_parent)
+        {
+            auto* child = c.proc.windows.get(hwnd_child);
+            if (!child)
+            {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                return 0;
+            }
+
+            auto* new_parent = c.proc.windows.get(hwnd_new_parent);
+            if (hwnd_new_parent != 0 && !new_parent)
+            {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                return 0;
+            }
+
+            const hwnd desktop = c.proc.default_desktop_window_handle.bits;
+            auto* effective_parent = new_parent;
+            if (!effective_parent)
+            {
+                effective_parent = c.proc.windows.get(desktop);
+            }
+
+            hwnd old_parent = child->parent_handle;
+            if (old_parent == desktop)
+            {
+                old_parent = 0;
+            }
+
+            if (!effective_parent)
+            {
+                child->parent_handle = 0;
+                child->guest.access([&](USER_WINDOW& guest_win) {
+                    guest_win.spwndParent = 0;
+                    guest_win.spwndPrev = 0;
+                    guest_win.spwndNext = 0;
+                });
+                return old_parent;
+            }
+
+            auto* ancestor = effective_parent;
+            for (size_t guard = 0; ancestor != nullptr && guard < c.proc.windows.size(); ++guard)
+            {
+                if (ancestor->handle == child->handle)
+                {
+                    set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                    return 0;
+                }
+
+                ancestor = c.proc.windows.get(ancestor->parent_handle);
+            }
+
+            const auto child_ptr = child->guest.value();
+            const auto unlink_from_parent = [&] {
+                const auto guest_child = child->guest.read();
+                if (guest_child.spwndParent != 0)
+                {
+                    emulator_object<USER_WINDOW>{c.emu, guest_child.spwndParent}.access([&](USER_WINDOW& parent_guest) {
+                        if (parent_guest.spwndChild == child_ptr)
+                        {
+                            parent_guest.spwndChild = guest_child.spwndNext;
+                        }
+                    });
+                }
+                if (guest_child.spwndPrev != 0)
+                {
+                    emulator_object<USER_WINDOW>{c.emu, guest_child.spwndPrev}.access([&](USER_WINDOW& previous_guest) {
+                        if (previous_guest.spwndNext == child_ptr)
+                        {
+                            previous_guest.spwndNext = guest_child.spwndNext;
+                        }
+                    });
+                }
+                if (guest_child.spwndNext != 0)
+                {
+                    emulator_object<USER_WINDOW>{c.emu, guest_child.spwndNext}.access([&](USER_WINDOW& next_guest) {
+                        if (next_guest.spwndPrev == child_ptr)
+                        {
+                            next_guest.spwndPrev = guest_child.spwndPrev;
+                        }
+                    });
+                }
+            };
+
+            const auto append_to_parent = [&] {
+                uint64_t current = 0;
+                effective_parent->guest.access([&](USER_WINDOW& parent_guest) {
+                    current = parent_guest.spwndChild;
+                    if (current == 0)
+                    {
+                        parent_guest.spwndChild = child_ptr;
+                    }
+                });
+
+                for (size_t guard = 0; current != 0 && guard < c.proc.windows.size(); ++guard)
+                {
+                    uint64_t following = 0;
+                    bool appended = false;
+                    emulator_object<USER_WINDOW>{c.emu, current}.access([&](USER_WINDOW& current_guest) {
+                        following = current_guest.spwndNext;
+                        if (following == 0)
+                        {
+                            current_guest.spwndNext = child_ptr;
+                            appended = true;
+                        }
+                    });
+                    if (appended)
+                    {
+                        child->guest.access([&](USER_WINDOW& guest_child) { guest_child.spwndPrev = current; });
+                        return;
+                    }
+
+                    current = following;
+                }
+            };
+
+            unlink_from_parent();
+
+            child->parent_handle = effective_parent->handle;
+            child->guest.access([&](USER_WINDOW& guest_win) {
+                guest_win.spwndParent = effective_parent->guest.value();
+                guest_win.spwndPrev = 0;
+                guest_win.spwndNext = 0;
+            });
+
+            append_to_parent();
+
+            return old_parent;
         }
 
         BOOL handle_NtUserSetWindowPos(const syscall_context& c, const hwnd hWnd, const hwnd /*hwnd_insert_after*/, const int x,
@@ -3778,6 +4009,7 @@ namespace sogen
                     case GWLP_WNDPROC:
                         oldValue = guest_win.lpfnWndProc;
                         guest_win.lpfnWndProc = dwNewLong;
+                        win->wnd_proc = dwNewLong;
                         break;
 
                     default:
@@ -4024,9 +4256,9 @@ namespace sogen
             return was_enabled ? FALSE : TRUE;
         }
 
-        BOOL handle_NtUserDeleteMenu(const syscall_context& /*c*/, const uint64_t /*menu*/, const UINT /*position*/, const UINT /*flags*/)
+        BOOL handle_NtUserDeleteMenu(const syscall_context& c, const uint64_t menu, const UINT position, const UINT flags)
         {
-            return TRUE;
+            return handle_NtUserRemoveMenu(c, static_cast<hmenu>(menu), position, flags);
         }
 
         uint64_t handle_NtUserGetSystemMenu(const syscall_context& c, const hwnd hwnd, const BOOL revert)
@@ -4484,9 +4716,33 @@ namespace sogen
             return result;
         }
 
-        NTSTATUS handle_NtUserCreateAcceleratorTable()
+        uint64_t handle_NtUserCreateAcceleratorTable(const syscall_context& c, const emulator_pointer entries, const int32_t entry_count)
         {
-            return STATUS_SUCCESS;
+            constexpr int32_t max_entry_count = 0x10000;
+            if (entries == 0 || entry_count <= 0 || entry_count > max_entry_count)
+            {
+                return 0;
+            }
+
+            auto [table_handle, table] = c.proc.accelerator_tables.create(c.win_emu.memory);
+            table.entries.resize(static_cast<size_t>(entry_count));
+            if (!c.win_emu.memory.try_read_memory(entries, table.entries.data(), table.entries.size() * sizeof(accelerator_table_entry)))
+            {
+                c.proc.accelerator_tables.erase(table_handle);
+                return 0;
+            }
+
+            return table_handle.bits;
+        }
+
+        BOOL handle_NtUserDestroyAcceleratorTable(const syscall_context& c, const handle accelerator_table)
+        {
+            return c.proc.accelerator_tables.erase(accelerator_table) ? TRUE : FALSE;
+        }
+
+        int32_t handle_NtUserCopyAcceleratorTable()
+        {
+            return 0;
         }
 
         int32_t handle_NtUserTranslateAccelerator()
@@ -4603,15 +4859,21 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserSetMenuDefaultItem(const syscall_context& /*c*/, const hmenu /*menu*/, const UINT /*item*/,
+                                             const UINT /*by_position*/)
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserEndMenu()
+        {
+            return TRUE;
+        }
+
         BOOL handle_NtUserRemoveMenu(const syscall_context& c, const hmenu menu, const UINT position, const UINT flags)
         {
             auto* m = c.proc.menus.get(menu);
-            if (!m)
-            {
-                return FALSE;
-            }
-
-            if (m->items.empty())
+            if (!m || m->items.empty())
             {
                 return FALSE;
             }
@@ -4624,17 +4886,18 @@ namespace sogen
                 }
 
                 m->items.erase(m->items.begin() + static_cast<ptrdiff_t>(position));
-                m->sync_guest_items(c.win_emu.memory);
-                return TRUE;
             }
-
-            const auto it = std::ranges::find_if(m->items, [&](const auto& item) { return item.id == position; });
-            if (it == m->items.end())
+            else
             {
-                return FALSE;
+                const auto item = std::ranges::find_if(m->items, [&](const auto& entry) { return entry.id == position; });
+                if (item == m->items.end())
+                {
+                    return FALSE;
+                }
+
+                m->items.erase(item);
             }
 
-            m->items.erase(it);
             m->sync_guest_items(c.win_emu.memory);
             return TRUE;
         }
@@ -5002,6 +5265,267 @@ namespace sogen
         uint64_t handle_NtUserSetClipboardData()
         {
             return 1;
+        }
+
+        uint64_t handle_NtUserGetProcessDpiAwarenessContext()
+        {
+            return 0;
+        }
+
+        NTSTATUS handle_NtUserSetProcessDpiAwarenessContext()
+        {
+            return 0;
+        }
+
+        uint32_t handle_NtUserMapVirtualKeyEx(const syscall_context& /*c*/, const uint32_t code, const uint32_t map_type,
+                                              const uint32_t /*keyboard_id*/, const uint64_t /*keyboard_layout*/)
+        {
+            constexpr std::array<uint8_t, 26> letter_scans{
+                0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32,
+                0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C,
+            };
+            constexpr std::array<uint8_t, 10> digit_scans{0x0B, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A};
+            constexpr std::array<uint8_t, 10> numpad_scans{0x52, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49};
+
+            const auto virtual_key_to_scan_code = [&](const uint32_t virtual_key) -> uint32_t {
+                if (virtual_key >= 'A' && virtual_key <= 'Z')
+                {
+                    return letter_scans[virtual_key - 'A'];
+                }
+                if (virtual_key >= '0' && virtual_key <= '9')
+                {
+                    return digit_scans[virtual_key - '0'];
+                }
+                if (virtual_key >= VK_NUMPAD0 && virtual_key <= VK_NUMPAD9)
+                {
+                    return numpad_scans[virtual_key - VK_NUMPAD0];
+                }
+                if (virtual_key >= VK_F1 && virtual_key <= VK_F10)
+                {
+                    return 0x3B + virtual_key - VK_F1;
+                }
+
+                switch (virtual_key)
+                {
+                case VK_F11:
+                    return 0x57;
+                case VK_F12:
+                    return 0x58;
+                case VK_ESCAPE:
+                    return 0x01;
+                case VK_BACK:
+                    return 0x0E;
+                case VK_TAB:
+                    return 0x0F;
+                case VK_RETURN:
+                    return 0x1C;
+                case VK_SHIFT:
+                case 0xA0:
+                    return 0x2A;
+                case 0xA1:
+                    return 0x36;
+                case VK_CONTROL:
+                case 0xA2:
+                    return 0x1D;
+                case 0xA3:
+                    return 0xE01D;
+                case VK_MENU:
+                case 0xA4:
+                    return 0x38;
+                case 0xA5:
+                    return 0xE038;
+                case VK_PAUSE:
+                    return 0xE11D;
+                case VK_CAPITAL:
+                    return 0x3A;
+                case VK_SPACE:
+                    return 0x39;
+                case VK_PRIOR:
+                    return 0xE049;
+                case VK_NEXT:
+                    return 0xE051;
+                case VK_END:
+                    return 0xE04F;
+                case VK_HOME:
+                    return 0xE047;
+                case VK_LEFT:
+                    return 0xE04B;
+                case VK_UP:
+                    return 0xE048;
+                case VK_RIGHT:
+                    return 0xE04D;
+                case VK_DOWN:
+                    return 0xE050;
+                case VK_INSERT:
+                    return 0xE052;
+                case VK_DELETE:
+                    return 0xE053;
+                case VK_LWIN:
+                    return 0xE05B;
+                case VK_RWIN:
+                    return 0xE05C;
+                case VK_APPS:
+                    return 0xE05D;
+                case VK_MULTIPLY:
+                    return 0x37;
+                case VK_ADD:
+                    return 0x4E;
+                case VK_SUBTRACT:
+                    return 0x4A;
+                case VK_DECIMAL:
+                    return 0x53;
+                case VK_DIVIDE:
+                    return 0xE035;
+                case VK_NUMLOCK:
+                    return 0x45;
+                case VK_SCROLL:
+                    return 0x46;
+                case VK_OEM_1:
+                    return 0x27;
+                case VK_OEM_PLUS:
+                    return 0x0D;
+                case VK_OEM_COMMA:
+                    return 0x33;
+                case VK_OEM_MINUS:
+                    return 0x0C;
+                case VK_OEM_PERIOD:
+                    return 0x34;
+                case VK_OEM_2:
+                    return 0x35;
+                case VK_OEM_3:
+                    return 0x29;
+                case VK_OEM_4:
+                    return 0x1A;
+                case VK_OEM_5:
+                    return 0x2B;
+                case VK_OEM_6:
+                    return 0x1B;
+                case VK_OEM_7:
+                    return 0x28;
+                case VK_OEM_102:
+                    return 0x56;
+                default:
+                    return 0;
+                }
+            };
+
+            if (map_type == 0 || map_type == 4)
+            {
+                const auto scan_code = virtual_key_to_scan_code(code);
+                return map_type == 0 ? scan_code & 0xFF : scan_code;
+            }
+
+            if (map_type == 2)
+            {
+                if ((code >= '0' && code <= '9') || (code >= 'A' && code <= 'Z') || code == VK_SPACE)
+                {
+                    return code;
+                }
+
+                switch (code)
+                {
+                case VK_OEM_1:
+                    return ';';
+                case VK_OEM_PLUS:
+                    return '=';
+                case VK_OEM_COMMA:
+                    return ',';
+                case VK_OEM_MINUS:
+                    return '-';
+                case VK_OEM_PERIOD:
+                    return '.';
+                case VK_OEM_2:
+                    return '/';
+                case VK_OEM_3:
+                    return '`';
+                case VK_OEM_4:
+                    return '[';
+                case VK_OEM_5:
+                    return '\\';
+                case VK_OEM_6:
+                    return ']';
+                case VK_OEM_7:
+                    return '\'';
+                default:
+                    return 0;
+                }
+            }
+
+            if (map_type == 1 || map_type == 3)
+            {
+                const auto scan_code = map_type == 1 ? code & 0xFF : code & 0xFFFF;
+                if (map_type == 1)
+                {
+                    if (scan_code == 0x2A || scan_code == 0x36)
+                    {
+                        return VK_SHIFT;
+                    }
+                    if (scan_code == 0x1D)
+                    {
+                        return VK_CONTROL;
+                    }
+                    if (scan_code == 0x38)
+                    {
+                        return VK_MENU;
+                    }
+                }
+                else
+                {
+                    switch (scan_code)
+                    {
+                    case 0x2A:
+                        return 0xA0;
+                    case 0x36:
+                        return 0xA1;
+                    case 0x1D:
+                        return 0xA2;
+                    case 0xE01D:
+                        return 0xA3;
+                    case 0x38:
+                        return 0xA4;
+                    case 0xE038:
+                        return 0xA5;
+                    default:
+                        break;
+                    }
+                }
+
+                for (uint32_t virtual_key = 1; virtual_key < 0x100; ++virtual_key)
+                {
+                    const auto candidate = virtual_key_to_scan_code(virtual_key);
+                    if ((map_type == 1 ? candidate & 0xFF : candidate) == scan_code)
+                    {
+                        return virtual_key;
+                    }
+                }
+            }
+
+            return 0;
+        }
+
+        NTSTATUS handle_NtUserToUnicodeEx()
+        {
+            return 0;
+        }
+
+        uint64_t handle_NtUserSetKeyboardState()
+        {
+            return 0;
+        }
+
+        uint64_t handle_NtUserAttachThreadInput()
+        {
+            return 0;
+        }
+
+        BOOL handle_NtUserRegisterTouchHitTestingWindow()
+        {
+            return TRUE;
+        }
+
+        uint64_t handle_NtUserActivateKeyboardLayout()
+        {
+            return 0x1337;
         }
     }
 

@@ -271,7 +271,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (token_information_class == TokenIsAppContainer)
+            if (token_information_class == TokenIsAppContainer || token_information_class == TokenIsAppSilo)
             {
                 constexpr auto required_size = sizeof(ULONG);
                 return_length.write(required_size);

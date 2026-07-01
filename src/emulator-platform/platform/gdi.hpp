@@ -4,6 +4,154 @@
 
 namespace sogen
 {
+#ifndef OS_WINDOWS
+#define ANSI_CHARSET       0
+#define DEFAULT_CHARSET    1
+#define GREEK_CHARSET      161
+#define TURKISH_CHARSET    162
+#define VIETNAMESE_CHARSET 163
+#define HEBREW_CHARSET     177
+#define ARABIC_CHARSET     178
+#define BALTIC_CHARSET     186
+#define RUSSIAN_CHARSET    204
+#define EASTEUROPE_CHARSET 238
+
+#define DEFAULT_PITCH      0
+#define FF_SWISS           0x20
+#define FW_NORMAL          400
+#define FW_BOLD            700
+#define NTM_ITALIC         0x00000001
+#define NTM_BOLD           0x00000020
+#define NTM_REGULAR        0x00000040
+#define TRUETYPE_FONTTYPE  0x00000004
+#define RDH_RECTANGLES     1
+
+    struct ABC
+    {
+        int abcA;
+        UINT abcB;
+        int abcC;
+    };
+
+    struct RGNDATAHEADER
+    {
+        DWORD dwSize;
+        DWORD iType;
+        DWORD nCount;
+        DWORD nRgnSize;
+        RECT rcBound;
+    };
+#endif
+
+    struct EMU_LOGFONTW
+    {
+        LONG lfHeight;
+        LONG lfWidth;
+        LONG lfEscapement;
+        LONG lfOrientation;
+        LONG lfWeight;
+        BYTE lfItalic;
+        BYTE lfUnderline;
+        BYTE lfStrikeOut;
+        BYTE lfCharSet;
+        BYTE lfOutPrecision;
+        BYTE lfClipPrecision;
+        BYTE lfQuality;
+        BYTE lfPitchAndFamily;
+        char16_t lfFaceName[32];
+    };
+    static_assert(sizeof(EMU_LOGFONTW) == 0x5C);
+
+    struct EMU_ENUMLOGFONTEXW
+    {
+        EMU_LOGFONTW elfLogFont;
+        char16_t elfFullName[64];
+        char16_t elfStyle[32];
+        char16_t elfScript[32];
+    };
+    static_assert(sizeof(EMU_ENUMLOGFONTEXW) == 0x15C);
+
+    struct EMU_NEWTEXTMETRICW
+    {
+        LONG tmHeight;
+        LONG tmAscent;
+        LONG tmDescent;
+        LONG tmInternalLeading;
+        LONG tmExternalLeading;
+        LONG tmAveCharWidth;
+        LONG tmMaxCharWidth;
+        LONG tmWeight;
+        LONG tmOverhang;
+        LONG tmDigitizedAspectX;
+        LONG tmDigitizedAspectY;
+        char16_t tmFirstChar;
+        char16_t tmLastChar;
+        char16_t tmDefaultChar;
+        char16_t tmBreakChar;
+        BYTE tmItalic;
+        BYTE tmUnderlined;
+        BYTE tmStruckOut;
+        BYTE tmPitchAndFamily;
+        BYTE tmCharSet;
+        DWORD ntmFlags;
+        UINT ntmSizeEM;
+        UINT ntmCellHeight;
+        UINT ntmAvgWidth;
+    };
+    static_assert(sizeof(EMU_NEWTEXTMETRICW) == 0x4C);
+
+    struct EMU_NEWTEXTMETRICEXW
+    {
+        EMU_NEWTEXTMETRICW ntmTm;
+        DWORD fsUsb[4];
+        DWORD fsCsb[2];
+    };
+    static_assert(sizeof(EMU_NEWTEXTMETRICEXW) == 0x64);
+
+    struct FIXED
+    {
+        uint16_t fract;
+        int16_t value;
+    };
+    static_assert(sizeof(FIXED) == 0x04);
+
+    struct POINTFX
+    {
+        FIXED x;
+        FIXED y;
+    };
+    static_assert(sizeof(POINTFX) == 0x08);
+
+    struct EMU_TTPOLYGONHEADER
+    {
+        uint32_t cb{};
+        uint32_t dwType{};
+        POINTFX pfxStart{};
+    };
+    static_assert(sizeof(EMU_TTPOLYGONHEADER) == 0x10);
+
+    struct EMU_TTPOLYCURVE_HEADER
+    {
+        uint16_t wType{};
+        uint16_t cpfx{};
+    };
+    static_assert(sizeof(EMU_TTPOLYCURVE_HEADER) == 0x04);
+
+    struct EMU_BITMAPINFOHEADER
+    {
+        DWORD biSize;
+        LONG biWidth;
+        LONG biHeight;
+        WORD biPlanes;
+        WORD biBitCount;
+        DWORD biCompression;
+        DWORD biSizeImage;
+        LONG biXPelsPerMeter;
+        LONG biYPelsPerMeter;
+        DWORD biClrUsed;
+        DWORD biClrImportant;
+    };
+    static_assert(sizeof(EMU_BITMAPINFOHEADER) == 0x28);
 
     struct GDI_HANDLE_ENTRY64
     {
@@ -394,6 +542,25 @@ namespace sogen
     {
         LUID AdapterLuid;
         UINT32 hAdapter;
+    };
+
+    struct EMU_D3DKMT_CREATEDCFROMMEMORY
+    {
+        UINT64 pMemory;
+        UINT32 Format;
+        UINT32 Width;
+        UINT32 Height;
+        UINT32 Pitch;
+        UINT64 hDeviceDc;
+        UINT64 pColorTable;
+        UINT64 hDc;
+        UINT64 hBitmap;
+    };
+
+    struct EMU_D3DKMT_DESTROYDCFROMMEMORY
+    {
+        UINT64 hDc;
+        UINT64 hBitmap;
     };
 } // namespace sogen
 

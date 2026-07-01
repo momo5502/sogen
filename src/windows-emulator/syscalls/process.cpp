@@ -186,6 +186,30 @@ namespace sogen
                         i.CheckSum = optional_header.CheckSum;
                     });
 
+            case ProcessQuotaLimits: {
+                constexpr uint32_t quota_limits32_size = 0x20;
+                constexpr uint32_t quota_limits64_size = 0x30;
+
+                if (process_information_length != quota_limits32_size && process_information_length != quota_limits64_size)
+                {
+                    if (return_length)
+                    {
+                        return_length.write(quota_limits64_size);
+                    }
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                const std::vector<std::byte> zeroed(process_information_length, std::byte{0});
+                c.emu.write_memory(process_information, zeroed.data(), zeroed.size());
+
+                if (return_length)
+                {
+                    return_length.write(process_information_length);
+                }
+
+                return STATUS_SUCCESS;
+            }
+
             case ProcessVmCounters: {
                 constexpr uint32_t vm_counters_size = 88;
                 constexpr uint32_t vm_counters_ex_size = 96;
@@ -266,7 +290,9 @@ namespace sogen
                 || info_class == ProcessPriorityBoost                        //
                 || info_class == ProcessPriorityClassEx                      //
                 || info_class == ProcessQuotaLimits                          //
-                || info_class == ProcessPriorityClass || info_class == ProcessAffinityMask)
+                || info_class == ProcessPriorityClass                        //
+                || info_class == ProcessAffinityMask                         //
+                || info_class == ProcessTelemetryCoverage)
             {
                 return STATUS_SUCCESS;
             }
@@ -430,7 +456,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            c.win_emu.log.error("Unsupported info process class: %X\n", info_class);
+            c.win_emu.log.error("Unsupported info process class: 0x%X\n", info_class);
             c.emu.stop();
 
             return STATUS_NOT_SUPPORTED;

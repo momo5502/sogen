@@ -9,6 +9,80 @@ namespace sogen
     {
         namespace
         {
+            NTSTATUS handle_system_memory_usage_information(const syscall_context& c, const uint32_t info_class,
+                                                            const uint64_t system_information, const uint32_t system_information_length,
+                                                            const emulator_object<uint32_t> return_length)
+            {
+                struct basic_memory_status_information
+                {
+                    uint64_t total_physical_bytes;
+                    uint64_t available_physical_bytes;
+                    uint64_t reserved0;
+                    uint64_t committed_bytes;
+                    uint64_t reserved1;
+                    uint64_t commit_limit_bytes;
+                    uint64_t reserved2;
+                };
+
+                if (info_class == SystemMemoryUsageInformation && system_information_length == sizeof(basic_memory_status_information))
+                {
+                    // Simulated physical memory size (~13 GB).
+                    constexpr uint64_t total_physical_bytes = 0x00c9c7ffULL * 0x1000;
+
+                    const basic_memory_status_information info{
+                        .total_physical_bytes = total_physical_bytes,
+                        .available_physical_bytes = total_physical_bytes / 2,
+                        .reserved0 = 0,
+                        .committed_bytes = total_physical_bytes / 4,
+                        .reserved1 = 0,
+                        .commit_limit_bytes = total_physical_bytes + total_physical_bytes / 2,
+                        .reserved2 = 0,
+                    };
+
+                    c.emu.write_memory(system_information, &info, sizeof(info));
+                    if (return_length)
+                    {
+                        return_length.write(sizeof(info));
+                    }
+
+                    return STATUS_SUCCESS;
+                }
+
+                using Traits = EmulatorTraits<Emu64>;
+                using info_t = SYSTEM_MEMORY_USAGE_INFORMATION<Traits>;
+                using usage_t = SYSTEM_MEMORY_USAGE<Traits>;
+
+                constexpr auto header_size = static_cast<uint32_t>(offsetof(info_t, MemoryUsage));
+                constexpr auto usage_name = std::to_array(u"System Memory");
+                constexpr auto required_length = header_size + static_cast<uint32_t>(sizeof(usage_t) + sizeof(usage_name));
+
+                if (return_length)
+                {
+                    return_length.write(required_length);
+                }
+
+                if (system_information_length < required_length)
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                const info_t header{.Reserved = 0, .EndOfData = system_information + header_size + sizeof(usage_t), .MemoryUsage = {}};
+                c.emu.write_memory(system_information, &header, header_size);
+
+                const USHORT base_valid = info_class == SystemFullMemoryInformation ? 0x2000 : 0x1000;
+                const usage_t usage{
+                    .Name = system_information + header_size + sizeof(usage_t),
+                    .Valid = base_valid,
+                    .Standby = static_cast<USHORT>(base_valid / 2),
+                    .Modified = static_cast<USHORT>(base_valid / 8),
+                    .PageTables = static_cast<USHORT>(base_valid / 16),
+                };
+
+                c.emu.write_memory(system_information + header_size, &usage, sizeof(usage));
+                c.emu.write_memory(system_information + header_size + sizeof(usage), usage_name.data(), sizeof(usage_name));
+                return STATUS_SUCCESS;
+            }
+
             NTSTATUS handle_logical_processor_and_group_information(const syscall_context& c, const uint64_t input_buffer,
                                                                     const uint32_t input_buffer_length, const uint64_t system_information,
                                                                     const uint32_t system_information_length,
@@ -277,7 +351,6 @@ namespace sogen
 
             case 250: // Build 27744
             case SystemFlushInformation:
-            case SystemMemoryUsageInformation:
             case SystemCodeIntegrityPolicyInformation:
             case SystemHypervisorSharedPageInformation:
             case SystemFeatureConfigurationInformation:
@@ -378,6 +451,11 @@ namespace sogen
 
                         dtzi.DynamicDaylightTimeDisabled = FALSE;
                     });
+
+            case SystemMemoryUsageInformation:
+            case SystemFullMemoryInformation:
+            case SystemSummaryMemoryInformation:
+                return handle_system_memory_usage_information(c, info_class, system_information, system_information_length, return_length);
 
             case SystemRangeStartInformation:
                 return handle_query<SYSTEM_RANGE_START_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
@@ -548,6 +626,13 @@ namespace sogen
             case SystemRecommendedSharedDataAlignment:
                 return handle_query<ULONG>(c.emu, system_information, system_information_length, return_length,
                                            [&](ULONG& alignment) { alignment = 64; });
+
+            case SystemNumaAvailableMemory:
+                return handle_query<SYSTEM_NUMA_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
+                                                               [&](SYSTEM_NUMA_INFORMATION64& info) {
+                                                                   memset(&info, 0, sizeof(info));
+                                                                   info.AvailableMemory[0] = 0x80000000ull;
+                                                               });
 
             case SystemSupportedProcessorArchitectures: {
                 constexpr auto num_arch = 2;
