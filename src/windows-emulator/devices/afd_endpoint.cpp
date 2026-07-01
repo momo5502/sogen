@@ -1002,18 +1002,15 @@ namespace sogen
                 const emulator_object<AFD_POLL_HANDLE_INFO<Traits>> handle_info_obj{win_emu.emu(), c.input_buffer + info_size};
 
                 size_t current_index = 0;
-                size_t source_index = 0;
-                endpoint_it = endpoints.begin();
-                handle_it = handles.begin();
 
-                for (const auto& pfd : poll_data)
+                for (size_t source_index = 0; source_index < poll_data.size(); ++source_index)
                 {
-                    const auto* endpoint = *endpoint_it++;
-                    const auto& handle = *handle_it++;
+                    const auto& pfd = poll_data.at(source_index);
+                    const auto* endpoint = endpoints.subspan(source_index, 1).front();
+                    const auto& handle = handles.subspan(source_index, 1).front();
 
                     if (pfd.revents == 0)
                     {
-                        ++source_index;
                         continue;
                     }
 
@@ -1026,7 +1023,6 @@ namespace sogen
                     entry.Status = STATUS_SUCCESS;
 
                     handle_info_obj.write(entry, current_index++);
-                    ++source_index;
                 }
 
                 assert(current_index == static_cast<size_t>(count));
