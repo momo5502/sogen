@@ -1859,9 +1859,11 @@ namespace sogen
                 {
                     RAWKEYBOARD32 keyboard{};
                     keyboard.MakeCode = payload.scan_code;
-                    keyboard.Flags = payload.key_release; // RI_KEY_MAKE (0) / RI_KEY_BREAK (1)
+                    const bool key_release = payload.key_message == WM_KEYUP || payload.key_message == WM_SYSKEYUP;
+                    keyboard.Flags =
+                        static_cast<uint16_t>((key_release ? RI_KEY_BREAK : RI_KEY_MAKE) | (payload.key_extended ? RI_KEY_E0 : 0));
                     keyboard.VKey = payload.vkey;
-                    keyboard.Message = payload.key_release ? WM_KEYUP : WM_KEYDOWN;
+                    keyboard.Message = payload.key_message;
                     std::memcpy(buffer.data() + header_size, &keyboard, sizeof(keyboard));
                 }
                 else

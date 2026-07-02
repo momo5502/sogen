@@ -272,6 +272,11 @@ namespace sogen
 #define RIM_INPUT              0
 #define RIM_INPUTSINK          1
 
+#define RI_KEY_MAKE            0x0000
+#define RI_KEY_BREAK           0x0001
+#define RI_KEY_E0              0x0002
+#define RI_KEY_E1              0x0004
+
 #define RIDEV_REMOVE           0x00000001
 #define RIDEV_EXCLUDE          0x00000010
 #define RIDEV_INPUTSINK        0x00000100

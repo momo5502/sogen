@@ -135,6 +135,21 @@ namespace sogen
                    message == WM_RBUTTONUP || message == WM_MBUTTONDOWN || message == WM_MBUTTONUP;
         }
 
+        bool is_key_down_message(const uint32_t message)
+        {
+            return message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
+        }
+
+        bool is_key_up_message(const uint32_t message)
+        {
+            return message == WM_KEYUP || message == WM_SYSKEYUP;
+        }
+
+        bool is_keyboard_message(const uint32_t message)
+        {
+            return is_key_down_message(message) || is_key_up_message(message);
+        }
+
         // Window button message -> RAWMOUSE usButtonFlags transition bit (winuser.h RI_MOUSE_* values).
         uint16_t raw_mouse_button_flags(const uint32_t message)
         {
@@ -1372,11 +1387,11 @@ namespace sogen
         this->deliver_raw_input({.keyboard = false, .dx = dx, .dy = dy, .mouse_buttons = button_flags}, this->process.raw_mouse_target);
     }
 
-    void windows_emulator::deliver_raw_keyboard_input(const uint16_t vkey, const uint16_t scan_code, const bool release)
+    void windows_emulator::deliver_raw_keyboard_input(const uint16_t vkey, const uint16_t scan_code, const uint32_t message,
+                                                      const bool extended)
     {
-        this->deliver_raw_input(
-            {.keyboard = true, .vkey = vkey, .scan_code = scan_code, .key_release = static_cast<uint16_t>(release ? 1 : 0)},
-            this->process.raw_keyboard_target);
+        this->deliver_raw_input({.keyboard = true, .vkey = vkey, .scan_code = scan_code, .key_message = message, .key_extended = extended},
+                                this->process.raw_keyboard_target);
     }
 
     void windows_emulator::handle_ui_event(const ui_event& event)
@@ -1464,9 +1479,11 @@ namespace sogen
         switch (event.message)
         {
         case WM_KEYDOWN:
+        case WM_SYSKEYDOWN:
             this->process.key_state[event.wParam & 0xFF] = 0x80;
             break;
         case WM_KEYUP:
+        case WM_SYSKEYUP:
             this->process.key_state[event.wParam & 0xFF] = 0;
             break;
         case WM_LBUTTONDOWN:
@@ -1486,10 +1503,17 @@ namespace sogen
         }
 
         // Raw-input games (e.g. Skyrim) read the keyboard via WM_INPUT/GetRawInputData, not WM_KEYDOWN.
-        if (this->process.raw_keyboard_registered && (event.message == WM_KEYDOWN || event.message == WM_KEYUP))
+        if (this->process.raw_keyboard_registered && is_keyboard_message(event.message))
         {
             const auto vk = static_cast<uint16_t>(event.wParam & 0xFFFF);
-            this->deliver_raw_keyboard_input(vk, vk_to_scan_code(vk), event.message == WM_KEYUP);
+            auto scan_code = static_cast<uint16_t>((event.lParam >> 16) & 0xFF);
+            if (scan_code == 0)
+            {
+                scan_code = vk_to_scan_code(vk);
+            }
+
+            const bool extended = (event.lParam & (1ull << 24)) != 0;
+            this->deliver_raw_keyboard_input(vk, scan_code, event.message, extended);
         }
 
         thread->post_message(*this, m, true);

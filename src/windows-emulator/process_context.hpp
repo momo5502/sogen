@@ -441,7 +441,8 @@ namespace sogen
             uint16_t mouse_buttons{}; // RI_MOUSE_* button transition flags
             uint16_t vkey{};          // keyboard virtual key
             uint16_t scan_code{};     // keyboard scan code
-            uint16_t key_release{};   // 0 = key down (RI_KEY_MAKE), 1 = key up (RI_KEY_BREAK)
+            uint32_t key_message{};   // corresponding WM_KEY* or WM_SYSKEY* message
+            bool key_extended{};      // true when the key's scan code has an E0 prefix (lParam bit 24)
         };
         std::map<uint32_t, raw_input_payload> raw_inputs{};
         uint32_t next_raw_input_token{1};
