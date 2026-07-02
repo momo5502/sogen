@@ -36,7 +36,7 @@ namespace sogen
             };
         }
 
-        std::string get_instruction_string(const disassembler& d, const emulator& emu, const uint64_t address)
+        std::string get_instruction_string(const disassembler& d, x86_64_cpu& emu, const uint64_t address)
         {
             std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
             const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
@@ -45,10 +45,8 @@ namespace sogen
                 return {};
             }
 
-            uint16_t reg_cs = 0;
-            auto& emu_ref = const_cast<emulator&>(emu);
-            emu_ref.read_raw_register(static_cast<int>(x86_register::cs), &reg_cs, sizeof(reg_cs));
-            const auto instructions = d.disassemble(emu_ref, reg_cs, instruction_bytes, 1, address);
+            const auto reg_cs = emu.reg<uint16_t>(x86_register::cs);
+            const auto instructions = d.disassemble(emu, reg_cs, instruction_bytes, 1, address);
             if (instructions.empty())
             {
                 return {};
@@ -399,7 +397,7 @@ namespace sogen
             }
         }
 
-        bool is_return(const disassembler& d, const emulator& emu, const uint64_t address)
+        bool is_return(const disassembler& d, x86_64_cpu& emu, const uint64_t address)
         {
             std::array<uint8_t, MAX_INSTRUCTION_BYTES> instruction_bytes{};
             const auto result = emu.try_read_memory(address, instruction_bytes.data(), instruction_bytes.size());
@@ -408,16 +406,14 @@ namespace sogen
                 return false;
             }
 
-            uint16_t reg_cs = 0;
-            auto& emu_ref = const_cast<emulator&>(emu);
-            emu_ref.read_raw_register(static_cast<int>(x86_register::cs), &reg_cs, sizeof(reg_cs));
-            const auto instructions = d.disassemble(emu_ref, reg_cs, instruction_bytes, 1, address);
+            const auto reg_cs = emu.reg<uint16_t>(x86_register::cs);
+            const auto instructions = d.disassemble(emu, reg_cs, instruction_bytes, 1, address);
             if (instructions.empty())
             {
                 return false;
             }
 
-            const auto handle = d.resolve_handle(emu_ref, reg_cs);
+            const auto handle = d.resolve_handle(emu, reg_cs);
             return cs_insn_group(handle, instructions.data(), CS_GRP_RET);
         }
 
