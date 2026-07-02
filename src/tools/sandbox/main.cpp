@@ -1,8 +1,12 @@
 #include <windows_emulator.hpp>
+#ifdef _WIN32
 #include <whp_x86_64_emulator.hpp>
+#include <utils/win.hpp>
+#else
+#include <kvm_x86_64_emulator.hpp>
+#endif
 
 #include <utils/interupt_handler.hpp>
-#include <utils/win.hpp>
 
 #include <CLI/CLI.hpp>
 
@@ -22,6 +26,7 @@ namespace sogen::sandbox
     {
         std::filesystem::path get_current_binary_dir()
         {
+#ifdef _WIN32
             std::array<wchar_t, MAX_PATH> buffer{};
 
             const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
@@ -31,6 +36,9 @@ namespace sogen::sandbox
             }
 
             return std::filesystem::path(buffer.data()).parent_path();
+#else
+            return "./";
+#endif
         }
 
         std::vector<std::u16string> parse_arguments(const std::span<const std::string_view> args)
@@ -58,13 +66,25 @@ namespace sogen::sandbox
                 .registry_directory = get_current_binary_dir() / "registry",
             };
 
+            // TODO: expose this as a proper command-line option; for now it is taken from the environment.
+            if (const char* root = std::getenv("EMULATOR_ROOT"); root != nullptr && root[0] != '\0')
+            {
+                settings.emulation_root = root;
+            }
+
             emulator_callbacks callbacks{};
             callbacks.on_stdout = [](const std::string_view data) {
                 (void)fwrite(data.data(), 1, data.size(), stdout);
                 fflush(stdout);
             };
 
-            windows_emulator win_emu{whp::create_x86_64_emulator(), std::move(app_settings), settings, std::move(callbacks)};
+#ifdef _WIN32
+            auto emulator = whp::create_x86_64_emulator();
+#else
+            auto emulator = kvm::create_x86_64_emulator();
+#endif
+
+            windows_emulator win_emu{std::move(emulator), std::move(app_settings), settings, std::move(callbacks)};
             win_emu.log.disable_output(true);
 
             std::atomic_uint32_t signals_received{0};
