@@ -849,9 +849,10 @@ with tempfile.TemporaryDirectory() as tmpdir:
     assert b"".join(path_stdout) == b"mapped\n"
     assert path_app.process.exit_status == 0
 
+    escape_root = Path(tempfile.mkdtemp())
     sandbox_root = tmp_path / "symlink-root"
     (sandbox_root / "tmp").mkdir(parents=True)
-    host_escape = tmp_path / "host_escape.txt"
+    host_escape = escape_root / "host_escape.txt"
     host_escape.write_text("escaped\n")
     sandbox_target = sandbox_root / str(host_escape).lstrip("/")
     sandbox_target.parent.mkdir(parents=True, exist_ok=True)
@@ -904,8 +905,11 @@ with tempfile.TemporaryDirectory() as tmpdir:
     )
     symlink_app.callbacks.on_stdout = capture_output(symlink_stdout)
     symlink_app.start()
-    assert b"".join(symlink_stdout) == b"contained\n"
-    assert symlink_app.process.exit_status == 0
+    symlink_output = b"".join(symlink_stdout)
+    symlink_status = symlink_app.process.exit_status
+    shutil.rmtree(escape_root, ignore_errors=True)
+    assert symlink_output == b"contained\n"
+    assert symlink_status == 0
 
     readonly_host = tmp_path / "readonly"
     readonly_host.mkdir()
