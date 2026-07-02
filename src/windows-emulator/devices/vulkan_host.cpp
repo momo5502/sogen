@@ -595,8 +595,8 @@ namespace sogen
                 return index;
             }
 
-            constexpr VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT |
-                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+            constexpr VkMemoryPropertyFlags want =
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
             for (uint32_t i = 0; i < props.memoryTypeCount; ++i)
             {
                 const auto flags = props.memoryTypes[i].propertyFlags;
