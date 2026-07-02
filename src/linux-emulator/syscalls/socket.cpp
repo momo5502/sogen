@@ -95,7 +95,6 @@ namespace sogen
             };
             return std::bit_cast<uint16_t>(bytes);
         }
-#endif
 
         uint32_t write_network_u32(const uint32_t value)
         {
@@ -107,6 +106,7 @@ namespace sogen
             };
             return std::bit_cast<uint32_t>(bytes);
         }
+#endif
         linux_socket_state* socket_state_for_fd(linux_fd* fd_entry)
         {
             if (!fd_entry || fd_entry->type != fd_type::socket || !fd_entry->socket_state)
