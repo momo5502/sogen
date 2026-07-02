@@ -10,47 +10,6 @@ namespace sogen
 {
     namespace
     {
-        struct mouse_button_msg
-        {
-            uint32_t message{};
-            uint64_t wparam{};
-        };
-
-        // Map an SDL mouse button to its guest window message and the button's MK_* wparam flag (button-up
-        // carries no held-button flag, matching how the guest sees a release).
-        mouse_button_msg mouse_button_message(const uint8_t sdl_button, const bool down)
-        {
-            switch (sdl_button)
-            {
-            case SDL_BUTTON_LEFT:
-                return {.message = static_cast<uint32_t>(down ? WM_LBUTTONDOWN : WM_LBUTTONUP), .wparam = down ? MK_LBUTTON : 0u};
-            case SDL_BUTTON_RIGHT:
-                return {.message = static_cast<uint32_t>(down ? WM_RBUTTONDOWN : WM_RBUTTONUP), .wparam = down ? MK_RBUTTON : 0u};
-            case SDL_BUTTON_MIDDLE:
-                return {.message = static_cast<uint32_t>(down ? WM_MBUTTONDOWN : WM_MBUTTONUP), .wparam = down ? MK_MBUTTON : 0u};
-            default:
-                return {};
-            }
-        }
-
-        // Translate SDL's held-button bitmask into the MK_* flags carried by WM_MOUSEMOVE.
-        uint64_t mouse_state_keys(const uint32_t sdl_state)
-        {
-            uint64_t keys = 0;
-            if (sdl_state & SDL_BUTTON_LMASK)
-            {
-                keys |= MK_LBUTTON;
-            }
-            if (sdl_state & SDL_BUTTON_RMASK)
-            {
-                keys |= MK_RBUTTON;
-            }
-            if (sdl_state & SDL_BUTTON_MMASK)
-            {
-                keys |= MK_MBUTTON;
-            }
-            return keys;
-        }
 
 #ifdef _WIN32
         void apply_application_icon(SDL_Window* window)
@@ -75,6 +34,119 @@ namespace sogen
         {
             return (static_cast<uint64_t>(static_cast<uint32_t>(y) & 0xFFFFu) << 16) |
                    static_cast<uint64_t>(static_cast<uint32_t>(x) & 0xFFFFu);
+        }
+
+        uint16_t low_word(const uint64_t value)
+        {
+            return static_cast<uint16_t>(value & 0xFFFFu);
+        }
+
+        uint64_t make_xbutton_wparam(const uint16_t key_state, const uint16_t xbutton)
+        {
+            return static_cast<uint64_t>(key_state) | (static_cast<uint64_t>(xbutton) << 16);
+        }
+
+        uint16_t sdl_mouse_button_to_mk(const uint8_t button)
+        {
+            switch (button)
+            {
+            case SDL_BUTTON_LEFT:
+                return MK_LBUTTON;
+            case SDL_BUTTON_RIGHT:
+                return MK_RBUTTON;
+            case SDL_BUTTON_MIDDLE:
+                return MK_MBUTTON;
+            case SDL_BUTTON_X1:
+                return MK_XBUTTON1;
+            case SDL_BUTTON_X2:
+                return MK_XBUTTON2;
+            default:
+                return 0;
+            }
+        }
+
+        uint16_t sdl_mouse_mask_to_mk(const SDL_MouseButtonFlags buttons)
+        {
+            uint16_t result = 0;
+            if ((buttons & SDL_BUTTON_LMASK) != 0)
+            {
+                result |= MK_LBUTTON;
+            }
+            if ((buttons & SDL_BUTTON_RMASK) != 0)
+            {
+                result |= MK_RBUTTON;
+            }
+            if ((buttons & SDL_BUTTON_MMASK) != 0)
+            {
+                result |= MK_MBUTTON;
+            }
+            if ((buttons & SDL_BUTTON_X1MASK) != 0)
+            {
+                result |= MK_XBUTTON1;
+            }
+            if ((buttons & SDL_BUTTON_X2MASK) != 0)
+            {
+                result |= MK_XBUTTON2;
+            }
+            return result;
+        }
+
+        uint32_t sdl_mouse_button_down_message(const uint8_t button)
+        {
+            switch (button)
+            {
+            case SDL_BUTTON_LEFT:
+                return WM_LBUTTONDOWN;
+            case SDL_BUTTON_RIGHT:
+                return WM_RBUTTONDOWN;
+            case SDL_BUTTON_MIDDLE:
+                return WM_MBUTTONDOWN;
+            case SDL_BUTTON_X1:
+            case SDL_BUTTON_X2:
+                return WM_XBUTTONDOWN;
+            default:
+                return 0;
+            }
+        }
+
+        uint32_t sdl_mouse_button_up_message(const uint8_t button)
+        {
+            switch (button)
+            {
+            case SDL_BUTTON_LEFT:
+                return WM_LBUTTONUP;
+            case SDL_BUTTON_RIGHT:
+                return WM_RBUTTONUP;
+            case SDL_BUTTON_MIDDLE:
+                return WM_MBUTTONUP;
+            case SDL_BUTTON_X1:
+            case SDL_BUTTON_X2:
+                return WM_XBUTTONUP;
+            default:
+                return 0;
+            }
+        }
+
+        uint16_t sdl_mouse_button_to_xbutton(const uint8_t button)
+        {
+            switch (button)
+            {
+            case SDL_BUTTON_X1:
+                return XBUTTON1;
+            case SDL_BUTTON_X2:
+                return XBUTTON2;
+            default:
+                return 0;
+            }
+        }
+
+        uint64_t mouse_button_wparam(const uint16_t key_state, const uint8_t button)
+        {
+            if (const auto xbutton = sdl_mouse_button_to_xbutton(button); xbutton != 0)
+            {
+                return make_xbutton_wparam(key_state, xbutton);
+            }
+            return key_state;
         }
 
         uint64_t map_sdl_keycode(const SDL_Keycode key)
@@ -534,6 +606,7 @@ namespace sogen
                 this->windows_.clear();
                 this->guest_by_window_id_.clear();
                 this->active_window_ = 0;
+                this->mouse_button_state_ = 0;
                 this->key_down_.fill(false);
 
                 if (this->initialized_)
@@ -702,23 +775,25 @@ namespace sogen
                         break;
 
                     case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                        if (const auto msg = mouse_button_message(event.button.button, true); msg.message != 0)
+                        if (const auto message = sdl_mouse_button_down_message(event.button.button); message != 0)
                         {
                             if (const auto guest = this->resolve_guest(event.button.windowID); guest != 0)
                             {
                                 this->set_window_active(guest, true);
-                                this->post_event(guest, msg.message, msg.wparam,
+                                this->mouse_button_state_ |= sdl_mouse_button_to_mk(event.button.button);
+                                this->post_event(guest, message, mouse_button_wparam(this->mouse_button_state_, event.button.button),
                                                  this->map_window_point(guest, event.button.x, event.button.y));
                             }
                         }
                         break;
 
                     case SDL_EVENT_MOUSE_BUTTON_UP:
-                        if (const auto msg = mouse_button_message(event.button.button, false); msg.message != 0)
+                        if (const auto message = sdl_mouse_button_up_message(event.button.button); message != 0)
                         {
                             if (const auto guest = this->resolve_guest(event.button.windowID); guest != 0)
                             {
-                                this->post_event(guest, msg.message, msg.wparam,
+                                this->mouse_button_state_ &= static_cast<uint16_t>(~sdl_mouse_button_to_mk(event.button.button));
+                                this->post_event(guest, message, mouse_button_wparam(this->mouse_button_state_, event.button.button),
                                                  this->map_window_point(guest, event.button.x, event.button.y));
                             }
                         }
@@ -728,7 +803,8 @@ namespace sogen
                         if (const auto guest = this->resolve_guest(event.motion.windowID); guest != 0)
                         {
                             this->set_window_active(guest, true);
-                            this->post_event(guest, WM_MOUSEMOVE, mouse_state_keys(event.motion.state),
+                            this->mouse_button_state_ = sdl_mouse_mask_to_mk(event.motion.state);
+                            this->post_event(guest, WM_MOUSEMOVE, low_word(this->mouse_button_state_),
                                              this->map_window_point(guest, event.motion.x, event.motion.y));
                         }
                         break;
@@ -1244,6 +1320,7 @@ namespace sogen
             event_sink sink_{};
             bool initialized_{};
             hwnd active_window_{};
+            uint16_t mouse_button_state_{};
             std::array<bool, SDL_SCANCODE_COUNT> key_down_{};
             std::unordered_map<hwnd, window_state> windows_{};
             std::unordered_map<SDL_WindowID, hwnd> guest_by_window_id_{};

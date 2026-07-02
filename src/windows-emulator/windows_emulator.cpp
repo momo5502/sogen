@@ -64,6 +64,11 @@ namespace sogen
             return static_cast<int16_t>((lparam >> 16) & 0xFFFF);
         }
 
+        uint16_t high_word(const uint64_t value)
+        {
+            return static_cast<uint16_t>((value >> 16) & 0xFFFFu);
+        }
+
         struct child_hit_test_result
         {
             const window* win{};
@@ -126,13 +131,40 @@ namespace sogen
             return origin;
         }
 
+        bool is_mouse_button_message(const uint32_t message)
+        {
+            switch (message)
+            {
+            case WM_LBUTTONDOWN:
+            case WM_LBUTTONUP:
+            case WM_RBUTTONDOWN:
+            case WM_RBUTTONUP:
+            case WM_MBUTTONDOWN:
+            case WM_MBUTTONUP:
+            case WM_XBUTTONDOWN:
+            case WM_XBUTTONUP:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        bool is_mouse_button_down_message(const uint32_t message)
+        {
+            return message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN || message == WM_MBUTTONDOWN || message == WM_XBUTTONDOWN;
+        }
+
+        bool is_mouse_button_up_message(const uint32_t message)
+        {
+            return message == WM_LBUTTONUP || message == WM_RBUTTONUP || message == WM_MBUTTONUP || message == WM_XBUTTONUP;
+        }
+
         bool is_pointer_message(const uint32_t message)
         {
             // All mouse messages go through capture/child hit-testing: while a window holds the mouse
             // capture every mouse message must reach it (so a pressed button still completes its click),
             // and otherwise each is delivered to the child under the cursor (hover, right-click, etc.).
-            return message == WM_MOUSEMOVE || message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_RBUTTONDOWN ||
-                   message == WM_RBUTTONUP || message == WM_MBUTTONDOWN || message == WM_MBUTTONUP;
+            return message == WM_MOUSEMOVE || is_mouse_button_message(message);
         }
 
         bool is_key_down_message(const uint32_t message)
@@ -151,22 +183,47 @@ namespace sogen
         }
 
         // Window button message -> RAWMOUSE usButtonFlags transition bit (winuser.h RI_MOUSE_* values).
-        uint16_t raw_mouse_button_flags(const uint32_t message)
+        uint16_t raw_mouse_button_flags(const uint32_t message, const uint64_t wparam)
         {
             switch (message)
             {
             case WM_LBUTTONDOWN:
-                return 0x0001; // RI_MOUSE_LEFT_BUTTON_DOWN
+                return RI_MOUSE_LEFT_BUTTON_DOWN;
             case WM_LBUTTONUP:
-                return 0x0002; // RI_MOUSE_LEFT_BUTTON_UP
+                return RI_MOUSE_LEFT_BUTTON_UP;
             case WM_RBUTTONDOWN:
-                return 0x0004; // RI_MOUSE_RIGHT_BUTTON_DOWN
+                return RI_MOUSE_RIGHT_BUTTON_DOWN;
             case WM_RBUTTONUP:
-                return 0x0008; // RI_MOUSE_RIGHT_BUTTON_UP
+                return RI_MOUSE_RIGHT_BUTTON_UP;
             case WM_MBUTTONDOWN:
-                return 0x0010; // RI_MOUSE_MIDDLE_BUTTON_DOWN
+                return RI_MOUSE_MIDDLE_BUTTON_DOWN;
             case WM_MBUTTONUP:
-                return 0x0020; // RI_MOUSE_MIDDLE_BUTTON_UP
+                return RI_MOUSE_MIDDLE_BUTTON_UP;
+            case WM_XBUTTONDOWN:
+                return high_word(wparam) == XBUTTON2 ? RI_MOUSE_BUTTON_5_DOWN : RI_MOUSE_BUTTON_4_DOWN;
+            case WM_XBUTTONUP:
+                return high_word(wparam) == XBUTTON2 ? RI_MOUSE_BUTTON_5_UP : RI_MOUSE_BUTTON_4_UP;
+            default:
+                return 0;
+            }
+        }
+
+        uint8_t mouse_button_virtual_key(const uint32_t message, const uint64_t wparam)
+        {
+            switch (message)
+            {
+            case WM_LBUTTONDOWN:
+            case WM_LBUTTONUP:
+                return VK_LBUTTON;
+            case WM_RBUTTONDOWN:
+            case WM_RBUTTONUP:
+                return VK_RBUTTON;
+            case WM_MBUTTONDOWN:
+            case WM_MBUTTONUP:
+                return VK_MBUTTON;
+            case WM_XBUTTONDOWN:
+            case WM_XBUTTONUP:
+                return high_word(wparam) == XBUTTON2 ? VK_XBUTTON2 : VK_XBUTTON1;
             default:
                 return 0;
             }
@@ -1443,7 +1500,7 @@ namespace sogen
                         this->deliver_raw_mouse_input(dx, dy, 0);
                     }
                 }
-                else if (const uint16_t buttons = raw_mouse_button_flags(event.message); buttons != 0)
+                else if (const uint16_t buttons = raw_mouse_button_flags(event.message, event.wParam); buttons != 0)
                 {
                     // Raw-input games read button transitions from WM_INPUT, not WM_LBUTTONDOWN/UP.
                     this->deliver_raw_mouse_input(0, 0, buttons);
@@ -1493,27 +1550,22 @@ namespace sogen
         case WM_SYSKEYUP:
             this->process.key_state[static_cast<uint8_t>(event.wParam & 0xFF)] = 0;
             break;
-        case WM_LBUTTONDOWN:
-            if ((this->process.key_state[0x01] & 0x80) == 0)
-            {
-                this->process.async_key_state[0x01] = 1;
-            }
-            this->process.key_state[0x01] = 0x80; // VK_LBUTTON
-            break;
-        case WM_LBUTTONUP:
-            this->process.key_state[0x01] = 0;
-            break;
-        case WM_RBUTTONDOWN:
-            if ((this->process.key_state[0x02] & 0x80) == 0)
-            {
-                this->process.async_key_state[0x02] = 1;
-            }
-            this->process.key_state[0x02] = 0x80; // VK_RBUTTON
-            break;
-        case WM_RBUTTONUP:
-            this->process.key_state[0x02] = 0;
-            break;
         default:
+            if (const auto virtual_key = mouse_button_virtual_key(event.message, event.wParam); virtual_key != 0)
+            {
+                if (is_mouse_button_down_message(event.message))
+                {
+                    if ((this->process.key_state[virtual_key] & 0x80) == 0)
+                    {
+                        this->process.async_key_state[virtual_key] = 1;
+                    }
+                    this->process.key_state[virtual_key] = 0x80;
+                }
+                else if (is_mouse_button_up_message(event.message))
+                {
+                    this->process.key_state[virtual_key] = 0;
+                }
+            }
             break;
         }
 
@@ -1533,8 +1585,8 @@ namespace sogen
 
         thread->post_message(*this, m, true);
 
-        if (event.message == WM_CLOSE || event.message == WM_COMMAND || event.message == WM_KEYDOWN || event.message == WM_LBUTTONDOWN ||
-            event.message == WM_LBUTTONUP)
+        if (event.message == WM_CLOSE || event.message == WM_COMMAND || is_key_down_message(event.message) ||
+            is_mouse_button_message(event.message))
         {
             // Kick the vCPU currently running the target thread so it promptly re-checks its message
             // queue; if the thread is not running on any vCPU right now, fall back to vCPU 0 to force a
