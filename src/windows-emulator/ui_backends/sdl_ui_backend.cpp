@@ -10,6 +10,48 @@ namespace sogen
 {
     namespace
     {
+        struct mouse_button_msg
+        {
+            uint32_t message{};
+            uint64_t wparam{};
+        };
+
+        // Map an SDL mouse button to its guest window message and the button's MK_* wparam flag (button-up
+        // carries no held-button flag, matching how the guest sees a release).
+        mouse_button_msg mouse_button_message(const uint8_t sdl_button, const bool down)
+        {
+            switch (sdl_button)
+            {
+            case SDL_BUTTON_LEFT:
+                return {static_cast<uint32_t>(down ? WM_LBUTTONDOWN : WM_LBUTTONUP), down ? MK_LBUTTON : 0u};
+            case SDL_BUTTON_RIGHT:
+                return {static_cast<uint32_t>(down ? WM_RBUTTONDOWN : WM_RBUTTONUP), down ? MK_RBUTTON : 0u};
+            case SDL_BUTTON_MIDDLE:
+                return {static_cast<uint32_t>(down ? WM_MBUTTONDOWN : WM_MBUTTONUP), down ? MK_MBUTTON : 0u};
+            default:
+                return {};
+            }
+        }
+
+        // Translate SDL's held-button bitmask into the MK_* flags carried by WM_MOUSEMOVE.
+        uint64_t mouse_state_keys(const uint32_t sdl_state)
+        {
+            uint64_t keys = 0;
+            if (sdl_state & SDL_BUTTON_LMASK)
+            {
+                keys |= MK_LBUTTON;
+            }
+            if (sdl_state & SDL_BUTTON_RMASK)
+            {
+                keys |= MK_RBUTTON;
+            }
+            if (sdl_state & SDL_BUTTON_MMASK)
+            {
+                keys |= MK_MBUTTON;
+            }
+            return keys;
+        }
+
 #ifdef _WIN32
         void apply_application_icon(SDL_Window* window)
         {
@@ -649,23 +691,24 @@ namespace sogen
                         break;
 
                     case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                        if (event.button.button == SDL_BUTTON_LEFT)
+                        if (const auto msg = mouse_button_message(event.button.button, true); msg.message != 0)
                         {
                             if (const auto guest = this->resolve_guest(event.button.windowID); guest != 0)
                             {
                                 this->set_window_active(guest, true);
-                                this->post_event(guest, WM_LBUTTONDOWN, MK_LBUTTON,
+                                this->post_event(guest, msg.message, msg.wparam,
                                                  this->map_window_point(guest, event.button.x, event.button.y));
                             }
                         }
                         break;
 
                     case SDL_EVENT_MOUSE_BUTTON_UP:
-                        if (event.button.button == SDL_BUTTON_LEFT)
+                        if (const auto msg = mouse_button_message(event.button.button, false); msg.message != 0)
                         {
                             if (const auto guest = this->resolve_guest(event.button.windowID); guest != 0)
                             {
-                                this->post_event(guest, WM_LBUTTONUP, 0, this->map_window_point(guest, event.button.x, event.button.y));
+                                this->post_event(guest, msg.message, msg.wparam,
+                                                 this->map_window_point(guest, event.button.x, event.button.y));
                             }
                         }
                         break;
@@ -674,8 +717,8 @@ namespace sogen
                         if (const auto guest = this->resolve_guest(event.motion.windowID); guest != 0)
                         {
                             this->set_window_active(guest, true);
-                            const uint64_t keys = (event.motion.state & SDL_BUTTON_LMASK) ? MK_LBUTTON : 0;
-                            this->post_event(guest, WM_MOUSEMOVE, keys, this->map_window_point(guest, event.motion.x, event.motion.y));
+                            this->post_event(guest, WM_MOUSEMOVE, mouse_state_keys(event.motion.state),
+                                             this->map_window_point(guest, event.motion.x, event.motion.y));
                         }
                         break;
 
