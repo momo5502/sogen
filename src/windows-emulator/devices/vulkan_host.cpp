@@ -562,7 +562,12 @@ namespace sogen
         // buffers over PCIe instead of from local VRAM, which is what native drivers do for dynamic data
         // anyway. Only substitute a type that is also HOST_COHERENT: DXVK relies on coherency and never issues
         // vkFlushMappedMemoryRanges, so dropping it would leave the GPU reading stale data.
-        // Set SOGEN_GPU_FORCE_CACHED=0 to disable.
+        //
+        // Caveat: strictly, the substituted index must be set in the eventual resource's
+        // VkMemoryRequirements::memoryTypeBits, but a bare vkAllocateMemory (this path) carries no such
+        // bitmask and a VkDeviceMemory is not tied to one resource. We only ever swap one host-visible type
+        // for another host-visible type, which desktop drivers permit for every host-visible buffer, so the
+        // substituted type is compatible in practice. Set SOGEN_GPU_FORCE_CACHED=0 to disable.
         uint32_t substitute_cached_memory_type(const device_data& dev, const uint32_t index)
         {
             static const bool disabled = [] {
