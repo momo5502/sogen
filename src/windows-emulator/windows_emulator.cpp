@@ -809,10 +809,10 @@ namespace sogen
             return;
         }
 
-        hooks[section_index] =
-            this->emu().hook_memory_range_execution(section.region.start, section.region.length, [this](const uint64_t address) {
-                this->track_section_first_execution(address); //
-            });
+        hooks[section_index] = this->emu().hook_memory_range_execution(section.region.start, section.region.length,
+                                                                       [this](cpu_interface&, const uint64_t address) {
+                                                                           this->track_section_first_execution(address); //
+                                                                       });
     }
 
     void windows_emulator::install_section_first_execution_hooks()
@@ -890,7 +890,7 @@ namespace sogen
             return instruction_hook_continuation::skip_instruction; //
         });
 
-        this->emu().hook_interrupt([&](const int interrupt) {
+        this->emu().hook_interrupt([&](cpu_interface&, const int interrupt) {
             this->callbacks.on_exception();
             const auto eflags = this->emu().reg<uint32_t>(x86_register::eflags);
 
@@ -953,55 +953,55 @@ namespace sogen
             }
         });
 
-        this->emu().hook_memory_violation(
-            [&](const uint64_t address, const size_t size, const memory_operation operation, const memory_violation_type type) {
-                if (this->emu().reg<uint16_t>(x86_register::cs) == 0x33)
+        this->emu().hook_memory_violation([&](cpu_interface&, const uint64_t address, const size_t size, const memory_operation operation,
+                                              const memory_violation_type type) {
+            if (this->emu().reg<uint16_t>(x86_register::cs) == 0x33)
+            {
+                // loading gs selector only works in 64-bit mode
+                const auto required_gs_base = this->current_thread().gs_segment->get_base();
+                const auto actual_gs_base = this->emu().get_segment_base(x86_register::gs);
+                if (actual_gs_base != required_gs_base)
                 {
-                    // loading gs selector only works in 64-bit mode
-                    const auto required_gs_base = this->current_thread().gs_segment->get_base();
-                    const auto actual_gs_base = this->emu().get_segment_base(x86_register::gs);
-                    if (actual_gs_base != required_gs_base)
+                    this->emu().set_segment_base(x86_register::gs, required_gs_base);
+                    return memory_violation_continuation::restart;
+                }
+            }
+
+            auto region = this->memory.get_region_info(address);
+            if (region.permissions.is_guarded())
+            {
+                // Unset the GUARD_PAGE flag and dispatch a STATUS_GUARD_PAGE_VIOLATION
+                this->memory.protect_memory(region.allocation_base, region.length, region.permissions & ~memory_permission_ext::guard);
+                dispatch_guard_page_violation(*this, address, operation);
+            }
+            else
+            {
+                // A fault on a null/near-null address is almost always a call through a null function
+                // pointer (e.g. a Vulkan entry point the shim doesn't implement). Log the caller's
+                // return address so the missing function's call site can be identified.
+                if (address < 0x1000)
+                {
+                    const auto sp = this->emu().reg<uint32_t>(x86_register::esp);
+                    uint32_t return_address = 0;
+                    if (this->emu().try_read_memory(sp, &return_address, sizeof(return_address)))
                     {
-                        this->emu().set_segment_base(x86_register::gs, required_gs_base);
-                        return memory_violation_continuation::restart;
+                        const auto* mod = this->mod_manager.find_by_address(return_address);
+                        this->log.error("Null-pointer call to 0x%llx; caller return address 0x%x (%s+0x%llx)\n",
+                                        static_cast<unsigned long long>(address), return_address, mod ? mod->name.c_str() : "?",
+                                        mod ? static_cast<unsigned long long>(return_address - mod->image_base) : return_address);
                     }
                 }
 
-                auto region = this->memory.get_region_info(address);
-                if (region.permissions.is_guarded())
-                {
-                    // Unset the GUARD_PAGE flag and dispatch a STATUS_GUARD_PAGE_VIOLATION
-                    this->memory.protect_memory(region.allocation_base, region.length, region.permissions & ~memory_permission_ext::guard);
-                    dispatch_guard_page_violation(*this, address, operation);
-                }
-                else
-                {
-                    // A fault on a null/near-null address is almost always a call through a null function
-                    // pointer (e.g. a Vulkan entry point the shim doesn't implement). Log the caller's
-                    // return address so the missing function's call site can be identified.
-                    if (address < 0x1000)
-                    {
-                        const auto sp = this->emu().reg<uint32_t>(x86_register::esp);
-                        uint32_t return_address = 0;
-                        if (this->emu().try_read_memory(sp, &return_address, sizeof(return_address)))
-                        {
-                            const auto* mod = this->mod_manager.find_by_address(return_address);
-                            this->log.error("Null-pointer call to 0x%llx; caller return address 0x%x (%s+0x%llx)\n",
-                                            static_cast<unsigned long long>(address), return_address, mod ? mod->name.c_str() : "?",
-                                            mod ? static_cast<unsigned long long>(return_address - mod->image_base) : return_address);
-                        }
-                    }
+                this->callbacks.on_memory_violate(address, size, operation, type);
+                dispatch_access_violation(*this, address, operation);
+            }
 
-                    this->callbacks.on_memory_violate(address, size, operation, type);
-                    dispatch_access_violation(*this, address, operation);
-                }
-
-                return memory_violation_continuation::resume;
-            });
+            return memory_violation_continuation::resume;
+        });
 
         if (this->uses_instruction_precision())
         {
-            this->emu().hook_memory_execution([&](const uint64_t address) {
+            this->emu().hook_memory_execution([&](cpu_interface&, const uint64_t address) {
                 this->on_instruction_execution(address); //
             });
         }
@@ -1010,7 +1010,7 @@ namespace sogen
             // The backend cannot be stopped safely from another thread, so the interrupt thread in start()
             // is not available for time-slicing. Preempt cooperatively from the CPU thread via a basic-block
             // hook instead.
-            this->emu().hook_basic_block([&](const basic_block& block) {
+            this->emu().hook_basic_block([&](cpu_interface&, const basic_block& block) {
                 this->on_basic_block_execution(block); //
             });
         }

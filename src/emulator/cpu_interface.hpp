@@ -12,6 +12,9 @@ namespace sogen
     {
         virtual ~cpu_interface() = default;
 
+        // Identity of this virtual CPU within its machine, in [0, vcpu_count).
+        virtual size_t index() const = 0;
+
         struct descriptor_table_register
         {
             uint64_t base{};

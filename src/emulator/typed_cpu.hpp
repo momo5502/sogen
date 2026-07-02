@@ -67,8 +67,6 @@ namespace sogen
         static constexpr registers stack_pointer = Traits::stack_pointer;
         static constexpr registers instruction_pointer = Traits::instruction_pointer;
 
-        virtual size_t index() const = 0;
-
         virtual memory_interface& memory() = 0;
         virtual const memory_interface& memory() const = 0;
 

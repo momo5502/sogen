@@ -1997,7 +1997,7 @@ namespace sogen::whp
                 };
                 this->set_registers(pre_hook_names, pre_hook_values);
 
-                const auto continuation = this->syscall_hook_->callback(0);
+                const auto continuation = this->syscall_hook_->callback(*this, 0);
 
                 constexpr std::array<WHV_REGISTER_NAME, 1> post_hook_rip_name = {WHvX64RegisterRip};
                 auto post_hook_rip_value = this->get_registers(post_hook_rip_name);
@@ -3033,7 +3033,7 @@ namespace sogen::whp
                     }
 
                     handled = true;
-                    if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
+                    if (hook.callback(*this, 0) == instruction_hook_continuation::skip_instruction)
                     {
                         skip = true;
                     }
@@ -3058,7 +3058,7 @@ namespace sogen::whp
                 {
                     for (auto& [_, hook] : this->interrupt_hooks_)
                     {
-                        hook(std::to_integer<uint8_t>(opcode[1]));
+                        hook(*this, std::to_integer<uint8_t>(opcode[1]));
 
                         if (this->read_instruction_pointer() == rip)
                         {
@@ -3081,7 +3081,7 @@ namespace sogen::whp
                             continue;
                         }
 
-                        if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
+                        if (hook.callback(*this, 0) == instruction_hook_continuation::skip_instruction)
                         {
                             skip = true;
                             consumed = true;
@@ -3100,7 +3100,7 @@ namespace sogen::whp
 
                     for (auto& [_, hook] : this->interrupt_hooks_)
                     {
-                        hook(6);
+                        hook(*this, 6);
                         return true;
                     }
 
@@ -3121,7 +3121,7 @@ namespace sogen::whp
                 {
                     for (auto& [_, hook] : this->interrupt_hooks_)
                     {
-                        hook(1);
+                        hook(*this, 1);
                         return true;
                     }
                 }
@@ -3132,7 +3132,7 @@ namespace sogen::whp
                 {
                     for (auto& [_, hook] : this->memory_violation_hooks_)
                     {
-                        const auto result = hook(fault_address, 1, memory_operation::read, memory_violation_type::unmapped);
+                        const auto result = hook(*this, fault_address, 1, memory_operation::read, memory_violation_type::unmapped);
                         if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                         {
                             return true;
@@ -3142,7 +3142,7 @@ namespace sogen::whp
 
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
-                    hook(14);
+                    hook(*this, 14);
                     return true;
                 }
 
@@ -3171,7 +3171,7 @@ namespace sogen::whp
 
                 for (const auto& callback : callbacks)
                 {
-                    callback(address);
+                    callback(*this, address);
                 }
 
                 if (this->stop_requested_)
@@ -3259,7 +3259,7 @@ namespace sogen::whp
 
                 for (auto& [_, hook] : this->memory_violation_hooks_)
                 {
-                    const auto result = hook(mmio_address, 1, operation, type);
+                    const auto result = hook(*this, mmio_address, 1, operation, type);
                     if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                     {
                         return true;
@@ -3292,7 +3292,7 @@ namespace sogen::whp
 
                 for (const auto& callback : callbacks)
                 {
-                    callback(address);
+                    callback(*this, address);
                 }
 
                 this->deferred_patched_breakpoint_ = address;
@@ -3321,7 +3321,7 @@ namespace sogen::whp
 
                     for (auto& [_, hook] : this->memory_violation_hooks_)
                     {
-                        const auto result = hook(fault_address, 1, operation, type);
+                        const auto result = hook(*this, fault_address, 1, operation, type);
                         if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                         {
                             return true;
@@ -3330,7 +3330,7 @@ namespace sogen::whp
 
                     for (auto& [_, hook] : this->interrupt_hooks_)
                     {
-                        hook(14);
+                        hook(*this, 14);
                         return true;
                     }
 
@@ -3387,7 +3387,7 @@ namespace sogen::whp
                             continue;
                         }
 
-                        if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
+                        if (hook.callback(*this, 0) == instruction_hook_continuation::skip_instruction)
                         {
                             if (this->read_instruction_pointer() == rip)
                             {
@@ -3423,7 +3423,7 @@ namespace sogen::whp
 
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
-                    hook(exception.ExceptionType);
+                    hook(*this, exception.ExceptionType);
                     return true;
                 }
 

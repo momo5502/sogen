@@ -23,7 +23,7 @@ namespace sogen
 
         emulator_hook* hook_instruction(hookable_instructions instruction_type, simple_instruction_hook_callback callback)
         {
-            return this->hook_instruction(instruction_type, [c = std::move(callback)](const uint64_t) { return c(); });
+            return this->hook_instruction(instruction_type, [c = std::move(callback)](cpu_interface&, const uint64_t) { return c(); });
         }
 
       private:

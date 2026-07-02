@@ -1101,7 +1101,7 @@ namespace sogen::kvm
 
                 for (const auto& callback : callbacks)
                 {
-                    callback(address);
+                    callback(*this, address);
                 }
             }
 
@@ -1813,7 +1813,7 @@ namespace sogen::kvm
                 bool rip_changed = false;
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
-                    hook(static_cast<int>(breakpoint_interrupt));
+                    hook(*this, static_cast<int>(breakpoint_interrupt));
                     handled = true;
                     rip_changed = rip_changed || this->read_instruction_pointer() != rip;
                 }
@@ -1841,7 +1841,7 @@ namespace sogen::kvm
                     }
 
                     handled = true;
-                    if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
+                    if (hook.callback(*this, 0) == instruction_hook_continuation::skip_instruction)
                     {
                         skip = true;
                     }
@@ -1870,7 +1870,7 @@ namespace sogen::kvm
                         continue;
                     }
 
-                    if (hook.callback(0) == instruction_hook_continuation::skip_instruction)
+                    if (hook.callback(*this, 0) == instruction_hook_continuation::skip_instruction)
                     {
                         consumed = true;
                     }
@@ -1948,7 +1948,7 @@ namespace sogen::kvm
                 const auto operation = mmio.is_write ? memory_operation::write : memory_operation::read;
                 for (auto& [_, hook] : this->memory_violation_hooks_)
                 {
-                    const auto result = hook(violation_address, mmio.len, operation, violation_type);
+                    const auto result = hook(*this, violation_address, mmio.len, operation, violation_type);
                     if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                     {
                         return true;
@@ -1971,7 +1971,7 @@ namespace sogen::kvm
                     const auto type = (error_code & 0x1) ? memory_violation_type::protection : memory_violation_type::unmapped;
                     for (auto& [_, hook] : this->memory_violation_hooks_)
                     {
-                        const auto result = hook(fault_address, 1, operation, type);
+                        const auto result = hook(*this, fault_address, 1, operation, type);
                         if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                         {
                             return true;
@@ -1982,7 +1982,7 @@ namespace sogen::kvm
                 bool handled = false;
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
-                    hook(static_cast<int>(exception));
+                    hook(*this, static_cast<int>(exception));
                     handled = true;
                 }
 
@@ -2131,7 +2131,7 @@ namespace sogen::kvm
                 bool handled = false;
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
-                    hook(vector);
+                    hook(*this, vector);
                     handled = true;
                 }
 
@@ -2160,7 +2160,7 @@ namespace sogen::kvm
                 this->set_regs(regs);
                 this->set_sregs(sregs);
 
-                const auto continuation = this->syscall_hook_->callback(0);
+                const auto continuation = this->syscall_hook_->callback(*this, 0);
 
                 regs = this->get_regs();
                 if (continuation != instruction_hook_continuation::finalized_instruction_pointer)

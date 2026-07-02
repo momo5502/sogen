@@ -62,17 +62,17 @@ namespace sogen
 
         auto& emu = win_emu_.emu();
 
-        auto* read_hook = emu.hook_memory_read(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
+        auto* read_hook = emu.hook_memory_read(0, 0xFFFFFFFFFFFFFFFF, [this](cpu_interface&, uint64_t a, const void* d, size_t s) {
             this->log_memory_read(a, d, s); //
         });
         read_hook_ = scoped_hook(emu, read_hook);
 
-        auto* write_hook = emu.hook_memory_write(0, 0xFFFFFFFFFFFFFFFF, [this](uint64_t a, const void* d, size_t s) {
+        auto* write_hook = emu.hook_memory_write(0, 0xFFFFFFFFFFFFFFFF, [this](cpu_interface&, uint64_t a, const void* d, size_t s) {
             this->log_memory_write(a, d, s); //
         });
         write_hook_ = scoped_hook(emu, write_hook);
 
-        auto* execute_hook = emu.hook_memory_execution([&](uint64_t address) {
+        auto* execute_hook = emu.hook_memory_execution([&](cpu_interface&, uint64_t address) {
             this->process_instruction(address); //
         });
         execute_hook_ = scoped_hook(emu, execute_hook);

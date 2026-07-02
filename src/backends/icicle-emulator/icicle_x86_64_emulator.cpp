@@ -116,7 +116,7 @@ namespace sogen::icicle
         {
             uint64_t address{};
             uint64_t size{};
-            memory_access_hook_callback callback{};
+            std::function<void(uint64_t address, const void* data, size_t size)> callback{};
             bool is_read{};
         };
 
@@ -316,6 +316,14 @@ namespace sogen::icicle
             ice(res, "Failed to apply permissions");
         }
 
+        // The raw icicle hook wrappers are captureless function pointers, so the
+        // triggering CPU is bound into the stored function up front.
+        template <typename Ret, typename... Args>
+        std::function<Ret(Args...)> bind_cpu(std::function<Ret(cpu_interface&, Args...)> callback)
+        {
+            return [this, c = std::move(callback)](Args... args) { return c(*this, std::forward<Args>(args)...); };
+        }
+
         emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override
         {
             if (static_cast<x86_hookable_instructions>(instruction_type) != x86_hookable_instructions::syscall)
@@ -324,7 +332,7 @@ namespace sogen::icicle
                 return nullptr;
             }
 
-            auto obj = make_function_object(std::move(callback), this->is_in_hook_);
+            auto obj = make_function_object(this->bind_cpu(std::move(callback)), this->is_in_hook_);
             auto* ptr = obj.get();
 
             const auto invoker = +[](void* cb) {
@@ -340,7 +348,7 @@ namespace sogen::icicle
 
         emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
         {
-            auto object = make_function_object(std::move(callback), this->is_in_hook_);
+            auto object = make_function_object(this->bind_cpu(std::move(callback)), this->is_in_hook_);
             auto* ptr = object.get();
             auto* wrapper = +[](void* user, const uint64_t addr, const uint64_t instructions) {
                 basic_block block{};
@@ -359,7 +367,7 @@ namespace sogen::icicle
 
         emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
         {
-            auto obj = make_function_object(std::move(callback), this->is_in_hook_);
+            auto obj = make_function_object(this->bind_cpu(std::move(callback)), this->is_in_hook_);
             auto* ptr = obj.get();
             auto* wrapper = +[](void* user, const int32_t code) {
                 const auto& func = *static_cast<decltype(ptr)>(user);
@@ -374,7 +382,7 @@ namespace sogen::icicle
 
         emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) override
         {
-            auto obj = make_function_object(std::move(callback), this->is_in_hook_);
+            auto obj = make_function_object(this->bind_cpu(std::move(callback)), this->is_in_hook_);
             auto* ptr = obj.get();
             auto* wrapper = +[](void* user, const uint64_t address, const uint8_t operation, const int32_t unmapped) -> int32_t {
                 const auto violation_type = unmapped //
@@ -396,7 +404,7 @@ namespace sogen::icicle
 
         emulator_hook* hook_memory_execution(const uint64_t address, memory_execution_hook_callback callback) override
         {
-            auto object = make_function_object(std::move(callback), this->is_in_hook_);
+            auto object = make_function_object(this->bind_cpu(std::move(callback)), this->is_in_hook_);
             auto* ptr = object.get();
             auto* wrapper = +[](void* user, const uint64_t addr) {
                 const auto& func = *static_cast<decltype(ptr)>(user);
@@ -417,7 +425,7 @@ namespace sogen::icicle
                 return this->hook_memory_execution(address, std::move(callback));
             }
 
-            auto object = make_function_object(std::move(callback), this->is_in_hook_);
+            auto object = make_function_object(this->bind_cpu(std::move(callback)), this->is_in_hook_);
             auto* ptr = object.get();
             auto* wrapper = +[](void* user, const uint64_t addr) {
                 const auto& func = *static_cast<decltype(ptr)>(user);
@@ -432,7 +440,7 @@ namespace sogen::icicle
 
         emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
         {
-            auto object = make_function_object(std::move(callback), this->is_in_hook_);
+            auto object = make_function_object(this->bind_cpu(std::move(callback)), this->is_in_hook_);
             auto* ptr = object.get();
             auto* wrapper = +[](void* user, const uint64_t addr) {
                 const auto& func = *static_cast<decltype(ptr)>(user);
@@ -450,7 +458,7 @@ namespace sogen::icicle
             return this->try_install_memory_access_hook(memory_access_hook{
                 .address = address,
                 .size = size,
-                .callback = std::move(callback),
+                .callback = this->bind_cpu(std::move(callback)),
                 .is_read = true,
             });
         }
@@ -460,7 +468,7 @@ namespace sogen::icicle
             return this->try_install_memory_access_hook(memory_access_hook{
                 .address = address,
                 .size = size,
-                .callback = std::move(callback),
+                .callback = this->bind_cpu(std::move(callback)),
                 .is_read = false,
             });
         }

@@ -174,7 +174,7 @@ namespace sogen
                     return;
                 }
 
-                auto hook_handler = [state, env_ptr](const uint64_t address, const void*, const size_t size) {
+                auto hook_handler = [state, env_ptr](cpu_interface&, const uint64_t address, const void*, const size_t size) {
                     const auto rip = state->win_emu_.emu().read_instruction_pointer();
                     const auto* mod = state->win_emu_.mod_manager.find_by_address(rip);
                     const auto is_main_access =
@@ -209,7 +209,7 @@ namespace sogen
             auto& win_emu = state->win_emu_;
             return state->win_emu_.emu().hook_memory_write(
                 process_params.value() + offsetof(RTL_USER_PROCESS_PARAMETERS64, Environment), 0x8,
-                [&win_emu, install = std::move(install_env_access_hook)](const uint64_t address, const void*, size_t) {
+                [&win_emu, install = std::move(install_env_access_hook)](cpu_interface&, const uint64_t address, const void*, size_t) {
                     const auto new_process_params = get_process_params(win_emu);
 
                     const auto target_address = new_process_params.value() + offsetof(RTL_USER_PROCESS_PARAMETERS64, Environment);
@@ -256,7 +256,7 @@ namespace sogen
 
             win_emu.emu().hook_memory_write(
                 win_emu.process.peb64.value() + offsetof(PEB64, ProcessParameters), 0x8,
-                [state, emit_object_access, update_env = std::move(update_env_hook)](const uint64_t, const void*, size_t) {
+                [state, emit_object_access, update_env = std::move(update_env_hook)](cpu_interface&, const uint64_t, const void*, size_t) {
                     const auto new_ptr = state->win_emu_.process.peb64.read().ProcessParameters;
                     state->params_hook_ = watch_object<RTL_USER_PROCESS_PARAMETERS64>(
                         state->win_emu_, state->modules_, new_ptr, state->verbose_, emit_object_access, state->params_state_);
@@ -264,7 +264,7 @@ namespace sogen
                 });
 
             win_emu.emu().hook_memory_write(win_emu.process.peb64.value() + offsetof(PEB64, Ldr), 0x8,
-                                            [state, emit_object_access](const uint64_t, const void*, size_t) {
+                                            [state, emit_object_access](cpu_interface&, const uint64_t, const void*, size_t) {
                                                 const auto new_ptr = state->win_emu_.process.peb64.read().Ldr;
                                                 state->ldr_hook_ =
                                                     watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_,
@@ -698,39 +698,40 @@ namespace sogen
             if (options.log_foreign_module_access)
             {
                 auto module_cache = std::make_shared<std::map<std::string, uint64_t>>();
-                win_emu->emu().hook_memory_read(
-                    0, std::numeric_limits<uint64_t>::max(), [&, module_cache](const uint64_t address, const void*, size_t size) {
-                        const auto rip = win_emu->emu().read_instruction_pointer();
-                        const auto accessor = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+                win_emu->emu().hook_memory_read(0, std::numeric_limits<uint64_t>::max(),
+                                                [&, module_cache](cpu_interface&, const uint64_t address, const void*, size_t size) {
+                                                    const auto rip = win_emu->emu().read_instruction_pointer();
+                                                    const auto accessor =
+                                                        get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
-                        if (!accessor.has_value())
-                        {
-                            return;
-                        }
+                                                    if (!accessor.has_value())
+                                                    {
+                                                        return;
+                                                    }
 
-                        const auto* mod = win_emu->mod_manager.find_by_address(address);
-                        if (!mod || mod == *accessor)
-                        {
-                            return;
-                        }
+                                                    const auto* mod = win_emu->mod_manager.find_by_address(address);
+                                                    if (!mod || mod == *accessor)
+                                                    {
+                                                        return;
+                                                    }
 
-                        if (concise_logging)
-                        {
-                            const auto count = ++(*module_cache)[mod->name];
-                            if (count > 30 && count % 100000 != 0)
-                            {
-                                return;
-                            }
-                        }
+                                                    if (concise_logging)
+                                                    {
+                                                        const auto count = ++(*module_cache)[mod->name];
+                                                        if (count > 30 && count % 100000 != 0)
+                                                        {
+                                                            return;
+                                                        }
+                                                    }
 
-                        const auto* region_name = get_module_memory_region_name(*mod, address);
-                        context.emit_observation<foreign_module_read_event>([&](auto& event) {
-                            event.address = address;
-                            event.size = size;
-                            event.module_name = mod->name;
-                            event.region_name = region_name;
-                        });
-                    });
+                                                    const auto* region_name = get_module_memory_region_name(*mod, address);
+                                                    context.emit_observation<foreign_module_read_event>([&](auto& event) {
+                                                        event.address = address;
+                                                        event.size = size;
+                                                        event.module_name = mod->name;
+                                                        event.region_name = region_name;
+                                                    });
+                                                });
             }
 
             if (options.log_executable_access)
@@ -745,7 +746,8 @@ namespace sogen
                     const auto read_count = std::make_shared<uint64_t>(0);
                     const auto write_count = std::make_shared<uint64_t>(0);
 
-                    auto read_handler = [&, section, concise_logging, read_count](const uint64_t address, const void*, size_t size) {
+                    auto read_handler = [&, section, concise_logging, read_count](cpu_interface&, const uint64_t address, const void*,
+                                                                                  size_t size) {
                         const auto rip = win_emu->emu().read_instruction_pointer();
                         const auto accessor = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
@@ -770,8 +772,8 @@ namespace sogen
                         });
                     };
 
-                    auto write_handler = [&, section, concise_logging, write_count](const uint64_t address, const void* value,
-                                                                                    size_t size) {
+                    auto write_handler = [&, section, concise_logging, write_count](cpu_interface&, const uint64_t address,
+                                                                                    const void* value, size_t size) {
                         if (concise_logging)
                         {
                             const auto count = ++*write_count;

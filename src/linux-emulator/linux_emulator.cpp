@@ -628,9 +628,10 @@ namespace sogen
     void linux_emulator::setup_hooks()
     {
         // Hook the syscall instruction
-        this->emu().hook_instruction(x86_hookable_instructions::syscall, [this](uint64_t) { return this->dispatcher.dispatch(*this); });
+        this->emu().hook_instruction(x86_hookable_instructions::syscall,
+                                     [this](cpu_interface&, uint64_t) { return this->dispatcher.dispatch(*this); });
 
-        this->emu().hook_interrupt([this](const int interrupt) {
+        this->emu().hook_interrupt([this](cpu_interface&, const int interrupt) {
             this->notify_interrupt_observers(interrupt);
             if (this->should_stop)
             {
@@ -647,57 +648,57 @@ namespace sogen
 
         // Hook memory violations — first give Linux-managed observers a chance
         // to handle the fault, then fall back to SIGSEGV/default termination.
-        this->emu().hook_memory_violation(
-            [this](const uint64_t address, const size_t size, const memory_operation operation, const memory_violation_type type) {
-                if (!this->memory_violation_observers_.empty())
-                {
-                    return this->notify_memory_violation_observers(address, size, operation, type);
-                }
+        this->emu().hook_memory_violation([this](cpu_interface&, const uint64_t address, const size_t size,
+                                                 const memory_operation operation, const memory_violation_type type) {
+            if (!this->memory_violation_observers_.empty())
+            {
+                return this->notify_memory_violation_observers(address, size, operation, type);
+            }
 
-                const char* type_str = (type == memory_violation_type::unmapped) ? "unmapped" : "protection";
-                const char* op_str = "unknown";
+            const char* type_str = (type == memory_violation_type::unmapped) ? "unmapped" : "protection";
+            const char* op_str = "unknown";
 
-                if (operation == memory_permission::read)
-                {
-                    op_str = "read";
-                }
-                else if (operation == memory_permission::write)
-                {
-                    op_str = "write";
-                }
-                else if (operation == memory_permission::exec)
-                {
-                    op_str = "exec";
-                }
+            if (operation == memory_permission::read)
+            {
+                op_str = "read";
+            }
+            else if (operation == memory_permission::write)
+            {
+                op_str = "write";
+            }
+            else if (operation == memory_permission::exec)
+            {
+                op_str = "exec";
+            }
 
-                const auto rip = this->emu().read_instruction_pointer();
+            const auto rip = this->emu().read_instruction_pointer();
 
-                // Determine si_code: SEGV_MAPERR for unmapped, SEGV_ACCERR for protection violation
-                const int si_code =
-                    (type == memory_violation_type::unmapped) ? linux_signals::LINUX_SEGV_MAPERR : linux_signals::LINUX_SEGV_ACCERR;
+            // Determine si_code: SEGV_MAPERR for unmapped, SEGV_ACCERR for protection violation
+            const int si_code =
+                (type == memory_violation_type::unmapped) ? linux_signals::LINUX_SEGV_MAPERR : linux_signals::LINUX_SEGV_ACCERR;
 
-                // Try to deliver SIGSEGV to the emulated program's signal handler
-                if (this->signals.deliver_signal(*this, linux_signals::LINUX_SIGSEGV, address, si_code))
-                {
-                    // Signal handler was set up — continue execution (it will run the handler)
-                    return memory_violation_continuation::resume;
-                }
+            // Try to deliver SIGSEGV to the emulated program's signal handler
+            if (this->signals.deliver_signal(*this, linux_signals::LINUX_SIGSEGV, address, si_code))
+            {
+                // Signal handler was set up — continue execution (it will run the handler)
+                return memory_violation_continuation::resume;
+            }
 
-                // No handler — default action: terminate
-                if (!this->log.is_output_disabled())
-                {
-                    this->log.error("Memory violation at 0x%" PRIx64 ": %s %s (size=%zu, rip=0x%" PRIx64 ")\n", address, type_str, op_str,
-                                    size, rip);
-                }
+            // No handler — default action: terminate
+            if (!this->log.is_output_disabled())
+            {
+                this->log.error("Memory violation at 0x%" PRIx64 ": %s %s (size=%zu, rip=0x%" PRIx64 ")\n", address, type_str, op_str, size,
+                                rip);
+            }
 
-                this->record_stop(stop_reason::unhandled_memory_violation, format_memory_violation_stop_detail(address, size));
-                this->process.exit_status.reset();
-                this->stop();
-                return memory_violation_continuation::stop;
-            });
+            this->record_stop(stop_reason::unhandled_memory_violation, format_memory_violation_stop_detail(address, size));
+            this->process.exit_status.reset();
+            this->stop();
+            return memory_violation_continuation::stop;
+        });
 
         // Hook instruction execution (for counting)
-        this->emu().hook_memory_execution([this](const uint64_t address) { this->on_instruction_execution(address); });
+        this->emu().hook_memory_execution([this](cpu_interface&, const uint64_t address) { this->on_instruction_execution(address); });
     }
 
     void linux_emulator::on_instruction_execution(const uint64_t address)

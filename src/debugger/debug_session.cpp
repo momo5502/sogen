@@ -33,7 +33,7 @@ namespace sogen::debugger
           impl_(std::make_unique<impl>())
     {
         auto& cpu = this->emu_->emu();
-        this->impl_->control_hook = scoped_hook(cpu, cpu.hook_memory_execution([this](const uint64_t address) {
+        this->impl_->control_hook = scoped_hook(cpu, cpu.hook_memory_execution([this](cpu_interface&, const uint64_t address) {
             if (this->should_break(address))
             {
                 enter_breakpoint(*this->emu_, address);

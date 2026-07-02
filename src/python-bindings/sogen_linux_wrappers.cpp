@@ -1,4 +1,4 @@
-#include "sogen_internal.hpp"
+﻿#include "sogen_internal.hpp"
 
 #include <linux_emulator.hpp>
 #include <disassembler.hpp>
@@ -738,7 +738,7 @@ namespace sogen::py
                 continue;
             }
 
-            auto* hook = this->emu->emu().hook_memory_execution(symbol.address, [this, key, symbol](uint64_t address) {
+            auto* hook = this->emu->emu().hook_memory_execution(symbol.address, [this, key, symbol](cpu_interface&, uint64_t address) {
                 auto& backend = this->emu->emu();
                 uint64_t return_address{};
                 if (!backend.try_read_memory(backend.reg<uint64_t>(x86_register::rsp), &return_address, sizeof(return_address)))
@@ -787,7 +787,8 @@ namespace sogen::py
             return true;
         }
 
-        auto* hook = this->emu->emu().hook_memory_execution(address, [this, address](uint64_t) { this->handle_breakpoint(address); });
+        auto* hook = this->emu->emu().hook_memory_execution(
+            address, [this, address](cpu_interface&, uint64_t) { this->handle_breakpoint(address); });
         this->breakpoints.emplace(address, hook_handle{this->emu->emu(), hook, nb::none()});
         return true;
     }
@@ -834,12 +835,14 @@ namespace sogen::py
         }
         catch (...)
         {
-            auto* hook = this->emu->emu().hook_memory_execution(address, [this, address](uint64_t) { this->handle_breakpoint(address); });
+            auto* hook = this->emu->emu().hook_memory_execution(
+                address, [this, address](cpu_interface&, uint64_t) { this->handle_breakpoint(address); });
             it->second = hook_handle{this->emu->emu(), hook, nb::none()};
             throw;
         }
 
-        auto* hook = this->emu->emu().hook_memory_execution(address, [this, address](uint64_t) { this->handle_breakpoint(address); });
+        auto* hook = this->emu->emu().hook_memory_execution(
+            address, [this, address](cpu_interface&, uint64_t) { this->handle_breakpoint(address); });
         it->second = hook_handle{this->emu->emu(), hook, nb::none()};
         return true;
     }
@@ -890,7 +893,8 @@ namespace sogen::py
 
     void linux_debug_facade::run_to(const uint64_t address)
     {
-        auto* hook = this->emu->emu().hook_memory_execution(address, [this, address](uint64_t) { this->handle_breakpoint(address); });
+        auto* hook = this->emu->emu().hook_memory_execution(
+            address, [this, address](cpu_interface&, uint64_t) { this->handle_breakpoint(address); });
         hook_handle temporary{this->emu->emu(), hook, nb::none()};
         try
         {
@@ -1092,7 +1096,7 @@ namespace sogen::py
 
     hook_handle linux_hook_registry::memory_execution(nb::object callback)
     {
-        auto* hook = this->emu->emu().hook_memory_execution([cb = std::move(callback)](uint64_t address) {
+        auto* hook = this->emu->emu().hook_memory_execution([cb = std::move(callback)](cpu_interface&, uint64_t address) {
             nb::gil_scoped_acquire gil{};
             cb(address);
         });
@@ -1101,7 +1105,7 @@ namespace sogen::py
 
     hook_handle linux_hook_registry::memory_execution_at(uint64_t address, nb::object callback)
     {
-        auto* hook = this->emu->emu().hook_memory_execution(address, [cb = std::move(callback)](uint64_t addr) {
+        auto* hook = this->emu->emu().hook_memory_execution(address, [cb = std::move(callback)](cpu_interface&, uint64_t addr) {
             nb::gil_scoped_acquire gil{};
             cb(addr);
         });
@@ -1110,8 +1114,8 @@ namespace sogen::py
 
     hook_handle linux_hook_registry::memory_read(uint64_t address, uint64_t size, nb::object callback)
     {
-        auto* hook =
-            this->emu->emu().hook_memory_read(address, size, [cb = std::move(callback)](uint64_t addr, const void* data, size_t length) {
+        auto* hook = this->emu->emu().hook_memory_read(
+            address, size, [cb = std::move(callback)](cpu_interface&, uint64_t addr, const void* data, size_t length) {
                 nb::gil_scoped_acquire gil{};
                 cb(addr, nb::bytes(static_cast<const char*>(data), static_cast<nb::ssize_t>(length)));
             });
@@ -1120,8 +1124,8 @@ namespace sogen::py
 
     hook_handle linux_hook_registry::memory_write(uint64_t address, uint64_t size, nb::object callback)
     {
-        auto* hook =
-            this->emu->emu().hook_memory_write(address, size, [cb = std::move(callback)](uint64_t addr, const void* data, size_t length) {
+        auto* hook = this->emu->emu().hook_memory_write(
+            address, size, [cb = std::move(callback)](cpu_interface&, uint64_t addr, const void* data, size_t length) {
                 nb::gil_scoped_acquire gil{};
                 cb(addr, nb::bytes(static_cast<const char*>(data), static_cast<nb::ssize_t>(length)));
             });
@@ -1130,7 +1134,7 @@ namespace sogen::py
 
     hook_handle linux_hook_registry::instruction(x86_hookable_instructions instruction_type, nb::object callback)
     {
-        auto* hook = this->emu->emu().hook_instruction(instruction_type, [cb = std::move(callback)](uint64_t data) {
+        auto* hook = this->emu->emu().hook_instruction(instruction_type, [cb = std::move(callback)](cpu_interface&, uint64_t data) {
             nb::gil_scoped_acquire gil{};
             return coerce_instruction_continuation(cb(data));
         });
@@ -1162,7 +1166,7 @@ namespace sogen::py
 
     hook_handle linux_hook_registry::basic_block(nb::object callback)
     {
-        auto* hook = this->emu->emu().hook_basic_block([cb = std::move(callback)](const sogen::basic_block& block) {
+        auto* hook = this->emu->emu().hook_basic_block([cb = std::move(callback)](cpu_interface&, const sogen::basic_block& block) {
             nb::gil_scoped_acquire gil{};
             cb(block);
         });

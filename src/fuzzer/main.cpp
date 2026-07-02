@@ -64,7 +64,7 @@ namespace sogen
         void forward_emulator(windows_emulator& win_emu)
         {
             const auto target = win_emu.mod_manager.executable->find_export("vulnerable");
-            win_emu.emu().hook_memory_execution(target, [&](uint64_t) {
+            win_emu.emu().hook_memory_execution(target, [&](cpu_interface&, uint64_t) {
                 win_emu.emu().stop(); //
             });
 
@@ -81,7 +81,7 @@ namespace sogen
             fuzzer_executer(const std::span<const std::byte> data)
                 : emulator_data(data)
             {
-                emu.emu().hook_basic_block([&](const basic_block& block) {
+                emu.emu().hook_basic_block([&](cpu_interface&, const basic_block& block) {
                     if (this->handler && visited_blocks.emplace(block.address).second)
                     {
                         (*this->handler)(block.address);
@@ -93,7 +93,7 @@ namespace sogen
                 emu.save_snapshot();
 
                 const auto return_address = emu.emu().read_stack(0);
-                emu.emu().hook_memory_execution(return_address, [&](const uint64_t) {
+                emu.emu().hook_memory_execution(return_address, [&](cpu_interface&, const uint64_t) {
                     emu.emu().stop(); //
                 });
             }

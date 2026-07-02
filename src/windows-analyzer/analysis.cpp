@@ -745,30 +745,31 @@ namespace sogen
                 max = std::max(import_thunk, max);
             }
 
-            c.win_emu->emu().hook_memory_write(min, max - min, [&c](const uint64_t address, const void* value, size_t size) {
-                const auto& watched_module = *c.win_emu->mod_manager.executable;
+            c.win_emu->emu().hook_memory_write(min, max - min,
+                                               [&c](cpu_interface&, const uint64_t address, const void* value, size_t size) {
+                                                   const auto& watched_module = *c.win_emu->mod_manager.executable;
 
-                const auto sym = watched_module.imports.find(address);
-                if (sym == watched_module.imports.end())
-                {
-                    // TODO: Print unaligned write accesses?
-                    return;
-                }
+                                                   const auto sym = watched_module.imports.find(address);
+                                                   if (sym == watched_module.imports.end())
+                                                   {
+                                                       // TODO: Print unaligned write accesses?
+                                                       return;
+                                                   }
 
-                uint64_t int_value{};
-                memcpy(&int_value, value, std::min(size, sizeof(int_value)));
+                                                   uint64_t int_value{};
+                                                   memcpy(&int_value, value, std::min(size, sizeof(int_value)));
 
-                const auto import_module = watched_module.imported_modules.at(sym->second.module_index);
+                                                   const auto import_module = watched_module.imported_modules.at(sym->second.module_index);
 
-                c.emit_observation<import_write_event>([&](auto& event) {
-                    event.size = size;
-                    event.value = int_value;
-                    event.import_name = sym->second.name;
-                    event.import_module = import_module;
-                });
-            });
+                                                   c.emit_observation<import_write_event>([&](auto& event) {
+                                                       event.size = size;
+                                                       event.value = int_value;
+                                                       event.import_name = sym->second.name;
+                                                       event.import_module = import_module;
+                                                   });
+                                               });
 
-            c.win_emu->emu().hook_memory_read(min, max - min, [&c](const uint64_t address, const void*, size_t) {
+            c.win_emu->emu().hook_memory_read(min, max - min, [&c](cpu_interface&, const uint64_t address, const void*, size_t) {
                 const auto rip = c.win_emu->emu().read_instruction_pointer();
                 const auto& watched_module = *c.win_emu->mod_manager.executable;
                 const auto accessor_module = get_module_if_interesting(c.win_emu->mod_manager, c.settings->modules, rip);
