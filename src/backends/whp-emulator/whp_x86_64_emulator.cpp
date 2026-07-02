@@ -6,14 +6,18 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <iomanip>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
+#include <shared_mutex>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -26,7 +30,7 @@ namespace sogen::whp
 {
     namespace
     {
-        constexpr UINT32 vp_index = 0;
+        constexpr size_t maximum_vcpu_count = 64;
         constexpr uint64_t page_size = 0x1000;
         constexpr uint64_t trap_flag_bit = 0x100ull;
         constexpr uint64_t syscall_instruction_size = 2;
@@ -96,10 +100,11 @@ namespace sogen::whp
         class virtual_processor_handle
         {
           public:
-            explicit virtual_processor_handle(const WHV_PARTITION_HANDLE partition)
-                : partition_(partition)
+            virtual_processor_handle(const WHV_PARTITION_HANDLE partition, const UINT32 vp_index)
+                : partition_(partition),
+                  vp_index_(vp_index)
             {
-                WHP_CHECK_HR(WHvCreateVirtualProcessor(this->partition_, vp_index, 0));
+                WHP_CHECK_HR(WHvCreateVirtualProcessor(this->partition_, this->vp_index_, 0));
             }
 
             virtual_processor_handle(const virtual_processor_handle&) = delete;
@@ -109,12 +114,13 @@ namespace sogen::whp
             {
                 if (this->partition_ != nullptr)
                 {
-                    (void)WHvDeleteVirtualProcessor(this->partition_, vp_index);
+                    (void)WHvDeleteVirtualProcessor(this->partition_, this->vp_index_);
                 }
             }
 
           private:
             WHV_PARTITION_HANDLE partition_ = nullptr;
+            UINT32 vp_index_ = 0;
         };
 
         struct mapped_page
@@ -840,180 +846,53 @@ namespace sogen::whp
             throw std::runtime_error("Unsupported WHP register");
         }
 
-        class whp_x86_64_emulator : public x86_64_emulator
+        class whp_x86_64_emulator;
+
+        struct pending_mmio_step
+        {
+            uint64_t page_base{};
+            uint64_t original_rflags{};
+            bool had_trap_flag{};
+            bool allow_debug_delivery{};
+            bool is_write{};
+            std::vector<std::byte> old_page{};
+        };
+
+        struct pending_execution_step
+        {
+            std::optional<uint64_t> page_base{};
+            std::optional<uint64_t> patched_breakpoint{};
+            bool had_trap_flag{};
+            bool stop_after_step{};
+        };
+
+        class whp_vcpu final : public x86_64_cpu
         {
           public:
-            whp_x86_64_emulator()
+            whp_vcpu(whp_x86_64_emulator& emulator, const WHV_PARTITION_HANDLE partition, const UINT32 index)
+                : emulator_(emulator),
+                  partition_(partition),
+                  vp_index_(index),
+                  vp_(partition, index)
             {
-                this->ensure_platform_support();
-                this->configure_partition();
-                this->vp_ = std::make_unique<virtual_processor_handle>(this->partition_);
-                this->initialize_long_mode_page_tables();
-                this->initialize_virtual_processor_state();
-                this->initialize_syscall_intercept_page();
             }
 
-            ~whp_x86_64_emulator() override
+            size_t index() const override
             {
-                utils::reset_object_with_delayed_destruction(this->memory_write_hooks_);
-                utils::reset_object_with_delayed_destruction(this->memory_read_hooks_);
-                utils::reset_object_with_delayed_destruction(this->memory_execution_hooks_);
-                utils::reset_object_with_delayed_destruction(this->memory_violation_hooks_);
-                utils::reset_object_with_delayed_destruction(this->interrupt_hooks_);
-                utils::reset_object_with_delayed_destruction(this->basic_block_hooks_);
-                utils::reset_object_with_delayed_destruction(this->instruction_hooks_);
+                return this->vp_index_;
             }
 
-            void set_memory_execution_hook_mode(const memory_execution_hook_mode mode) override
-            {
-                this->memory_execution_hook_mode_ = mode;
-            }
+            memory_interface& memory() override;
+            const memory_interface& memory() const override;
 
-            void start(const size_t count) override
-            {
-                if (count != 0 && count != 1)
-                {
-                    throw std::runtime_error("WHP backend does not support exact instruction counts yet");
-                }
-
-                this->stop_requested_ = false;
-                bool armed_single_step = false;
-                if (this->deferred_patched_breakpoint_)
-                {
-                    if (this->read_instruction_pointer() == *this->deferred_patched_breakpoint_)
-                    {
-                        if (!this->arm_patched_breakpoint_single_step(*this->deferred_patched_breakpoint_, count == 1))
-                        {
-                            throw std::runtime_error("Nested WHP execution single-step state is not supported");
-                        }
-
-                        armed_single_step = true;
-                    }
-                    else
-                    {
-                        this->set_patched_execution_breakpoint_state(*this->deferred_patched_breakpoint_, true);
-                        this->deferred_patched_breakpoint_.reset();
-                    }
-                }
-
-                if (!armed_single_step && this->deferred_execution_page_)
-                {
-                    if (!this->arm_execution_single_step(*this->deferred_execution_page_, count == 1))
-                    {
-                        throw std::runtime_error("Nested WHP execution single-step state is not supported");
-                    }
-
-                    this->deferred_execution_page_.reset();
-                    armed_single_step = true;
-                }
-
-                if (!armed_single_step && count == 1 && !this->arm_execution_single_step(std::nullopt, true))
-                {
-                    throw std::runtime_error("Nested WHP execution single-step state is not supported");
-                }
-
-                while (!this->stop_requested_)
-                {
-                    this->expire_mmio_read_grace_pages();
-                    WHV_RUN_VP_EXIT_CONTEXT exit_context{};
-                    const auto start_rip = this->read_instruction_pointer();
-                    this->run_active_ = true;
-                    const auto run_hr = WHvRunVirtualProcessor(this->partition_, vp_index, &exit_context, sizeof(exit_context));
-                    this->run_active_ = false;
-                    if (FAILED(run_hr))
-                    {
-                        throw_hr(run_hr, "WHvRunVirtualProcessor");
-                    }
-                    switch (exit_context.ExitReason)
-                    {
-                    case WHvRunVpExitReasonCanceled: {
-                        if (this->stop_requested_)
-                        {
-                            return;
-                        }
-
-                        // If rip has not changed, we _probably_ executed nothing.
-                        // Could be that the execution was cancelled while it was not running.
-                        // Just restart it.
-                        if (start_rip == exit_context.VpContext.Rip)
-                        {
-                            this->stop_requested_ = false;
-                            continue;
-                        }
-
-                        return;
-                    }
-                    case WHvRunVpExitReasonX64Halt:
-                        if (this->syscall_hook_ && exit_context.VpContext.Rip == (this->syscall_hook_page_ + 1))
-                        {
-                            if (this->handle_syscall_halt())
-                            {
-                                continue;
-                            }
-                        }
-                        else
-                        {
-                            return;
-                        }
-
-                        if (this->stop_requested_)
-                        {
-                            return;
-                        }
-
-                        if (this->syscall_hook_)
-                        {
-                            continue;
-                        }
-                        return;
-                    case WHvRunVpExitReasonMemoryAccess:
-                        if (this->handle_memory_access(exit_context.MemoryAccess))
-                        {
-                            continue;
-                        }
-                        return;
-                    case WHvRunVpExitReasonException:
-                        if (this->handle_exception(exit_context))
-                        {
-                            this->clear_pending_exception_state();
-                            continue;
-                        }
-                        return;
-                    case WHvRunVpExitReasonX64Cpuid:
-                        if (this->handle_instruction_exit(x86_hookable_instructions::cpuid, exit_context, 2))
-                        {
-                            continue;
-                        }
-                        throw std::runtime_error("Unhandled CPUID exit");
-                    case WHvRunVpExitReasonX64Rdtsc:
-                        if (this->handle_instruction_exit(exit_context.ReadTsc.RdtscInfo.IsRdtscp ? x86_hookable_instructions::rdtscp
-                                                                                                  : x86_hookable_instructions::rdtsc,
-                                                          exit_context, 2))
-                        {
-                            continue;
-                        }
-                        throw std::runtime_error("Unhandled RDTSC/RDTSCP exit");
-                    case WHvRunVpExitReasonUnrecoverableException:
-                        if (this->handle_unrecoverable_exception())
-                        {
-                            this->clear_pending_exception_state();
-                            continue;
-                        }
-                        throw_unhandled_exit(exit_context);
-                    case WHvRunVpExitReasonUnsupportedFeature:
-                        throw std::runtime_error("Encountered unsupported processor feature");
-                    default:
-                        throw_unhandled_exit(exit_context);
-                    }
-                }
-            }
+            void start(size_t count) override;
 
             void stop() override
             {
                 this->stop_requested_ = true;
                 if (this->run_active_)
                 {
-                    WHP_CHECK_HR(WHvCancelRunVirtualProcessor(this->partition_, vp_index, 0));
+                    WHP_CHECK_HR(WHvCancelRunVirtualProcessor(this->partition_, this->vp_index_, 0));
                 }
             }
 
@@ -1037,314 +916,6 @@ namespace sogen::whp
             {
                 const auto mapping = map_register(base);
                 return this->get_register(mapping.name).Segment.Base;
-            }
-
-            void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) override
-            {
-                if (!is_page_aligned(address) || !is_page_aligned(size))
-                {
-                    throw std::runtime_error("WHP MMIO mappings must be page aligned");
-                }
-
-                mmio_region region{
-                    .address = address,
-                    .size = size,
-                    .read_cb = std::move(read_cb),
-                    .write_cb = std::move(write_cb),
-                };
-
-                bool can_batch_map = true;
-                for (size_t offset = 0; offset < size; offset += page_size)
-                {
-                    const auto guest_address = address + offset;
-                    const auto entry = this->mapped_pages_.find(guest_address);
-                    if (entry != this->mapped_pages_.end() && entry->second && entry->second->host_page != nullptr)
-                    {
-                        can_batch_map = false;
-                        break;
-                    }
-                }
-
-                if (can_batch_map)
-                {
-                    auto backing = allocate_backing_memory(size);
-                    auto* backing_base = backing.get();
-
-                    for (size_t offset = 0; offset < size; offset += page_size)
-                    {
-                        const auto guest_address = address + offset;
-                        auto& page = this->mapped_pages_[guest_address];
-                        if (!page)
-                        {
-                            page = std::make_unique<mapped_page>();
-                        }
-
-                        page->owned_page = backing;
-                        page->host_page = backing_base + offset;
-                        this->assign_guest_physical_page(guest_address, *page);
-                        page->permissions = memory_permission::none;
-                        this->apply_patched_execution_breakpoints(guest_address);
-                        this->ensure_virtual_mapping(guest_address);
-                    }
-
-                    this->remap_pages(address, size);
-                    this->mmio_regions_[address] = std::move(region);
-                    return;
-                }
-
-                for (size_t offset = 0; offset < size; offset += page_size)
-                {
-                    const auto guest_address = address + offset;
-                    auto& page = this->mapped_pages_[guest_address];
-                    if (!page)
-                    {
-                        page = std::make_unique<mapped_page>();
-                    }
-
-                    if (page->host_page == nullptr)
-                    {
-                        auto backing = allocate_backing_memory(page_size);
-                        page->owned_page = std::move(backing);
-                        page->host_page = page->owned_page.get();
-                        this->assign_guest_physical_page(guest_address, *page);
-                        this->apply_patched_execution_breakpoints(guest_address);
-                    }
-
-                    page->permissions = memory_permission::none;
-                    this->remap_page(*page);
-                    this->ensure_virtual_mapping(guest_address);
-                }
-
-                this->mmio_regions_[address] = std::move(region);
-            }
-
-            void map_memory(const uint64_t address, const size_t size, const memory_permission permissions) override
-            {
-                if (!is_page_aligned(address) || !is_page_aligned(size))
-                {
-                    throw std::runtime_error("WHP memory mappings must be page aligned");
-                }
-
-                bool can_batch_map = true;
-                for (size_t offset = 0; offset < size; offset += page_size)
-                {
-                    const auto guest_address = address + offset;
-                    const auto entry = this->mapped_pages_.find(guest_address);
-                    if (entry != this->mapped_pages_.end() && entry->second && entry->second->host_page != nullptr)
-                    {
-                        can_batch_map = false;
-                        break;
-                    }
-                }
-
-                if (can_batch_map)
-                {
-                    auto backing = allocate_backing_memory(size);
-                    auto* backing_base = backing.get();
-
-                    for (size_t offset = 0; offset < size; offset += page_size)
-                    {
-                        const auto guest_address = address + offset;
-                        auto& page = this->mapped_pages_[guest_address];
-                        if (!page)
-                        {
-                            page = std::make_unique<mapped_page>();
-                        }
-
-                        page->owned_page = backing;
-                        page->host_page = backing_base + offset;
-                        this->assign_guest_physical_page(guest_address, *page);
-                        page->permissions = permissions;
-                        this->apply_patched_execution_breakpoints(guest_address);
-                        this->ensure_virtual_mapping(guest_address);
-                    }
-
-                    this->remap_pages(address, size);
-                    return;
-                }
-
-                for (size_t offset = 0; offset < size; offset += page_size)
-                {
-                    const auto guest_address = address + offset;
-                    auto& page = this->mapped_pages_[guest_address];
-                    if (!page)
-                    {
-                        page = std::make_unique<mapped_page>();
-                    }
-
-                    if (page->host_page == nullptr)
-                    {
-                        auto backing = allocate_backing_memory(page_size);
-                        page->owned_page = std::move(backing);
-                        page->host_page = page->owned_page.get();
-                        this->assign_guest_physical_page(guest_address, *page);
-                        this->apply_patched_execution_breakpoints(guest_address);
-                    }
-
-                    page->permissions = permissions;
-                    this->remap_page(*page);
-                    this->ensure_virtual_mapping(guest_address);
-                }
-            }
-
-            void map_host_memory(const uint64_t address, const size_t size, void* host_pointer,
-                                 const memory_permission permissions) override
-            {
-                if (!is_page_aligned(address) || !is_page_aligned(size))
-                {
-                    throw std::runtime_error("WHP host memory mappings must be page aligned");
-                }
-                if ((reinterpret_cast<uintptr_t>(host_pointer) % page_size) != 0)
-                {
-                    throw std::runtime_error("WHP host memory mappings require a page-aligned host pointer");
-                }
-
-                // Back each guest page with the caller's host memory (owned_page stays null so unmap never
-                // frees it). WHvMapGpaRange then aliases the guest physical page directly onto that host page,
-                // so guest reads and writes hit it coherently.
-                auto* host_base = static_cast<uint8_t*>(host_pointer);
-                for (size_t offset = 0; offset < size; offset += page_size)
-                {
-                    const auto guest_address = address + offset;
-                    auto& page = this->mapped_pages_[guest_address];
-                    if (!page)
-                    {
-                        page = std::make_unique<mapped_page>();
-                    }
-
-                    page->owned_page = nullptr;
-                    page->host_page = host_base + offset;
-                    this->assign_guest_physical_page(guest_address, *page);
-                    page->permissions = permissions;
-                    this->apply_patched_execution_breakpoints(guest_address);
-                    this->ensure_virtual_mapping(guest_address);
-                }
-
-                this->remap_pages(address, size);
-            }
-
-            void unmap_memory(const uint64_t address, const size_t size) override
-            {
-                if (!is_page_aligned(address) || !is_page_aligned(size))
-                {
-                    throw std::runtime_error("WHP memory unmappings must be page aligned");
-                }
-
-                // Coalesce into one WHvUnmapGpaRange per contiguous guest-physical run: each call is an EPT flush,
-                // so freeing a large region page-by-page stalls the guest for seconds. The LIFO GPA free list
-                // scatters/reverses a region's GPAs, hence the sort. Free high-to-low so the indices pop back
-                // ascending on the next allocation, keeping remap_pages' map-side coalescing effective too.
-                std::vector<uint64_t> unmap_gpas;
-                // Keep each page's host backing alive until after the unmaps below: erasing the mapped_page drops
-                // its (shared) owned_page, which can free memory the WHP partition still maps by GPA.
-                std::vector<std::shared_ptr<uint8_t>> retired_backings;
-                bool flushed_virtual_mappings = false;
-                for (size_t offset = size; offset > 0; offset -= page_size)
-                {
-                    const auto guest_address = address + offset - page_size;
-                    this->revoke_mmio_read_grace(guest_address);
-
-                    const auto entry = this->mapped_pages_.find(guest_address);
-                    if (entry == this->mapped_pages_.end())
-                    {
-                        continue;
-                    }
-
-                    if (entry->second->map_flags != 0)
-                    {
-                        unmap_gpas.push_back(entry->second->guest_physical_address);
-                    }
-
-                    flushed_virtual_mappings = this->clear_virtual_mapping(guest_address) || flushed_virtual_mappings;
-                    this->mark_patched_execution_breakpoints_unmapped(guest_address);
-                    this->release_guest_physical_page(entry->second->guest_physical_address);
-                    retired_backings.push_back(std::move(entry->second->owned_page));
-                    this->mapped_pages_.erase(entry);
-                }
-
-                std::ranges::sort(unmap_gpas);
-                for (size_t i = 0; i < unmap_gpas.size();)
-                {
-                    size_t j = i;
-                    while (j + 1 < unmap_gpas.size() && unmap_gpas[j + 1] == unmap_gpas[j] + page_size)
-                    {
-                        ++j;
-                    }
-
-                    WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, unmap_gpas[i], (j - i + 1) * page_size));
-                    i = j + 1;
-                }
-
-                if (flushed_virtual_mappings)
-                {
-                    this->flush_virtual_address_mappings();
-                }
-
-                const auto mmio = this->mmio_regions_.find(address);
-                if (mmio != this->mmio_regions_.end() && mmio->second.size == size)
-                {
-                    this->mmio_regions_.erase(mmio);
-                }
-            }
-
-            bool try_read_memory(const uint64_t address, void* data, const size_t size) const override
-            {
-                if (!this->access_memory(address, data, size, false))
-                {
-                    return false;
-                }
-
-                this->overlay_patched_breakpoints(address, data, size);
-                return true;
-            }
-
-            void read_memory(const uint64_t address, void* data, const size_t size) const override
-            {
-                if (!this->try_read_memory(address, data, size))
-                {
-                    throw std::runtime_error("Failed to read WHP guest memory");
-                }
-            }
-
-            bool try_write_memory(const uint64_t address, const void* data, const size_t size) override
-            {
-                if (!this->access_memory(address, const_cast<void*>(data), size, true))
-                {
-                    return false;
-                }
-
-                this->overlay_patched_breakpoints(address, data, size);
-                return true;
-            }
-
-            void write_memory(const uint64_t address, const void* data, const size_t size) override
-            {
-                if (!this->try_write_memory(address, data, size))
-                {
-                    throw std::runtime_error("Failed to write WHP guest memory");
-                }
-            }
-
-            void apply_memory_protection(const uint64_t address, const size_t size, const memory_permission permissions) override
-            {
-                if (!is_page_aligned(address) || !is_page_aligned(size))
-                {
-                    throw std::runtime_error("WHP protection changes must be page aligned");
-                }
-
-                for (size_t offset = 0; offset < size; offset += page_size)
-                {
-                    const auto guest_address = address + offset;
-                    const auto entry = this->mapped_pages_.find(guest_address);
-                    if (entry == this->mapped_pages_.end())
-                    {
-                        continue;
-                    }
-
-                    entry->second->permissions = permissions;
-                }
-
-                this->remap_pages(address, size);
             }
 
             size_t write_raw_register(const int reg, const void* value, const size_t size) override
@@ -1557,8 +1128,543 @@ namespace sogen::whp
                 return true;
             }
 
+            std::vector<std::byte> save_registers() const override
+            {
+                auto names = snapshot_register_names();
+                std::vector<WHV_REGISTER_VALUE> values(names.size());
+                WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, this->vp_index_, names.data(),
+                                                             static_cast<UINT32>(names.size()), values.data()));
+
+                std::vector<std::byte> bytes(sizeof(WHV_REGISTER_VALUE) * values.size());
+                std::memcpy(bytes.data(), values.data(), bytes.size());
+                return bytes;
+            }
+
+            void restore_registers(const std::vector<std::byte>& register_data) override
+            {
+                auto names = snapshot_register_names();
+                const auto expected_size = sizeof(WHV_REGISTER_VALUE) * names.size();
+                if (register_data.size() != expected_size)
+                {
+                    throw std::runtime_error("Unexpected WHP register snapshot size");
+                }
+
+                std::vector<WHV_REGISTER_VALUE> values(names.size());
+                std::memcpy(values.data(), register_data.data(), register_data.size());
+
+                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, this->vp_index_, names.data(),
+                                                             static_cast<UINT32>(names.size()), values.data()));
+            }
+
+            bool has_violation() const override
+            {
+                return false;
+            }
+
+            bool supports_instruction_counting() const override
+            {
+                return false;
+            }
+
+            bool is_stop_thread_safe() const override
+            {
+                return true;
+            }
+
+            WHV_REGISTER_VALUE get_register(const WHV_REGISTER_NAME name) const
+            {
+                WHV_REGISTER_VALUE value{};
+                WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, this->vp_index_, &name, 1, &value));
+                return value;
+            }
+
+            template <size_t N>
+            std::array<WHV_REGISTER_VALUE, N> get_registers(const std::array<WHV_REGISTER_NAME, N>& names) const
+            {
+                std::array<WHV_REGISTER_VALUE, N> values{};
+                WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, this->vp_index_, names.data(),
+                                                             static_cast<UINT32>(names.size()), values.data()));
+                return values;
+            }
+
+            void set_register(const WHV_REGISTER_NAME name, const WHV_REGISTER_VALUE& value)
+            {
+                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, this->vp_index_, &name, 1, &value));
+            }
+
+            template <size_t N>
+            void set_registers(const std::array<WHV_REGISTER_NAME, N>& names, const std::array<WHV_REGISTER_VALUE, N>& values)
+            {
+                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, this->vp_index_, names.data(),
+                                                             static_cast<UINT32>(names.size()), values.data()));
+            }
+
+            void advance_rip(const uint64_t amount)
+            {
+                auto rip = this->get_register(WHvX64RegisterRip);
+                rip.Reg64 += amount;
+                this->set_register(WHvX64RegisterRip, rip);
+            }
+
+            void clear_pending_exception_state()
+            {
+                WHV_REGISTER_VALUE pending_interruption{};
+                pending_interruption.PendingInterruption.AsUINT64 = 0;
+                this->set_register(WHvRegisterPendingInterruption, pending_interruption);
+
+                WHV_REGISTER_VALUE pending_event{};
+                pending_event.ExceptionEvent.AsUINT128 = {};
+                this->set_register(WHvRegisterPendingEvent, pending_event);
+
+                WHV_REGISTER_VALUE pending_debug{};
+                pending_debug.PendingDebugException.AsUINT64 = 0;
+                this->set_register(WHvX64RegisterPendingDebugException, pending_debug);
+            }
+
+          private:
+            friend class whp_x86_64_emulator;
+
+            whp_x86_64_emulator& emulator_;
+            WHV_PARTITION_HANDLE partition_{};
+            UINT32 vp_index_{};
+            virtual_processor_handle vp_;
+
+            std::atomic_bool stop_requested_{false};
+            std::atomic_bool run_active_{false};
+            std::optional<pending_execution_step> pending_execution_step_{};
+            std::optional<pending_mmio_step> pending_mmio_step_{};
+            std::optional<uint64_t> deferred_patched_breakpoint_{};
+            std::optional<uint64_t> deferred_execution_page_{};
+        };
+
+        class whp_x86_64_emulator : public x86_64_emulator
+        {
+          public:
+            explicit whp_x86_64_emulator(const size_t vcpu_count)
+            {
+                this->ensure_platform_support();
+                this->configure_partition(static_cast<UINT32>(vcpu_count));
+                this->initialize_long_mode_page_tables();
+                this->initialize_syscall_intercept_page();
+
+                this->vcpus_.reserve(vcpu_count);
+                for (size_t i = 0; i < vcpu_count; ++i)
+                {
+                    auto vcpu = std::make_unique<whp_vcpu>(*this, this->partition_, static_cast<UINT32>(i));
+                    this->initialize_virtual_processor_state(*vcpu);
+                    this->vcpus_.push_back(std::move(vcpu));
+                }
+            }
+
+            ~whp_x86_64_emulator() override
+            {
+                utils::reset_object_with_delayed_destruction(this->memory_write_hooks_);
+                utils::reset_object_with_delayed_destruction(this->memory_read_hooks_);
+                utils::reset_object_with_delayed_destruction(this->memory_execution_hooks_);
+                utils::reset_object_with_delayed_destruction(this->memory_violation_hooks_);
+                utils::reset_object_with_delayed_destruction(this->interrupt_hooks_);
+                utils::reset_object_with_delayed_destruction(this->basic_block_hooks_);
+                utils::reset_object_with_delayed_destruction(this->instruction_hooks_);
+            }
+
+            void set_memory_execution_hook_mode(const memory_execution_hook_mode mode) override
+            {
+                std::unique_lock lock(this->partition_mutex_);
+                this->memory_execution_hook_mode_ = mode;
+            }
+
+            size_t vcpu_count() const override
+            {
+                return this->vcpus_.size();
+            }
+
+            x86_64_cpu& get_cpu(const size_t index) override
+            {
+                if (index >= this->vcpus_.size())
+                {
+                    throw std::out_of_range("Invalid vCPU index");
+                }
+
+                return *this->vcpus_[index];
+            }
+
+            void start(const size_t count) override
+            {
+                this->vcpus_[0]->start(count);
+            }
+
+            void stop() override
+            {
+                this->vcpus_[0]->stop();
+            }
+
+            size_t write_raw_register(const int reg, const void* value, const size_t size) override
+            {
+                return this->vcpus_[0]->write_raw_register(reg, value, size);
+            }
+
+            size_t read_raw_register(const int reg, void* value, const size_t size) override
+            {
+                return this->vcpus_[0]->read_raw_register(reg, value, size);
+            }
+
+            bool read_descriptor_table(const int reg, descriptor_table_register& table) override
+            {
+                return this->vcpus_[0]->read_descriptor_table(reg, table);
+            }
+
+            std::vector<std::byte> save_registers() const override
+            {
+                return this->vcpus_[0]->save_registers();
+            }
+
+            void restore_registers(const std::vector<std::byte>& register_data) override
+            {
+                this->vcpus_[0]->restore_registers(register_data);
+            }
+
+            void load_gdt(const pointer_type address, const uint32_t limit) override
+            {
+                this->vcpus_[0]->load_gdt(address, limit);
+            }
+
+            void set_segment_base(const x86_register base, const pointer_type value) override
+            {
+                this->vcpus_[0]->set_segment_base(base, value);
+            }
+
+            pointer_type get_segment_base(const x86_register base) override
+            {
+                return this->vcpus_[0]->get_segment_base(base);
+            }
+
+            void map_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("WHP MMIO mappings must be page aligned");
+                }
+
+                std::unique_lock lock(this->partition_mutex_);
+
+                mmio_region region{
+                    .address = address,
+                    .size = size,
+                    .read_cb = std::move(read_cb),
+                    .write_cb = std::move(write_cb),
+                };
+
+                bool can_batch_map = true;
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    const auto entry = this->mapped_pages_.find(guest_address);
+                    if (entry != this->mapped_pages_.end() && entry->second && entry->second->host_page != nullptr)
+                    {
+                        can_batch_map = false;
+                        break;
+                    }
+                }
+
+                if (can_batch_map)
+                {
+                    auto backing = allocate_backing_memory(size);
+                    auto* backing_base = backing.get();
+
+                    for (size_t offset = 0; offset < size; offset += page_size)
+                    {
+                        const auto guest_address = address + offset;
+                        auto& page = this->mapped_pages_[guest_address];
+                        if (!page)
+                        {
+                            page = std::make_unique<mapped_page>();
+                        }
+
+                        page->owned_page = backing;
+                        page->host_page = backing_base + offset;
+                        this->assign_guest_physical_page(guest_address, *page);
+                        page->permissions = memory_permission::none;
+                        this->apply_patched_execution_breakpoints(guest_address);
+                        this->ensure_virtual_mapping(guest_address);
+                    }
+
+                    this->remap_pages(address, size);
+                    this->mmio_regions_[address] = std::move(region);
+                    return;
+                }
+
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    auto& page = this->mapped_pages_[guest_address];
+                    if (!page)
+                    {
+                        page = std::make_unique<mapped_page>();
+                    }
+
+                    if (page->host_page == nullptr)
+                    {
+                        auto backing = allocate_backing_memory(page_size);
+                        page->owned_page = std::move(backing);
+                        page->host_page = page->owned_page.get();
+                        this->assign_guest_physical_page(guest_address, *page);
+                        this->apply_patched_execution_breakpoints(guest_address);
+                    }
+
+                    page->permissions = memory_permission::none;
+                    this->remap_page(*page);
+                    this->ensure_virtual_mapping(guest_address);
+                }
+
+                this->mmio_regions_[address] = std::move(region);
+            }
+
+            void map_memory(const uint64_t address, const size_t size, const memory_permission permissions) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("WHP memory mappings must be page aligned");
+                }
+
+                std::unique_lock lock(this->partition_mutex_);
+
+                bool can_batch_map = true;
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    const auto entry = this->mapped_pages_.find(guest_address);
+                    if (entry != this->mapped_pages_.end() && entry->second && entry->second->host_page != nullptr)
+                    {
+                        can_batch_map = false;
+                        break;
+                    }
+                }
+
+                if (can_batch_map)
+                {
+                    auto backing = allocate_backing_memory(size);
+                    auto* backing_base = backing.get();
+
+                    for (size_t offset = 0; offset < size; offset += page_size)
+                    {
+                        const auto guest_address = address + offset;
+                        auto& page = this->mapped_pages_[guest_address];
+                        if (!page)
+                        {
+                            page = std::make_unique<mapped_page>();
+                        }
+
+                        page->owned_page = backing;
+                        page->host_page = backing_base + offset;
+                        this->assign_guest_physical_page(guest_address, *page);
+                        page->permissions = permissions;
+                        this->apply_patched_execution_breakpoints(guest_address);
+                        this->ensure_virtual_mapping(guest_address);
+                    }
+
+                    this->remap_pages(address, size);
+                    return;
+                }
+
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    auto& page = this->mapped_pages_[guest_address];
+                    if (!page)
+                    {
+                        page = std::make_unique<mapped_page>();
+                    }
+
+                    if (page->host_page == nullptr)
+                    {
+                        auto backing = allocate_backing_memory(page_size);
+                        page->owned_page = std::move(backing);
+                        page->host_page = page->owned_page.get();
+                        this->assign_guest_physical_page(guest_address, *page);
+                        this->apply_patched_execution_breakpoints(guest_address);
+                    }
+
+                    page->permissions = permissions;
+                    this->remap_page(*page);
+                    this->ensure_virtual_mapping(guest_address);
+                }
+            }
+
+            void map_host_memory(const uint64_t address, const size_t size, void* host_pointer,
+                                 const memory_permission permissions) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("WHP host memory mappings must be page aligned");
+                }
+                if ((reinterpret_cast<uintptr_t>(host_pointer) % page_size) != 0)
+                {
+                    throw std::runtime_error("WHP host memory mappings require a page-aligned host pointer");
+                }
+
+                std::unique_lock lock(this->partition_mutex_);
+
+                // Back each guest page with the caller's host memory (owned_page stays null so unmap never
+                // frees it). WHvMapGpaRange then aliases the guest physical page directly onto that host page,
+                // so guest reads and writes hit it coherently.
+                auto* host_base = static_cast<uint8_t*>(host_pointer);
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    auto& page = this->mapped_pages_[guest_address];
+                    if (!page)
+                    {
+                        page = std::make_unique<mapped_page>();
+                    }
+
+                    page->owned_page = nullptr;
+                    page->host_page = host_base + offset;
+                    this->assign_guest_physical_page(guest_address, *page);
+                    page->permissions = permissions;
+                    this->apply_patched_execution_breakpoints(guest_address);
+                    this->ensure_virtual_mapping(guest_address);
+                }
+
+                this->remap_pages(address, size);
+            }
+
+            void unmap_memory(const uint64_t address, const size_t size) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("WHP memory unmappings must be page aligned");
+                }
+
+                std::unique_lock lock(this->partition_mutex_);
+
+                // Coalesce into one WHvUnmapGpaRange per contiguous guest-physical run: each call is an EPT flush,
+                // so freeing a large region page-by-page stalls the guest for seconds. The LIFO GPA free list
+                // scatters/reverses a region's GPAs, hence the sort. Free high-to-low so the indices pop back
+                // ascending on the next allocation, keeping remap_pages' map-side coalescing effective too.
+                std::vector<uint64_t> unmap_gpas;
+                // Keep each page's host backing alive until after the unmaps below: erasing the mapped_page drops
+                // its (shared) owned_page, which can free memory the WHP partition still maps by GPA.
+                std::vector<std::shared_ptr<uint8_t>> retired_backings;
+                bool flushed_virtual_mappings = false;
+                for (size_t offset = size; offset > 0; offset -= page_size)
+                {
+                    const auto guest_address = address + offset - page_size;
+                    this->revoke_mmio_read_grace(guest_address);
+
+                    const auto entry = this->mapped_pages_.find(guest_address);
+                    if (entry == this->mapped_pages_.end())
+                    {
+                        continue;
+                    }
+
+                    if (entry->second->map_flags != 0)
+                    {
+                        unmap_gpas.push_back(entry->second->guest_physical_address);
+                    }
+
+                    flushed_virtual_mappings = this->clear_virtual_mapping(guest_address) || flushed_virtual_mappings;
+                    this->mark_patched_execution_breakpoints_unmapped(guest_address);
+                    this->release_guest_physical_page(entry->second->guest_physical_address);
+                    retired_backings.push_back(std::move(entry->second->owned_page));
+                    this->mapped_pages_.erase(entry);
+                }
+
+                std::ranges::sort(unmap_gpas);
+                for (size_t i = 0; i < unmap_gpas.size();)
+                {
+                    size_t j = i;
+                    while (j + 1 < unmap_gpas.size() && unmap_gpas[j + 1] == unmap_gpas[j] + page_size)
+                    {
+                        ++j;
+                    }
+
+                    WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, unmap_gpas[i], (j - i + 1) * page_size));
+                    i = j + 1;
+                }
+
+                if (flushed_virtual_mappings)
+                {
+                    this->flush_virtual_address_mappings();
+                }
+
+                const auto mmio = this->mmio_regions_.find(address);
+                if (mmio != this->mmio_regions_.end() && mmio->second.size == size)
+                {
+                    this->mmio_regions_.erase(mmio);
+                }
+            }
+
+            bool try_read_memory(const uint64_t address, void* data, const size_t size) const override
+            {
+                std::shared_lock lock(this->partition_mutex_);
+
+                if (!this->access_memory(address, data, size, false))
+                {
+                    return false;
+                }
+
+                this->overlay_patched_breakpoints(address, data, size);
+                return true;
+            }
+
+            void read_memory(const uint64_t address, void* data, const size_t size) const override
+            {
+                if (!this->try_read_memory(address, data, size))
+                {
+                    throw std::runtime_error("Failed to read WHP guest memory");
+                }
+            }
+
+            bool try_write_memory(const uint64_t address, const void* data, const size_t size) override
+            {
+                // Exclusive: the breakpoint overlay below may update patched-breakpoint bookkeeping.
+                std::unique_lock lock(this->partition_mutex_);
+
+                if (!this->access_memory(address, const_cast<void*>(data), size, true))
+                {
+                    return false;
+                }
+
+                this->overlay_patched_breakpoints(address, data, size);
+                return true;
+            }
+
+            void write_memory(const uint64_t address, const void* data, const size_t size) override
+            {
+                if (!this->try_write_memory(address, data, size))
+                {
+                    throw std::runtime_error("Failed to write WHP guest memory");
+                }
+            }
+
+            void apply_memory_protection(const uint64_t address, const size_t size, const memory_permission permissions) override
+            {
+                if (!is_page_aligned(address) || !is_page_aligned(size))
+                {
+                    throw std::runtime_error("WHP protection changes must be page aligned");
+                }
+
+                std::unique_lock lock(this->partition_mutex_);
+
+                for (size_t offset = 0; offset < size; offset += page_size)
+                {
+                    const auto guest_address = address + offset;
+                    const auto entry = this->mapped_pages_.find(guest_address);
+                    if (entry == this->mapped_pages_.end())
+                    {
+                        continue;
+                    }
+
+                    entry->second->permissions = permissions;
+                }
+
+                this->remap_pages(address, size);
+            }
+
             emulator_hook* hook_instruction(const int instruction_type, instruction_hook_callback callback) override
             {
+                std::unique_lock lock(this->partition_mutex_);
+
                 auto* hook = this->make_hook();
                 auto& entry = this->instruction_hooks_[hook];
                 entry.type = static_cast<x86_hookable_instructions>(instruction_type);
@@ -1574,6 +1680,8 @@ namespace sogen::whp
 
             emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
             {
+                std::unique_lock lock(this->partition_mutex_);
+
                 auto* hook = this->make_hook();
                 this->basic_block_hooks_[hook] = std::move(callback);
                 return hook;
@@ -1581,6 +1689,8 @@ namespace sogen::whp
 
             emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
             {
+                std::unique_lock lock(this->partition_mutex_);
+
                 auto* hook = this->make_hook();
                 this->interrupt_hooks_[hook] = std::move(callback);
                 return hook;
@@ -1588,6 +1698,8 @@ namespace sogen::whp
 
             emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) override
             {
+                std::unique_lock lock(this->partition_mutex_);
+
                 auto* hook = this->make_hook();
                 this->memory_violation_hooks_[hook] = std::move(callback);
                 return hook;
@@ -1596,6 +1708,8 @@ namespace sogen::whp
             emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
             {
                 // NOTE: Global memory execution hooks are registered but not currently honored.
+                std::unique_lock lock(this->partition_mutex_);
+
                 auto* hook = this->make_hook();
                 this->memory_execution_hooks_[hook] = execution_hook_entry{.address = std::nullopt, .callback = std::move(callback)};
                 return hook;
@@ -1609,6 +1723,8 @@ namespace sogen::whp
                     return this->hook_memory_execution(address, std::move(callback));
                 }
 
+                std::unique_lock lock(this->partition_mutex_);
+
                 auto* hook = this->make_hook();
                 this->memory_execution_hooks_[hook] =
                     execution_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
@@ -1619,6 +1735,8 @@ namespace sogen::whp
 
             emulator_hook* hook_memory_execution(const uint64_t address, memory_execution_hook_callback callback) override
             {
+                std::unique_lock lock(this->partition_mutex_);
+
                 auto* hook = this->make_hook();
 
                 switch (this->memory_execution_hook_mode_)
@@ -1646,6 +1764,8 @@ namespace sogen::whp
 
             emulator_hook* hook_memory_read(const uint64_t address, const uint64_t size, memory_access_hook_callback callback) override
             {
+                std::unique_lock lock(this->partition_mutex_);
+
                 auto* hook = this->make_hook();
                 this->memory_read_hooks_[hook] =
                     memory_access_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
@@ -1654,6 +1774,8 @@ namespace sogen::whp
 
             emulator_hook* hook_memory_write(const uint64_t address, const uint64_t size, memory_access_hook_callback callback) override
             {
+                std::unique_lock lock(this->partition_mutex_);
+
                 auto* hook = this->make_hook();
                 this->memory_write_hooks_[hook] =
                     memory_access_hook_entry{.address = address, .size = size, .callback = std::move(callback)};
@@ -1662,6 +1784,8 @@ namespace sogen::whp
 
             void delete_hook(emulator_hook* hook) override
             {
+                std::unique_lock lock(this->partition_mutex_);
+
                 const auto instruction_it = this->instruction_hooks_.find(hook);
                 if (instruction_it != this->instruction_hooks_.end() && &instruction_it->second == this->syscall_hook_)
                 {
@@ -1685,45 +1809,27 @@ namespace sogen::whp
 
             void serialize_state(utils::buffer_serializer& buffer, const bool) const override
             {
-                buffer.write_vector(this->save_registers());
+                if (this->vcpus_.size() > 1)
+                {
+                    throw std::runtime_error("Multi-vCPU snapshots are not supported yet");
+                }
+
+                buffer.write_vector(this->vcpus_[0]->save_registers());
             }
 
             void deserialize_state(utils::buffer_deserializer& buffer, const bool) override
             {
-                this->restore_registers(buffer.read_vector<std::byte>());
-            }
-
-            std::vector<std::byte> save_registers() const override
-            {
-                auto names = snapshot_register_names();
-                std::vector<WHV_REGISTER_VALUE> values(names.size());
-                WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
-                                                             values.data()));
-
-                std::vector<std::byte> bytes(sizeof(WHV_REGISTER_VALUE) * values.size());
-                std::memcpy(bytes.data(), values.data(), bytes.size());
-                return bytes;
-            }
-
-            void restore_registers(const std::vector<std::byte>& register_data) override
-            {
-                auto names = snapshot_register_names();
-                const auto expected_size = sizeof(WHV_REGISTER_VALUE) * names.size();
-                if (register_data.size() != expected_size)
+                if (this->vcpus_.size() > 1)
                 {
-                    throw std::runtime_error("Unexpected WHP register snapshot size");
+                    throw std::runtime_error("Multi-vCPU snapshots are not supported yet");
                 }
 
-                std::vector<WHV_REGISTER_VALUE> values(names.size());
-                std::memcpy(values.data(), register_data.data(), register_data.size());
-
-                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
-                                                             values.data()));
+                this->vcpus_[0]->restore_registers(buffer.read_vector<std::byte>());
             }
 
             bool has_violation() const override
             {
-                return false;
+                return this->vcpus_[0]->has_violation();
             }
 
             std::string get_name() const override
@@ -1743,10 +1849,7 @@ namespace sogen::whp
 
             bool supports_multiple_vcpus() const override
             {
-                // WHP can drive multiple virtual processors per partition, but the
-                // backend still hardcodes VP index 0 everywhere. Flip this once the
-                // multi-vCPU backend work (docs/multi-vcpu-design.md, Phase 1) lands.
-                return false;
+                return true;
             }
 
             bool supports_global_memory_execution_hooks() const override
@@ -1755,6 +1858,8 @@ namespace sogen::whp
             }
 
           private:
+            friend class whp_vcpu;
+
             struct instruction_hook_entry
             {
                 x86_hookable_instructions type = x86_hookable_instructions::invalid;
@@ -1784,22 +1889,10 @@ namespace sogen::whp
                 mmio_write_callback write_cb{};
             };
 
-            struct pending_mmio_step
+            struct mmio_write_chunk
             {
-                uint64_t page_base{};
-                uint64_t original_rflags{};
-                bool had_trap_flag{};
-                bool allow_debug_delivery{};
-                bool is_write{};
-                std::vector<std::byte> old_page{};
-            };
-
-            struct pending_execution_step
-            {
-                std::optional<uint64_t> page_base{};
-                std::optional<uint64_t> patched_breakpoint{};
-                bool had_trap_flag{};
-                bool stop_after_step{};
+                size_t offset{};
+                std::vector<std::byte> data{};
             };
 
             struct patched_execution_breakpoint
@@ -1810,10 +1903,17 @@ namespace sogen::whp
             };
 
             partition_handle partition_{};
-            std::unique_ptr<virtual_processor_handle> vp_{};
             WHV_EXTENDED_VM_EXITS supported_exits_{};
             WHV_PROCESSOR_XSAVE_FEATURES supported_xsave_features_{};
             bool has_supported_xsave_features_ = false;
+
+            // Guards all partition-shared state below (page/GPA tables, MMIO regions, hook containers).
+            // Discipline: acquired only at public entry points and at the top-level exit handlers of the
+            // run loop; interior helpers assume it is already held. Non-recursive — never re-acquired.
+            // Never held while invoking a user callback or across WHvRunVirtualProcessor. Construction
+            // runs single-threaded, before any vCPU can execute, and takes no lock.
+            mutable std::shared_mutex partition_mutex_{};
+
             std::unordered_map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
             std::vector<uint64_t> guest_pages_by_gpa_{};
             // Ordered free list of guest-physical page indices. Allocating the *lowest* free index (rather
@@ -1825,9 +1925,6 @@ namespace sogen::whp
             std::unordered_map<uint64_t, uint64_t*> page_table_views_{};
             uint64_t pml4_gpa_ = 0;
             uint64_t next_internal_gpa_ = internal_page_table_base;
-            std::atomic_bool stop_requested_ = false;
-            std::atomic_bool run_active_ = false;
-            std::optional<pending_execution_step> pending_execution_step_{};
             uint64_t syscall_hook_page_ = 0;
             size_t next_hook_id_ = 1;
 
@@ -1839,13 +1936,15 @@ namespace sogen::whp
             std::unordered_map<emulator_hook*, memory_access_hook_entry> memory_read_hooks_{};
             std::unordered_map<emulator_hook*, memory_access_hook_entry> memory_write_hooks_{};
             std::unordered_map<uint64_t, patched_execution_breakpoint> patched_execution_breakpoints_{};
-            std::optional<uint64_t> deferred_patched_breakpoint_{};
-            std::optional<uint64_t> deferred_execution_page_{};
             std::unordered_map<uint64_t, mmio_region> mmio_regions_{};
-            std::optional<pending_mmio_step> pending_mmio_step_{};
             std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> mmio_read_grace_deadlines_{};
+            // Installed once during setup, before any vCPU runs, and read-only afterwards; the syscall
+            // dispatch hot path deliberately reads it without taking partition_mutex_.
             instruction_hook_entry* syscall_hook_ = nullptr;
             memory_execution_hook_mode memory_execution_hook_mode_ = memory_execution_hook_mode::automatic;
+
+            std::vector<std::unique_ptr<whp_vcpu>> vcpus_{};
+
             void ensure_platform_support()
             {
                 BOOL hypervisor_present = FALSE;
@@ -1869,9 +1968,8 @@ namespace sogen::whp
                                                       this->supported_xsave_features_.XsaveSupport;
             }
 
-            void configure_partition()
+            void configure_partition(const UINT32 processor_count)
             {
-                UINT32 processor_count = 1;
                 WHP_CHECK_HR(WHvSetPartitionProperty(this->partition_, WHvPartitionPropertyCodeProcessorCount, &processor_count,
                                                      sizeof(processor_count)));
 
@@ -1898,7 +1996,7 @@ namespace sogen::whp
                 WHP_CHECK_HR(WHvSetupPartition(this->partition_));
             }
 
-            void initialize_virtual_processor_state()
+            void initialize_virtual_processor_state(whp_vcpu& vcpu)
             {
                 std::vector<WHV_REGISTER_NAME> names = {
                     WHvX64RegisterCs,
@@ -1916,6 +2014,7 @@ namespace sogen::whp
                     WHvX64RegisterSfmask,
                     WHvX64RegisterFpControlStatus,
                     WHvX64RegisterXmmControlStatus,
+                    WHvX64RegisterLstar,
                 };
                 std::vector<WHV_REGISTER_VALUE> values(names.size());
                 values[0].Segment = make_segment(0x33, true);
@@ -1936,6 +2035,7 @@ namespace sogen::whp
                 values[13].FpControlStatus.FpTag = 0xFF;
                 values[14].XmmControlStatus.XmmStatusControl = 0x1F80u;
                 values[14].XmmControlStatus.XmmStatusControlMask = 0xFFFFFFFFu;
+                values[15].Reg64 = this->syscall_hook_page_;
 
                 if (this->has_supported_xsave_features_)
                 {
@@ -1949,8 +2049,8 @@ namespace sogen::whp
                     values.push_back(xcr0);
                 }
 
-                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
-                                                             values.data()));
+                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vcpu.vp_index_, names.data(),
+                                                             static_cast<UINT32>(names.size()), values.data()));
             }
 
             void initialize_syscall_intercept_page()
@@ -1958,13 +2058,10 @@ namespace sogen::whp
                 this->syscall_hook_page_ = this->allocate_internal_page(true);
                 auto* code = static_cast<uint8_t*>(this->mapped_pages_.at(this->syscall_hook_page_)->host_page);
                 code[0] = 0xF4;
-
-                WHV_REGISTER_VALUE lstar{};
-                lstar.Reg64 = this->syscall_hook_page_;
-                this->set_register(WHvX64RegisterLstar, lstar);
             }
 
-            bool handle_syscall_halt()
+            // Hot path: reads only registers and the setup-frozen syscall hook, so it takes no lock.
+            bool handle_syscall_halt(whp_vcpu& vcpu)
             {
                 if (!this->syscall_hook_)
                 {
@@ -1975,7 +2072,7 @@ namespace sogen::whp
                     WHvX64RegisterRip,    WHvX64RegisterRcx, WHvX64RegisterR10, WHvX64RegisterR11,
                     WHvX64RegisterRflags, WHvX64RegisterCs,  WHvX64RegisterSs,
                 };
-                auto entry_values = this->get_registers(entry_names);
+                auto entry_values = vcpu.get_registers(entry_names);
 
                 const auto post_syscall_rcx = entry_values[1].Reg64;
                 const auto post_syscall_r10 = entry_values[2].Reg64;
@@ -1995,12 +2092,12 @@ namespace sogen::whp
                 const std::array<WHV_REGISTER_VALUE, 5> pre_hook_values = {
                     entry_values[0], entry_values[1], entry_values[4], entry_values[5], entry_values[6],
                 };
-                this->set_registers(pre_hook_names, pre_hook_values);
+                vcpu.set_registers(pre_hook_names, pre_hook_values);
 
-                const auto continuation = this->syscall_hook_->callback(*this, 0);
+                const auto continuation = this->syscall_hook_->callback(vcpu, 0);
 
                 constexpr std::array<WHV_REGISTER_NAME, 1> post_hook_rip_name = {WHvX64RegisterRip};
-                auto post_hook_rip_value = this->get_registers(post_hook_rip_name);
+                auto post_hook_rip_value = vcpu.get_registers(post_hook_rip_name);
                 if (continuation != instruction_hook_continuation::finalized_instruction_pointer)
                 {
                     if (continuation == instruction_hook_continuation::skip_instruction && post_hook_rip_value[0].Reg64 == pre_syscall_rip)
@@ -2025,7 +2122,7 @@ namespace sogen::whp
                 };
                 post_hook_values[1].Segment = make_segment(0x33, true);
                 post_hook_values[2].Segment = make_segment(0x2B, false);
-                this->set_registers(post_hook_names, post_hook_values);
+                vcpu.set_registers(post_hook_names, post_hook_values);
 
                 return true;
             }
@@ -2035,6 +2132,7 @@ namespace sogen::whp
                 this->pml4_gpa_ = this->allocate_internal_page(false, false);
             }
 
+            // Assumes partition_mutex_ is held exclusively (or single-threaded construction).
             uint64_t allocate_internal_page(const bool executable = false, const bool map_into_guest = true)
             {
                 auto backing = allocate_backing_memory(page_size);
@@ -2061,6 +2159,7 @@ namespace sogen::whp
                 return page_gpa;
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             uint64_t allocate_guest_physical_page()
             {
                 size_t page_index = 0;
@@ -2089,6 +2188,7 @@ namespace sogen::whp
                 return guest_physical_memory_base + (static_cast<uint64_t>(page_index) * page_size);
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void assign_guest_physical_page(const uint64_t guest_address, mapped_page& page)
             {
                 if (page.guest_physical_address != unmapped_guest_page)
@@ -2106,6 +2206,7 @@ namespace sogen::whp
                 this->guest_pages_by_gpa_[this->guest_physical_page_index(page.guest_physical_address)] = page.guest_page_base;
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void release_guest_physical_page(const uint64_t guest_physical_address)
             {
                 if (guest_physical_address == unmapped_guest_page)
@@ -2128,6 +2229,7 @@ namespace sogen::whp
                 this->free_guest_gpa_indices_.insert(page_index);
             }
 
+            // Assumes partition_mutex_ is held (shared is sufficient).
             std::optional<uint64_t> translate_guest_physical_address(const uint64_t guest_physical_address) const
             {
                 if (guest_physical_address < guest_physical_memory_base)
@@ -2167,11 +2269,27 @@ namespace sogen::whp
                 return page_index;
             }
 
+            // Assumes partition_mutex_ is held. All pending-step mutation happens under the exclusive
+            // lock, so scanning the other vCPUs' step state here is safe.
+            bool is_page_being_stepped(const uint64_t page_base) const
+            {
+                for (const auto& vcpu : this->vcpus_)
+                {
+                    const auto& step = vcpu->pending_execution_step_;
+                    if (step && step->page_base == page_base)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+
+            // Assumes partition_mutex_ is held.
             memory_permission effective_page_permissions(const mapped_page& page) const
             {
                 auto permissions = page.permissions;
-                const auto stepped_page = this->pending_execution_step_ ? this->pending_execution_step_->page_base : std::nullopt;
-                if (page.page_execution_hook_count != 0 && stepped_page != page.guest_page_base)
+                if (page.page_execution_hook_count != 0 && !this->is_page_being_stepped(page.guest_page_base))
                 {
                     permissions &= ~memory_permission::exec;
                 }
@@ -2179,6 +2297,7 @@ namespace sogen::whp
                 return permissions;
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void remap_page(mapped_page& page)
             {
                 if (page.guest_physical_address == unmapped_guest_page)
@@ -2201,6 +2320,7 @@ namespace sogen::whp
                                             static_cast<WHV_MAP_GPA_RANGE_FLAGS>(page.map_flags)));
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void remap_pages(const uint64_t address, const size_t size)
             {
                 if (size == 0)
@@ -2272,6 +2392,7 @@ namespace sogen::whp
                 }
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void remap_hook_page(const uint64_t address)
             {
                 const auto page_base = align_down_to_page(address);
@@ -2282,6 +2403,7 @@ namespace sogen::whp
                 }
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void remap_hook_pages(const uint64_t address, const uint64_t size)
             {
                 if (size == 0)
@@ -2298,6 +2420,7 @@ namespace sogen::whp
                 this->remap_pages(start, static_cast<size_t>(end - start));
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void increment_execution_hook_count(const uint64_t address, const uint64_t size)
             {
                 if (size == 0)
@@ -2319,6 +2442,7 @@ namespace sogen::whp
                 }
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void decrement_execution_hook_count(const uint64_t address, const uint64_t size)
             {
                 if (size == 0)
@@ -2343,6 +2467,7 @@ namespace sogen::whp
                 }
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void deactivate_execution_hook(emulator_hook* hook)
             {
                 const auto execution_it = this->memory_execution_hooks_.find(hook);
@@ -2368,6 +2493,7 @@ namespace sogen::whp
                 }
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void try_apply_patched_execution_breakpoint(const uint64_t address, patched_execution_breakpoint& breakpoint)
             {
                 const auto page_base = align_down_to_page(address);
@@ -2390,6 +2516,7 @@ namespace sogen::whp
                 breakpoint.applied = true;
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void apply_patched_execution_breakpoints(const uint64_t page_base)
             {
                 for (auto& [address, breakpoint] : this->patched_execution_breakpoints_)
@@ -2401,6 +2528,7 @@ namespace sogen::whp
                 }
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void mark_patched_execution_breakpoints_unmapped(const uint64_t page_base)
             {
                 for (auto& [address, breakpoint] : this->patched_execution_breakpoints_)
@@ -2413,6 +2541,7 @@ namespace sogen::whp
                 }
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void install_patched_execution_breakpoint(const uint64_t address)
             {
                 auto existing = this->patched_execution_breakpoints_.find(address);
@@ -2431,6 +2560,7 @@ namespace sogen::whp
                 this->patched_execution_breakpoints_[address] = breakpoint;
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void uninstall_patched_execution_breakpoint(const uint64_t address)
             {
                 auto existing = this->patched_execution_breakpoints_.find(address);
@@ -2454,6 +2584,7 @@ namespace sogen::whp
                 this->patched_execution_breakpoints_.erase(existing);
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void set_patched_execution_breakpoint_state(const uint64_t address, const bool applied)
             {
                 const auto existing = this->patched_execution_breakpoints_.find(address);
@@ -2484,28 +2615,29 @@ namespace sogen::whp
                 existing->second.applied = applied;
             }
 
-            bool arm_execution_single_step(const std::optional<uint64_t> page_base, const bool stop_after_step)
+            // Assumes partition_mutex_ is held exclusively.
+            bool arm_execution_single_step(whp_vcpu& vcpu, const std::optional<uint64_t> page_base, const bool stop_after_step)
             {
-                if (this->pending_execution_step_)
+                if (vcpu.pending_execution_step_)
                 {
-                    if (!page_base || this->pending_execution_step_->page_base)
+                    if (!page_base || vcpu.pending_execution_step_->page_base)
                     {
                         return false;
                     }
 
-                    this->pending_execution_step_->page_base = page_base;
+                    vcpu.pending_execution_step_->page_base = page_base;
                 }
                 else
                 {
-                    auto rflags = this->get_register(WHvX64RegisterRflags);
+                    auto rflags = vcpu.get_register(WHvX64RegisterRflags);
                     pending_execution_step state{};
                     state.page_base = page_base;
                     state.had_trap_flag = (rflags.Reg64 & trap_flag_bit) != 0;
                     state.stop_after_step = stop_after_step;
 
                     rflags.Reg64 |= trap_flag_bit;
-                    this->set_register(WHvX64RegisterRflags, rflags);
-                    this->pending_execution_step_ = state;
+                    vcpu.set_register(WHvX64RegisterRflags, rflags);
+                    vcpu.pending_execution_step_ = state;
                 }
 
                 if (page_base)
@@ -2520,28 +2652,30 @@ namespace sogen::whp
                 return true;
             }
 
-            bool arm_patched_breakpoint_single_step(const uint64_t address, const bool stop_after_step)
+            // Assumes partition_mutex_ is held exclusively.
+            bool arm_patched_breakpoint_single_step(whp_vcpu& vcpu, const uint64_t address, const bool stop_after_step)
             {
-                if (!this->arm_execution_single_step(std::nullopt, stop_after_step))
+                if (!this->arm_execution_single_step(vcpu, std::nullopt, stop_after_step))
                 {
                     return false;
                 }
 
-                this->pending_execution_step_->patched_breakpoint = address;
-                this->deferred_patched_breakpoint_.reset();
+                vcpu.pending_execution_step_->patched_breakpoint = address;
+                vcpu.deferred_patched_breakpoint_.reset();
                 return true;
             }
 
-            bool complete_execution_step()
+            // Assumes partition_mutex_ is held exclusively.
+            bool complete_execution_step(whp_vcpu& vcpu)
             {
-                if (!this->pending_execution_step_)
+                if (!vcpu.pending_execution_step_)
                 {
                     return false;
                 }
 
-                const auto state = std::exchange(this->pending_execution_step_, std::nullopt);
+                const auto state = std::exchange(vcpu.pending_execution_step_, std::nullopt);
 
-                auto rflags = this->get_register(WHvX64RegisterRflags);
+                auto rflags = vcpu.get_register(WHvX64RegisterRflags);
                 if (state->had_trap_flag)
                 {
                     rflags.Reg64 |= trap_flag_bit;
@@ -2550,7 +2684,7 @@ namespace sogen::whp
                 {
                     rflags.Reg64 &= ~trap_flag_bit;
                 }
-                this->set_register(WHvX64RegisterRflags, rflags);
+                vcpu.set_register(WHvX64RegisterRflags, rflags);
 
                 if (state->page_base)
                 {
@@ -2563,12 +2697,13 @@ namespace sogen::whp
 
                 if (state->stop_after_step)
                 {
-                    this->stop_requested_ = true;
+                    vcpu.stop_requested_ = true;
                 }
 
                 return !state->had_trap_flag;
             }
 
+            // Assumes partition_mutex_ is held.
             mmio_region* find_mmio_region(const uint64_t address)
             {
                 for (auto& [base, region] : this->mmio_regions_)
@@ -2582,6 +2717,7 @@ namespace sogen::whp
                 return nullptr;
             }
 
+            // Assumes partition_mutex_ is held.
             const mmio_region* find_mmio_region(const uint64_t address) const
             {
                 for (const auto& [base, region] : this->mmio_regions_)
@@ -2595,26 +2731,37 @@ namespace sogen::whp
                 return nullptr;
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void grant_mmio_read_grace(const uint64_t page_base)
             {
                 constexpr std::chrono::milliseconds mmio_read_grace_period_{4};
                 this->mmio_read_grace_deadlines_[page_base] = std::chrono::steady_clock::now() + mmio_read_grace_period_;
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void revoke_mmio_read_grace(const uint64_t page_base)
             {
                 this->mmio_read_grace_deadlines_.erase(page_base);
             }
 
-            void expire_mmio_read_grace_pages()
+            void expire_mmio_read_grace_pages(whp_vcpu& vcpu)
             {
-                if (this->pending_mmio_step_.has_value())
+                if (vcpu.pending_mmio_step_.has_value())
                 {
                     return;
                 }
 
+                {
+                    std::shared_lock lock(this->partition_mutex_);
+                    if (this->mmio_read_grace_deadlines_.empty())
+                    {
+                        return;
+                    }
+                }
+
                 const auto now = std::chrono::steady_clock::now();
 
+                std::unique_lock lock(this->partition_mutex_);
                 for (auto it = this->mmio_read_grace_deadlines_.begin(); it != this->mmio_read_grace_deadlines_.end();)
                 {
                     const auto page_base = it->first;
@@ -2640,61 +2787,15 @@ namespace sogen::whp
                 }
             }
 
-            void refresh_mmio_page(const mmio_region& region, const uint64_t page_base)
+            // Assumes partition_mutex_ is held exclusively.
+            bool arm_mmio_single_step(whp_vcpu& vcpu, const uint64_t page_base, const bool is_write)
             {
-                auto entry = this->mapped_pages_.find(page_base);
-                if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
-                {
-                    throw std::runtime_error("MMIO page backing is missing");
-                }
-
-                auto* page = static_cast<std::byte*>(entry->second->host_page);
-                std::memset(page, 0, page_size);
-
-                const auto region_offset = static_cast<size_t>(page_base - region.address);
-                const auto bytes_to_read = (std::min)(static_cast<size_t>(page_size), region.size - region_offset);
-                region.read_cb(region_offset, page, bytes_to_read);
-            }
-
-            void flush_mmio_write(const mmio_region& region, const uint64_t page_base, const std::vector<std::byte>& old_page)
-            {
-                auto entry = this->mapped_pages_.find(page_base);
-                if (entry == this->mapped_pages_.end() || !entry->second || entry->second->host_page == nullptr)
-                {
-                    throw std::runtime_error("MMIO page backing is missing");
-                }
-
-                const auto* current_page = static_cast<const std::byte*>(entry->second->host_page);
-                const auto region_offset = static_cast<size_t>(page_base - region.address);
-                const auto bytes_in_region = (std::min)(static_cast<size_t>(page_size), region.size - region_offset);
-
-                size_t index = 0;
-                while (index < bytes_in_region)
-                {
-                    if (old_page[index] == current_page[index])
-                    {
-                        ++index;
-                        continue;
-                    }
-
-                    const auto start = index;
-                    while (index < bytes_in_region && old_page[index] != current_page[index])
-                    {
-                        ++index;
-                    }
-
-                    region.write_cb(region_offset + start, current_page + start, index - start);
-                }
-            }
-
-            bool arm_mmio_single_step(const uint64_t page_base, const bool is_write)
-            {
-                if (this->pending_mmio_step_.has_value())
+                if (vcpu.pending_mmio_step_.has_value())
                 {
                     return false;
                 }
 
-                auto rflags = this->get_register(WHvX64RegisterRflags);
+                auto rflags = vcpu.get_register(WHvX64RegisterRflags);
                 const auto original_rflags = rflags.Reg64;
 
                 pending_mmio_step state{};
@@ -2717,40 +2818,84 @@ namespace sogen::whp
                 }
 
                 rflags.Reg64 = original_rflags | 0x100;
-                this->set_register(WHvX64RegisterRflags, rflags);
-                this->pending_mmio_step_ = std::move(state);
+                vcpu.set_register(WHvX64RegisterRflags, rflags);
+                vcpu.pending_mmio_step_ = std::move(state);
                 return true;
             }
 
-            bool complete_pending_mmio_step()
+            // Called without the partition lock held; takes it internally so the MMIO write callback
+            // can be invoked outside of it.
+            bool complete_pending_mmio_step(whp_vcpu& vcpu)
             {
-                if (!this->pending_mmio_step_.has_value())
+                if (!vcpu.pending_mmio_step_.has_value())
                 {
                     return false;
                 }
 
-                const auto state = std::move(*this->pending_mmio_step_);
-                this->pending_mmio_step_.reset();
-                this->revoke_mmio_read_grace(state.page_base);
+                const auto state = std::move(*vcpu.pending_mmio_step_);
+                vcpu.pending_mmio_step_.reset();
 
-                const auto entry = this->mapped_pages_.find(state.page_base);
-                if (entry == this->mapped_pages_.end() || !entry->second)
-                {
-                    throw std::runtime_error("MMIO page backing is missing");
-                }
+                mmio_write_callback write_cb{};
+                std::vector<mmio_write_chunk> write_chunks{};
 
-                if (state.is_write)
                 {
-                    if (const auto* region = this->find_mmio_region(state.page_base))
+                    std::unique_lock lock(this->partition_mutex_);
+                    this->revoke_mmio_read_grace(state.page_base);
+
+                    const auto entry = this->mapped_pages_.find(state.page_base);
+                    if (entry == this->mapped_pages_.end() || !entry->second)
                     {
-                        this->flush_mmio_write(*region, state.page_base, state.old_page);
+                        throw std::runtime_error("MMIO page backing is missing");
                     }
+
+                    if (state.is_write)
+                    {
+                        if (const auto* region = this->find_mmio_region(state.page_base))
+                        {
+                            if (entry->second->host_page == nullptr)
+                            {
+                                throw std::runtime_error("MMIO page backing is missing");
+                            }
+
+                            write_cb = region->write_cb;
+
+                            const auto* current_page = static_cast<const std::byte*>(entry->second->host_page);
+                            const auto region_offset = static_cast<size_t>(state.page_base - region->address);
+                            const auto bytes_in_region = (std::min)(static_cast<size_t>(page_size), region->size - region_offset);
+
+                            size_t index = 0;
+                            while (index < bytes_in_region)
+                            {
+                                if (state.old_page[index] == current_page[index])
+                                {
+                                    ++index;
+                                    continue;
+                                }
+
+                                const auto start = index;
+                                while (index < bytes_in_region && state.old_page[index] != current_page[index])
+                                {
+                                    ++index;
+                                }
+
+                                write_chunks.push_back(mmio_write_chunk{
+                                    .offset = region_offset + start,
+                                    .data = std::vector<std::byte>(current_page + start, current_page + index),
+                                });
+                            }
+                        }
+                    }
+
+                    entry->second->permissions = memory_permission::none;
+                    this->remap_page(*entry->second);
                 }
 
-                entry->second->permissions = memory_permission::none;
-                this->remap_page(*entry->second);
+                for (const auto& chunk : write_chunks)
+                {
+                    write_cb(chunk.offset, chunk.data.data(), chunk.data.size());
+                }
 
-                auto rflags = this->get_register(WHvX64RegisterRflags);
+                auto rflags = vcpu.get_register(WHvX64RegisterRflags);
 
                 if (state.had_trap_flag)
                 {
@@ -2761,7 +2906,7 @@ namespace sogen::whp
                     rflags.Reg64 &= ~0x100ull;
                 }
 
-                this->set_register(WHvX64RegisterRflags, rflags);
+                vcpu.set_register(WHvX64RegisterRflags, rflags);
 
                 return !state.allow_debug_delivery;
             }
@@ -2771,6 +2916,7 @@ namespace sogen::whp
                 return this->page_table_views_.at(page_gpa);
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             uint64_t ensure_child_table(const uint64_t table_gpa, const size_t index)
             {
                 auto* const table_entries = this->get_page_table_entries(table_gpa);
@@ -2786,6 +2932,7 @@ namespace sogen::whp
                 return entry & page_table_entry_address_mask;
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void ensure_virtual_mapping(const uint64_t guest_address)
             {
                 const auto page_base = align_down_to_page(guest_address);
@@ -2809,6 +2956,7 @@ namespace sogen::whp
                                        page_table_entry_user;
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             bool clear_virtual_mapping(const uint64_t guest_address)
             {
                 const auto page_base = align_down_to_page(guest_address);
@@ -2849,11 +2997,18 @@ namespace sogen::whp
                 return true;
             }
 
+            // Assumes partition_mutex_ is held exclusively. Rewriting CR3 flushes the cached
+            // virtual-address translations; every vCPU shares the same page tables.
             void flush_virtual_address_mappings()
             {
-                this->set_register(WHvX64RegisterCr3, this->get_register(WHvX64RegisterCr3));
+                for (const auto& vcpu : this->vcpus_)
+                {
+                    vcpu->set_register(WHvX64RegisterCr3, vcpu->get_register(WHvX64RegisterCr3));
+                }
             }
 
+            // Assumes partition_mutex_ is held (shared is sufficient for reads, exclusive for writes
+            // only because callers that write also update breakpoint bookkeeping).
             bool access_memory(const uint64_t address, void* data, size_t size, const bool is_write) const
             {
                 auto current_address = address;
@@ -2889,6 +3044,7 @@ namespace sogen::whp
                 return true;
             }
 
+            // Assumes partition_mutex_ is held (shared).
             void overlay_patched_breakpoints(const uint64_t address, void* data, const size_t size) const
             {
                 auto current_address = address;
@@ -2919,6 +3075,7 @@ namespace sogen::whp
                 }
             }
 
+            // Assumes partition_mutex_ is held exclusively.
             void overlay_patched_breakpoints(const uint64_t address, const void* data, const size_t size)
             {
                 auto current_address = address;
@@ -2957,60 +3114,220 @@ namespace sogen::whp
                 }
             }
 
-            WHV_REGISTER_VALUE get_register(const WHV_REGISTER_NAME name) const
-            {
-                WHV_REGISTER_VALUE value{};
-                WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, vp_index, &name, 1, &value));
-                return value;
-            }
-
-            template <size_t N>
-            std::array<WHV_REGISTER_VALUE, N> get_registers(const std::array<WHV_REGISTER_NAME, N>& names) const
-            {
-                std::array<WHV_REGISTER_VALUE, N> values{};
-                WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
-                                                             values.data()));
-                return values;
-            }
-
-            void set_register(const WHV_REGISTER_NAME name, const WHV_REGISTER_VALUE& value)
-            {
-                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, &name, 1, &value));
-            }
-
-            template <size_t N>
-            void set_registers(const std::array<WHV_REGISTER_NAME, N>& names, const std::array<WHV_REGISTER_VALUE, N>& values)
-            {
-                WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, vp_index, names.data(), static_cast<UINT32>(names.size()),
-                                                             values.data()));
-            }
-
+            // Assumes partition_mutex_ is held exclusively.
             emulator_hook* make_hook()
             {
                 return reinterpret_cast<emulator_hook*>(this->next_hook_id_++);
             }
 
-            void apply_default_instruction_exit(const x86_hookable_instructions type, const WHV_RUN_VP_EXIT_CONTEXT& exit_context)
+            interrupt_hook_callback copy_first_interrupt_hook() const
+            {
+                std::shared_lock lock(this->partition_mutex_);
+                if (this->interrupt_hooks_.empty())
+                {
+                    return {};
+                }
+
+                return this->interrupt_hooks_.begin()->second;
+            }
+
+            std::vector<instruction_hook_callback> copy_instruction_hooks(const x86_hookable_instructions type) const
+            {
+                std::vector<instruction_hook_callback> callbacks{};
+
+                std::shared_lock lock(this->partition_mutex_);
+                for (const auto& [_, hook] : this->instruction_hooks_)
+                {
+                    if (hook.type == type)
+                    {
+                        callbacks.push_back(hook.callback);
+                    }
+                }
+
+                return callbacks;
+            }
+
+            std::vector<memory_violation_hook_callback> copy_memory_violation_hooks() const
+            {
+                std::vector<memory_violation_hook_callback> callbacks{};
+
+                std::shared_lock lock(this->partition_mutex_);
+                callbacks.reserve(this->memory_violation_hooks_.size());
+                for (const auto& [_, hook] : this->memory_violation_hooks_)
+                {
+                    callbacks.push_back(hook);
+                }
+
+                return callbacks;
+            }
+
+            void run(whp_vcpu& vcpu, const size_t count)
+            {
+                if (count != 0 && count != 1)
+                {
+                    throw std::runtime_error("WHP backend does not support exact instruction counts yet");
+                }
+
+                vcpu.stop_requested_ = false;
+
+                {
+                    std::unique_lock lock(this->partition_mutex_);
+
+                    bool armed_single_step = false;
+                    if (vcpu.deferred_patched_breakpoint_)
+                    {
+                        if (vcpu.read_instruction_pointer() == *vcpu.deferred_patched_breakpoint_)
+                        {
+                            if (!this->arm_patched_breakpoint_single_step(vcpu, *vcpu.deferred_patched_breakpoint_, count == 1))
+                            {
+                                throw std::runtime_error("Nested WHP execution single-step state is not supported");
+                            }
+
+                            armed_single_step = true;
+                        }
+                        else
+                        {
+                            this->set_patched_execution_breakpoint_state(*vcpu.deferred_patched_breakpoint_, true);
+                            vcpu.deferred_patched_breakpoint_.reset();
+                        }
+                    }
+
+                    if (!armed_single_step && vcpu.deferred_execution_page_)
+                    {
+                        if (!this->arm_execution_single_step(vcpu, *vcpu.deferred_execution_page_, count == 1))
+                        {
+                            throw std::runtime_error("Nested WHP execution single-step state is not supported");
+                        }
+
+                        vcpu.deferred_execution_page_.reset();
+                        armed_single_step = true;
+                    }
+
+                    if (!armed_single_step && count == 1 && !this->arm_execution_single_step(vcpu, std::nullopt, true))
+                    {
+                        throw std::runtime_error("Nested WHP execution single-step state is not supported");
+                    }
+                }
+
+                while (!vcpu.stop_requested_)
+                {
+                    this->expire_mmio_read_grace_pages(vcpu);
+                    WHV_RUN_VP_EXIT_CONTEXT exit_context{};
+                    const auto start_rip = vcpu.read_instruction_pointer();
+                    vcpu.run_active_ = true;
+                    const auto run_hr = WHvRunVirtualProcessor(this->partition_, vcpu.vp_index_, &exit_context, sizeof(exit_context));
+                    vcpu.run_active_ = false;
+                    if (FAILED(run_hr))
+                    {
+                        throw_hr(run_hr, "WHvRunVirtualProcessor");
+                    }
+                    switch (exit_context.ExitReason)
+                    {
+                    case WHvRunVpExitReasonCanceled: {
+                        if (vcpu.stop_requested_)
+                        {
+                            return;
+                        }
+
+                        // If rip has not changed, we _probably_ executed nothing.
+                        // Could be that the execution was cancelled while it was not running.
+                        // Just restart it.
+                        if (start_rip == exit_context.VpContext.Rip)
+                        {
+                            vcpu.stop_requested_ = false;
+                            continue;
+                        }
+
+                        return;
+                    }
+                    case WHvRunVpExitReasonX64Halt:
+                        if (this->syscall_hook_ && exit_context.VpContext.Rip == (this->syscall_hook_page_ + 1))
+                        {
+                            if (this->handle_syscall_halt(vcpu))
+                            {
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            return;
+                        }
+
+                        if (vcpu.stop_requested_)
+                        {
+                            return;
+                        }
+
+                        if (this->syscall_hook_)
+                        {
+                            continue;
+                        }
+                        return;
+                    case WHvRunVpExitReasonMemoryAccess:
+                        if (this->handle_memory_access(vcpu, exit_context.MemoryAccess))
+                        {
+                            continue;
+                        }
+                        return;
+                    case WHvRunVpExitReasonException:
+                        if (this->handle_exception(vcpu, exit_context))
+                        {
+                            vcpu.clear_pending_exception_state();
+                            continue;
+                        }
+                        return;
+                    case WHvRunVpExitReasonX64Cpuid:
+                        if (this->handle_instruction_exit(vcpu, x86_hookable_instructions::cpuid, exit_context, 2))
+                        {
+                            continue;
+                        }
+                        throw std::runtime_error("Unhandled CPUID exit");
+                    case WHvRunVpExitReasonX64Rdtsc:
+                        if (this->handle_instruction_exit(vcpu,
+                                                          exit_context.ReadTsc.RdtscInfo.IsRdtscp ? x86_hookable_instructions::rdtscp
+                                                                                                  : x86_hookable_instructions::rdtsc,
+                                                          exit_context, 2))
+                        {
+                            continue;
+                        }
+                        throw std::runtime_error("Unhandled RDTSC/RDTSCP exit");
+                    case WHvRunVpExitReasonUnrecoverableException:
+                        if (this->handle_unrecoverable_exception(vcpu))
+                        {
+                            vcpu.clear_pending_exception_state();
+                            continue;
+                        }
+                        throw_unhandled_exit(exit_context);
+                    case WHvRunVpExitReasonUnsupportedFeature:
+                        throw std::runtime_error("Encountered unsupported processor feature");
+                    default:
+                        throw_unhandled_exit(exit_context);
+                    }
+                }
+            }
+
+            void apply_default_instruction_exit(whp_vcpu& vcpu, const x86_hookable_instructions type,
+                                                const WHV_RUN_VP_EXIT_CONTEXT& exit_context)
             {
                 switch (type)
                 {
                 case x86_hookable_instructions::cpuid: {
                     const auto& cpuid = exit_context.CpuidAccess;
-                    this->reg(x86_register::rax, static_cast<uint64_t>(cpuid.DefaultResultRax));
-                    this->reg(x86_register::rbx, static_cast<uint64_t>(cpuid.DefaultResultRbx));
-                    this->reg(x86_register::rcx, static_cast<uint64_t>(cpuid.DefaultResultRcx));
-                    this->reg(x86_register::rdx, static_cast<uint64_t>(cpuid.DefaultResultRdx));
+                    vcpu.reg(x86_register::rax, static_cast<uint64_t>(cpuid.DefaultResultRax));
+                    vcpu.reg(x86_register::rbx, static_cast<uint64_t>(cpuid.DefaultResultRbx));
+                    vcpu.reg(x86_register::rcx, static_cast<uint64_t>(cpuid.DefaultResultRcx));
+                    vcpu.reg(x86_register::rdx, static_cast<uint64_t>(cpuid.DefaultResultRdx));
                     break;
                 }
                 case x86_hookable_instructions::rdtsc:
                 case x86_hookable_instructions::rdtscp: {
                     const auto tsc = exit_context.ReadTsc.Tsc;
-                    this->reg(x86_register::rax, static_cast<uint32_t>(tsc & 0xFFFFFFFFull));
-                    this->reg(x86_register::rdx, static_cast<uint32_t>(tsc >> 32));
+                    vcpu.reg(x86_register::rax, static_cast<uint32_t>(tsc & 0xFFFFFFFFull));
+                    vcpu.reg(x86_register::rdx, static_cast<uint32_t>(tsc >> 32));
 
                     if (type == x86_hookable_instructions::rdtscp)
                     {
-                        this->reg(x86_register::rcx, static_cast<uint32_t>(exit_context.ReadTsc.TscAux & 0xFFFFFFFFull));
+                        vcpu.reg(x86_register::rcx, static_cast<uint32_t>(exit_context.ReadTsc.TscAux & 0xFFFFFFFFull));
                     }
 
                     break;
@@ -3020,20 +3337,16 @@ namespace sogen::whp
                 }
             }
 
-            bool handle_instruction_exit(const x86_hookable_instructions type, const WHV_RUN_VP_EXIT_CONTEXT& exit_context,
+            bool handle_instruction_exit(whp_vcpu& vcpu, const x86_hookable_instructions type, const WHV_RUN_VP_EXIT_CONTEXT& exit_context,
                                          const uint64_t instruction_size)
             {
-                bool handled = false;
+                const auto callbacks = this->copy_instruction_hooks(type);
+                const bool handled = !callbacks.empty();
                 bool skip = false;
-                for (auto& [_, hook] : this->instruction_hooks_)
-                {
-                    if (hook.type != type)
-                    {
-                        continue;
-                    }
 
-                    handled = true;
-                    if (hook.callback(*this, 0) == instruction_hook_continuation::skip_instruction)
+                for (const auto& callback : callbacks)
+                {
+                    if (callback(vcpu, 0) == instruction_hook_continuation::skip_instruction)
                     {
                         skip = true;
                     }
@@ -3041,56 +3354,57 @@ namespace sogen::whp
 
                 if (!handled || !skip)
                 {
-                    this->apply_default_instruction_exit(type, exit_context);
+                    this->apply_default_instruction_exit(vcpu, type, exit_context);
                 }
 
-                this->advance_rip(instruction_size);
+                vcpu.advance_rip(instruction_size);
 
                 return handled || type == x86_hookable_instructions::cpuid || type == x86_hookable_instructions::rdtsc ||
                        type == x86_hookable_instructions::rdtscp;
             }
 
-            bool handle_unrecoverable_exception()
+            bool handle_unrecoverable_exception(whp_vcpu& vcpu)
             {
-                const auto rip = this->read_instruction_pointer();
-                std::array<std::byte, 2> opcode{};
-                if (this->access_memory(rip, opcode.data(), opcode.size(), false) && opcode[0] == std::byte{0xCD})
-                {
-                    for (auto& [_, hook] : this->interrupt_hooks_)
-                    {
-                        hook(*this, std::to_integer<uint8_t>(opcode[1]));
+                const auto rip = vcpu.read_instruction_pointer();
 
-                        if (this->read_instruction_pointer() == rip)
+                std::array<std::byte, 2> opcode{};
+                bool opcode_read = false;
+                {
+                    std::shared_lock lock(this->partition_mutex_);
+                    opcode_read = this->access_memory(rip, opcode.data(), opcode.size(), false);
+                }
+
+                if (opcode_read && opcode[0] == std::byte{0xCD})
+                {
+                    if (const auto hook = this->copy_first_interrupt_hook())
+                    {
+                        hook(vcpu, std::to_integer<uint8_t>(opcode[1]));
+
+                        if (vcpu.read_instruction_pointer() == rip)
                         {
-                            this->advance_rip(2);
+                            vcpu.advance_rip(2);
                         }
 
                         return true;
                     }
                 }
-                else if (this->access_memory(rip, opcode.data(), opcode.size(), false) && opcode[0] == std::byte{0x0F} &&
-                         opcode[1] == std::byte{0x0B})
+                else if (opcode_read && opcode[0] == std::byte{0x0F} && opcode[1] == std::byte{0x0B})
                 {
                     bool skip = false;
                     bool consumed = false;
 
-                    for (auto& [_, hook] : this->instruction_hooks_)
+                    for (const auto& callback : this->copy_instruction_hooks(x86_hookable_instructions::invalid))
                     {
-                        if (hook.type != x86_hookable_instructions::invalid)
-                        {
-                            continue;
-                        }
-
-                        if (hook.callback(*this, 0) == instruction_hook_continuation::skip_instruction)
+                        if (callback(vcpu, 0) == instruction_hook_continuation::skip_instruction)
                         {
                             skip = true;
                             consumed = true;
                         }
                     }
 
-                    if (skip && this->read_instruction_pointer() == rip)
+                    if (skip && vcpu.read_instruction_pointer() == rip)
                     {
-                        this->advance_rip(2);
+                        vcpu.advance_rip(2);
                     }
 
                     if (consumed)
@@ -3098,41 +3412,41 @@ namespace sogen::whp
                         return true;
                     }
 
-                    for (auto& [_, hook] : this->interrupt_hooks_)
+                    if (const auto hook = this->copy_first_interrupt_hook())
                     {
-                        hook(*this, 6);
+                        hook(vcpu, 6);
                         return true;
                     }
 
                     return false;
                 }
 
-                if (this->pending_mmio_step_.has_value())
+                if (vcpu.pending_mmio_step_.has_value())
                 {
-                    const auto swallow = this->complete_pending_mmio_step();
+                    const auto swallow = this->complete_pending_mmio_step(vcpu);
                     if (swallow)
                     {
                         return true;
                     }
                 }
 
-                const auto rflags = this->reg<uint64_t>(x86_register::rflags);
+                const auto rflags = vcpu.reg<uint64_t>(x86_register::rflags);
                 if ((rflags & 0x100ull) != 0)
                 {
-                    for (auto& [_, hook] : this->interrupt_hooks_)
+                    if (const auto hook = this->copy_first_interrupt_hook())
                     {
-                        hook(*this, 1);
+                        hook(vcpu, 1);
                         return true;
                     }
                 }
 
-                const auto fault_address = this->reg<uint64_t>(x86_register::cr2);
+                const auto fault_address = vcpu.reg<uint64_t>(x86_register::cr2);
 
-                if (fault_address != 0 && !this->memory_violation_hooks_.empty())
+                if (fault_address != 0)
                 {
-                    for (auto& [_, hook] : this->memory_violation_hooks_)
+                    for (const auto& hook : this->copy_memory_violation_hooks())
                     {
-                        const auto result = hook(*this, fault_address, 1, memory_operation::read, memory_violation_type::unmapped);
+                        const auto result = hook(vcpu, fault_address, 1, memory_operation::read, memory_violation_type::unmapped);
                         if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                         {
                             return true;
@@ -3140,45 +3454,52 @@ namespace sogen::whp
                     }
                 }
 
-                for (auto& [_, hook] : this->interrupt_hooks_)
+                if (const auto hook = this->copy_first_interrupt_hook())
                 {
-                    hook(*this, 14);
+                    hook(vcpu, 14);
                     return true;
                 }
 
                 return false;
             }
 
-            bool handle_execution_hook(const uint64_t address)
+            bool handle_execution_hook(whp_vcpu& vcpu, const uint64_t address)
             {
                 const auto page_base = align_down_to_page(address);
-                const auto entry = this->mapped_pages_.find(page_base);
-                if (entry == this->mapped_pages_.end() || !entry->second || !is_executable(entry->second->permissions) ||
-                    entry->second->page_execution_hook_count == 0)
-                {
-                    return false;
-                }
-
                 std::vector<memory_execution_hook_callback> callbacks{};
-                for (const auto& [_, hook] : this->memory_execution_hooks_)
+
                 {
-                    if (hook.address && !hook.patched_breakpoint && hook.size != 0 &&
-                        is_within_start_and_length(address, *hook.address, hook.size))
+                    std::shared_lock lock(this->partition_mutex_);
+
+                    const auto entry = this->mapped_pages_.find(page_base);
+                    if (entry == this->mapped_pages_.end() || !entry->second || !is_executable(entry->second->permissions) ||
+                        entry->second->page_execution_hook_count == 0)
                     {
-                        callbacks.push_back(hook.callback);
+                        return false;
+                    }
+
+                    for (const auto& [_, hook] : this->memory_execution_hooks_)
+                    {
+                        if (hook.address && !hook.patched_breakpoint && hook.size != 0 &&
+                            is_within_start_and_length(address, *hook.address, hook.size))
+                        {
+                            callbacks.push_back(hook.callback);
+                        }
                     }
                 }
 
                 for (const auto& callback : callbacks)
                 {
-                    callback(*this, address);
+                    callback(vcpu, address);
                 }
 
-                if (this->stop_requested_)
+                if (vcpu.stop_requested_)
                 {
-                    this->deferred_execution_page_ = page_base;
+                    vcpu.deferred_execution_page_ = page_base;
                     return true;
                 }
+
+                std::unique_lock lock(this->partition_mutex_);
 
                 const auto current_entry = this->mapped_pages_.find(page_base);
                 if (current_entry == this->mapped_pages_.end() || !current_entry->second ||
@@ -3187,7 +3508,7 @@ namespace sogen::whp
                     return true;
                 }
 
-                if (!this->arm_execution_single_step(page_base, false))
+                if (!this->arm_execution_single_step(vcpu, page_base, false))
                 {
                     throw std::runtime_error("Nested WHP execution single-step state is not supported");
                 }
@@ -3195,32 +3516,62 @@ namespace sogen::whp
                 return true;
             }
 
-            bool handle_memory_access(const WHV_MEMORY_ACCESS_CONTEXT& memory_access)
+            bool handle_memory_access(whp_vcpu& vcpu, const WHV_MEMORY_ACCESS_CONTEXT& memory_access)
             {
                 const auto access_type = static_cast<WHV_MEMORY_ACCESS_TYPE>(memory_access.AccessInfo.AccessType);
-                const auto resolved_address = memory_access.AccessInfo.GvaValid
-                                                  ? memory_access.Gva
-                                                  : this->translate_guest_physical_address(memory_access.Gpa).value_or(memory_access.Gpa);
 
-                if (access_type == WHvMemoryAccessExecute && this->handle_execution_hook(resolved_address))
+                auto resolved_address = memory_access.Gva;
+                if (!memory_access.AccessInfo.GvaValid)
+                {
+                    std::shared_lock lock(this->partition_mutex_);
+                    resolved_address = this->translate_guest_physical_address(memory_access.Gpa).value_or(memory_access.Gpa);
+                }
+
+                if (access_type == WHvMemoryAccessExecute && this->handle_execution_hook(vcpu, resolved_address))
                 {
                     return true;
                 }
 
                 const auto mmio_address = resolved_address;
-                if (auto* region = this->find_mmio_region(mmio_address))
+                const auto operation = map_memory_operation(access_type);
+
+                bool found_region = false;
+                mmio_read_callback region_read_cb{};
+                uint64_t region_address = 0;
+                size_t region_size = 0;
+
+                {
+                    std::shared_lock lock(this->partition_mutex_);
+                    if (const auto* region = this->find_mmio_region(mmio_address))
+                    {
+                        found_region = true;
+                        region_read_cb = region->read_cb;
+                        region_address = region->address;
+                        region_size = region->size;
+                    }
+                }
+
+                if (found_region)
                 {
                     const auto page_base = align_down_to_page(mmio_address);
-                    const auto operation = map_memory_operation(access_type);
                     const auto is_write = operation == memory_operation::write;
 
-                    this->refresh_mmio_page(*region, page_base);
+                    // Refresh the page content through the region callback outside the lock, then
+                    // publish it into the backing page under it.
+                    std::vector<std::byte> refreshed_page(page_size);
+                    const auto region_offset = static_cast<size_t>(page_base - region_address);
+                    const auto bytes_to_read = (std::min)(static_cast<size_t>(page_size), region_size - region_offset);
+                    region_read_cb(region_offset, refreshed_page.data(), bytes_to_read);
+
+                    std::unique_lock lock(this->partition_mutex_);
 
                     auto page_it = this->mapped_pages_.find(page_base);
-                    if (page_it == this->mapped_pages_.end())
+                    if (page_it == this->mapped_pages_.end() || !page_it->second || page_it->second->host_page == nullptr)
                     {
                         throw std::runtime_error("MMIO page backing is missing");
                     }
+
+                    std::memcpy(page_it->second->host_page, refreshed_page.data(), page_size);
 
                     if (is_write)
                     {
@@ -3240,7 +3591,7 @@ namespace sogen::whp
                         return true;
                     }
 
-                    if (!this->arm_mmio_single_step(page_base, is_write))
+                    if (!this->arm_mmio_single_step(vcpu, page_base, is_write))
                     {
                         throw std::runtime_error("Nested WHP MMIO single-step state is not supported");
                     }
@@ -3248,18 +3599,18 @@ namespace sogen::whp
                     return true;
                 }
 
-                if (this->memory_violation_hooks_.empty())
+                const auto violation_hooks = this->copy_memory_violation_hooks();
+                if (violation_hooks.empty())
                 {
                     throw std::runtime_error("Unhandled WHP memory access violation");
                 }
 
-                const auto operation = map_memory_operation(access_type);
                 const auto type =
                     memory_access.AccessInfo.GpaUnmapped ? memory_violation_type::unmapped : memory_violation_type::protection;
 
-                for (auto& [_, hook] : this->memory_violation_hooks_)
+                for (const auto& hook : violation_hooks)
                 {
-                    const auto result = hook(*this, mmio_address, 1, operation, type);
+                    const auto result = hook(vcpu, mmio_address, 1, operation, type);
                     if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                     {
                         return true;
@@ -3269,36 +3620,42 @@ namespace sogen::whp
                 return false;
             }
 
-            bool handle_patched_execution_breakpoint(const uint64_t address)
+            bool handle_patched_execution_breakpoint(whp_vcpu& vcpu, const uint64_t address)
             {
-                if (!this->patched_execution_breakpoints_.contains(address))
-                {
-                    return false;
-                }
-
-                auto rip_value = this->get_register(WHvX64RegisterRip);
-                rip_value.Reg64 = address;
-                this->set_register(WHvX64RegisterRip, rip_value);
-                this->set_patched_execution_breakpoint_state(address, false);
-
                 std::vector<memory_execution_hook_callback> callbacks{};
-                for (const auto& [_, hook] : this->memory_execution_hooks_)
+
                 {
-                    if (hook.address && hook.patched_breakpoint && *hook.address == address)
+                    std::unique_lock lock(this->partition_mutex_);
+
+                    if (!this->patched_execution_breakpoints_.contains(address))
                     {
-                        callbacks.push_back(hook.callback);
+                        return false;
+                    }
+
+                    auto rip_value = vcpu.get_register(WHvX64RegisterRip);
+                    rip_value.Reg64 = address;
+                    vcpu.set_register(WHvX64RegisterRip, rip_value);
+                    this->set_patched_execution_breakpoint_state(address, false);
+
+                    for (const auto& [_, hook] : this->memory_execution_hooks_)
+                    {
+                        if (hook.address && hook.patched_breakpoint && *hook.address == address)
+                        {
+                            callbacks.push_back(hook.callback);
+                        }
                     }
                 }
 
                 for (const auto& callback : callbacks)
                 {
-                    callback(*this, address);
+                    callback(vcpu, address);
                 }
 
-                this->deferred_patched_breakpoint_ = address;
-                if (!this->stop_requested_)
+                vcpu.deferred_patched_breakpoint_ = address;
+                if (!vcpu.stop_requested_)
                 {
-                    if (!this->arm_patched_breakpoint_single_step(address, false))
+                    std::unique_lock lock(this->partition_mutex_);
+                    if (!this->arm_patched_breakpoint_single_step(vcpu, address, false))
                     {
                         throw std::runtime_error("Nested WHP execution single-step state is not supported");
                     }
@@ -3307,7 +3664,7 @@ namespace sogen::whp
                 return true;
             }
 
-            bool handle_exception(const WHV_RUN_VP_EXIT_CONTEXT& exit_context)
+            bool handle_exception(whp_vcpu& vcpu, const WHV_RUN_VP_EXIT_CONTEXT& exit_context)
             {
                 const auto& exception = exit_context.VpException;
 
@@ -3319,18 +3676,18 @@ namespace sogen::whp
                     const auto operation = is_write ? memory_operation::write : memory_operation::read;
                     const auto type = is_present ? memory_violation_type::protection : memory_violation_type::unmapped;
 
-                    for (auto& [_, hook] : this->memory_violation_hooks_)
+                    for (const auto& hook : this->copy_memory_violation_hooks())
                     {
-                        const auto result = hook(*this, fault_address, 1, operation, type);
+                        const auto result = hook(vcpu, fault_address, 1, operation, type);
                         if (result == memory_violation_continuation::resume || result == memory_violation_continuation::restart)
                         {
                             return true;
                         }
                     }
 
-                    for (auto& [_, hook] : this->interrupt_hooks_)
+                    if (const auto hook = this->copy_first_interrupt_hook())
                     {
-                        hook(*this, 14);
+                        hook(vcpu, 14);
                         return true;
                     }
 
@@ -3339,14 +3696,17 @@ namespace sogen::whp
 
                 if (exception.ExceptionType == WHvX64ExceptionTypeDebugTrapOrFault)
                 {
-                    if (this->complete_execution_step())
                     {
-                        return true;
+                        std::unique_lock lock(this->partition_mutex_);
+                        if (this->complete_execution_step(vcpu))
+                        {
+                            return true;
+                        }
                     }
 
-                    if (this->pending_mmio_step_.has_value())
+                    if (vcpu.pending_mmio_step_.has_value())
                     {
-                        const auto swallow = this->complete_pending_mmio_step();
+                        const auto swallow = this->complete_pending_mmio_step(vcpu);
                         if (swallow)
                         {
                             return true;
@@ -3361,7 +3721,7 @@ namespace sogen::whp
                 if (exception.ExceptionType == WHvX64ExceptionTypeBreakpointTrap)
                 {
                     const auto rip = exit_context.VpContext.Rip;
-                    if (this->handle_patched_execution_breakpoint(rip - 1) || this->handle_patched_execution_breakpoint(rip))
+                    if (this->handle_patched_execution_breakpoint(vcpu, rip - 1) || this->handle_patched_execution_breakpoint(vcpu, rip))
                     {
                         return true;
                     }
@@ -3370,28 +3730,23 @@ namespace sogen::whp
                     {
                         if (rip == this->syscall_hook_page_ || rip == (this->syscall_hook_page_ + 1))
                         {
-                            return this->handle_syscall_halt();
+                            return this->handle_syscall_halt(vcpu);
                         }
                     }
                 }
 
                 if (exception.ExceptionType == WHvX64ExceptionTypeInvalidOpcodeFault)
                 {
-                    const auto rip = this->read_instruction_pointer();
+                    const auto rip = vcpu.read_instruction_pointer();
                     bool consumed = false;
 
-                    for (auto& [_, hook] : this->instruction_hooks_)
+                    for (const auto& callback : this->copy_instruction_hooks(x86_hookable_instructions::invalid))
                     {
-                        if (hook.type != x86_hookable_instructions::invalid)
+                        if (callback(vcpu, 0) == instruction_hook_continuation::skip_instruction)
                         {
-                            continue;
-                        }
-
-                        if (hook.callback(*this, 0) == instruction_hook_continuation::skip_instruction)
-                        {
-                            if (this->read_instruction_pointer() == rip)
+                            if (vcpu.read_instruction_pointer() == rip)
                             {
-                                this->advance_rip(exception.InstructionByteCount);
+                                vcpu.advance_rip(exception.InstructionByteCount);
                             }
                             consumed = true;
                         }
@@ -3410,52 +3765,50 @@ namespace sogen::whp
                     // guest only reaches here with its FP exception masks cleared (a corrupted MXCSR/x87 control
                     // word); restore the masked Windows defaults and re-run the instruction so it completes as it
                     // would natively.
-                    const auto mxcsr = this->reg<uint32_t>(x86_register::mxcsr);
-                    this->reg(x86_register::mxcsr, (mxcsr | 0x1F80u) & ~0x3Fu);
-                    const auto fpcw = this->reg<uint16_t>(x86_register::fpcw);
-                    this->reg(x86_register::fpcw, static_cast<uint16_t>(fpcw | 0x3Fu));
+                    const auto mxcsr = vcpu.reg<uint32_t>(x86_register::mxcsr);
+                    vcpu.reg(x86_register::mxcsr, (mxcsr | 0x1F80u) & ~0x3Fu);
+                    const auto fpcw = vcpu.reg<uint16_t>(x86_register::fpcw);
+                    vcpu.reg(x86_register::fpcw, static_cast<uint16_t>(fpcw | 0x3Fu));
                     // Also clear the x87 status-word exception flags / summary (ES) bit, or an FWAIT or following
                     // x87 op would re-raise #MF on the rerun.
-                    const auto fpsw = this->reg<uint16_t>(x86_register::fpsw);
-                    this->reg(x86_register::fpsw, static_cast<uint16_t>(fpsw & ~0x80FFu));
+                    const auto fpsw = vcpu.reg<uint16_t>(x86_register::fpsw);
+                    vcpu.reg(x86_register::fpsw, static_cast<uint16_t>(fpsw & ~0x80FFu));
                     return true;
                 }
 
-                for (auto& [_, hook] : this->interrupt_hooks_)
+                if (const auto hook = this->copy_first_interrupt_hook())
                 {
-                    hook(*this, exception.ExceptionType);
+                    hook(vcpu, exception.ExceptionType);
                     return true;
                 }
 
                 return false;
             }
-
-            void advance_rip(const uint64_t amount)
-            {
-                auto rip = this->get_register(WHvX64RegisterRip);
-                rip.Reg64 += amount;
-                this->set_register(WHvX64RegisterRip, rip);
-            }
-
-            void clear_pending_exception_state()
-            {
-                WHV_REGISTER_VALUE pending_interruption{};
-                pending_interruption.PendingInterruption.AsUINT64 = 0;
-                this->set_register(WHvRegisterPendingInterruption, pending_interruption);
-
-                WHV_REGISTER_VALUE pending_event{};
-                pending_event.ExceptionEvent.AsUINT128 = {};
-                this->set_register(WHvRegisterPendingEvent, pending_event);
-
-                WHV_REGISTER_VALUE pending_debug{};
-                pending_debug.PendingDebugException.AsUINT64 = 0;
-                this->set_register(WHvX64RegisterPendingDebugException, pending_debug);
-            }
         };
+
+        void whp_vcpu::start(const size_t count)
+        {
+            this->emulator_.run(*this, count);
+        }
+
+        memory_interface& whp_vcpu::memory()
+        {
+            return this->emulator_;
+        }
+
+        const memory_interface& whp_vcpu::memory() const
+        {
+            return this->emulator_;
+        }
     }
 
-    std::unique_ptr<x86_64_emulator> create_x86_64_emulator()
+    std::unique_ptr<x86_64_emulator> create_x86_64_emulator(const size_t vcpu_count)
     {
-        return std::make_unique<whp_x86_64_emulator>();
+        if (vcpu_count < 1 || vcpu_count > maximum_vcpu_count)
+        {
+            throw std::invalid_argument("WHP vCPU count must be between 1 and " + std::to_string(maximum_vcpu_count));
+        }
+
+        return std::make_unique<whp_x86_64_emulator>(vcpu_count);
     }
 } // namespace sogen::whp

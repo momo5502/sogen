@@ -579,6 +579,11 @@ namespace sogen
             throw std::invalid_argument("The " + this->emu_->get_name() + " backend does not support multiple vCPUs");
         }
 
+        if (this->vcpu_count_ > this->emu_->vcpu_count())
+        {
+            throw std::invalid_argument("The emulator backend was created with fewer vCPUs than requested");
+        }
+
         this->ui_backend_->set_event_sink([this](const ui_event& event) { this->handle_ui_event(event); });
 #ifndef OS_WINDOWS
         if (this->emulation_root.empty())
