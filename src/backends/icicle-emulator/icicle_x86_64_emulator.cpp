@@ -538,6 +538,11 @@ namespace sogen::icicle
             return true;
         }
 
+        bool supports_multiple_vcpus() const override
+        {
+            return false;
+        }
+
         std::string get_name() const override
         {
             return "icicle-emu";

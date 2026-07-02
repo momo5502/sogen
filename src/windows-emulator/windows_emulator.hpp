@@ -92,6 +92,10 @@ namespace sogen
         bool use_relative_time{false};
         bool use_instruction_precision{true};
 
+        // Number of virtual CPUs to run guest threads on. Values above 1 require a
+        // backend where supports_multiple_vcpus() is true (see docs/multi-vcpu-design.md).
+        uint32_t vcpu_count{1};
+
         std::filesystem::path emulation_root{};
         std::filesystem::path registry_directory{"./registry"};
 
@@ -220,6 +224,11 @@ namespace sogen
             return this->instruction_precision_;
         }
 
+        uint32_t vcpu_count() const
+        {
+            return this->vcpu_count_;
+        }
+
         stop_reason last_stop_reason() const
         {
             return this->last_stop_reason_;
@@ -297,6 +306,7 @@ namespace sogen
         std::atomic_bool switch_thread_{false};
         bool use_relative_time_{false}; // TODO: Get rid of that
         bool instruction_precision_{true};
+        uint32_t vcpu_count_{1};
         std::atomic_bool should_stop{false};
 
         std::unordered_map<uint16_t, uint16_t> port_mappings_{};

@@ -566,8 +566,19 @@ namespace sogen
           mod_manager(memory, file_sys, this->callbacks),
           process(*this->emu_, memory, *this->clock_, this->callbacks),
           use_relative_time_(settings.use_relative_time),
-          instruction_precision_(settings.use_instruction_precision && this->emu_->supports_instruction_counting())
+          instruction_precision_(settings.use_instruction_precision && this->emu_->supports_instruction_counting()),
+          vcpu_count_(settings.vcpu_count)
     {
+        if (this->vcpu_count_ == 0)
+        {
+            throw std::invalid_argument("At least one vCPU is required");
+        }
+
+        if (this->vcpu_count_ > 1 && !this->emu_->supports_multiple_vcpus())
+        {
+            throw std::invalid_argument("The " + this->emu_->get_name() + " backend does not support multiple vCPUs");
+        }
+
         this->ui_backend_->set_event_sink([this](const ui_event& event) { this->handle_ui_event(event); });
 #ifndef OS_WINDOWS
         if (this->emulation_root.empty())

@@ -939,6 +939,13 @@ namespace sogen::kvm
                 return true;
             }
 
+            bool supports_multiple_vcpus() const override
+            {
+                // KVM could support multiple vCPUs per VM, but the backend is
+                // single-vCPU for now (docs/multi-vcpu-design.md, Phase 5).
+                return false;
+            }
+
             std::string get_name() const override
             {
                 return "Linux KVM";

@@ -1741,6 +1741,14 @@ namespace sogen::whp
                 return true;
             }
 
+            bool supports_multiple_vcpus() const override
+            {
+                // WHP can drive multiple virtual processors per partition, but the
+                // backend still hardcodes VP index 0 everywhere. Flip this once the
+                // multi-vCPU backend work (docs/multi-vcpu-design.md, Phase 1) lands.
+                return false;
+            }
+
             bool supports_global_memory_execution_hooks() const override
             {
                 return false;

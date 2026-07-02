@@ -736,6 +736,11 @@ namespace sogen::unicorn
                 return false;
             }
 
+            bool supports_multiple_vcpus() const override
+            {
+                return false;
+            }
+
             std::string get_name() const override
             {
                 return "Unicorn Engine";

@@ -67,6 +67,7 @@ namespace sogen
             std::string whp_execution_hook_mode{"auto"};
             std::optional<backend_type> backend{};
             bool disable_instruction_precision{false};
+            uint32_t vcpu_count{1};
             std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
             std::filesystem::path emulation_root{};
             std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
@@ -469,6 +470,7 @@ namespace sogen
             return {
                 .use_relative_time = options.reproducible,
                 .use_instruction_precision = !options.disable_instruction_precision,
+                .vcpu_count = options.vcpu_count,
                 .emulation_root = options.emulation_root,
                 .registry_directory = options.registry_path,
                 .path_mappings = options.path_mappings,
@@ -859,6 +861,9 @@ namespace sogen
                 ->capture_default_str()
                 ->check(CLI::IsMember({"auto", "int3"}));
             app.add_option("-r,--registry", options.registry_path, "Set registry path");
+
+            app.add_option("--vcpus", options.vcpu_count, "Number of virtual CPUs (requires a backend with multi-vCPU support)")
+                ->capture_default_str();
 
             std::string backend_name{};
             app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp or kvm (overrides env)")
