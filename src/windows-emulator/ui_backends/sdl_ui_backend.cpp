@@ -23,11 +23,11 @@ namespace sogen
             switch (sdl_button)
             {
             case SDL_BUTTON_LEFT:
-                return {static_cast<uint32_t>(down ? WM_LBUTTONDOWN : WM_LBUTTONUP), down ? MK_LBUTTON : 0u};
+                return {.message = static_cast<uint32_t>(down ? WM_LBUTTONDOWN : WM_LBUTTONUP), .wparam = down ? MK_LBUTTON : 0u};
             case SDL_BUTTON_RIGHT:
-                return {static_cast<uint32_t>(down ? WM_RBUTTONDOWN : WM_RBUTTONUP), down ? MK_RBUTTON : 0u};
+                return {.message = static_cast<uint32_t>(down ? WM_RBUTTONDOWN : WM_RBUTTONUP), .wparam = down ? MK_RBUTTON : 0u};
             case SDL_BUTTON_MIDDLE:
-                return {static_cast<uint32_t>(down ? WM_MBUTTONDOWN : WM_MBUTTONUP), down ? MK_MBUTTON : 0u};
+                return {.message = static_cast<uint32_t>(down ? WM_MBUTTONDOWN : WM_MBUTTONUP), .wparam = down ? MK_MBUTTON : 0u};
             default:
                 return {};
             }
