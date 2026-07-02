@@ -556,7 +556,7 @@ namespace sogen
                 if (success_count > 0)
                 {
                     auto& first_thread = win_emu.process.threads.begin()->second;
-                    win_emu.process.active_thread = &first_thread;
+                    win_emu.vcpu(0).active_thread = &first_thread;
                 }
 
                 win_emu.log.info("Thread reconstruction: %zu/%zu threads created, %zu with context\n", success_count, threads.size(),

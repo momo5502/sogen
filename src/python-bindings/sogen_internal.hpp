@@ -209,11 +209,12 @@ namespace sogen::py
 
     struct sogen_process_context
     {
+        windows_emulator* emu{};
         process_context* ctx{};
         std::shared_ptr<callback_registry> callbacks{};
         nb::object owner = nb::none();
 
-        sogen_process_context(process_context& context, std::shared_ptr<callback_registry> callback_registry, nb::object owner);
+        sogen_process_context(windows_emulator& win_emu, std::shared_ptr<callback_registry> callback_registry, nb::object owner);
 
         bool is_wow64_process() const;
         std::optional<NTSTATUS> exit_status() const;

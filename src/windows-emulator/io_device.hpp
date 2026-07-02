@@ -12,6 +12,8 @@ namespace sogen
 
     class windows_emulator;
     struct process_context;
+    struct vcpu_context;
+    class emulator_thread;
 
     struct io_device_context
     {
@@ -24,6 +26,13 @@ namespace sogen
         ULONG input_buffer_length{};
         emulator_pointer output_buffer{};
         ULONG output_buffer_length{};
+
+        // The vCPU whose thread issued this I/O request. Set on syscall-originated ioctls;
+        // null (and not serialized) for deserialized delayed ioctls re-executed from the
+        // scheduler's device pump, which must not depend on an issuing thread.
+        vcpu_context* vcpu{};
+
+        emulator_thread& thread() const;
 
         io_device_context(x86_64_emulator& emu)
             : io_status_block(emu)

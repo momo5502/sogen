@@ -104,6 +104,16 @@ namespace sogen
         throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
     }
 
+    emulator_thread& io_device_context::thread() const
+    {
+        if (!this->vcpu)
+        {
+            throw std::runtime_error("I/O request has no issuing vCPU");
+        }
+
+        return this->vcpu->thread();
+    }
+
     NTSTATUS io_device::execute_ioctl(windows_emulator& win_emu, const io_device_context& c)
     {
         if (c.io_status_block)

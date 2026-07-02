@@ -44,8 +44,10 @@ namespace sogen
 
         callback_frame frame(completion_id, std::move(state));
         frame.save_registers(c.emu);
-        c.proc.active_thread->callback_return_rax.reset();
-        c.proc.active_thread->callback_stack.emplace_back(std::move(frame));
+
+        auto& thread = c.thread();
+        thread.callback_return_rax.reset();
+        thread.callback_stack.emplace_back(std::move(frame));
     }
 
     template <typename... Args>

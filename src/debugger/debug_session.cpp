@@ -252,7 +252,7 @@ namespace sogen::debugger
     std::vector<thread_info> debug_session::threads() const
     {
         std::vector<thread_info> result{};
-        const auto* active = this->emu_->process.active_thread;
+        const auto* active = this->emu_->vcpu(0).active_thread;
         for (auto& thread : this->emu_->process.threads | std::views::values)
         {
             result.push_back({.id = thread.id, .instruction_pointer = thread.current_ip, .active = &thread == active});

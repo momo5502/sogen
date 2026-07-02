@@ -113,6 +113,26 @@ namespace sogen
         std::unique_ptr<ui_backend> ui{};
     };
 
+    // Per-vCPU scheduler state: the guest thread a virtual CPU is currently executing
+    // and its yield request. Replaces the previous global "active thread" notion
+    // (docs/multi-vcpu-design.md, section 5.1).
+    struct vcpu_context
+    {
+        x86_64_cpu& cpu;
+        emulator_thread* active_thread{};
+        std::atomic_bool switch_thread{false};
+
+        emulator_thread& thread() const
+        {
+            if (!this->active_thread)
+            {
+                throw std::runtime_error("No active thread!");
+            }
+
+            return *this->active_thread;
+        }
+    };
+
     class windows_emulator
     {
         uint64_t executed_instructions_{0};
@@ -204,14 +224,17 @@ namespace sogen
         void deliver_raw_mouse_input(int32_t dx, int32_t dy, uint16_t button_flags);
         void deliver_raw_keyboard_input(uint16_t vkey, uint16_t scan_code, bool release);
 
+        // Single-vCPU observer convenience for external consumers (gdb stub, analyzer,
+        // python bindings). Internal execution paths must use the explicit vcpu_context
+        // instead. Remains correct until Phase 2, since the scheduler only drives vCPU 0.
         emulator_thread& current_thread() const
         {
-            if (!this->process.active_thread)
-            {
-                throw std::runtime_error("No active thread!");
-            }
+            return this->vcpus_[0]->thread();
+        }
 
-            return *this->process.active_thread;
+        vcpu_context& vcpu(const size_t index)
+        {
+            return *this->vcpus_.at(index);
         }
 
         uint64_t get_executed_instructions() const
@@ -298,16 +321,18 @@ namespace sogen
             }
         }
 
-        void yield_thread(bool alertable = false);
-        bool perform_thread_switch();
-        bool activate_thread(uint32_t id);
+        void yield_thread(vcpu_context& vcpu, bool alertable = false);
+        bool perform_thread_switch(vcpu_context& vcpu);
+        bool activate_thread(vcpu_context& vcpu, uint32_t id);
 
       private:
-        std::atomic_bool switch_thread_{false};
         bool use_relative_time_{false}; // TODO: Get rid of that
         bool instruction_precision_{true};
         uint32_t vcpu_count_{1};
         std::atomic_bool should_stop{false};
+
+        // unique_ptr because vcpu_context contains an atomic and must stay address-stable.
+        std::vector<std::unique_ptr<vcpu_context>> vcpus_{};
 
         std::unordered_map<uint16_t, uint16_t> port_mappings_{};
 
@@ -321,8 +346,8 @@ namespace sogen
 
         void setup_hooks();
         void setup_process();
-        void on_instruction_execution(uint64_t address);
-        void on_basic_block_execution(const basic_block& block);
+        void on_instruction_execution(vcpu_context& vcpu, uint64_t address);
+        void on_basic_block_execution(vcpu_context& vcpu, const basic_block& block);
 
         bool uses_section_first_execution_hooks() const;
         void clear_section_first_execution_hooks();

@@ -14,6 +14,7 @@ namespace sogen
     {
         windows_emulator& win_emu;
         x86_64_emulator& emu;
+        vcpu_context& vcpu;
         process_context& proc;
         mutable bool write_status{true};
         mutable bool retrigger_syscall{false};
@@ -22,6 +23,11 @@ namespace sogen
         bool is_callback_completion{false};
         completion_state* current_completion_state{};
         uint64_t previous_callback_result{};
+
+        emulator_thread& thread() const
+        {
+            return this->vcpu.thread();
+        }
 
         template <typename T>
         T get_callback_result() const

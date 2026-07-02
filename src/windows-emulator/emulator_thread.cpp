@@ -40,22 +40,22 @@ namespace sogen
         }
 
         template <typename T>
-        emulator_object<T> allocate_object_on_stack(x86_64_emulator& emu)
+        emulator_object<T> allocate_object_on_stack(x86_64_cpu& emu)
         {
             const auto old_sp = emu.reg(x86_register::rsp);
-            const auto new_sp = align_down(old_sp - sizeof(T), std::max(alignof(T), alignof(x86_64_emulator::pointer_type)));
+            const auto new_sp = align_down(old_sp - sizeof(T), std::max(alignof(T), alignof(x86_64_cpu::pointer_type)));
             emu.reg(x86_register::rsp, new_sp);
-            return {emu, new_sp};
+            return {emu.memory(), new_sp};
         }
 
-        void unalign_stack(x86_64_emulator& emu)
+        void unalign_stack(x86_64_cpu& emu)
         {
             auto sp = emu.reg(x86_register::rsp);
             sp = align_down(sp - 0x10, 0x10) + 8;
             emu.reg(x86_register::rsp, sp);
         }
 
-        void setup_stack(x86_64_emulator& emu, const process_context& context, const uint64_t stack_base, const size_t stack_size)
+        void setup_stack(x86_64_cpu& emu, const process_context& context, const uint64_t stack_base, const size_t stack_size)
         {
             if (!context.is_wow64_process)
             {
@@ -1172,7 +1172,7 @@ namespace sogen
         return true;
     }
 
-    void emulator_thread::setup_registers(x86_64_emulator& emu, const process_context& context) const
+    void emulator_thread::setup_registers(x86_64_cpu& emu, const process_context& context) const
     {
         if (!this->gs_segment)
         {
@@ -1224,7 +1224,7 @@ namespace sogen
         emu.reg(x86_register::rip, context.ldr_initialize_thunk);
     }
 
-    void emulator_thread::refresh_execution_context(x86_64_emulator& emu) const
+    void emulator_thread::refresh_execution_context(x86_64_cpu& emu) const
     {
         (void)emu;
 

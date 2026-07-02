@@ -1761,7 +1761,7 @@ namespace sogen
 
         BOOL handle_NtGdiFlush(const syscall_context& c)
         {
-            auto& thread = c.win_emu.current_thread();
+            auto& thread = c.thread();
             if (thread.teb64)
             {
                 BOOL result = TRUE;

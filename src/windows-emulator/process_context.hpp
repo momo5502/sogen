@@ -345,16 +345,16 @@ namespace sogen
         void add_knowndll_section(const std::u16string& name, const section& section, bool is_32bit);
         bool has_knowndll_section(const std::u16string& name, bool is_32bit) const;
 
-        void serialize(utils::buffer_serializer& buffer) const;
-        void deserialize(utils::buffer_deserializer& buffer);
+        void serialize(utils::buffer_serializer& buffer, const emulator_thread* active_thread) const;
+        void deserialize(utils::buffer_deserializer& buffer, emulator_thread*& active_thread);
 
         generic_handle_store* get_handle_store(handle handle);
         emulator_thread* find_thread_by_id(uint32_t thread_id);
         const emulator_thread* find_thread_by_id(uint32_t thread_id) const;
         bool is_current_process_handle(handle handle) const;
-        bool is_current_thread_handle(handle handle) const;
+        bool is_current_thread_handle(handle handle, const emulator_thread* active_thread) const;
         bool is_object_pseudo_handle(handle handle) const;
-        handle resolve_object_pseudo_handle(handle handle) const;
+        handle resolve_object_pseudo_handle(handle handle, const emulator_thread* active_thread) const;
 
         size_t get_live_thread_count() const;
 
@@ -481,7 +481,6 @@ namespace sogen
         static constexpr uint32_t process_id = 4;
         uint32_t spawned_thread_count{0};
         handle_store<handle_types::thread, emulator_thread> threads{};
-        emulator_thread* active_thread{nullptr};
 
         // Extended parameters from last NtMapViewOfSectionEx call
         // These can be used by other syscalls like NtAllocateVirtualMemoryEx

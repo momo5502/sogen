@@ -969,8 +969,7 @@ namespace sogen
                 }
 
                 auto* vulkan = &this->vulkan_;
-                win_emu.current_thread().await_host_condition = [vulkan, &win_emu, context, device, flags, entries = std::move(entries),
-                                                                 count]() {
+                context.thread().await_host_condition = [vulkan, &win_emu, context, device, flags, entries = std::move(entries), count]() {
                     const int32_t result = vulkan->wait_semaphores(device, flags, entries.data(), count, 0);
                     if (result == vk_timeout)
                     {
@@ -980,7 +979,7 @@ namespace sogen
                     write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
                     return true;
                 };
-                win_emu.yield_thread(false);
+                win_emu.yield_thread(*context.vcpu, false);
                 return STATUS_SUCCESS;
             }
 

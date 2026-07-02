@@ -376,18 +376,18 @@ namespace sogen
 
         bool is_thread_ready(windows_emulator& win_emu);
 
-        void save(x86_64_emulator& emu)
+        void save(x86_64_cpu& emu)
         {
             this->last_registers = emu.save_registers();
         }
 
-        void restore(x86_64_emulator& emu) const
+        void restore(x86_64_cpu& emu) const
         {
             emu.restore_registers(this->last_registers);
             this->refresh_execution_context(emu);
         }
 
-        void setup_if_necessary(x86_64_emulator& emu, const process_context& context)
+        void setup_if_necessary(x86_64_cpu& emu, const process_context& context)
         {
             if (!this->setup_done)
             {
@@ -553,8 +553,8 @@ namespace sogen
       private:
         bool can_coalesce_message(const msg& msg) const;
 
-        void setup_registers(x86_64_emulator& emu, const process_context& context) const;
-        void refresh_execution_context(x86_64_emulator& emu) const;
+        void setup_registers(x86_64_cpu& emu, const process_context& context) const;
+        void refresh_execution_context(x86_64_cpu& emu) const;
 
         void release()
         {

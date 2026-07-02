@@ -924,6 +924,7 @@ namespace sogen
             context.input_buffer_length = input_buffer_length;
             context.output_buffer = output_buffer;
             context.output_buffer_length = output_buffer_length;
+            context.vcpu = &c.vcpu;
 
             return device->execute_ioctl(c.win_emu, context);
         }
@@ -942,7 +943,7 @@ namespace sogen
 
         NTSTATUS handle_NtTestAlert(const syscall_context& c)
         {
-            c.win_emu.yield_thread(true);
+            c.win_emu.yield_thread(c.vcpu, true);
             return STATUS_SUCCESS;
         }
 

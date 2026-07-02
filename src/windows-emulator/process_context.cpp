@@ -562,7 +562,7 @@ namespace sogen
         });
     }
 
-    void process_context::serialize(utils::buffer_serializer& buffer) const
+    void process_context::serialize(utils::buffer_serializer& buffer, const emulator_thread* active_thread) const
     {
         buffer.write_vector(this->sid);
         buffer.write(this->shared_section_address);
@@ -648,10 +648,10 @@ namespace sogen
         buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
 
-        buffer.write(this->threads.find_handle(this->active_thread).bits);
+        buffer.write(this->threads.find_handle(active_thread).bits);
     }
 
-    void process_context::deserialize(utils::buffer_deserializer& buffer)
+    void process_context::deserialize(utils::buffer_deserializer& buffer, emulator_thread*& active_thread)
     {
         buffer.read_vector(this->sid);
         buffer.read(this->shared_section_address);
@@ -748,7 +748,7 @@ namespace sogen
             this->thread_handles_by_id[thread.id] = this->threads.make_handle(index);
         }
 
-        this->active_thread = this->threads.get(buffer.read<uint64_t>());
+        active_thread = this->threads.get(buffer.read<uint64_t>());
     }
 
     generic_handle_store* process_context::get_handle_store(const handle handle)
@@ -840,10 +840,10 @@ namespace sogen
         return handle == CURRENT_PROCESS || handle == GUEST_PROCESS_HANDLE;
     }
 
-    bool process_context::is_current_thread_handle(const handle handle) const
+    bool process_context::is_current_thread_handle(const handle handle, const emulator_thread* active_thread) const
     {
-        return handle == CURRENT_THREAD || (handle.value.type == handle_types::thread && this->active_thread &&
-                                            this->threads.find_handle(this->active_thread) == handle);
+        return handle == CURRENT_THREAD ||
+               (handle.value.type == handle_types::thread && active_thread && this->threads.find_handle(active_thread) == handle);
     }
 
     // NOLINTNEXTLINE(cert-dcl50-cpp,readability-convert-member-functions-to-static)
@@ -852,7 +852,7 @@ namespace sogen
         return handle == CURRENT_PROCESS || handle == CURRENT_THREAD;
     }
 
-    handle process_context::resolve_object_pseudo_handle(const handle handle) const
+    handle process_context::resolve_object_pseudo_handle(const handle handle, const emulator_thread* active_thread) const
     {
         if (handle == CURRENT_PROCESS)
         {
@@ -861,7 +861,7 @@ namespace sogen
 
         if (handle == CURRENT_THREAD)
         {
-            return this->threads.find_handle(this->active_thread);
+            return this->threads.find_handle(active_thread);
         }
 
         return handle;

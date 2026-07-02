@@ -277,9 +277,9 @@ namespace sogen
 
             uint64_t process_id = process_context::process_id;
             uint64_t active_tid = 0;
-            if (c.proc.active_thread && c.proc.active_thread->teb64)
+            if (c.vcpu.active_thread && c.vcpu.active_thread->teb64)
             {
-                c.proc.active_thread->teb64->access([&](const TEB64& teb) {
+                c.vcpu.active_thread->teb64->access([&](const TEB64& teb) {
                     process_id = teb.ClientId.UniqueProcess;
                     active_tid = teb.ClientId.UniqueThread;
                 });

@@ -492,7 +492,7 @@ namespace sogen
             {
                 for (auto& thread : c.proc.threads | std::views::values)
                 {
-                    if (&thread != c.proc.active_thread)
+                    if (&thread != c.vcpu.active_thread)
                     {
                         c.proc.terminate_thread(thread, exit_status);
                     }

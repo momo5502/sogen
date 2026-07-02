@@ -100,9 +100,10 @@ namespace sogen::py
 
     // ----- sogen_process_context -----
 
-    sogen_process_context::sogen_process_context(process_context& context, std::shared_ptr<callback_registry> callback_registry,
+    sogen_process_context::sogen_process_context(windows_emulator& win_emu, std::shared_ptr<callback_registry> callback_registry,
                                                  nb::object owner)
-        : ctx(&context),
+        : emu(&win_emu),
+          ctx(&win_emu.process),
           callbacks(std::move(callback_registry)),
           owner(std::move(owner))
     {
@@ -130,7 +131,7 @@ namespace sogen::py
 
     emulator_thread* sogen_process_context::active_thread() const
     {
-        return this->ctx->active_thread;
+        return this->emu->vcpu(0).active_thread;
     }
 
     callback_registry& sogen_process_context::callback_view() const
@@ -195,17 +196,17 @@ namespace sogen::py
 
     void sogen_windows_emulator::yield_thread(const bool alertable) const
     {
-        this->emu->yield_thread(alertable);
+        this->emu->yield_thread(this->emu->vcpu(0), alertable);
     }
 
     bool sogen_windows_emulator::perform_thread_switch() const
     {
-        return this->emu->perform_thread_switch();
+        return this->emu->perform_thread_switch(this->emu->vcpu(0));
     }
 
     bool sogen_windows_emulator::activate_thread(const uint32_t id) const
     {
-        return this->emu->activate_thread(id);
+        return this->emu->activate_thread(this->emu->vcpu(0), id);
     }
 
     memory_manager& sogen_windows_emulator::memory() const
@@ -215,7 +216,7 @@ namespace sogen::py
 
     emulator_thread* sogen_windows_emulator::current_thread() const
     {
-        return this->emu->process.active_thread;
+        return this->emu->vcpu(0).active_thread;
     }
 
     nb::bytes sogen_windows_emulator::read_memory(const uint64_t address, const size_t size) const
@@ -255,16 +256,17 @@ namespace sogen::py
 
     sogen_process_context sogen_windows_emulator::process()
     {
-        return {this->emu->process, this->callbacks, nb::cast(this, nb::rv_policy::reference_internal)};
+        return {*this->emu, this->callbacks, nb::cast(this, nb::rv_policy::reference_internal)};
     }
 
     std::optional<uint32_t> sogen_windows_emulator::current_thread_id() const
     {
-        if (!this->emu->process.active_thread)
+        const auto* active_thread = this->emu->vcpu(0).active_thread;
+        if (!active_thread)
         {
             return std::nullopt;
         }
 
-        return this->emu->process.active_thread->id;
+        return active_thread->id;
     }
 }

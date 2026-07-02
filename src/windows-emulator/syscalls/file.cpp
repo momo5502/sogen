@@ -1134,7 +1134,7 @@ namespace sogen
                     c.emu.write_memory(io_status_block.value() + sizeof(status32), &information32, sizeof(information32));
                 }
 
-                c.win_emu.current_thread().pending_apcs.push_back({
+                c.thread().pending_apcs.push_back({
                     .flags = 0,
                     .apc_routine = apc_routine,
                     .apc_argument1 = apc_context,
@@ -2193,6 +2193,7 @@ namespace sogen
             context.input_buffer_length = input_buffer_length;
             context.output_buffer = output_buffer;
             context.output_buffer_length = output_buffer_length;
+            context.vcpu = &c.vcpu;
 
             return device->execute_ioctl(c.win_emu, context);
         }

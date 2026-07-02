@@ -9,7 +9,8 @@ namespace sogen
     {
         bool is_wait_completion_target_type(handle target_object_handle);
 
-        bool retain_handle_reference(process_context& process, handle source_handle, handle& retained_handle);
+        bool retain_handle_reference(process_context& process, const emulator_thread* active_thread, handle source_handle,
+                                     handle& retained_handle);
         void release_handle_reference(process_context& process, handle& retained_handle);
 
         void cleanup_wait_packet_on_close(process_context& process, handle wait_packet_handle);
