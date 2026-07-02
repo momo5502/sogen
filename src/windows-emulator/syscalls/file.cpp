@@ -1088,7 +1088,7 @@ namespace sogen
 
         std::optional<uint64_t> get_lock_range_end(const LARGE_INTEGER& byte_offset, const LARGE_INTEGER& length)
         {
-            if (byte_offset.QuadPart < 0 || length.QuadPart <= 0)
+            if (byte_offset.QuadPart < 0 || length.QuadPart == 0)
             {
                 return std::nullopt;
             }
