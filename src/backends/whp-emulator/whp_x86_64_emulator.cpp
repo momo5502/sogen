@@ -2270,12 +2270,13 @@ namespace sogen::whp
                     return;
                 }
 
+                // Coalesce the EPT remap over the whole range: each per-page unmap+map is a hypervisor
+                // EPT flush, so flipping a large module section (thousands of pages) page-by-page stalls
+                // for seconds. remap_pages merges contiguous runs into one WHvMapGpaRange, which cuts the
+                // per-page cost by ~70x for the section-first-execution hooks that cover module code.
                 const auto start = align_down_to_page(address);
                 const auto end = align_up(address + size, page_size);
-                for (auto page = start; page < end; page += page_size)
-                {
-                    this->remap_hook_page(page);
-                }
+                this->remap_pages(start, static_cast<size_t>(end - start));
             }
 
             void increment_execution_hook_count(const uint64_t address, const uint64_t size)
