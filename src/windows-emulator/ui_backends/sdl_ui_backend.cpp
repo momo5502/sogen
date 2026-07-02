@@ -41,9 +41,23 @@ namespace sogen
             return static_cast<uint16_t>(value & 0xFFFFu);
         }
 
-        uint64_t make_xbutton_wparam(const uint16_t key_state, const uint16_t xbutton)
+        uint64_t make_high_word_wparam(const uint16_t key_state, const uint16_t high_word)
         {
-            return static_cast<uint64_t>(key_state) | (static_cast<uint64_t>(xbutton) << 16);
+            return static_cast<uint64_t>(key_state) | (static_cast<uint64_t>(high_word) << 16);
+        }
+
+        int16_t sdl_wheel_delta(const float amount)
+        {
+            const auto delta = static_cast<int32_t>(amount * static_cast<float>(WHEEL_DELTA));
+            if (delta > INT16_MAX)
+            {
+                return INT16_MAX;
+            }
+            if (delta < INT16_MIN)
+            {
+                return INT16_MIN;
+            }
+            return static_cast<int16_t>(delta);
         }
 
         uint16_t sdl_mouse_button_to_mk(const uint8_t button)
@@ -144,7 +158,7 @@ namespace sogen
         {
             if (const auto xbutton = sdl_mouse_button_to_xbutton(button); xbutton != 0)
             {
-                return make_xbutton_wparam(key_state, xbutton);
+                return make_high_word_wparam(key_state, xbutton);
             }
             return key_state;
         }
@@ -795,6 +809,29 @@ namespace sogen
                                 this->mouse_button_state_ &= static_cast<uint16_t>(~sdl_mouse_button_to_mk(event.button.button));
                                 this->post_event(guest, message, mouse_button_wparam(this->mouse_button_state_, event.button.button),
                                                  this->map_window_point(guest, event.button.x, event.button.y));
+                            }
+                        }
+                        break;
+
+                    case SDL_EVENT_MOUSE_WHEEL:
+                        if (const auto guest = this->resolve_guest(event.wheel.windowID); guest != 0)
+                        {
+                            this->set_window_active(guest, true);
+
+                            float mouse_x = 0.0f;
+                            float mouse_y = 0.0f;
+                            SDL_GetMouseState(&mouse_x, &mouse_y);
+                            const auto point = this->map_window_point(guest, mouse_x, mouse_y);
+
+                            if (const auto delta_y = sdl_wheel_delta(event.wheel.y); delta_y != 0)
+                            {
+                                this->post_event(guest, WM_MOUSEWHEEL,
+                                                 make_high_word_wparam(this->mouse_button_state_, static_cast<uint16_t>(delta_y)), point);
+                            }
+                            if (const auto delta_x = sdl_wheel_delta(event.wheel.x); delta_x != 0)
+                            {
+                                this->post_event(guest, WM_MOUSEHWHEEL,
+                                                 make_high_word_wparam(this->mouse_button_state_, static_cast<uint16_t>(delta_x)), point);
                             }
                         }
                         break;

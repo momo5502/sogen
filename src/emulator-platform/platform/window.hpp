@@ -294,6 +294,8 @@ namespace sogen
 #define RI_MOUSE_BUTTON_4_UP        0x0080
 #define RI_MOUSE_BUTTON_5_DOWN      0x0100
 #define RI_MOUSE_BUTTON_5_UP        0x0200
+#define RI_MOUSE_WHEEL              0x0400
+#define RI_MOUSE_HWHEEL             0x0800
 
 #define WA_INACTIVE                 0
 #define WA_ACTIVE                   1
@@ -311,6 +313,8 @@ namespace sogen
 
 #define XBUTTON1                    0x0001
 #define XBUTTON2                    0x0002
+
+#define WHEEL_DELTA                 120
 
 #define VK_LBUTTON                  0x01
 #define VK_RBUTTON                  0x02

@@ -1870,7 +1870,10 @@ namespace sogen
                 {
                     RAWMOUSE32 mouse{};
                     mouse.usFlags = MOUSE_MOVE_RELATIVE;
-                    mouse.ulButtons = payload.mouse_buttons; // low 16 bits == usButtonFlags
+                    // RAWMOUSE has a usButtonFlags/usButtonData union packed into ulButtons. The high
+                    // word carries wheel delta for RI_MOUSE_WHEEL/RI_MOUSE_HWHEEL.
+                    mouse.ulButtons =
+                        static_cast<uint32_t>(payload.mouse_buttons) | (static_cast<uint32_t>(payload.mouse_button_data) << 16);
                     mouse.lLastX = payload.dx;
                     mouse.lLastY = payload.dy;
                     std::memcpy(buffer.data() + header_size, &mouse, sizeof(mouse));

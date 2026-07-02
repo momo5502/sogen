@@ -438,14 +438,15 @@ namespace sogen
         // HRAWINPUT token posted in WM_INPUT's lParam; consumed by NtUserGetRawInputData.
         struct raw_input_payload
         {
-            bool keyboard{};          // false = mouse, true = keyboard
-            int32_t dx{};             // mouse relative motion
-            int32_t dy{};             //
-            uint16_t mouse_buttons{}; // RI_MOUSE_* button transition flags
-            uint16_t vkey{};          // keyboard virtual key
-            uint16_t scan_code{};     // keyboard scan code
-            uint32_t key_message{};   // corresponding WM_KEY* or WM_SYSKEY* message
-            bool key_extended{};      // true when the key's scan code has an E0 prefix (lParam bit 24)
+            bool keyboard{};              // false = mouse, true = keyboard
+            int32_t dx{};                 // mouse relative motion
+            int32_t dy{};                 //
+            uint16_t mouse_buttons{};     // RI_MOUSE_* button transition flags
+            uint16_t mouse_button_data{}; // wheel delta for RI_MOUSE_WHEEL/RI_MOUSE_HWHEEL
+            uint16_t vkey{};              // keyboard virtual key
+            uint16_t scan_code{};         // keyboard scan code
+            uint32_t key_message{};       // corresponding WM_KEY* or WM_SYSKEY* message
+            bool key_extended{};          // true when the key's scan code has an E0 prefix (lParam bit 24)
         };
         std::map<uint32_t, raw_input_payload> raw_inputs{};
         uint32_t next_raw_input_token{1};

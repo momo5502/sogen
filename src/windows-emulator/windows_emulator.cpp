@@ -131,6 +131,11 @@ namespace sogen
             return origin;
         }
 
+        bool is_mouse_wheel_message(const uint32_t message)
+        {
+            return message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL;
+        }
+
         bool is_mouse_button_message(const uint32_t message)
         {
             switch (message)
@@ -164,7 +169,7 @@ namespace sogen
             // All mouse messages go through capture/child hit-testing: while a window holds the mouse
             // capture every mouse message must reach it (so a pressed button still completes its click),
             // and otherwise each is delivered to the child under the cursor (hover, right-click, etc.).
-            return message == WM_MOUSEMOVE || is_mouse_button_message(message);
+            return message == WM_MOUSEMOVE || is_mouse_button_message(message) || is_mouse_wheel_message(message);
         }
 
         bool is_key_down_message(const uint32_t message)
@@ -203,9 +208,22 @@ namespace sogen
                 return high_word(wparam) == XBUTTON2 ? RI_MOUSE_BUTTON_5_DOWN : RI_MOUSE_BUTTON_4_DOWN;
             case WM_XBUTTONUP:
                 return high_word(wparam) == XBUTTON2 ? RI_MOUSE_BUTTON_5_UP : RI_MOUSE_BUTTON_4_UP;
+            case WM_MOUSEWHEEL:
+                return RI_MOUSE_WHEEL;
+            case WM_MOUSEHWHEEL:
+                return RI_MOUSE_HWHEEL;
             default:
                 return 0;
             }
+        }
+
+        uint16_t raw_mouse_button_data(const uint32_t message, const uint64_t wparam)
+        {
+            if (is_mouse_wheel_message(message))
+            {
+                return high_word(wparam);
+            }
+            return 0;
         }
 
         uint8_t mouse_button_virtual_key(const uint32_t message, const uint64_t wparam)
@@ -1439,9 +1457,11 @@ namespace sogen
         thread->post_message(*this, m);
     }
 
-    void windows_emulator::deliver_raw_mouse_input(const int32_t dx, const int32_t dy, const uint16_t button_flags)
+    void windows_emulator::deliver_raw_mouse_input(const int32_t dx, const int32_t dy, const uint16_t button_flags,
+                                                   const uint16_t button_data)
     {
-        this->deliver_raw_input({.keyboard = false, .dx = dx, .dy = dy, .mouse_buttons = button_flags}, this->process.raw_mouse_target);
+        this->deliver_raw_input({.keyboard = false, .dx = dx, .dy = dy, .mouse_buttons = button_flags, .mouse_button_data = button_data},
+                                this->process.raw_mouse_target);
     }
 
     void windows_emulator::deliver_raw_keyboard_input(const uint16_t vkey, const uint16_t scan_code, const uint32_t message,
@@ -1502,8 +1522,9 @@ namespace sogen
                 }
                 else if (const uint16_t buttons = raw_mouse_button_flags(event.message, event.wParam); buttons != 0)
                 {
-                    // Raw-input games read button transitions from WM_INPUT, not WM_LBUTTONDOWN/UP.
-                    this->deliver_raw_mouse_input(0, 0, buttons);
+                    // Raw-input games read button transitions and wheel deltas from WM_INPUT, not only
+                    // the corresponding window messages. For wheel messages the delta lives in usButtonData.
+                    this->deliver_raw_mouse_input(0, 0, buttons, raw_mouse_button_data(event.message, event.wParam));
                 }
             }
 
@@ -1513,7 +1534,9 @@ namespace sogen
 
             const auto target = route_pointer(this->process, event.window, point_x(event.lParam), point_y(event.lParam));
             m.window = target.window;
-            m.lParam = pack_point(target.x, target.y);
+            // WM_MOUSEWHEEL/WM_MOUSEHWHEEL carry screen coordinates in lParam, unlike button/move
+            // messages which carry client coordinates. Keep the routed target but preserve screen coords.
+            m.lParam = is_mouse_wheel_message(event.message) ? pack_point(new_cursor_x, new_cursor_y) : pack_point(target.x, target.y);
         }
         else if ((event.message == WM_ACTIVATE && event.wParam != 0) || event.message == WM_SETFOCUS)
         {
@@ -1586,7 +1609,7 @@ namespace sogen
         thread->post_message(*this, m, true);
 
         if (event.message == WM_CLOSE || event.message == WM_COMMAND || is_key_down_message(event.message) ||
-            is_mouse_button_message(event.message))
+            is_mouse_button_message(event.message) || is_mouse_wheel_message(event.message))
         {
             // Kick the vCPU currently running the target thread so it promptly re-checks its message
             // queue; if the thread is not running on any vCPU right now, fall back to vCPU 0 to force a
