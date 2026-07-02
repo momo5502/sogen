@@ -2624,10 +2624,16 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    std::vector<uint64_t> buffer_ids(req.binding_count);
-                    std::vector<uint64_t> offsets(req.binding_count);
-                    std::vector<uint64_t> sizes(req.binding_count);
-                    std::vector<uint64_t> strides(req.binding_count);
+                    // Reused scratch (single emulator thread, no reentrancy) - this path runs ~40k times/s
+                    // in heavy scenes, so a per-call heap allocation here is pure overhead.
+                    static thread_local std::vector<uint64_t> buffer_ids;
+                    static thread_local std::vector<uint64_t> offsets;
+                    static thread_local std::vector<uint64_t> sizes;
+                    static thread_local std::vector<uint64_t> strides;
+                    buffer_ids.resize(req.binding_count);
+                    offsets.resize(req.binding_count);
+                    sizes.resize(req.binding_count);
+                    strides.resize(req.binding_count);
                     auto buffer_id_out = buffer_ids.begin();
                     auto offset_out = offsets.begin();
                     auto size_out = sizes.begin();
@@ -2680,12 +2686,16 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    std::vector<uint64_t> sets(req.set_count);
+                    // Reused scratch (single emulator thread, no reentrancy) - this path runs ~100k times/s
+                    // in heavy scenes, so a per-call heap allocation here is pure overhead.
+                    static thread_local std::vector<uint64_t> sets;
+                    static thread_local std::vector<uint32_t> dynamic_offsets;
+                    sets.resize(req.set_count);
                     if (req.set_count > 0)
                     {
                         std::memcpy(sets.data(), payload + sizeof(req), ids_bytes);
                     }
-                    std::vector<uint32_t> dynamic_offsets(req.dynamic_offset_count);
+                    dynamic_offsets.resize(req.dynamic_offset_count);
                     if (req.dynamic_offset_count > 0)
                     {
                         std::memcpy(dynamic_offsets.data(), payload + sizeof(req) + ids_bytes, offsets_bytes);
