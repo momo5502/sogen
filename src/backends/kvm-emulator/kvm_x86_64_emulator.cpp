@@ -500,6 +500,10 @@ namespace sogen::kvm
                         {
                             if (this->handle_syscall_halt())
                             {
+                                if (single_step)
+                                {
+                                    return;
+                                }
                                 continue;
                             }
 
@@ -512,6 +516,10 @@ namespace sogen::kvm
                             if (this->handle_exception_trap(rip))
                             {
                                 this->clear_pending_exception_state();
+                                if (single_step)
+                                {
+                                    return;
+                                }
                                 continue;
                             }
                         }
@@ -521,6 +529,10 @@ namespace sogen::kvm
                     case KVM_EXIT_MMIO:
                         if (this->handle_mmio_exit())
                         {
+                            if (single_step)
+                            {
+                                return;
+                            }
                             continue;
                         }
 
@@ -529,6 +541,10 @@ namespace sogen::kvm
                         if (this->handle_exception(this->run_->ex.exception, this->run_->ex.error_code))
                         {
                             this->clear_pending_exception_state();
+                            if (single_step)
+                            {
+                                return;
+                            }
                             continue;
                         }
 
