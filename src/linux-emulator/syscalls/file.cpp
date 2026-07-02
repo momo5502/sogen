@@ -524,9 +524,9 @@ namespace sogen
             const auto link_parent_guest_path = linux_file_system::normalize_guest_path(resolved_link_guest).parent_path();
             const auto link_parent_guest = link_parent_guest_path.empty() ? std::string{"/"} : link_parent_guest_path.string();
             const auto resolved_target_guest = linux_file_system::resolve_guest_path_string(link_parent_guest, target_guest);
-            const auto target_host = c.emu_ref.file_sys.translate(resolved_target_guest).lexically_normal();
+            auto target_host = c.emu_ref.file_sys.translate(resolved_target_guest).lexically_normal();
             const auto link_parent_host = linkpath_host.parent_path().lexically_normal();
-            const auto relative_target = target_host.lexically_relative(link_parent_host);
+            auto relative_target = target_host.lexically_relative(link_parent_host);
             if (!relative_target.empty())
             {
                 return relative_target;
