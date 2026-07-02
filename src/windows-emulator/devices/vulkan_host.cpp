@@ -4538,24 +4538,41 @@ namespace sogen
         }
 
         // Each write carries exactly one descriptor. Buffer infos and image infos are kept in stable
-        // vectors so the VkWriteDescriptorSet pointers remain valid until the driver call below.
-        std::vector<VkWriteDescriptorSet> vk_writes;
-        std::vector<VkDescriptorBufferInfo> buffer_infos(writes.size());
-        std::vector<VkDescriptorImageInfo> image_infos(writes.size());
+        // vectors so the VkWriteDescriptorSet pointers remain valid until the driver call below. This runs
+        // ~100k times/s in heavy scenes, so the buffers are reused (single emulator thread, no reentrancy)
+        // instead of allocated per call.
+        static thread_local std::vector<VkWriteDescriptorSet> vk_writes;
+        static thread_local std::vector<VkDescriptorBufferInfo> buffer_infos;
+        static thread_local std::vector<VkDescriptorImageInfo> image_infos;
+        vk_writes.clear();
+        buffer_infos.resize(writes.size());
+        image_infos.resize(writes.size());
         vk_writes.reserve(writes.size());
+
+        // Consecutive writes usually target the same descriptor set; cache the last lookup to avoid a hash
+        // probe per write.
+        uint64_t cached_set_id = 0;
+        VkDescriptorSet cached_set_handle = VK_NULL_HANDLE;
+        impl::descriptor_set_data* cached_set = nullptr;
 
         for (size_t i = 0; i < writes.size(); ++i)
         {
             const descriptor_write& w = writes[i];
-            const auto set = this->impl_->descriptor_sets.find(w.dst_set);
-            if (set == this->impl_->descriptor_sets.end())
+            if (w.dst_set != cached_set_id || cached_set == nullptr)
             {
-                return VK_ERROR_INITIALIZATION_FAILED;
+                const auto set = this->impl_->descriptor_sets.find(w.dst_set);
+                if (set == this->impl_->descriptor_sets.end())
+                {
+                    return VK_ERROR_INITIALIZATION_FAILED;
+                }
+                cached_set_id = w.dst_set;
+                cached_set_handle = set->second.handle;
+                cached_set = &set->second;
             }
 
             VkWriteDescriptorSet vw{};
             vw.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            vw.dstSet = set->second.handle;
+            vw.dstSet = cached_set_handle;
             vw.dstBinding = w.dst_binding;
             vw.dstArrayElement = w.dst_array_element;
             vw.descriptorCount = 1;
@@ -4605,7 +4622,7 @@ namespace sogen
                     bi.buffer = buf->second.handle;
                     bi.offset = w.offset;
                     bi.range = w.range;
-                    set->second.buffer_bindings[w.dst_binding] =
+                    cached_set->buffer_bindings[w.dst_binding] =
                         impl::bound_buffer_info{.buffer_id = w.buffer, .offset = w.offset, .range = w.range, .type = w.descriptor_type};
                 }
                 vw.pBufferInfo = &bi;
@@ -5050,10 +5067,14 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        std::vector<VkBuffer> handles(count);
-        std::vector<VkDeviceSize> vk_offsets(count);
-        std::vector<VkDeviceSize> vk_sizes(count);
-        std::vector<VkDeviceSize> vk_strides(count);
+        static thread_local std::vector<VkBuffer> handles;
+        static thread_local std::vector<VkDeviceSize> vk_offsets;
+        static thread_local std::vector<VkDeviceSize> vk_sizes;
+        static thread_local std::vector<VkDeviceSize> vk_strides;
+        handles.resize(count);
+        vk_offsets.resize(count);
+        vk_sizes.resize(count);
+        vk_strides.resize(count);
         for (uint32_t i = 0; i < count; ++i)
         {
             if (buffer_ids[i] == 0)
@@ -5132,8 +5153,8 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        std::vector<VkDescriptorSet> handles;
-        handles.reserve(sets.size());
+        static thread_local std::vector<VkDescriptorSet> handles;
+        handles.clear();
         for (const uint64_t id : sets)
         {
             const auto set = this->impl_->descriptor_sets.find(id);
