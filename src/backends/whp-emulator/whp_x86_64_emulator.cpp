@@ -11,6 +11,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
@@ -1806,7 +1807,12 @@ namespace sogen::whp
             bool has_supported_xsave_features_ = false;
             std::unordered_map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
             std::vector<uint64_t> guest_pages_by_gpa_{};
-            std::vector<size_t> free_guest_gpa_indices_{};
+            // Ordered free list of guest-physical page indices. Allocating the *lowest* free index (rather
+            // than LIFO) hands a freed contiguous GPA block back in ascending order to the next mapping's
+            // ascending guest pages, so a contiguous guest region keeps monotonic contiguous GPAs. That lets
+            // remap_pages fold the EPT mapping into a few large WHvMapGpaRange calls instead of thousands of
+            // single-page flushes, which otherwise dominates frames that map/unmap memory heavily.
+            std::set<size_t> free_guest_gpa_indices_{};
             std::unordered_map<uint64_t, uint64_t*> page_table_views_{};
             uint64_t pml4_gpa_ = 0;
             uint64_t next_internal_gpa_ = internal_page_table_base;
@@ -2048,8 +2054,9 @@ namespace sogen::whp
                 size_t page_index = 0;
                 if (!this->free_guest_gpa_indices_.empty())
                 {
-                    page_index = this->free_guest_gpa_indices_.back();
-                    this->free_guest_gpa_indices_.pop_back();
+                    const auto lowest = this->free_guest_gpa_indices_.begin();
+                    page_index = *lowest;
+                    this->free_guest_gpa_indices_.erase(lowest);
                     if (this->guest_pages_by_gpa_[page_index] != unmapped_guest_page)
                     {
                         throw std::runtime_error("WHP guest physical free list corruption");
@@ -2106,7 +2113,7 @@ namespace sogen::whp
                 }
 
                 this->guest_pages_by_gpa_[page_index] = unmapped_guest_page;
-                this->free_guest_gpa_indices_.push_back(page_index);
+                this->free_guest_gpa_indices_.insert(page_index);
             }
 
             std::optional<uint64_t> translate_guest_physical_address(const uint64_t guest_physical_address) const
