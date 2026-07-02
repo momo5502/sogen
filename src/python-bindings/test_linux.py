@@ -720,11 +720,15 @@ assert len(app.modules) == pre_start_module_count
 
 
 pre_single_step_ip = app.read_register(sogen.Register.rip)
+pre_single_step_count = app.executed_instructions
 app.start(1)
 post_single_step_ip = app.read_register(sogen.Register.rip)
 assert post_single_step_ip != pre_single_step_ip, (
     f"{requested_backend} start(1) did not advance RIP: "
     f"{pre_single_step_ip:#x} -> {post_single_step_ip:#x}"
+)
+assert app.executed_instructions == pre_single_step_count + 1, (
+    f"{requested_backend} start(1) counted {app.executed_instructions - pre_single_step_count} instructions"
 )
 assert app.process.exit_status is None, f"{requested_backend} start(1) unexpectedly exited the process"
 

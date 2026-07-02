@@ -459,8 +459,10 @@ namespace sogen::kvm
 
                 while (!this->stop_requested_)
                 {
+                    const auto step_rip = this->read_instruction_pointer();
                     if (this->handle_pre_run_instruction())
                     {
+                        this->run_memory_execution_hooks(step_rip);
                         if (single_step)
                         {
                             return;
@@ -498,12 +500,14 @@ namespace sogen::kvm
                         const auto rip = this->read_instruction_pointer();
                         if (this->syscall_hook_ && rip == (this->syscall_hook_page_ + 1))
                         {
-                            if (this->handle_syscall_halt())
+                            if (const auto executed_rip = this->handle_syscall_halt())
                             {
                                 if (single_step)
                                 {
+                                    this->run_memory_execution_hooks(*executed_rip);
                                     return;
                                 }
+
                                 continue;
                             }
 
@@ -516,10 +520,6 @@ namespace sogen::kvm
                             if (this->handle_exception_trap(rip))
                             {
                                 this->clear_pending_exception_state();
-                                if (single_step)
-                                {
-                                    return;
-                                }
                                 continue;
                             }
                         }
@@ -529,10 +529,6 @@ namespace sogen::kvm
                     case KVM_EXIT_MMIO:
                         if (this->handle_mmio_exit())
                         {
-                            if (single_step)
-                            {
-                                return;
-                            }
                             continue;
                         }
 
@@ -541,10 +537,6 @@ namespace sogen::kvm
                         if (this->handle_exception(this->run_->ex.exception, this->run_->ex.error_code))
                         {
                             this->clear_pending_exception_state();
-                            if (single_step)
-                            {
-                                return;
-                            }
                             continue;
                         }
 
@@ -552,6 +544,7 @@ namespace sogen::kvm
                     case KVM_EXIT_DEBUG:
                         if (single_step)
                         {
+                            this->run_memory_execution_hooks(step_rip);
                             return;
                         }
 
@@ -1085,6 +1078,23 @@ namespace sogen::kvm
             void deserialize_state(utils::buffer_deserializer& buffer, bool) override
             {
                 this->restore_registers(buffer.read_vector<std::byte>());
+            }
+
+            void run_memory_execution_hooks(const uint64_t address)
+            {
+                std::vector<memory_execution_hook_callback> callbacks{};
+                for (const auto& [_, hook] : this->memory_execution_hooks_)
+                {
+                    if (!hook.address || hook.size != 0 && address >= *hook.address && address - *hook.address < hook.size)
+                    {
+                        callbacks.push_back(hook.callback);
+                    }
+                }
+
+                for (const auto& callback : callbacks)
+                {
+                    callback(address);
+                }
             }
 
           private:
@@ -2006,11 +2016,11 @@ namespace sogen::kvm
 
                 return handled;
             }
-            bool handle_syscall_halt()
+            std::optional<uint64_t> handle_syscall_halt()
             {
                 if (!this->syscall_hook_)
                 {
-                    return false;
+                    return std::nullopt;
                 }
 
                 auto regs = this->get_regs();
@@ -2049,7 +2059,7 @@ namespace sogen::kvm
                 sregs.ss = make_segment(0x2B, false, true);
                 this->set_regs(regs);
                 this->set_sregs(sregs);
-                return true;
+                return pre_syscall_rip;
             }
             void advance_rip(uint64_t amount)
             {
