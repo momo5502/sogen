@@ -1474,25 +1474,40 @@ namespace sogen
         this->process.user_handles.get_server_info().access(
             [&](USER_SERVERINFO& server_info) { server_info.foregroundWindow = this->process.foreground_window; });
 
-        // Maintain the polled key state (reported by GetKeyState) from key and mouse-button transitions, so
-        // games that read input by polling rather than via window messages (in-game movement) see it.
+        // Maintain the polled key state from key and mouse-button transitions. GetKeyState reports the high
+        // down bit; GetAsyncKeyState also reports a low edge bit that is set once when a key transitions from
+        // up to down and cleared by the next GetAsyncKeyState query for that virtual key.
         switch (event.message)
         {
         case WM_KEYDOWN:
-        case WM_SYSKEYDOWN:
-            this->process.key_state[event.wParam & 0xFF] = 0x80;
+        case WM_SYSKEYDOWN: {
+            const auto virtual_key = static_cast<uint8_t>(event.wParam & 0xFF);
+            if ((this->process.key_state[virtual_key] & 0x80) == 0)
+            {
+                this->process.async_key_state[virtual_key] = 1;
+            }
+            this->process.key_state[virtual_key] = 0x80;
             break;
+        }
         case WM_KEYUP:
         case WM_SYSKEYUP:
-            this->process.key_state[event.wParam & 0xFF] = 0;
+            this->process.key_state[static_cast<uint8_t>(event.wParam & 0xFF)] = 0;
             break;
         case WM_LBUTTONDOWN:
+            if ((this->process.key_state[0x01] & 0x80) == 0)
+            {
+                this->process.async_key_state[0x01] = 1;
+            }
             this->process.key_state[0x01] = 0x80; // VK_LBUTTON
             break;
         case WM_LBUTTONUP:
             this->process.key_state[0x01] = 0;
             break;
         case WM_RBUTTONDOWN:
+            if ((this->process.key_state[0x02] & 0x80) == 0)
+            {
+                this->process.async_key_state[0x02] = 1;
+            }
             this->process.key_state[0x02] = 0x80; // VK_RBUTTON
             break;
         case WM_RBUTTONUP:

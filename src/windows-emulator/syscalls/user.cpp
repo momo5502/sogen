@@ -2118,8 +2118,8 @@ namespace sogen
         }
 
         // GetKeyState / GetAsyncKeyState report whether a virtual key (or mouse button) is currently down.
-        // Games poll these for in-game input instead of consuming WM_KEYDOWN messages. The high bit (0x8000)
-        // means down; the tracked state is maintained from key/button events in handle_ui_event.
+        // Games poll these for in-game input instead of consuming WM_KEYDOWN messages. GetKeyState reports the
+        // high down bit; GetAsyncKeyState additionally returns the low pressed-since-last-query bit.
         uint32_t handle_NtUserGetKeyState(const syscall_context& c, const int32_t virtual_key)
         {
             return (c.proc.key_state[static_cast<uint32_t>(virtual_key) & 0xFF] & 0x80) ? 0x8000u : 0u;
@@ -2127,7 +2127,14 @@ namespace sogen
 
         uint32_t handle_NtUserGetAsyncKeyState(const syscall_context& c, const int32_t virtual_key)
         {
-            return (c.proc.key_state[static_cast<uint32_t>(virtual_key) & 0xFF] & 0x80) ? 0x8000u : 0u;
+            const auto key = static_cast<uint32_t>(virtual_key) & 0xFF;
+            uint32_t result = (c.proc.key_state[key] & 0x80) ? 0x8000u : 0u;
+            if (c.proc.async_key_state[key] != 0)
+            {
+                result |= 0x0001u;
+                c.proc.async_key_state[key] = 0;
+            }
+            return result;
         }
 
         // The host pointer is shown only when the display count is non-negative and the current cursor has a

@@ -421,6 +421,9 @@ namespace sogen
         // Per-virtual-key pressed state (0x80 = down), updated from key/mouse-button events and reported by
         // GetKeyState; games poll this for in-game input (movement, etc.) rather than window messages.
         std::array<uint8_t, 256> key_state{};
+        // Per-virtual-key transition state for GetAsyncKeyState's low bit. A value of 1 means the key or
+        // mouse button was pressed since the last GetAsyncKeyState query for that virtual key.
+        std::array<uint8_t, 256> async_key_state{};
 
         // Raw mouse input registration (NtUserRegisterRawInputDevices). When registered, mouse motion
         // synthesizes relative-mouse RAWINPUT delivered as WM_INPUT, so in-game mouse-look works.
