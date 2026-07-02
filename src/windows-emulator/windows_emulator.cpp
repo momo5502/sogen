@@ -132,7 +132,7 @@ namespace sogen
             // capture every mouse message must reach it (so a pressed button still completes its click),
             // and otherwise each is delivered to the child under the cursor (hover, right-click, etc.).
             return message == WM_MOUSEMOVE || message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_RBUTTONDOWN ||
-                   message == WM_RBUTTONUP;
+                   message == WM_RBUTTONUP || message == WM_MBUTTONDOWN || message == WM_MBUTTONUP;
         }
 
         // Window button message -> RAWMOUSE usButtonFlags transition bit (winuser.h RI_MOUSE_* values).
@@ -148,6 +148,10 @@ namespace sogen
                 return 0x0004; // RI_MOUSE_RIGHT_BUTTON_DOWN
             case WM_RBUTTONUP:
                 return 0x0008; // RI_MOUSE_RIGHT_BUTTON_UP
+            case WM_MBUTTONDOWN:
+                return 0x0010; // RI_MOUSE_MIDDLE_BUTTON_DOWN
+            case WM_MBUTTONUP:
+                return 0x0020; // RI_MOUSE_MIDDLE_BUTTON_UP
             default:
                 return 0;
             }
