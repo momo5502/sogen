@@ -1944,6 +1944,11 @@ namespace sogen
                 return STATUS_OBJECT_NAME_INVALID;
             }
 
+            if (filepath.is_relative())
+            {
+                return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+
             const auto local_filename = c.win_emu.file_sys.translate(filepath);
 
             struct compat_stat file_stat{};
