@@ -503,7 +503,12 @@ namespace sogen
                 return STATUS_ACCESS_VIOLATION;
             }
 
-            const auto _ = utils::finally([&] { io_status_block.write(block.value()); });
+            const auto _ = utils::finally([&] {
+                if (io_status_block)
+                {
+                    (void)io_status_block.try_write(block.value());
+                }
+            });
 
             const auto ret = [&](const NTSTATUS status, size_t size = 0) {
                 block->Status = status;
@@ -999,7 +1004,7 @@ namespace sogen
             const auto _ = utils::finally([&] {
                 if (io_status_block)
                 {
-                    io_status_block.write(block);
+                    (void)io_status_block.try_write(block);
                 }
             });
 
