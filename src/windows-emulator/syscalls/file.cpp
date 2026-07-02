@@ -20,6 +20,12 @@ namespace sogen
     {
         namespace
         {
+            bool has_valid_filename_characters(const std::u16string_view path)
+            {
+                constexpr std::u16string_view invalid_characters = u"\"<>|*?";
+                return path.find_first_of(invalid_characters) == std::u16string_view::npos;
+            }
+
             std::pair<utils::file_handle, NTSTATUS> open_file(const file_system& file_sys, const windows_path& path,
                                                               const std::u16string& mode)
             {
@@ -1913,7 +1919,13 @@ namespace sogen
 
             c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
-            const auto local_filename = c.win_emu.file_sys.translate(filename);
+            const windows_path filepath(filename);
+            if (!has_valid_filename_characters(filepath.u16string()))
+            {
+                return STATUS_OBJECT_NAME_INVALID;
+            }
+
+            const auto local_filename = c.win_emu.file_sys.translate(filepath);
 
             struct compat_stat file_stat{};
             if (!compat_stat(local_filename, &file_stat))
@@ -1966,7 +1978,12 @@ namespace sogen
 
             c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
-            windows_path filepath(filename);
+            const windows_path filepath(filename);
+            if (!has_valid_filename_characters(filepath.u16string()))
+            {
+                return STATUS_OBJECT_NAME_INVALID;
+            }
+
             if (filepath.is_relative())
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
