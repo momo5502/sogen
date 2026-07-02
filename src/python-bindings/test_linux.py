@@ -719,6 +719,15 @@ assert app.memory.mmap_base == pre_start_mmap_base
 assert len(app.modules) == pre_start_module_count
 
 
+pre_single_step_ip = app.read_register(sogen.Register.rip)
+app.start(1)
+post_single_step_ip = app.read_register(sogen.Register.rip)
+assert post_single_step_ip != pre_single_step_ip, (
+    f"{requested_backend} start(1) did not advance RIP: "
+    f"{pre_single_step_ip:#x} -> {post_single_step_ip:#x}"
+)
+assert app.process.exit_status is None, f"{requested_backend} start(1) unexpectedly exited the process"
+
 app.start()
 
 stdout_data = b"".join(stdout_chunks)
@@ -839,6 +848,64 @@ with tempfile.TemporaryDirectory() as tmpdir:
     path_app.start()
     assert b"".join(path_stdout) == b"mapped\n"
     assert path_app.process.exit_status == 0
+
+    sandbox_root = tmp_path / "symlink-root"
+    (sandbox_root / "tmp").mkdir(parents=True)
+    host_escape = tmp_path / "host_escape.txt"
+    host_escape.write_text("escaped\n")
+    sandbox_target = sandbox_root / str(host_escape).lstrip("/")
+    sandbox_target.parent.mkdir(parents=True, exist_ok=True)
+    sandbox_target.write_text("contained\n")
+    symlink_target_literal = str(host_escape).replace("\\", "\\\\").replace('"', '\\"')
+    symlink_source = tmp_path / "symlink_escape_fixture.c"
+    symlink_fixture = tmp_path / "symlink_escape_fixture"
+    symlink_source.write_text(
+        textwrap.dedent(
+            f"""
+            #include <fcntl.h>
+            #include <unistd.h>
+
+            int main(void) {{
+                char buffer[32] = {{0}};
+                if (symlink("{symlink_target_literal}", "/tmp/link") != 0) {{
+                    return 1;
+                }}
+
+                int fd = open("/tmp/link", O_RDONLY);
+                if (fd < 0) {{
+                    return 2;
+                }}
+
+                ssize_t count = read(fd, buffer, sizeof(buffer));
+                close(fd);
+                if (count <= 0) {{
+                    return 3;
+                }}
+                write(1, buffer, (size_t)count);
+                return 0;
+            }}
+            """
+        )
+    )
+    subprocess.run([cc, "-O0", str(symlink_source), "-o", str(symlink_fixture)], check=True)
+    symlink_stdout = []
+    symlink_path_mappings = {"/guest-bin": tmp_path}
+    for guest_lib in ("/lib", "/lib64", "/usr"):
+        host_lib = Path(guest_lib)
+        if host_lib.exists():
+            symlink_path_mappings[guest_lib] = host_lib
+    symlink_app = linux.create_application(
+        "/guest-bin/symlink_escape_fixture",
+        emulation_root=str(sandbox_root),
+        backend=backend,
+        working_directory="/tmp",
+        path_mappings=symlink_path_mappings,
+        disable_logging=True,
+    )
+    symlink_app.callbacks.on_stdout = capture_output(symlink_stdout)
+    symlink_app.start()
+    assert b"".join(symlink_stdout) == b"contained\n"
+    assert symlink_app.process.exit_status == 0
 
     readonly_host = tmp_path / "readonly"
     readonly_host.mkdir()
@@ -1230,6 +1297,17 @@ with tempfile.TemporaryDirectory() as tmpdir:
                 if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
                     close(fd);
                     return 2;
+                }
+
+                struct sockaddr_in peer = {0};
+                socklen_t peer_len = sizeof(peer);
+                if (getpeername(fd, (struct sockaddr *)&peer, &peer_len) != 0) {
+                    close(fd);
+                    return 30;
+                }
+                if (peer.sin_family != AF_INET || ntohs(peer.sin_port) != 40000 || ntohl(peer.sin_addr.s_addr) != 0x7f000001u) {
+                    close(fd);
+                    return 31;
                 }
 
                 int dupfd = dup(fd);

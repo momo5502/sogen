@@ -490,6 +490,8 @@ namespace sogen
         }
         state->host_socket = host_fd;
         state->connected = true;
+        state->peer_port = sin.sin_port;
+        state->peer_addr = sin.sin_addr;
         apply_host_socket_flags(*state, *fd_entry);
         write_linux_syscall_result(c, 0);
 #endif
@@ -667,6 +669,8 @@ namespace sogen
             }
 #endif
             state->connected = false;
+            state->peer_port = 0;
+            state->peer_addr = 0;
         }
 
         write_linux_syscall_result(c, 0);
@@ -929,7 +933,6 @@ namespace sogen
             return;
         }
 
-        // Return a synthetic peer address
         const auto addr_ptr = get_linux_syscall_argument(c.emu, 1);
         const auto addrlen_ptr = get_linux_syscall_argument(c.emu, 2);
 
@@ -937,8 +940,8 @@ namespace sogen
         {
             linux_sockaddr_in sin{};
             sin.sin_family = LINUX_AF_INET;
-            sin.sin_port = 0;
-            sin.sin_addr = write_network_u32(0x7F000001U);
+            sin.sin_port = state->peer_port;
+            sin.sin_addr = state->peer_addr;
 
             c.emu.write_memory(addr_ptr, &sin, sizeof(sin));
 

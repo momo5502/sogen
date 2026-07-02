@@ -513,6 +513,28 @@ namespace sogen
             return c.emu_ref.file_sys.translate_relative_to(fd_entry->host_path, guest_path);
         }
 
+        std::filesystem::path make_host_symlink_target(const linux_syscall_context& c, const std::string& target_guest,
+                                                       const std::string& resolved_link_guest, const std::filesystem::path& linkpath_host)
+        {
+            if (target_guest.empty())
+            {
+                return {};
+            }
+
+            const auto link_parent_guest_path = linux_file_system::normalize_guest_path(resolved_link_guest).parent_path();
+            const auto link_parent_guest = link_parent_guest_path.empty() ? std::string{"/"} : link_parent_guest_path.string();
+            const auto resolved_target_guest = linux_file_system::resolve_guest_path_string(link_parent_guest, target_guest);
+            const auto target_host = c.emu_ref.file_sys.translate(resolved_target_guest).lexically_normal();
+            const auto link_parent_host = linkpath_host.parent_path().lexically_normal();
+            const auto relative_target = target_host.lexically_relative(link_parent_host);
+            if (!relative_target.empty())
+            {
+                return relative_target;
+            }
+
+            return target_host;
+        }
+
 #pragma pack(push, 1)
         struct linux_dirent64_header
         {
@@ -2321,12 +2343,19 @@ namespace sogen
 
         const auto target = read_string<char>(c.emu, target_addr);
         const auto linkpath_guest = read_string<char>(c.emu, linkpath_addr);
-        if (is_read_only_guest_path_at(c, LINUX_AT_FDCWD, linkpath_guest))
+        int64_t resolve_error{};
+        auto resolved_link_guest = resolve_guest_path_name_at(c, LINUX_AT_FDCWD, linkpath_guest, resolve_error);
+        if (!resolved_link_guest.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+
+        if (c.emu_ref.file_sys.is_read_only_guest_path(*resolved_link_guest))
         {
             write_linux_syscall_result(c, -LINUX_EACCES);
             return;
         }
-        int64_t resolve_error{};
         auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, linkpath_guest, resolve_error);
         if (!resolved.has_value())
         {
@@ -2334,9 +2363,10 @@ namespace sogen
             return;
         }
         const auto& linkpath_host = *resolved;
+        const auto host_target = make_host_symlink_target(c, target, *resolved_link_guest, linkpath_host);
 
         std::error_code ec{};
-        std::filesystem::create_symlink(target, linkpath_host, ec);
+        std::filesystem::create_symlink(host_target, linkpath_host, ec);
         if (ec)
         {
             write_linux_syscall_result(c, -LINUX_ENOENT);
@@ -2355,6 +2385,13 @@ namespace sogen
         const auto target = read_string<char>(c.emu, target_addr);
         const auto linkpath_guest = read_string<char>(c.emu, linkpath_addr);
         int64_t resolve_error{};
+        auto resolved_link_guest = resolve_guest_path_name_at(c, newdirfd, linkpath_guest, resolve_error);
+        if (!resolved_link_guest.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+
         auto resolved = resolve_guest_path_at(c, newdirfd, linkpath_guest, resolve_error);
         if (!resolved.has_value())
         {
@@ -2363,14 +2400,15 @@ namespace sogen
         }
 
         const auto& linkpath_host = *resolved;
-        if (is_read_only_guest_path_at(c, newdirfd, linkpath_guest))
+        if (c.emu_ref.file_sys.is_read_only_guest_path(*resolved_link_guest))
         {
             write_linux_syscall_result(c, -LINUX_EACCES);
             return;
         }
+        const auto host_target = make_host_symlink_target(c, target, *resolved_link_guest, linkpath_host);
 
         std::error_code ec{};
-        std::filesystem::create_symlink(target, linkpath_host, ec);
+        std::filesystem::create_symlink(host_target, linkpath_host, ec);
         if (ec)
         {
             write_linux_syscall_result(c, -LINUX_ENOENT);

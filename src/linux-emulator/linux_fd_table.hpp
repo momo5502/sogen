@@ -49,6 +49,8 @@ namespace sogen
         int host_socket{-1};
         uint16_t bound_port{};
         uint32_t bound_addr{};
+        uint16_t peer_port{};
+        uint32_t peer_addr{};
 
         linux_socket_state() = default;
         ~linux_socket_state()

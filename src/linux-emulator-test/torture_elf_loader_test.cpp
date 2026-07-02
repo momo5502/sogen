@@ -1,6 +1,11 @@
 #include "linux_emulation_test_utils.hpp"
+#include "module/elf_mapping.hpp"
 
 #include <array>
+#include <cstring>
+#include <initializer_list>
+#include <limits>
+#include <vector>
 
 namespace sogen::linux_test
 {
@@ -16,6 +21,79 @@ namespace sogen::linux_test
         {
             return root / "elf" / relative;
         }
+
+        elf::Elf64_Phdr base_load_segment()
+        {
+            elf::Elf64_Phdr phdr{};
+            phdr.p_type = elf::PT_LOAD;
+            phdr.p_flags = elf::PF_R | elf::PF_X;
+            phdr.p_vaddr = 0x400000;
+            phdr.p_memsz = 0x1000;
+            phdr.p_align = 0x1000;
+            return phdr;
+        }
+
+        std::vector<std::byte> make_minimal_elf(const std::initializer_list<elf::Elf64_Phdr> phdrs)
+        {
+            std::vector<std::byte> data(sizeof(elf::Elf64_Ehdr) + (sizeof(elf::Elf64_Phdr) * phdrs.size()));
+
+            elf::Elf64_Ehdr ehdr{};
+            ehdr.e_ident[elf::EI_MAG0] = static_cast<uint8_t>(elf::ELFMAG0);
+            ehdr.e_ident[elf::EI_MAG1] = static_cast<uint8_t>(elf::ELFMAG1);
+            ehdr.e_ident[elf::EI_MAG2] = static_cast<uint8_t>(elf::ELFMAG2);
+            ehdr.e_ident[elf::EI_MAG3] = static_cast<uint8_t>(elf::ELFMAG3);
+            ehdr.e_ident[elf::EI_CLASS] = elf::ELFCLASS64;
+            ehdr.e_ident[elf::EI_DATA] = elf::ELFDATA2LSB;
+            ehdr.e_ident[elf::EI_VERSION] = elf::EV_CURRENT;
+            ehdr.e_type = elf::ET_EXEC;
+            ehdr.e_machine = elf::EM_X86_64;
+            ehdr.e_version = elf::EV_CURRENT;
+            ehdr.e_entry = phdrs.begin()->p_vaddr;
+            ehdr.e_phoff = sizeof(elf::Elf64_Ehdr);
+            ehdr.e_ehsize = sizeof(elf::Elf64_Ehdr);
+            ehdr.e_phentsize = sizeof(elf::Elf64_Phdr);
+            ehdr.e_phnum = static_cast<uint16_t>(phdrs.size());
+
+            std::memcpy(data.data(), &ehdr, sizeof(ehdr));
+            std::memcpy(data.data() + static_cast<size_t>(ehdr.e_phoff), phdrs.begin(), sizeof(elf::Elf64_Phdr) * phdrs.size());
+            return data;
+        }
+    }
+
+    TEST(LinuxElfLoaderTortureTest, RejectsLoadSegmentFileSizeLargerThanMemorySize)
+    {
+        auto phdr = base_load_segment();
+        phdr.p_filesz = phdr.p_memsz + 1;
+
+        const auto elf_data = make_minimal_elf({phdr});
+
+        EXPECT_THROW(read_elf_module_metadata(elf_data, "p_filesz_gt_p_memsz.elf", 0), std::runtime_error);
+    }
+
+    TEST(LinuxElfLoaderTortureTest, RejectsWrappingLoadSegmentFileRange)
+    {
+        auto phdr = base_load_segment();
+        phdr.p_offset = std::numeric_limits<uint64_t>::max();
+        phdr.p_filesz = 1;
+        phdr.p_memsz = 1;
+        phdr.p_align = 1;
+
+        const auto elf_data = make_minimal_elf({phdr});
+
+        EXPECT_THROW(read_elf_module_metadata(elf_data, "wrapping_p_offset.elf", 0), std::runtime_error);
+    }
+
+    TEST(LinuxElfLoaderTortureTest, RejectsWrappingDynamicSegmentFileRange)
+    {
+        const auto load_phdr = base_load_segment();
+        elf::Elf64_Phdr dynamic_phdr{};
+        dynamic_phdr.p_type = elf::PT_DYNAMIC;
+        dynamic_phdr.p_offset = std::numeric_limits<uint64_t>::max();
+        dynamic_phdr.p_filesz = 1;
+
+        const auto elf_data = make_minimal_elf({load_phdr, dynamic_phdr});
+
+        EXPECT_THROW(read_elf_module_metadata(elf_data, "wrapping_pt_dynamic.elf", 0), std::runtime_error);
     }
 
     TEST(LinuxElfLoaderTortureTest, FixtureManifestExpectations)

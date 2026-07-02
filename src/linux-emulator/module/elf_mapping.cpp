@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 namespace sogen
 {
@@ -11,16 +12,88 @@ namespace sogen
 
     namespace
     {
+        bool checked_add_u64(const uint64_t lhs, const uint64_t rhs, uint64_t& result)
+        {
+            if (lhs > std::numeric_limits<uint64_t>::max() - rhs)
+            {
+                return false;
+            }
+
+            result = lhs + rhs;
+            return true;
+        }
+
+        uint64_t checked_add_u64_or_throw(const uint64_t lhs, const uint64_t rhs, const std::string& message)
+        {
+            uint64_t result = 0;
+            if (!checked_add_u64(lhs, rhs, result))
+            {
+                throw std::runtime_error(message);
+            }
+
+            return result;
+        }
+
+        bool range_within_data(const std::span<const std::byte> data, const uint64_t offset, const uint64_t size)
+        {
+            const auto data_size = static_cast<uint64_t>(data.size());
+            return offset <= data_size && size <= data_size - offset;
+        }
+
+        uint64_t checked_page_align_up_or_throw(const uint64_t value, const std::string& message)
+        {
+            if (value > std::numeric_limits<uint64_t>::max() - (LINUX_PAGE_SIZE - 1))
+            {
+                throw std::runtime_error(message);
+            }
+
+            return page_align_up(value);
+        }
+
+        const Elf64_Phdr* get_checked_program_headers(const std::span<const std::byte> data)
+        {
+            const auto* ehdr = get_header(data);
+            if (!ehdr || !ehdr->e_phoff || !ehdr->e_phnum || ehdr->e_phentsize != sizeof(Elf64_Phdr))
+            {
+                return nullptr;
+            }
+
+            const auto phdr_size = static_cast<uint64_t>(ehdr->e_phnum) * sizeof(Elf64_Phdr);
+            if (!range_within_data(data, ehdr->e_phoff, phdr_size))
+            {
+                return nullptr;
+            }
+
+            return reinterpret_cast<const Elf64_Phdr*>(data.data() + static_cast<size_t>(ehdr->e_phoff));
+        }
+
+        const Elf64_Shdr* get_checked_section_headers(const std::span<const std::byte> data)
+        {
+            const auto* ehdr = get_header(data);
+            if (!ehdr || !ehdr->e_shoff || !ehdr->e_shnum || ehdr->e_shentsize != sizeof(Elf64_Shdr))
+            {
+                return nullptr;
+            }
+
+            const auto shdr_size = static_cast<uint64_t>(ehdr->e_shnum) * sizeof(Elf64_Shdr);
+            if (!range_within_data(data, ehdr->e_shoff, shdr_size))
+            {
+                return nullptr;
+            }
+
+            return reinterpret_cast<const Elf64_Shdr*>(data.data() + static_cast<size_t>(ehdr->e_shoff));
+        }
+
         std::string read_strtab_entry(const std::span<const std::byte> data, uint64_t strtab_offset, uint32_t name_index)
         {
-            const auto offset = strtab_offset + name_index;
-            if (offset >= data.size())
+            uint64_t offset = 0;
+            if (!checked_add_u64(strtab_offset, name_index, offset) || offset >= data.size())
             {
                 return {};
             }
 
-            const auto* str = reinterpret_cast<const char*>(data.data() + offset);
-            const auto max_len = data.size() - offset;
+            const auto* str = reinterpret_cast<const char*>(data.data() + static_cast<size_t>(offset));
+            const auto max_len = static_cast<size_t>(data.size() - offset);
 
             size_t len = 0;
             while (len < max_len && str[len] != '\0')
@@ -34,12 +107,12 @@ namespace sogen
         void parse_dynamic_section(const std::span<const std::byte> data, const Elf64_Phdr& dyn_phdr, linux_mapped_module& mod,
                                    uint64_t /*base_delta*/)
         {
-            if (dyn_phdr.p_offset + dyn_phdr.p_filesz > data.size())
+            if (!range_within_data(data, dyn_phdr.p_offset, dyn_phdr.p_filesz))
             {
-                return;
+                throw std::runtime_error("Invalid PT_DYNAMIC file range in ELF");
             }
 
-            const auto* dyn = reinterpret_cast<const Elf64_Dyn*>(data.data() + dyn_phdr.p_offset);
+            const auto* dyn = reinterpret_cast<const Elf64_Dyn*>(data.data() + static_cast<size_t>(dyn_phdr.p_offset));
             const auto count = dyn_phdr.p_filesz / sizeof(Elf64_Dyn);
 
             // First pass: find DT_STRTAB
@@ -65,7 +138,11 @@ namespace sogen
             if (strtab_vaddr != 0)
             {
                 const auto* ehdr = get_header(data);
-                const auto* phdrs = get_program_headers(data);
+                const auto* phdrs = get_checked_program_headers(data);
+                if (!ehdr || !phdrs)
+                {
+                    throw std::runtime_error("Invalid program header table in ELF");
+                }
 
                 for (uint16_t i = 0; i < ehdr->e_phnum; ++i)
                 {
@@ -76,9 +153,19 @@ namespace sogen
                     }
 
                     const auto seg_vaddr = ph.p_vaddr;
-                    if (strtab_vaddr >= seg_vaddr && strtab_vaddr < seg_vaddr + ph.p_filesz)
+                    uint64_t seg_file_vaddr_end = 0;
+                    if (!checked_add_u64(seg_vaddr, ph.p_filesz, seg_file_vaddr_end))
                     {
-                        strtab_file_offset = ph.p_offset + (strtab_vaddr - seg_vaddr);
+                        continue;
+                    }
+
+                    if (strtab_vaddr >= seg_vaddr && strtab_vaddr < seg_file_vaddr_end)
+                    {
+                        const auto offset_within_segment = strtab_vaddr - seg_vaddr;
+                        if (!checked_add_u64(ph.p_offset, offset_within_segment, strtab_file_offset) || strtab_file_offset >= data.size())
+                        {
+                            strtab_file_offset = 0;
+                        }
                         break;
                     }
                 }
@@ -116,8 +203,20 @@ namespace sogen
             }
         }
 
-        void validate_load_segment(const Elf64_Phdr& ph, const std::filesystem::path& path)
+        void validate_load_segment(const std::span<const std::byte> data, const Elf64_Phdr& ph, const std::filesystem::path& path)
         {
+            if (ph.p_filesz > ph.p_memsz)
+            {
+                throw std::runtime_error("Invalid PT_LOAD file size exceeds memory size in ELF: " + path.string());
+            }
+
+            if (ph.p_filesz != 0 && !range_within_data(data, ph.p_offset, ph.p_filesz))
+            {
+                throw std::runtime_error("Invalid PT_LOAD file range in ELF: " + path.string());
+            }
+
+            checked_add_u64_or_throw(ph.p_vaddr, ph.p_memsz, "Invalid PT_LOAD memory range in ELF: " + path.string());
+
             if (ph.p_align > 1 && (ph.p_vaddr % ph.p_align) != (ph.p_offset % ph.p_align))
             {
                 throw std::runtime_error("Invalid PT_LOAD alignment in ELF: " + path.string());
@@ -127,7 +226,7 @@ namespace sogen
         void parse_symbols(const std::span<const std::byte> data, linux_mapped_module& mod, uint64_t base)
         {
             const auto* ehdr = get_header(data);
-            const auto* shdrs = get_section_headers(data);
+            const auto* shdrs = get_checked_section_headers(data);
             if (!shdrs)
             {
                 return;
@@ -142,7 +241,7 @@ namespace sogen
                     continue;
                 }
 
-                if (sh.sh_offset + sh.sh_size > data.size())
+                if (!range_within_data(data, sh.sh_offset, sh.sh_size))
                 {
                     continue;
                 }
@@ -154,13 +253,13 @@ namespace sogen
                 }
 
                 const auto& strtab_sh = shdrs[sh.sh_link];
-                if (strtab_sh.sh_offset + strtab_sh.sh_size > data.size())
+                if (!range_within_data(data, strtab_sh.sh_offset, strtab_sh.sh_size))
                 {
                     continue;
                 }
 
                 const auto sym_count = sh.sh_size / sizeof(Elf64_Sym);
-                const auto* syms = reinterpret_cast<const Elf64_Sym*>(data.data() + sh.sh_offset);
+                const auto* syms = reinterpret_cast<const Elf64_Sym*>(data.data() + static_cast<size_t>(sh.sh_offset));
 
                 for (size_t j = 1; j < sym_count; ++j) // skip index 0 (undefined)
                 {
@@ -209,13 +308,17 @@ namespace sogen
         void parse_section_names(const std::span<const std::byte> data, linux_mapped_module& mod, uint64_t base)
         {
             const auto* ehdr = get_header(data);
-            const auto* shdrs = get_section_headers(data);
+            const auto* shdrs = get_checked_section_headers(data);
             if (!shdrs || ehdr->e_shstrndx == 0 || ehdr->e_shstrndx >= ehdr->e_shnum)
             {
                 return;
             }
 
             const auto& shstrtab = shdrs[ehdr->e_shstrndx];
+            if (!range_within_data(data, shstrtab.sh_offset, shstrtab.sh_size))
+            {
+                return;
+            }
 
             for (uint16_t i = 0; i < ehdr->e_shnum; ++i)
             {
@@ -259,7 +362,7 @@ namespace sogen
             throw std::runtime_error("Unsupported ELF type (expected ET_EXEC or ET_DYN): " + std::to_string(ehdr->e_type));
         }
 
-        const auto* phdrs = get_program_headers(data);
+        const auto* phdrs = get_checked_program_headers(data);
         if (!phdrs)
         {
             throw std::runtime_error("No program headers in ELF: " + path.string());
@@ -275,10 +378,12 @@ namespace sogen
             {
                 continue;
             }
-            validate_load_segment(ph, path);
+            validate_load_segment(data, ph, path);
 
             const auto seg_start = page_align_down(ph.p_vaddr);
-            const auto seg_end = page_align_up(ph.p_vaddr + ph.p_memsz);
+            const auto seg_end = checked_page_align_up_or_throw(
+                checked_add_u64_or_throw(ph.p_vaddr, ph.p_memsz, "Invalid PT_LOAD memory range in ELF: " + path.string()),
+                "Invalid PT_LOAD memory range in ELF: " + path.string());
 
             vaddr_min = std::min(vaddr_min, seg_start);
             vaddr_max = std::max(vaddr_max, seg_end);
@@ -367,7 +472,7 @@ namespace sogen
             throw std::runtime_error("Unsupported ELF type (expected ET_EXEC or ET_DYN): " + std::to_string(ehdr->e_type));
         }
 
-        const auto* phdrs = get_program_headers(data);
+        const auto* phdrs = get_checked_program_headers(data);
         if (!phdrs)
         {
             throw std::runtime_error("No program headers in ELF: " + path.string());
@@ -384,10 +489,12 @@ namespace sogen
             {
                 continue;
             }
-            validate_load_segment(ph, path);
+            validate_load_segment(data, ph, path);
 
             const auto seg_start = page_align_down(ph.p_vaddr);
-            const auto seg_end = page_align_up(ph.p_vaddr + ph.p_memsz);
+            const auto seg_end = checked_page_align_up_or_throw(
+                checked_add_u64_or_throw(ph.p_vaddr, ph.p_memsz, "Invalid PT_LOAD memory range in ELF: " + path.string()),
+                "Invalid PT_LOAD memory range in ELF: " + path.string());
 
             vaddr_min = std::min(vaddr_min, seg_start);
             vaddr_max = std::max(vaddr_max, seg_end);
@@ -439,8 +546,13 @@ namespace sogen
                 continue;
             }
 
-            auto seg_vaddr = page_align_down(ph.p_vaddr + static_cast<uint64_t>(base_delta));
-            const auto seg_end = page_align_up(ph.p_vaddr + ph.p_memsz + static_cast<uint64_t>(base_delta));
+            auto seg_vaddr = page_align_down(checked_add_u64_or_throw(ph.p_vaddr, static_cast<uint64_t>(base_delta),
+                                                                      "Invalid PT_LOAD memory range in ELF: " + path.string()));
+            const auto seg_end = checked_page_align_up_or_throw(
+                checked_add_u64_or_throw(
+                    checked_add_u64_or_throw(ph.p_vaddr, ph.p_memsz, "Invalid PT_LOAD memory range in ELF: " + path.string()),
+                    static_cast<uint64_t>(base_delta), "Invalid PT_LOAD memory range in ELF: " + path.string()),
+                "Invalid PT_LOAD memory range in ELF: " + path.string());
 
             // If this segment's page-aligned start overlaps the previous segment's
             // page-aligned end, skip the already-mapped region
@@ -458,30 +570,43 @@ namespace sogen
                 }
 
                 // Set correct permissions (deferred until after data copy for shared pages)
-                if (perm != memory_permission::read_write)
+                if (perm != memory_permission::read_write && !memory.protect_memory(seg_vaddr, seg_size, perm))
                 {
-                    memory.protect_memory(seg_vaddr, seg_size, perm);
+                    throw std::runtime_error("Failed to protect PT_LOAD segment at 0x" + std::to_string(seg_vaddr));
                 }
             }
 
             // Copy file data into the segment
-            if (ph.p_filesz > 0 && ph.p_offset + ph.p_filesz <= data.size())
+            if (ph.p_filesz > 0)
             {
-                const auto dest_addr = ph.p_vaddr + static_cast<uint64_t>(base_delta);
+                if (!range_within_data(data, ph.p_offset, ph.p_filesz))
+                {
+                    throw std::runtime_error("Invalid PT_LOAD file range in ELF: " + path.string());
+                }
+
+                const auto dest_addr = checked_add_u64_or_throw(ph.p_vaddr, static_cast<uint64_t>(base_delta),
+                                                                "Invalid PT_LOAD memory range in ELF: " + path.string());
 
                 // The shared page between segments may have been mapped read-only by the
                 // previous segment. Temporarily make the target range writable for the copy.
                 const auto copy_page_start = page_align_down(dest_addr);
-                const auto copy_page_end = page_align_up(dest_addr + ph.p_filesz);
-                memory.protect_memory(copy_page_start, static_cast<size_t>(copy_page_end - copy_page_start), memory_permission::read_write);
+                const auto copy_page_end = checked_page_align_up_or_throw(
+                    checked_add_u64_or_throw(dest_addr, ph.p_filesz, "Invalid PT_LOAD memory range in ELF: " + path.string()),
+                    "Invalid PT_LOAD memory range in ELF: " + path.string());
+                if (!memory.protect_memory(copy_page_start, static_cast<size_t>(copy_page_end - copy_page_start),
+                                           memory_permission::read_write))
+                {
+                    throw std::runtime_error("Failed to make PT_LOAD segment writable at 0x" + std::to_string(copy_page_start));
+                }
 
-                memory.write_memory(dest_addr, data.data() + ph.p_offset, static_cast<size_t>(ph.p_filesz));
+                memory.write_memory(dest_addr, data.data() + static_cast<size_t>(ph.p_offset), static_cast<size_t>(ph.p_filesz));
 
                 // Restore correct permissions for the pages we own (the new allocation region)
                 const auto perm = elf_segment_to_permission(ph.p_flags);
-                if (seg_vaddr < seg_end && perm != memory_permission::read_write)
+                if (seg_vaddr < seg_end && perm != memory_permission::read_write &&
+                    !memory.protect_memory(seg_vaddr, static_cast<size_t>(seg_end - seg_vaddr), perm))
                 {
-                    memory.protect_memory(seg_vaddr, static_cast<size_t>(seg_end - seg_vaddr), perm);
+                    throw std::runtime_error("Failed to restore PT_LOAD segment permissions at 0x" + std::to_string(seg_vaddr));
                 }
             }
 
@@ -500,7 +625,7 @@ namespace sogen
         std::vector<elf_irelative_entry> result{};
 
         const auto* ehdr = get_header(data);
-        const auto* shdrs = get_section_headers(data);
+        const auto* shdrs = get_checked_section_headers(data);
         if (!shdrs)
         {
             return result;
@@ -514,13 +639,13 @@ namespace sogen
                 continue;
             }
 
-            if (sh.sh_offset + sh.sh_size > data.size())
+            if (!range_within_data(data, sh.sh_offset, sh.sh_size))
             {
                 continue;
             }
 
             const auto rela_count = sh.sh_size / sizeof(Elf64_Rela);
-            const auto* relas = reinterpret_cast<const Elf64_Rela*>(data.data() + sh.sh_offset);
+            const auto* relas = reinterpret_cast<const Elf64_Rela*>(data.data() + static_cast<size_t>(sh.sh_offset));
 
             for (size_t j = 0; j < rela_count; ++j)
             {
@@ -544,7 +669,7 @@ namespace sogen
                                const int64_t base_delta)
     {
         const auto* ehdr = get_header(data);
-        const auto* shdrs = get_section_headers(data);
+        const auto* shdrs = get_checked_section_headers(data);
         if (!shdrs)
         {
             return;
@@ -558,13 +683,13 @@ namespace sogen
                 continue;
             }
 
-            if (sh.sh_offset + sh.sh_size > data.size())
+            if (!range_within_data(data, sh.sh_offset, sh.sh_size))
             {
                 continue;
             }
 
             const auto rela_count = sh.sh_size / sizeof(Elf64_Rela);
-            const auto* relas = reinterpret_cast<const Elf64_Rela*>(data.data() + sh.sh_offset);
+            const auto* relas = reinterpret_cast<const Elf64_Rela*>(data.data() + static_cast<size_t>(sh.sh_offset));
 
             // Get the symbol table associated with this relocation section
             const Elf64_Sym* symtab = nullptr;
@@ -573,9 +698,9 @@ namespace sogen
             if (sh.sh_link < ehdr->e_shnum)
             {
                 const auto& symsh = shdrs[sh.sh_link];
-                if (symsh.sh_offset + symsh.sh_size <= data.size())
+                if (range_within_data(data, symsh.sh_offset, symsh.sh_size))
                 {
-                    symtab = reinterpret_cast<const Elf64_Sym*>(data.data() + symsh.sh_offset);
+                    symtab = reinterpret_cast<const Elf64_Sym*>(data.data() + static_cast<size_t>(symsh.sh_offset));
                     symcount = static_cast<size_t>(symsh.sh_size / sizeof(Elf64_Sym));
                 }
             }

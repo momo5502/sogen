@@ -155,6 +155,59 @@ namespace sogen::kvm
             }
         }
 
+#if defined(KVM_SET_GUEST_DEBUG) && defined(KVM_GUESTDBG_ENABLE) && defined(KVM_GUESTDBG_SINGLESTEP)
+        void enable_guest_single_step(const int vcpu_fd)
+        {
+            kvm_guest_debug debug{};
+            debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
+            check_ioctl_result(::ioctl(vcpu_fd, KVM_SET_GUEST_DEBUG, &debug), "KVM_SET_GUEST_DEBUG");
+        }
+
+        void clear_guest_debug_control_noexcept(const int vcpu_fd) noexcept
+        {
+            kvm_guest_debug debug{};
+            (void)::ioctl(vcpu_fd, KVM_SET_GUEST_DEBUG, &debug);
+        }
+#else
+        void enable_guest_single_step(const int)
+        {
+            throw std::runtime_error("KVM backend single-step requires KVM guest debug support");
+        }
+
+        void clear_guest_debug_control_noexcept(const int) noexcept
+        {
+        }
+#endif
+
+        class scoped_guest_debug
+        {
+          public:
+            scoped_guest_debug(const int vcpu_fd, const bool enable)
+                : vcpu_fd_(vcpu_fd),
+                  active_(enable)
+            {
+                if (this->active_)
+                {
+                    enable_guest_single_step(this->vcpu_fd_);
+                }
+            }
+
+            scoped_guest_debug(const scoped_guest_debug&) = delete;
+            scoped_guest_debug& operator=(const scoped_guest_debug&) = delete;
+
+            ~scoped_guest_debug()
+            {
+                if (this->active_)
+                {
+                    clear_guest_debug_control_noexcept(this->vcpu_fd_);
+                }
+            }
+
+          private:
+            int vcpu_fd_ = -1;
+            bool active_ = false;
+        };
+
         // No-op handler whose only purpose is to interrupt a blocking KVM_RUN ioctl so the
         // run loop can observe a pending stop request. Installed without SA_RESTART so the
         // ioctl returns EINTR instead of being silently restarted.
@@ -392,10 +445,13 @@ namespace sogen::kvm
             }
             void start(size_t count) override
             {
-                if (count != 0)
+                if (count > 1)
                 {
-                    throw std::runtime_error("KVM backend does not support exact instruction counts yet");
+                    throw std::runtime_error("KVM backend does not support exact instruction counts greater than one yet");
                 }
+
+                const bool single_step = count == 1;
+                const scoped_guest_debug guest_debug(this->vcpu_fd_.get(), single_step);
 
                 this->stop_requested_ = false;
                 this->vcpu_thread_.store(pthread_self(), std::memory_order_release);
@@ -405,6 +461,11 @@ namespace sogen::kvm
                 {
                     if (this->handle_pre_run_instruction())
                     {
+                        if (single_step)
+                        {
+                            return;
+                        }
+
                         continue;
                     }
 
@@ -473,6 +534,11 @@ namespace sogen::kvm
 
                         return;
                     case KVM_EXIT_DEBUG:
+                        if (single_step)
+                        {
+                            return;
+                        }
+
                         if (this->handle_debug_exit())
                         {
                             continue;
@@ -1648,17 +1714,21 @@ namespace sogen::kvm
             bool handle_breakpoint_instruction()
             {
                 const auto rip = this->read_instruction_pointer();
+                bool handled = false;
+                bool rip_changed = false;
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
                     hook(static_cast<int>(breakpoint_interrupt));
-                    if (this->read_instruction_pointer() == rip && !this->stop_requested_)
-                    {
-                        this->advance_rip(1);
-                    }
-                    return true;
+                    handled = true;
+                    rip_changed = rip_changed || this->read_instruction_pointer() != rip;
                 }
 
-                return false;
+                if (handled && !rip_changed && !this->stop_requested_)
+                {
+                    this->advance_rip(1);
+                }
+
+                return handled;
             }
             bool handle_instruction_hook(x86_hookable_instructions type, uint64_t instruction_size)
             {
@@ -1814,13 +1884,14 @@ namespace sogen::kvm
                     }
                 }
 
+                bool handled = false;
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
                     hook(static_cast<int>(exception));
-                    return true;
+                    handled = true;
                 }
 
-                return false;
+                return handled;
             }
             bool handle_exception_trap(uint64_t stub_rip)
             {
@@ -1910,13 +1981,14 @@ namespace sogen::kvm
                     vector = static_cast<int>(breakpoint_interrupt);
                 }
 
+                bool handled = false;
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
                     hook(vector);
-                    return true;
+                    handled = true;
                 }
 
-                return false;
+                return handled;
             }
             bool handle_syscall_halt()
             {

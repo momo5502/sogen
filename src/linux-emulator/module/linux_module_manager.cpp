@@ -6,6 +6,7 @@
 #include <utils/io.hpp>
 #include <serialization_helper.hpp>
 #include <address_utils.hpp>
+#include <limits>
 
 namespace sogen
 {
@@ -15,6 +16,51 @@ namespace sogen
     namespace
     {
         constexpr size_t runtime_module_metadata_read_limit = 16 * 1024 * 1024;
+
+        bool checked_add_u64(const uint64_t lhs, const uint64_t rhs, uint64_t& result)
+        {
+            if (lhs > std::numeric_limits<uint64_t>::max() - rhs)
+            {
+                return false;
+            }
+
+            result = lhs + rhs;
+            return true;
+        }
+
+        bool range_within_file(const size_t file_size, const uint64_t offset, const uint64_t size)
+        {
+            const auto size_u64 = static_cast<uint64_t>(file_size);
+            return offset <= size_u64 && size <= size_u64 - offset;
+        }
+
+        bool checked_page_align_up(const uint64_t value, uint64_t& aligned)
+        {
+            if (value > std::numeric_limits<uint64_t>::max() - (LINUX_PAGE_SIZE - 1))
+            {
+                return false;
+            }
+
+            aligned = page_align_up(value);
+            return true;
+        }
+
+        const Elf64_Phdr* get_checked_program_headers(const std::span<const std::byte> data)
+        {
+            const auto* ehdr = get_header(data);
+            if (!ehdr || !ehdr->e_phoff || !ehdr->e_phnum || ehdr->e_phentsize != sizeof(Elf64_Phdr))
+            {
+                return nullptr;
+            }
+
+            const auto phdr_size = static_cast<uint64_t>(ehdr->e_phnum) * sizeof(Elf64_Phdr);
+            if (!range_within_file(data.size(), ehdr->e_phoff, phdr_size))
+            {
+                return nullptr;
+            }
+
+            return reinterpret_cast<const Elf64_Phdr*>(data.data() + static_cast<size_t>(ehdr->e_phoff));
+        }
 
         std::vector<std::byte> read_runtime_module_metadata_prefix(const std::filesystem::path& path)
         {
@@ -44,12 +90,12 @@ namespace sogen
             }
 
             const auto phdr_bytes = static_cast<uint64_t>(ehdr->e_phnum) * ehdr->e_phentsize;
-            if (phdr_bytes > UINT64_MAX - ehdr->e_phoff)
+            uint64_t phdr_end = 0;
+            if (!checked_add_u64(ehdr->e_phoff, phdr_bytes, phdr_end))
             {
                 return {};
             }
 
-            const auto phdr_end = ehdr->e_phoff + phdr_bytes;
             if (phdr_end > runtime_module_metadata_read_limit)
             {
                 return {};
@@ -204,7 +250,7 @@ namespace sogen
 
         // Check for PT_INTERP — dynamic linker path
         const auto* ehdr = get_header(data_span);
-        const auto* phdrs = get_program_headers(data_span);
+        const auto* phdrs = get_checked_program_headers(data_span);
         bool has_interp = false;
 
         if (ehdr && phdrs)
@@ -219,19 +265,21 @@ namespace sogen
 
                 has_interp = true;
 
-                if (ph.p_offset + ph.p_filesz <= file_data.size())
+                if (!range_within_file(file_data.size(), ph.p_offset, ph.p_filesz))
                 {
-                    const auto* interp_str = reinterpret_cast<const char*>(file_data.data() + ph.p_offset);
-                    auto interp_len = ph.p_filesz;
-
-                    // Strip trailing null
-                    while (interp_len > 0 && interp_str[interp_len - 1] == '\0')
-                    {
-                        --interp_len;
-                    }
-
-                    this->interpreter_path = std::string(interp_str, static_cast<size_t>(interp_len));
+                    throw std::runtime_error("Invalid PT_INTERP file range in ELF: " + executable_path.string());
                 }
+
+                const auto* interp_str = reinterpret_cast<const char*>(file_data.data() + static_cast<size_t>(ph.p_offset));
+                auto interp_len = ph.p_filesz;
+
+                // Strip trailing null
+                while (interp_len > 0 && interp_str[interp_len - 1] == '\0')
+                {
+                    --interp_len;
+                }
+
+                this->interpreter_path = std::string(interp_str, static_cast<size_t>(interp_len));
 
                 break;
             }
@@ -308,7 +356,7 @@ namespace sogen
         }
 
         const auto* ehdr = get_header(data_span);
-        const auto* phdrs = get_program_headers(data_span);
+        const auto* phdrs = get_checked_program_headers(data_span);
         if (!ehdr || !phdrs)
         {
             return nullptr;
@@ -318,6 +366,11 @@ namespace sogen
         for (uint16_t i = 0; i < ehdr->e_phnum; ++i)
         {
             const auto& ph = phdrs[i];
+            if (ph.p_type == PT_LOAD && ph.p_filesz > ph.p_memsz)
+            {
+                return nullptr;
+            }
+
             if (ph.p_type == PT_LOAD)
             {
                 vaddr_min = std::min(vaddr_min, page_align_down(ph.p_vaddr));
@@ -339,14 +392,24 @@ namespace sogen
             }
 
             const auto segment_file_start = page_align_down(ph.p_offset);
-            const auto segment_file_end = page_align_up(ph.p_offset + std::max<uint64_t>(ph.p_filesz, 1));
+            uint64_t segment_file_limit = 0;
+            uint64_t segment_file_end = 0;
+            if (!checked_add_u64(ph.p_offset, std::max<uint64_t>(ph.p_filesz, 1), segment_file_limit) ||
+                !checked_page_align_up(segment_file_limit, segment_file_end))
+            {
+                return nullptr;
+            }
             if (file_offset < segment_file_start || file_offset >= segment_file_end)
             {
                 continue;
             }
 
             const auto segment_vaddr_start = page_align_down(ph.p_vaddr);
-            const auto relative_vaddr = (segment_vaddr_start - vaddr_min) + (file_offset - segment_file_start);
+            uint64_t relative_vaddr = 0;
+            if (!checked_add_u64(segment_vaddr_start - vaddr_min, file_offset - segment_file_start, relative_vaddr))
+            {
+                return nullptr;
+            }
             if (mapped_address < relative_vaddr)
             {
                 return nullptr;
