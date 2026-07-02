@@ -34,8 +34,8 @@ namespace sogen
     template <typename Traits>
     struct x86_emulator : arch_emulator<Traits>
     {
-        using register_type = typename Traits::register_type;
-        using pointer_type = typename Traits::pointer_type;
+        using register_type = Traits::register_type;
+        using pointer_type = Traits::pointer_type;
 
         virtual void set_segment_base(register_type base, pointer_type value) = 0;
         virtual pointer_type get_segment_base(register_type base) = 0;

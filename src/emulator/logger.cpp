@@ -1,7 +1,15 @@
-#include "std_include.hpp"
 #include "logger.hpp"
 
 #include <utils/finally.hpp>
+#include <utils/win.hpp>
+
+#include <algorithm>
+#include <array>
+#include <cstdarg>
+#include <cstdio>
+#include <span>
+#include <string>
+#include <string_view>
 
 namespace sogen
 {
@@ -127,7 +135,7 @@ namespace sogen
         }
     }
 
-#ifdef OS_WINDOWS
+#ifdef _WIN32
     logger::logger()
     {
         old_cp = GetConsoleOutputCP();

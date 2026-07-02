@@ -103,8 +103,10 @@ namespace sogen
             c.emu.write_memory(parent_tid_addr, &tid32, sizeof(tid32));
         }
 
-        // Insert the thread
-        c.proc.threads.emplace(new_tid, new_thread);
+        // Insert the thread and notify observers after native state is visible.
+        auto [thread_it, inserted] = c.proc.threads.emplace(new_tid, new_thread);
+        (void)inserted;
+        c.emu_ref.on_thread_create(thread_it->second);
 
         // Parent returns the child's tid
         write_linux_syscall_result(c, static_cast<int64_t>(new_tid));

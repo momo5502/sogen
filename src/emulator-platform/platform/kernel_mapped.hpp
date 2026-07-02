@@ -1554,22 +1554,22 @@ namespace sogen
     template <typename Traits>
     struct PS_ATTRIBUTE
     {
-        typename Traits::ULONG_PTR Attribute;
-        typename Traits::SIZE_T Size;
+        Traits::ULONG_PTR Attribute;
+        Traits::SIZE_T Size;
 
         union
         {
-            typename Traits::ULONG_PTR Value;
-            typename Traits::PVOID ValuePtr;
+            Traits::ULONG_PTR Value;
+            Traits::PVOID ValuePtr;
         };
 
-        EMULATOR_CAST(uint64_t, typename Traits::SIZE_T*) ReturnLength;
+        EMULATOR_CAST(uint64_t, Traits::SIZE_T*) ReturnLength;
     };
 
     template <typename Traits>
     struct PS_ATTRIBUTE_LIST
     {
-        typename Traits::SIZE_T TotalLength;
+        Traits::SIZE_T TotalLength;
         PS_ATTRIBUTE<Traits> Attributes[1];
     };
 

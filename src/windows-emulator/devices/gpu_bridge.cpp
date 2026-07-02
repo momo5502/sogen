@@ -1953,19 +1953,23 @@ namespace sogen
                 }
 
                 std::vector<vulkan_host::vertex_binding> bindings(request.binding_count);
-                for (uint32_t i = 0; i < request.binding_count; ++i)
+                size_t binding_offset = 0;
+                for (auto& binding : bindings)
                 {
                     gpu_bridge::vertex_input_binding b{};
-                    std::memcpy(&b, trailer.data() + i * sizeof(b), sizeof(b));
-                    bindings[i] = {.binding = b.binding, .stride = b.stride, .input_rate = b.input_rate};
+                    std::memcpy(&b, trailer.data() + binding_offset, sizeof(b));
+                    binding_offset += sizeof(b);
+                    binding = {.binding = b.binding, .stride = b.stride, .input_rate = b.input_rate};
                 }
 
                 std::vector<vulkan_host::vertex_attribute> attributes(request.attribute_count);
-                for (uint32_t i = 0; i < request.attribute_count; ++i)
+                size_t attribute_offset = bindings_bytes;
+                for (auto& attribute : attributes)
                 {
                     gpu_bridge::vertex_input_attribute a{};
-                    std::memcpy(&a, trailer.data() + bindings_bytes + i * sizeof(a), sizeof(a));
-                    attributes[i] = {.location = a.location, .binding = a.binding, .format = a.format, .offset = a.offset};
+                    std::memcpy(&a, trailer.data() + attribute_offset, sizeof(a));
+                    attribute_offset += sizeof(a);
+                    attribute = {.location = a.location, .binding = a.binding, .format = a.format, .offset = a.offset};
                 }
 
                 std::vector<uint32_t> dynamic_states(request.dynamic_state_count);
@@ -1990,12 +1994,12 @@ namespace sogen
                         return;
                     }
                     entries.resize(entry_count);
-                    for (uint32_t i = 0; i < entry_count; ++i)
+                    for (auto& entry : entries)
                     {
                         gpu_bridge::specialization_map_entry e{};
                         std::memcpy(&e, trailer.data() + spec_cursor, sizeof(e));
                         spec_cursor += sizeof(e);
-                        entries[i] = {.constant_id = e.constant_id, .offset = e.offset, .size = e.size};
+                        entry = {.constant_id = e.constant_id, .offset = e.offset, .size = e.size};
                     }
                     data.resize(data_size);
                     if (data_size > 0)
@@ -2021,15 +2025,15 @@ namespace sogen
                 std::vector<vulkan_host::color_blend_attachment> blend_attachments(blend_count);
                 for (uint32_t i = 0; i < blend_count; ++i)
                 {
-                    const gpu_bridge::pipeline_blend_attachment& b = request.blend_attachments[i];
-                    blend_attachments[i] = {.blend_enable = b.blend_enable,
-                                            .src_color_blend_factor = b.src_color_blend_factor,
-                                            .dst_color_blend_factor = b.dst_color_blend_factor,
-                                            .color_blend_op = b.color_blend_op,
-                                            .src_alpha_blend_factor = b.src_alpha_blend_factor,
-                                            .dst_alpha_blend_factor = b.dst_alpha_blend_factor,
-                                            .alpha_blend_op = b.alpha_blend_op,
-                                            .color_write_mask = b.color_write_mask};
+                    const gpu_bridge::pipeline_blend_attachment& b = request.blend_attachments.at(i);
+                    blend_attachments.at(i) = {.blend_enable = b.blend_enable,
+                                               .src_color_blend_factor = b.src_color_blend_factor,
+                                               .dst_color_blend_factor = b.dst_color_blend_factor,
+                                               .color_blend_op = b.color_blend_op,
+                                               .src_alpha_blend_factor = b.src_alpha_blend_factor,
+                                               .dst_alpha_blend_factor = b.dst_alpha_blend_factor,
+                                               .alpha_blend_op = b.alpha_blend_op,
+                                               .color_write_mask = b.color_write_mask};
                 }
 
                 uint64_t pipeline = gpu_bridge::null_object;
@@ -2077,12 +2081,14 @@ namespace sogen
                 }
 
                 std::vector<vulkan_host::descriptor_binding> bindings(wire.size());
-                for (size_t i = 0; i < wire.size(); ++i)
+                auto binding_out = bindings.begin();
+                for (const auto& entry : wire)
                 {
-                    bindings[i] = {.binding = wire[i].binding,
-                                   .descriptor_type = wire[i].descriptor_type,
-                                   .descriptor_count = wire[i].descriptor_count,
-                                   .stage_flags = wire[i].stage_flags};
+                    *binding_out = {.binding = entry.binding,
+                                    .descriptor_type = entry.descriptor_type,
+                                    .descriptor_count = entry.descriptor_count,
+                                    .stage_flags = entry.stage_flags};
+                    ++binding_out;
                 }
 
                 uint64_t layout = gpu_bridge::null_object;
@@ -2118,9 +2124,11 @@ namespace sogen
                 }
 
                 std::vector<vulkan_host::descriptor_pool_size> sizes(wire.size());
-                for (size_t i = 0; i < wire.size(); ++i)
+                auto size_out = sizes.begin();
+                for (const auto& entry : wire)
                 {
-                    sizes[i] = {.descriptor_type = wire[i].descriptor_type, .descriptor_count = wire[i].descriptor_count};
+                    *size_out = {.descriptor_type = entry.descriptor_type, .descriptor_count = entry.descriptor_count};
+                    ++size_out;
                 }
 
                 uint64_t pool = gpu_bridge::null_object;
@@ -2217,20 +2225,22 @@ namespace sogen
                 }
 
                 std::vector<vulkan_host::descriptor_write> writes(request.write_count);
-                for (size_t i = 0; i < request.write_count; ++i)
+                size_t write_offset = offset;
+                for (auto& write : writes)
                 {
                     gpu_bridge::descriptor_write w{};
-                    std::memcpy(&w, data + offset + i * sizeof(w), sizeof(w));
-                    writes[i] = {.dst_set = w.dst_set,
-                                 .dst_binding = w.dst_binding,
-                                 .dst_array_element = w.dst_array_element,
-                                 .descriptor_type = w.descriptor_type,
-                                 .buffer = w.buffer,
-                                 .offset = w.offset,
-                                 .range = w.range,
-                                 .sampler = w.sampler,
-                                 .image_view = w.image_view,
-                                 .image_layout = w.image_layout};
+                    std::memcpy(&w, data + write_offset, sizeof(w));
+                    write_offset += sizeof(w);
+                    write = {.dst_set = w.dst_set,
+                             .dst_binding = w.dst_binding,
+                             .dst_array_element = w.dst_array_element,
+                             .descriptor_type = w.descriptor_type,
+                             .buffer = w.buffer,
+                             .offset = w.offset,
+                             .range = w.range,
+                             .sampler = w.sampler,
+                             .image_view = w.image_view,
+                             .image_layout = w.image_layout};
                 }
                 offset += writes_bytes;
 
@@ -2497,11 +2507,13 @@ namespace sogen
                         return vk_error_initialization_failed;
                     }
                     std::vector<vulkan_host::buffer_copy> regions(req.region_count);
-                    for (uint32_t i = 0; i < req.region_count; ++i)
+                    size_t region_offset = sizeof(req);
+                    for (auto& region : regions)
                     {
                         gpu_bridge::buffer_copy_region r{};
-                        std::memcpy(&r, payload + sizeof(req) + i * sizeof(r), sizeof(r));
-                        regions[i] = vulkan_host::buffer_copy{.src_offset = r.src_offset, .dst_offset = r.dst_offset, .size = r.size};
+                        std::memcpy(&r, payload + region_offset, sizeof(r));
+                        region_offset += sizeof(r);
+                        region = vulkan_host::buffer_copy{.src_offset = r.src_offset, .dst_offset = r.dst_offset, .size = r.size};
                     }
                     return this->vulkan_.cmd_copy_buffer(req.command_buffer, req.src_buffer, req.dst_buffer, regions);
                 }
@@ -2585,12 +2597,18 @@ namespace sogen
                     }
                     std::vector<uint64_t> buffer_ids(req.binding_count);
                     std::vector<uint64_t> offsets(req.binding_count);
+                    auto buffer_id_out = buffer_ids.begin();
+                    auto offset_out = offsets.begin();
+                    size_t binding_offset = sizeof(req);
                     for (uint32_t i = 0; i < req.binding_count; ++i)
                     {
                         gpu_bridge::vertex_buffer_binding vb{};
-                        std::memcpy(&vb, payload + sizeof(req) + i * sizeof(vb), sizeof(vb));
-                        buffer_ids[i] = vb.buffer;
-                        offsets[i] = vb.offset;
+                        std::memcpy(&vb, payload + binding_offset, sizeof(vb));
+                        binding_offset += sizeof(vb);
+                        *buffer_id_out = vb.buffer;
+                        *offset_out = vb.offset;
+                        ++buffer_id_out;
+                        ++offset_out;
                     }
                     return this->vulkan_.cmd_bind_vertex_buffers(req.command_buffer, req.first_binding, req.binding_count,
                                                                  buffer_ids.data(), offsets.data());
@@ -2610,14 +2628,24 @@ namespace sogen
                     std::vector<uint64_t> offsets(req.binding_count);
                     std::vector<uint64_t> sizes(req.binding_count);
                     std::vector<uint64_t> strides(req.binding_count);
+                    auto buffer_id_out = buffer_ids.begin();
+                    auto offset_out = offsets.begin();
+                    auto size_out = sizes.begin();
+                    auto stride_out = strides.begin();
+                    size_t binding_offset = sizeof(req);
                     for (uint32_t i = 0; i < req.binding_count; ++i)
                     {
                         gpu_bridge::vertex_buffer_binding2 vb{};
-                        std::memcpy(&vb, payload + sizeof(req) + i * sizeof(vb), sizeof(vb));
-                        buffer_ids[i] = vb.buffer;
-                        offsets[i] = vb.offset;
-                        sizes[i] = vb.size;
-                        strides[i] = vb.stride;
+                        std::memcpy(&vb, payload + binding_offset, sizeof(vb));
+                        binding_offset += sizeof(vb);
+                        *buffer_id_out = vb.buffer;
+                        *offset_out = vb.offset;
+                        *size_out = vb.size;
+                        *stride_out = vb.stride;
+                        ++buffer_id_out;
+                        ++offset_out;
+                        ++size_out;
+                        ++stride_out;
                     }
                     return this->vulkan_.cmd_bind_vertex_buffers2(req.command_buffer, req.first_binding, req.binding_count,
                                                                   buffer_ids.data(), offsets.data(), req.has_sizes ? sizes.data() : nullptr,
@@ -2700,12 +2728,12 @@ namespace sogen
                         return a;
                     };
 
+                    size_t next = 0;
                     std::vector<vulkan_host::rendering_attachment> color(req.color_attachment_count);
-                    for (uint32_t i = 0; i < req.color_attachment_count; ++i)
+                    for (auto& attachment : color)
                     {
-                        color[i] = convert(i);
+                        attachment = convert(next++);
                     }
-                    size_t next = req.color_attachment_count;
                     vulkan_host::rendering_attachment depth{};
                     vulkan_host::rendering_attachment stencil{};
                     if (req.has_depth)

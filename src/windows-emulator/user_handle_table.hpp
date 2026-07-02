@@ -55,14 +55,14 @@ namespace sogen
             uint64_t wnd_message_bits_cursor = wnd_message_bits_addr_;
             for (size_t i = 0; i < WND_MESSAGE_BITS.size(); ++i)
             {
-                const auto byte_size = get_wnd_message_bits_byte_size(WND_MESSAGE_BITS[i].max_msgs);
+                const auto byte_size = get_wnd_message_bits_byte_size(WND_MESSAGE_BITS.at(i).max_msgs);
                 if (byte_size == 0)
                 {
                     continue;
                 }
 
-                wnd_message_bits_addrs_[i] = wnd_message_bits_cursor;
-                memory_->write_memory(wnd_message_bits_cursor, WND_MESSAGE_BITS[i].bits.data(), byte_size);
+                wnd_message_bits_addrs_.at(i) = wnd_message_bits_cursor;
+                memory_->write_memory(wnd_message_bits_cursor, WND_MESSAGE_BITS.at(i).bits.data(), byte_size);
                 wnd_message_bits_cursor += align_up(byte_size, alignof(uint32_t));
             }
         }
@@ -115,19 +115,19 @@ namespace sogen
                 },
                 index);
 
-            used_indices_[index] = true;
+            used_indices_.at(index) = true;
 
             return {make_handle(index, type, false), alloc_obj};
         }
 
         void free_index(uint32_t index)
         {
-            if (index >= used_indices_.size() || !used_indices_[index])
+            if (index >= used_indices_.size() || !used_indices_.at(index))
             {
                 return;
             }
 
-            used_indices_[index] = false;
+            used_indices_.at(index) = false;
 
             const emulator_object<USER_HANDLEENTRY> handle_table_obj(*memory_, handle_table_addr_);
             handle_table_obj.access(
@@ -251,8 +251,8 @@ namespace sogen
             }
 
             USER_WNDMSG message{};
-            message.maxMsgs = WND_MESSAGE_BITS[index].max_msgs;
-            message.abMsgs = wnd_message_bits_addrs_[index];
+            message.maxMsgs = WND_MESSAGE_BITS.at(index).max_msgs;
+            message.abMsgs = wnd_message_bits_addrs_.at(index);
             return message;
         }
 
@@ -260,7 +260,7 @@ namespace sogen
         {
             for (uint32_t i = 1; i < used_indices_.size(); ++i)
             {
-                if (!used_indices_[i])
+                if (!used_indices_.at(i))
                 {
                     return i;
                 }
@@ -430,7 +430,7 @@ namespace sogen
             return h;
         }
 
-        std::pair<typename value_map::iterator, bool> erase(const typename value_map::iterator& entry)
+        std::pair<typename value_map::iterator, bool> erase(const value_map::iterator& entry)
         {
             if (this->block_mutation_)
             {
@@ -511,7 +511,7 @@ namespace sogen
             return this->erase(make_handle(entry->first));
         }
 
-        typename value_map::iterator find(const T& value)
+        value_map::iterator find(const T& value)
         {
             auto i = this->store_.begin();
             for (; i != this->store_.end(); ++i)
@@ -524,7 +524,7 @@ namespace sogen
             return i;
         }
 
-        typename value_map::const_iterator find(const T& value) const
+        value_map::const_iterator find(const T& value) const
         {
             auto i = this->store_.begin();
             for (; i != this->store_.end(); ++i)
@@ -556,19 +556,19 @@ namespace sogen
             return this->find_handle(*value);
         }
 
-        typename value_map::iterator begin()
+        value_map::iterator begin()
         {
             return this->store_.begin();
         }
-        typename value_map::const_iterator begin() const
+        value_map::const_iterator begin() const
         {
             return this->store_.begin();
         }
-        typename value_map::iterator end()
+        value_map::iterator end()
         {
             return this->store_.end();
         }
-        typename value_map::const_iterator end() const
+        value_map::const_iterator end() const
         {
             return this->store_.end();
         }

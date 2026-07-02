@@ -80,17 +80,12 @@ namespace sogen
     {
         if (path == "/proc/self/exe")
         {
-            return emu.mod_manager.get_executable_path().string();
+            return emu.process.executable_path;
         }
 
         if (path == "/proc/self/cwd")
         {
-            // Return emulation root or "/"
-            if (!emu.emulation_root.empty())
-            {
-                return emu.emulation_root.string();
-            }
-            return "/";
+            return linux_file_system::normalize_guest_path_string(emu.process.current_working_directory);
         }
 
         // /proc/self/fd/N
@@ -106,6 +101,10 @@ namespace sogen
                 auto it = fds.find(fd_num);
                 if (it != fds.end())
                 {
+                    if (!it->second.guest_path.empty())
+                    {
+                        return linux_file_system::normalize_guest_path_string(it->second.guest_path);
+                    }
                     if (!it->second.host_path.empty())
                     {
                         return it->second.host_path;
@@ -370,7 +369,7 @@ namespace sogen
     {
         // /proc/self/stat: single line of process statistics
         // Format: pid (comm) state ppid pgrp session tty_nr tpgid flags ...
-        const auto& exe_path = emu.mod_manager.get_executable_path();
+        const auto exe_path = std::filesystem::path{emu.process.executable_path};
         auto comm = exe_path.filename().string();
 
         char buf[512];

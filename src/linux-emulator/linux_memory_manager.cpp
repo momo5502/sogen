@@ -1,6 +1,9 @@
 #include "std_include.hpp"
 #include "linux_memory_manager.hpp"
 
+#include <algorithm>
+#include <iterator>
+
 namespace sogen
 {
 
@@ -16,6 +19,34 @@ namespace sogen
         {
             region.length = static_cast<size_t>(buffer.read<uint64_t>());
             region.permissions = buffer.read<memory_permission>();
+        }
+    }
+
+    namespace
+    {
+        constexpr auto linux_private_allocation_kind = static_cast<memory_region_kind>(1);
+    }
+
+    linux_memory_region_info::linux_memory_region_info()
+        : kind(linux_private_allocation_kind)
+    {
+    }
+
+    namespace
+    {
+        linux_memory_region_info make_region_info(const uint64_t start, const linux_memory_manager::mapped_region& region)
+        {
+            linux_memory_region_info info{};
+            info.start = start;
+            info.length = region.length;
+            info.permissions = region.permissions;
+            info.allocation_base = start;
+            info.allocation_length = region.length;
+            info.is_reserved = false;
+            info.is_committed = true;
+            info.initial_permissions = region.permissions;
+            info.kind = linux_private_allocation_kind;
+            return info;
         }
     }
 
@@ -36,19 +67,31 @@ namespace sogen
 
     void linux_memory_manager::deserialize_memory_state(utils::buffer_deserializer& buffer)
     {
-        buffer.read(this->mmap_base_);
-        buffer.read_map(this->mapped_regions_);
+        const auto new_mmap_base = buffer.read<uint64_t>();
+        auto new_regions = buffer.read_map<mapped_region_map>();
 
-        std::vector<uint8_t> data{};
-
-        for (const auto& region : this->mapped_regions_)
+        std::vector<std::vector<uint8_t>> region_data{};
+        region_data.reserve(new_regions.size());
+        for (const auto& [_, region] : new_regions)
         {
-            data.resize(region.second.length);
-            buffer.read(data.data(), region.second.length);
-
-            this->map_memory(region.first, region.second.length, region.second.permissions);
-            this->write_memory(region.first, data.data(), region.second.length);
+            auto& data = region_data.emplace_back();
+            data.resize(region.length);
+            buffer.read(data.data(), region.length);
         }
+
+        this->unmap_all_memory();
+        this->mmap_base_ = new_mmap_base;
+        this->mapped_regions_.clear();
+
+        auto data_it = region_data.begin();
+        for (const auto& [base, region] : new_regions)
+        {
+            this->map_memory(base, region.length, region.permissions);
+            this->write_memory(base, data_it->data(), region.length);
+            ++data_it;
+        }
+
+        this->mapped_regions_ = std::move(new_regions);
     }
 
     bool linux_memory_manager::allocate_memory(const uint64_t address, const size_t size, const memory_permission permissions)
@@ -60,6 +103,7 @@ namespace sogen
 
         this->map_memory(address, size, permissions);
         this->mapped_regions_[address] = mapped_region{.length = size, .permissions = permissions};
+        this->notify_memory_allocate(address, size, permissions, true);
 
         return true;
     }
@@ -77,8 +121,40 @@ namespace sogen
 
     bool linux_memory_manager::protect_memory(const uint64_t address, const size_t size, const memory_permission permissions)
     {
+        if (size == 0 || address > std::numeric_limits<uint64_t>::max() - size)
+        {
+            return false;
+        }
+
+        const auto requested_end = address + size;
+        if (requested_end > std::numeric_limits<uint64_t>::max() - 0xFFF)
+        {
+            return false;
+        }
+
         const auto prot_start = page_align_down(address);
-        const auto prot_end = page_align_up(address + size);
+        const auto prot_end = page_align_up(requested_end);
+
+        auto covered_until = prot_start;
+        while (covered_until < prot_end)
+        {
+            auto it = this->mapped_regions_.upper_bound(covered_until);
+            if (it == this->mapped_regions_.begin())
+            {
+                return false;
+            }
+
+            --it;
+            const auto region_end = it->first + it->second.length;
+            if (it->first > covered_until || region_end <= covered_until)
+            {
+                return false;
+            }
+
+            covered_until = std::min(region_end, prot_end);
+        }
+
+        bool changed = false;
 
         // Collect regions to split (can't modify map while iterating)
         std::vector<std::pair<uint64_t, mapped_region>> to_add{};
@@ -99,6 +175,7 @@ namespace sogen
             {
                 this->apply_memory_protection(base, region.length, permissions);
                 region.permissions = permissions;
+                changed = true;
                 continue;
             }
 
@@ -118,6 +195,7 @@ namespace sogen
             const auto overlap_len = static_cast<size_t>(overlap_end - overlap_start);
             this->apply_memory_protection(overlap_start, overlap_len, permissions);
             to_add.push_back({overlap_start, {.length = overlap_len, .permissions = permissions}});
+            changed = true;
 
             // Part after the protected range
             if (region_end > prot_end)
@@ -137,6 +215,11 @@ namespace sogen
             this->mapped_regions_[addr] = region;
         }
 
+        if (changed)
+        {
+            this->notify_memory_protect(address, size, permissions);
+        }
+
         return true;
     }
 
@@ -150,13 +233,17 @@ namespace sogen
                 return false;
             }
 
-            this->unmap_memory(it->first, it->second.length);
+            const auto release_start = it->first;
+            const auto release_size = it->second.length;
+            this->unmap_memory(release_start, release_size);
             this->mapped_regions_.erase(it);
+            this->notify_memory_release(release_start, release_size);
             return true;
         }
 
         const auto aligned_start = page_align_down(address);
         const auto aligned_end = page_align_up(address + size);
+        bool changed = false;
 
         // Collect regions to split/remove
         std::vector<std::pair<uint64_t, mapped_region>> to_add{};
@@ -192,6 +279,7 @@ namespace sogen
             const auto unmap_start = std::max(base, aligned_start);
             const auto unmap_end = std::min(region_end, aligned_end);
             this->unmap_memory(unmap_start, static_cast<size_t>(unmap_end - unmap_start));
+            changed = true;
         }
 
         for (const auto& key : to_remove)
@@ -204,7 +292,115 @@ namespace sogen
             this->mapped_regions_[addr] = region;
         }
 
+        if (changed)
+        {
+            this->notify_memory_release(aligned_start, static_cast<size_t>(aligned_end - aligned_start));
+        }
+
         return true;
+    }
+
+    std::vector<linux_memory_region_info> linux_memory_manager::get_mapped_region_infos() const
+    {
+        std::vector<linux_memory_region_info> regions{};
+        regions.reserve(this->mapped_regions_.size());
+
+        for (const auto& [start, region] : this->mapped_regions_)
+        {
+            regions.push_back(make_region_info(start, region));
+        }
+
+        return regions;
+    }
+
+    std::optional<linux_memory_region_info> linux_memory_manager::get_region_info(const uint64_t address) const
+    {
+        const auto upper_bound = this->mapped_regions_.upper_bound(address);
+        if (upper_bound == this->mapped_regions_.begin())
+        {
+            return std::nullopt;
+        }
+
+        const auto entry = std::prev(upper_bound);
+        const auto start = entry->first;
+        const auto& region = entry->second;
+        if (address >= start + region.length)
+        {
+            return std::nullopt;
+        }
+
+        return make_region_info(start, region);
+    }
+
+    linux_memory_stats linux_memory_manager::compute_memory_stats() const
+    {
+        linux_memory_stats stats{};
+        stats.region_count = this->mapped_regions_.size();
+
+        for (const auto& [_, region] : this->mapped_regions_)
+        {
+            stats.mapped_bytes += region.length;
+            if ((region.permissions & memory_permission::exec) != memory_permission::none)
+            {
+                stats.executable_bytes += region.length;
+            }
+        }
+
+        return stats;
+    }
+
+    uint64_t linux_memory_manager::add_memory_allocate_callback(memory_allocate_callback callback)
+    {
+        const auto id = this->next_memory_callback_id_++;
+        this->memory_allocate_callbacks_.emplace_back(id, std::move(callback));
+        return id;
+    }
+
+    uint64_t linux_memory_manager::add_memory_protect_callback(memory_protect_callback callback)
+    {
+        const auto id = this->next_memory_callback_id_++;
+        this->memory_protect_callbacks_.emplace_back(id, std::move(callback));
+        return id;
+    }
+
+    uint64_t linux_memory_manager::add_memory_release_callback(memory_release_callback callback)
+    {
+        const auto id = this->next_memory_callback_id_++;
+        this->memory_release_callbacks_.emplace_back(id, std::move(callback));
+        return id;
+    }
+
+    void linux_memory_manager::remove_memory_callback(const uint64_t id)
+    {
+        const auto remove_id = [id](const auto& entry) { return entry.first == id; };
+        std::erase_if(this->memory_allocate_callbacks_, remove_id);
+        std::erase_if(this->memory_protect_callbacks_, remove_id);
+        std::erase_if(this->memory_release_callbacks_, remove_id);
+    }
+
+    void linux_memory_manager::notify_memory_allocate(const uint64_t address, const size_t size, const memory_permission permissions,
+                                                      const bool committed)
+    {
+        for (const auto& [_, callback] : this->memory_allocate_callbacks_)
+        {
+            callback(address, size, permissions, committed);
+        }
+    }
+
+    void linux_memory_manager::notify_memory_protect(const uint64_t address, const size_t size, const memory_permission permissions)
+    {
+        for (const auto& [_, callback] : this->memory_protect_callbacks_)
+        {
+            callback(address, size, permissions);
+        }
+    }
+
+    void linux_memory_manager::notify_memory_release(const uint64_t address, const size_t size)
+    {
+        for (const auto& [_, callback] : this->memory_release_callbacks_)
+        {
+            callback(address, size);
+        }
     }
 
     void linux_memory_manager::unmap_all_memory()

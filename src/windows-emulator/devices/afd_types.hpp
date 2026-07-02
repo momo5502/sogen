@@ -40,11 +40,11 @@ namespace sogen
     struct TDI_CONNECTION_INFORMATION
     {
         LONG UserDataLength;
-        typename Traits::PVOID UserData;
+        Traits::PVOID UserData;
         LONG OptionsLength;
-        typename Traits::PVOID Options;
+        Traits::PVOID Options;
         LONG RemoteAddressLength;
-        typename Traits::PVOID RemoteAddress;
+        Traits::PVOID RemoteAddress;
     };
 
     template <typename Traits>
@@ -52,13 +52,13 @@ namespace sogen
     {
         union
         {
-            typename Traits::HANDLE AddressHandle;
-            EMULATOR_CAST(typename Traits::PVOID, CONNECTION_CONTEXT) ConnectionContext;
-            typename Traits::HANDLE ControlChannel;
+            Traits::HANDLE AddressHandle;
+            EMULATOR_CAST(Traits::PVOID, CONNECTION_CONTEXT) ConnectionContext;
+            Traits::HANDLE ControlChannel;
         } Handle;
 
-        typename Traits::PVOID RequestNotifyObject;
-        typename Traits::PVOID RequestContext;
+        Traits::PVOID RequestNotifyObject;
+        Traits::PVOID RequestContext;
         TDI_STATUS TdiStatus;
     };
 
@@ -66,13 +66,13 @@ namespace sogen
     struct TDI_REQUEST_SEND_DATAGRAM
     {
         TDI_REQUEST<Traits> Request;
-        EMULATOR_CAST(typename Traits::PVOID, PTDI_CONNECTION_INFORMATION) SendDatagramInformation;
+        EMULATOR_CAST(Traits::PVOID, PTDI_CONNECTION_INFORMATION) SendDatagramInformation;
     };
 
     template <typename Traits>
     struct AFD_SEND_INFO
     {
-        EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
+        EMULATOR_CAST(Traits::PVOID, LPWSABUF) BufferArray;
         ULONG BufferCount;
         ULONG AfdFlags;
         ULONG TdiFlags;
@@ -81,7 +81,7 @@ namespace sogen
     template <typename Traits>
     struct AFD_SEND_DATAGRAM_INFO
     {
-        EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
+        EMULATOR_CAST(Traits::PVOID, LPWSABUF) BufferArray;
         ULONG BufferCount;
         ULONG AfdFlags;
         TDI_REQUEST_SEND_DATAGRAM<Traits> TdiRequest;
@@ -91,7 +91,7 @@ namespace sogen
     template <typename Traits>
     struct AFD_RECV_INFO
     {
-        EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
+        EMULATOR_CAST(Traits::PVOID, LPWSABUF) BufferArray;
         ULONG BufferCount;
         ULONG AfdFlags;
         ULONG TdiFlags;
@@ -100,12 +100,12 @@ namespace sogen
     template <typename Traits>
     struct AFD_RECV_DATAGRAM_INFO
     {
-        EMULATOR_CAST(typename Traits::PVOID, LPWSABUF) BufferArray;
+        EMULATOR_CAST(Traits::PVOID, LPWSABUF) BufferArray;
         ULONG BufferCount;
         ULONG AfdFlags;
         ULONG TdiFlags;
-        typename Traits::PVOID Address;
-        EMULATOR_CAST(typename Traits::PVOID, PULONG) AddressLength;
+        Traits::PVOID Address;
+        EMULATOR_CAST(Traits::PVOID, PULONG) AddressLength;
     };
 
     template <typename Traits>

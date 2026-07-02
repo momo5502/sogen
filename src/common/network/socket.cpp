@@ -168,7 +168,7 @@ namespace sogen::network
         for (size_t i = 0; i < sockets.size(); ++i)
         {
             auto& pfd = pfds.at(i);
-            const auto& socket = sockets[i];
+            const auto* socket = sockets.subspan(i, 1).front();
 
             pfd.fd = socket->get_socket();
             pfd.events = in_poll ? POLLIN : POLLOUT;

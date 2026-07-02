@@ -23,6 +23,7 @@ namespace sogen::unicorn
 
         constexpr auto IA32_FS_BASE_MSR = 0xC0000100;
         constexpr auto IA32_GS_BASE_MSR = 0xC0000101;
+        constexpr uint64_t syscall_instruction_size = 2;
 
         struct msr_value
         {
@@ -441,7 +442,13 @@ namespace sogen::unicorn
                 }
                 else if (inst_type == x86_hookable_instructions::syscall)
                 {
-                    function_wrapper<void, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) { (void)c(0); });
+                    function_wrapper<void, uc_engine*> wrapper([c = std::move(callback), this](uc_engine*) {
+                        const auto continuation = c(0);
+                        if (continuation == instruction_hook_continuation::finalized_instruction_pointer)
+                        {
+                            this->reg(x86_register::rip, this->read_instruction_pointer() - syscall_instruction_size);
+                        }
+                    });
 
                     const auto uc_instruction = map_hookable_instruction(inst_type);
                     uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INSN, wrapper.get_function(), wrapper.get_user_data(), 0,
@@ -567,8 +574,16 @@ namespace sogen::unicorn
             emulator_hook* hook_memory_range_execution(const uint64_t address, const uint64_t size,
                                                        memory_execution_hook_callback callback) override
             {
-                auto exec_wrapper = [c = std::move(callback)](uc_engine*, const uint64_t address, const uint32_t /*size*/) {
-                    c(address); //
+                auto exec_wrapper = [c = std::move(callback), this](uc_engine*, const uint64_t address, const uint32_t /*size*/) {
+                    const auto old_ip = this->read_instruction_pointer();
+                    c(address);
+
+                    const auto new_ip = this->read_instruction_pointer();
+                    if (new_ip != old_ip)
+                    {
+                        this->violation_ip_ = new_ip;
+                        uce(uc_emu_stop(*this));
+                    }
                 };
 
                 function_wrapper<void, uc_engine*, uint64_t, uint32_t> wrapper(std::move(exec_wrapper));

@@ -22,6 +22,14 @@ namespace sogen
 
     using namespace linux_errno; // NOLINT(google-build-using-namespace)
 
+    void cleanup_linux_socket_state(int fd);
+    bool linux_socket_has_host_socket(const linux_fd& fd_entry);
+    void linux_socket_apply_fd_flags(int fd, const linux_fd& fd_entry);
+    int64_t linux_socket_send_guest_buffer(const linux_syscall_context& c, int fd, uint64_t buf_addr, size_t count, int flags);
+    int64_t linux_socket_recv_guest_buffer(const linux_syscall_context& c, int fd, uint64_t buf_addr, size_t count, int flags);
+    int64_t linux_socket_writev_from_guest(const linux_syscall_context& c, int fd, uint64_t iov_addr, int iovcnt);
+    int64_t linux_socket_readv_to_guest(const linux_syscall_context& c, int fd, uint64_t iov_addr, int iovcnt);
+
 #ifdef _WIN32
 #define lstat stat
 #endif
@@ -97,6 +105,7 @@ namespace sogen
         {
             linux_fd fd{};
             fd.type = fd_type::memory_file;
+            fd.guest_path = path;
             fd.host_path = std::move(path);
             fd.memory_file = std::make_shared<linux_memory_fd>();
             fd.memory_file->content = std::move(content);
@@ -393,19 +402,84 @@ namespace sogen
             }
         }
 
+        bool open_flags_mutate_file(const int flags)
+        {
+            const auto access = flags & 3;
+            return access == LINUX_O_WRONLY || access == LINUX_O_RDWR || (flags & (LINUX_O_CREAT | LINUX_O_TRUNC)) != 0;
+        }
+
+        bool fd_allows_read(const linux_fd& fd)
+        {
+            return fd.type != fd_type::file || (fd.flags & 3) != LINUX_O_WRONLY;
+        }
+
+        std::optional<std::string> resolve_guest_path_name_at(const linux_syscall_context& c, const int dirfd,
+                                                              const std::string& guest_path, int64_t& linux_error)
+        {
+            linux_error = LINUX_EBADF;
+
+            if (guest_path.starts_with('/') || guest_path.starts_with('\\'))
+            {
+                return linux_file_system::normalize_guest_path_string(guest_path);
+            }
+
+            if (dirfd == LINUX_AT_FDCWD)
+            {
+                return linux_file_system::resolve_guest_path_string(c.proc.current_working_directory, guest_path);
+            }
+
+            auto* fd_entry = c.proc.fds.get(dirfd);
+            if (!fd_entry)
+            {
+                return std::nullopt;
+            }
+
+            if (fd_entry->type != fd_type::directory)
+            {
+                linux_error = LINUX_ENOTDIR;
+                return std::nullopt;
+            }
+
+            if (fd_entry->guest_path.empty())
+            {
+                return std::nullopt;
+            }
+
+            return linux_file_system::resolve_guest_path_string(fd_entry->guest_path, guest_path);
+        }
+
+        bool is_read_only_guest_path_at(const linux_syscall_context& c, const int dirfd, const std::string& guest_path)
+        {
+            int64_t resolve_error{};
+            const auto resolved_guest = resolve_guest_path_name_at(c, dirfd, guest_path, resolve_error);
+            return resolved_guest.has_value() && c.emu_ref.file_sys.is_read_only_guest_path(*resolved_guest);
+        }
+
         std::optional<std::filesystem::path> resolve_guest_path_at(const linux_syscall_context& c, const int dirfd,
                                                                    const std::string& guest_path, int64_t& linux_error)
         {
             linux_error = LINUX_EBADF;
 
-            if (guest_path.starts_with('/'))
+            if (guest_path.starts_with('/') || guest_path.starts_with('\\'))
             {
-                return c.emu_ref.file_sys.translate(guest_path);
+                const auto normalized_guest = linux_file_system::normalize_guest_path_string(guest_path);
+                if (procfs::is_procfs_path(normalized_guest) || procfs::is_procfs_symlink(normalized_guest))
+                {
+                    linux_error = LINUX_ENOENT;
+                    return std::nullopt;
+                }
+                return c.emu_ref.file_sys.translate(normalized_guest);
             }
 
             if (dirfd == LINUX_AT_FDCWD)
             {
-                return c.emu_ref.file_sys.translate(guest_path);
+                const auto normalized_guest = linux_file_system::resolve_guest_path_string(c.proc.current_working_directory, guest_path);
+                if (procfs::is_procfs_path(normalized_guest) || procfs::is_procfs_symlink(normalized_guest))
+                {
+                    linux_error = LINUX_ENOENT;
+                    return std::nullopt;
+                }
+                return c.emu_ref.file_sys.translate(normalized_guest);
             }
 
             auto* fd_entry = c.proc.fds.get(dirfd);
@@ -425,7 +499,40 @@ namespace sogen
                 return std::nullopt;
             }
 
+            if (!fd_entry->guest_path.empty())
+            {
+                const auto normalized_guest = linux_file_system::resolve_guest_path_string(fd_entry->guest_path, guest_path);
+                if (procfs::is_procfs_path(normalized_guest) || procfs::is_procfs_symlink(normalized_guest))
+                {
+                    linux_error = LINUX_ENOENT;
+                    return std::nullopt;
+                }
+                return c.emu_ref.file_sys.translate(normalized_guest);
+            }
+
             return c.emu_ref.file_sys.translate_relative_to(fd_entry->host_path, guest_path);
+        }
+
+        std::filesystem::path make_host_symlink_target(const linux_syscall_context& c, const std::string& target_guest,
+                                                       const std::string& resolved_link_guest, const std::filesystem::path& linkpath_host)
+        {
+            if (target_guest.empty())
+            {
+                return {};
+            }
+
+            const auto link_parent_guest_path = linux_file_system::normalize_guest_path(resolved_link_guest).parent_path();
+            const auto link_parent_guest = link_parent_guest_path.empty() ? std::string{"/"} : link_parent_guest_path.string();
+            const auto resolved_target_guest = linux_file_system::resolve_guest_path_string(link_parent_guest, target_guest);
+            auto target_host = c.emu_ref.file_sys.translate(resolved_target_guest).lexically_normal();
+            const auto link_parent_host = linkpath_host.parent_path().lexically_normal();
+            auto relative_target = target_host.lexically_relative(link_parent_host);
+            if (!relative_target.empty())
+            {
+                return relative_target;
+            }
+
+            return target_host;
         }
 
 #pragma pack(push, 1)
@@ -685,6 +792,18 @@ namespace sogen
             return;
         }
 
+        if (fd_entry->type == fd_type::socket && linux_socket_has_host_socket(*fd_entry))
+        {
+            write_linux_syscall_result(c, linux_socket_recv_guest_buffer(c, fd, buf_addr, count, 0));
+            return;
+        }
+
+        if (!fd_allows_read(*fd_entry))
+        {
+            write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
         if (fd_entry->host_path == "/dev/stdin")
         {
             // stdin: return 0 (EOF) for now
@@ -778,6 +897,12 @@ namespace sogen
             return;
         }
 
+        if (fd_entry->type == fd_type::socket && linux_socket_has_host_socket(*fd_entry))
+        {
+            write_linux_syscall_result(c, linux_socket_send_guest_buffer(c, fd, buf_addr, count, 0));
+            return;
+        }
+
         std::vector<uint8_t> buffer(count);
         c.emu.read_memory(buf_addr, buffer.data(), count);
 
@@ -829,6 +954,12 @@ namespace sogen
             return;
         }
 
+        if (fd_entry->read_only_mapping)
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
+
         const auto written = fwrite(buffer.data(), 1, count, fd_entry->handle);
         write_linux_syscall_result(c, static_cast<int64_t>(written));
     }
@@ -841,25 +972,53 @@ namespace sogen
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
 
-        // Intercept procfs paths
-        if (procfs::is_procfs_path(guest_path))
+        int64_t resolve_error{};
+        auto resolved_guest = resolve_guest_path_name_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved_guest.has_value())
         {
-            auto content = procfs::generate_content(c.emu_ref, guest_path);
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+
+        // Intercept procfs paths after guest-path resolution so cwd-relative
+        // opens from /proc/self never escape to the host /proc filesystem.
+        if (procfs::is_procfs_path(*resolved_guest))
+        {
+            if (open_flags_mutate_file(flags))
+            {
+                write_linux_syscall_result(c, -LINUX_EACCES);
+                return;
+            }
+
+            auto content = procfs::generate_content(c.emu_ref, *resolved_guest);
             if (!content)
             {
                 write_linux_syscall_result(c, -LINUX_ENOENT);
                 return;
             }
 
-            auto new_fd = make_memory_file_fd(guest_path, std::move(*content), flags);
+            auto new_fd = make_memory_file_fd(*resolved_guest, std::move(*content), flags);
 
             const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
             write_linux_syscall_result(c, fd_num);
             return;
         }
 
-        const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
 
+        const auto read_only_mapping = c.emu_ref.file_sys.is_read_only_guest_path(*resolved_guest);
+        if (read_only_mapping && open_flags_mutate_file(flags))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
+
+        const auto& host_path = *resolved;
         if (flags & LINUX_O_DIRECTORY)
         {
             if (!std::filesystem::exists(host_path))
@@ -877,7 +1036,9 @@ namespace sogen
             linux_fd new_fd{};
             new_fd.type = fd_type::directory;
             new_fd.host_path = host_path.string();
+            new_fd.guest_path = resolved_guest.value_or(std::string{});
             new_fd.flags = flags;
+            new_fd.read_only_mapping = read_only_mapping;
             new_fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
             const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
@@ -896,8 +1057,10 @@ namespace sogen
         linux_fd new_fd{};
         new_fd.type = fd_type::file;
         new_fd.host_path = host_path.string();
+        new_fd.guest_path = resolved_guest.value_or(std::string{});
         new_fd.handle = handle;
         new_fd.flags = flags;
+        new_fd.read_only_mapping = read_only_mapping;
         new_fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
         const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
@@ -915,6 +1078,7 @@ namespace sogen
         }
 
         cleanup_closed_fd(c.proc, fd);
+        cleanup_linux_socket_state(fd);
 
         write_linux_syscall_result(c, 0);
     }
@@ -1015,14 +1179,23 @@ namespace sogen
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
 
-        // Intercept procfs paths — they always "exist"
-        if (procfs::is_procfs_path(guest_path) || procfs::is_procfs_symlink(guest_path))
+        int64_t resolve_error{};
+        auto resolved_guest = resolve_guest_path_name_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+
+        // Intercept procfs paths after resolving relative names against guest cwd.
+        if (resolved_guest.has_value() && (procfs::is_procfs_path(*resolved_guest) || procfs::is_procfs_symlink(*resolved_guest)))
         {
             write_linux_syscall_result(c, 0);
             return;
         }
 
-        const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+        const auto& host_path = *resolved;
 
         if (std::filesystem::exists(host_path))
         {
@@ -1043,24 +1216,38 @@ namespace sogen
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
 
-        // Intercept procfs paths
-        if (procfs::is_procfs_path(guest_path))
+        int64_t resolve_error{};
+        auto resolved_guest = resolve_guest_path_name_at(c, dirfd, guest_path, resolve_error);
+        if (!resolved_guest.has_value())
         {
-            auto content = procfs::generate_content(c.emu_ref, guest_path);
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+
+        // Intercept procfs paths after guest-path resolution so dirfd/cwd-relative
+        // opens are handled by the emulator, not the host /proc filesystem.
+        if (procfs::is_procfs_path(*resolved_guest))
+        {
+            if (open_flags_mutate_file(flags))
+            {
+                write_linux_syscall_result(c, -LINUX_EACCES);
+                return;
+            }
+
+            auto content = procfs::generate_content(c.emu_ref, *resolved_guest);
             if (!content)
             {
                 write_linux_syscall_result(c, -LINUX_ENOENT);
                 return;
             }
 
-            auto new_fd = make_memory_file_fd(guest_path, std::move(*content), flags);
+            auto new_fd = make_memory_file_fd(*resolved_guest, std::move(*content), flags);
 
             const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
             write_linux_syscall_result(c, fd_num);
             return;
         }
 
-        int64_t resolve_error{};
         auto resolved = resolve_guest_path_at(c, dirfd, guest_path, resolve_error);
         if (!resolved.has_value())
         {
@@ -1069,6 +1256,12 @@ namespace sogen
         }
 
         const auto& host_path = *resolved;
+        const auto read_only_mapping = c.emu_ref.file_sys.is_read_only_guest_path(*resolved_guest);
+        if (read_only_mapping && open_flags_mutate_file(flags))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
 
         if (flags & LINUX_O_DIRECTORY)
         {
@@ -1087,7 +1280,9 @@ namespace sogen
             linux_fd new_fd{};
             new_fd.type = fd_type::directory;
             new_fd.host_path = host_path.string();
+            new_fd.guest_path = resolved_guest.value_or(std::string{});
             new_fd.flags = flags;
+            new_fd.read_only_mapping = read_only_mapping;
             new_fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
             const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
@@ -1106,8 +1301,10 @@ namespace sogen
         linux_fd new_fd{};
         new_fd.type = fd_type::file;
         new_fd.host_path = host_path.string();
+        new_fd.guest_path = resolved_guest.value_or(std::string{});
         new_fd.handle = handle;
         new_fd.flags = flags;
+        new_fd.read_only_mapping = read_only_mapping;
         new_fd.close_on_exec = (flags & LINUX_O_CLOEXEC) != 0;
 
         const auto fd_num = c.proc.fds.allocate(std::move(new_fd));
@@ -1121,11 +1318,14 @@ namespace sogen
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
 
-        // Intercept procfs paths
-        if (procfs::is_procfs_path(guest_path))
+        int64_t resolve_error{};
+        auto resolved_guest = resolve_guest_path_name_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+
+        // Intercept procfs paths after guest-path resolution.
+        if (resolved_guest.has_value() && procfs::is_procfs_path(*resolved_guest))
         {
             linux_stat ls{};
-            if (procfs::stat_procfs(c.emu_ref, guest_path, ls))
+            if (procfs::stat_procfs(c.emu_ref, *resolved_guest, ls))
             {
                 c.emu.write_memory(buf_addr, &ls, sizeof(ls));
                 write_linux_syscall_result(c, 0);
@@ -1137,7 +1337,13 @@ namespace sogen
             return;
         }
 
-        const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+        const auto& host_path = *resolved;
 
         linux_stat ls{};
         if (!fill_linux_stat(ls, host_path))
@@ -1157,11 +1363,14 @@ namespace sogen
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
 
-        // Intercept procfs paths (important for symlinks like /proc/self/exe)
-        if (procfs::is_procfs_path(guest_path) || procfs::is_procfs_symlink(guest_path))
+        int64_t resolve_error{};
+        auto resolved_guest = resolve_guest_path_name_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+
+        // Intercept procfs paths after guest-path resolution (important for symlinks like /proc/self/exe)
+        if (resolved_guest.has_value() && (procfs::is_procfs_path(*resolved_guest) || procfs::is_procfs_symlink(*resolved_guest)))
         {
             linux_stat ls{};
-            if (procfs::stat_procfs(c.emu_ref, guest_path, ls))
+            if (procfs::stat_procfs(c.emu_ref, *resolved_guest, ls))
             {
                 c.emu.write_memory(buf_addr, &ls, sizeof(ls));
                 write_linux_syscall_result(c, 0);
@@ -1173,7 +1382,13 @@ namespace sogen
             return;
         }
 
-        const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+        const auto& host_path = *resolved;
 
         linux_stat ls{};
         if (!fill_linux_stat(ls, host_path, false))
@@ -1195,6 +1410,18 @@ namespace sogen
 
         auto* fd_entry = c.proc.fds.get(fd);
         if (!fd_entry)
+        {
+            write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
+        if (fd_entry->type == fd_type::socket && linux_socket_has_host_socket(*fd_entry))
+        {
+            write_linux_syscall_result(c, linux_socket_recv_guest_buffer(c, fd, buf_addr, count, 0));
+            return;
+        }
+
+        if (!fd_allows_read(*fd_entry))
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
             return;
@@ -1256,6 +1483,18 @@ namespace sogen
         if (!fd_entry)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
+        if (fd_entry->type == fd_type::socket && linux_socket_has_host_socket(*fd_entry))
+        {
+            write_linux_syscall_result(c, linux_socket_writev_from_guest(c, fd, iov_addr, iovcnt));
+            return;
+        }
+
+        if (fd_entry->read_only_mapping)
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
             return;
         }
 
@@ -1420,6 +1659,7 @@ namespace sogen
             break;
         case LINUX_F_SETFL:
             fd_entry->flags = static_cast<int>(arg);
+            linux_socket_apply_fd_flags(fd, *fd_entry);
             write_linux_syscall_result(c, 0);
             break;
         default:
@@ -1433,8 +1673,8 @@ namespace sogen
         const auto buf_addr = get_linux_syscall_argument(c.emu, 0);
         const auto size = static_cast<size_t>(get_linux_syscall_argument(c.emu, 1));
 
-        const char* cwd = "/";
-        const auto cwd_len = strlen(cwd) + 1;
+        const auto cwd = linux_file_system::normalize_guest_path_string(c.proc.current_working_directory);
+        const auto cwd_len = cwd.size() + 1;
 
         if (size < cwd_len)
         {
@@ -1442,8 +1682,86 @@ namespace sogen
             return;
         }
 
-        c.emu.write_memory(buf_addr, cwd, cwd_len);
-        write_linux_syscall_result(c, static_cast<int64_t>(buf_addr));
+        c.emu.write_memory(buf_addr, cwd.c_str(), cwd_len);
+        write_linux_syscall_result(c, static_cast<int64_t>(cwd_len));
+    }
+
+    void sys_chdir(const linux_syscall_context& c)
+    {
+        const auto path_addr = get_linux_syscall_argument(c.emu, 0);
+        const auto guest_path = read_string<char>(c.emu, path_addr);
+
+        int64_t resolve_error{};
+        auto resolved_guest = resolve_guest_path_name_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved_guest.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+
+        if (procfs::is_procfs_path(*resolved_guest))
+        {
+            linux_stat ls{};
+            if (!procfs::stat_procfs(c.emu_ref, *resolved_guest, ls))
+            {
+                write_linux_syscall_result(c, -LINUX_ENOENT);
+                return;
+            }
+            if ((ls.st_mode & 0170000) != 040000)
+            {
+                write_linux_syscall_result(c, -LINUX_ENOTDIR);
+                return;
+            }
+
+            c.proc.current_working_directory = std::move(*resolved_guest);
+            write_linux_syscall_result(c, 0);
+            return;
+        }
+
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+
+        if (!std::filesystem::exists(*resolved))
+        {
+            write_linux_syscall_result(c, -LINUX_ENOENT);
+            return;
+        }
+        if (!std::filesystem::is_directory(*resolved))
+        {
+            write_linux_syscall_result(c, -LINUX_ENOTDIR);
+            return;
+        }
+
+        c.proc.current_working_directory = std::move(*resolved_guest);
+        write_linux_syscall_result(c, 0);
+    }
+
+    void sys_fchdir(const linux_syscall_context& c)
+    {
+        const auto fd = static_cast<int>(get_linux_syscall_argument(c.emu, 0));
+        auto* fd_entry = c.proc.fds.get(fd);
+        if (!fd_entry)
+        {
+            write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+        if (fd_entry->type != fd_type::directory)
+        {
+            write_linux_syscall_result(c, -LINUX_ENOTDIR);
+            return;
+        }
+        if (fd_entry->guest_path.empty())
+        {
+            write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
+        c.proc.current_working_directory = linux_file_system::normalize_guest_path_string(fd_entry->guest_path);
+        write_linux_syscall_result(c, 0);
     }
 
     void sys_readlink(const linux_syscall_context& c)
@@ -1454,10 +1772,13 @@ namespace sogen
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
 
-        // Intercept procfs symlinks
-        if (procfs::is_procfs_symlink(guest_path))
+        int64_t resolve_error{};
+        auto resolved_guest = resolve_guest_path_name_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+
+        // Intercept procfs symlinks after resolving relative names against guest cwd.
+        if (resolved_guest.has_value() && procfs::is_procfs_symlink(*resolved_guest))
         {
-            auto target = procfs::resolve_symlink(c.emu_ref, guest_path);
+            auto target = procfs::resolve_symlink(c.emu_ref, *resolved_guest);
             if (!target)
             {
                 write_linux_syscall_result(c, -LINUX_ENOENT);
@@ -1469,10 +1790,15 @@ namespace sogen
             return;
         }
 
-        const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
 
         std::error_code ec{};
-        const auto target = std::filesystem::read_symlink(host_path, ec);
+        const auto target = std::filesystem::read_symlink(*resolved, ec);
         if (ec)
         {
             write_linux_syscall_result(c, -LINUX_EINVAL);
@@ -1494,10 +1820,13 @@ namespace sogen
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
 
-        // Intercept procfs symlinks
-        if (procfs::is_procfs_symlink(guest_path))
+        int64_t resolve_error{};
+        auto resolved_guest = resolve_guest_path_name_at(c, dirfd, guest_path, resolve_error);
+
+        // Intercept procfs symlinks after guest-path resolution.
+        if (resolved_guest.has_value() && procfs::is_procfs_symlink(*resolved_guest))
         {
-            auto target = procfs::resolve_symlink(c.emu_ref, guest_path);
+            auto target = procfs::resolve_symlink(c.emu_ref, *resolved_guest);
             if (!target)
             {
                 write_linux_syscall_result(c, -LINUX_ENOENT);
@@ -1509,7 +1838,6 @@ namespace sogen
             return;
         }
 
-        int64_t resolve_error{};
         auto resolved = resolve_guest_path_at(c, dirfd, guest_path, resolve_error);
         if (!resolved.has_value())
         {
@@ -1684,11 +2012,14 @@ namespace sogen
             return;
         }
 
-        // Intercept procfs paths
-        if (procfs::is_procfs_path(guest_path))
+        int64_t resolve_error{};
+        auto resolved_guest = resolve_guest_path_name_at(c, dirfd, guest_path, resolve_error);
+
+        // Intercept procfs paths after guest-path resolution.
+        if (resolved_guest.has_value() && procfs::is_procfs_path(*resolved_guest))
         {
             linux_stat ls{};
-            if (procfs::stat_procfs(c.emu_ref, guest_path, ls))
+            if (procfs::stat_procfs(c.emu_ref, *resolved_guest, ls))
             {
                 c.emu.write_memory(buf_addr, &ls, sizeof(ls));
                 write_linux_syscall_result(c, 0);
@@ -1700,7 +2031,6 @@ namespace sogen
             return;
         }
 
-        int64_t resolve_error{};
         auto resolved = resolve_guest_path_at(c, dirfd, guest_path, resolve_error);
         if (!resolved.has_value())
         {
@@ -1737,8 +2067,30 @@ namespace sogen
         const auto old_guest = read_string<char>(c.emu, oldpath_addr);
         const auto new_guest = read_string<char>(c.emu, newpath_addr);
 
-        const auto old_host = c.emu_ref.file_sys.translate(old_guest);
-        const auto new_host = c.emu_ref.file_sys.translate(new_guest);
+        if (is_read_only_guest_path_at(c, LINUX_AT_FDCWD, old_guest) || is_read_only_guest_path_at(c, LINUX_AT_FDCWD, new_guest))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
+
+        int64_t old_resolve_error{};
+        auto old_resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, old_guest, old_resolve_error);
+        if (!old_resolved.has_value())
+        {
+            write_linux_syscall_result(c, -old_resolve_error);
+            return;
+        }
+
+        int64_t new_resolve_error{};
+        auto new_resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, new_guest, new_resolve_error);
+        if (!new_resolved.has_value())
+        {
+            write_linux_syscall_result(c, -new_resolve_error);
+            return;
+        }
+
+        const auto& old_host = *old_resolved;
+        const auto& new_host = *new_resolved;
 
         std::error_code ec{};
         std::filesystem::rename(old_host, new_host, ec);
@@ -1761,6 +2113,12 @@ namespace sogen
 
         const auto old_guest = read_string<char>(c.emu, oldpath_addr);
         const auto new_guest = read_string<char>(c.emu, newpath_addr);
+
+        if (is_read_only_guest_path_at(c, olddirfd, old_guest) || is_read_only_guest_path_at(c, newdirfd, new_guest))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
 
         int64_t old_resolve_error{};
         auto old_resolved = resolve_guest_path_at(c, olddirfd, old_guest, old_resolve_error);
@@ -1797,7 +2155,19 @@ namespace sogen
         const auto path_addr = get_linux_syscall_argument(c.emu, 0);
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
-        const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+        if (is_read_only_guest_path_at(c, LINUX_AT_FDCWD, guest_path))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
+        int64_t resolve_error{};
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+        const auto& host_path = *resolved;
 
         std::error_code ec{};
         if (!std::filesystem::remove(host_path, ec))
@@ -1827,6 +2197,11 @@ namespace sogen
         }
 
         const auto& host_path = *resolved;
+        if (is_read_only_guest_path_at(c, dirfd, guest_path))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
 
         constexpr int LINUX_AT_REMOVEDIR = 0x200;
 
@@ -1866,7 +2241,19 @@ namespace sogen
         // mode is arg 1
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
-        const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+        if (is_read_only_guest_path_at(c, LINUX_AT_FDCWD, guest_path))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
+        int64_t resolve_error{};
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+        const auto& host_path = *resolved;
 
         std::error_code ec{};
         if (!std::filesystem::create_directory(host_path, ec))
@@ -1899,6 +2286,11 @@ namespace sogen
         }
 
         const auto& host_path = *resolved;
+        if (is_read_only_guest_path_at(c, dirfd, guest_path))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
 
         std::error_code ec{};
         if (!std::filesystem::create_directory(host_path, ec))
@@ -1920,7 +2312,19 @@ namespace sogen
         const auto path_addr = get_linux_syscall_argument(c.emu, 0);
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
-        const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+        if (is_read_only_guest_path_at(c, LINUX_AT_FDCWD, guest_path))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
+        int64_t resolve_error{};
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+        const auto& host_path = *resolved;
 
         std::error_code ec{};
         if (!std::filesystem::remove(host_path, ec))
@@ -1939,10 +2343,30 @@ namespace sogen
 
         const auto target = read_string<char>(c.emu, target_addr);
         const auto linkpath_guest = read_string<char>(c.emu, linkpath_addr);
-        const auto linkpath_host = c.emu_ref.file_sys.translate(linkpath_guest);
+        int64_t resolve_error{};
+        auto resolved_link_guest = resolve_guest_path_name_at(c, LINUX_AT_FDCWD, linkpath_guest, resolve_error);
+        if (!resolved_link_guest.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+
+        if (c.emu_ref.file_sys.is_read_only_guest_path(*resolved_link_guest))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, linkpath_guest, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+        const auto& linkpath_host = *resolved;
+        const auto host_target = make_host_symlink_target(c, target, *resolved_link_guest, linkpath_host);
 
         std::error_code ec{};
-        std::filesystem::create_symlink(target, linkpath_host, ec);
+        std::filesystem::create_symlink(host_target, linkpath_host, ec);
         if (ec)
         {
             write_linux_syscall_result(c, -LINUX_ENOENT);
@@ -1961,6 +2385,13 @@ namespace sogen
         const auto target = read_string<char>(c.emu, target_addr);
         const auto linkpath_guest = read_string<char>(c.emu, linkpath_addr);
         int64_t resolve_error{};
+        auto resolved_link_guest = resolve_guest_path_name_at(c, newdirfd, linkpath_guest, resolve_error);
+        if (!resolved_link_guest.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+
         auto resolved = resolve_guest_path_at(c, newdirfd, linkpath_guest, resolve_error);
         if (!resolved.has_value())
         {
@@ -1969,9 +2400,15 @@ namespace sogen
         }
 
         const auto& linkpath_host = *resolved;
+        if (c.emu_ref.file_sys.is_read_only_guest_path(*resolved_link_guest))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
+        const auto host_target = make_host_symlink_target(c, target, *resolved_link_guest, linkpath_host);
 
         std::error_code ec{};
-        std::filesystem::create_symlink(target, linkpath_host, ec);
+        std::filesystem::create_symlink(host_target, linkpath_host, ec);
         if (ec)
         {
             write_linux_syscall_result(c, -LINUX_ENOENT);
@@ -1987,7 +2424,19 @@ namespace sogen
         const auto mode = static_cast<uint32_t>(get_linux_syscall_argument(c.emu, 1));
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
-        const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+        if (is_read_only_guest_path_at(c, LINUX_AT_FDCWD, guest_path))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
+        int64_t resolve_error{};
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+        const auto& host_path = *resolved;
 
         std::error_code ec{};
         std::filesystem::permissions(host_path, static_cast<std::filesystem::perms>(mode), std::filesystem::perm_options::replace, ec);
@@ -2016,6 +2465,12 @@ namespace sogen
         {
             // Can't chmod special fds
             write_linux_syscall_result(c, 0);
+            return;
+        }
+
+        if (fd_entry->read_only_mapping)
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
             return;
         }
 
@@ -2048,6 +2503,11 @@ namespace sogen
         }
 
         const auto& host_path = *resolved;
+        if (is_read_only_guest_path_at(c, dirfd, guest_path))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
 
         std::error_code ec{};
         std::filesystem::permissions(host_path, static_cast<std::filesystem::perms>(mode), std::filesystem::perm_options::replace, ec);
@@ -2094,7 +2554,19 @@ namespace sogen
         const auto length = static_cast<int64_t>(get_linux_syscall_argument(c.emu, 1));
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
-        const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+        if (is_read_only_guest_path_at(c, LINUX_AT_FDCWD, guest_path))
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
+        int64_t resolve_error{};
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+        const auto& host_path = *resolved;
 
         std::error_code ec{};
         std::filesystem::resize_file(host_path, static_cast<uintmax_t>(length), ec);
@@ -2125,6 +2597,12 @@ namespace sogen
             return;
         }
 
+        if (fd_entry->read_only_mapping)
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
+            return;
+        }
+
         std::error_code ec{};
         std::filesystem::resize_file(fd_entry->host_path, static_cast<uintmax_t>(length), ec);
         if (ec)
@@ -2144,9 +2622,27 @@ namespace sogen
         const auto offset = static_cast<int64_t>(get_linux_syscall_argument(c.emu, 3));
 
         auto* fd_entry = c.proc.fds.get(fd);
-        if (!fd_entry || !fd_entry->handle)
+        if (!fd_entry)
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
+        if (fd_entry->type == fd_type::socket && linux_socket_has_host_socket(*fd_entry))
+        {
+            write_linux_syscall_result(c, linux_socket_send_guest_buffer(c, fd, buf_addr, count, 0));
+            return;
+        }
+
+        if (!fd_entry->handle)
+        {
+            write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
+        if (fd_entry->read_only_mapping)
+        {
+            write_linux_syscall_result(c, -LINUX_EACCES);
             return;
         }
 
@@ -2170,6 +2666,18 @@ namespace sogen
 
         auto* fd_entry = c.proc.fds.get(fd);
         if (!fd_entry)
+        {
+            write_linux_syscall_result(c, -LINUX_EBADF);
+            return;
+        }
+
+        if (fd_entry->type == fd_type::socket && linux_socket_has_host_socket(*fd_entry))
+        {
+            write_linux_syscall_result(c, linux_socket_readv_to_guest(c, fd, iov_addr, iovcnt));
+            return;
+        }
+
+        if (!fd_allows_read(*fd_entry))
         {
             write_linux_syscall_result(c, -LINUX_EBADF);
             return;
@@ -2252,14 +2760,16 @@ namespace sogen
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
 
-        // Intercept procfs paths
-        if (procfs::is_procfs_path(guest_path) || procfs::is_procfs_symlink(guest_path))
+        int64_t resolve_error{};
+        auto resolved_guest = resolve_guest_path_name_at(c, dirfd, guest_path, resolve_error);
+
+        // Intercept procfs paths after guest-path resolution.
+        if (resolved_guest.has_value() && (procfs::is_procfs_path(*resolved_guest) || procfs::is_procfs_symlink(*resolved_guest)))
         {
             write_linux_syscall_result(c, 0);
             return;
         }
 
-        int64_t resolve_error{};
         auto resolved = resolve_guest_path_at(c, dirfd, guest_path, resolve_error);
         if (!resolved.has_value())
         {
@@ -2285,7 +2795,14 @@ namespace sogen
         const auto buf_addr = get_linux_syscall_argument(c.emu, 1);
 
         const auto guest_path = read_string<char>(c.emu, path_addr);
-        const auto host_path = c.emu_ref.file_sys.translate(guest_path);
+        int64_t resolve_error{};
+        auto resolved = resolve_guest_path_at(c, LINUX_AT_FDCWD, guest_path, resolve_error);
+        if (!resolved.has_value())
+        {
+            write_linux_syscall_result(c, -resolve_error);
+            return;
+        }
+        const auto& host_path = *resolved;
 
         if (!std::filesystem::exists(host_path))
         {

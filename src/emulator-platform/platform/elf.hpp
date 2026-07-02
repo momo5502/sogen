@@ -345,6 +345,18 @@ namespace sogen
         // ========================================================================
         // Utility functions
         // ========================================================================
+        template <uint8_t Index>
+        uint8_t elf_ident_byte(const Elf64_Ehdr& ehdr)
+        {
+            static_assert(Index < EI_NIDENT);
+            return std::get<Index>(ehdr.e_ident);
+        }
+
+        inline bool has_elf_magic(const Elf64_Ehdr& ehdr)
+        {
+            return elf_ident_byte<EI_MAG0>(ehdr) == ELFMAG0 && elf_ident_byte<EI_MAG1>(ehdr) == ELFMAG1 &&
+                   elf_ident_byte<EI_MAG2>(ehdr) == ELFMAG2 && elf_ident_byte<EI_MAG3>(ehdr) == ELFMAG3;
+        }
 
         inline bool is_valid_elf(const std::span<const std::byte> data)
         {
@@ -354,8 +366,7 @@ namespace sogen
             }
 
             const auto* ehdr = reinterpret_cast<const Elf64_Ehdr*>(data.data());
-            return ehdr->e_ident[EI_MAG0] == ELFMAG0 && ehdr->e_ident[EI_MAG1] == ELFMAG1 && ehdr->e_ident[EI_MAG2] == ELFMAG2 &&
-                   ehdr->e_ident[EI_MAG3] == ELFMAG3;
+            return has_elf_magic(*ehdr);
         }
 
         inline bool is_elf64(const std::span<const std::byte> data)
@@ -366,7 +377,7 @@ namespace sogen
             }
 
             const auto* ehdr = reinterpret_cast<const Elf64_Ehdr*>(data.data());
-            return ehdr->e_ident[EI_CLASS] == ELFCLASS64;
+            return elf_ident_byte<EI_CLASS>(*ehdr) == ELFCLASS64;
         }
 
         inline bool is_little_endian(const std::span<const std::byte> data)
@@ -377,7 +388,7 @@ namespace sogen
             }
 
             const auto* ehdr = reinterpret_cast<const Elf64_Ehdr*>(data.data());
-            return ehdr->e_ident[EI_DATA] == ELFDATA2LSB;
+            return elf_ident_byte<EI_DATA>(*ehdr) == ELFDATA2LSB;
         }
 
         inline std::optional<uint16_t> get_elf_machine(const std::span<const std::byte> data)

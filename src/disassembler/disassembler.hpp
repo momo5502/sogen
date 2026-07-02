@@ -4,6 +4,7 @@
 #include <capstone/capstone.h>
 #include <optional>
 #include <span>
+#include <stdexcept>
 
 #include "arch_emulator.hpp"
 #include "segment_utils.hpp"
@@ -64,7 +65,12 @@ namespace sogen
 
         const cs_insn& operator[](const size_t index) const
         {
-            return this->instructions_[index];
+            if (index >= this->instructions_.size())
+            {
+                throw std::out_of_range("Instruction index out of range");
+            }
+
+            return this->instructions_.subspan(index, 1).front();
         }
 
         auto begin() const

@@ -96,7 +96,7 @@ namespace sogen
             template <typename TimePoint>
             TimePoint now(const TimePoint start)
             {
-                using duration = typename TimePoint::duration;
+                using duration = TimePoint::duration;
 
                 const auto passed_ticks = this->ticks();
                 const auto passed_time = duration(passed_ticks * duration::period::den / this->frequency_);

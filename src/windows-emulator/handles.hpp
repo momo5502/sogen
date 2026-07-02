@@ -168,7 +168,6 @@ namespace sogen
             return --e.ref_count == 0;
         }
 
-      private:
         virtual void serialize_object(utils::buffer_serializer& buffer) const = 0;
         virtual void deserialize_object(utils::buffer_deserializer& buffer) = 0;
     };
@@ -269,7 +268,7 @@ namespace sogen
             return h;
         }
 
-        std::pair<typename value_map::iterator, bool> erase(const typename value_map::iterator& entry)
+        std::pair<typename value_map::iterator, bool> erase(const value_map::iterator& entry)
         {
             if (this->block_mutation_)
             {
@@ -330,7 +329,7 @@ namespace sogen
             buffer.read_map(this->store_);
         }
 
-        typename value_map::iterator find(const T& value)
+        value_map::iterator find(const T& value)
         {
             auto i = this->store_.begin();
             for (; i != this->store_.end(); ++i)
@@ -344,7 +343,7 @@ namespace sogen
             return i;
         }
 
-        typename value_map::const_iterator find(const T& value) const
+        value_map::const_iterator find(const T& value) const
         {
             auto i = this->store_.begin();
             for (; i != this->store_.end(); ++i)
@@ -379,28 +378,28 @@ namespace sogen
             return this->find_handle(*value);
         }
 
-        typename value_map::iterator begin()
+        value_map::iterator begin()
         {
             return this->store_.begin();
         }
 
-        typename value_map::const_iterator begin() const
+        value_map::const_iterator begin() const
         {
             return this->store_.begin();
         }
 
-        typename value_map::iterator end()
+        value_map::iterator end()
         {
             return this->store_.end();
         }
 
-        typename value_map::const_iterator end() const
+        value_map::const_iterator end() const
         {
             return this->store_.end();
         }
 
       private:
-        typename value_map::iterator get_iterator(const handle_value h)
+        value_map::iterator get_iterator(const handle_value h)
         {
             if (h.type != Type || h.is_pseudo)
             {
@@ -557,22 +556,22 @@ namespace sogen
             return value ? this->find_handle(*value) : handle{};
         }
 
-        typename value_map::iterator begin()
+        value_map::iterator begin()
         {
             return this->store_.begin();
         }
 
-        typename value_map::const_iterator begin() const
+        value_map::const_iterator begin() const
         {
             return this->store_.begin();
         }
 
-        typename value_map::iterator end()
+        value_map::iterator end()
         {
             return this->store_.end();
         }
 
-        typename value_map::const_iterator end() const
+        value_map::const_iterator end() const
         {
             return this->store_.end();
         }

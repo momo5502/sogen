@@ -41,7 +41,11 @@ namespace sogen
     enum class memory_region_kind : uint8_t;
     enum class stop_reason : uint8_t;
     struct linux_process_context;
+    struct linux_exported_symbol;
+    struct linux_mapped_module;
+    struct linux_mapped_section;
     struct linux_thread;
+    enum class thread_wait_state : uint8_t;
     struct mapped_module;
     struct nt_memory_permission;
     struct process_context;
@@ -55,6 +59,9 @@ namespace sogen::py
     using sogen::function_calling_convention;
     using sogen::instruction_hook_continuation;
     using sogen::linux_emulator;
+    using sogen::linux_exported_symbol;
+    using sogen::linux_mapped_module;
+    using sogen::linux_mapped_section;
     using sogen::linux_memory_manager;
     using sogen::linux_process_context;
     using sogen::linux_thread;
@@ -67,6 +74,7 @@ namespace sogen::py
     using sogen::nt_memory_permission;
     using sogen::process_context;
     using sogen::stop_reason;
+    using sogen::thread_wait_state;
     using sogen::windows_emulator;
     using sogen::x86_register;
 
@@ -86,6 +94,8 @@ namespace sogen::py
     struct sogen_process_context;
     struct sogen_windows_emulator;
     struct linux_callback_registry;
+    struct linux_symbol_call_info;
+    struct linux_symbol_hook_registry;
     struct sogen_linux_process_context;
     struct sogen_linux_emulator;
 
@@ -105,6 +115,7 @@ namespace sogen::py
     std::unique_ptr<windows_emulator> create_empty_emulator(const nb::kwargs& kwargs);
     std::unique_ptr<windows_emulator> create_application_emulator(const nb::object& application, const nb::object& args,
                                                                   const nb::kwargs& kwargs);
+    std::unique_ptr<linux_emulator> create_empty_linux_emulator(const nb::kwargs& kwargs);
     std::unique_ptr<linux_emulator> create_linux_application_emulator(const nb::object& application, const nb::object& args,
                                                                       const nb::kwargs& kwargs);
 

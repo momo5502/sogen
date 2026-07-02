@@ -422,7 +422,7 @@ namespace sogen
     template <typename Traits>
     struct SECTION_BASIC_INFORMATION
     {
-        typename Traits::PVOID BaseAddress;
+        Traits::PVOID BaseAddress;
         ULONG Attributes;
         LARGE_INTEGER Size;
     };
@@ -430,10 +430,10 @@ namespace sogen
     template <typename Traits>
     struct SECTION_IMAGE_INFORMATION
     {
-        typename Traits::PVOID TransferAddress;
+        Traits::PVOID TransferAddress;
         ULONG ZeroBits;
-        typename Traits::SIZE_T MaximumStackSize;
-        typename Traits::SIZE_T CommittedStackSize;
+        Traits::SIZE_T MaximumStackSize;
+        Traits::SIZE_T CommittedStackSize;
         ULONG SubSystemType;
 
         union

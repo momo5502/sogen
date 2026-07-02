@@ -62,6 +62,8 @@ namespace sogen::kvm
         constexpr uint32_t vp_index = 0;
         constexpr uint32_t breakpoint_interrupt = 3;
         constexpr int invalid_opcode_interrupt = 6;
+        constexpr std::byte int3_opcode{0xCC};
+        constexpr uint64_t syscall_instruction_size = 2;
 
         constexpr uintptr_t cache_line_size = 64;
         constexpr uint64_t guest_physical_page_base = 0x0000000100000000ull;
@@ -117,6 +119,7 @@ namespace sogen::kvm
         constexpr uint64_t exception_stub_stride = 8;
         constexpr uint16_t kernel_code_selector = 0x08; // 64-bit ring-0 code segment in the guest GDT
         constexpr uint16_t task_state_selector = 0x38;
+        constexpr uint16_t tss_descriptor_limit = 0x67;
         constexpr uint8_t exception_ist_index = 1;
 
         bool exception_has_error_code(const uint32_t vector)
@@ -151,6 +154,59 @@ namespace sogen::kvm
                 throw_errno(action);
             }
         }
+
+#if defined(KVM_SET_GUEST_DEBUG) && defined(KVM_GUESTDBG_ENABLE) && defined(KVM_GUESTDBG_SINGLESTEP)
+        void enable_guest_single_step(const int vcpu_fd)
+        {
+            kvm_guest_debug debug{};
+            debug.control = KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_SINGLESTEP;
+            check_ioctl_result(::ioctl(vcpu_fd, KVM_SET_GUEST_DEBUG, &debug), "KVM_SET_GUEST_DEBUG");
+        }
+
+        void clear_guest_debug_control_noexcept(const int vcpu_fd) noexcept
+        {
+            kvm_guest_debug debug{};
+            (void)::ioctl(vcpu_fd, KVM_SET_GUEST_DEBUG, &debug);
+        }
+#else
+        void enable_guest_single_step(const int)
+        {
+            throw std::runtime_error("KVM backend single-step requires KVM guest debug support");
+        }
+
+        void clear_guest_debug_control_noexcept(const int) noexcept
+        {
+        }
+#endif
+
+        class scoped_guest_debug
+        {
+          public:
+            scoped_guest_debug(const int vcpu_fd, const bool enable)
+                : vcpu_fd_(vcpu_fd),
+                  active_(enable)
+            {
+                if (this->active_)
+                {
+                    enable_guest_single_step(this->vcpu_fd_);
+                }
+            }
+
+            scoped_guest_debug(const scoped_guest_debug&) = delete;
+            scoped_guest_debug& operator=(const scoped_guest_debug&) = delete;
+
+            ~scoped_guest_debug()
+            {
+                if (this->active_)
+                {
+                    clear_guest_debug_control_noexcept(this->vcpu_fd_);
+                }
+            }
+
+          private:
+            int vcpu_fd_ = -1;
+            bool active_ = false;
+        };
 
         // No-op handler whose only purpose is to interrupt a blocking KVM_RUN ioctl so the
         // run loop can observe a pending stop request. Installed without SA_RESTART so the
@@ -389,10 +445,13 @@ namespace sogen::kvm
             }
             void start(size_t count) override
             {
-                if (count != 0)
+                if (count > 1)
                 {
-                    throw std::runtime_error("KVM backend does not support exact instruction counts yet");
+                    throw std::runtime_error("KVM backend does not support exact instruction counts greater than one yet");
                 }
+
+                const bool single_step = count == 1;
+                const scoped_guest_debug guest_debug(this->vcpu_fd_.get(), single_step);
 
                 this->stop_requested_ = false;
                 this->vcpu_thread_.store(pthread_self(), std::memory_order_release);
@@ -400,8 +459,15 @@ namespace sogen::kvm
 
                 while (!this->stop_requested_)
                 {
+                    const auto step_rip = this->read_instruction_pointer();
                     if (this->handle_pre_run_instruction())
                     {
+                        this->run_memory_execution_hooks(step_rip);
+                        if (single_step)
+                        {
+                            return;
+                        }
+
                         continue;
                     }
 
@@ -435,8 +501,14 @@ namespace sogen::kvm
                         const auto rip = this->read_instruction_pointer();
                         if (this->syscall_hook_ && rip == (this->syscall_hook_page_ + 1))
                         {
-                            if (this->handle_syscall_halt())
+                            if (const auto executed_rip = this->handle_syscall_halt())
                             {
+                                if (single_step)
+                                {
+                                    this->run_memory_execution_hooks(*executed_rip);
+                                    return;
+                                }
+
                                 continue;
                             }
 
@@ -471,6 +543,12 @@ namespace sogen::kvm
 
                         return;
                     case KVM_EXIT_DEBUG:
+                        if (single_step)
+                        {
+                            this->run_memory_execution_hooks(step_rip);
+                            return;
+                        }
+
                         if (this->handle_debug_exit())
                         {
                             continue;
@@ -883,6 +961,7 @@ namespace sogen::kvm
                 sregs.gdt.base = address;
                 sregs.gdt.limit = static_cast<uint16_t>(limit);
                 this->set_sregs(sregs);
+                this->install_exception_gdt_entries();
             }
 
             void read_memory(uint64_t address, void* data, size_t size) const override
@@ -1000,6 +1079,23 @@ namespace sogen::kvm
             void deserialize_state(utils::buffer_deserializer& buffer, bool) override
             {
                 this->restore_registers(buffer.read_vector<std::byte>());
+            }
+
+            void run_memory_execution_hooks(const uint64_t address)
+            {
+                std::vector<memory_execution_hook_callback> callbacks{};
+                for (const auto& [_, hook] : this->memory_execution_hooks_)
+                {
+                    if (!hook.address || (hook.size != 0 && address >= *hook.address && address - *hook.address < hook.size))
+                    {
+                        callbacks.push_back(hook.callback);
+                    }
+                }
+
+                for (const auto& callback : callbacks)
+                {
+                    callback(address);
+                }
             }
 
           private:
@@ -1401,6 +1497,41 @@ namespace sogen::kvm
                 sregs.tr.unusable = 0;
                 this->set_sregs(sregs);
             }
+            void install_exception_gdt_entries()
+            {
+                if (this->exception_tss_page_ == 0)
+                {
+                    return;
+                }
+
+                const auto sregs = this->get_sregs();
+                const auto gdt_base = sregs.gdt.base;
+                const auto gdt_limit = static_cast<uint64_t>(sregs.gdt.limit);
+                const auto tss_offset = static_cast<uint64_t>(task_state_selector);
+                if (gdt_base == 0 || gdt_limit < tss_offset + sizeof(uint64_t) * 2 - 1)
+                {
+                    return;
+                }
+
+                uint64_t code_descriptor = 0x00AF9B000000FFFFull;
+                if (!detail::access_memory(this->mapped_pages_, gdt_base + kernel_code_selector, &code_descriptor, sizeof(code_descriptor),
+                                           true))
+                {
+                    throw std::runtime_error("Failed to install KVM exception code descriptor");
+                }
+
+                const auto base = this->exception_tss_page_;
+                const uint32_t limit = tss_descriptor_limit;
+                uint64_t tss_low = (limit & 0xFFFFull) | ((base & 0xFFFFFFull) << 16) | (0x8Bull << 40) |
+                                   (((static_cast<uint64_t>(limit) >> 16) & 0xFull) << 48) | (((base >> 24) & 0xFFull) << 56);
+                uint64_t tss_high = base >> 32;
+                const auto descriptor_address = gdt_base + task_state_selector;
+                if (!detail::access_memory(this->mapped_pages_, descriptor_address, &tss_low, sizeof(tss_low), true) ||
+                    !detail::access_memory(this->mapped_pages_, descriptor_address + sizeof(tss_low), &tss_high, sizeof(tss_high), true))
+                {
+                    throw std::runtime_error("Failed to install KVM exception TSS descriptor");
+                }
+            }
             void initialize_long_mode_page_tables()
             {
                 this->pml4_gpa_ = this->allocate_internal_page(false, false);
@@ -1656,12 +1787,36 @@ namespace sogen::kvm
                     return this->handle_instruction_hook(x86_hookable_instructions::rdtscp, 3);
                 }
 
+                if (opcode[0] == int3_opcode)
+                {
+                    return this->handle_breakpoint_instruction();
+                }
+
                 if (opcode[0] == std::byte{0x0F} && opcode[1] == std::byte{0x0B})
                 {
                     return this->handle_invalid_instruction_hook();
                 }
 
                 return false;
+            }
+            bool handle_breakpoint_instruction()
+            {
+                const auto rip = this->read_instruction_pointer();
+                bool handled = false;
+                bool rip_changed = false;
+                for (auto& [_, hook] : this->interrupt_hooks_)
+                {
+                    hook(static_cast<int>(breakpoint_interrupt));
+                    handled = true;
+                    rip_changed = rip_changed || this->read_instruction_pointer() != rip;
+                }
+
+                if (handled && !rip_changed && !this->stop_requested_)
+                {
+                    this->advance_rip(1);
+                }
+
+                return handled;
             }
             bool handle_instruction_hook(x86_hookable_instructions type, uint64_t instruction_size)
             {
@@ -1817,13 +1972,14 @@ namespace sogen::kvm
                     }
                 }
 
+                bool handled = false;
                 for (auto& [_, hook] : this->interrupt_hooks_)
                 {
                     hook(static_cast<int>(exception));
-                    return true;
+                    handled = true;
                 }
 
-                return false;
+                return handled;
             }
             bool handle_exception_trap(uint64_t stub_rip)
             {
@@ -1952,19 +2108,33 @@ namespace sogen::kvm
             }
             bool handle_debug_exit()
             {
-                for (auto& [_, hook] : this->interrupt_hooks_)
+                const auto rip = this->read_instruction_pointer();
+                auto vector = 1;
+                std::byte opcode{};
+                if (detail::access_memory(this->mapped_pages_, rip, &opcode, sizeof(opcode), false) && opcode == int3_opcode)
                 {
-                    hook(1);
-                    return true;
+                    vector = static_cast<int>(breakpoint_interrupt);
+                }
+                else if (rip > 0 && detail::access_memory(this->mapped_pages_, rip - 1, &opcode, sizeof(opcode), false) &&
+                         opcode == int3_opcode)
+                {
+                    vector = static_cast<int>(breakpoint_interrupt);
                 }
 
-                return false;
+                bool handled = false;
+                for (auto& [_, hook] : this->interrupt_hooks_)
+                {
+                    hook(vector);
+                    handled = true;
+                }
+
+                return handled;
             }
-            bool handle_syscall_halt()
+            std::optional<uint64_t> handle_syscall_halt()
             {
                 if (!this->syscall_hook_)
                 {
-                    return false;
+                    return std::nullopt;
                 }
 
                 auto regs = this->get_regs();
@@ -1973,7 +2143,7 @@ namespace sogen::kvm
                 const auto post_syscall_rcx = regs.rcx;
                 const auto post_syscall_r10 = regs.r10;
                 const auto saved_rflags = regs.r11;
-                const auto pre_syscall_rip = post_syscall_rcx - 2;
+                const auto pre_syscall_rip = post_syscall_rcx - syscall_instruction_size;
 
                 regs.rip = pre_syscall_rip;
                 regs.rcx = post_syscall_r10;
@@ -1986,16 +2156,16 @@ namespace sogen::kvm
                 const auto continuation = this->syscall_hook_->callback(0);
 
                 regs = this->get_regs();
-                if (continuation == instruction_hook_continuation::skip_instruction && regs.rip == pre_syscall_rip)
+                if (continuation != instruction_hook_continuation::finalized_instruction_pointer)
                 {
-                    regs.rip = post_syscall_rcx;
-                }
-                else
-                {
-                    // Advance past the syscall instruction. This also covers handlers that moved RIP and
-                    // expect the syscall length to be added back (e.g. the instrumentation-callback
-                    // redirect sets RIP to callback-2). Matches the WHP backend.
-                    regs.rip += 2;
+                    if (continuation == instruction_hook_continuation::skip_instruction && regs.rip == pre_syscall_rip)
+                    {
+                        regs.rip = post_syscall_rcx;
+                    }
+                    else
+                    {
+                        regs.rip += syscall_instruction_size;
+                    }
                 }
 
                 sregs = this->get_sregs();
@@ -2003,7 +2173,7 @@ namespace sogen::kvm
                 sregs.ss = make_segment(0x2B, false, true);
                 this->set_regs(regs);
                 this->set_sregs(sregs);
-                return true;
+                return pre_syscall_rip;
             }
             void advance_rip(uint64_t amount)
             {

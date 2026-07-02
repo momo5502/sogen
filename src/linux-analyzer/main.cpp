@@ -2,6 +2,8 @@
 #include <cstdlib>
 #include <cinttypes>
 #include <string>
+#include <optional>
+#include <string_view>
 #include <vector>
 #include <filesystem>
 
@@ -94,11 +96,11 @@ namespace sogen
 
             if (opts.use_gdb)
             {
-                const auto* address = "127.0.0.1:28960";
-                printf("Waiting for GDB connection on %s...\n", address);
+                const auto address = network::address{"127.0.0.1:28960", AF_INET};
+                printf("Waiting for GDB connection on %s...\n", address.to_string().c_str());
 
                 linux_x64_gdb_stub_handler handler{linux_emu};
-                gdb_stub::run_gdb_stub(network::address{address, AF_INET}, handler);
+                gdb_stub::run_gdb_stub(address, handler);
             }
             else
             {

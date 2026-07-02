@@ -14,7 +14,7 @@ namespace sogen::py
 
     hook_handle hook_registry::make_hook(emulator_hook* hook)
     {
-        hook_handle stored{*this->emu, hook, nb::none()};
+        hook_handle stored{this->emu->emu(), hook, nb::none()};
         this->active_hooks.emplace_back(stored);
 
         auto exposed = stored;
@@ -60,13 +60,12 @@ namespace sogen::py
         return make_hook(hook);
     }
 
-    hook_handle hook_registry::instruction(int instruction_type, nb::object callback)
+    hook_handle hook_registry::instruction(x86_hookable_instructions instruction_type, nb::object callback)
     {
-        auto* hook = this->emu->emu().hook_instruction(static_cast<x86_hookable_instructions>(instruction_type),
-                                                       [cb = std::move(callback)](uint64_t data) {
-                                                           nb::gil_scoped_acquire gil{};
-                                                           return coerce_instruction_continuation(cb(data));
-                                                       });
+        auto* hook = this->emu->emu().hook_instruction(instruction_type, [cb = std::move(callback)](uint64_t data) {
+            nb::gil_scoped_acquire gil{};
+            return coerce_instruction_continuation(cb(data));
+        });
         return make_hook(hook);
     }
 

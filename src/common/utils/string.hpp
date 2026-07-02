@@ -178,7 +178,7 @@ namespace sogen
             requires std::is_same_v<T, std::vector<std::byte>> || std::is_same_v<T, std::string>
         constexpr T from_hex_string(const std::string_view str)
         {
-            using value_type = typename T::value_type;
+            using value_type = T::value_type;
 
             const auto size = str.size() / 2;
 
@@ -187,8 +187,8 @@ namespace sogen
 
             for (size_t i = 0; i < size; ++i)
             {
-                const auto high = parse_nibble(str[(i * 2) + 0]);
-                const auto low = parse_nibble(str[(i * 2) + 1]);
+                const auto high = parse_nibble(str.at((i * 2) + 0));
+                const auto low = parse_nibble(str.at((i * 2) + 1));
                 const auto value = static_cast<value_type>((high << 4) | low);
 
                 data.push_back(value);
@@ -267,12 +267,11 @@ namespace sogen
         template <class Elem, class Traits>
         int compare_ignore_case(std::basic_string_view<Elem, Traits> lhs, std::basic_string_view<Elem, Traits> rhs)
         {
-            const std::size_t n = std::min(lhs.size(), rhs.size());
-
-            for (std::size_t i = 0; i < n; ++i)
+            const auto count = std::min(lhs.size(), rhs.size());
+            for (size_t i = 0; i < count; ++i)
             {
-                auto c1 = char_to_lower(lhs[i]);
-                auto c2 = char_to_lower(rhs[i]);
+                auto c1 = char_to_lower(lhs.at(i));
+                auto c2 = char_to_lower(rhs.at(i));
 
                 if (c1 < c2)
                 {

@@ -32,9 +32,6 @@ namespace sogen
         virtual void map_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
         virtual void unmap_memory(uint64_t address, size_t size) = 0;
 
-        // Maps caller-owned host memory directly into the guest address space so the guest sees it
-        // coherently (no staging copy). The backend must not take ownership of host_pointer. Backends that
-        // cannot alias host memory (e.g. icicle) keep the default and throw.
         virtual void map_host_memory(uint64_t /*address*/, size_t /*size*/, void* /*host_pointer*/, memory_permission /*permissions*/)
         {
             throw std::runtime_error("Host memory mapping is not supported by this backend");
@@ -42,27 +39,16 @@ namespace sogen
 
         virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
 
-        // Add new virtuals at the end of the class so the vtable slots of existing methods never move; this
-        // keeps separately built backends (e.g. the dynamically loaded KVM/unicorn backends) ABI-compatible
-        // with the analyzer that calls through this interface.
-        //
-        // Whether memory aliased via map_host_memory is cache-coherent with external devices (e.g. a GPU)
-        // without explicit cache maintenance. KVM aliases host memory write-back into the guest while the GPU
-        // may read the same physical pages through a write-combined mapping, so it reports false and callers
-        // must flush the CPU cache (flush_host_memory_cache) for an aliased range before device access.
+      public:
         virtual bool host_memory_aliasing_is_coherent() const
         {
             return true;
         }
 
-        // Evicts the CPU cache for a host range previously passed to map_host_memory, making the guest's
-        // pending writes visible to a device that reads the same physical memory non-coherently. No-op when
-        // aliasing is already coherent.
         virtual void flush_host_memory_cache(const void* /*host_pointer*/, size_t /*size*/)
         {
         }
 
-      public:
         template <typename T>
         T read_memory(const uint64_t address) const
         {

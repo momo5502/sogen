@@ -4,11 +4,39 @@
 
 #include <address_utils.hpp>
 #include <platform/elf.hpp>
+#include <serialization_helper.hpp>
 
 namespace sogen
 {
 
     using namespace elf; // NOLINT(google-build-using-namespace)
+
+    namespace utils
+    {
+        static void serialize(buffer_serializer& buffer, const linux_cached_dir_entry& entry)
+        {
+            buffer.write(entry.ino);
+            buffer.write(entry.d_type);
+            buffer.write(entry.name);
+        }
+
+        static void deserialize(buffer_deserializer& buffer, linux_cached_dir_entry& entry)
+        {
+            buffer.read(entry.ino);
+            buffer.read(entry.d_type);
+            buffer.read(entry.name);
+        }
+
+        static void serialize(buffer_serializer& buffer, const linux_epoll_instance& instance)
+        {
+            buffer.write_vector(instance.entries);
+        }
+
+        static void deserialize(buffer_deserializer& buffer, linux_epoll_instance& instance)
+        {
+            buffer.read_vector(instance.entries);
+        }
+    }
 
     namespace
     {
@@ -34,11 +62,13 @@ namespace sogen
 
     void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& memory, const linux_mapped_module& exe,
                                       const std::vector<std::string>& argv_values, const std::vector<std::string>& envp_values,
-                                      const uint64_t interpreter_base, const uint64_t initial_rip, const uint64_t vdso_base)
+                                      std::string process_executable_path, const uint64_t interpreter_base, const uint64_t initial_rip,
+                                      const uint64_t vdso_base)
     {
         // Store argv/envp for procfs emulation
         this->argv = argv_values;
         this->envp = envp_values;
+        this->executable_path = std::move(process_executable_path);
 
         // ---- Allocate the stack ----
         const auto stack_base = STACK_TOP;
@@ -347,6 +377,105 @@ namespace sogen
         this->active_thread->fs_base = initial_fs_base;
         this->active_thread->stack_base = stack_alloc_base;
         this->active_thread->stack_size = STACK_SIZE;
+    }
+
+    void linux_process_context::serialize(utils::buffer_serializer& buffer) const
+    {
+        this->fds.serialize(buffer);
+        buffer.write_map(this->directory_entries);
+        buffer.write_map(this->directory_offsets);
+
+        buffer.write<uint64_t>(this->epoll_instances.size());
+        for (const auto& [fd, instance] : this->epoll_instances)
+        {
+            buffer.write(fd);
+            if (!instance)
+            {
+                throw std::runtime_error("Linux process snapshot found an invalid epoll instance");
+            }
+            buffer.write(*instance);
+        }
+
+        buffer.write(this->brk_base);
+        buffer.write(this->brk_current);
+        buffer.write_map(this->threads);
+        buffer.write<uint32_t>(this->active_thread ? this->active_thread->tid : 0);
+        buffer.write(this->pid);
+        buffer.write(this->ppid);
+        buffer.write(this->uid);
+        buffer.write(this->gid);
+        buffer.write(this->euid);
+        buffer.write(this->egid);
+        buffer.write_optional(this->exit_status);
+        buffer.write(this->current_working_directory);
+        buffer.write(this->executable_path);
+        buffer.write(this->next_tid);
+        buffer.write_vector(this->argv);
+        buffer.write_vector(this->envp);
+        buffer.write_vector(this->auxv);
+    }
+
+    void linux_process_context::deserialize(utils::buffer_deserializer& buffer)
+    {
+        linux_fd_table new_fds{};
+        new_fds.deserialize(buffer);
+        auto new_directory_entries = buffer.read_map<std::map<int, std::vector<linux_cached_dir_entry>>>();
+        auto new_directory_offsets = buffer.read_map<std::map<int, size_t>>();
+
+        std::map<int, std::shared_ptr<linux_epoll_instance>> new_epoll_instances{};
+        const auto epoll_count = buffer.read<uint64_t>();
+        for (uint64_t i = 0; i < epoll_count; ++i)
+        {
+            const auto fd = buffer.read<int>();
+            auto instance = std::make_shared<linux_epoll_instance>();
+            buffer.read(*instance);
+            new_epoll_instances.emplace(fd, std::move(instance));
+        }
+
+        auto new_brk_base = buffer.read<uint64_t>();
+        auto new_brk_current = buffer.read<uint64_t>();
+        auto new_threads = buffer.read_map<std::map<uint32_t, linux_thread>>();
+        const auto active_tid = buffer.read<uint32_t>();
+        auto new_pid = buffer.read<uint32_t>();
+        auto new_ppid = buffer.read<uint32_t>();
+        auto new_uid = buffer.read<uint32_t>();
+        auto new_gid = buffer.read<uint32_t>();
+        auto new_euid = buffer.read<uint32_t>();
+        auto new_egid = buffer.read<uint32_t>();
+        std::optional<int> new_exit_status{};
+        buffer.read_optional(new_exit_status);
+        auto new_current_working_directory = buffer.read<std::string>();
+        auto new_executable_path = buffer.read<std::string>();
+        auto new_next_tid = buffer.read<uint32_t>();
+        auto new_argv = buffer.read_vector<std::string>();
+        auto new_envp = buffer.read_vector<std::string>();
+        auto new_auxv = buffer.read_vector<linux_auxv_entry>();
+
+        this->fds = std::move(new_fds);
+        this->directory_entries = std::move(new_directory_entries);
+        this->directory_offsets = std::move(new_directory_offsets);
+        this->epoll_instances = std::move(new_epoll_instances);
+        this->brk_base = new_brk_base;
+        this->brk_current = new_brk_current;
+        this->threads = std::move(new_threads);
+        this->active_thread = nullptr;
+        if (active_tid != 0)
+        {
+            this->active_thread = &this->threads.at(active_tid);
+        }
+        this->pid = new_pid;
+        this->ppid = new_ppid;
+        this->uid = new_uid;
+        this->gid = new_gid;
+        this->euid = new_euid;
+        this->egid = new_egid;
+        this->exit_status = new_exit_status;
+        this->current_working_directory = std::move(new_current_working_directory);
+        this->executable_path = std::move(new_executable_path);
+        this->next_tid = new_next_tid;
+        this->argv = std::move(new_argv);
+        this->envp = std::move(new_envp);
+        this->auxv = std::move(new_auxv);
     }
 
 } // namespace sogen

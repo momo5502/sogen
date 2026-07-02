@@ -54,9 +54,9 @@ namespace sogen
     class typed_emulator : public emulator
     {
       public:
-        using registers = typename Traits::register_type;
-        using pointer_type = typename Traits::pointer_type;
-        using hookable_instructions = typename Traits::hookable_instructions;
+        using registers = Traits::register_type;
+        using pointer_type = Traits::pointer_type;
+        using hookable_instructions = Traits::hookable_instructions;
 
         static constexpr size_t pointer_size = sizeof(pointer_type);
         static constexpr registers stack_pointer = Traits::stack_pointer;
@@ -163,9 +163,7 @@ namespace sogen
 
         emulator_hook* hook_instruction(hookable_instructions instruction_type, simple_instruction_hook_callback callback)
         {
-            return this->hook_instruction(instruction_type, [c = std::move(callback)](const uint64_t) {
-                return c(); //
-            });
+            return this->hook_instruction(instruction_type, [c = std::move(callback)](const uint64_t) { return c(); });
         }
 
       private:
