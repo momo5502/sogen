@@ -1085,7 +1085,7 @@ namespace sogen::kvm
                 std::vector<memory_execution_hook_callback> callbacks{};
                 for (const auto& [_, hook] : this->memory_execution_hooks_)
                 {
-                    if (!hook.address || hook.size != 0 && address >= *hook.address && address - *hook.address < hook.size)
+                    if (!hook.address || (hook.size != 0 && address >= *hook.address && address - *hook.address < hook.size))
                     {
                         callbacks.push_back(hook.callback);
                     }
