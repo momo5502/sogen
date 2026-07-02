@@ -553,6 +553,61 @@ namespace sogen
             return UINT32_MAX;
         }
 
+        // Redirect a CPU-slow host-visible allocation to plain cached system RAM. DXVK places CPU-written
+        // buffers (vertex/uniform/dynamic) in the fastest-for-the-GPU host-visible memory it can find, which
+        // on modern GPUs is Resizable-BAR VRAM (DEVICE_LOCAL | HOST_VISIBLE) or write-combined system memory.
+        // Optimal on real hardware, but the guest's memcpy into it goes through the hypervisor to uncached/WC
+        // memory over PCIe, where reads run ~350x slower than cached RAM (~50 MB/s) and dominate frame time.
+        // Substituting a HOST_CACHED system-RAM type makes guest access near-native; the GPU then reads those
+        // buffers over PCIe instead of from local VRAM, which is what native drivers do for dynamic data
+        // anyway. Only substitute a type that is also HOST_COHERENT: DXVK relies on coherency and never issues
+        // vkFlushMappedMemoryRanges, so dropping it would leave the GPU reading stale data.
+        // Set SOGEN_GPU_FORCE_CACHED=0 to disable.
+        uint32_t substitute_cached_memory_type(const device_data& dev, const uint32_t index)
+        {
+            static const bool disabled = [] {
+                const char* e = std::getenv("SOGEN_GPU_FORCE_CACHED");
+                return e != nullptr && e[0] == '0';
+            }();
+            if (disabled)
+            {
+                return index;
+            }
+
+            const auto instance = this->instances.find(dev.instance_id);
+            if (instance == this->instances.end() || !instance->second.get_physical_device_memory_properties)
+            {
+                return index;
+            }
+
+            VkPhysicalDeviceMemoryProperties props{};
+            instance->second.get_physical_device_memory_properties(dev.physical_device, &props);
+            if (index >= props.memoryTypeCount)
+            {
+                return index;
+            }
+
+            // Only touch host-visible memory that is not already cached (ReBAR VRAM or write-combined system
+            // memory). Leave pure device-local VRAM and already-cached memory alone.
+            const auto original = props.memoryTypes[index].propertyFlags;
+            if (!(original & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) || (original & VK_MEMORY_PROPERTY_HOST_CACHED_BIT))
+            {
+                return index;
+            }
+
+            constexpr VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT |
+                                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+            for (uint32_t i = 0; i < props.memoryTypeCount; ++i)
+            {
+                const auto flags = props.memoryTypes[i].propertyFlags;
+                if ((flags & want) == want && !(flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+                {
+                    return i;
+                }
+            }
+            return index;
+        }
+
         template <typename Map, typename Pred>
         void erase_owned(Map& map, Pred pred)
         {
@@ -2491,7 +2546,7 @@ namespace sogen
         VkMemoryAllocateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
         info.allocationSize = aligned_size;
-        info.memoryTypeIndex = memory_type_index;
+        info.memoryTypeIndex = this->impl_->substitute_cached_memory_type(dev->second, memory_type_index);
 
         VkDeviceMemory memory{};
         const VkResult result = dev->second.allocate_memory(dev->second.handle, &info, nullptr, &memory);
