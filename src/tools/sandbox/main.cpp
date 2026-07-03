@@ -10,6 +10,7 @@
 
 #include <CLI/CLI.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -18,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 namespace sogen::sandbox
@@ -62,7 +64,16 @@ namespace sogen::sandbox
                 .arguments = parse_arguments(args),
             };
 
+#ifdef _WIN32
+            // One vCPU per host core; WHP supports at most 64 per partition.
+            const auto vcpu_count = std::clamp(std::thread::hardware_concurrency(), 1u, 64u);
+#else
+            // The KVM backend does not support multiple vCPUs yet.
+            constexpr uint32_t vcpu_count = 1;
+#endif
+
             emulator_settings settings{
+                .vcpu_count = vcpu_count,
                 .registry_directory = get_current_binary_dir() / "registry",
             };
 
@@ -79,7 +90,7 @@ namespace sogen::sandbox
             };
 
 #ifdef _WIN32
-            auto emulator = whp::create_x86_64_emulator();
+            auto emulator = whp::create_x86_64_emulator(vcpu_count);
 #else
             auto emulator = kvm::create_x86_64_emulator();
 #endif
