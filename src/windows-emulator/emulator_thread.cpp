@@ -18,7 +18,7 @@ namespace sogen
             abandoned,
         };
 
-        void setup_wow64_fs_segment(memory_manager& memory, uint64_t teb32_addr)
+        void setup_wow64_fs_segment(memory_manager& memory, uint64_t teb32_addr, uint64_t gdt_base)
         {
             const uint64_t base = teb32_addr;
             const uint32_t limit = 0xFFF; // 4KB - size of TEB32 (matching Windows)
@@ -34,8 +34,8 @@ namespace sogen
             descriptor |= (0x40ULL << 48);                                        // G=0 (byte), D=1 (32-bit), L=0, AVL=0
             descriptor |= ((base & 0xFF000000) << 32);                            // Base[31:24]
 
-            // Write the updated descriptor to GDT index 10 (selector 0x53)
-            constexpr uint64_t fs_gdt_offset = GDT_ADDR + 10 * sizeof(uint64_t);
+            // Write the updated descriptor to GDT index 10 (selector 0x53) of this vCPU's own GDT.
+            const uint64_t fs_gdt_offset = gdt_base + 10 * sizeof(uint64_t);
             memory.write_memory(fs_gdt_offset, &descriptor, sizeof(descriptor));
         }
 
@@ -1226,12 +1226,17 @@ namespace sogen
 
     void emulator_thread::refresh_execution_context(x86_64_cpu& emu) const
     {
-        (void)emu;
+        // Point this vCPU's GDTR at its own per-vCPU GDT. The saved thread context restores whatever
+        // GDTR the thread last ran with (possibly another vCPU's GDT), so re-assert it here on every
+        // switch. Cheap and keeps each vCPU reading its own descriptors.
+        const auto gdt_base = gdt_base_for_vcpu(emu.index());
+        emu.load_gdt(gdt_base, GDT_LIMIT);
 
         if (this->teb32.has_value())
         {
-            // Refresh GDT entry for FS selector on context switch
-            setup_wow64_fs_segment(*this->memory_ptr, this->teb32->value());
+            // Refresh this vCPU's WOW64 FS descriptor with this thread's 32-bit TEB base, so a 64<->32
+            // transition that reloads FS reads the correct base regardless of which vCPU runs the thread.
+            setup_wow64_fs_segment(*this->memory_ptr, this->teb32->value(), gdt_base);
         }
     }
 

@@ -23,14 +23,22 @@ namespace sogen
 
     struct fake_environment_config;
 
-#define PEB_SEGMENT_SIZE        (20 << 20) // 20 MB
-#define GS_SEGMENT_SIZE         (1 << 20)  // 1 MB
+#define PEB_SEGMENT_SIZE (20 << 20) // 20 MB
+#define GS_SEGMENT_SIZE  (1 << 20)  // 1 MB
 
-#define STACK_SIZE              0x40000ULL // 256KB
+#define STACK_SIZE       0x40000ULL // 256KB
 
-#define GDT_ADDR                0x35000
-#define GDT_LIMIT               0x1000
-#define GDT_ENTRY_SIZE          0x8
+#define GDT_ADDR         0x35000
+#define GDT_LIMIT        0x1000
+#define GDT_ENTRY_SIZE   0x8
+
+    // Each vCPU gets its own GDT page. Most descriptors are identical, but the WOW64 FS descriptor
+    // (selector 0x53) holds a per-thread 32-bit TEB base that the guest reloads on every 64<->32
+    // transition, so a shared GDT would let a WOW64 thread on one vCPU read another vCPU's TEB base.
+    constexpr uint64_t gdt_base_for_vcpu(const size_t vcpu_index) noexcept
+    {
+        return GDT_ADDR + vcpu_index * GDT_LIMIT;
+    }
 
 // TODO: Get rid of that
 #define WOW64_NATIVE_STACK_SIZE 0x8000

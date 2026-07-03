@@ -87,54 +87,41 @@ namespace sogen
 
         void setup_gdt(x86_64_emulator& emu, memory_manager& memory)
         {
-            // Allocate GDT with read-write permissions for segment descriptor setup
-            memory.allocate_memory(GDT_ADDR, static_cast<size_t>(page_align_up(GDT_LIMIT)), memory_permission::read_write);
+            const auto vcpu_count = emu.vcpu_count();
 
-            // The GDT table lives in shared guest memory, but the GDTR register is per-vCPU. Every vCPU
-            // needs it loaded: normal 64-bit execution restores segment caches from the saved thread
-            // context, but a runtime segment load - notably the WOW64 32<->64 heaven's-gate transition -
-            // reads descriptors through the GDTR, which would be invalid on a vCPU that never loaded it.
-            for (size_t i = 0; i < emu.vcpu_count(); ++i)
+            // One GDT page per vCPU (see gdt_base_for_vcpu): the WOW64 FS descriptor holds a per-thread
+            // TEB base, so a shared GDT cannot serve WOW64 threads on different vCPUs at the same time.
+            memory.allocate_memory(GDT_ADDR, static_cast<size_t>(page_align_up(vcpu_count * GDT_LIMIT)), memory_permission::read_write);
+
+            for (size_t i = 0; i < vcpu_count; ++i)
             {
-                emu.get_cpu(i).load_gdt(GDT_ADDR, GDT_LIMIT);
+                const auto gdt_base = gdt_base_for_vcpu(i);
+
+                // Index 1 (0x08) - 64-bit kernel code (Ring 0): P=1, DPL=0, S=1, Type=0xA, L=1
+                emu.write_memory<uint64_t>(gdt_base + (1 * sizeof(uint64_t)), 0x00AF9B000000FFFF);
+                // Index 2 (0x10) - 64-bit kernel data (Ring 0): P=1, DPL=0, S=1, Type=0x2, L=1
+                emu.write_memory<uint64_t>(gdt_base + (2 * sizeof(uint64_t)), 0x00CF93000000FFFF);
+                // Index 3 (0x18) - 32-bit compatibility code (Ring 0): P=1, DPL=0, S=1, Type=0xA, DB=1, G=1
+                emu.write_memory<uint64_t>(gdt_base + (3 * sizeof(uint64_t)), 0x00CF9B000000FFFF);
+                // Index 4 (0x23) - 32-bit WOW64 code (Ring 3): P=1, DPL=3, S=1, Type=0xA, DB=1, G=1
+                emu.write_memory<uint64_t>(gdt_base + (4 * sizeof(uint64_t)), 0x00CFFB000000FFFF);
+                // Index 5 (0x2B) - user data (Ring 3): P=1, DPL=3, S=1, Type=0x2, G=1
+                emu.write_memory<uint64_t>(gdt_base + (5 * sizeof(uint64_t)), 0x00CFF3000000FFFF);
+                // Index 6 (0x33) - 64-bit user code (Ring 3): P=1, DPL=3, S=1, Type=0xA, L=1
+                emu.write_memory<uint64_t>(gdt_base + (6 * sizeof(uint64_t)), 0x00AFFB000000FFFF);
+                // Index 10 (0x53) - WOW64 FS/TEB (Ring 3, byte granularity). The base is filled in
+                // per-thread by emulator_thread::refresh_execution_context.
+                emu.write_memory<uint64_t>(gdt_base + (10 * sizeof(uint64_t)), 0x0040F3000000FFFF);
+
+                emu.get_cpu(i).load_gdt(gdt_base, GDT_LIMIT);
             }
 
-            // Index 1 (selector 0x08) - 64-bit kernel code segment (Ring 0)
-            // P=1, DPL=0, S=1, Type=0xA (Code, Execute/Read), L=1 (Long mode)
-            emu.write_memory<uint64_t>(GDT_ADDR + (1 * sizeof(uint64_t)), 0x00AF9B000000FFFF);
-
-            // Index 2 (selector 0x10) - 64-bit kernel data segment (Ring 0)
-            // P=1, DPL=0, S=1, Type=0x2 (Data, Read/Write), L=1 (64-bit)
-            emu.write_memory<uint64_t>(GDT_ADDR + (2 * sizeof(uint64_t)), 0x00CF93000000FFFF);
-
-            // Index 3 (selector 0x18) - 32-bit compatibility mode segment (Ring 0)
-            // P=1, DPL=0, S=1, Type=0xA (Code, Execute/Read), DB=1, G=1
-            emu.write_memory<uint64_t>(GDT_ADDR + (3 * sizeof(uint64_t)), 0x00CF9B000000FFFF);
-
-            // Index 4 (selector 0x23) - 32-bit code segment for WOW64 (Ring 3)
-            // Real Windows: Code RE Ac 3 Bg Pg P Nl 00000cfb
-            // P=1, DPL=3, S=1, Type=0xA (Code, Execute/Read), DB=1, G=1
-            emu.write_memory<uint64_t>(GDT_ADDR + (4 * sizeof(uint64_t)), 0x00CFFB000000FFFF);
-
-            // Index 5 (selector 0x2B) - Data segment for user mode (Ring 3)
-            // Real Windows: Data RW Ac 3 Bg Pg P Nl 00000cf3
-            // P=1, DPL=3, S=1, Type=0x2 (Data, Read/Write), G=1
-            emu.write_memory<uint64_t>(GDT_ADDR + (5 * sizeof(uint64_t)), 0x00CFF3000000FFFF);
+            // Initial selectors for the primary thread on the primary vCPU (per-thread bases applied later).
             emu.reg<uint16_t>(x86_register::ss, 0x2B);
             emu.reg<uint16_t>(x86_register::ds, 0x2B);
             emu.reg<uint16_t>(x86_register::es, 0x2B);
-            emu.reg<uint16_t>(x86_register::gs, 0x2B); // Initial GS value, will be overridden with proper base later
-
-            // Index 6 (selector 0x33) - 64-bit code segment (Ring 3)
-            // P=1, DPL=3, S=1, Type=0xA (Code, Execute/Read), L=1 (Long mode)
-            emu.write_memory<uint64_t>(GDT_ADDR + (6 * sizeof(uint64_t)), 0x00AFFB000000FFFF);
+            emu.reg<uint16_t>(x86_register::gs, 0x2B);
             emu.reg<uint16_t>(x86_register::cs, 0x33);
-
-            // Index 10 (selector 0x53) - FS segment for WOW64 TEB access
-            // Real Windows: Data RW Ac 3 Bg By P Nl 000004f3 (base=0x002c1000, limit=0xfff)
-            // Initially set with base=0, will be updated during thread creation
-            // P=1, DPL=3, S=1, Type=0x3 (Data, Read/Write, Accessed), G=0 (byte granularity), DB=1
-            emu.write_memory<uint64_t>(GDT_ADDR + (10 * sizeof(uint64_t)), 0x0040F3000000FFFF);
             emu.reg<uint16_t>(x86_register::fs, 0x53);
         }
 
