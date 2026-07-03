@@ -1664,6 +1664,25 @@ namespace sogen
             std::u16string filename_upper = filename;
             std::ranges::transform(filename_upper, filename_upper.begin(), ::towupper);
 
+            constexpr std::u16string_view system_root_prefix = u"\\SYSTEMROOT";
+            if (filename_upper == system_root_prefix ||
+                (filename_upper.size() > system_root_prefix.size() && filename_upper.starts_with(system_root_prefix) &&
+                 windows_path_detail::is_slash(filename_upper[system_root_prefix.size()])))
+            {
+                const std::u16string_view system_root = c.proc.kusd.get().NtSystemRoot.arr;
+                const auto suffix = std::u16string_view{filename}.substr(system_root_prefix.size());
+                filename = std::u16string(system_root);
+
+                if (!suffix.empty() && windows_path_detail::is_slash(filename.back()) && windows_path_detail::is_slash(suffix.front()))
+                {
+                    filename.append(suffix.substr(1));
+                }
+                else
+                {
+                    filename.append(suffix);
+                }
+            }
+
             // Handle console output device
             if (filename_upper == u"\\??\\CONOUT$" || filename_upper == u"\\DEVICE\\CONOUT$" || filename_upper == u"CONOUT$" ||
                 filename_upper == u"\\??\\CON" || filename_upper == u"\\DEVICE\\CONSOLE" || filename_upper == u"CON")
