@@ -741,7 +741,8 @@ namespace sogen
         BOOL handle_NtGdiGetCharABCWidthsW(const syscall_context& c, hdc dc, UINT first_char, UINT char_count, emulator_pointer chars,
                                            UINT flags, emulator_pointer buffer);
         NTSTATUS handle_NtGdiExtCreateRegion();
-        NTSTATUS handle_NtGdiTransparentBlt();
+        BOOL handle_NtGdiTransparentBlt(const syscall_context& c, hdc dst_dc, int x_dst, int y_dst, int dst_width, int dst_height,
+                                        hdc src_dc, int x_src, int y_src, int src_width, int src_height, COLORREF transparent_color);
         uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
         int32_t handle_NtGdiGetRandomRgn(const syscall_context& c, hdc dc, uint64_t region, LONG index);
         uint32_t handle_NtGdiGetRegionData(const syscall_context& c, handle hrgn, ULONG buffer_size, emulator_pointer region_data);
@@ -1286,6 +1287,7 @@ namespace sogen
         add_handler(NtGdiPatBlt);
         add_handler(NtGdiBitBlt);
         add_handler(NtGdiStretchBlt);
+        add_handler(NtGdiTransparentBlt);
         add_handler(NtGdiPolyPatBlt);
         add_handler(NtGdiExtTextOutW);
         add_handler(NtGdiGetRealizationInfo);
@@ -1566,7 +1568,6 @@ namespace sogen
         add_handler(NtUserSetWindowRgn);
         add_handler(NtUserAlterWindowStyle);
         add_handler(NtUserSetActiveWindow);
-        add_handler(NtGdiTransparentBlt);
         add_handler(NtUserCreateAcceleratorTable);
         add_handler(NtUserDestroyAcceleratorTable);
         add_handler(NtUserCopyAcceleratorTable);

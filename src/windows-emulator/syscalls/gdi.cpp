@@ -3086,11 +3086,6 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtGdiTransparentBlt()
-        {
-            return STATUS_SUCCESS;
-        }
-
         uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, const LONG /*x_left*/, const LONG /*y_top*/, const LONG /*x_right*/,
                                            const LONG /*y_bottom*/)
         {
@@ -3573,6 +3568,16 @@ namespace sogen
 
             present_win_surface(c, present_handle, dst_surface);
             return TRUE;
+        }
+
+        BOOL handle_NtGdiTransparentBlt(const syscall_context& c, const hdc dst_dc, const int x_dst, const int y_dst, const int dst_width,
+                                        const int dst_height, const hdc src_dc, const int x_src, const int y_src, const int src_width,
+                                        const int src_height, const COLORREF /*transparent_color*/)
+        {
+            // TODO: This is only an approximation; honor the transparent color instead of using SRCCOPY.
+            constexpr DWORD srccopy = 0x00CC0020u;
+            return handle_NtGdiStretchBlt(c, dst_dc, x_dst, y_dst, dst_width, dst_height, src_dc, x_src, y_src, src_width, src_height,
+                                          srccopy, 0);
         }
 
         BOOL handle_NtGdiPatBlt(const syscall_context& c, const hdc dc, const LONG x, const LONG y, const LONG width, const LONG height,
