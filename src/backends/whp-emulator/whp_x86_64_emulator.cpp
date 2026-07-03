@@ -1231,6 +1231,7 @@ namespace sogen::whp
 
             std::atomic_bool stop_requested_{false};
             std::atomic_bool run_active_{false};
+            std::atomic_bool pending_tlb_flush_{false};
             std::optional<pending_execution_step> pending_execution_step_{};
             std::optional<pending_mmio_step> pending_mmio_step_{};
             std::optional<uint64_t> deferred_patched_breakpoint_{};
@@ -2997,13 +2998,18 @@ namespace sogen::whp
                 return true;
             }
 
-            // Assumes partition_mutex_ is held exclusively. Rewriting CR3 flushes the cached
-            // virtual-address translations; every vCPU shares the same page tables.
+            // Assumes partition_mutex_ is held exclusively. Every vCPU shares the same page
+            // tables; each one flushes its own cached translations by reloading CR3 at the
+            // top of its run loop. Registers of a potentially running vCPU cannot be touched
+            // from here, so the flush is requested via a flag plus a cancel: a running vCPU
+            // exits and re-enters through the loop top, an idle one applies the flag before
+            // its next run.
             void flush_virtual_address_mappings()
             {
                 for (const auto& vcpu : this->vcpus_)
                 {
-                    vcpu->set_register(WHvX64RegisterCr3, vcpu->get_register(WHvX64RegisterCr3));
+                    vcpu->pending_tlb_flush_ = true;
+                    (void)WHvCancelRunVirtualProcessor(this->partition_, vcpu->vp_index_, 0);
                 }
             }
 
@@ -3211,6 +3217,13 @@ namespace sogen::whp
 
                 while (!vcpu.stop_requested_)
                 {
+                    if (vcpu.pending_tlb_flush_.exchange(false))
+                    {
+                        // Reload CR3 to flush this vCPU's cached translations. Safe here:
+                        // this vCPU is not inside WHvRunVirtualProcessor.
+                        vcpu.set_register(WHvX64RegisterCr3, vcpu.get_register(WHvX64RegisterCr3));
+                    }
+
                     this->expire_mmio_read_grace_pages(vcpu);
                     WHV_RUN_VP_EXIT_CONTEXT exit_context{};
                     const auto start_rip = vcpu.read_instruction_pointer();

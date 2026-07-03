@@ -9,14 +9,22 @@ Status: in progress on branch `multi-vcpu`
 - [x] Phase 1 — WHP drives N VPs: per-VP `whp_vcpu` objects, parameterized VP index,
       `partition_mutex_` (shared_mutex, copy-then-invoke callback discipline),
       `ProcessorCount = N`, factory takes `vcpu_count` (eef2e558). Clang-tidy clean.
-- [ ] Phase 2 — BEL + vcpu_worker scheduler. Done: `kernel_lock` (owner-tracking,
+- [~] Phase 2 — BEL + vcpu_worker scheduler. Done: `kernel_lock` (owner-tracking,
       non-recursive, assert-based interior checks) acquired at every entry point (hook
       callbacks, UI event delivery, scheduler loop — released across guest execution
-      and idle sleeps), logger print mutex, startup conflict validation
-      (instruction precision / relative time / instruction budgets / gdb at N>1).
-      Remaining: per-vCPU worker loops + ready_cv, timer kicks for all running vCPUs,
-      device pump on scheduler ticks, N=1 boot benchmark vs main, clang-cl
-      -Wthread-safety annotations.
+      and idle sleeps); logger print mutex; startup conflict validation (instruction
+      precision / relative time / instruction budgets / gdb at N>1); one host worker
+      thread per vCPU (`vcpu_worker`) with per-vCPU thread ownership (a guest thread
+      loaded on one vCPU is skipped by the others; detached when the vCPU goes idle);
+      timer thread kicks all running vCPUs; `stop()` cancels all vCPUs; WHP per-vCPU
+      deferred TLB flush (flag + cancel, applied at run-loop top) replacing the
+      cross-vCPU CR3 rewrite. N=1 keeps its proven inline loop (workers only spawn at
+      N>1); N=1 + all tests unaffected.
+      **N>1 launches real parallel execution but is not yet correct** — surfaces
+      concurrency bugs (`No active thread!`, guest-memory read failures) that are the
+      Phase 3 cross-vCPU-correctness work. Remaining Phase 2 polish: replace the idle
+      sleep-poll with a ready_cv; device pump on scheduler ticks; N=1 boot benchmark vs
+      main; clang-cl -Wthread-safety annotations.
 - [ ] Phase 3 — cross-vCPU correctness
 - [ ] Phase 4 — stress testing + contention profiling
 - [ ] Phase 5 — KVM parity, linux-emulator

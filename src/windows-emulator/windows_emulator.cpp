@@ -269,10 +269,11 @@ namespace sogen
             return false;
         }
 
+        vcpu_context* find_vcpu_running_thread(windows_emulator& win_emu, const emulator_thread& thread);
+
         void perform_context_switch_work(windows_emulator& win_emu, vcpu_context& vcpu)
         {
             auto& threads = win_emu.process.threads;
-            auto*& active = vcpu.active_thread;
 
             for (auto it = threads.begin(); it != threads.end();)
             {
@@ -282,9 +283,16 @@ namespace sogen
                     continue;
                 }
 
-                if (active == &it->second)
+                if (auto* running_on = find_vcpu_running_thread(win_emu, it->second))
                 {
-                    active = nullptr;
+                    if (running_on != &vcpu)
+                    {
+                        // Another vCPU still has this thread loaded; it will detach it soon.
+                        ++it;
+                        continue;
+                    }
+
+                    running_on->active_thread = nullptr;
                 }
 
                 const auto [new_it, deleted] = threads.erase(it);
@@ -382,9 +390,29 @@ namespace sogen
             emu.reg(x86_register::rip, win_emu.process.ki_user_apc_dispatcher);
         }
 
+        vcpu_context* find_vcpu_running_thread(windows_emulator& win_emu, const emulator_thread& thread)
+        {
+            for (uint32_t i = 0; i < win_emu.vcpu_count(); ++i)
+            {
+                auto& vcpu = win_emu.vcpu(i);
+                if (vcpu.active_thread == &thread)
+                {
+                    return &vcpu;
+                }
+            }
+
+            return nullptr;
+        }
+
         bool switch_to_thread(windows_emulator& win_emu, vcpu_context& vcpu, emulator_thread& thread, const bool force = false)
         {
             if (thread.is_terminated())
+            {
+                return false;
+            }
+
+            // A thread that is loaded on another vCPU can only run there.
+            if (auto* running_on = find_vcpu_running_thread(win_emu, thread); running_on && running_on != &vcpu)
             {
                 return false;
             }
@@ -686,17 +714,31 @@ namespace sogen
 
         while (!switch_to_next_thread(*this, vcpu))
         {
+            if (this->vcpu_count_ > 1 && vcpu.active_thread)
+            {
+                // Nothing runnable for this vCPU: detach the stale thread so another
+                // vCPU can pick it up once it becomes ready.
+                vcpu.active_thread->save(vcpu.cpu);
+                vcpu.active_thread = nullptr;
+            }
+
+            const auto host_wait_pending = has_pending_host_wait(this->process);
+
             // Idle: nothing is ready. Release the kernel lock while pumping UI events
-            // and sleeping so other threads (UI delivery, future vCPU workers) can run.
+            // and sleeping so other threads (UI delivery, vCPU workers) can run.
             lock.unlock();
 
-            this->ui_backend_->pump_events();
+            if (this->vcpu_count_ == 1)
+            {
+                // With workers, the thread calling start() pumps UI events instead.
+                this->ui_backend_->pump_events();
+            }
 
             if (this->use_relative_time_)
             {
                 this->executed_instructions_ += MAX_INSTRUCTIONS_PER_TIME_SLICE;
             }
-            else if (has_pending_host_wait(this->process))
+            else if (host_wait_pending)
             {
                 // A host wait (e.g. a GPU semaphore) is parked - re-poll immediately to wake it promptly.
                 std::this_thread::yield();
@@ -717,6 +759,38 @@ namespace sogen
         }
 
         return true;
+    }
+
+    void windows_emulator::vcpu_worker(vcpu_context& vcpu)
+    {
+        std::unique_lock lock(this->kernel_lock_);
+
+        while (!this->should_stop)
+        {
+            if (vcpu.switch_thread || !vcpu.active_thread || !vcpu.thread().is_thread_ready(*this))
+            {
+                if (!this->perform_thread_switch(vcpu, lock))
+                {
+                    break;
+                }
+            }
+
+            // Guest code executes with the kernel lock released; hook callbacks
+            // (syscalls, exceptions, exec hooks) re-acquire it on VM exit.
+            lock.unlock();
+            vcpu.cpu.start();
+            lock.lock();
+
+            if (!vcpu.switch_thread && !vcpu.cpu.has_violation())
+            {
+                break;
+            }
+        }
+
+        lock.unlock();
+
+        // One vCPU winding down (process exit, fatal error) ends the whole run.
+        this->stop();
     }
 
     bool windows_emulator::activate_thread(vcpu_context& vcpu, const uint32_t id)
@@ -1097,6 +1171,8 @@ namespace sogen
         std::mutex interrupt_mutex{};
         std::condition_variable interrupt_cond{};
         std::thread interrupt_thread{};
+        std::vector<std::thread> workers{};
+        std::atomic<uint32_t> active_workers{0};
 
         const auto _ = utils::finally([&] {
             {
@@ -1106,14 +1182,24 @@ namespace sogen
 
             interrupt_cond.notify_all();
 
+            for (uint32_t i = 0; i < this->vcpu_count_; ++i)
+            {
+                this->vcpu(i).cpu.stop();
+            }
+
+            for (auto& worker : workers)
+            {
+                if (worker.joinable())
+                {
+                    worker.join();
+                }
+            }
+
             if (interrupt_thread.joinable())
             {
                 interrupt_thread.join();
             }
         });
-
-        // The scheduler only drives vCPU 0 until Phase 2 introduces per-vCPU worker loops.
-        auto& vcpu = this->vcpu(0);
 
         if (!this->uses_instruction_precision() && this->emu().is_stop_thread_safe())
         {
@@ -1127,12 +1213,50 @@ namespace sogen
 
                     if (!this->should_stop)
                     {
-                        vcpu.switch_thread = true;
-                        vcpu.cpu.stop();
+                        for (uint32_t i = 0; i < this->vcpu_count_; ++i)
+                        {
+                            auto& v = this->vcpu(i);
+                            v.switch_thread = true;
+                            v.cpu.stop();
+                        }
                     }
                 }
             });
         }
+
+        if (this->vcpu_count_ > 1)
+        {
+            // One worker thread per vCPU; this thread pumps UI events until the run ends.
+            active_workers = this->vcpu_count_;
+            workers.reserve(this->vcpu_count_);
+
+            for (uint32_t i = 0; i < this->vcpu_count_; ++i)
+            {
+                workers.emplace_back([this, i, &active_workers] {
+                    try
+                    {
+                        this->vcpu_worker(this->vcpu(i));
+                    }
+                    catch (const std::exception& e)
+                    {
+                        this->log.error("vCPU %u worker terminated: %s\n", i, e.what());
+                        this->stop();
+                    }
+
+                    --active_workers;
+                });
+            }
+
+            while (active_workers.load() > 0)
+            {
+                this->ui_backend_->pump_events();
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+
+            return;
+        }
+
+        auto& vcpu = this->vcpu(0);
 
         std::unique_lock lock(this->kernel_lock_);
 
@@ -1351,7 +1475,11 @@ namespace sogen
     void windows_emulator::stop()
     {
         this->should_stop = true;
-        this->vcpu(0).cpu.stop();
+
+        for (uint32_t i = 0; i < this->vcpu_count_; ++i)
+        {
+            this->vcpu(i).cpu.stop();
+        }
     }
 
     void windows_emulator::register_factories(utils::buffer_deserializer& buffer)
