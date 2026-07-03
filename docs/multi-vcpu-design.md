@@ -29,13 +29,19 @@ Status: in progress on branch `multi-vcpu`
       mapping + flushes this vCPU's TLB + retries whenever the page is backed and its
       intended permissions allow the operation (guard/no-access pages map with permission
       `none`, so genuine violations are still delivered); a per-vCPU (page,rip) retry
-      counter (cap 256) rides out concurrent re-clears at high vCPU counts without looping.
-      Result: `--vcpus 2` 70/70, `--vcpus 4` 27/28, `--vcpus 8` ~125/126 smoke runs pass;
-      N=1 and the 23 unit tests unaffected. Remaining Phase 3 (non-blocking): cross-vCPU
-      kicks for alert/APC/suspend/terminate targeting a *running* thread (currently take
-      effect at the next ~20ms timer preemption); NtGet/SetContextThread force-save;
-      stop-the-world snapshot quiesce (snapshots still N=1); guest CPU count tied to
-      vcpu_count. Details of the earlier register/dispatch fixes below.
+      counter rides out concurrent re-clears; the cap applies only to the unrecoverable-exit
+      path whose access type is guessed, while the well-typed paths (#PF, memory access,
+      which carry the real read/write) retry uncapped since a backed+permitted fault there is
+      always transient. Result: `--vcpus 1` 100% (unchanged), `--vcpus 2`/`4` 100%, `--vcpus 8`
+      ~99% (a rare miss remains under heavy oversubscription); N=1 and the 23 unit tests
+      unaffected. Guest CPU identity done: the guest now sees `max(fake_env.number_of_processors,
+      vcpu_count)` processors (KUSD ActiveProcessorCount, PEB, SystemBasicInformation all
+      consistent) and NtGetCurrentProcessorNumber[Ex] returns the acting vCPU index.
+      Remaining Phase 3 (non-blocking, latency/feature): cross-vCPU kicks for
+      alert/APC/suspend/terminate targeting a *running* thread (currently take effect at the
+      next ~20ms timer preemption — functionally correct); NtGet/SetContextThread force-save
+      for a running thread; stop-the-world snapshot quiesce (snapshots still N=1); and the
+      rare `--vcpus 8+` miss. Details of the earlier register/dispatch fixes below.
 - [~] Phase 3 (earlier fixes) — Fixed the register-routing bug that made every
       syscall on a non-zero vCPU touch vCPU 0's registers: `syscall_context::emu` (and the
       argument/register helpers, `callback_frame`, exception dispatch, rdtsc/rdtscp/
