@@ -286,7 +286,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (info_class == MemoryRegionInformation)
+            if (info_class == MemoryRegionInformation || info_class == MemoryRegionInformationEx)
             {
                 if (return_length)
                 {
@@ -311,9 +311,18 @@ namespace sogen
 
                     image_info.AllocationBase = region_info.allocation_base;
                     image_info.AllocationProtect = map_emulator_to_nt_protection(region_info.initial_permissions);
-                    // image_info.PartitionId = 0;
+                    image_info.RegionType = memory_region_policy::to_memory_region_information_type(region_info.kind);
                     image_info.RegionSize = static_cast<int64_t>(region_info.allocation_length);
-                    image_info.Reserved = 0x10;
+
+                    const auto& reserved_regions = c.win_emu.memory.get_reserved_regions();
+                    const auto allocation = reserved_regions.find(region_info.allocation_base);
+                    if (allocation != reserved_regions.end())
+                    {
+                        for (const auto& committed : allocation->second.committed_regions | std::views::values)
+                        {
+                            image_info.CommitSize += static_cast<int64_t>(committed.length);
+                        }
+                    }
                 });
 
                 return STATUS_SUCCESS;

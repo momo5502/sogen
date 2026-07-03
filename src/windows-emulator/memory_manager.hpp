@@ -195,6 +195,26 @@ namespace sogen
             }
         }
 
+        constexpr uint32_t to_memory_region_information_type(const memory_region_kind kind)
+        {
+            switch (kind)
+            {
+            case memory_region_kind::private_allocation:
+                return 1 << 0;
+            case memory_region_kind::file_section_view:
+                return 1 << 1;
+            case memory_region_kind::section_image:
+                return 1 << 2;
+            case memory_region_kind::pagefile_section_view:
+                return 1 << 3;
+            case memory_region_kind::mmio:
+                return 1 << 4;
+            case memory_region_kind::free:
+            default:
+                return 0;
+            }
+        }
+
         constexpr NTSTATUS nt_free_virtual_memory_denied_status(const memory_region_kind kind)
         {
             if (is_section_kind(kind))
