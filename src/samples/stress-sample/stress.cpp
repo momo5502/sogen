@@ -66,8 +66,9 @@ namespace
             {
                 EnterCriticalSection(&cs);
                 const LONG value = guarded;
-                // Widen the race window without yielding the vCPU (a syscall would serialize us).
-                for (volatile int spin = 0; spin < 64; ++spin)
+                // Widen the race window without yielding the vCPU (a syscall would serialize us). Simple
+                // assignment rather than ++ because increment of a volatile is deprecated in C++20.
+                for (volatile int spin = 0; spin < 64; spin = spin + 1)
                 {
                 }
                 guarded = value + 1;
