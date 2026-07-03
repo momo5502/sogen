@@ -249,6 +249,14 @@ namespace sogen
     {
         auto& thread = vcpu.thread();
 
+        win_emu.record_exception_trace({
+            .status = static_cast<uint32_t>(status),
+            .tid = thread.id,
+            .vcpu = static_cast<uint32_t>(vcpu.cpu.index()),
+            .rip = vcpu.cpu.read_instruction_pointer(),
+            .info = parameters.size() > 1 ? static_cast<uint64_t>(parameters[1]) : 0,
+        });
+
         CONTEXT64 ctx{};
         ctx.ContextFlags = CONTEXT64_ALL;
         cpu_context::save(vcpu.cpu, ctx);

@@ -268,6 +268,26 @@ namespace sogen
             vcpu_context* previous_{};
         };
 
+        // Post-mortem exception capture for multi-vCPU debugging. Recorded under the
+        // kernel lock (no I/O, no extra locking), dumped after the run ends, so it does
+        // not perturb the timing-sensitive races it is meant to catch.
+        struct exception_trace_entry
+        {
+            uint32_t status{};
+            uint32_t tid{};
+            uint32_t vcpu{};
+            uint64_t rip{};
+            uint64_t info{};
+        };
+
+        void record_exception_trace(const exception_trace_entry& entry)
+        {
+            this->exception_trace_[this->exception_trace_index_ % this->exception_trace_.size()] = entry;
+            ++this->exception_trace_index_;
+        }
+
+        void dump_exception_trace();
+
         uint64_t get_executed_instructions() const
         {
             return this->executed_instructions_;
@@ -369,6 +389,9 @@ namespace sogen
         // The vCPU currently running a handler under the kernel lock; drives
         // current_thread(). See scoped_dispatch.
         vcpu_context* dispatch_vcpu_{};
+
+        std::array<exception_trace_entry, 32> exception_trace_{};
+        size_t exception_trace_index_{0};
 
         // unique_ptr because vcpu_context contains an atomic and must stay address-stable.
         std::vector<std::unique_ptr<vcpu_context>> vcpus_{};

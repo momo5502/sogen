@@ -49,7 +49,19 @@ Status: in progress on branch `multi-vcpu`
       reading the time page tore `kusd_`; now guarded by an internal mutex. That, plus the
       cancel-return fix, took the `--vcpus 2` smoke suite from near-always-failing to
       ~6/8 passing (full suite completes, clean `NtTerminateProcess`).
-      **Residual**: ~25% of silent `--vcpus 2` runs still fail at the **Threads** test with
+      Post-mortem exception tracer added (env `SOGEN_TRACE_EXCEPTIONS=1`, dumped after the
+      run so it doesn't perturb the race): it pinpointed the crash as a spurious access
+      violation (0xC0000005) on a page the memory manager reports **committed** — the guest
+      page-table entry is absent on the faulting vCPU. Deterministic fault address
+      (ntdll+0x1ea598, an image `.data`/COW page) but intermittent by timing. Added a
+      stale-TLB retry: a not-present #PF whose guest PTE is actually present flushes the
+      vCPU's TLB and resumes instead of delivering a bogus AV. That only helps when the PTE
+      is present; the residual case is a **committed page whose eager WHP mapping is absent
+      on the faulting vCPU** — likely the image/COW mapping path (not the eager
+      `map_memory`) not being established/flushed across vCPUs. Next: instrument the WHP
+      violation fall-through to log GvaValid + mapped_pages_ state + is_virtual_mapping_present
+      for that address, and check whether ntdll `.data` COW pages are mapped lazily.
+      **Residual**: ~5/12 of silent `--vcpus 2` runs still fail at the **Threads** test with
       NO emulator-side error (the guest observes the fault), and it vanishes under any
       added logging (Heisenbug). This last race needs dedicated tooling — a deterministic
       repro or the Linux/KVM build under ThreadSanitizer (TSan is unavailable on WHP) —

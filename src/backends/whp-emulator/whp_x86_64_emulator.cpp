@@ -2934,7 +2934,9 @@ namespace sogen::whp
             }
 
             // Assumes partition_mutex_ is held exclusively.
-            void ensure_virtual_mapping(const uint64_t guest_address)
+            // Returns true if the page transitioned from not-present to present, meaning
+            // other vCPUs may hold a stale (negative) translation and need a TLB flush.
+            bool ensure_virtual_mapping(const uint64_t guest_address)
             {
                 const auto page_base = align_down_to_page(guest_address);
                 const auto mapped_page = this->mapped_pages_.find(page_base);
@@ -2953,8 +2955,45 @@ namespace sogen::whp
                 const auto pt_gpa = this->ensure_child_table(pd_gpa, pd_index);
 
                 auto* const pt_entries = this->get_page_table_entries(pt_gpa);
+                const auto was_present = (pt_entries[pt_index] & page_table_entry_present) != 0;
                 pt_entries[pt_index] = mapped_page->second->guest_physical_address | page_table_entry_present | page_table_entry_writable |
                                        page_table_entry_user;
+                return !was_present;
+            }
+
+            // Assumes partition_mutex_ is held (shared is sufficient). Walks the guest page
+            // tables read-only and reports whether the address is currently mapped present.
+            bool is_virtual_mapping_present(const uint64_t guest_address)
+            {
+                const auto page_base = align_down_to_page(guest_address);
+                const auto pml4_index = static_cast<size_t>((page_base >> 39) & 0x1FF);
+                const auto pdpt_index = static_cast<size_t>((page_base >> 30) & 0x1FF);
+                const auto pd_index = static_cast<size_t>((page_base >> 21) & 0x1FF);
+                const auto pt_index = static_cast<size_t>((page_base >> 12) & 0x1FF);
+
+                auto* pml4_entries = this->get_page_table_entries(this->pml4_gpa_);
+                const auto pml4_entry = pml4_entries[pml4_index];
+                if ((pml4_entry & page_table_entry_present) == 0)
+                {
+                    return false;
+                }
+
+                auto* pdpt_entries = this->get_page_table_entries(pml4_entry & page_table_entry_address_mask);
+                const auto pdpt_entry = pdpt_entries[pdpt_index];
+                if ((pdpt_entry & page_table_entry_present) == 0)
+                {
+                    return false;
+                }
+
+                auto* pd_entries = this->get_page_table_entries(pdpt_entry & page_table_entry_address_mask);
+                const auto pd_entry = pd_entries[pd_index];
+                if ((pd_entry & page_table_entry_present) == 0)
+                {
+                    return false;
+                }
+
+                auto* pt_entries = this->get_page_table_entries(pd_entry & page_table_entry_address_mask);
+                return (pt_entries[pt_index] & page_table_entry_present) != 0;
             }
 
             // Assumes partition_mutex_ is held exclusively.
@@ -3684,6 +3723,21 @@ namespace sogen::whp
                     const bool is_present = (exception.ErrorCode & 0x1u) != 0;
                     const auto operation = is_write ? memory_operation::write : memory_operation::read;
                     const auto type = is_present ? memory_violation_type::protection : memory_violation_type::unmapped;
+
+                    // Under multiple vCPUs a peer may have mapped/committed this page after this vCPU
+                    // cached a stale (negative) translation, producing a spurious not-present fault. If
+                    // the page is in fact mapped present, flush this vCPU's TLB and retry instead of
+                    // delivering a bogus access violation to the guest.
+                    if (!is_present)
+                    {
+                        std::shared_lock lock(this->partition_mutex_);
+                        if (this->is_virtual_mapping_present(fault_address))
+                        {
+                            lock.unlock();
+                            vcpu.set_register(WHvX64RegisterCr3, vcpu.get_register(WHvX64RegisterCr3));
+                            return true;
+                        }
+                    }
 
                     for (const auto& hook : this->copy_memory_violation_hooks())
                     {

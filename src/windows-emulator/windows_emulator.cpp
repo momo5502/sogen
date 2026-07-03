@@ -1263,6 +1263,7 @@ namespace sogen
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
 
+            this->dump_exception_trace();
             return;
         }
 
@@ -1479,6 +1480,44 @@ namespace sogen
             auto& vcpu = this->vcpu(0);
             vcpu.switch_thread = true;
             vcpu.cpu.stop();
+        }
+    }
+
+    void windows_emulator::dump_exception_trace()
+    {
+        // Opt-in post-mortem aid for multi-vCPU debugging (see docs/multi-vcpu-design.md).
+        const auto* enabled = std::getenv("SOGEN_TRACE_EXCEPTIONS");
+        if (!enabled || enabled[0] != '1')
+        {
+            return;
+        }
+
+        const auto count = std::min(this->exception_trace_index_, this->exception_trace_.size());
+        if (count == 0)
+        {
+            return;
+        }
+
+        const auto total = this->exception_trace_index_;
+        const auto start = total - count;
+        this->log.error("--- exception trace (last %zu of %zu) ---\n", count, total);
+
+        const auto describe = [this](const uint64_t address) -> std::string {
+            const auto* mod = this->mod_manager.find_by_address(address);
+            const auto region = this->memory.get_region_info(address);
+            char buffer[256];
+            std::snprintf(buffer, sizeof(buffer), "%s+0x%llx [%s]", mod ? mod->name.c_str() : "?",
+                          mod ? static_cast<unsigned long long>(address - mod->image_base) : address,
+                          region.is_committed ? "committed" : "FREE/reserved");
+            return buffer;
+        };
+
+        for (size_t i = 0; i < count; ++i)
+        {
+            const auto& e = this->exception_trace_[(start + i) % this->exception_trace_.size()];
+            this->log.error("  [%zu] status 0x%08x vcpu %u tid %u\n      rip  0x%llx %s\n      addr 0x%llx %s\n", start + i, e.status,
+                            e.vcpu, e.tid, static_cast<unsigned long long>(e.rip), describe(e.rip).c_str(),
+                            static_cast<unsigned long long>(e.info), describe(e.info).c_str());
         }
     }
 
