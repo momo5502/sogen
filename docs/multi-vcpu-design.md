@@ -1,6 +1,26 @@
 # Multi-vCPU Support — Design
 
-Status: proposal (not implemented)
+Status: in progress on branch `multi-vcpu`
+
+- [x] Phase 0a — capability query, `vcpu_count` setting, `--vcpus`, hard-error validation (4aa27ba1)
+- [x] Phase 0b — `x86_64_cpu` extraction (5611f1d4); hook callbacks carry the triggering CPU
+      (a68338eb); `vcpu_context` replaces `process_context::active_thread`, `CURRENT_THREAD`
+      resolution takes the calling thread explicitly, snapshot format unchanged (9d6be10b)
+- [x] Phase 1 — WHP drives N VPs: per-VP `whp_vcpu` objects, parameterized VP index,
+      `partition_mutex_` (shared_mutex, copy-then-invoke callback discipline),
+      `ProcessorCount = N`, factory takes `vcpu_count` (eef2e558). Clang-tidy clean.
+- [ ] Phase 2 — BEL + vcpu_worker scheduler. Done: `kernel_lock` (owner-tracking,
+      non-recursive, assert-based interior checks) acquired at every entry point (hook
+      callbacks, UI event delivery, scheduler loop — released across guest execution
+      and idle sleeps), logger print mutex, startup conflict validation
+      (instruction precision / relative time / instruction budgets / gdb at N>1).
+      Remaining: per-vCPU worker loops + ready_cv, timer kicks for all running vCPUs,
+      device pump on scheduler ticks, N=1 boot benchmark vs main, clang-cl
+      -Wthread-safety annotations.
+- [ ] Phase 3 — cross-vCPU correctness
+- [ ] Phase 4 — stress testing + contention profiling
+- [ ] Phase 5 — KVM parity, linux-emulator
+
 Scope: WHP backend first, KVM second; windows-emulator first, linux-emulator second.
 Goal: run guest threads truly in parallel — one host thread drives one vCPU — instead of
 cooperatively multiplexing all guest threads onto a single vCPU.

@@ -8,6 +8,7 @@
 
 #include "syscall_dispatcher.hpp"
 #include "process_context.hpp"
+#include "kernel_lock.hpp"
 #include "logger.hpp"
 #include "file_system.hpp"
 #include "memory_manager.hpp"
@@ -322,7 +323,7 @@ namespace sogen
         }
 
         void yield_thread(vcpu_context& vcpu, bool alertable = false);
-        bool perform_thread_switch(vcpu_context& vcpu);
+        bool perform_thread_switch(vcpu_context& vcpu, std::unique_lock<kernel_lock>& lock);
         bool activate_thread(vcpu_context& vcpu, uint32_t id);
 
       private:
@@ -330,6 +331,10 @@ namespace sogen
         bool instruction_precision_{true};
         uint32_t vcpu_count_{1};
         std::atomic_bool should_stop{false};
+
+        // The emulator kernel lock: held by all code touching shared kernel state,
+        // released while guest code executes (docs/multi-vcpu-design.md, section 7).
+        kernel_lock kernel_lock_{};
 
         // unique_ptr because vcpu_context contains an atomic and must stay address-stable.
         std::vector<std::unique_ptr<vcpu_context>> vcpus_{};

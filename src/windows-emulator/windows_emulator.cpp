@@ -584,6 +584,20 @@ namespace sogen
             throw std::invalid_argument("The emulator backend was created with fewer vCPUs than requested");
         }
 
+        if (this->vcpu_count_ > 1)
+        {
+            // Deliberate hard errors instead of silent clamping (docs/multi-vcpu-design.md).
+            if (this->instruction_precision_)
+            {
+                throw std::invalid_argument("Instruction precision requires a single vCPU");
+            }
+
+            if (this->use_relative_time_)
+            {
+                throw std::invalid_argument("Relative time requires a single vCPU");
+            }
+        }
+
         this->vcpus_.reserve(this->vcpu_count_);
         for (uint32_t i = 0; i < this->vcpu_count_; ++i)
         {
@@ -655,20 +669,27 @@ namespace sogen
         switch_to_thread(*this, this->vcpu(0), main_thread_id);
     }
 
-    // NOLINTNEXTLINE(readability-convert-member-functions-to-static)
     void windows_emulator::yield_thread(vcpu_context& vcpu, const bool alertable)
     {
+        this->kernel_lock_.assert_held();
+
         vcpu.switch_thread = true;
         vcpu.thread().apc_alertable = alertable;
         vcpu.cpu.stop();
     }
 
-    bool windows_emulator::perform_thread_switch(vcpu_context& vcpu)
+    bool windows_emulator::perform_thread_switch(vcpu_context& vcpu, std::unique_lock<kernel_lock>& lock)
     {
+        this->kernel_lock_.assert_held();
+
         const auto needed_switch = vcpu.switch_thread.exchange(false);
 
         while (!switch_to_next_thread(*this, vcpu))
         {
+            // Idle: nothing is ready. Release the kernel lock while pumping UI events
+            // and sleeping so other threads (UI delivery, future vCPU workers) can run.
+            lock.unlock();
+
             this->ui_backend_->pump_events();
 
             if (this->use_relative_time_)
@@ -686,6 +707,8 @@ namespace sogen
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
 
+            lock.lock();
+
             if (this->should_stop)
             {
                 vcpu.switch_thread = needed_switch;
@@ -698,6 +721,8 @@ namespace sogen
 
     bool windows_emulator::activate_thread(vcpu_context& vcpu, const uint32_t id)
     {
+        const std::scoped_lock lock(this->kernel_lock_);
+
         auto* thread = get_thread_by_id(this->process, id);
         if (!thread)
         {
@@ -822,6 +847,7 @@ namespace sogen
 
         hooks[section_index] = this->emu().hook_memory_range_execution(section.region.start, section.region.length,
                                                                        [this](cpu_interface&, const uint64_t address) {
+                                                                           const std::scoped_lock lock(this->kernel_lock_);
                                                                            this->track_section_first_execution(address); //
                                                                        });
     }
@@ -866,11 +892,13 @@ namespace sogen
         });
 
         this->emu().hook_instruction(x86_hookable_instructions::syscall, [&](cpu_interface& cpu, uint64_t) {
+            const std::scoped_lock lock(this->kernel_lock_);
             this->dispatcher.dispatch(*this, this->vcpu(cpu.index()));
             return instruction_hook_continuation::skip_instruction;
         });
 
         this->emu().hook_instruction(x86_hookable_instructions::rdtscp, [&] {
+            const std::scoped_lock lock(this->kernel_lock_);
             this->callbacks.on_rdtscp();
 
             const auto ticks = this->clock_->timestamp_counter();
@@ -885,6 +913,7 @@ namespace sogen
         });
 
         this->emu().hook_instruction(x86_hookable_instructions::rdtsc, [&] {
+            const std::scoped_lock lock(this->kernel_lock_);
             this->callbacks.on_rdtsc();
 
             const auto ticks = this->clock_->timestamp_counter();
@@ -896,12 +925,14 @@ namespace sogen
 
         // TODO: Unicorn needs this - This should be handled in the backend
         this->emu().hook_instruction(x86_hookable_instructions::invalid, [&](cpu_interface& cpu, uint64_t) {
+            const std::scoped_lock lock(this->kernel_lock_);
             // TODO: Unify icicle & unicorn handling
             dispatch_illegal_instruction_violation(*this, this->vcpu(cpu.index()));
             return instruction_hook_continuation::skip_instruction; //
         });
 
         this->emu().hook_interrupt([&](cpu_interface& cpu, const int interrupt) {
+            const std::scoped_lock lock(this->kernel_lock_);
             auto& vcpu = this->vcpu(cpu.index());
             this->callbacks.on_exception();
             const auto eflags = this->emu().reg<uint32_t>(x86_register::eflags);
@@ -967,6 +998,7 @@ namespace sogen
 
         this->emu().hook_memory_violation([&](cpu_interface& cpu, const uint64_t address, const size_t size,
                                               const memory_operation operation, const memory_violation_type type) {
+            const std::scoped_lock lock(this->kernel_lock_);
             auto& vcpu = this->vcpu(cpu.index());
             if (this->emu().reg<uint16_t>(x86_register::cs) == 0x33)
             {
@@ -1015,6 +1047,7 @@ namespace sogen
         if (this->uses_instruction_precision())
         {
             this->emu().hook_memory_execution([&](cpu_interface& cpu, const uint64_t address) {
+                const std::scoped_lock lock(this->kernel_lock_);
                 this->on_instruction_execution(this->vcpu(cpu.index()), address); //
             });
         }
@@ -1024,6 +1057,7 @@ namespace sogen
             // is not available for time-slicing. Preempt cooperatively from the CPU thread via a basic-block
             // hook instead.
             this->emu().hook_basic_block([&](cpu_interface& cpu, const basic_block& block) {
+                const std::scoped_lock lock(this->kernel_lock_);
                 this->on_basic_block_execution(this->vcpu(cpu.index()), block); //
             });
         }
@@ -1050,6 +1084,11 @@ namespace sogen
         this->last_stop_reason_ = stop_reason::none;
         this->last_stop_detail_.clear();
         this->setup_process_if_necessary();
+
+        if (count > 0 && this->vcpu_count_ > 1)
+        {
+            throw std::invalid_argument("Instruction-count budgets require a single vCPU");
+        }
 
         const auto use_count = count > 0;
         const auto start_instructions = this->executed_instructions_;
@@ -1095,18 +1134,27 @@ namespace sogen
             });
         }
 
+        std::unique_lock lock(this->kernel_lock_);
+
         while (!this->should_stop)
         {
+            lock.unlock();
             this->ui_backend_->pump_events();
+            lock.lock();
+
             if (vcpu.switch_thread || !vcpu.thread().is_thread_ready(*this))
             {
-                if (!this->perform_thread_switch(vcpu))
+                if (!this->perform_thread_switch(vcpu, lock))
                 {
                     break;
                 }
             }
 
+            // Guest code executes with the kernel lock released; hook callbacks
+            // (syscalls, exceptions, exec hooks) re-acquire it on VM exit.
+            lock.unlock();
             vcpu.cpu.start(count);
+            lock.lock();
 
             if (!vcpu.switch_thread && !vcpu.cpu.has_violation())
             {
@@ -1178,6 +1226,8 @@ namespace sogen
 
     void windows_emulator::handle_ui_event(const ui_event& event)
     {
+        const std::scoped_lock lock(this->kernel_lock_);
+
         const auto* win = this->process.windows.get(event.window);
         if (!win)
         {
