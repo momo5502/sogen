@@ -1279,6 +1279,7 @@ namespace sogen
             }
 
             this->dump_exception_trace();
+            this->dump_lock_profile();
             return;
         }
 
@@ -1323,6 +1324,8 @@ namespace sogen
                 count = static_cast<size_t>(target_instructions - current_instructions);
             }
         }
+
+        this->dump_lock_profile();
     }
 
     void windows_emulator::deliver_raw_input(const process_context::raw_input_payload& payload, const hwnd explicit_target)
@@ -1534,6 +1537,29 @@ namespace sogen
                             e.vcpu, e.tid, static_cast<unsigned long long>(e.rip), describe(e.rip).c_str(),
                             static_cast<unsigned long long>(e.info), describe(e.info).c_str());
         }
+    }
+
+    void windows_emulator::dump_lock_profile()
+    {
+        if (!kernel_lock::profiling_enabled())
+        {
+            return;
+        }
+
+        const auto stats = this->kernel_lock_.profile();
+        const auto held_ms = static_cast<double>(stats.held_nanos) / 1e6;
+        const auto wait_ms = static_cast<double>(stats.wait_nanos) / 1e6;
+        const auto contended_pct =
+            stats.acquisitions ? (100.0 * static_cast<double>(stats.contended) / static_cast<double>(stats.acquisitions)) : 0.0;
+
+        this->log.print(color::cyan,
+                        "--- kernel lock (BEL) profile ---\n"
+                        "  acquisitions:   %llu\n"
+                        "  contended:      %llu (%.1f%%)\n"
+                        "  wait time:      %.1f ms (blocked on a busy BEL)\n"
+                        "  held time:      %.1f ms (BEL busy across all threads)\n",
+                        static_cast<unsigned long long>(stats.acquisitions), static_cast<unsigned long long>(stats.contended),
+                        contended_pct, wait_ms, held_ms);
     }
 
     void windows_emulator::stop()

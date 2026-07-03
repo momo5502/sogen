@@ -308,6 +308,9 @@ namespace sogen
 
         void dump_exception_trace();
 
+        // Prints BEL contention stats when SOGEN_LOCK_PROFILE is set (see kernel_lock).
+        void dump_lock_profile();
+
         uint64_t get_executed_instructions() const
         {
             return this->executed_instructions_;
