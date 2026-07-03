@@ -156,6 +156,8 @@ namespace sogen
 
     void kusd_mmio::read(const uint64_t addr, void* data, const size_t size)
     {
+        const std::scoped_lock lock(this->mutex_);
+
         this->update();
 
         if (addr >= KUSD_SIZE)

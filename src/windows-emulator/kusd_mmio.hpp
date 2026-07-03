@@ -5,6 +5,7 @@
 
 #include "arch_emulator.hpp"
 
+#include <mutex>
 #include <utils/time.hpp>
 
 namespace sogen
@@ -50,6 +51,11 @@ namespace sogen
         utils::clock* clock_{};
 
         bool registered_{};
+
+        // The MMIO read callback runs on the WHP worker thread during guest execution
+        // (outside the kernel lock), so multiple vCPUs can read KUSD concurrently. This
+        // guards update() + the read snapshot so kusd_ is never torn.
+        mutable std::mutex mutex_{};
 
         // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         KUSER_SHARED_DATA64 kusd_{};
