@@ -102,8 +102,12 @@ Status: in progress on branch `multi-vcpu`
       Remaining Phase 3: that race; cross-vCPU kicks; stop-the-world for snapshots; guest
       CPU count = vcpu_count. Remaining Phase 2 polish: ready_cv instead of sleep-poll;
       device pump on ticks; N=1 boot benchmark; clang-cl -Wthread-safety annotations.
-- [ ] Phase 3 — cross-vCPU correctness
-- [ ] Phase 4 — stress testing + contention profiling
+- [~] Phase 3 — cross-vCPU correctness (WHP: 64-bit + WoW64 32-bit run at N=1..8;
+      real game open-iw5/MW3 runs to self-exit at N=2. Fixes landed: per-vCPU GDTs,
+      SDL UI marshaling to the pump thread, acting-vCPU attribution for
+      syscalls/rdtsc/rdtscp/cpuid/read-hooks. Converged, not closed — more workloads
+      will surface more races.)
+- [x] Phase 4 — stress testing + contention profiling (see §9 Phase 4 for results)
 - [ ] Phase 5 — KVM parity, linux-emulator
 
 Scope: WHP backend first, KVM second; windows-emulator first, linux-emulator second.
@@ -646,12 +650,33 @@ Kicks for alert/APC/suspend/terminate targeting running threads; force-save for
 snapshot restriction); guest-visible CPU identity (KUSD count,
 `NtGetCurrentProcessorNumberEx`).
 
-**Phase 4 — validation + performance.**
-Guest stress test (in the test-sample or a dedicated sample: N threads hammering
-interlocked ops, events, mutants, waits, VirtualAlloc churn) run at `--vcpus 2..8`;
-BEL contention profiling (extend the `SOGEN_WHP_PROFILE` infrastructure); then targeted
-lock refinement *only where measured*: likely candidates are KUSD reads, hot device
-ioctls (GPU bridge), and `memory_manager` read paths (a `shared_mutex` split).
+**Phase 4 — validation + performance.** *(done)*
+Guest stress test: `src/samples/stress-sample` — 8 threads hammering interlocked ops, a
+`CRITICAL_SECTION`-guarded counter, a semaphore producer/consumer, auto-reset event
+ping-pong, and `VirtualAlloc` churn with write/read verification, each asserting a
+deterministic invariant. Passes at `--vcpus 1..8` for both x64 and WoW64 (x86) on WHP;
+no new races surfaced.
+
+BEL contention profiling: `kernel_lock` is instrumented under `SOGEN_LOCK_PROFILE`
+(acquisitions / contended / wait time / held time, summarized at end of run; zero cost
+when unset). Measured contention (contended acquisitions ÷ total):
+
+| workload                    | N=2   | N=4   | N=8   |
+|-----------------------------|-------|-------|-------|
+| pure-synchronization stress | 43.5% | 51.6% | 53.7% |
+| real game (open-iw5/MW3)    | 1.4%  | 2.6%  | —     |
+
+Held time stays ~constant (~4.7 s stress, ~5–6 s game) across vCPU counts — the BEL
+serializes a fixed amount of work. The stress numbers are a worst case (the workload is
+almost entirely syscalls); the game is guest-compute-dominated, so the BEL is contended
+only 1–3% of the time and is **not** a bottleneck for the target workloads.
+
+Targeted lock refinement: **none warranted** by the measurements. Per the rule above
+("only where measured"), refining a 1–3% game-workload contention would be speculative
+and risk new lock-ordering bugs, so it is deliberately not done. If a future syscall-heavy
+workload proves otherwise, the profiler points the way and the candidates remain KUSD
+reads, hot device ioctls (GPU bridge), and `memory_manager` read paths (a `shared_mutex`
+split).
 
 **Phase 5 — secondary targets.**
 KVM parity (§8); linux-emulator adopts the same scheduler/BEL shape (it mirrors the
