@@ -29,13 +29,23 @@ Status: in progress on branch `multi-vcpu`
       legacy `current_thread()` observer API is made correct via `scoped_dispatch`: a
       `windows_emulator::dispatch_vcpu_` member set at each handler entry under the kernel
       lock (race-free because the BEL serializes handlers — not a global or thread-local).
-      With these fixes N>1 now runs the entire smoke suite correctly through ~15 tests
-      (Registry, System Info, Time Zone, Exceptions, …) and fails only at the **Threads**
-      test — the one test that exercises genuinely concurrent guest threads. That failure
-      is parallelism-specific (Threads passes at N=1) and is the remaining Phase 3 work:
-      wait/signal ordering under true concurrency and any remaining shared state touched
-      off-lock. Remaining Phase 2 polish still open: ready_cv instead of sleep-poll; device
-      pump on scheduler ticks; N=1 boot benchmark; clang-cl -Wthread-safety annotations.
+      Also fixed a WHP premature-termination bug: `flush_virtual_address_mappings` cancels
+      other running VPs (`WHvCancelRunVirtualProcessor`) without setting `stop_requested_`,
+      and `run()`'s Canceled handler returned (instead of restarting) when rip had advanced
+      — so a vCPU cancelled for a peer's page-table change returned to the worker, which saw
+      `!switch_thread` and ended the whole run ("Emulation terminated without status"). A
+      cancel without `stop_requested_` is now always a TLB-flush re-entry, never a stop.
+      With these fixes N>1 runs the entire smoke suite correctly through ~15 tests and the
+      verbose run reaches a clean `NtTerminateProcess` (status 0). The **Threads** test
+      still fails under `-s` (silent, fastest/most-parallel) — a genuine timing race
+      (Heisenbug: host logging serializes enough to hide it). A guest thread raises an
+      unhandled exception (WER is contacted) under contention. Prime suspect: the
+      partition-global EPT single-step dance in the WHP section-first-execution hooks (two
+      vCPUs flipping/​restoring exec on the same shared page — the accepted-race from §4;
+      may not be benign under real contention). Remaining Phase 3: pin down and fix that
+      race; cross-vCPU kicks; stop-the-world for snapshots; guest CPU count = vcpu_count.
+      Remaining Phase 2 polish: ready_cv instead of sleep-poll; device pump on ticks; N=1
+      boot benchmark; clang-cl -Wthread-safety annotations.
 - [ ] Phase 3 — cross-vCPU correctness
 - [ ] Phase 4 — stress testing + contention profiling
 - [ ] Phase 5 — KVM parity, linux-emulator

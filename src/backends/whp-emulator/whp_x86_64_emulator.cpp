@@ -3242,16 +3242,12 @@ namespace sogen::whp
                             return;
                         }
 
-                        // If rip has not changed, we _probably_ executed nothing.
-                        // Could be that the execution was cancelled while it was not running.
-                        // Just restart it.
-                        if (start_rip == exit_context.VpContext.Rip)
-                        {
-                            vcpu.stop_requested_ = false;
-                            continue;
-                        }
-
-                        return;
+                        // A cancel without a stop request comes from flush_virtual_address_mappings
+                        // (another vCPU changed the shared page tables) - never from a real stop, which
+                        // always sets stop_requested_ first. Re-enter so the pending TLB flush is applied
+                        // at the loop top; do not treat it as a stop regardless of whether rip advanced.
+                        (void)start_rip;
+                        continue;
                     }
                     case WHvRunVpExitReasonX64Halt:
                         if (this->syscall_hook_ && exit_context.VpContext.Rip == (this->syscall_hook_page_ + 1))
