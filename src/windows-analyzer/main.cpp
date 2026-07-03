@@ -174,30 +174,32 @@ namespace sogen
                     return;
                 }
 
-                auto hook_handler = [state, env_ptr](cpu_interface&, const uint64_t address, const void*, const size_t size) {
-                    const auto rip = state->win_emu_.emu().read_instruction_pointer();
-                    const auto* mod = state->win_emu_.mod_manager.find_by_address(rip);
-                    const auto is_main_access =
-                        !mod || (mod == state->win_emu_.mod_manager.executable || state->modules_.contains(mod->name));
+                auto hook_handler = [state, env_ptr](cpu_interface& cpu, const uint64_t address, const void*, const size_t size) {
+                    state->win_emu_.dispatch_on_cpu(cpu, [&] {
+                        const auto rip = state->win_emu_.active_cpu().read_instruction_pointer();
+                        const auto* mod = state->win_emu_.mod_manager.find_by_address(rip);
+                        const auto is_main_access =
+                            !mod || (mod == state->win_emu_.mod_manager.executable || state->modules_.contains(mod->name));
 
-                    if (!is_main_access && !state->verbose_)
-                    {
-                        return;
-                    }
-
-                    if (state->concise_)
-                    {
-                        const auto count = ++state->env_module_cache_[mod ? mod->name : "<N/A>"];
-                        if (count > 30 && count % 1000 != 0)
+                        if (!is_main_access && !state->verbose_)
                         {
                             return;
                         }
-                    }
 
-                    state->context_.emit_observation<environment_access_event>([&](auto& event) {
-                        event.main_access = is_main_access;
-                        event.offset = address - env_ptr;
-                        event.size = size;
+                        if (state->concise_)
+                        {
+                            const auto count = ++state->env_module_cache_[mod ? mod->name : "<N/A>"];
+                            if (count > 30 && count % 1000 != 0)
+                            {
+                                return;
+                            }
+                        }
+
+                        state->context_.emit_observation<environment_access_event>([&](auto& event) {
+                            event.main_access = is_main_access;
+                            event.offset = address - env_ptr;
+                            event.size = size;
+                        });
                     });
                 };
 
@@ -702,37 +704,39 @@ namespace sogen
             {
                 auto module_cache = std::make_shared<std::map<std::string, uint64_t>>();
                 win_emu->emu().hook_memory_read(0, std::numeric_limits<uint64_t>::max(),
-                                                [&, module_cache](cpu_interface&, const uint64_t address, const void*, size_t size) {
-                                                    const auto rip = win_emu->emu().read_instruction_pointer();
-                                                    const auto accessor =
-                                                        get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+                                                [&, module_cache](cpu_interface& cpu, const uint64_t address, const void*, size_t size) {
+                                                    win_emu->dispatch_on_cpu(cpu, [&] {
+                                                        const auto rip = win_emu->active_cpu().read_instruction_pointer();
+                                                        const auto accessor =
+                                                            get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
-                                                    if (!accessor.has_value())
-                                                    {
-                                                        return;
-                                                    }
-
-                                                    const auto* mod = win_emu->mod_manager.find_by_address(address);
-                                                    if (!mod || mod == *accessor)
-                                                    {
-                                                        return;
-                                                    }
-
-                                                    if (concise_logging)
-                                                    {
-                                                        const auto count = ++(*module_cache)[mod->name];
-                                                        if (count > 30 && count % 100000 != 0)
+                                                        if (!accessor.has_value())
                                                         {
                                                             return;
                                                         }
-                                                    }
 
-                                                    const auto* region_name = get_module_memory_region_name(*mod, address);
-                                                    context.emit_observation<foreign_module_read_event>([&](auto& event) {
-                                                        event.address = address;
-                                                        event.size = size;
-                                                        event.module_name = mod->name;
-                                                        event.region_name = region_name;
+                                                        const auto* mod = win_emu->mod_manager.find_by_address(address);
+                                                        if (!mod || mod == *accessor)
+                                                        {
+                                                            return;
+                                                        }
+
+                                                        if (concise_logging)
+                                                        {
+                                                            const auto count = ++(*module_cache)[mod->name];
+                                                            if (count > 30 && count % 100000 != 0)
+                                                            {
+                                                                return;
+                                                            }
+                                                        }
+
+                                                        const auto* region_name = get_module_memory_region_name(*mod, address);
+                                                        context.emit_observation<foreign_module_read_event>([&](auto& event) {
+                                                            event.address = address;
+                                                            event.size = size;
+                                                            event.module_name = mod->name;
+                                                            event.region_name = region_name;
+                                                        });
                                                     });
                                                 });
             }
