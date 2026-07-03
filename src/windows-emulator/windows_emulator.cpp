@@ -986,7 +986,9 @@ namespace sogen
 
         this->emu().hook_instruction(x86_hookable_instructions::rdtscp, [&](cpu_interface& cpu, uint64_t) {
             const std::scoped_lock lock(this->kernel_lock_);
-            auto& acting = this->vcpu(cpu.index()).cpu;
+            auto& vcpu = this->vcpu(cpu.index());
+            const scoped_dispatch dispatch(*this, vcpu);
+            auto& acting = vcpu.cpu;
             this->callbacks.on_rdtscp();
 
             const auto ticks = this->clock_->timestamp_counter();
@@ -1002,7 +1004,9 @@ namespace sogen
 
         this->emu().hook_instruction(x86_hookable_instructions::rdtsc, [&](cpu_interface& cpu, uint64_t) {
             const std::scoped_lock lock(this->kernel_lock_);
-            auto& acting = this->vcpu(cpu.index()).cpu;
+            auto& vcpu = this->vcpu(cpu.index());
+            const scoped_dispatch dispatch(*this, vcpu);
+            auto& acting = vcpu.cpu;
             this->callbacks.on_rdtsc();
 
             const auto ticks = this->clock_->timestamp_counter();

@@ -648,52 +648,54 @@ namespace sogen
             const auto& exe = *win_emu->mod_manager.executable;
             const auto is_whp = win_emu->emu().get_name() == "Windows Hypervisor Platform";
 
-            win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&] {
-                auto& emu = win_emu->emu();
+            win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&](cpu_interface& cpu, uint64_t) {
+                return win_emu->dispatch_on_cpu(cpu, [&] {
+                    auto& emu = win_emu->active_cpu();
 
-                const auto rip = emu.read_instruction_pointer();
-                const auto leaf = emu.reg<uint32_t>(x86_register::eax);
-                const auto mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+                    const auto rip = emu.read_instruction_pointer();
+                    const auto leaf = emu.reg<uint32_t>(x86_register::eax);
+                    const auto mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
-                if (mod.has_value() && (!concise_logging || context.cpuid_cache.insert({rip, leaf}).second))
-                {
-                    context.emit_observation<cpuid_event>([&](auto& event) { event.leaf = leaf; });
-                }
+                    if (mod.has_value() && (!concise_logging || context.cpuid_cache.insert({rip, leaf}).second))
+                    {
+                        context.emit_observation<cpuid_event>([&](auto& event) { event.leaf = leaf; });
+                    }
 
-                if (leaf == 1 && !is_whp)
-                {
-                    // NOTE: We hard-code these values to disable SSE4.x and AVX
-                    //       See: https://github.com/momo5502/sogen/issues/560
-                    emu.reg<uint32_t>(x86_register::eax, 0x000906EA);
-                    emu.reg<uint32_t>(x86_register::ebx, 0x00100800);
-                    emu.reg<uint32_t>(x86_register::ecx, 0xEFE2F38F);
-                    emu.reg<uint32_t>(x86_register::edx, 0xBFEBFBFF);
+                    if (leaf == 1 && !is_whp)
+                    {
+                        // NOTE: We hard-code these values to disable SSE4.x and AVX
+                        //       See: https://github.com/momo5502/sogen/issues/560
+                        emu.reg<uint32_t>(x86_register::eax, 0x000906EA);
+                        emu.reg<uint32_t>(x86_register::ebx, 0x00100800);
+                        emu.reg<uint32_t>(x86_register::ecx, 0xEFE2F38F);
+                        emu.reg<uint32_t>(x86_register::edx, 0xBFEBFBFF);
 
-                    return instruction_hook_continuation::skip_instruction;
-                }
+                        return instruction_hook_continuation::skip_instruction;
+                    }
 
-                if (leaf == 0x40000000 && !is_whp)
-                {
-                    // Microsoft Hv vendor string
-                    emu.reg<uint32_t>(x86_register::eax, 0x40000003);
-                    emu.reg<uint32_t>(x86_register::ebx, 0x7263694d);
-                    emu.reg<uint32_t>(x86_register::ecx, 0x666f736f);
-                    emu.reg<uint32_t>(x86_register::edx, 0x76482074);
+                    if (leaf == 0x40000000 && !is_whp)
+                    {
+                        // Microsoft Hv vendor string
+                        emu.reg<uint32_t>(x86_register::eax, 0x40000003);
+                        emu.reg<uint32_t>(x86_register::ebx, 0x7263694d);
+                        emu.reg<uint32_t>(x86_register::ecx, 0x666f736f);
+                        emu.reg<uint32_t>(x86_register::edx, 0x76482074);
 
-                    return instruction_hook_continuation::skip_instruction;
-                }
+                        return instruction_hook_continuation::skip_instruction;
+                    }
 
-                if (leaf == 0x40000003 && !is_whp)
-                {
-                    emu.reg<uint32_t>(x86_register::eax, 0x00000000);
-                    emu.reg<uint32_t>(x86_register::ebx, 0x00000001);
-                    emu.reg<uint32_t>(x86_register::ecx, 0x00000000);
-                    emu.reg<uint32_t>(x86_register::edx, 0x00000000);
+                    if (leaf == 0x40000003 && !is_whp)
+                    {
+                        emu.reg<uint32_t>(x86_register::eax, 0x00000000);
+                        emu.reg<uint32_t>(x86_register::ebx, 0x00000001);
+                        emu.reg<uint32_t>(x86_register::ecx, 0x00000000);
+                        emu.reg<uint32_t>(x86_register::edx, 0x00000000);
 
-                    return instruction_hook_continuation::skip_instruction;
-                }
+                        return instruction_hook_continuation::skip_instruction;
+                    }
 
-                return instruction_hook_continuation::run_instruction;
+                    return instruction_hook_continuation::run_instruction;
+                });
             });
 
             if (options.log_foreign_module_access)

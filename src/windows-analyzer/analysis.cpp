@@ -593,7 +593,7 @@ namespace sogen
         void handle_rdtsc(analysis_context& c)
         {
             auto& win_emu = *c.win_emu;
-            auto& emu = win_emu.emu();
+            auto& emu = win_emu.active_cpu();
 
             const auto rip = emu.read_instruction_pointer();
             const auto mod = get_module_if_interesting(win_emu.mod_manager, c.settings->modules, rip);
@@ -609,7 +609,7 @@ namespace sogen
         void handle_rdtscp(analysis_context& c)
         {
             auto& win_emu = *c.win_emu;
-            auto& emu = win_emu.emu();
+            auto& emu = win_emu.active_cpu();
 
             const auto rip = emu.read_instruction_pointer();
             const auto mod = get_module_if_interesting(win_emu.mod_manager, c.settings->modules, rip);
@@ -809,7 +809,7 @@ namespace sogen
 
     execution_context analysis_context::make_execution_context() const
     {
-        auto& emu = this->win_emu->emu();
+        auto& emu = this->win_emu->active_cpu();
         const auto rip = emu.read_instruction_pointer();
         const auto* rip_module = this->win_emu->mod_manager.find_name(rip);
 

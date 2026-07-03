@@ -243,6 +243,18 @@ namespace sogen
             return (this->dispatch_vcpu_ ? this->dispatch_vcpu_ : this->vcpus_[0].get())->cpu;
         }
 
+        // Run fn as a dispatched handler for the CPU that triggered a hook: takes the kernel lock and
+        // marks that vCPU as the dispatching one, so active_cpu()/current_thread() resolve to it. Meant
+        // for hooks installed outside setup_hooks (e.g. the analyzer's cpuid hook) which otherwise run
+        // lock-free and would observe only the facade/vCPU 0 when vcpu_count > 1.
+        template <typename Function>
+        auto dispatch_on_cpu(cpu_interface& cpu, Function&& fn)
+        {
+            const std::scoped_lock lock(this->kernel_lock_);
+            const scoped_dispatch dispatch(*this, this->vcpu(cpu.index()));
+            return std::forward<Function>(fn)();
+        }
+
         vcpu_context& vcpu(const size_t index)
         {
             return *this->vcpus_.at(index);
