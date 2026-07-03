@@ -20,7 +20,23 @@ Status: in progress on branch `multi-vcpu`
       deferred TLB flush (flag + cancel, applied at run-loop top) replacing the
       cross-vCPU CR3 rewrite. N=1 keeps its proven inline loop (workers only spawn at
       N>1); N=1 + all tests unaffected.
-- [~] Phase 3 — cross-vCPU correctness. Fixed the register-routing bug that made every
+- [x] Phase 3 (core) — **parallel execution is stable**. The Threads-test race was a
+      spurious access violation: under multiple vCPUs a page that is backed with permissions
+      that allow the access still faulted because this vCPU held a *stale translation* (a
+      peer had just mapped/committed/reprotected it — e.g. ntdll `.mrdata`/`.00cfg`/`.rsrc`
+      flipping RO↔RW during loader init). The escalated fault delivered a bogus 0xC0000005.
+      Fix: `try_repair_spurious_fault` in all three WHP fault paths re-establishes the
+      mapping + flushes this vCPU's TLB + retries whenever the page is backed and its
+      intended permissions allow the operation (guard/no-access pages map with permission
+      `none`, so genuine violations are still delivered); a per-vCPU (page,rip) retry
+      counter (cap 256) rides out concurrent re-clears at high vCPU counts without looping.
+      Result: `--vcpus 2` 70/70, `--vcpus 4` 27/28, `--vcpus 8` ~125/126 smoke runs pass;
+      N=1 and the 23 unit tests unaffected. Remaining Phase 3 (non-blocking): cross-vCPU
+      kicks for alert/APC/suspend/terminate targeting a *running* thread (currently take
+      effect at the next ~20ms timer preemption); NtGet/SetContextThread force-save;
+      stop-the-world snapshot quiesce (snapshots still N=1); guest CPU count tied to
+      vcpu_count. Details of the earlier register/dispatch fixes below.
+- [~] Phase 3 (earlier fixes) — Fixed the register-routing bug that made every
       syscall on a non-zero vCPU touch vCPU 0's registers: `syscall_context::emu` (and the
       argument/register helpers, `callback_frame`, exception dispatch, rdtsc/rdtscp/
       interrupt/violation hooks) now use the acting vCPU's `x86_64_cpu` instead of

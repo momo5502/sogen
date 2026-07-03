@@ -1233,10 +1233,16 @@ namespace sogen::whp
             std::atomic_bool run_active_{false};
             std::atomic_bool pending_tlb_flush_{false};
 
-            // Guards against looping when a fault is repaired but recurs unchanged (a genuine
-            // violation): tracks the last (page, rip) we re-mapped and retried.
+            // Tracks the last (page, rip) we re-mapped and retried, plus how many times in a row.
+            // A backed page whose permissions allow the access can only fault spuriously (a stale
+            // translation or a peer transiently re-clearing/reprotecting it) - never a genuine
+            // violation, which fails the permission check and is delivered without a repair. So we
+            // retry many times to ride out concurrent re-clears at high vCPU counts, but still cap it
+            // to bound the one case that could otherwise loop: an unrecoverable-exit fault whose real
+            // access type we had to guess (see the unrecoverable handler).
             uint64_t last_repair_page_{unmapped_guest_page};
             uint64_t last_repair_rip_{};
+            uint32_t last_repair_count_{};
             std::optional<pending_execution_step> pending_execution_step_{};
             std::optional<pending_mmio_step> pending_mmio_step_{};
             std::optional<uint64_t> deferred_patched_breakpoint_{};
@@ -2939,9 +2945,7 @@ namespace sogen::whp
             }
 
             // Assumes partition_mutex_ is held exclusively.
-            // Returns true if the page transitioned from not-present to present, meaning
-            // other vCPUs may hold a stale (negative) translation and need a TLB flush.
-            bool ensure_virtual_mapping(const uint64_t guest_address)
+            void ensure_virtual_mapping(const uint64_t guest_address)
             {
                 const auto page_base = align_down_to_page(guest_address);
                 const auto mapped_page = this->mapped_pages_.find(page_base);
@@ -2960,45 +2964,8 @@ namespace sogen::whp
                 const auto pt_gpa = this->ensure_child_table(pd_gpa, pd_index);
 
                 auto* const pt_entries = this->get_page_table_entries(pt_gpa);
-                const auto was_present = (pt_entries[pt_index] & page_table_entry_present) != 0;
                 pt_entries[pt_index] = mapped_page->second->guest_physical_address | page_table_entry_present | page_table_entry_writable |
                                        page_table_entry_user;
-                return !was_present;
-            }
-
-            // Assumes partition_mutex_ is held (shared is sufficient). Walks the guest page
-            // tables read-only and reports whether the address is currently mapped present.
-            bool is_virtual_mapping_present(const uint64_t guest_address)
-            {
-                const auto page_base = align_down_to_page(guest_address);
-                const auto pml4_index = static_cast<size_t>((page_base >> 39) & 0x1FF);
-                const auto pdpt_index = static_cast<size_t>((page_base >> 30) & 0x1FF);
-                const auto pd_index = static_cast<size_t>((page_base >> 21) & 0x1FF);
-                const auto pt_index = static_cast<size_t>((page_base >> 12) & 0x1FF);
-
-                auto* pml4_entries = this->get_page_table_entries(this->pml4_gpa_);
-                const auto pml4_entry = pml4_entries[pml4_index];
-                if ((pml4_entry & page_table_entry_present) == 0)
-                {
-                    return false;
-                }
-
-                auto* pdpt_entries = this->get_page_table_entries(pml4_entry & page_table_entry_address_mask);
-                const auto pdpt_entry = pdpt_entries[pdpt_index];
-                if ((pdpt_entry & page_table_entry_present) == 0)
-                {
-                    return false;
-                }
-
-                auto* pd_entries = this->get_page_table_entries(pdpt_entry & page_table_entry_address_mask);
-                const auto pd_entry = pd_entries[pd_index];
-                if ((pd_entry & page_table_entry_present) == 0)
-                {
-                    return false;
-                }
-
-                auto* pt_entries = this->get_page_table_entries(pd_entry & page_table_entry_address_mask);
-                return (pt_entries[pt_index] & page_table_entry_present) != 0;
             }
 
             // A fault can be spurious under multiple vCPUs: the backend has the page backed
@@ -3007,30 +2974,52 @@ namespace sogen::whp
             // re-establish its mapping, flush this vCPU's TLB and retry. A per-vCPU (page,rip)
             // guard ensures a genuine violation (unbacked page, wrong permissions) is still
             // delivered rather than looping forever.
-            bool try_repair_spurious_fault(whp_vcpu& vcpu, const uint64_t fault_address)
+            bool try_repair_spurious_fault(whp_vcpu& vcpu, const uint64_t fault_address, const memory_operation operation)
             {
+                constexpr uint32_t max_consecutive_repairs = 256;
+
                 const auto page_base = align_down_to_page(fault_address);
                 const auto rip = vcpu.read_instruction_pointer();
+                const auto same_as_last = vcpu.last_repair_page_ == page_base && vcpu.last_repair_rip_ == rip;
+                const auto guard_tripped = same_as_last && vcpu.last_repair_count_ >= max_consecutive_repairs;
 
-                if (vcpu.last_repair_page_ == page_base && vcpu.last_repair_rip_ == rip)
-                {
-                    // Already repaired this exact fault and it recurred unchanged: it is real.
-                    vcpu.last_repair_page_ = unmapped_guest_page;
-                    return false;
-                }
+                bool repaired = false;
 
                 {
                     std::unique_lock lock(this->partition_mutex_);
                     const auto it = this->mapped_pages_.find(page_base);
-                    if (it == this->mapped_pages_.end() || !it->second || it->second->host_page == nullptr)
-                    {
-                        return false;
-                    }
+                    const auto backed = it != this->mapped_pages_.end() && it->second && it->second->host_page != nullptr;
 
-                    this->ensure_virtual_mapping(page_base);
-                    this->remap_page(*it->second);
+                    // Only a page that is backed AND whose intended permissions allow the faulting
+                    // operation can be a spurious (stale-translation) fault. Guard and no-access pages
+                    // map with permission 'none', so they still reach the violation hook, as do genuine
+                    // protection violations (write to read-only, etc.).
+                    const auto perms = backed ? it->second->permissions : memory_permission::none;
+                    const auto permitted = (perms & operation) == operation;
+
+                    if (!guard_tripped && backed && permitted)
+                    {
+                        this->ensure_virtual_mapping(page_base);
+                        this->remap_page(*it->second);
+                        repaired = true;
+                    }
                 }
 
+                if (guard_tripped)
+                {
+                    // Repaired this exact fault too many times in a row without progress: give up and
+                    // deliver it (guards the unrecoverable-exit read-assumption from a write-to-RO loop).
+                    vcpu.last_repair_page_ = unmapped_guest_page;
+                    vcpu.last_repair_count_ = 0;
+                    return false;
+                }
+
+                if (!repaired)
+                {
+                    return false;
+                }
+
+                vcpu.last_repair_count_ = same_as_last ? vcpu.last_repair_count_ + 1 : 1;
                 vcpu.last_repair_page_ = page_base;
                 vcpu.last_repair_rip_ = rip;
                 vcpu.set_register(WHvX64RegisterCr3, vcpu.get_register(WHvX64RegisterCr3));
@@ -3534,10 +3523,12 @@ namespace sogen::whp
                 if (fault_address != 0)
                 {
                     // Guest page faults escalate here (the guest IDT cannot dispatch them). Under
-                    // multiple vCPUs the faulting page may in fact be backed - a peer mapped/committed
-                    // it, or a protection/remap on another vCPU transiently cleared this vCPU's guest
-                    // PTE. Repair and retry rather than delivering a spurious access violation.
-                    if (this->try_repair_spurious_fault(vcpu, fault_address))
+                    // multiple vCPUs the faulting page may in fact be backed with permissions that
+                    // allow the access - a peer mapped/committed/reprotected it after this vCPU cached
+                    // a stale translation. Repair and retry rather than delivering a spurious access
+                    // violation. The exit carries no access type, so assume a read; a genuine
+                    // write-to-read-only self-corrects via the per-vCPU retry guard.
+                    if (this->try_repair_spurious_fault(vcpu, fault_address, memory_operation::read))
                     {
                         return true;
                     }
@@ -3697,10 +3688,10 @@ namespace sogen::whp
                     return true;
                 }
 
-                // Spurious fault on an actually-backed page whose GPA mapping is momentarily
-                // absent for this vCPU (peer map/commit): repair and retry. Only for unmapped
-                // (not protection) accesses, so guard pages and real violations still reach the hook.
-                if (memory_access.AccessInfo.GpaUnmapped && this->try_repair_spurious_fault(vcpu, resolved_address))
+                // Spurious fault on an actually-backed page whose mapping is momentarily stale for
+                // this vCPU (peer map/commit/reprotect): repair and retry. Guard/no-access pages
+                // (permission 'none') and genuine violations still reach the hook.
+                if (this->try_repair_spurious_fault(vcpu, resolved_address, operation))
                 {
                     return true;
                 }
@@ -3782,13 +3773,12 @@ namespace sogen::whp
                     const auto operation = is_write ? memory_operation::write : memory_operation::read;
                     const auto type = is_present ? memory_violation_type::protection : memory_violation_type::unmapped;
 
-                    // Under multiple vCPUs a peer may have mapped/committed this page (or a
-                    // protection/COW remap transiently cleared its guest PTE) after this vCPU faulted,
-                    // producing a spurious not-present fault on an actually-backed page. Repair and
-                    // retry rather than delivering a bogus access violation to the guest. Only for
-                    // not-present faults - protection faults (guard pages, real violations) are left
-                    // to the violation hook.
-                    if (!is_present && this->try_repair_spurious_fault(vcpu, fault_address))
+                    // Under multiple vCPUs a peer may have mapped/committed/reprotected this page
+                    // after this vCPU cached a stale translation, producing a spurious fault on an
+                    // actually-backed page whose permissions allow the access. Repair and retry rather
+                    // than delivering a bogus access violation. Guard/no-access pages and genuine
+                    // violations (permission mismatch) still reach the violation hook.
+                    if (this->try_repair_spurious_fault(vcpu, fault_address, operation))
                     {
                         return true;
                     }
