@@ -66,10 +66,12 @@ namespace
             {
                 EnterCriticalSection(&cs);
                 const LONG value = guarded;
-                // Widen the race window without yielding the vCPU (a syscall would serialize us). Simple
-                // assignment rather than ++ because increment of a volatile is deprecated in C++20.
-                for (volatile int spin = 0; spin < 64; spin = spin + 1)
+                // Widen the race window without yielding the vCPU (a syscall would serialize us). An atomic
+                // delay loop keeps the compiler from eliding it; a volatile counter is deprecated in C++20.
+                std::atomic<int> spin{0};
+                for (int i = 0; i < 64; ++i)
                 {
+                    spin.fetch_add(1, std::memory_order_relaxed);
                 }
                 guarded = value + 1;
                 LeaveCriticalSection(&cs);
