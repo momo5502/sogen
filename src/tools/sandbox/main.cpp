@@ -65,8 +65,12 @@ namespace sogen::sandbox
             };
 
 #ifdef _WIN32
-            // One vCPU per host core; WHP supports at most 64 per partition.
-            const auto vcpu_count = std::clamp(std::thread::hardware_concurrency(), 1u, 64u);
+            // One vCPU per host core; WHP supports at most 64 per partition. EMULATOR_VCPU_COUNT overrides.
+            auto vcpu_count = std::clamp(std::thread::hardware_concurrency(), 1u, 64u);
+            if (const char* env = std::getenv("EMULATOR_VCPU_COUNT"); env != nullptr && env[0] != '\0')
+            {
+                vcpu_count = std::clamp(static_cast<uint32_t>(std::strtoul(env, nullptr, 10)), 1u, 64u);
+            }
 #else
             // The KVM backend does not support multiple vCPUs yet.
             constexpr uint32_t vcpu_count = 1;
