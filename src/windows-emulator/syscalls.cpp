@@ -874,7 +874,7 @@ namespace sogen
                 if (performance_frequency)
                 {
                     performance_frequency.access([&](LARGE_INTEGER& value) {
-                        value.QuadPart = c.proc.kusd.get().QpcFrequency; //
+                        value.QuadPart = c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.QpcFrequency; }); //
                     });
                 }
 

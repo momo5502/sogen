@@ -32,14 +32,20 @@ namespace sogen
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);
 
-        KUSER_SHARED_DATA64& get()
+        // Locked access to the KUSD block: the MMIO read callback mutates kusd_ under mutex_ on the WHP
+        // worker thread, so callers must not touch it unsynchronized. The functor's result is forwarded.
+        template <typename F>
+        decltype(auto) access(const F& functor)
         {
-            return this->kusd_;
+            const std::lock_guard lock{this->mutex_};
+            return functor(this->kusd_);
         }
 
-        const KUSER_SHARED_DATA64& get() const
+        template <typename F>
+        decltype(auto) access(const F& functor) const
         {
-            return this->kusd_;
+            const std::lock_guard lock{this->mutex_};
+            return functor(this->kusd_);
         }
 
         static uint64_t address();

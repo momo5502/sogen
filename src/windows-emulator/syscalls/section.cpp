@@ -295,7 +295,8 @@ namespace sogen
                 const auto shared_section_size = c.proc.shared_section_size;
                 const auto address = c.proc.shared_section_address;
 
-                const std::u16string_view windows_dir = c.proc.kusd.get().NtSystemRoot.arr;
+                const auto windows_dir =
+                    c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return std::u16string{kusd.NtSystemRoot.arr}; });
 
                 uint64_t obj_address{};
                 if (const auto status =

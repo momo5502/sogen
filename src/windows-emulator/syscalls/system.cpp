@@ -105,7 +105,8 @@ namespace sogen
                     group.MaximumGroupCount = 1;
 
                     auto& group_info = group.GroupInfo[0];
-                    group_info.ActiveProcessorCount = static_cast<uint8_t>(c.proc.kusd.get().ActiveProcessorCount);
+                    group_info.ActiveProcessorCount =
+                        static_cast<uint8_t>(c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; }));
                     group_info.ActiveProcessorMask = (1ULL << group_info.ActiveProcessorCount) - 1;
                     group_info.MaximumProcessorCount = group_info.ActiveProcessorCount;
 
@@ -468,7 +469,7 @@ namespace sogen
                 // IdleTime == KernelTime (Windows kernel time includes idle), UserTime == 0. Use the
                 // executed-instruction tick as a monotonic clock so consecutive samples differ and callers
                 // computing usage from deltas don't divide by zero.
-                const auto processor_count = c.proc.kusd.get().ActiveProcessorCount;
+                const auto processor_count = c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
                 constexpr auto entry_size = sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION);
                 const auto required = static_cast<uint32_t>(processor_count * entry_size);
 
@@ -548,7 +549,8 @@ namespace sogen
                     if (processor_group == 0)
                     {
                         using mask_type = decltype(info.ProcessorMask);
-                        const auto active_processor_count = c.proc.kusd.get().ActiveProcessorCount;
+                        const auto active_processor_count =
+                            c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
                         info.ProcessorMask = (static_cast<mask_type>(1) << active_processor_count) - 1;
                     }
                 });
@@ -566,7 +568,8 @@ namespace sogen
                         basic_info.AllocationGranularity = ALLOCATION_GRANULARITY;
                         basic_info.MinimumUserModeAddress = MIN_ALLOCATION_ADDRESS;
                         basic_info.MaximumUserModeAddress = MAX_ALLOCATION_ADDRESS;
-                        const auto processor_count = c.proc.kusd.get().ActiveProcessorCount;
+                        const auto processor_count =
+                            c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
                         basic_info.ActiveProcessorsAffinityMask = (processor_count >= 64) ? ~0ull : ((1ull << processor_count) - 1);
                         basic_info.NumberOfProcessors = static_cast<char>(processor_count);
                     });
