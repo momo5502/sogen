@@ -111,6 +111,13 @@ namespace sogen
         bool use_relative_time{false};
         bool use_instruction_precision{true};
 
+        // Timing fidelity vs. speed. With interception on (the default, used by the analyzer) rdtsc reads
+        // and KUSER_SHARED_DATA accesses trap so the emulated clock stays exact and deterministic. Turning
+        // them off (as the sandbox does) lets the guest read the host TSC natively and KUSD from a plain
+        // mapped page, removing those VM exits at the cost of exact/reproducible timing.
+        bool intercept_rdtsc{true};
+        bool intercept_kusd{true};
+
         std::filesystem::path emulation_root{};
         std::filesystem::path registry_directory{"./registry"};
 
@@ -508,6 +515,8 @@ namespace sogen
       private:
         bool use_relative_time_{false}; // TODO: Get rid of that
         bool instruction_precision_{true};
+        bool intercept_rdtsc_{true};
+        bool intercept_kusd_{true};
         uint32_t vcpu_count_{1};
         std::atomic_bool should_stop{false};
 
