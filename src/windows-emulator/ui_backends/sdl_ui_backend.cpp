@@ -549,10 +549,21 @@ namespace sogen
 
             void pump_events() override
             {
+                {
+                    const std::lock_guard lock(this->command_mutex_);
+                    if (!this->ui_thread_known_)
+                    {
+                        this->ui_thread_id_ = std::this_thread::get_id();
+                        this->ui_thread_known_ = true;
+                    }
+                }
+
                 if (!this->ensure_initialized())
                 {
                     return;
                 }
+
+                this->drain_commands();
 
                 SDL_Event event{};
                 while (SDL_PollEvent(&event))
@@ -730,6 +741,11 @@ namespace sogen
 
             void create_window(const ui_window_desc& desc) override
             {
+                this->queue_or_run([this, desc] { this->create_window_impl(desc); });
+            }
+
+            void create_window_impl(const ui_window_desc& desc)
+            {
                 if (!this->ensure_initialized())
                 {
                     return;
@@ -800,128 +816,191 @@ namespace sogen
 
             void destroy_window(const hwnd window) override
             {
-                if (const auto it = this->windows_.find(window); it != this->windows_.end())
-                {
-                    // Child (non-top-level) windows have no SDL window; only top-level windows do.
-                    if (it->second.window)
+                this->queue_or_run([this, window] {
+                    if (const auto it = this->windows_.find(window); it != this->windows_.end())
                     {
-                        SDL_StopTextInput(it->second.window);
-                        this->guest_by_window_id_.erase(SDL_GetWindowID(it->second.window));
+                        // Child (non-top-level) windows have no SDL window; only top-level windows do.
+                        if (it->second.window)
+                        {
+                            SDL_StopTextInput(it->second.window);
+                            this->guest_by_window_id_.erase(SDL_GetWindowID(it->second.window));
+                        }
+                        destroy_window_resources(it->second);
+                        this->windows_.erase(it);
                     }
-                    destroy_window_resources(it->second);
-                    this->windows_.erase(it);
-                }
+                });
             }
 
             void set_window_rect(const hwnd window, const RECT& rect) override
             {
-                if (auto* state = this->resolve_window(window))
-                {
-                    state->desc.rect = rect;
-                    if (state->desc.top_level)
+                this->queue_or_run([this, window, rect] {
+                    if (auto* state = this->resolve_window(window))
                     {
-                        const auto& insets = state->desc.client_insets;
-                        SDL_SetWindowPosition(state->window, rect.left, rect.top);
-                        SDL_SetWindowSize(state->window, std::max<int>(1, (rect.right - rect.left) - insets.left - insets.right),
-                                          std::max<int>(1, (rect.bottom - rect.top) - insets.top - insets.bottom));
+                        state->desc.rect = rect;
+                        if (state->desc.top_level)
+                        {
+                            const auto& insets = state->desc.client_insets;
+                            SDL_SetWindowPosition(state->window, rect.left, rect.top);
+                            SDL_SetWindowSize(state->window, std::max<int>(1, (rect.right - rect.left) - insets.left - insets.right),
+                                              std::max<int>(1, (rect.bottom - rect.top) - insets.top - insets.bottom));
+                        }
+                        this->redraw_related(window);
                     }
-                    this->redraw_related(window);
-                }
+                });
             }
 
             void set_window_visible(const hwnd window, const bool visible) override
             {
-                if (auto* state = this->resolve_window(window))
-                {
-                    state->desc.visible = visible;
-                    if (state->desc.top_level)
+                this->queue_or_run([this, window, visible] {
+                    if (auto* state = this->resolve_window(window))
                     {
-                        if (visible)
+                        state->desc.visible = visible;
+                        if (state->desc.top_level)
                         {
-                            SDL_ShowWindow(state->window);
+                            if (visible)
+                            {
+                                SDL_ShowWindow(state->window);
+                            }
+                            else
+                            {
+                                SDL_HideWindow(state->window);
+                            }
                         }
-                        else
-                        {
-                            SDL_HideWindow(state->window);
-                        }
+                        this->redraw_related(window);
                     }
-                    this->redraw_related(window);
-                }
+                });
             }
 
             void set_window_enabled(const hwnd window, const bool enabled) override
             {
-                if (auto* state = this->resolve_window(window))
-                {
-                    state->desc.enabled = enabled;
-                    this->redraw_related(window);
-                }
+                this->queue_or_run([this, window, enabled] {
+                    if (auto* state = this->resolve_window(window))
+                    {
+                        state->desc.enabled = enabled;
+                        this->redraw_related(window);
+                    }
+                });
             }
 
             void set_window_title(const hwnd window, std::u16string_view title) override
             {
-                if (auto* state = this->resolve_window(window))
-                {
-                    state->desc.title = std::u16string{title};
-                    if (state->desc.top_level)
+                this->queue_or_run([this, window, title = std::u16string{title}] {
+                    if (auto* state = this->resolve_window(window))
                     {
-                        const auto utf8 = u16_to_u8(title);
-                        SDL_SetWindowTitle(state->window, utf8.c_str());
+                        state->desc.title = title;
+                        if (state->desc.top_level)
+                        {
+                            const auto utf8 = u16_to_u8(title);
+                            SDL_SetWindowTitle(state->window, utf8.c_str());
+                        }
+                        this->redraw_related(window);
                     }
-                    this->redraw_related(window);
-                }
+                });
             }
 
             void present_surface(const hwnd window, const ui_surface_desc& surface) override
             {
-                // The render target is frequently a child window (e.g. a D3D/Vulkan swap-chain child),
-                // which has no SDL renderer of its own. Composite its surface onto the top-level
-                // ancestor -- the window that actually owns the on-screen SDL window and renderer.
-                auto* state = this->resolve_window(window);
-                if (state && !state->renderer)
+                // The queued command runs on the pump thread after this call returns, by which point the
+                // guest's pixel buffer may be gone, so take a private copy of it now.
+                std::vector<uint8_t> pixels;
+                auto copy = surface;
+                if (surface.pixels && surface.stride > 0 && surface.height > 0)
                 {
-                    state = this->resolve_window(this->get_top_level_ancestor(window));
+                    const auto size = static_cast<size_t>(surface.stride) * static_cast<size_t>(surface.height);
+                    pixels.resize(size);
+                    std::memcpy(pixels.data(), surface.pixels, size);
                 }
-                if (state && state->renderer)
-                {
-                    update_surface_texture(*state, surface);
-                    render_window(*state);
-                }
+
+                this->queue_or_run([this, window, copy, pixels = std::move(pixels)]() mutable {
+                    copy.pixels = pixels.empty() ? nullptr : pixels.data();
+
+                    // The render target is frequently a child window (e.g. a D3D/Vulkan swap-chain child),
+                    // which has no SDL renderer of its own. Composite its surface onto the top-level
+                    // ancestor -- the window that actually owns the on-screen SDL window and renderer.
+                    auto* state = this->resolve_window(window);
+                    if (state && !state->renderer)
+                    {
+                        state = this->resolve_window(this->get_top_level_ancestor(window));
+                    }
+                    if (state && state->renderer)
+                    {
+                        update_surface_texture(*state, copy);
+                        render_window(*state);
+                    }
+                });
             }
 
             void set_cursor_position(const hwnd window, const int32_t screen_x, const int32_t screen_y) override
             {
-                // Top-levels are positioned at their emulated rect (SDL_SetWindowPosition), so emulated screen
-                // coordinates map to guest client pixels by subtracting that origin.
-                const auto top = this->get_top_level_ancestor(window);
-                if (auto* state = this->resolve_window(top); state && state->window)
-                {
-                    auto window_x = static_cast<float>(screen_x - state->desc.rect.left);
-                    auto window_y = static_cast<float>(screen_y - state->desc.rect.top);
-                    // The frame is letterboxed into the window, so guest pixels are not at the same position in
-                    // the host window; map through the same transform map_window_point inverts.
-                    if (state->renderer)
+                this->queue_or_run([this, window, screen_x, screen_y] {
+                    // Top-levels are positioned at their emulated rect (SDL_SetWindowPosition), so emulated screen
+                    // coordinates map to guest client pixels by subtracting that origin.
+                    const auto top = this->get_top_level_ancestor(window);
+                    if (auto* state = this->resolve_window(top); state && state->window)
                     {
-                        SDL_RenderCoordinatesToWindow(state->renderer, window_x, window_y, &window_x, &window_y);
+                        auto window_x = static_cast<float>(screen_x - state->desc.rect.left);
+                        auto window_y = static_cast<float>(screen_y - state->desc.rect.top);
+                        // The frame is letterboxed into the window, so guest pixels are not at the same position in
+                        // the host window; map through the same transform map_window_point inverts.
+                        if (state->renderer)
+                        {
+                            SDL_RenderCoordinatesToWindow(state->renderer, window_x, window_y, &window_x, &window_y);
+                        }
+                        SDL_WarpMouseInWindow(state->window, window_x, window_y);
                     }
-                    SDL_WarpMouseInWindow(state->window, window_x, window_y);
-                }
+                });
             }
 
             void set_cursor_visibility(const bool visible) override
             {
-                // SDL cursor visibility is process-global, which matches the single foreground guest game.
-                if (visible)
-                {
-                    SDL_ShowCursor();
-                }
-                else
-                {
-                    SDL_HideCursor();
-                }
+                this->queue_or_run([visible] {
+                    // SDL cursor visibility is process-global, which matches the single foreground guest game.
+                    if (visible)
+                    {
+                        SDL_ShowCursor();
+                    }
+                    else
+                    {
+                        SDL_HideCursor();
+                    }
+                });
             }
 
           private:
+            // SDL windows are thread-affine: only their owning thread's message pump services the
+            // cross-thread SendMessage that host calls such as SDL_ShowWindow issue, so every SDL
+            // operation must run on the one thread that calls pump_events. With multiple vCPUs the
+            // syscall handlers run on different worker threads, so operations they trigger are queued
+            // here and executed on the pump thread. Every ui_backend method returns void, so the
+            // callers never need a result and this can stay fully asynchronous.
+            void queue_or_run(std::function<void()> task)
+            {
+                {
+                    const std::lock_guard lock(this->command_mutex_);
+                    if (this->ui_thread_known_ && this->ui_thread_id_ != std::this_thread::get_id())
+                    {
+                        this->commands_.emplace_back(std::move(task));
+                        return;
+                    }
+                }
+
+                task();
+            }
+
+            void drain_commands()
+            {
+                std::vector<std::function<void()>> pending;
+                {
+                    const std::lock_guard lock(this->command_mutex_);
+                    pending.swap(this->commands_);
+                }
+
+                for (auto& task : pending)
+                {
+                    task();
+                }
+            }
+
             bool ensure_initialized()
             {
                 if (!this->initialized_)
@@ -1168,6 +1247,11 @@ namespace sogen
             std::array<bool, SDL_SCANCODE_COUNT> key_down_{};
             std::unordered_map<hwnd, window_state> windows_{};
             std::unordered_map<SDL_WindowID, hwnd> guest_by_window_id_{};
+
+            std::mutex command_mutex_{};
+            std::vector<std::function<void()>> commands_{};
+            std::thread::id ui_thread_id_{};
+            bool ui_thread_known_{false};
         };
     }
 
