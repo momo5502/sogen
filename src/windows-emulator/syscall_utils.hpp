@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "windows_emulator.hpp"
 #include <ctime>
@@ -13,7 +13,9 @@ namespace sogen
     struct syscall_context
     {
         windows_emulator& win_emu;
-        x86_64_emulator& emu;
+        // The virtual CPU that issued this syscall. Register and memory access must go
+        // through this CPU, not windows_emulator::emu() (which always resolves vCPU 0).
+        x86_64_cpu& emu;
         vcpu_context& vcpu;
         process_context& proc;
         mutable bool write_status{true};
@@ -54,7 +56,7 @@ namespace sogen
         }
     };
 
-    inline uint64_t get_syscall_argument(x86_64_emulator& emu, const size_t index)
+    inline uint64_t get_syscall_argument(x86_64_cpu& emu, const size_t index)
     {
         return get_function_argument(emu, index, true);
     }
@@ -144,7 +146,7 @@ namespace sogen
 
     template <typename T>
         requires(std::is_integral_v<T> || std::is_enum_v<T>)
-    T resolve_argument(x86_64_emulator& emu, const size_t index)
+    T resolve_argument(x86_64_cpu& emu, const size_t index)
     {
         const auto arg = get_syscall_argument(emu, index);
         return static_cast<T>(arg);
@@ -152,7 +154,7 @@ namespace sogen
 
     template <typename T>
         requires(std::is_same_v<std::remove_cvref_t<T>, handle>)
-    handle resolve_argument(x86_64_emulator& emu, const size_t index)
+    handle resolve_argument(x86_64_cpu& emu, const size_t index)
     {
         handle h{};
         h.bits = resolve_argument<uint64_t>(emu, index);
@@ -161,14 +163,14 @@ namespace sogen
 
     template <typename T>
         requires(std::is_same_v<T, emulator_object<typename T::value_type>>)
-    T resolve_argument(x86_64_emulator& emu, const size_t index)
+    T resolve_argument(x86_64_cpu& emu, const size_t index)
     {
         const auto arg = get_syscall_argument(emu, index);
         return T(emu, arg);
     }
 
     template <typename T>
-    T resolve_indexed_argument(x86_64_emulator& emu, size_t& index)
+    T resolve_indexed_argument(x86_64_cpu& emu, size_t& index)
     {
         return resolve_argument<T>(emu, index++);
     }
@@ -218,7 +220,7 @@ namespace sogen
     }
 
     template <typename T, typename Traits>
-    void write_attribute(emulator& emu, const PS_ATTRIBUTE<Traits>& attribute, const T& value)
+    void write_attribute(memory_interface& emu, const PS_ATTRIBUTE<Traits>& attribute, const T& value)
     {
         if (attribute.ReturnLength)
         {
@@ -232,7 +234,7 @@ namespace sogen
     }
 
     template <typename ResponseType, typename Action, typename ReturnLengthSetter>
-    NTSTATUS handle_query_internal(x86_64_emulator& emu, const uint64_t buffer, const uint32_t length,
+    NTSTATUS handle_query_internal(x86_64_cpu& emu, const uint64_t buffer, const uint32_t length,
                                    const ReturnLengthSetter& return_length_setter, const Action& action)
     {
         constexpr auto required_size = sizeof(ResponseType);
@@ -267,8 +269,8 @@ namespace sogen
 
     template <typename ResponseType, typename Action, typename LengthType>
         requires(std::is_integral_v<LengthType>)
-    NTSTATUS handle_query(x86_64_emulator& emu, const uint64_t buffer, const uint32_t length,
-                          const emulator_object<LengthType> return_length, const Action& action)
+    NTSTATUS handle_query(x86_64_cpu& emu, const uint64_t buffer, const uint32_t length, const emulator_object<LengthType> return_length,
+                          const Action& action)
     {
         const auto length_setter = [&](const size_t required_size) {
             if (return_length)
@@ -281,7 +283,7 @@ namespace sogen
     }
 
     template <typename ResponseType, typename Action>
-    NTSTATUS handle_query(x86_64_emulator& emu, const uint64_t buffer, const uint32_t length,
+    NTSTATUS handle_query(x86_64_cpu& emu, const uint64_t buffer, const uint32_t length,
                           const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const Action& action)
     {
         IO_STATUS_BLOCK<EmulatorTraits<Emu64>> status_block{};

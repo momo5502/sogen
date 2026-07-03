@@ -225,18 +225,48 @@ namespace sogen
         void deliver_raw_mouse_input(int32_t dx, int32_t dy, uint16_t button_flags);
         void deliver_raw_keyboard_input(uint16_t vkey, uint16_t scan_code, bool release);
 
-        // Single-vCPU observer convenience for external consumers (gdb stub, analyzer,
-        // python bindings). Internal execution paths must use the explicit vcpu_context
-        // instead. Remains correct until Phase 2, since the scheduler only drives vCPU 0.
+        // Observer convenience for external consumers (gdb stub, analyzer, python
+        // bindings) and legacy paths that don't thread a vcpu_context through. Resolves
+        // to the vCPU whose handler is currently running: all handler/observer code runs
+        // under the kernel lock, so exactly one vCPU dispatches at a time and this is
+        // race-free. Falls back to vCPU 0 when no handler is active (e.g. setup).
         emulator_thread& current_thread() const
         {
-            return this->vcpus_[0]->thread();
+            return (this->dispatch_vcpu_ ? this->dispatch_vcpu_ : this->vcpus_[0].get())->thread();
         }
 
         vcpu_context& vcpu(const size_t index)
         {
             return *this->vcpus_.at(index);
         }
+
+        // Marks vcpu as the one currently dispatching a handler on the calling host
+        // thread, so current_thread() resolves correctly. RAII; must be held only while
+        // the kernel lock is held.
+        class scoped_dispatch
+        {
+          public:
+            scoped_dispatch(windows_emulator& emu, vcpu_context& vcpu)
+                : emu_(&emu),
+                  previous_(emu.dispatch_vcpu_)
+            {
+                emu.dispatch_vcpu_ = &vcpu;
+            }
+
+            ~scoped_dispatch()
+            {
+                this->emu_->dispatch_vcpu_ = this->previous_;
+            }
+
+            scoped_dispatch(const scoped_dispatch&) = delete;
+            scoped_dispatch& operator=(const scoped_dispatch&) = delete;
+            scoped_dispatch(scoped_dispatch&&) = delete;
+            scoped_dispatch& operator=(scoped_dispatch&&) = delete;
+
+          private:
+            windows_emulator* emu_{};
+            vcpu_context* previous_{};
+        };
 
         uint64_t get_executed_instructions() const
         {
@@ -335,6 +365,10 @@ namespace sogen
         // The emulator kernel lock: held by all code touching shared kernel state,
         // released while guest code executes (docs/multi-vcpu-design.md, section 7).
         kernel_lock kernel_lock_{};
+
+        // The vCPU currently running a handler under the kernel lock; drives
+        // current_thread(). See scoped_dispatch.
+        vcpu_context* dispatch_vcpu_{};
 
         // unique_ptr because vcpu_context contains an atomic and must stay address-stable.
         std::vector<std::unique_ptr<vcpu_context>> vcpus_{};

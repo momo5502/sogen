@@ -20,11 +20,22 @@ Status: in progress on branch `multi-vcpu`
       deferred TLB flush (flag + cancel, applied at run-loop top) replacing the
       cross-vCPU CR3 rewrite. N=1 keeps its proven inline loop (workers only spawn at
       N>1); N=1 + all tests unaffected.
-      **N>1 launches real parallel execution but is not yet correct** — surfaces
-      concurrency bugs (`No active thread!`, guest-memory read failures) that are the
-      Phase 3 cross-vCPU-correctness work. Remaining Phase 2 polish: replace the idle
-      sleep-poll with a ready_cv; device pump on scheduler ticks; N=1 boot benchmark vs
-      main; clang-cl -Wthread-safety annotations.
+- [~] Phase 3 — cross-vCPU correctness. Fixed the register-routing bug that made every
+      syscall on a non-zero vCPU touch vCPU 0's registers: `syscall_context::emu` (and the
+      argument/register helpers, `callback_frame`, exception dispatch, rdtsc/rdtscp/
+      interrupt/violation hooks) now use the acting vCPU's `x86_64_cpu` instead of
+      `windows_emulator::emu()` (the vCPU-0 facade). Guest memory is shared, so
+      `x86_64_cpu` gained an implicit conversion to the shared `memory_interface&`. The
+      legacy `current_thread()` observer API is made correct via `scoped_dispatch`: a
+      `windows_emulator::dispatch_vcpu_` member set at each handler entry under the kernel
+      lock (race-free because the BEL serializes handlers — not a global or thread-local).
+      With these fixes N>1 now runs the entire smoke suite correctly through ~15 tests
+      (Registry, System Info, Time Zone, Exceptions, …) and fails only at the **Threads**
+      test — the one test that exercises genuinely concurrent guest threads. That failure
+      is parallelism-specific (Threads passes at N=1) and is the remaining Phase 3 work:
+      wait/signal ordering under true concurrency and any remaining shared state touched
+      off-lock. Remaining Phase 2 polish still open: ready_cv instead of sleep-poll; device
+      pump on scheduler ticks; N=1 boot benchmark; clang-cl -Wthread-safety annotations.
 - [ ] Phase 3 — cross-vCPU correctness
 - [ ] Phase 4 — stress testing + contention profiling
 - [ ] Phase 5 — KVM parity, linux-emulator

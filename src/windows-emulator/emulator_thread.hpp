@@ -230,8 +230,8 @@ namespace sogen
 
         ~callback_frame();
 
-        void save_registers(x86_64_emulator& emu);
-        void restore_registers(x86_64_emulator& emu) const;
+        void save_registers(x86_64_cpu& emu);
+        void restore_registers(x86_64_cpu& emu) const;
 
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);

@@ -68,7 +68,7 @@ namespace sogen
 
     void syscall_dispatcher::dispatch(windows_emulator& win_emu, vcpu_context& vcpu)
     {
-        auto& emu = win_emu.emu();
+        auto& emu = vcpu.cpu;
         auto& context = win_emu.process;
 
         const auto address = emu.read_instruction_pointer();
@@ -155,7 +155,7 @@ namespace sogen
     dispatch_result syscall_dispatcher::dispatch_completion(windows_emulator& win_emu, vcpu_context& vcpu, callback_id callback_id,
                                                             completion_state* completion_state, uint64_t callback_result)
     {
-        auto& emu = win_emu.emu();
+        auto& emu = vcpu.cpu;
 
         const syscall_context c{.win_emu = win_emu,
                                 .emu = emu,

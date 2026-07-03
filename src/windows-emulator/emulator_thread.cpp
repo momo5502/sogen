@@ -1,4 +1,4 @@
-#include "std_include.hpp"
+﻿#include "std_include.hpp"
 #include "emulator_thread.hpp"
 
 #include "cpu_context.hpp"
@@ -1248,7 +1248,7 @@ namespace sogen
 
     callback_frame::~callback_frame() = default;
 
-    void callback_frame::save_registers(x86_64_emulator& emu)
+    void callback_frame::save_registers(x86_64_cpu& emu)
     {
         if (this->rip != 0)
         {
@@ -1280,7 +1280,7 @@ namespace sogen
         this->gs = emu.reg<uint16_t>(x86_register::gs);
     }
 
-    void callback_frame::restore_registers(x86_64_emulator& emu) const
+    void callback_frame::restore_registers(x86_64_cpu& emu) const
     {
         if (this->rip == 0)
         {

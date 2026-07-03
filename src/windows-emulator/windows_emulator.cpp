@@ -967,32 +967,36 @@ namespace sogen
 
         this->emu().hook_instruction(x86_hookable_instructions::syscall, [&](cpu_interface& cpu, uint64_t) {
             const std::scoped_lock lock(this->kernel_lock_);
-            this->dispatcher.dispatch(*this, this->vcpu(cpu.index()));
+            auto& vcpu = this->vcpu(cpu.index());
+            const scoped_dispatch dispatch(*this, vcpu);
+            this->dispatcher.dispatch(*this, vcpu);
             return instruction_hook_continuation::skip_instruction;
         });
 
-        this->emu().hook_instruction(x86_hookable_instructions::rdtscp, [&] {
+        this->emu().hook_instruction(x86_hookable_instructions::rdtscp, [&](cpu_interface& cpu, uint64_t) {
             const std::scoped_lock lock(this->kernel_lock_);
+            auto& acting = this->vcpu(cpu.index()).cpu;
             this->callbacks.on_rdtscp();
 
             const auto ticks = this->clock_->timestamp_counter();
-            this->emu().reg(x86_register::rax, static_cast<uint32_t>(ticks));
-            this->emu().reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
+            acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
+            acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
 
             // Return the IA32_TSC_AUX value in RCX (low 32 bits)
             auto tsc_aux = 0; // Need to replace this with proper CPUID later
-            this->emu().reg(x86_register::rcx, tsc_aux);
+            acting.reg(x86_register::rcx, tsc_aux);
 
             return instruction_hook_continuation::skip_instruction;
         });
 
-        this->emu().hook_instruction(x86_hookable_instructions::rdtsc, [&] {
+        this->emu().hook_instruction(x86_hookable_instructions::rdtsc, [&](cpu_interface& cpu, uint64_t) {
             const std::scoped_lock lock(this->kernel_lock_);
+            auto& acting = this->vcpu(cpu.index()).cpu;
             this->callbacks.on_rdtsc();
 
             const auto ticks = this->clock_->timestamp_counter();
-            this->emu().reg(x86_register::rax, static_cast<uint32_t>(ticks));
-            this->emu().reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
+            acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
+            acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
 
             return instruction_hook_continuation::skip_instruction;
         });
@@ -1008,8 +1012,10 @@ namespace sogen
         this->emu().hook_interrupt([&](cpu_interface& cpu, const int interrupt) {
             const std::scoped_lock lock(this->kernel_lock_);
             auto& vcpu = this->vcpu(cpu.index());
+            const scoped_dispatch dispatch(*this, vcpu);
+            auto& acting = vcpu.cpu;
             this->callbacks.on_exception();
-            const auto eflags = this->emu().reg<uint32_t>(x86_register::eflags);
+            const auto eflags = acting.reg<uint32_t>(x86_register::eflags);
 
             switch (interrupt)
             {
@@ -1019,7 +1025,7 @@ namespace sogen
             case 1:
                 if ((eflags & 0x100) != 0)
                 {
-                    this->emu().reg(x86_register::eflags, eflags & ~0x100);
+                    acting.reg(x86_register::eflags, eflags & ~0x100);
                 }
 
                 this->callbacks.on_suspicious_activity("Singlestep");
@@ -1034,16 +1040,16 @@ namespace sogen
                 dispatch_illegal_instruction_violation(*this, vcpu);
                 return;
             case 41:
-                this->callbacks.on_fast_fail(this->emu().reg<uint32_t>(x86_register::ecx));
+                this->callbacks.on_fast_fail(acting.reg<uint32_t>(x86_register::ecx));
                 this->process.exit_status = STATUS_FAIL_FAST_EXCEPTION;
                 this->stop();
                 return;
             case 45:
                 this->callbacks.on_suspicious_activity("DbgPrint");
                 {
-                    const auto cs_selector = this->emu().reg<uint16_t>(x86_register::cs);
-                    const auto bitness = segment_utils::get_segment_bitness(this->emu(), cs_selector);
-                    const auto service = this->emu().reg<uint32_t>(x86_register::eax);
+                    const auto cs_selector = acting.reg<uint16_t>(x86_register::cs);
+                    const auto bitness = segment_utils::get_segment_bitness(acting, cs_selector);
+                    const auto service = acting.reg<uint32_t>(x86_register::eax);
 
                     if (bitness && *bitness == segment_utils::segment_bitness::bit64 &&
                         (service == BREAKPOINT_PRINT || service == BREAKPOINT_LOAD_SYMBOLS || service == BREAKPOINT_UNLOAD_SYMBOLS ||
@@ -1051,8 +1057,8 @@ namespace sogen
                     {
                         const auto ip = this->uses_instruction_precision() //
                                             ? vcpu.thread().current_ip
-                                            : this->emu().read_instruction_pointer();
-                        this->emu().reg(x86_register::rip, ip + 3);
+                                            : acting.read_instruction_pointer();
+                        acting.reg(x86_register::rip, ip + 3);
                     }
                     else
                     {
@@ -1074,14 +1080,16 @@ namespace sogen
                                               const memory_operation operation, const memory_violation_type type) {
             const std::scoped_lock lock(this->kernel_lock_);
             auto& vcpu = this->vcpu(cpu.index());
-            if (this->emu().reg<uint16_t>(x86_register::cs) == 0x33)
+            const scoped_dispatch dispatch(*this, vcpu);
+            auto& acting = vcpu.cpu;
+            if (acting.reg<uint16_t>(x86_register::cs) == 0x33)
             {
                 // loading gs selector only works in 64-bit mode
                 const auto required_gs_base = vcpu.thread().gs_segment->get_base();
-                const auto actual_gs_base = this->emu().get_segment_base(x86_register::gs);
+                const auto actual_gs_base = acting.get_segment_base(x86_register::gs);
                 if (actual_gs_base != required_gs_base)
                 {
-                    this->emu().set_segment_base(x86_register::gs, required_gs_base);
+                    acting.set_segment_base(x86_register::gs, required_gs_base);
                     return memory_violation_continuation::restart;
                 }
             }
@@ -1100,9 +1108,9 @@ namespace sogen
                 // return address so the missing function's call site can be identified.
                 if (address < 0x1000)
                 {
-                    const auto sp = this->emu().reg<uint32_t>(x86_register::esp);
+                    const auto sp = acting.reg<uint32_t>(x86_register::esp);
                     uint32_t return_address = 0;
-                    if (this->emu().try_read_memory(sp, &return_address, sizeof(return_address)))
+                    if (acting.try_read_memory(sp, &return_address, sizeof(return_address)))
                     {
                         const auto* mod = this->mod_manager.find_by_address(return_address);
                         this->log.error("Null-pointer call to 0x%llx; caller return address 0x%x (%s+0x%llx)\n",
@@ -1122,7 +1130,9 @@ namespace sogen
         {
             this->emu().hook_memory_execution([&](cpu_interface& cpu, const uint64_t address) {
                 const std::scoped_lock lock(this->kernel_lock_);
-                this->on_instruction_execution(this->vcpu(cpu.index()), address); //
+                auto& vcpu = this->vcpu(cpu.index());
+                const scoped_dispatch dispatch(*this, vcpu);
+                this->on_instruction_execution(vcpu, address); //
             });
         }
         else if (!this->emu().is_stop_thread_safe())

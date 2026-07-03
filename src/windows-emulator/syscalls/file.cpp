@@ -344,7 +344,7 @@ namespace sogen
             auto& enum_state = *f->enumeration_state;
 
             uint64_t current_offset{0};
-            emulator_object<T> object{c.emu};
+            emulator_object<T> object{c.emu.memory()};
 
             size_t current_index = enum_state.current_index;
 
@@ -1053,7 +1053,7 @@ namespace sogen
             return ret(STATUS_NOT_SUPPORTED);
         }
 
-        void commit_file_data(const std::string_view data, emulator& emu,
+        void commit_file_data(const std::string_view data, memory_interface& emu,
                               const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t buffer)
         {
             if (io_status_block)
@@ -1996,8 +1996,8 @@ namespace sogen
                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const ULONG share_access,
                                    const ULONG open_options)
         {
-            return handle_NtCreateFile(c, file_handle, desired_access, object_attributes, io_status_block, {c.emu}, 0, share_access,
-                                       FILE_OPEN, open_options, 0, 0);
+            return handle_NtCreateFile(c, file_handle, desired_access, object_attributes, io_status_block, {c.emu.memory()}, 0,
+                                       share_access, FILE_OPEN, open_options, 0, 0);
         }
 
         NTSTATUS handle_NtOpenDirectoryObject(const syscall_context& c, const emulator_object<handle> directory_handle,

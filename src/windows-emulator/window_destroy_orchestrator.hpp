@@ -38,7 +38,7 @@ namespace sogen
         void finalize_frame(window_destroy_frame& frame, const window& win) const;
 
         window_destroy_state& state_;
-        x86_64_emulator& emu_;
+        x86_64_cpu& emu_;
         process_context& proc_;
         const emulator_thread& thread_;
         ui_backend& ui_;

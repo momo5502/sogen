@@ -70,6 +70,19 @@ namespace sogen
         virtual memory_interface& memory() = 0;
         virtual const memory_interface& memory() const = 0;
 
+        // Guest memory is shared by every vCPU, so a CPU can stand in wherever a
+        // memory_interface is expected (emulator_object, read_string, ...). Only
+        // register state is per-CPU.
+        operator memory_interface&()
+        {
+            return this->memory();
+        }
+
+        operator const memory_interface&() const
+        {
+            return this->memory();
+        }
+
         size_t write_register(registers reg, const void* value, const size_t size)
         {
             return this->write_raw_register(static_cast<int>(reg), value, size);

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "syscall_utils.hpp"
 
@@ -14,7 +14,7 @@ namespace sogen
     }
 
     template <typename T>
-    void write_user_callback_arg(x86_64_emulator& emu, const uint64_t arg_buffer, size_t& offset, const T& arg)
+    void write_user_callback_arg(x86_64_cpu& emu, const uint64_t arg_buffer, size_t& offset, const T& arg)
     {
         offset = static_cast<size_t>(align_up(offset, alignof(T)));
         emu.write_memory(arg_buffer + offset, &arg, sizeof(arg));
@@ -51,7 +51,7 @@ namespace sogen
     }
 
     template <typename... Args>
-    void prepare_call_stack(x86_64_emulator& emu, const uint32_t callback_index, const Args&... args)
+    void prepare_call_stack(x86_64_cpu& emu, const uint32_t callback_index, const Args&... args)
     {
         const uint32_t arg_length = user_callback_args_size<Args...>();
         const uint64_t stack_args_size = align_up(arg_length, 0x10);

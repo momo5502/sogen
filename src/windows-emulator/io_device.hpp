@@ -34,7 +34,7 @@ namespace sogen
 
         emulator_thread& thread() const;
 
-        io_device_context(x86_64_emulator& emu)
+        io_device_context(memory_interface& emu)
             : io_status_block(emu)
         {
         }
