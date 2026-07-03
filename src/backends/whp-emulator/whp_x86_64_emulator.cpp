@@ -2974,14 +2974,21 @@ namespace sogen::whp
             // re-establish its mapping, flush this vCPU's TLB and retry. A per-vCPU (page,rip)
             // guard ensures a genuine violation (unbacked page, wrong permissions) is still
             // delivered rather than looping forever.
-            bool try_repair_spurious_fault(whp_vcpu& vcpu, const uint64_t fault_address, const memory_operation operation)
+            // operation_known is false only for the unrecoverable-exit path, whose fault carries no
+            // access type (we assume a read). There a backed+readable page could still be a genuine
+            // write-to-read-only, so consecutive repairs are capped to avoid an endless retry loop.
+            // For the well-typed paths (#PF, memory access) a backed page whose permissions allow the
+            // faulting operation can only fault transiently (a peer's stale-translation re-clear), so
+            // it is retried without a cap - the re-clears are finite and always resolve.
+            bool try_repair_spurious_fault(whp_vcpu& vcpu, const uint64_t fault_address, const memory_operation operation,
+                                           const bool operation_known)
             {
                 constexpr uint32_t max_consecutive_repairs = 256;
 
                 const auto page_base = align_down_to_page(fault_address);
                 const auto rip = vcpu.read_instruction_pointer();
                 const auto same_as_last = vcpu.last_repair_page_ == page_base && vcpu.last_repair_rip_ == rip;
-                const auto guard_tripped = same_as_last && vcpu.last_repair_count_ >= max_consecutive_repairs;
+                const auto guard_tripped = !operation_known && same_as_last && vcpu.last_repair_count_ >= max_consecutive_repairs;
 
                 bool repaired = false;
 
@@ -3528,7 +3535,7 @@ namespace sogen::whp
                     // a stale translation. Repair and retry rather than delivering a spurious access
                     // violation. The exit carries no access type, so assume a read; a genuine
                     // write-to-read-only self-corrects via the per-vCPU retry guard.
-                    if (this->try_repair_spurious_fault(vcpu, fault_address, memory_operation::read))
+                    if (this->try_repair_spurious_fault(vcpu, fault_address, memory_operation::read, false))
                     {
                         return true;
                     }
@@ -3691,7 +3698,7 @@ namespace sogen::whp
                 // Spurious fault on an actually-backed page whose mapping is momentarily stale for
                 // this vCPU (peer map/commit/reprotect): repair and retry. Guard/no-access pages
                 // (permission 'none') and genuine violations still reach the hook.
-                if (this->try_repair_spurious_fault(vcpu, resolved_address, operation))
+                if (this->try_repair_spurious_fault(vcpu, resolved_address, operation, true))
                 {
                     return true;
                 }
@@ -3778,7 +3785,7 @@ namespace sogen::whp
                     // actually-backed page whose permissions allow the access. Repair and retry rather
                     // than delivering a bogus access violation. Guard/no-access pages and genuine
                     // violations (permission mismatch) still reach the violation hook.
-                    if (this->try_repair_spurious_fault(vcpu, fault_address, operation))
+                    if (this->try_repair_spurious_fault(vcpu, fault_address, operation, true))
                     {
                         return true;
                     }
