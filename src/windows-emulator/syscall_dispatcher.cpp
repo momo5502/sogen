@@ -136,7 +136,9 @@ namespace sogen
 
     void syscall_dispatcher::dispatch_callback(windows_emulator& win_emu, std::string& syscall_name)
     {
-        auto& emu = win_emu.emu();
+        // active_cpu(), not emu(): this runs under the syscall's scoped_dispatch, and with more than one
+        // vCPU the instrumentation-callback redirect must rewrite the acting vCPU's RIP/r10, not vCPU 0's.
+        auto& emu = win_emu.active_cpu();
         auto& context = win_emu.process;
 
         if (context.instrumentation_callback != 0 && syscall_name != "NtContinue")

@@ -397,6 +397,7 @@ namespace sogen
 
         void yield_thread(vcpu_context& vcpu, bool alertable = false);
         bool perform_thread_switch(vcpu_context& vcpu, std::unique_lock<kernel_lock>& lock);
+        bool perform_thread_switch(vcpu_context& vcpu);
         bool activate_thread(vcpu_context& vcpu, uint32_t id);
 
       private:

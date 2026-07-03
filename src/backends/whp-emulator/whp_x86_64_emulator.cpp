@@ -3391,8 +3391,8 @@ namespace sogen::whp
                 }
             }
 
-            void apply_default_instruction_exit(whp_vcpu& vcpu, const x86_hookable_instructions type,
-                                                const WHV_RUN_VP_EXIT_CONTEXT& exit_context)
+            static void apply_default_instruction_exit(whp_vcpu& vcpu, const x86_hookable_instructions type,
+                                                       const WHV_RUN_VP_EXIT_CONTEXT& exit_context)
             {
                 switch (type)
                 {
@@ -3439,7 +3439,7 @@ namespace sogen::whp
 
                 if (!handled || !skip)
                 {
-                    this->apply_default_instruction_exit(vcpu, type, exit_context);
+                    apply_default_instruction_exit(vcpu, type, exit_context);
                 }
 
                 vcpu.advance_rip(instruction_size);

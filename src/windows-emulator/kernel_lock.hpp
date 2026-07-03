@@ -71,16 +71,19 @@ namespace sogen
 
         void assert_held() const
         {
-            assert(this->is_held_by_current_thread() && "The kernel lock must be held");
+            // Evaluated outside assert() so the member access survives in NDEBUG builds (where assert
+            // expands to nothing); the relaxed load is otherwise dead and elided by the optimizer.
+            [[maybe_unused]] const bool held = this->is_held_by_current_thread();
+            assert(held && "The kernel lock must be held");
         }
 
         profile_stats profile() const
         {
             return {
-                this->acquisitions_.load(std::memory_order_relaxed),
-                this->contended_.load(std::memory_order_relaxed),
-                this->wait_nanos_.load(std::memory_order_relaxed),
-                this->held_nanos_.load(std::memory_order_relaxed),
+                .acquisitions = this->acquisitions_.load(std::memory_order_relaxed),
+                .contended = this->contended_.load(std::memory_order_relaxed),
+                .wait_nanos = this->wait_nanos_.load(std::memory_order_relaxed),
+                .held_nanos = this->held_nanos_.load(std::memory_order_relaxed),
             };
         }
 

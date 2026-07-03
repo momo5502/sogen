@@ -21,7 +21,7 @@ namespace sogen
 {
     namespace
     {
-        std::unique_ptr<x86_64_emulator> create_backend(backend_type backend, const size_t vcpu_count)
+        std::unique_ptr<x86_64_emulator> create_backend(backend_type backend, [[maybe_unused]] const size_t vcpu_count)
         {
             switch (backend)
             {

@@ -58,14 +58,14 @@ namespace
         CRITICAL_SECTION cs;
         InitializeCriticalSection(&cs);
 
-        volatile long guarded = 0;
+        volatile LONG guarded = 0;
         const unsigned iters = scaled(2000);
 
         run_threads(kThreads, [&](unsigned) {
             for (unsigned i = 0; i < iters; ++i)
             {
                 EnterCriticalSection(&cs);
-                const long value = guarded;
+                const LONG value = guarded;
                 // Widen the race window without yielding the vCPU (a syscall would serialize us).
                 for (volatile int spin = 0; spin < 64; ++spin)
                 {
@@ -77,7 +77,7 @@ namespace
 
         DeleteCriticalSection(&cs);
 
-        const long expected = static_cast<long>(kThreads * iters);
+        const LONG expected = static_cast<LONG>(kThreads) * static_cast<LONG>(iters);
         if (guarded != expected)
         {
             printf("  critical section: lost updates, got %ld expected %ld\n", guarded, expected);
@@ -90,7 +90,7 @@ namespace
     // prefix must stay atomic across host threads. A torn increment shows up as a short total.
     bool test_interlocked()
     {
-        volatile long counter = 0;
+        volatile LONG counter = 0;
         const unsigned iters = scaled(20000);
 
         run_threads(kThreads, [&](unsigned) {
@@ -100,7 +100,7 @@ namespace
             }
         });
 
-        const long expected = static_cast<long>(kThreads * iters);
+        const LONG expected = static_cast<LONG>(kThreads) * static_cast<LONG>(iters);
         if (counter != expected)
         {
             printf("  interlocked: torn increment, got %ld expected %ld\n", counter, expected);
@@ -116,7 +116,7 @@ namespace
         const unsigned producers = kThreads / 2;
         const unsigned consumers = kThreads - producers;
         const unsigned per_producer = scaled(1000);
-        const long total = static_cast<long>(producers * per_producer);
+        const LONG total = static_cast<LONG>(producers) * static_cast<LONG>(per_producer);
 
         HANDLE sem = CreateSemaphoreW(nullptr, 0, total, nullptr);
         if (!sem)
@@ -125,8 +125,8 @@ namespace
             return false;
         }
 
-        std::atomic<long> claim{0};
-        std::atomic<long> acquired{0};
+        std::atomic<LONG> claim{0};
+        std::atomic<LONG> acquired{0};
         std::atomic<bool> ok{true};
 
         std::vector<std::thread> threads;
@@ -251,7 +251,7 @@ namespace
                 }
 
                 const uint32_t stamp = (tid << 24) ^ (i * 2654435761u);
-                constexpr unsigned words = 0x1000 / sizeof(uint32_t);
+                constexpr auto words = static_cast<unsigned>(0x1000 / sizeof(uint32_t));
                 for (unsigned w = 0; w < words; ++w)
                 {
                     page[w] = stamp + w;
@@ -291,7 +291,7 @@ int main(const int argc, const char* argv[])
 {
     if (argc >= 2)
     {
-        const int parsed = atoi(argv[1]);
+        const auto parsed = std::strtol(argv[1], nullptr, 10);
         if (parsed > 0)
         {
             g_scale = static_cast<unsigned>(parsed);

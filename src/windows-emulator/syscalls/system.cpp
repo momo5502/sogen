@@ -568,7 +568,7 @@ namespace sogen
                         basic_info.MaximumUserModeAddress = MAX_ALLOCATION_ADDRESS;
                         const auto processor_count = c.proc.kusd.get().ActiveProcessorCount;
                         basic_info.ActiveProcessorsAffinityMask = (processor_count >= 64) ? ~0ull : ((1ull << processor_count) - 1);
-                        basic_info.NumberOfProcessors = static_cast<uint8_t>(processor_count);
+                        basic_info.NumberOfProcessors = static_cast<char>(processor_count);
                     });
 
             case SystemDeviceInformation:

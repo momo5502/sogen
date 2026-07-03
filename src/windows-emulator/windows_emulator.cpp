@@ -717,6 +717,12 @@ namespace sogen
         vcpu.cpu.stop();
     }
 
+    bool windows_emulator::perform_thread_switch(vcpu_context& vcpu)
+    {
+        std::unique_lock lock(this->kernel_lock_);
+        return this->perform_thread_switch(vcpu, lock);
+    }
+
     bool windows_emulator::perform_thread_switch(vcpu_context& vcpu, std::unique_lock<kernel_lock>& lock)
     {
         this->kernel_lock_.assert_held();
@@ -1325,6 +1331,7 @@ namespace sogen
             }
         }
 
+        this->dump_exception_trace();
         this->dump_lock_profile();
     }
 
@@ -1495,7 +1502,11 @@ namespace sogen
         if (event.message == WM_CLOSE || event.message == WM_COMMAND || event.message == WM_KEYDOWN || event.message == WM_LBUTTONDOWN ||
             event.message == WM_LBUTTONUP)
         {
-            auto& vcpu = this->vcpu(0);
+            // Kick the vCPU currently running the target thread so it promptly re-checks its message
+            // queue; if the thread is not running on any vCPU right now, fall back to vCPU 0 to force a
+            // reschedule that can pick up the now-ready thread.
+            auto* running_on = find_vcpu_running_thread(*this, *thread);
+            auto& vcpu = running_on ? *running_on : this->vcpu(0);
             vcpu.switch_thread = true;
             vcpu.cpu.stop();
         }
@@ -1523,11 +1534,11 @@ namespace sogen
         const auto describe = [this](const uint64_t address) -> std::string {
             const auto* mod = this->mod_manager.find_by_address(address);
             const auto region = this->memory.get_region_info(address);
-            char buffer[256];
-            std::snprintf(buffer, sizeof(buffer), "%s+0x%llx [%s]", mod ? mod->name.c_str() : "?",
+            std::array<char, 256> buffer{};
+            std::snprintf(buffer.data(), buffer.size(), "%s+0x%llx [%s]", mod ? mod->name.c_str() : "?",
                           mod ? static_cast<unsigned long long>(address - mod->image_base) : address,
                           region.is_committed ? "committed" : "FREE/reserved");
-            return buffer;
+            return buffer.data();
         };
 
         for (size_t i = 0; i < count; ++i)
