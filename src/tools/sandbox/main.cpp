@@ -77,6 +77,10 @@ namespace sogen::sandbox
 #endif
 
             emulator_settings settings{
+                // The sandbox favours speed over exact timing: read the TSC and KUSER_SHARED_DATA
+                // natively instead of trapping every access (the analyzer keeps interception on).
+                .intercept_rdtsc = false,
+                .intercept_kusd = false,
                 .vcpu_count = vcpu_count,
                 .registry_directory = get_current_binary_dir() / "registry",
             };

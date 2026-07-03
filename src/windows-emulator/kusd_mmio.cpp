@@ -135,10 +135,23 @@ namespace sogen
     {
     }
 
-    void kusd_mmio::setup(const windows_version_manager& version, const fake_environment_config& fake_env)
+    void kusd_mmio::setup(const windows_version_manager& version, const fake_environment_config& fake_env, const bool intercept)
     {
+        this->intercept_ = intercept;
         setup_kusd(this->kusd_, version, fake_env);
         this->register_mmio();
+    }
+
+    void kusd_mmio::refresh()
+    {
+        if (this->intercept_ || !this->registered_)
+        {
+            return;
+        }
+
+        const std::scoped_lock lock(this->mutex_);
+        this->update();
+        this->memory_->write_memory(KUSD_ADDRESS, &this->kusd_, KUSD_SIZE);
     }
 
     void kusd_mmio::serialize(utils::buffer_serializer& buffer) const
@@ -205,14 +218,25 @@ namespace sogen
 
         this->registered_ = true;
 
-        this->memory_->allocate_mmio(
-            KUSD_ADDRESS, KUSD_BUFFER_SIZE,
-            [this](const uint64_t addr, void* data, const size_t size) {
-                this->read(addr, data, size); //
-            },
-            [](const uint64_t, const void*, const size_t) {
-                // Writing not supported!
-            });
+        if (this->intercept_)
+        {
+            this->memory_->allocate_mmio(
+                KUSD_ADDRESS, KUSD_BUFFER_SIZE,
+                [this](const uint64_t addr, void* data, const size_t size) {
+                    this->read(addr, data, size); //
+                },
+                [](const uint64_t, const void*, const size_t) {
+                    // Writing not supported!
+                });
+            return;
+        }
+
+        // Fast mode: a plain read-only page the guest reads without a per-access MMIO trap. The time
+        // fields are seeded here and then refreshed periodically via refresh().
+        this->memory_->allocate_memory(KUSD_ADDRESS, KUSD_BUFFER_SIZE, memory_permission::read);
+        const std::scoped_lock lock(this->mutex_);
+        this->update();
+        this->memory_->write_memory(KUSD_ADDRESS, &this->kusd_, KUSD_SIZE);
     }
 
     void kusd_mmio::deregister_mmio()

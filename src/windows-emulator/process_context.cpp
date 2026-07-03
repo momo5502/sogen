@@ -252,13 +252,13 @@ namespace sogen
     void process_context::setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, file_system& file_system,
                                 windows_version_manager& version, const fake_environment_config& fake_env,
                                 const application_settings& app_settings, const mapped_module& executable, const mapped_module& ntdll,
-                                const apiset::container& apiset_container, const mapped_module* ntdll32)
+                                const apiset::container& apiset_container, const mapped_module* ntdll32, const bool intercept_kusd)
     {
         this->sid = get_sid(registry);
 
         setup_gdt(emu, memory);
 
-        this->kusd.setup(version, fake_env);
+        this->kusd.setup(version, fake_env, intercept_kusd);
 
         this->base_allocator = create_allocator(memory, PEB_SEGMENT_SIZE, this->is_wow64_process);
         auto& allocator = this->base_allocator;

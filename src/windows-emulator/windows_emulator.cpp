@@ -606,6 +606,8 @@ namespace sogen
           process(*this->emu_, memory, *this->clock_, this->callbacks),
           use_relative_time_(settings.use_relative_time),
           instruction_precision_(settings.use_instruction_precision && this->emu_->supports_instruction_counting()),
+          intercept_rdtsc_(settings.intercept_rdtsc),
+          intercept_kusd_(settings.intercept_kusd),
           vcpu_count_(settings.vcpu_count)
     {
         if (this->vcpu_count_ == 0)
@@ -695,7 +697,8 @@ namespace sogen
         const auto apiset_data = apiset::obtain(this->emulation_root);
 
         this->process.setup(this->emu(), this->memory, this->registry, this->file_sys, this->version, this->fake_env,
-                            this->application_settings_, *executable, *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32);
+                            this->application_settings_, *executable, *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32,
+                            this->intercept_kusd_);
 
         const auto ntdll_data = emu.read_memory(ntdll->image_base, static_cast<size_t>(ntdll->size_of_image));
         const auto win32u_data = emu.read_memory(win32u->image_base, static_cast<size_t>(win32u->size_of_image));
@@ -990,37 +993,43 @@ namespace sogen
             return instruction_hook_continuation::skip_instruction;
         });
 
-        this->emu().hook_instruction(x86_hookable_instructions::rdtscp, [&](cpu_interface& cpu, uint64_t) {
-            const std::scoped_lock lock(this->kernel_lock_);
-            auto& vcpu = this->vcpu(cpu.index());
-            const scoped_dispatch dispatch(*this, vcpu);
-            auto& acting = vcpu.cpu;
-            this->callbacks.on_rdtscp();
+        // rdtsc/rdtscp are intercepted only when timing must stay exact (the analyzer). Otherwise the
+        // guest reads the host TSC natively - the WHP backend serves the exit with the real TSC and no
+        // kernel lock - removing a hot VM-exit path for games.
+        if (this->intercept_rdtsc_)
+        {
+            this->emu().hook_instruction(x86_hookable_instructions::rdtscp, [&](cpu_interface& cpu, uint64_t) {
+                const std::scoped_lock lock(this->kernel_lock_);
+                auto& vcpu = this->vcpu(cpu.index());
+                const scoped_dispatch dispatch(*this, vcpu);
+                auto& acting = vcpu.cpu;
+                this->callbacks.on_rdtscp();
 
-            const auto ticks = this->clock_->timestamp_counter();
-            acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
-            acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
+                const auto ticks = this->clock_->timestamp_counter();
+                acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
+                acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
 
-            // Return the IA32_TSC_AUX value in RCX (low 32 bits)
-            auto tsc_aux = 0; // Need to replace this with proper CPUID later
-            acting.reg(x86_register::rcx, tsc_aux);
+                // Return the IA32_TSC_AUX value in RCX (low 32 bits)
+                auto tsc_aux = 0; // Need to replace this with proper CPUID later
+                acting.reg(x86_register::rcx, tsc_aux);
 
-            return instruction_hook_continuation::skip_instruction;
-        });
+                return instruction_hook_continuation::skip_instruction;
+            });
 
-        this->emu().hook_instruction(x86_hookable_instructions::rdtsc, [&](cpu_interface& cpu, uint64_t) {
-            const std::scoped_lock lock(this->kernel_lock_);
-            auto& vcpu = this->vcpu(cpu.index());
-            const scoped_dispatch dispatch(*this, vcpu);
-            auto& acting = vcpu.cpu;
-            this->callbacks.on_rdtsc();
+            this->emu().hook_instruction(x86_hookable_instructions::rdtsc, [&](cpu_interface& cpu, uint64_t) {
+                const std::scoped_lock lock(this->kernel_lock_);
+                auto& vcpu = this->vcpu(cpu.index());
+                const scoped_dispatch dispatch(*this, vcpu);
+                auto& acting = vcpu.cpu;
+                this->callbacks.on_rdtsc();
 
-            const auto ticks = this->clock_->timestamp_counter();
-            acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
-            acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
+                const auto ticks = this->clock_->timestamp_counter();
+                acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
+                acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
 
-            return instruction_hook_continuation::skip_instruction;
-        });
+                return instruction_hook_continuation::skip_instruction;
+            });
+        }
 
         // TODO: Unicorn needs this - This should be handled in the backend
         this->emu().hook_instruction(x86_hookable_instructions::invalid, [&](cpu_interface& cpu, uint64_t) {
@@ -1232,9 +1241,11 @@ namespace sogen
             }
         });
 
-        if (!this->uses_instruction_precision() && this->emu().is_stop_thread_safe())
+        const bool preempt_vcpus = !this->uses_instruction_precision() && this->emu().is_stop_thread_safe();
+        const bool refresh_kusd = !this->intercept_kusd_;
+        if (preempt_vcpus || refresh_kusd)
         {
-            interrupt_thread = std::thread([&] {
+            interrupt_thread = std::thread([&, preempt_vcpus, refresh_kusd] {
                 while (!this->should_stop)
                 {
                     std::unique_lock lock{interrupt_mutex};
@@ -1242,7 +1253,18 @@ namespace sogen
                         return this->should_stop.load(); //
                     });
 
-                    if (!this->should_stop)
+                    if (this->should_stop)
+                    {
+                        break;
+                    }
+
+                    // Fast-mode KUSD is a plain page; refresh its time fields here instead of on each read.
+                    if (refresh_kusd)
+                    {
+                        this->process.kusd.refresh();
+                    }
+
+                    if (preempt_vcpus)
                     {
                         for (uint32_t i = 0; i < this->vcpu_count_; ++i)
                         {

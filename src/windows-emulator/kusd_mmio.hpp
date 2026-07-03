@@ -50,13 +50,19 @@ namespace sogen
 
         static uint64_t address();
 
-        void setup(const windows_version_manager& version, const fake_environment_config& fake_env);
+        void setup(const windows_version_manager& version, const fake_environment_config& fake_env, bool intercept = true);
+
+        // In non-intercept (fast) mode KUSD is a plain mapped page rather than an MMIO trap; call this
+        // periodically (e.g. from the timer thread) to refresh the time fields into that page. No-op
+        // when intercepting.
+        void refresh();
 
       private:
         memory_manager* memory_{};
         utils::clock* clock_{};
 
         bool registered_{};
+        bool intercept_{true};
 
         // The MMIO read callback runs on the WHP worker thread during guest execution
         // (outside the kernel lock), so multiple vCPUs can read KUSD concurrently. This
