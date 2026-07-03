@@ -1457,6 +1457,8 @@ namespace sogen::whp
                     auto backing = allocate_backing_memory(size);
                     auto* backing_base = backing.get();
 
+                    const bool range_has_hooks = this->range_intersects_execution_hook(address, size);
+
                     for (size_t offset = 0; offset < size; offset += page_size)
                     {
                         const auto guest_address = address + offset;
@@ -1468,7 +1470,7 @@ namespace sogen::whp
 
                         page->owned_page = backing;
                         page->host_page = backing_base + offset;
-                        this->assign_guest_physical_page(guest_address, *page);
+                        this->assign_guest_physical_page(guest_address, *page, range_has_hooks);
                         page->permissions = permissions;
                         this->apply_patched_execution_breakpoints(guest_address);
                         this->ensure_virtual_mapping(guest_address);
@@ -2200,8 +2202,21 @@ namespace sogen::whp
                 return guest_physical_memory_base + (static_cast<uint64_t>(page_index) * page_size);
             }
 
-            // Assumes partition_mutex_ is held exclusively.
-            void assign_guest_physical_page(const uint64_t guest_address, mapped_page& page)
+            // True if any execution hook overlaps [base, base + size). Used to skip the per-page hook
+            // count for allocations that cannot possibly touch a hooked code range (the common case:
+            // freshly committed data/heap far from any module code). Assumes partition_mutex_ is held.
+            bool range_intersects_execution_hook(const uint64_t base, const uint64_t size) const
+            {
+                return std::ranges::any_of(this->memory_execution_hooks_, [&](const auto& entry) {
+                    const auto& hook = entry.second;
+                    return hook.address && !hook.patched_breakpoint && hook.size != 0 &&
+                           regions_with_length_intersect(*hook.address, hook.size, base, size);
+                });
+            }
+
+            // Assumes partition_mutex_ is held exclusively. maybe_has_execution_hooks lets a batch caller
+            // that has already ruled out any overlap for the whole range skip the (linear) per-page scan.
+            void assign_guest_physical_page(const uint64_t guest_address, mapped_page& page, const bool maybe_has_execution_hooks = true)
             {
                 if (page.guest_physical_address != unmapped_guest_page)
                 {
@@ -2210,11 +2225,16 @@ namespace sogen::whp
 
                 page.guest_page_base = align_down_to_page(guest_address);
                 page.guest_physical_address = this->allocate_guest_physical_page();
-                page.page_execution_hook_count = std::ranges::count_if(this->memory_execution_hooks_, [&](const auto& entry) {
-                    const auto& hook = entry.second;
-                    return hook.address && !hook.patched_breakpoint && hook.size != 0 &&
-                           regions_with_length_intersect(*hook.address, hook.size, page.guest_page_base, page_size);
-                });
+                page.page_execution_hook_count =
+                    maybe_has_execution_hooks
+                        ? std::ranges::count_if(this->memory_execution_hooks_,
+                                                [&](const auto& entry) {
+                                                    const auto& hook = entry.second;
+                                                    return hook.address && !hook.patched_breakpoint && hook.size != 0 &&
+                                                           regions_with_length_intersect(*hook.address, hook.size, page.guest_page_base,
+                                                                                         page_size);
+                                                })
+                        : 0;
                 this->guest_pages_by_gpa_[this->guest_physical_page_index(page.guest_physical_address)] = page.guest_page_base;
             }
 
@@ -3310,6 +3330,7 @@ namespace sogen::whp
                     {
                         throw_hr(run_hr, "WHvRunVirtualProcessor");
                     }
+
                     switch (exit_context.ExitReason)
                     {
                     case WHvRunVpExitReasonCanceled: {
