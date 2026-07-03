@@ -249,18 +249,23 @@ namespace sogen
         }
     }
 
-    void process_context::setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, file_system& file_system,
-                                windows_version_manager& version, const fake_environment_config& fake_env,
-                                const application_settings& app_settings, const mapped_module& executable, const mapped_module& ntdll,
-                                const apiset::container& apiset_container, const mapped_module* ntdll32)
+    void process_context::setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
+                                const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32)
     {
-        this->sid = get_sid(registry);
+        auto& emu = win_emu.emu();
+        const auto& version = win_emu.version;
+        const auto& fake_env = win_emu.fake_env;
 
-        setup_gdt(emu, memory);
+        io_device_container console{u"Console", win_emu, {}};
+        this->console_handle = this->devices.store(std::move(console));
+
+        this->sid = get_sid(win_emu.registry);
+
+        setup_gdt(emu, win_emu.memory);
 
         this->kusd.setup(version, fake_env);
 
-        this->base_allocator = create_allocator(memory, PEB_SEGMENT_SIZE, this->is_wow64_process);
+        this->base_allocator = create_allocator(win_emu.memory, PEB_SEGMENT_SIZE, this->is_wow64_process);
         auto& allocator = this->base_allocator;
 
         this->peb64 = allocator.reserve_page_aligned<PEB64>();
@@ -299,7 +304,7 @@ namespace sogen
 
             proc_params.Environment = allocator.copy_string(u"=::=::\\");
 
-            const auto env_map = get_environment_variables(registry, version, app_settings);
+            const auto env_map = get_environment_variables(win_emu.registry, version, app_settings);
             for (const auto& [name, value] : env_map)
             {
                 std::u16string entry;
@@ -467,8 +472,8 @@ namespace sogen
 
         this->apiset = apiset::get_namespace_table(reinterpret_cast<const API_SET_NAMESPACE*>(apiset_container.data.data()));
         const auto& system_root = version.get_system_root();
-        this->build_knowndlls_section_table<uint64_t>(registry, file_system, apiset, system_root, false);
-        this->build_knowndlls_section_table<uint32_t>(registry, file_system, apiset, system_root, true);
+        this->build_knowndlls_section_table<uint64_t>(win_emu.registry, win_emu.file_sys, apiset, system_root, false);
+        this->build_knowndlls_section_table<uint32_t>(win_emu.registry, win_emu.file_sys, apiset, system_root, true);
 
         this->ntdll_image_base = ntdll.image_base;
         this->ldr_initialize_thunk = ntdll.find_export("LdrInitializeThunk");
@@ -532,7 +537,7 @@ namespace sogen
             }
         });
 
-        auto [wh, desktop_win] = this->windows.create(memory);
+        auto [wh, desktop_win] = this->windows.create(win_emu.memory);
         this->default_desktop_window_handle = wh;
         desktop_win.handle = wh.bits;
         desktop_win.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
@@ -613,6 +618,7 @@ namespace sogen
         buffer.write_map(this->file_locks);
         buffer.write(this->sections);
         buffer.write(this->devices);
+        buffer.write(this->console_handle);
         buffer.write(this->semaphores);
         buffer.write(this->io_completions);
         buffer.write(this->wait_completion_packets);
@@ -702,6 +708,7 @@ namespace sogen
         buffer.read_map(this->file_locks);
         buffer.read(this->sections);
         buffer.read(this->devices);
+        buffer.read(this->console_handle);
         buffer.read(this->semaphores);
         buffer.read(this->io_completions);
         buffer.read(this->wait_completion_packets);
@@ -857,6 +864,11 @@ namespace sogen
         if (handle == CURRENT_THREAD)
         {
             return this->threads.find_handle(active_thread);
+        }
+
+        if (handle == CONSOLE_HANDLE)
+        {
+            return this->console_handle;
         }
 
         return handle;
