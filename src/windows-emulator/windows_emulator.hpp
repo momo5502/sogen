@@ -235,6 +235,14 @@ namespace sogen
             return (this->dispatch_vcpu_ ? this->dispatch_vcpu_ : this->vcpus_[0].get())->thread();
         }
 
+        // The CPU of the vCPU currently dispatching a handler on the calling host thread (see
+        // scoped_dispatch). emu() is only the facade/vCPU 0, so handlers that inspect the faulting
+        // register state must go through here to observe the right vCPU when vcpu_count > 1.
+        x86_64_cpu& active_cpu() const
+        {
+            return (this->dispatch_vcpu_ ? this->dispatch_vcpu_ : this->vcpus_[0].get())->cpu;
+        }
+
         vcpu_context& vcpu(const size_t index)
         {
             return *this->vcpus_.at(index);

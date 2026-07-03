@@ -630,7 +630,7 @@ namespace sogen
             }
 
             auto& win_emu = *c.win_emu;
-            auto& emu = win_emu.emu();
+            auto& emu = win_emu.active_cpu();
 
             const auto address = emu.read_instruction_pointer();
             if (c.syscall_to_resume_after_break)
