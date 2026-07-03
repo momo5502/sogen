@@ -387,7 +387,7 @@ namespace sogen
                                          EmulatorTraits<Emu64>::SIZE_T maximum_stack_size,
                                          emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list);
         NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context&, emulator_object<PROCESSOR_NUMBER> processor_number);
-        ULONG handle_NtGetCurrentProcessorNumber();
+        ULONG handle_NtGetCurrentProcessorNumber(const syscall_context& c);
         NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, handle thread_handle, handle reserve_handle, uint32_t apc_flags,
                                             uint64_t apc_routine, uint64_t apc_argument1, uint64_t apc_argument2, uint64_t apc_argument3);
         NTSTATUS handle_NtQueueApcThreadEx(const syscall_context& c, handle thread_handle, handle reserve_handle, uint64_t apc_routine,

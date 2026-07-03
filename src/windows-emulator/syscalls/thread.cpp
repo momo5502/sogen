@@ -913,16 +913,17 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context&, const emulator_object<PROCESSOR_NUMBER> processor_number)
+        NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context& c, const emulator_object<PROCESSOR_NUMBER> processor_number)
         {
-            constexpr PROCESSOR_NUMBER number{};
+            PROCESSOR_NUMBER number{};
+            number.Number = static_cast<uint8_t>(c.vcpu.cpu.index());
             processor_number.write(number);
             return STATUS_SUCCESS;
         }
 
-        ULONG handle_NtGetCurrentProcessorNumber()
+        ULONG handle_NtGetCurrentProcessorNumber(const syscall_context& c)
         {
-            return 0;
+            return static_cast<ULONG>(c.vcpu.cpu.index());
         }
 
         NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, const handle thread_handle, const handle /*reserve_handle*/,

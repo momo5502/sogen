@@ -556,19 +556,20 @@ namespace sogen
 
             case SystemBasicInformation:
             case SystemEmulationBasicInformation:
-                return handle_query<SYSTEM_BASIC_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
-                                                                [&](SYSTEM_BASIC_INFORMATION64& basic_info) {
-                                                                    basic_info.Reserved = 0;
-                                                                    basic_info.TimerResolution = 0x0002625a;
-                                                                    basic_info.PageSize = 0x1000;
-                                                                    basic_info.LowestPhysicalPageNumber = 0x00000001;
-                                                                    basic_info.HighestPhysicalPageNumber = 0x00c9c7ff;
-                                                                    basic_info.AllocationGranularity = ALLOCATION_GRANULARITY;
-                                                                    basic_info.MinimumUserModeAddress = MIN_ALLOCATION_ADDRESS;
-                                                                    basic_info.MaximumUserModeAddress = MAX_ALLOCATION_ADDRESS;
-                                                                    basic_info.ActiveProcessorsAffinityMask = 0x0000000000000f;
-                                                                    basic_info.NumberOfProcessors = 4;
-                                                                });
+                return handle_query<SYSTEM_BASIC_INFORMATION64>(
+                    c.emu, system_information, system_information_length, return_length, [&](SYSTEM_BASIC_INFORMATION64& basic_info) {
+                        basic_info.Reserved = 0;
+                        basic_info.TimerResolution = 0x0002625a;
+                        basic_info.PageSize = 0x1000;
+                        basic_info.LowestPhysicalPageNumber = 0x00000001;
+                        basic_info.HighestPhysicalPageNumber = 0x00c9c7ff;
+                        basic_info.AllocationGranularity = ALLOCATION_GRANULARITY;
+                        basic_info.MinimumUserModeAddress = MIN_ALLOCATION_ADDRESS;
+                        basic_info.MaximumUserModeAddress = MAX_ALLOCATION_ADDRESS;
+                        const auto processor_count = c.proc.kusd.get().ActiveProcessorCount;
+                        basic_info.ActiveProcessorsAffinityMask = (processor_count >= 64) ? ~0ull : ((1ull << processor_count) - 1);
+                        basic_info.NumberOfProcessors = static_cast<uint8_t>(processor_count);
+                    });
 
             case SystemDeviceInformation:
                 return handle_query<SYSTEM_DEVICE_INFORMATION>(c.emu, system_information, system_information_length, return_length,

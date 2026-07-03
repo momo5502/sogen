@@ -568,6 +568,17 @@ namespace sogen
 
             return create_default_ui_backend();
         }
+
+        // The guest must see at least as many logical processors as there are vCPUs, otherwise a
+        // thread running on a higher-indexed vCPU would report a processor number the guest
+        // considers out of range. The configured fake value still wins when it is larger (e.g. the
+        // anti-analysis default of 4 with a single vCPU).
+        fake_environment_config effective_fake_env(const emulator_settings& settings)
+        {
+            auto fake_env = settings.fake_env;
+            fake_env.number_of_processors = std::max(fake_env.number_of_processors, settings.vcpu_count);
+            return fake_env;
+        }
     }
 
     windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, application_settings app_settings,
@@ -586,7 +597,7 @@ namespace sogen
           socket_factory_(get_socket_factory(interfaces)),
           ui_backend_(get_ui_backend(interfaces)),
           emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
-          fake_env(settings.fake_env),
+          fake_env(effective_fake_env(settings)),
           callbacks(std::move(callbacks)),
           file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
           memory(*this->emu_),
