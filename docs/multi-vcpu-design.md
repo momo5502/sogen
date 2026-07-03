@@ -42,10 +42,21 @@ Status: in progress on branch `multi-vcpu`
       unhandled exception (WER is contacted) under contention. Prime suspect: the
       partition-global EPT single-step dance in the WHP section-first-execution hooks (two
       vCPUs flipping/​restoring exec on the same shared page — the accepted-race from §4;
-      may not be benign under real contention). Remaining Phase 3: pin down and fix that
-      race; cross-vCPU kicks; stop-the-world for snapshots; guest CPU count = vcpu_count.
-      Remaining Phase 2 polish: ready_cv instead of sleep-poll; device pump on ticks; N=1
-      boot benchmark; clang-cl -Wthread-safety annotations.
+      may not be benign under real contention) — but `--whp-exec-hook int3` fails
+      identically, so the exec-hook mechanism was **ruled out**. Fixed a real off-lock
+      race since: KUSD MMIO reads (`kusd_mmio::read`/`update`) run on the worker thread
+      during guest execution (kernel lock released) and were unguarded, so two vCPUs
+      reading the time page tore `kusd_`; now guarded by an internal mutex. That, plus the
+      cancel-return fix, took the `--vcpus 2` smoke suite from near-always-failing to
+      ~6/8 passing (full suite completes, clean `NtTerminateProcess`).
+      **Residual**: ~25% of silent `--vcpus 2` runs still fail at the **Threads** test with
+      NO emulator-side error (the guest observes the fault), and it vanishes under any
+      added logging (Heisenbug). This last race needs dedicated tooling — a deterministic
+      repro or the Linux/KVM build under ThreadSanitizer (TSan is unavailable on WHP) —
+      rather than trial-and-error. Remaining Phase 3: that race; cross-vCPU kicks;
+      stop-the-world for snapshots; guest CPU count = vcpu_count. Remaining Phase 2 polish:
+      ready_cv instead of sleep-poll; device pump on ticks; N=1 boot benchmark;
+      clang-cl -Wthread-safety annotations.
 - [ ] Phase 3 — cross-vCPU correctness
 - [ ] Phase 4 — stress testing + contention profiling
 - [ ] Phase 5 — KVM parity, linux-emulator
