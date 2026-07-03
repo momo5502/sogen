@@ -1232,6 +1232,11 @@ namespace sogen::whp
             std::atomic_bool stop_requested_{false};
             std::atomic_bool run_active_{false};
             std::atomic_bool pending_tlb_flush_{false};
+
+            // Guards against looping when a fault is repaired but recurs unchanged (a genuine
+            // violation): tracks the last (page, rip) we re-mapped and retried.
+            uint64_t last_repair_page_{unmapped_guest_page};
+            uint64_t last_repair_rip_{};
             std::optional<pending_execution_step> pending_execution_step_{};
             std::optional<pending_mmio_step> pending_mmio_step_{};
             std::optional<uint64_t> deferred_patched_breakpoint_{};
@@ -2996,6 +3001,42 @@ namespace sogen::whp
                 return (pt_entries[pt_index] & page_table_entry_present) != 0;
             }
 
+            // A fault can be spurious under multiple vCPUs: the backend has the page backed
+            // (a peer mapped/committed it, or a protection/COW remap transiently cleared the
+            // guest PTE) but this vCPU's page-table walk missed it. If the page is backed,
+            // re-establish its mapping, flush this vCPU's TLB and retry. A per-vCPU (page,rip)
+            // guard ensures a genuine violation (unbacked page, wrong permissions) is still
+            // delivered rather than looping forever.
+            bool try_repair_spurious_fault(whp_vcpu& vcpu, const uint64_t fault_address)
+            {
+                const auto page_base = align_down_to_page(fault_address);
+                const auto rip = vcpu.read_instruction_pointer();
+
+                if (vcpu.last_repair_page_ == page_base && vcpu.last_repair_rip_ == rip)
+                {
+                    // Already repaired this exact fault and it recurred unchanged: it is real.
+                    vcpu.last_repair_page_ = unmapped_guest_page;
+                    return false;
+                }
+
+                {
+                    std::unique_lock lock(this->partition_mutex_);
+                    const auto it = this->mapped_pages_.find(page_base);
+                    if (it == this->mapped_pages_.end() || !it->second || it->second->host_page == nullptr)
+                    {
+                        return false;
+                    }
+
+                    this->ensure_virtual_mapping(page_base);
+                    this->remap_page(*it->second);
+                }
+
+                vcpu.last_repair_page_ = page_base;
+                vcpu.last_repair_rip_ = rip;
+                vcpu.set_register(WHvX64RegisterCr3, vcpu.get_register(WHvX64RegisterCr3));
+                return true;
+            }
+
             // Assumes partition_mutex_ is held exclusively.
             bool clear_virtual_mapping(const uint64_t guest_address)
             {
@@ -3492,6 +3533,15 @@ namespace sogen::whp
 
                 if (fault_address != 0)
                 {
+                    // Guest page faults escalate here (the guest IDT cannot dispatch them). Under
+                    // multiple vCPUs the faulting page may in fact be backed - a peer mapped/committed
+                    // it, or a protection/remap on another vCPU transiently cleared this vCPU's guest
+                    // PTE. Repair and retry rather than delivering a spurious access violation.
+                    if (this->try_repair_spurious_fault(vcpu, fault_address))
+                    {
+                        return true;
+                    }
+
                     for (const auto& hook : this->copy_memory_violation_hooks())
                     {
                         const auto result = hook(vcpu, fault_address, 1, memory_operation::read, memory_violation_type::unmapped);
@@ -3647,6 +3697,14 @@ namespace sogen::whp
                     return true;
                 }
 
+                // Spurious fault on an actually-backed page whose GPA mapping is momentarily
+                // absent for this vCPU (peer map/commit): repair and retry. Only for unmapped
+                // (not protection) accesses, so guard pages and real violations still reach the hook.
+                if (memory_access.AccessInfo.GpaUnmapped && this->try_repair_spurious_fault(vcpu, resolved_address))
+                {
+                    return true;
+                }
+
                 const auto violation_hooks = this->copy_memory_violation_hooks();
                 if (violation_hooks.empty())
                 {
@@ -3724,19 +3782,15 @@ namespace sogen::whp
                     const auto operation = is_write ? memory_operation::write : memory_operation::read;
                     const auto type = is_present ? memory_violation_type::protection : memory_violation_type::unmapped;
 
-                    // Under multiple vCPUs a peer may have mapped/committed this page after this vCPU
-                    // cached a stale (negative) translation, producing a spurious not-present fault. If
-                    // the page is in fact mapped present, flush this vCPU's TLB and retry instead of
-                    // delivering a bogus access violation to the guest.
-                    if (!is_present)
+                    // Under multiple vCPUs a peer may have mapped/committed this page (or a
+                    // protection/COW remap transiently cleared its guest PTE) after this vCPU faulted,
+                    // producing a spurious not-present fault on an actually-backed page. Repair and
+                    // retry rather than delivering a bogus access violation to the guest. Only for
+                    // not-present faults - protection faults (guard pages, real violations) are left
+                    // to the violation hook.
+                    if (!is_present && this->try_repair_spurious_fault(vcpu, fault_address))
                     {
-                        std::shared_lock lock(this->partition_mutex_);
-                        if (this->is_virtual_mapping_present(fault_address))
-                        {
-                            lock.unlock();
-                            vcpu.set_register(WHvX64RegisterCr3, vcpu.get_register(WHvX64RegisterCr3));
-                            return true;
-                        }
+                        return true;
                     }
 
                     for (const auto& hook : this->copy_memory_violation_hooks())

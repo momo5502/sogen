@@ -59,16 +59,27 @@ Status: in progress on branch `multi-vcpu`
       is present; the residual case is a **committed page whose eager WHP mapping is absent
       on the faulting vCPU** — likely the image/COW mapping path (not the eager
       `map_memory`) not being established/flushed across vCPUs. Next: instrument the WHP
-      violation fall-through to log GvaValid + mapped_pages_ state + is_virtual_mapping_present
-      for that address, and check whether ntdll `.data` COW pages are mapped lazily.
-      **Residual**: ~5/12 of silent `--vcpus 2` runs still fail at the **Threads** test with
-      NO emulator-side error (the guest observes the fault), and it vanishes under any
-      added logging (Heisenbug). This last race needs dedicated tooling — a deterministic
-      repro or the Linux/KVM build under ThreadSanitizer (TSan is unavailable on WHP) —
-      rather than trial-and-error. Remaining Phase 3: that race; cross-vCPU kicks;
-      stop-the-world for snapshots; guest CPU count = vcpu_count. Remaining Phase 2 polish:
-      ready_cv instead of sleep-poll; device pump on ticks; N=1 boot benchmark;
-      clang-cl -Wthread-safety annotations.
+      violation fall-through to log GvaValid + mapped_pages_ state + is_virtual_mapping_present.
+      Root-caused it: guest page faults escalate to WHP's *unrecoverable-exception* exit
+      (the guest IDT can't dispatch #PF), and that path read CR2 and delivered a memory
+      violation **without** any spurious-fault check — so a fault on an actually-backed
+      page (peer map/commit, or a transient protection/COW remap on another vCPU clearing
+      this vCPU's PTE) became a bogus AV. Fix: `try_repair_spurious_fault` (re-establishes
+      the mapping + flushes this vCPU's TLB + retries, with a per-vCPU (page,rip) guard so
+      genuine violations — null derefs, wrong-permission pages — are still delivered after
+      one cycle) now runs in all three fault paths (`handle_exception` #PF,
+      `handle_memory_access` GpaUnmapped, `handle_unrecoverable_exception`). This lifted
+      the `--vcpus 2` smoke pass rate to ~16/24 (was ~1/2). A speculative flush in
+      `apply_memory_protection` was tried and reverted (no clear help; Hyper-V handles
+      EPT-level coherency; added churn).
+      **Residual**: ~1/3 of silent `--vcpus 2` runs still fail at the **Threads** test — the
+      repair fires but the page is sometimes concurrently re-cleared (guard trips → AV
+      delivered), pointing at a tighter map/unmap/protect race on a shared page, or a
+      guest-level loader-lock / .mrdata race. Still Heisenbug-y (vanishes under hot-path
+      logging); the env-gated post-mortem tracer (`SOGEN_TRACE_EXCEPTIONS=1`) is the tool.
+      Remaining Phase 3: that race; cross-vCPU kicks; stop-the-world for snapshots; guest
+      CPU count = vcpu_count. Remaining Phase 2 polish: ready_cv instead of sleep-poll;
+      device pump on ticks; N=1 boot benchmark; clang-cl -Wthread-safety annotations.
 - [ ] Phase 3 — cross-vCPU correctness
 - [ ] Phase 4 — stress testing + contention profiling
 - [ ] Phase 5 — KVM parity, linux-emulator
