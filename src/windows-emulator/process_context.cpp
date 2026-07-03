@@ -89,7 +89,15 @@ namespace sogen
         {
             // Allocate GDT with read-write permissions for segment descriptor setup
             memory.allocate_memory(GDT_ADDR, static_cast<size_t>(page_align_up(GDT_LIMIT)), memory_permission::read_write);
-            emu.load_gdt(GDT_ADDR, GDT_LIMIT);
+
+            // The GDT table lives in shared guest memory, but the GDTR register is per-vCPU. Every vCPU
+            // needs it loaded: normal 64-bit execution restores segment caches from the saved thread
+            // context, but a runtime segment load - notably the WOW64 32<->64 heaven's-gate transition -
+            // reads descriptors through the GDTR, which would be invalid on a vCPU that never loaded it.
+            for (size_t i = 0; i < emu.vcpu_count(); ++i)
+            {
+                emu.get_cpu(i).load_gdt(GDT_ADDR, GDT_LIMIT);
+            }
 
             // Index 1 (selector 0x08) - 64-bit kernel code segment (Ring 0)
             // P=1, DPL=0, S=1, Type=0xA (Code, Execute/Read), L=1 (Long mode)
