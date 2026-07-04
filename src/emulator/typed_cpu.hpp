@@ -4,8 +4,13 @@
 #include "memory_interface.hpp"
 #include "serialization.hpp"
 
+#include <algorithm>
+#include <array>
 #include <limits>
+#include <source_location>
+#include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace sogen
@@ -14,6 +19,13 @@ namespace sogen
     class emulator_stack_leak_collector
     {
       public:
+        struct leak_record
+        {
+            uint64_t address{};
+            uint64_t previous_stack_pointer{};
+            std::source_location origin{};
+        };
+
         emulator_stack_leak_collector()
             : previous_(std::exchange(active_, this))
         {
@@ -29,27 +41,83 @@ namespace sogen
         emulator_stack_leak_collector(emulator_stack_leak_collector&&) = delete;
         emulator_stack_leak_collector& operator=(emulator_stack_leak_collector&&) = delete;
 
-        static void report_leak() noexcept
+        static void report_leak(const leak_record& leak) noexcept
         {
             if (active_)
             {
-                active_->leaked_ = true;
+                if (active_->leak_count_ < active_->leaks_.size())
+                {
+                    active_->leaks_[active_->leak_count_] = leak;
+                }
+                ++active_->leak_count_;
             }
         }
 
         void throw_if_leaked() const
         {
-            if (leaked_)
+            if (leak_count_ != 0)
             {
-                throw std::runtime_error("Emulator stack allocation was not released");
+                std::ostringstream message{};
+                message << leak_count_ << " emulator stack allocation(s) were not released";
+
+                const auto recorded_count = std::min(leak_count_, leaks_.size());
+                for (size_t i = 0; i < recorded_count; ++i)
+                {
+                    const auto& leak = leaks_[i];
+                    message << "\n  guest stack 0x" << std::hex << leak.address << "..0x" << leak.previous_stack_pointer << std::dec;
+                    if (leak.origin.line() != 0)
+                    {
+                        message << " allocated at " << leak.origin.file_name() << ':' << leak.origin.line() << " in "
+                                << get_short_function_name(leak.origin);
+                    }
+                    else
+                    {
+                        message << " restored from serialized state";
+                    }
+                }
+
+                if (leak_count_ > recorded_count)
+                {
+                    message << "\n  ... and " << (leak_count_ - recorded_count) << " more";
+                }
+
+                throw std::runtime_error(message.str());
             }
         }
 
       private:
+        static std::string_view get_short_function_name(const std::source_location& origin)
+        {
+            std::string_view name{origin.function_name()};
+            if (const auto parameters = name.find('('); parameters != std::string_view::npos)
+            {
+                name = name.substr(0, parameters);
+            }
+
+            const auto end = name.find_last_not_of(' ');
+            if (end == std::string_view::npos)
+            {
+                return {};
+            }
+            name = name.substr(0, end + 1);
+
+            if (const auto scope = name.rfind("::"); scope != std::string_view::npos)
+            {
+                return name.substr(scope + 2);
+            }
+            if (const auto space = name.find_last_of(' '); space != std::string_view::npos)
+            {
+                return name.substr(space + 1);
+            }
+            return name;
+        }
+
         inline static thread_local emulator_stack_leak_collector* active_{};
+        static constexpr size_t max_recorded_leaks = 16;
 
         emulator_stack_leak_collector* previous_{};
-        bool leaked_{};
+        std::array<leak_record, max_recorded_leaks> leaks_{};
+        size_t leak_count_{};
     };
 
     struct emulator_stack_allocation
@@ -60,7 +128,7 @@ namespace sogen
         {
             if (*this)
             {
-                emulator_stack_leak_collector::report_leak();
+                emulator_stack_leak_collector::report_leak({address_, previous_stack_pointer_, origin_});
             }
         }
 
@@ -69,7 +137,8 @@ namespace sogen
 
         emulator_stack_allocation(emulator_stack_allocation&& other) noexcept
             : address_(std::exchange(other.address_, 0)),
-              previous_stack_pointer_(std::exchange(other.previous_stack_pointer_, 0))
+              previous_stack_pointer_(std::exchange(other.previous_stack_pointer_, 0)),
+              origin_(std::exchange(other.origin_, std::source_location{}))
         {
         }
 
@@ -84,6 +153,7 @@ namespace sogen
 
                 address_ = std::exchange(other.address_, 0);
                 previous_stack_pointer_ = std::exchange(other.previous_stack_pointer_, 0);
+                origin_ = std::exchange(other.origin_, std::source_location{});
             }
             return *this;
         }
@@ -125,6 +195,7 @@ namespace sogen
 
             address_ = address;
             previous_stack_pointer_ = previous_stack_pointer;
+            origin_ = {};
         }
 
       private:
@@ -133,9 +204,10 @@ namespace sogen
 
         static constexpr uint64_t stack_alignment = 16;
 
-        emulator_stack_allocation(const uint64_t address, const uint64_t previous_stack_pointer)
+        emulator_stack_allocation(const uint64_t address, const uint64_t previous_stack_pointer, const std::source_location origin)
             : address_(address),
-              previous_stack_pointer_(previous_stack_pointer)
+              previous_stack_pointer_(previous_stack_pointer),
+              origin_(origin)
         {
         }
 
@@ -143,10 +215,12 @@ namespace sogen
         {
             address_ = 0;
             previous_stack_pointer_ = 0;
+            origin_ = {};
         }
 
         uint64_t address_{};
         uint64_t previous_stack_pointer_{};
+        std::source_location origin_{};
     };
 
     // A single virtual CPU's view of the machine: typed register and stack access
@@ -312,7 +386,8 @@ namespace sogen
 
         template <typename T>
             requires std::is_trivially_copyable_v<T>
-        [[nodiscard]] emulator_stack_allocation push_stack(const T& data)
+        [[nodiscard]] emulator_stack_allocation push_stack(const T& data,
+                                                           const std::source_location origin = std::source_location::current())
         {
             const auto old_rsp = read_stack_pointer();
             if (sizeof(T) > static_cast<uint64_t>(old_rsp))
@@ -324,7 +399,7 @@ namespace sogen
             write_memory(new_rsp, &data, sizeof(T));
             reg(stack_pointer, new_rsp);
 
-            return emulator_stack_allocation{new_rsp, old_rsp};
+            return emulator_stack_allocation{new_rsp, old_rsp, origin};
         }
 
         void pop_stack(emulator_stack_allocation&& allocation)
