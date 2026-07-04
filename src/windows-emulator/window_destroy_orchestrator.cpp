@@ -9,6 +9,7 @@ namespace sogen
         : state_(state),
           emu_(c.emu),
           proc_(c.proc),
+          thread_(c.thread()),
           ui_(c.win_emu.ui())
     {
     }
@@ -24,7 +25,7 @@ namespace sogen
         {
             auto& frame = this->state_.frames.back();
             auto* win = this->proc_.windows.get(frame.handle);
-            if (!win || win->thread_id != this->proc_.active_thread->id)
+            if (!win || win->thread_id != this->thread_.id)
             {
                 this->pop_frame_allocation(frame);
                 this->state_.frames.pop_back();

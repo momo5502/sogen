@@ -8,6 +8,7 @@
 
 #include "syscall_dispatcher.hpp"
 #include "process_context.hpp"
+#include "kernel_lock.hpp"
 #include "logger.hpp"
 #include "file_system.hpp"
 #include "memory_manager.hpp"
@@ -109,6 +110,26 @@ namespace sogen
         std::unique_ptr<ui_backend> ui{};
     };
 
+    // Per-vCPU scheduler state: the guest thread a virtual CPU is currently executing
+    // and its yield request. Replaces the previous global "active thread" notion
+    // (docs/multi-vcpu-design.md, section 5.1).
+    struct vcpu_context
+    {
+        x86_64_cpu& cpu;
+        emulator_thread* active_thread{};
+        std::atomic_bool switch_thread{false};
+
+        emulator_thread& thread() const
+        {
+            if (!this->active_thread)
+            {
+                throw std::runtime_error("No active thread!");
+            }
+
+            return *this->active_thread;
+        }
+    };
+
     class windows_emulator
     {
         uint64_t executed_instructions_{0};
@@ -200,15 +221,91 @@ namespace sogen
         void deliver_raw_mouse_input(int32_t dx, int32_t dy, uint16_t button_flags);
         void deliver_raw_keyboard_input(uint16_t vkey, uint16_t scan_code, bool release);
 
+        // Observer convenience for external consumers (gdb stub, analyzer, python
+        // bindings) and legacy paths that don't thread a vcpu_context through. Resolves
+        // to the vCPU whose handler is currently running: all handler/observer code runs
+        // under the kernel lock, so exactly one vCPU dispatches at a time and this is
+        // race-free. Falls back to vCPU 0 when no handler is active (e.g. setup).
         emulator_thread& current_thread() const
         {
-            if (!this->process.active_thread)
+            return (this->dispatch_vcpu_ ? this->dispatch_vcpu_ : this->vcpus_[0].get())->thread();
+        }
+
+        // The CPU of the vCPU currently dispatching a handler on the calling host thread (see
+        // scoped_dispatch). emu() is only the facade/vCPU 0, so handlers that inspect the faulting
+        // register state must go through here to observe the right vCPU when vcpu_count > 1.
+        x86_64_cpu& active_cpu() const
+        {
+            return (this->dispatch_vcpu_ ? this->dispatch_vcpu_ : this->vcpus_[0].get())->cpu;
+        }
+
+        // Run fn as a dispatched handler for the CPU that triggered a hook: takes the kernel lock and
+        // marks that vCPU as the dispatching one, so active_cpu()/current_thread() resolve to it. Meant
+        // for hooks installed outside setup_hooks (e.g. the analyzer's cpuid hook) which otherwise run
+        // lock-free and would observe only the facade/vCPU 0 when vcpu_count > 1.
+        template <typename Function>
+        auto dispatch_on_cpu(cpu_interface& cpu, Function&& fn)
+        {
+            const std::scoped_lock lock(this->kernel_lock_);
+            const scoped_dispatch dispatch(*this, this->vcpu(cpu.index()));
+            return std::forward<Function>(fn)();
+        }
+
+        vcpu_context& vcpu(const size_t index)
+        {
+            return *this->vcpus_.at(index);
+        }
+
+        // Marks vcpu as the one currently dispatching a handler on the calling host
+        // thread, so current_thread() resolves correctly. RAII; must be held only while
+        // the kernel lock is held.
+        class scoped_dispatch
+        {
+          public:
+            scoped_dispatch(windows_emulator& emu, vcpu_context& vcpu)
+                : emu_(&emu),
+                  previous_(emu.dispatch_vcpu_)
             {
-                throw std::runtime_error("No active thread!");
+                emu.dispatch_vcpu_ = &vcpu;
             }
 
-            return *this->process.active_thread;
+            ~scoped_dispatch()
+            {
+                this->emu_->dispatch_vcpu_ = this->previous_;
+            }
+
+            scoped_dispatch(const scoped_dispatch&) = delete;
+            scoped_dispatch& operator=(const scoped_dispatch&) = delete;
+            scoped_dispatch(scoped_dispatch&&) = delete;
+            scoped_dispatch& operator=(scoped_dispatch&&) = delete;
+
+          private:
+            windows_emulator* emu_{};
+            vcpu_context* previous_{};
+        };
+
+        // Post-mortem exception capture for multi-vCPU debugging. Recorded under the
+        // kernel lock (no I/O, no extra locking), dumped after the run ends, so it does
+        // not perturb the timing-sensitive races it is meant to catch.
+        struct exception_trace_entry
+        {
+            uint32_t status{};
+            uint32_t tid{};
+            uint32_t vcpu{};
+            uint64_t rip{};
+            uint64_t info{};
+        };
+
+        void record_exception_trace(const exception_trace_entry& entry)
+        {
+            this->exception_trace_[this->exception_trace_index_ % this->exception_trace_.size()] = entry;
+            ++this->exception_trace_index_;
         }
+
+        void dump_exception_trace();
+
+        // Prints BEL contention stats when SOGEN_LOCK_PROFILE is set (see kernel_lock).
+        void dump_lock_profile();
 
         uint64_t get_executed_instructions() const
         {
@@ -218,6 +315,11 @@ namespace sogen
         bool uses_instruction_precision() const
         {
             return this->instruction_precision_;
+        }
+
+        uint32_t vcpu_count() const
+        {
+            return this->vcpu_count_;
         }
 
         stop_reason last_stop_reason() const
@@ -289,15 +391,30 @@ namespace sogen
             }
         }
 
-        void yield_thread(bool alertable = false);
-        bool perform_thread_switch();
-        bool activate_thread(uint32_t id);
+        void yield_thread(vcpu_context& vcpu, bool alertable = false);
+        bool perform_thread_switch(vcpu_context& vcpu, std::unique_lock<kernel_lock>& lock);
+        bool perform_thread_switch(vcpu_context& vcpu);
+        bool activate_thread(vcpu_context& vcpu, uint32_t id);
 
       private:
-        std::atomic_bool switch_thread_{false};
         bool use_relative_time_{false}; // TODO: Get rid of that
         bool instruction_precision_{true};
+        uint32_t vcpu_count_{1};
         std::atomic_bool should_stop{false};
+
+        // The emulator kernel lock: held by all code touching shared kernel state,
+        // released while guest code executes (docs/multi-vcpu-design.md, section 7).
+        kernel_lock kernel_lock_{};
+
+        // The vCPU currently running a handler under the kernel lock; drives
+        // current_thread(). See scoped_dispatch.
+        vcpu_context* dispatch_vcpu_{};
+
+        std::array<exception_trace_entry, 32> exception_trace_{};
+        size_t exception_trace_index_{0};
+
+        // unique_ptr because vcpu_context contains an atomic and must stay address-stable.
+        std::vector<std::unique_ptr<vcpu_context>> vcpus_{};
 
         std::unordered_map<uint16_t, uint16_t> port_mappings_{};
 
@@ -311,8 +428,9 @@ namespace sogen
 
         void setup_hooks();
         void setup_process();
-        void on_instruction_execution(uint64_t address);
-        void on_basic_block_execution(const basic_block& block);
+        void vcpu_worker(vcpu_context& vcpu);
+        void on_instruction_execution(vcpu_context& vcpu, uint64_t address);
+        void on_basic_block_execution(vcpu_context& vcpu, const basic_block& block);
 
         bool uses_section_first_execution_hooks() const;
         void clear_section_first_execution_hooks();

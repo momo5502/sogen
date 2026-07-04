@@ -87,46 +87,41 @@ namespace sogen
 
         void setup_gdt(x86_64_emulator& emu, memory_manager& memory)
         {
-            // Allocate GDT with read-write permissions for segment descriptor setup
-            memory.allocate_memory(GDT_ADDR, static_cast<size_t>(page_align_up(GDT_LIMIT)), memory_permission::read_write);
-            emu.load_gdt(GDT_ADDR, GDT_LIMIT);
+            const auto vcpu_count = emu.vcpu_count();
 
-            // Index 1 (selector 0x08) - 64-bit kernel code segment (Ring 0)
-            // P=1, DPL=0, S=1, Type=0xA (Code, Execute/Read), L=1 (Long mode)
-            emu.write_memory<uint64_t>(GDT_ADDR + (1 * sizeof(uint64_t)), 0x00AF9B000000FFFF);
+            // One GDT page per vCPU (see gdt_base_for_vcpu): the WOW64 FS descriptor holds a per-thread
+            // TEB base, so a shared GDT cannot serve WOW64 threads on different vCPUs at the same time.
+            memory.allocate_memory(GDT_ADDR, static_cast<size_t>(page_align_up(vcpu_count * GDT_LIMIT)), memory_permission::read_write);
 
-            // Index 2 (selector 0x10) - 64-bit kernel data segment (Ring 0)
-            // P=1, DPL=0, S=1, Type=0x2 (Data, Read/Write), L=1 (64-bit)
-            emu.write_memory<uint64_t>(GDT_ADDR + (2 * sizeof(uint64_t)), 0x00CF93000000FFFF);
+            for (size_t i = 0; i < vcpu_count; ++i)
+            {
+                const auto gdt_base = gdt_base_for_vcpu(i);
 
-            // Index 3 (selector 0x18) - 32-bit compatibility mode segment (Ring 0)
-            // P=1, DPL=0, S=1, Type=0xA (Code, Execute/Read), DB=1, G=1
-            emu.write_memory<uint64_t>(GDT_ADDR + (3 * sizeof(uint64_t)), 0x00CF9B000000FFFF);
+                // Index 1 (0x08) - 64-bit kernel code (Ring 0): P=1, DPL=0, S=1, Type=0xA, L=1
+                emu.write_memory<uint64_t>(gdt_base + (1 * sizeof(uint64_t)), 0x00AF9B000000FFFF);
+                // Index 2 (0x10) - 64-bit kernel data (Ring 0): P=1, DPL=0, S=1, Type=0x2, L=1
+                emu.write_memory<uint64_t>(gdt_base + (2 * sizeof(uint64_t)), 0x00CF93000000FFFF);
+                // Index 3 (0x18) - 32-bit compatibility code (Ring 0): P=1, DPL=0, S=1, Type=0xA, DB=1, G=1
+                emu.write_memory<uint64_t>(gdt_base + (3 * sizeof(uint64_t)), 0x00CF9B000000FFFF);
+                // Index 4 (0x23) - 32-bit WOW64 code (Ring 3): P=1, DPL=3, S=1, Type=0xA, DB=1, G=1
+                emu.write_memory<uint64_t>(gdt_base + (4 * sizeof(uint64_t)), 0x00CFFB000000FFFF);
+                // Index 5 (0x2B) - user data (Ring 3): P=1, DPL=3, S=1, Type=0x2, G=1
+                emu.write_memory<uint64_t>(gdt_base + (5 * sizeof(uint64_t)), 0x00CFF3000000FFFF);
+                // Index 6 (0x33) - 64-bit user code (Ring 3): P=1, DPL=3, S=1, Type=0xA, L=1
+                emu.write_memory<uint64_t>(gdt_base + (6 * sizeof(uint64_t)), 0x00AFFB000000FFFF);
+                // Index 10 (0x53) - WOW64 FS/TEB (Ring 3, byte granularity). The base is filled in
+                // per-thread by emulator_thread::refresh_execution_context.
+                emu.write_memory<uint64_t>(gdt_base + (10 * sizeof(uint64_t)), 0x0040F3000000FFFF);
 
-            // Index 4 (selector 0x23) - 32-bit code segment for WOW64 (Ring 3)
-            // Real Windows: Code RE Ac 3 Bg Pg P Nl 00000cfb
-            // P=1, DPL=3, S=1, Type=0xA (Code, Execute/Read), DB=1, G=1
-            emu.write_memory<uint64_t>(GDT_ADDR + (4 * sizeof(uint64_t)), 0x00CFFB000000FFFF);
+                emu.get_cpu(i).load_gdt(gdt_base, GDT_LIMIT);
+            }
 
-            // Index 5 (selector 0x2B) - Data segment for user mode (Ring 3)
-            // Real Windows: Data RW Ac 3 Bg Pg P Nl 00000cf3
-            // P=1, DPL=3, S=1, Type=0x2 (Data, Read/Write), G=1
-            emu.write_memory<uint64_t>(GDT_ADDR + (5 * sizeof(uint64_t)), 0x00CFF3000000FFFF);
+            // Initial selectors for the primary thread on the primary vCPU (per-thread bases applied later).
             emu.reg<uint16_t>(x86_register::ss, 0x2B);
             emu.reg<uint16_t>(x86_register::ds, 0x2B);
             emu.reg<uint16_t>(x86_register::es, 0x2B);
-            emu.reg<uint16_t>(x86_register::gs, 0x2B); // Initial GS value, will be overridden with proper base later
-
-            // Index 6 (selector 0x33) - 64-bit code segment (Ring 3)
-            // P=1, DPL=3, S=1, Type=0xA (Code, Execute/Read), L=1 (Long mode)
-            emu.write_memory<uint64_t>(GDT_ADDR + (6 * sizeof(uint64_t)), 0x00AFFB000000FFFF);
+            emu.reg<uint16_t>(x86_register::gs, 0x2B);
             emu.reg<uint16_t>(x86_register::cs, 0x33);
-
-            // Index 10 (selector 0x53) - FS segment for WOW64 TEB access
-            // Real Windows: Data RW Ac 3 Bg By P Nl 000004f3 (base=0x002c1000, limit=0xfff)
-            // Initially set with base=0, will be updated during thread creation
-            // P=1, DPL=3, S=1, Type=0x3 (Data, Read/Write, Accessed), G=0 (byte granularity), DB=1
-            emu.write_memory<uint64_t>(GDT_ADDR + (10 * sizeof(uint64_t)), 0x0040F3000000FFFF);
             emu.reg<uint16_t>(x86_register::fs, 0x53);
         }
 
@@ -562,7 +557,7 @@ namespace sogen
         });
     }
 
-    void process_context::serialize(utils::buffer_serializer& buffer) const
+    void process_context::serialize(utils::buffer_serializer& buffer, const emulator_thread* active_thread) const
     {
         buffer.write_vector(this->sid);
         buffer.write(this->shared_section_address);
@@ -648,10 +643,10 @@ namespace sogen
         buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
 
-        buffer.write(this->threads.find_handle(this->active_thread).bits);
+        buffer.write(this->threads.find_handle(active_thread).bits);
     }
 
-    void process_context::deserialize(utils::buffer_deserializer& buffer)
+    void process_context::deserialize(utils::buffer_deserializer& buffer, emulator_thread*& active_thread)
     {
         buffer.read_vector(this->sid);
         buffer.read(this->shared_section_address);
@@ -748,7 +743,7 @@ namespace sogen
             this->thread_handles_by_id[thread.id] = this->threads.make_handle(index);
         }
 
-        this->active_thread = this->threads.get(buffer.read<uint64_t>());
+        active_thread = this->threads.get(buffer.read<uint64_t>());
     }
 
     generic_handle_store* process_context::get_handle_store(const handle handle)
@@ -840,10 +835,10 @@ namespace sogen
         return handle == CURRENT_PROCESS || handle == GUEST_PROCESS_HANDLE;
     }
 
-    bool process_context::is_current_thread_handle(const handle handle) const
+    bool process_context::is_current_thread_handle(const handle handle, const emulator_thread* active_thread) const
     {
-        return handle == CURRENT_THREAD || (handle.value.type == handle_types::thread && this->active_thread &&
-                                            this->threads.find_handle(this->active_thread) == handle);
+        return handle == CURRENT_THREAD ||
+               (handle.value.type == handle_types::thread && active_thread && this->threads.find_handle(active_thread) == handle);
     }
 
     // NOLINTNEXTLINE(cert-dcl50-cpp,readability-convert-member-functions-to-static)
@@ -852,7 +847,7 @@ namespace sogen
         return handle == CURRENT_PROCESS || handle == CURRENT_THREAD;
     }
 
-    handle process_context::resolve_object_pseudo_handle(const handle handle) const
+    handle process_context::resolve_object_pseudo_handle(const handle handle, const emulator_thread* active_thread) const
     {
         if (handle == CURRENT_PROCESS)
         {
@@ -861,7 +856,7 @@ namespace sogen
 
         if (handle == CURRENT_THREAD)
         {
-            return this->threads.find_handle(this->active_thread);
+            return this->threads.find_handle(active_thread);
         }
 
         return handle;

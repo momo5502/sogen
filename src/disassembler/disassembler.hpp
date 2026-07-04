@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <array>
 #include <capstone/capstone.h>
@@ -108,10 +108,10 @@ namespace sogen
 
         using segment_bitness = segment_utils::segment_bitness;
 
-        instructions disassemble(emulator& cpu, uint16_t cs_selector, std::span<const uint8_t> data, size_t count,
+        instructions disassemble(x86_64_cpu& cpu, uint16_t cs_selector, std::span<const uint8_t> data, size_t count,
                                  uint64_t address = 0) const;
-        static std::optional<segment_bitness> get_segment_bitness(emulator& cpu, uint16_t cs_selector);
-        csh resolve_handle(emulator& cpu, uint16_t cs_selector) const;
+        static std::optional<segment_bitness> get_segment_bitness(x86_64_cpu& cpu, uint16_t cs_selector);
+        csh resolve_handle(x86_64_cpu& cpu, uint16_t cs_selector) const;
 
         csh get_handle_64() const
         {
@@ -136,7 +136,7 @@ namespace sogen
         void release();
     };
 
-    inline bool read_x86_register_value(x86_64_emulator& cpu, x86_reg reg, uint64_t& value)
+    inline bool read_x86_register_value(x86_64_cpu& cpu, x86_reg reg, uint64_t& value)
     {
         switch (reg)
         {
@@ -193,7 +193,7 @@ namespace sogen
         }
     }
 
-    inline bool resolve_jump_target(x86_64_emulator& cpu, uint64_t& target)
+    inline bool resolve_jump_target(x86_64_cpu& cpu, uint64_t& target)
     {
         disassembler d{};
         const auto cs_selector = cpu.reg<uint16_t>(x86_register::cs);

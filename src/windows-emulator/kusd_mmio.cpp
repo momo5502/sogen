@@ -65,11 +65,11 @@ namespace sogen
             kusd.QpcInterruptTimeIncrement = 0x8000000000000000;
             kusd.QpcSystemTimeIncrementShift = 0x01;
             kusd.QpcInterruptTimeIncrementShift = 0x01;
-            kusd.UnparkedProcessorCount = 0x000c;
+            kusd.UnparkedProcessorCount = static_cast<uint16_t>(fake_env.number_of_processors);
             kusd.TelemetryCoverageRound = 0x00000001;
             kusd.LangGenerationCount = 0x00000003;
             kusd.InterruptTimeBias = 0x00000015a5d56406;
-            kusd.ActiveProcessorCount = 0x00000004;
+            kusd.ActiveProcessorCount = fake_env.number_of_processors;
             kusd.ActiveGroupCount = 0x01;
             kusd.TimeZoneBiasEffectiveStart.QuadPart = 0x01db276e654cb2ff;
             kusd.TimeZoneBiasEffectiveEnd.QuadPart = 0x01db280b8c3b2800;
@@ -156,6 +156,8 @@ namespace sogen
 
     void kusd_mmio::read(const uint64_t addr, void* data, const size_t size)
     {
+        const std::scoped_lock lock(this->mutex_);
+
         this->update();
 
         if (addr >= KUSD_SIZE)

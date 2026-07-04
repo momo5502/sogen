@@ -344,7 +344,7 @@ namespace sogen
             auto& enum_state = *f->enumeration_state;
 
             uint64_t current_offset{0};
-            emulator_object<T> object{c.emu};
+            emulator_object<T> object{c.emu.memory()};
 
             size_t current_index = enum_state.current_index;
 
@@ -1053,7 +1053,7 @@ namespace sogen
             return ret(STATUS_NOT_SUPPORTED);
         }
 
-        void commit_file_data(const std::string_view data, emulator& emu,
+        void commit_file_data(const std::string_view data, memory_interface& emu,
                               const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t buffer)
         {
             if (io_status_block)
@@ -1134,7 +1134,7 @@ namespace sogen
                     c.emu.write_memory(io_status_block.value() + sizeof(status32), &information32, sizeof(information32));
                 }
 
-                c.win_emu.current_thread().pending_apcs.push_back({
+                c.thread().pending_apcs.push_back({
                     .flags = 0,
                     .apc_routine = apc_routine,
                     .apc_argument1 = apc_context,
@@ -1996,8 +1996,8 @@ namespace sogen
                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const ULONG share_access,
                                    const ULONG open_options)
         {
-            return handle_NtCreateFile(c, file_handle, desired_access, object_attributes, io_status_block, {c.emu}, 0, share_access,
-                                       FILE_OPEN, open_options, 0, 0);
+            return handle_NtCreateFile(c, file_handle, desired_access, object_attributes, io_status_block, {c.emu.memory()}, 0,
+                                       share_access, FILE_OPEN, open_options, 0, 0);
         }
 
         NTSTATUS handle_NtOpenDirectoryObject(const syscall_context& c, const emulator_object<handle> directory_handle,
@@ -2193,6 +2193,7 @@ namespace sogen
             context.input_buffer_length = input_buffer_length;
             context.output_buffer = output_buffer;
             context.output_buffer_length = output_buffer_length;
+            context.vcpu = &c.vcpu;
 
             return device->execute_ioctl(c.win_emu, context);
         }

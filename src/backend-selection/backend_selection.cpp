@@ -21,7 +21,7 @@ namespace sogen
 {
     namespace
     {
-        std::unique_ptr<x86_64_emulator> create_backend(backend_type backend)
+        std::unique_ptr<x86_64_emulator> create_backend(backend_type backend, [[maybe_unused]] const size_t vcpu_count)
         {
             switch (backend)
             {
@@ -38,7 +38,7 @@ namespace sogen
 
 #if defined(_WIN64) && !defined(__MINGW64__)
             case backend_type::whp:
-                return whp::create_x86_64_emulator();
+                return whp::create_x86_64_emulator(vcpu_count);
 #endif
 
 #if defined(__linux__) && !defined(__ANDROID__) && (defined(__x86_64__) || defined(__amd64__))
@@ -54,12 +54,18 @@ namespace sogen
         }
     }
 
-    std::unique_ptr<x86_64_emulator> create_x86_64_emulator(backend_type backend)
+    std::unique_ptr<x86_64_emulator> create_x86_64_emulator(backend_type backend, const size_t vcpu_count)
     {
-        return create_backend(backend);
+        auto emulator = create_backend(backend, vcpu_count);
+        if (vcpu_count > 1 && !emulator->supports_multiple_vcpus())
+        {
+            throw std::invalid_argument("The " + emulator->get_name() + " backend does not support multiple vCPUs");
+        }
+
+        return emulator;
     }
 
-    std::unique_ptr<x86_64_emulator> create_x86_64_emulator_from_environment()
+    std::unique_ptr<x86_64_emulator> create_x86_64_emulator_from_environment(const size_t vcpu_count)
     {
         auto backend = backend_type::unicorn;
 
@@ -90,6 +96,6 @@ namespace sogen
             }
         }
 
-        return create_x86_64_emulator(backend);
+        return create_x86_64_emulator(backend, vcpu_count);
     }
 } // namespace sogen

@@ -1,4 +1,4 @@
-#include "std_include.hpp"
+﻿#include "std_include.hpp"
 #include "emulator_thread.hpp"
 
 #include "cpu_context.hpp"
@@ -18,7 +18,7 @@ namespace sogen
             abandoned,
         };
 
-        void setup_wow64_fs_segment(memory_manager& memory, uint64_t teb32_addr)
+        void setup_wow64_fs_segment(memory_manager& memory, uint64_t teb32_addr, uint64_t gdt_base)
         {
             const uint64_t base = teb32_addr;
             const uint32_t limit = 0xFFF; // 4KB - size of TEB32 (matching Windows)
@@ -34,28 +34,28 @@ namespace sogen
             descriptor |= (0x40ULL << 48);                                        // G=0 (byte), D=1 (32-bit), L=0, AVL=0
             descriptor |= ((base & 0xFF000000) << 32);                            // Base[31:24]
 
-            // Write the updated descriptor to GDT index 10 (selector 0x53)
-            constexpr uint64_t fs_gdt_offset = GDT_ADDR + 10 * sizeof(uint64_t);
+            // Write the updated descriptor to GDT index 10 (selector 0x53) of this vCPU's own GDT.
+            const uint64_t fs_gdt_offset = gdt_base + 10 * sizeof(uint64_t);
             memory.write_memory(fs_gdt_offset, &descriptor, sizeof(descriptor));
         }
 
         template <typename T>
-        emulator_object<T> allocate_object_on_stack(x86_64_emulator& emu)
+        emulator_object<T> allocate_object_on_stack(x86_64_cpu& emu)
         {
             const auto old_sp = emu.reg(x86_register::rsp);
-            const auto new_sp = align_down(old_sp - sizeof(T), std::max(alignof(T), alignof(x86_64_emulator::pointer_type)));
+            const auto new_sp = align_down(old_sp - sizeof(T), std::max(alignof(T), alignof(x86_64_cpu::pointer_type)));
             emu.reg(x86_register::rsp, new_sp);
-            return {emu, new_sp};
+            return {emu.memory(), new_sp};
         }
 
-        void unalign_stack(x86_64_emulator& emu)
+        void unalign_stack(x86_64_cpu& emu)
         {
             auto sp = emu.reg(x86_register::rsp);
             sp = align_down(sp - 0x10, 0x10) + 8;
             emu.reg(x86_register::rsp, sp);
         }
 
-        void setup_stack(x86_64_emulator& emu, const process_context& context, const uint64_t stack_base, const size_t stack_size)
+        void setup_stack(x86_64_cpu& emu, const process_context& context, const uint64_t stack_base, const size_t stack_size)
         {
             if (!context.is_wow64_process)
             {
@@ -1172,7 +1172,7 @@ namespace sogen
         return true;
     }
 
-    void emulator_thread::setup_registers(x86_64_emulator& emu, const process_context& context) const
+    void emulator_thread::setup_registers(x86_64_cpu& emu, const process_context& context) const
     {
         if (!this->gs_segment)
         {
@@ -1224,14 +1224,19 @@ namespace sogen
         emu.reg(x86_register::rip, context.ldr_initialize_thunk);
     }
 
-    void emulator_thread::refresh_execution_context(x86_64_emulator& emu) const
+    void emulator_thread::refresh_execution_context(x86_64_cpu& emu) const
     {
-        (void)emu;
+        // Point this vCPU's GDTR at its own per-vCPU GDT. The saved thread context restores whatever
+        // GDTR the thread last ran with (possibly another vCPU's GDT), so re-assert it here on every
+        // switch. Cheap and keeps each vCPU reading its own descriptors.
+        const auto gdt_base = gdt_base_for_vcpu(emu.index());
+        emu.load_gdt(gdt_base, GDT_LIMIT);
 
         if (this->teb32.has_value())
         {
-            // Refresh GDT entry for FS selector on context switch
-            setup_wow64_fs_segment(*this->memory_ptr, this->teb32->value());
+            // Refresh this vCPU's WOW64 FS descriptor with this thread's 32-bit TEB base, so a 64<->32
+            // transition that reloads FS reads the correct base regardless of which vCPU runs the thread.
+            setup_wow64_fs_segment(*this->memory_ptr, this->teb32->value(), gdt_base);
         }
     }
 
@@ -1248,7 +1253,7 @@ namespace sogen
 
     callback_frame::~callback_frame() = default;
 
-    void callback_frame::save_registers(x86_64_emulator& emu)
+    void callback_frame::save_registers(x86_64_cpu& emu)
     {
         if (this->rip != 0)
         {
@@ -1280,7 +1285,7 @@ namespace sogen
         this->gs = emu.reg<uint16_t>(x86_register::gs);
     }
 
-    void callback_frame::restore_registers(x86_64_emulator& emu) const
+    void callback_frame::restore_registers(x86_64_cpu& emu) const
     {
         if (this->rip == 0)
         {

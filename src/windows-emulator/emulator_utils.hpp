@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <arch_emulator.hpp>
 #include <function_calling_convention.hpp>
@@ -386,7 +386,7 @@ namespace sogen
         return result;
     }
 
-    inline std::u16string read_unicode_string(const emulator& emu, const UNICODE_STRING<EmulatorTraits<Emu64>> ucs)
+    inline std::u16string read_unicode_string(const memory_interface& emu, const UNICODE_STRING<EmulatorTraits<Emu64>> ucs)
     {
         static_assert(offsetof(UNICODE_STRING<EmulatorTraits<Emu64>>, Length) == 0);
         static_assert(offsetof(UNICODE_STRING<EmulatorTraits<Emu64>>, MaximumLength) == 2);
@@ -401,14 +401,15 @@ namespace sogen
         return result;
     }
 
-    inline std::u16string read_unicode_string(const emulator& emu, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string,
+    inline std::u16string read_unicode_string(const memory_interface& emu,
+                                              const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> uc_string,
                                               const size_t index = 0)
     {
         const auto ucs = uc_string.read(index);
         return read_unicode_string(emu, ucs);
     }
 
-    inline std::u16string read_unicode_string(emulator& emu, const uint64_t uc_string, const size_t index = 0)
+    inline std::u16string read_unicode_string(memory_interface& emu, const uint64_t uc_string, const size_t index = 0)
     {
         return read_unicode_string(emu, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{emu, uc_string}, index);
     }
@@ -430,7 +431,7 @@ namespace sogen
         return cp1252_to_u16(ansi_string);
     }
 
-    inline uint64_t get_function_argument_x64_fastcall(x86_64_emulator& emu, const size_t index)
+    inline uint64_t get_function_argument_x64_fastcall(x86_64_cpu& emu, const size_t index)
     {
         switch (index)
         {
@@ -447,7 +448,7 @@ namespace sogen
         }
     }
 
-    inline uint64_t get_function_argument_x64_syscall(x86_64_emulator& emu, const size_t index)
+    inline uint64_t get_function_argument_x64_syscall(x86_64_cpu& emu, const size_t index)
     {
         if (index == 0)
         {
@@ -457,21 +458,21 @@ namespace sogen
         return get_function_argument_x64_fastcall(emu, index);
     }
 
-    inline bool is_32bit_code_segment(x86_64_emulator& emu)
+    inline bool is_32bit_code_segment(x86_64_cpu& emu)
     {
         const auto cs_selector = emu.reg<uint16_t>(x86_register::cs);
         const auto bitness = segment_utils::get_segment_bitness(emu, cs_selector);
         return bitness && *bitness == segment_utils::segment_bitness::bit32;
     }
 
-    inline uint64_t get_function_argument_x86_stack(x86_64_emulator& emu, const size_t index)
+    inline uint64_t get_function_argument_x86_stack(x86_64_cpu& emu, const size_t index)
     {
         const auto esp = emu.reg<uint32_t>(x86_register::esp);
         const auto address = static_cast<uint64_t>(esp) + static_cast<uint64_t>((index + 1) * sizeof(uint32_t));
         return static_cast<uint64_t>(emu.read_memory<uint32_t>(address));
     }
 
-    inline uint64_t get_function_argument(x86_64_emulator& emu, const function_calling_convention cc, const size_t index)
+    inline uint64_t get_function_argument(x86_64_cpu& emu, const function_calling_convention cc, const size_t index)
     {
         using enum function_calling_convention;
 
@@ -489,7 +490,7 @@ namespace sogen
         }
     }
 
-    inline uint64_t get_function_argument(x86_64_emulator& emu, const size_t index, const bool is_syscall = false)
+    inline uint64_t get_function_argument(x86_64_cpu& emu, const size_t index, const bool is_syscall = false)
     {
         if (is_syscall)
         {
@@ -504,7 +505,7 @@ namespace sogen
         return get_function_argument_x64_fastcall(emu, index);
     }
 
-    inline std::vector<uint64_t> get_function_arguments(x86_64_emulator& emu, const function_calling_convention cc, const size_t count)
+    inline std::vector<uint64_t> get_function_arguments(x86_64_cpu& emu, const function_calling_convention cc, const size_t count)
     {
         std::vector<uint64_t> args{};
         args.reserve(count);
@@ -517,7 +518,7 @@ namespace sogen
         return args;
     }
 
-    inline void set_function_argument_x64_fastcall(x86_64_emulator& emu, const size_t index, const uint64_t value)
+    inline void set_function_argument_x64_fastcall(x86_64_cpu& emu, const size_t index, const uint64_t value)
     {
         switch (index)
         {
@@ -539,7 +540,7 @@ namespace sogen
         }
     }
 
-    inline void set_function_argument_x64_syscall(x86_64_emulator& emu, const size_t index, const uint64_t value)
+    inline void set_function_argument_x64_syscall(x86_64_cpu& emu, const size_t index, const uint64_t value)
     {
         if (index == 0)
         {
@@ -550,14 +551,14 @@ namespace sogen
         set_function_argument_x64_fastcall(emu, index, value);
     }
 
-    inline void set_function_argument_x86_stack(x86_64_emulator& emu, const size_t index, const uint64_t value)
+    inline void set_function_argument_x86_stack(x86_64_cpu& emu, const size_t index, const uint64_t value)
     {
         const auto esp = emu.reg<uint32_t>(x86_register::esp);
         const auto address = static_cast<uint64_t>(esp) + static_cast<uint64_t>((index + 1) * sizeof(uint32_t));
         emu.write_memory<uint32_t>(address, static_cast<uint32_t>(value));
     }
 
-    inline void set_function_argument(x86_64_emulator& emu, const function_calling_convention cc, const size_t index, const uint64_t value)
+    inline void set_function_argument(x86_64_cpu& emu, const function_calling_convention cc, const size_t index, const uint64_t value)
     {
         using enum function_calling_convention;
 
@@ -578,7 +579,7 @@ namespace sogen
         }
     }
 
-    inline void set_function_argument(x86_64_emulator& emu, const size_t index, const uint64_t value, const bool is_syscall = false)
+    inline void set_function_argument(x86_64_cpu& emu, const size_t index, const uint64_t value, const bool is_syscall = false)
     {
         if (is_32bit_code_segment(emu))
         {
@@ -595,7 +596,7 @@ namespace sogen
         set_function_argument_x64_fastcall(emu, index, value);
     }
 
-    inline void set_function_arguments(x86_64_emulator& emu, const function_calling_convention cc, const std::span<const uint64_t> values)
+    inline void set_function_arguments(x86_64_cpu& emu, const function_calling_convention cc, const std::span<const uint64_t> values)
     {
         for (size_t i = 0; i < values.size(); ++i)
         {

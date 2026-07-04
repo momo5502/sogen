@@ -387,7 +387,7 @@ namespace sogen
                                          EmulatorTraits<Emu64>::SIZE_T maximum_stack_size,
                                          emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list);
         NTSTATUS handle_NtGetCurrentProcessorNumberEx(const syscall_context&, emulator_object<PROCESSOR_NUMBER> processor_number);
-        ULONG handle_NtGetCurrentProcessorNumber();
+        ULONG handle_NtGetCurrentProcessorNumber(const syscall_context& c);
         NTSTATUS handle_NtQueueApcThreadEx2(const syscall_context& c, handle thread_handle, handle reserve_handle, uint32_t apc_flags,
                                             uint64_t apc_routine, uint64_t apc_argument1, uint64_t apc_argument2, uint64_t apc_argument3);
         NTSTATUS handle_NtQueueApcThreadEx(const syscall_context& c, handle thread_handle, handle reserve_handle, uint64_t apc_routine,
@@ -874,7 +874,7 @@ namespace sogen
                 if (performance_frequency)
                 {
                     performance_frequency.access([&](LARGE_INTEGER& value) {
-                        value.QuadPart = c.proc.kusd.get().QpcFrequency; //
+                        value.QuadPart = c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.QpcFrequency; }); //
                     });
                 }
 
@@ -924,6 +924,7 @@ namespace sogen
             context.input_buffer_length = input_buffer_length;
             context.output_buffer = output_buffer;
             context.output_buffer_length = output_buffer_length;
+            context.vcpu = &c.vcpu;
 
             return device->execute_ioctl(c.win_emu, context);
         }
@@ -942,7 +943,7 @@ namespace sogen
 
         NTSTATUS handle_NtTestAlert(const syscall_context& c)
         {
-            c.win_emu.yield_thread(true);
+            c.win_emu.yield_thread(c.vcpu, true);
             return STATUS_SUCCESS;
         }
 

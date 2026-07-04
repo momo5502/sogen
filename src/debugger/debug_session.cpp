@@ -33,7 +33,7 @@ namespace sogen::debugger
           impl_(std::make_unique<impl>())
     {
         auto& cpu = this->emu_->emu();
-        this->impl_->control_hook = scoped_hook(cpu, cpu.hook_memory_execution([this](const uint64_t address) {
+        this->impl_->control_hook = scoped_hook(cpu, cpu.hook_memory_execution([this](cpu_interface&, const uint64_t address) {
             if (this->should_break(address))
             {
                 enter_breakpoint(*this->emu_, address);
@@ -252,7 +252,7 @@ namespace sogen::debugger
     std::vector<thread_info> debug_session::threads() const
     {
         std::vector<thread_info> result{};
-        const auto* active = this->emu_->process.active_thread;
+        const auto* active = this->emu_->vcpu(0).active_thread;
         for (auto& thread : this->emu_->process.threads | std::views::values)
         {
             result.push_back({.id = thread.id, .instruction_pointer = thread.current_ip, .active = &thread == active});

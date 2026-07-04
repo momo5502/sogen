@@ -150,6 +150,8 @@ namespace sogen
 
     void logger::print_message(const color c, const std::string_view message, const bool force) const
     {
+        const std::scoped_lock lock(this->print_mutex_);
+
         // Sinks observe all log activity, regardless of disable_output_. That lets
         // consumers capture a full structured log even when they've silenced the
         // terminal (e.g. --silent, or a Python wrapper capturing via callback).

@@ -518,7 +518,7 @@ namespace sogen
                                                 const uint32_t page_protection)
         {
             return handle_NtAllocateVirtualMemoryEx(c, process_handle, base_address, bytes_to_allocate, allocation_type, page_protection,
-                                                    emulator_object<MEM_EXTENDED_PARAMETER64>{c.emu}, 0);
+                                                    emulator_object<MEM_EXTENDED_PARAMETER64>{c.emu.memory()}, 0);
         }
 
         NTSTATUS handle_NtFreeVirtualMemory(const syscall_context& c, const handle process_handle,

@@ -4,6 +4,7 @@
 #include <utils/function.hpp>
 #include <utils/win.hpp>
 
+#include <mutex>
 #include <string_view>
 #include <utility>
 
@@ -56,6 +57,7 @@ namespace sogen
 #endif
         bool disable_output_{false};
         sink sink_{};
+        mutable std::mutex print_mutex_{};
         void print_message(color c, std::string_view message, bool force = false) const;
     };
 

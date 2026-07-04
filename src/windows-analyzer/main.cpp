@@ -67,6 +67,7 @@ namespace sogen
             std::string whp_execution_hook_mode{"auto"};
             std::optional<backend_type> backend{};
             bool disable_instruction_precision{false};
+            uint32_t vcpu_count{1};
             std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
             std::filesystem::path emulation_root{};
             std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
@@ -173,30 +174,32 @@ namespace sogen
                     return;
                 }
 
-                auto hook_handler = [state, env_ptr](const uint64_t address, const void*, const size_t size) {
-                    const auto rip = state->win_emu_.emu().read_instruction_pointer();
-                    const auto* mod = state->win_emu_.mod_manager.find_by_address(rip);
-                    const auto is_main_access =
-                        !mod || (mod == state->win_emu_.mod_manager.executable || state->modules_.contains(mod->name));
+                auto hook_handler = [state, env_ptr](cpu_interface& cpu, const uint64_t address, const void*, const size_t size) {
+                    state->win_emu_.dispatch_on_cpu(cpu, [&] {
+                        const auto rip = state->win_emu_.active_cpu().read_instruction_pointer();
+                        const auto* mod = state->win_emu_.mod_manager.find_by_address(rip);
+                        const auto is_main_access =
+                            !mod || (mod == state->win_emu_.mod_manager.executable || state->modules_.contains(mod->name));
 
-                    if (!is_main_access && !state->verbose_)
-                    {
-                        return;
-                    }
-
-                    if (state->concise_)
-                    {
-                        const auto count = ++state->env_module_cache_[mod ? mod->name : "<N/A>"];
-                        if (count > 30 && count % 1000 != 0)
+                        if (!is_main_access && !state->verbose_)
                         {
                             return;
                         }
-                    }
 
-                    state->context_.emit_observation<environment_access_event>([&](auto& event) {
-                        event.main_access = is_main_access;
-                        event.offset = address - env_ptr;
-                        event.size = size;
+                        if (state->concise_)
+                        {
+                            const auto count = ++state->env_module_cache_[mod ? mod->name : "<N/A>"];
+                            if (count > 30 && count % 1000 != 0)
+                            {
+                                return;
+                            }
+                        }
+
+                        state->context_.emit_observation<environment_access_event>([&](auto& event) {
+                            event.main_access = is_main_access;
+                            event.offset = address - env_ptr;
+                            event.size = size;
+                        });
                     });
                 };
 
@@ -208,7 +211,7 @@ namespace sogen
             auto& win_emu = state->win_emu_;
             return state->win_emu_.emu().hook_memory_write(
                 process_params.value() + offsetof(RTL_USER_PROCESS_PARAMETERS64, Environment), 0x8,
-                [&win_emu, install = std::move(install_env_access_hook)](const uint64_t address, const void*, size_t) {
+                [&win_emu, install = std::move(install_env_access_hook)](cpu_interface&, const uint64_t address, const void*, size_t) {
                     const auto new_process_params = get_process_params(win_emu);
 
                     const auto target_address = new_process_params.value() + offsetof(RTL_USER_PROCESS_PARAMETERS64, Environment);
@@ -255,7 +258,7 @@ namespace sogen
 
             win_emu.emu().hook_memory_write(
                 win_emu.process.peb64.value() + offsetof(PEB64, ProcessParameters), 0x8,
-                [state, emit_object_access, update_env = std::move(update_env_hook)](const uint64_t, const void*, size_t) {
+                [state, emit_object_access, update_env = std::move(update_env_hook)](cpu_interface&, const uint64_t, const void*, size_t) {
                     const auto new_ptr = state->win_emu_.process.peb64.read().ProcessParameters;
                     state->params_hook_ = watch_object<RTL_USER_PROCESS_PARAMETERS64>(
                         state->win_emu_, state->modules_, new_ptr, state->verbose_, emit_object_access, state->params_state_);
@@ -263,7 +266,7 @@ namespace sogen
                 });
 
             win_emu.emu().hook_memory_write(win_emu.process.peb64.value() + offsetof(PEB64, Ldr), 0x8,
-                                            [state, emit_object_access](const uint64_t, const void*, size_t) {
+                                            [state, emit_object_access](cpu_interface&, const uint64_t, const void*, size_t) {
                                                 const auto new_ptr = state->win_emu_.process.peb64.read().Ldr;
                                                 state->ldr_hook_ =
                                                     watch_object<PEB_LDR_DATA64>(state->win_emu_, state->modules_, new_ptr, state->verbose_,
@@ -492,7 +495,8 @@ namespace sogen
 
         std::unique_ptr<x86_64_emulator> create_configured_backend(const analysis_options& options)
         {
-            auto emu = options.backend ? create_x86_64_emulator(*options.backend) : create_x86_64_emulator_from_environment();
+            auto emu = options.backend ? create_x86_64_emulator(*options.backend, options.vcpu_count)
+                                       : create_x86_64_emulator_from_environment(options.vcpu_count);
             emu->set_memory_execution_hook_mode(parse_memory_execution_hook_mode(options.whp_execution_hook_mode));
             return emu;
         }
@@ -645,90 +649,95 @@ namespace sogen
             const auto& exe = *win_emu->mod_manager.executable;
             const auto is_whp = win_emu->emu().get_name() == "Windows Hypervisor Platform";
 
-            win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&] {
-                auto& emu = win_emu->emu();
+            win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&](cpu_interface& cpu, uint64_t) {
+                return win_emu->dispatch_on_cpu(cpu, [&] {
+                    auto& emu = win_emu->active_cpu();
 
-                const auto rip = emu.read_instruction_pointer();
-                const auto leaf = emu.reg<uint32_t>(x86_register::eax);
-                const auto mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+                    const auto rip = emu.read_instruction_pointer();
+                    const auto leaf = emu.reg<uint32_t>(x86_register::eax);
+                    const auto mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
-                if (mod.has_value() && (!concise_logging || context.cpuid_cache.insert({rip, leaf}).second))
-                {
-                    context.emit_observation<cpuid_event>([&](auto& event) { event.leaf = leaf; });
-                }
+                    if (mod.has_value() && (!concise_logging || context.cpuid_cache.insert({rip, leaf}).second))
+                    {
+                        context.emit_observation<cpuid_event>([&](auto& event) { event.leaf = leaf; });
+                    }
 
-                if (leaf == 1 && !is_whp)
-                {
-                    // NOTE: We hard-code these values to disable SSE4.x and AVX
-                    //       See: https://github.com/momo5502/sogen/issues/560
-                    emu.reg<uint32_t>(x86_register::eax, 0x000906EA);
-                    emu.reg<uint32_t>(x86_register::ebx, 0x00100800);
-                    emu.reg<uint32_t>(x86_register::ecx, 0xEFE2F38F);
-                    emu.reg<uint32_t>(x86_register::edx, 0xBFEBFBFF);
+                    if (leaf == 1 && !is_whp)
+                    {
+                        // NOTE: We hard-code these values to disable SSE4.x and AVX
+                        //       See: https://github.com/momo5502/sogen/issues/560
+                        emu.reg<uint32_t>(x86_register::eax, 0x000906EA);
+                        emu.reg<uint32_t>(x86_register::ebx, 0x00100800);
+                        emu.reg<uint32_t>(x86_register::ecx, 0xEFE2F38F);
+                        emu.reg<uint32_t>(x86_register::edx, 0xBFEBFBFF);
 
-                    return instruction_hook_continuation::skip_instruction;
-                }
+                        return instruction_hook_continuation::skip_instruction;
+                    }
 
-                if (leaf == 0x40000000 && !is_whp)
-                {
-                    // Microsoft Hv vendor string
-                    emu.reg<uint32_t>(x86_register::eax, 0x40000003);
-                    emu.reg<uint32_t>(x86_register::ebx, 0x7263694d);
-                    emu.reg<uint32_t>(x86_register::ecx, 0x666f736f);
-                    emu.reg<uint32_t>(x86_register::edx, 0x76482074);
+                    if (leaf == 0x40000000 && !is_whp)
+                    {
+                        // Microsoft Hv vendor string
+                        emu.reg<uint32_t>(x86_register::eax, 0x40000003);
+                        emu.reg<uint32_t>(x86_register::ebx, 0x7263694d);
+                        emu.reg<uint32_t>(x86_register::ecx, 0x666f736f);
+                        emu.reg<uint32_t>(x86_register::edx, 0x76482074);
 
-                    return instruction_hook_continuation::skip_instruction;
-                }
+                        return instruction_hook_continuation::skip_instruction;
+                    }
 
-                if (leaf == 0x40000003 && !is_whp)
-                {
-                    emu.reg<uint32_t>(x86_register::eax, 0x00000000);
-                    emu.reg<uint32_t>(x86_register::ebx, 0x00000001);
-                    emu.reg<uint32_t>(x86_register::ecx, 0x00000000);
-                    emu.reg<uint32_t>(x86_register::edx, 0x00000000);
+                    if (leaf == 0x40000003 && !is_whp)
+                    {
+                        emu.reg<uint32_t>(x86_register::eax, 0x00000000);
+                        emu.reg<uint32_t>(x86_register::ebx, 0x00000001);
+                        emu.reg<uint32_t>(x86_register::ecx, 0x00000000);
+                        emu.reg<uint32_t>(x86_register::edx, 0x00000000);
 
-                    return instruction_hook_continuation::skip_instruction;
-                }
+                        return instruction_hook_continuation::skip_instruction;
+                    }
 
-                return instruction_hook_continuation::run_instruction;
+                    return instruction_hook_continuation::run_instruction;
+                });
             });
 
             if (options.log_foreign_module_access)
             {
                 auto module_cache = std::make_shared<std::map<std::string, uint64_t>>();
-                win_emu->emu().hook_memory_read(
-                    0, std::numeric_limits<uint64_t>::max(), [&, module_cache](const uint64_t address, const void*, size_t size) {
-                        const auto rip = win_emu->emu().read_instruction_pointer();
-                        const auto accessor = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+                win_emu->emu().hook_memory_read(0, std::numeric_limits<uint64_t>::max(),
+                                                [&, module_cache](cpu_interface& cpu, const uint64_t address, const void*, size_t size) {
+                                                    win_emu->dispatch_on_cpu(cpu, [&] {
+                                                        const auto rip = win_emu->active_cpu().read_instruction_pointer();
+                                                        const auto accessor =
+                                                            get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
-                        if (!accessor.has_value())
-                        {
-                            return;
-                        }
+                                                        if (!accessor.has_value())
+                                                        {
+                                                            return;
+                                                        }
 
-                        const auto* mod = win_emu->mod_manager.find_by_address(address);
-                        if (!mod || mod == *accessor)
-                        {
-                            return;
-                        }
+                                                        const auto* mod = win_emu->mod_manager.find_by_address(address);
+                                                        if (!mod || mod == *accessor)
+                                                        {
+                                                            return;
+                                                        }
 
-                        if (concise_logging)
-                        {
-                            const auto count = ++(*module_cache)[mod->name];
-                            if (count > 30 && count % 100000 != 0)
-                            {
-                                return;
-                            }
-                        }
+                                                        if (concise_logging)
+                                                        {
+                                                            const auto count = ++(*module_cache)[mod->name];
+                                                            if (count > 30 && count % 100000 != 0)
+                                                            {
+                                                                return;
+                                                            }
+                                                        }
 
-                        const auto* region_name = get_module_memory_region_name(*mod, address);
-                        context.emit_observation<foreign_module_read_event>([&](auto& event) {
-                            event.address = address;
-                            event.size = size;
-                            event.module_name = mod->name;
-                            event.region_name = region_name;
-                        });
-                    });
+                                                        const auto* region_name = get_module_memory_region_name(*mod, address);
+                                                        context.emit_observation<foreign_module_read_event>([&](auto& event) {
+                                                            event.address = address;
+                                                            event.size = size;
+                                                            event.module_name = mod->name;
+                                                            event.region_name = region_name;
+                                                        });
+                                                    });
+                                                });
             }
 
             if (options.log_executable_access)
@@ -743,7 +752,8 @@ namespace sogen
                     const auto read_count = std::make_shared<uint64_t>(0);
                     const auto write_count = std::make_shared<uint64_t>(0);
 
-                    auto read_handler = [&, section, concise_logging, read_count](const uint64_t address, const void*, size_t size) {
+                    auto read_handler = [&, section, concise_logging, read_count](cpu_interface&, const uint64_t address, const void*,
+                                                                                  size_t size) {
                         const auto rip = win_emu->emu().read_instruction_pointer();
                         const auto accessor = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
@@ -768,8 +778,8 @@ namespace sogen
                         });
                     };
 
-                    auto write_handler = [&, section, concise_logging, write_count](const uint64_t address, const void* value,
-                                                                                    size_t size) {
+                    auto write_handler = [&, section, concise_logging, write_count](cpu_interface&, const uint64_t address,
+                                                                                    const void* value, size_t size) {
                         if (concise_logging)
                         {
                             const auto count = ++*write_count;
@@ -860,6 +870,9 @@ namespace sogen
                 ->check(CLI::IsMember({"auto", "int3"}));
             app.add_option("-r,--registry", options.registry_path, "Set registry path");
 
+            app.add_option("--vcpus", options.vcpu_count, "Number of virtual CPUs (requires a backend with multi-vCPU support)")
+                ->capture_default_str();
+
             std::string backend_name{};
             app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp or kvm (overrides env)")
                 ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm"}));
@@ -886,6 +899,11 @@ namespace sogen
 
             try
             {
+                if (options.use_gdb && options.vcpu_count > 1)
+                {
+                    throw std::runtime_error("GDB debugging requires --vcpus 1");
+                }
+
                 if (!backend_name.empty())
                 {
                     static const std::map<std::string, backend_type> backends{

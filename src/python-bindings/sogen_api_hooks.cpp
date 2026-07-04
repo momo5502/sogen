@@ -277,7 +277,7 @@ namespace sogen::py
             return;
         }
 
-        auto* hook = this->win_emu->emu().hook_memory_execution([this](uint64_t address) {
+        auto* hook = this->win_emu->emu().hook_memory_execution([this](cpu_interface&, uint64_t address) {
             try
             {
                 this->dispatch_address(address);

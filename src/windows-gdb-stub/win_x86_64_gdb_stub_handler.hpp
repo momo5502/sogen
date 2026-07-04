@@ -103,7 +103,7 @@ namespace sogen
 
         bool switch_to_thread(const uint32_t thread_id) override
         {
-            return this->win_emu_->activate_thread(thread_id);
+            return this->win_emu_->activate_thread(this->win_emu_->vcpu(0), thread_id);
         }
 
         std::optional<uint32_t> get_exit_code() override

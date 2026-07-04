@@ -5,6 +5,7 @@
 
 #include "arch_emulator.hpp"
 
+#include <mutex>
 #include <utils/time.hpp>
 
 namespace sogen
@@ -31,14 +32,20 @@ namespace sogen
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);
 
-        KUSER_SHARED_DATA64& get()
+        // Locked access to the KUSD block: the MMIO read callback mutates kusd_ under mutex_ on the WHP
+        // worker thread, so callers must not touch it unsynchronized. The functor's result is forwarded.
+        template <typename F>
+        decltype(auto) access(const F& functor)
         {
-            return this->kusd_;
+            const std::lock_guard lock{this->mutex_};
+            return functor(this->kusd_);
         }
 
-        const KUSER_SHARED_DATA64& get() const
+        template <typename F>
+        decltype(auto) access(const F& functor) const
         {
-            return this->kusd_;
+            const std::lock_guard lock{this->mutex_};
+            return functor(this->kusd_);
         }
 
         static uint64_t address();
@@ -50,6 +57,11 @@ namespace sogen
         utils::clock* clock_{};
 
         bool registered_{};
+
+        // The MMIO read callback runs on the WHP worker thread during guest execution
+        // (outside the kernel lock), so multiple vCPUs can read KUSD concurrently. This
+        // guards update() + the read snapshot so kusd_ is never torn.
+        mutable std::mutex mutex_{};
 
         // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         KUSER_SHARED_DATA64 kusd_{};

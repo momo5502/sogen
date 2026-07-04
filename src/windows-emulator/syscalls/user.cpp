@@ -136,7 +136,7 @@ namespace sogen
 
         void set_guest_last_error(const syscall_context& c, uint32_t last_error)
         {
-            c.proc.active_thread->teb64->access([&](TEB64& teb) {
+            c.vcpu.active_thread->teb64->access([&](TEB64& teb) {
                 teb.LastErrorValue = static_cast<ULONG>(last_error); //
             });
         }
@@ -273,15 +273,15 @@ namespace sogen
 
         void set_thread_window_context(const syscall_context& c, const uint64_t active_handle, const uint64_t active_window_ptr)
         {
-            if (c.proc.active_thread && c.proc.active_thread->teb64)
+            if (c.vcpu.active_thread && c.vcpu.active_thread->teb64)
             {
-                c.proc.active_thread->teb64->access([&](TEB64& teb) {
+                c.vcpu.active_thread->teb64->access([&](TEB64& teb) {
                     teb.Win32ClientInfo.arr[8] = active_handle;
                     teb.Win32ClientInfo.arr[9] = active_window_ptr;
                 });
             }
 
-            if (c.proc.is_wow64_process && c.proc.active_thread && c.proc.active_thread->teb32)
+            if (c.proc.is_wow64_process && c.vcpu.active_thread && c.vcpu.active_thread->teb32)
             {
                 uint32_t active_handle32{};
                 uint32_t active_window_ptr32{};
@@ -296,7 +296,7 @@ namespace sogen
                     active_window_ptr32 = static_cast<uint32_t>(active_window_ptr);
                 }
 
-                c.proc.active_thread->teb32->access([&](TEB32& teb) {
+                c.vcpu.active_thread->teb32->access([&](TEB32& teb) {
                     teb.Win32ClientInfo[8] = active_handle32;
                     teb.Win32ClientInfo[9] = active_window_ptr32;
                 });
@@ -911,7 +911,7 @@ namespace sogen
 
         uint64_t ensure_win32_thread_info(const syscall_context& c)
         {
-            auto* thread = c.proc.active_thread;
+            auto* thread = c.vcpu.active_thread;
             if (!thread || !thread->teb64)
             {
                 return 0;
@@ -940,7 +940,7 @@ namespace sogen
 
         void publish_win32_thread_info(const syscall_context& c, const uint64_t thread_info)
         {
-            auto* thread = c.proc.active_thread;
+            auto* thread = c.vcpu.active_thread;
             if (!thread || !thread->teb64 || thread_info == 0)
             {
                 return;
@@ -1347,12 +1347,12 @@ namespace sogen
         {
             if (routine == k_thread_state_message_time)
             {
-                return c.proc.active_thread ? c.proc.active_thread->current_message_time : 0;
+                return c.vcpu.active_thread ? c.vcpu.active_thread->current_message_time : 0;
             }
 
             if (routine == k_thread_state_dialog_state)
             {
-                return c.proc.active_thread ? c.proc.active_thread->win32k_thread_state : 0;
+                return c.vcpu.active_thread ? c.vcpu.active_thread->win32k_thread_state : 0;
             }
 
             if (routine != k_thread_state_win32_thread_info)
@@ -1368,10 +1368,10 @@ namespace sogen
 
             publish_win32_thread_info(c, thread_info);
 
-            if (c.proc.is_wow64_process && c.proc.active_thread && !c.proc.active_thread->win32k_thread_setup_done &&
-                !c.proc.active_thread->win32k_thread_setup_pending)
+            if (c.proc.is_wow64_process && c.vcpu.active_thread && !c.vcpu.active_thread->win32k_thread_setup_done &&
+                !c.vcpu.active_thread->win32k_thread_setup_pending)
             {
-                c.proc.active_thread->win32k_thread_setup_pending = true;
+                c.vcpu.active_thread->win32k_thread_setup_pending = true;
                 dispatch_user_callback(c, callback_id::NtUserGetThreadState, k_client_setup_callback_id);
                 return 0;
             }
@@ -1381,7 +1381,7 @@ namespace sogen
 
         uint64_t handle_NtUserSetThreadState(const syscall_context& c, const uint64_t value, const uint64_t mask)
         {
-            auto* thread = c.proc.active_thread;
+            auto* thread = c.vcpu.active_thread;
             if (!thread)
             {
                 return 0;
@@ -1444,10 +1444,10 @@ namespace sogen
                 }
             }
 
-            if (c.proc.active_thread)
+            if (c.vcpu.active_thread)
             {
-                c.proc.active_thread->win32k_thread_setup_pending = false;
-                c.proc.active_thread->win32k_thread_setup_done = true;
+                c.vcpu.active_thread->win32k_thread_setup_pending = false;
+                c.vcpu.active_thread->win32k_thread_setup_done = true;
             }
 
             return STATUS_SUCCESS;
@@ -1457,10 +1457,10 @@ namespace sogen
                                                         const emulator_pointer apfn_client_w, const emulator_pointer apfn_client_worker,
                                                         const emulator_pointer /*hmod_user*/)
         {
-            if (c.proc.active_thread)
+            if (c.vcpu.active_thread)
             {
-                c.proc.active_thread->win32k_thread_setup_pending = false;
-                c.proc.active_thread->win32k_thread_setup_done = true;
+                c.vcpu.active_thread->win32k_thread_setup_pending = false;
+                c.vcpu.active_thread->win32k_thread_setup_done = true;
             }
 
             if (!win32k_userconnect::try_update_client_pfn_arrays_from_addresses(c.win_emu.memory, c.proc, apfn_client_a, apfn_client_w,
@@ -1480,9 +1480,9 @@ namespace sogen
         hdesk handle_NtUserGetThreadDesktop(const syscall_context& c, const ULONG thread_id)
         {
             emulator_thread* target = nullptr;
-            if (thread_id == 0 || (c.proc.active_thread && c.proc.active_thread->id == thread_id))
+            if (thread_id == 0 || (c.vcpu.active_thread && c.vcpu.active_thread->id == thread_id))
             {
-                target = c.proc.active_thread;
+                target = c.vcpu.active_thread;
             }
             else
             {
@@ -2667,7 +2667,7 @@ namespace sogen
             win.y = y;
             win.width = width;
             win.height = height;
-            win.thread_id = c.win_emu.current_thread().id;
+            win.thread_id = c.thread().id;
             win.handle = handle.bits;
             if (!is_message_only)
             {
@@ -2953,7 +2953,7 @@ namespace sogen
                 return FALSE;
             }
 
-            if (win->thread_id != c.proc.active_thread->id)
+            if (win->thread_id != c.vcpu.active_thread->id)
             {
                 return FALSE;
             }
@@ -3070,7 +3070,7 @@ namespace sogen
                 return FALSE;
             }
 
-            if (win->thread_id != c.proc.active_thread->id)
+            if (win->thread_id != c.vcpu.active_thread->id)
             {
                 // TODO: Wait?
                 return FALSE;
@@ -3185,7 +3185,7 @@ namespace sogen
                 return write_message_call_result(c, result_info, result) ? TRUE : FALSE;
             }
 
-            if (win->thread_id != c.proc.active_thread->id)
+            if (win->thread_id != c.vcpu.active_thread->id)
             {
                 // TODO: This is a bit incorrect. We're supposed to wait until the message is received, but this is fine for a first
                 //       minimal version.
@@ -3328,7 +3328,7 @@ namespace sogen
                 return 0;
             }
 
-            if (win && win->thread_id != c.proc.active_thread->id)
+            if (win && win->thread_id != c.vcpu.active_thread->id)
             {
                 return 0;
             }
@@ -3372,7 +3372,7 @@ namespace sogen
         BOOL handle_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                      const UINT msg_filter_min, const UINT msg_filter_max)
         {
-            auto& t = c.win_emu.current_thread();
+            auto& t = c.thread();
 
             if (auto pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, true))
             {
@@ -3384,14 +3384,14 @@ namespace sogen
 
             t.await_msg = {message, hwnd, msg_filter_min, msg_filter_max};
 
-            c.win_emu.yield_thread(false);
+            c.win_emu.yield_thread(c.vcpu, false);
             return {};
         }
 
         BOOL handle_NtUserPeekMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                       const UINT msg_filter_min, const UINT msg_filter_max, const UINT remove_message)
         {
-            auto& t = c.win_emu.current_thread();
+            auto& t = c.thread();
 
             const bool should_remove = (remove_message & PM_REMOVE) != 0;
             std::optional<msg> pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, should_remove);
@@ -3409,14 +3409,14 @@ namespace sogen
 
         BOOL handle_NtUserWaitMessage(const syscall_context& c)
         {
-            auto& t = c.win_emu.current_thread();
+            auto& t = c.thread();
             if (t.peek_pending_message(c.win_emu))
             {
                 return TRUE;
             }
 
-            c.proc.active_thread->await_msg_mask = QS_ALLINPUT;
-            c.win_emu.yield_thread(false);
+            c.vcpu.active_thread->await_msg_mask = QS_ALLINPUT;
+            c.win_emu.yield_thread(c.vcpu, false);
             return {};
         }
 
@@ -3452,7 +3452,7 @@ namespace sogen
 
         void collect_pending_paint_tree(const syscall_context& c, window& win, std::vector<uint64_t>& order)
         {
-            if (win.update_pending && win.thread_id == c.proc.active_thread->id)
+            if (win.update_pending && win.thread_id == c.vcpu.active_thread->id)
             {
                 order.push_back(static_cast<uint64_t>(win.handle));
             }
@@ -3495,7 +3495,7 @@ namespace sogen
             // rely on this to display content without running a message loop, so a merely queued WM_PAINT would
             // never be pumped. Dispatch WM_PAINT now to the window and its invalid visible child controls.
             // Cross-thread windows cannot be painted on this thread, so fall back to posting the paint.
-            if (win->thread_id != c.proc.active_thread->id)
+            if (win->thread_id != c.vcpu.active_thread->id)
             {
                 if (win->update_pending)
                 {
@@ -3546,7 +3546,7 @@ namespace sogen
                 return FALSE;
             }
 
-            uint32_t target_thread_id = hwnd != 0 ? win->thread_id : c.win_emu.current_thread().id;
+            uint32_t target_thread_id = hwnd != 0 ? win->thread_id : c.thread().id;
 
             if (auto* thread = c.proc.find_thread_by_id(target_thread_id))
             {
@@ -3586,7 +3586,7 @@ namespace sogen
             qmsg.message = WM_QUIT;
             qmsg.wParam = exit_code;
 
-            c.proc.active_thread->post_message(c.win_emu, qmsg);
+            c.vcpu.active_thread->post_message(c.win_emu, qmsg);
             return TRUE;
         }
 
@@ -4764,7 +4764,7 @@ namespace sogen
                 interval = k_user_timer_minimum;
             }
 
-            auto* target_thread = c.proc.active_thread;
+            auto* target_thread = c.vcpu.active_thread;
 
             if (hwnd != 0)
             {
@@ -4811,7 +4811,7 @@ namespace sogen
 
         BOOL handle_NtUserKillTimer(const syscall_context& c, const hwnd hwnd, const uint64_t timer_id)
         {
-            auto* target_thread = c.proc.active_thread;
+            auto* target_thread = c.vcpu.active_thread;
 
             if (hwnd != 0)
             {
@@ -4862,7 +4862,7 @@ namespace sogen
 
         uint32_t handle_NtUserGetQueueStatusReadonly(const syscall_context& c, const UINT flags)
         {
-            auto* thread = c.proc.active_thread;
+            auto* thread = c.vcpu.active_thread;
             const auto current_bits = thread->get_message_queue_status(c.win_emu) & flags;
             const auto changed_bits = thread->queue_status_changed_bits & flags;
             return current_bits | (changed_bits << 16);
@@ -4871,7 +4871,7 @@ namespace sogen
         uint32_t handle_NtUserGetQueueStatus(const syscall_context& c, const UINT flags)
         {
             const auto result = handle_NtUserGetQueueStatusReadonly(c, flags);
-            c.proc.active_thread->queue_status_changed_bits &= ~flags;
+            c.vcpu.active_thread->queue_status_changed_bits &= ~flags;
             return result;
         }
 

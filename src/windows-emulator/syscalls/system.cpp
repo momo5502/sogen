@@ -105,7 +105,8 @@ namespace sogen
                     group.MaximumGroupCount = 1;
 
                     auto& group_info = group.GroupInfo[0];
-                    group_info.ActiveProcessorCount = static_cast<uint8_t>(c.proc.kusd.get().ActiveProcessorCount);
+                    group_info.ActiveProcessorCount =
+                        static_cast<uint8_t>(c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; }));
                     group_info.ActiveProcessorMask = (1ULL << group_info.ActiveProcessorCount) - 1;
                     group_info.MaximumProcessorCount = group_info.ActiveProcessorCount;
 
@@ -277,9 +278,9 @@ namespace sogen
 
             uint64_t process_id = process_context::process_id;
             uint64_t active_tid = 0;
-            if (c.proc.active_thread && c.proc.active_thread->teb64)
+            if (c.vcpu.active_thread && c.vcpu.active_thread->teb64)
             {
-                c.proc.active_thread->teb64->access([&](const TEB64& teb) {
+                c.vcpu.active_thread->teb64->access([&](const TEB64& teb) {
                     process_id = teb.ClientId.UniqueProcess;
                     active_tid = teb.ClientId.UniqueThread;
                 });
@@ -468,7 +469,7 @@ namespace sogen
                 // IdleTime == KernelTime (Windows kernel time includes idle), UserTime == 0. Use the
                 // executed-instruction tick as a monotonic clock so consecutive samples differ and callers
                 // computing usage from deltas don't divide by zero.
-                const auto processor_count = c.proc.kusd.get().ActiveProcessorCount;
+                const auto processor_count = c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
                 constexpr auto entry_size = sizeof(SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION);
                 const auto required = static_cast<uint32_t>(processor_count * entry_size);
 
@@ -548,7 +549,8 @@ namespace sogen
                     if (processor_group == 0)
                     {
                         using mask_type = decltype(info.ProcessorMask);
-                        const auto active_processor_count = c.proc.kusd.get().ActiveProcessorCount;
+                        const auto active_processor_count =
+                            c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
                         info.ProcessorMask = (static_cast<mask_type>(1) << active_processor_count) - 1;
                     }
                 });
@@ -556,19 +558,21 @@ namespace sogen
 
             case SystemBasicInformation:
             case SystemEmulationBasicInformation:
-                return handle_query<SYSTEM_BASIC_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
-                                                                [&](SYSTEM_BASIC_INFORMATION64& basic_info) {
-                                                                    basic_info.Reserved = 0;
-                                                                    basic_info.TimerResolution = 0x0002625a;
-                                                                    basic_info.PageSize = 0x1000;
-                                                                    basic_info.LowestPhysicalPageNumber = 0x00000001;
-                                                                    basic_info.HighestPhysicalPageNumber = 0x00c9c7ff;
-                                                                    basic_info.AllocationGranularity = ALLOCATION_GRANULARITY;
-                                                                    basic_info.MinimumUserModeAddress = MIN_ALLOCATION_ADDRESS;
-                                                                    basic_info.MaximumUserModeAddress = MAX_ALLOCATION_ADDRESS;
-                                                                    basic_info.ActiveProcessorsAffinityMask = 0x0000000000000f;
-                                                                    basic_info.NumberOfProcessors = 4;
-                                                                });
+                return handle_query<SYSTEM_BASIC_INFORMATION64>(
+                    c.emu, system_information, system_information_length, return_length, [&](SYSTEM_BASIC_INFORMATION64& basic_info) {
+                        basic_info.Reserved = 0;
+                        basic_info.TimerResolution = 0x0002625a;
+                        basic_info.PageSize = 0x1000;
+                        basic_info.LowestPhysicalPageNumber = 0x00000001;
+                        basic_info.HighestPhysicalPageNumber = 0x00c9c7ff;
+                        basic_info.AllocationGranularity = ALLOCATION_GRANULARITY;
+                        basic_info.MinimumUserModeAddress = MIN_ALLOCATION_ADDRESS;
+                        basic_info.MaximumUserModeAddress = MAX_ALLOCATION_ADDRESS;
+                        const auto processor_count =
+                            c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
+                        basic_info.ActiveProcessorsAffinityMask = (processor_count >= 64) ? ~0ull : ((1ull << processor_count) - 1);
+                        basic_info.NumberOfProcessors = static_cast<char>(processor_count);
+                    });
 
             case SystemDeviceInformation:
                 return handle_query<SYSTEM_DEVICE_INFORMATION>(c.emu, system_information, system_information_length, return_length,
