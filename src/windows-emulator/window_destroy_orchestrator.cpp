@@ -187,7 +187,7 @@ namespace sogen
     {
         if (frame.window_pos_alloc)
         {
-            this->emu_.pop_stack(std::move(frame.window_pos_alloc));
+            this->emu_.pop_stack(frame.window_pos_alloc);
         }
     }
 

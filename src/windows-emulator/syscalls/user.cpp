@@ -2947,12 +2947,12 @@ namespace sogen
 
             if (s.window_pos_alloc)
             {
-                c.emu.pop_stack(std::move(s.window_pos_alloc));
+                c.emu.pop_stack(s.window_pos_alloc);
             }
 
-            c.emu.pop_stack(std::move(s.min_max_info_alloc));
-            c.emu.pop_stack(std::move(s.window_rect_alloc));
-            c.emu.pop_stack(std::move(s.create_struct_alloc));
+            c.emu.pop_stack(s.min_max_info_alloc);
+            c.emu.pop_stack(s.window_rect_alloc);
+            c.emu.pop_stack(s.create_struct_alloc);
 
             return s.handle;
         }
@@ -3177,7 +3177,7 @@ namespace sogen
                 return {};
             }
 
-            c.emu.pop_stack(std::move(s.window_pos_alloc));
+            c.emu.pop_stack(s.window_pos_alloc);
 
             return s.was_visible ? TRUE : FALSE;
         }

@@ -128,7 +128,8 @@ namespace sogen
         {
             if (*this)
             {
-                emulator_stack_leak_collector::report_leak({address_, previous_stack_pointer_, origin_});
+                emulator_stack_leak_collector::report_leak(
+                    {.address = address_, .previous_stack_pointer = previous_stack_pointer_, .origin = origin_});
             }
         }
 
@@ -142,6 +143,8 @@ namespace sogen
         {
         }
 
+        // This operation deliberately rejects overwriting a live allocation instead of terminating.
+        // NOLINTNEXTLINE(cppcoreguidelines-noexcept-move-operations,hicpp-noexcept-move,performance-noexcept-move-constructor)
         emulator_stack_allocation& operator=(emulator_stack_allocation&& other)
         {
             if (this != &other)
@@ -402,7 +405,7 @@ namespace sogen
             return emulator_stack_allocation{new_rsp, old_rsp, origin};
         }
 
-        void pop_stack(emulator_stack_allocation&& allocation)
+        void pop_stack(emulator_stack_allocation& allocation)
         {
             if (!allocation)
             {
