@@ -1,9 +1,16 @@
-# Runs `cargo build` for the icicle bridge, retrying transient GitHub/crates.io
-# network failures (curl 56, OpenSSL "unexpected eof while reading", registry/git
-# fetch errors) that frequently break CI. Genuine build errors are NOT retried:
-# only failures whose output matches a known network-error signature trigger a
-# retry, so a real compile error fails fast. Invoked via `cmake -P` from
-# CMakeLists.txt; per-request robustness lives in .cargo/config.toml.
+# Builds the icicle bridge in two phases so we never have to guess whether a
+# failure was a transient network blip or a genuine build error:
+#
+#   1. `cargo fetch` downloads every dependency (git + crates.io). This phase is
+#      pure network, so ANY failure is a fetch failure and is retried to ride out
+#      the frequent GitHub/crates.io flakiness in CI (curl 56, OpenSSL
+#      "unexpected eof while reading", ...).
+#   2. `cargo build --offline` compiles against the already-fetched deps with no
+#      network access and no retries — a failure here is a real build error and
+#      fails fast.
+#
+# Invoked via `cmake -P` from CMakeLists.txt; per-request fetch robustness lives
+# in .cargo/config.toml.
 
 if(NOT DEFINED CARGO_RETRIES)
   set(CARGO_RETRIES 5)
@@ -13,48 +20,47 @@ if(NOT DEFINED CARGO_RETRY_DELAY)
   set(CARGO_RETRY_DELAY 15)
 endif()
 
-# Lowercased substrings that identify a transient network / dependency-fetch
-# failure (matched against cargo's combined output). Kept deliberately specific
-# so genuine build errors don't accidentally look retryable.
-set(network_error_pattern
-    "failed to get|failed to download|failed to load source|unable to update registry|spurious network error|unexpected eof|ssl|curl|timed out|failed to fetch|network failure|connection reset|connection closed|error sending request|could not download|failed to clone|download of")
-
-set(cargo_args build --lib --profile ${CARGO_PROFILE})
+set(target_option)
 if(CARGO_TRIPLE)
-  list(APPEND cargo_args --target=${CARGO_TRIPLE})
+  set(target_option --target=${CARGO_TRIPLE})
 endif()
 
+set(cargo_env ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${CARGO_TARGET_DIR}" --)
+
+# Phase 1: fetch dependencies, retrying transient network failures.
 set(attempt 1)
 while(TRUE)
-  message(STATUS "icicle: cargo build (attempt ${attempt}/${CARGO_RETRIES})")
+  message(STATUS "icicle: cargo fetch (attempt ${attempt}/${CARGO_RETRIES})")
 
-  # Capture the output so we can classify the failure, while still streaming it live.
   execute_process(
-    COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${CARGO_TARGET_DIR}" -- cargo ${cargo_args}
+    COMMAND ${cargo_env} cargo fetch ${target_option}
     WORKING_DIRECTORY ${CARGO_MANIFEST_DIR}
-    RESULT_VARIABLE result
-    OUTPUT_VARIABLE stdout_text
-    ERROR_VARIABLE stderr_text
-    ECHO_OUTPUT_VARIABLE
-    ECHO_ERROR_VARIABLE
+    RESULT_VARIABLE fetch_result
   )
 
-  if(result EQUAL 0)
+  if(fetch_result EQUAL 0)
     break()
   endif()
 
-  string(TOLOWER "${stdout_text}${stderr_text}" combined_lower)
-  string(REGEX MATCH "${network_error_pattern}" network_error "${combined_lower}")
-
-  if(NOT network_error)
-    message(FATAL_ERROR "icicle: cargo build failed (exit ${result}); output is not a transient network error, not retrying")
-  endif()
-
   if(attempt GREATER_EQUAL CARGO_RETRIES)
-    message(FATAL_ERROR "icicle: cargo build failed after ${CARGO_RETRIES} attempts due to network errors (last exit code: ${result})")
+    message(FATAL_ERROR "icicle: cargo fetch failed after ${CARGO_RETRIES} attempts (last exit code: ${fetch_result})")
   endif()
 
-  message(WARNING "icicle: cargo build hit a transient network error (exit ${result}); retrying in ${CARGO_RETRY_DELAY}s")
+  message(WARNING "icicle: cargo fetch failed (exit ${fetch_result}); retrying in ${CARGO_RETRY_DELAY}s")
   execute_process(COMMAND ${CMAKE_COMMAND} -E sleep ${CARGO_RETRY_DELAY})
   math(EXPR attempt "${attempt} + 1")
 endwhile()
+
+# Phase 2: build offline against the fetched deps. No retries: a failure here is a
+# genuine build error and should surface immediately.
+message(STATUS "icicle: cargo build (offline)")
+
+execute_process(
+  COMMAND ${cargo_env} cargo build --offline --lib --profile ${CARGO_PROFILE} ${target_option}
+  WORKING_DIRECTORY ${CARGO_MANIFEST_DIR}
+  RESULT_VARIABLE build_result
+)
+
+if(NOT build_result EQUAL 0)
+  message(FATAL_ERROR "icicle: cargo build failed (exit ${build_result})")
+endif()
