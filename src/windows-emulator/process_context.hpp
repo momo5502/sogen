@@ -421,6 +421,9 @@ namespace sogen
         // Per-virtual-key pressed state (0x80 = down), updated from key/mouse-button events and reported by
         // GetKeyState; games poll this for in-game input (movement, etc.) rather than window messages.
         std::array<uint8_t, 256> key_state{};
+        // Per-virtual-key transition state for GetAsyncKeyState's low bit. A value of 1 means the key or
+        // mouse button was pressed since the last GetAsyncKeyState query for that virtual key.
+        std::array<uint8_t, 256> async_key_state{};
 
         // Raw mouse input registration (NtUserRegisterRawInputDevices). When registered, mouse motion
         // synthesizes relative-mouse RAWINPUT delivered as WM_INPUT, so in-game mouse-look works.
@@ -435,13 +438,15 @@ namespace sogen
         // HRAWINPUT token posted in WM_INPUT's lParam; consumed by NtUserGetRawInputData.
         struct raw_input_payload
         {
-            bool keyboard{};          // false = mouse, true = keyboard
-            int32_t dx{};             // mouse relative motion
-            int32_t dy{};             //
-            uint16_t mouse_buttons{}; // RI_MOUSE_* button transition flags
-            uint16_t vkey{};          // keyboard virtual key
-            uint16_t scan_code{};     // keyboard scan code
-            uint16_t key_release{};   // 0 = key down (RI_KEY_MAKE), 1 = key up (RI_KEY_BREAK)
+            bool keyboard{};              // false = mouse, true = keyboard
+            int32_t dx{};                 // mouse relative motion
+            int32_t dy{};                 //
+            uint16_t mouse_buttons{};     // RI_MOUSE_* button transition flags
+            uint16_t mouse_button_data{}; // wheel delta for RI_MOUSE_WHEEL/RI_MOUSE_HWHEEL
+            uint16_t vkey{};              // keyboard virtual key
+            uint16_t scan_code{};         // keyboard scan code
+            uint32_t key_message{};       // corresponding WM_KEY* or WM_SYSKEY* message
+            bool key_extended{};          // true when the key's scan code has an E0 prefix (lParam bit 24)
         };
         std::map<uint32_t, raw_input_payload> raw_inputs{};
         uint32_t next_raw_input_token{1};

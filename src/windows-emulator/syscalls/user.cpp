@@ -1859,16 +1859,21 @@ namespace sogen
                 {
                     RAWKEYBOARD32 keyboard{};
                     keyboard.MakeCode = payload.scan_code;
-                    keyboard.Flags = payload.key_release; // RI_KEY_MAKE (0) / RI_KEY_BREAK (1)
+                    const bool key_release = payload.key_message == WM_KEYUP || payload.key_message == WM_SYSKEYUP;
+                    keyboard.Flags =
+                        static_cast<uint16_t>((key_release ? RI_KEY_BREAK : RI_KEY_MAKE) | (payload.key_extended ? RI_KEY_E0 : 0));
                     keyboard.VKey = payload.vkey;
-                    keyboard.Message = payload.key_release ? WM_KEYUP : WM_KEYDOWN;
+                    keyboard.Message = payload.key_message;
                     std::memcpy(buffer.data() + header_size, &keyboard, sizeof(keyboard));
                 }
                 else
                 {
                     RAWMOUSE32 mouse{};
                     mouse.usFlags = MOUSE_MOVE_RELATIVE;
-                    mouse.ulButtons = payload.mouse_buttons; // low 16 bits == usButtonFlags
+                    // RAWMOUSE has a usButtonFlags/usButtonData union packed into ulButtons. The high
+                    // word carries wheel delta for RI_MOUSE_WHEEL/RI_MOUSE_HWHEEL.
+                    mouse.ulButtons =
+                        static_cast<uint32_t>(payload.mouse_buttons) | (static_cast<uint32_t>(payload.mouse_button_data) << 16);
                     mouse.lLastX = payload.dx;
                     mouse.lLastY = payload.dy;
                     std::memcpy(buffer.data() + header_size, &mouse, sizeof(mouse));
@@ -2116,8 +2121,8 @@ namespace sogen
         }
 
         // GetKeyState / GetAsyncKeyState report whether a virtual key (or mouse button) is currently down.
-        // Games poll these for in-game input instead of consuming WM_KEYDOWN messages. The high bit (0x8000)
-        // means down; the tracked state is maintained from key/button events in handle_ui_event.
+        // Games poll these for in-game input instead of consuming WM_KEYDOWN messages. GetKeyState reports the
+        // high down bit; GetAsyncKeyState additionally returns the low pressed-since-last-query bit.
         uint32_t handle_NtUserGetKeyState(const syscall_context& c, const int32_t virtual_key)
         {
             return (c.proc.key_state[static_cast<uint32_t>(virtual_key) & 0xFF] & 0x80) ? 0x8000u : 0u;
@@ -2125,7 +2130,14 @@ namespace sogen
 
         uint32_t handle_NtUserGetAsyncKeyState(const syscall_context& c, const int32_t virtual_key)
         {
-            return (c.proc.key_state[static_cast<uint32_t>(virtual_key) & 0xFF] & 0x80) ? 0x8000u : 0u;
+            const auto key = static_cast<uint32_t>(virtual_key) & 0xFF;
+            uint32_t result = (c.proc.key_state[key] & 0x80) ? 0x8000u : 0u;
+            if (c.proc.async_key_state[key] != 0)
+            {
+                result |= 0x0001u;
+                c.proc.async_key_state[key] = 0;
+            }
+            return result;
         }
 
         // The host pointer is shown only when the display count is non-negative and the current cursor has a

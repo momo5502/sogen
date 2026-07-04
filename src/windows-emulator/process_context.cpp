@@ -598,6 +598,7 @@ namespace sogen
         buffer.write(this->cursor_show_count);
         buffer.write(this->cursor_shape_visible);
         buffer.write(this->key_state);
+        buffer.write(this->async_key_state);
         buffer.write(this->raw_mouse_registered);
         buffer.write(this->raw_mouse_target);
         buffer.write(this->raw_keyboard_registered);
@@ -687,6 +688,7 @@ namespace sogen
         buffer.read(this->cursor_show_count);
         buffer.read(this->cursor_shape_visible);
         buffer.read(this->key_state);
+        buffer.read(this->async_key_state);
         buffer.read(this->raw_mouse_registered);
         buffer.read(this->raw_mouse_target);
         buffer.read(this->raw_keyboard_registered);
