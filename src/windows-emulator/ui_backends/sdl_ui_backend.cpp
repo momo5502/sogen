@@ -818,10 +818,7 @@ namespace sogen
                         {
                             this->set_window_active(guest, true);
 
-                            float mouse_x = 0.0f;
-                            float mouse_y = 0.0f;
-                            SDL_GetMouseState(&mouse_x, &mouse_y);
-                            const auto point = this->map_window_point(guest, mouse_x, mouse_y);
+                            const auto point = this->map_window_point(guest, event.wheel.mouse_x, event.wheel.mouse_y);
 
                             if (const auto delta_y = sdl_wheel_delta(event.wheel.y); delta_y != 0)
                             {
