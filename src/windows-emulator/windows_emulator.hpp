@@ -93,10 +93,6 @@ namespace sogen
         bool use_relative_time{false};
         bool use_instruction_precision{true};
 
-        // Number of virtual CPUs to run guest threads on. Values above 1 require a
-        // backend where supports_multiple_vcpus() is true (see docs/multi-vcpu-design.md).
-        uint32_t vcpu_count{1};
-
         std::filesystem::path emulation_root{};
         std::filesystem::path registry_directory{"./registry"};
 

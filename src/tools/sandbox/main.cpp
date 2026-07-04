@@ -71,13 +71,9 @@ namespace sogen::sandbox
             {
                 vcpu_count = std::clamp(static_cast<uint32_t>(std::strtoul(env, nullptr, 10)), 1u, 64u);
             }
-#else
-            // The KVM backend does not support multiple vCPUs yet.
-            constexpr uint32_t vcpu_count = 1;
 #endif
 
             emulator_settings settings{
-                .vcpu_count = vcpu_count,
                 .registry_directory = get_current_binary_dir() / "registry",
             };
 

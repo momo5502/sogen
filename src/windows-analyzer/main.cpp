@@ -472,7 +472,6 @@ namespace sogen
             return {
                 .use_relative_time = options.reproducible,
                 .use_instruction_precision = !options.disable_instruction_precision,
-                .vcpu_count = options.vcpu_count,
                 .emulation_root = options.emulation_root,
                 .registry_directory = options.registry_path,
                 .path_mappings = options.path_mappings,

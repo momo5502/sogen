@@ -573,10 +573,10 @@ namespace sogen
         // thread running on a higher-indexed vCPU would report a processor number the guest
         // considers out of range. The configured fake value still wins when it is larger (e.g. the
         // anti-analysis default of 4 with a single vCPU).
-        fake_environment_config effective_fake_env(const emulator_settings& settings)
+        fake_environment_config effective_fake_env(const emulator_settings& settings, const uint32_t vcpu_count)
         {
             auto fake_env = settings.fake_env;
-            fake_env.number_of_processors = std::max(fake_env.number_of_processors, settings.vcpu_count);
+            fake_env.number_of_processors = std::max(fake_env.number_of_processors, vcpu_count);
             return fake_env;
         }
     }
@@ -597,7 +597,7 @@ namespace sogen
           socket_factory_(get_socket_factory(interfaces)),
           ui_backend_(get_ui_backend(interfaces)),
           emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
-          fake_env(effective_fake_env(settings)),
+          fake_env(effective_fake_env(settings, static_cast<uint32_t>(this->emu_->vcpu_count()))),
           callbacks(std::move(callbacks)),
           file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
           memory(*this->emu_),
@@ -606,7 +606,7 @@ namespace sogen
           process(*this->emu_, memory, *this->clock_, this->callbacks),
           use_relative_time_(settings.use_relative_time),
           instruction_precision_(settings.use_instruction_precision && this->emu_->supports_instruction_counting()),
-          vcpu_count_(settings.vcpu_count)
+          vcpu_count_(static_cast<uint32_t>(this->emu_->vcpu_count()))
     {
         if (this->vcpu_count_ == 0)
         {
@@ -616,11 +616,6 @@ namespace sogen
         if (this->vcpu_count_ > 1 && !this->emu_->supports_multiple_vcpus())
         {
             throw std::invalid_argument("The " + this->emu_->get_name() + " backend does not support multiple vCPUs");
-        }
-
-        if (this->vcpu_count_ > this->emu_->vcpu_count())
-        {
-            throw std::invalid_argument("The emulator backend was created with fewer vCPUs than requested");
         }
 
         if (this->vcpu_count_ > 1)
