@@ -112,11 +112,15 @@ namespace sogen::icicle
             return std::make_unique<function_object<T>>(std::move(func), &hook_state);
         }
 
+        // memory_access_hook_callback with the leading cpu_interface& stripped: bind_cpu binds icicle's
+        // single vCPU into the callback (icicle is single-vCPU), so the stored callback takes no cpu.
+        using bound_memory_access_hook_callback = std::function<void(uint64_t address, const void* data, size_t size)>;
+
         struct memory_access_hook
         {
             uint64_t address{};
             uint64_t size{};
-            std::function<void(uint64_t address, const void* data, size_t size)> callback{};
+            bound_memory_access_hook_callback callback{};
             bool is_read{};
         };
 
