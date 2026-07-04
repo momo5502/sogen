@@ -349,6 +349,23 @@ namespace
             return false;
         }
 
+        constexpr DWORD negative_length_low = 0xFFFFFFFFUL;
+        constexpr DWORD negative_length_high = 0xFFFFFFFFUL;
+
+        OVERLAPPED negative_lock{};
+        if (!LockFileEx(first, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, negative_length_low, negative_length_high,
+                        &negative_lock))
+        {
+            puts("Failed to acquire negative-length file lock");
+            return false;
+        }
+
+        if (!UnlockFileEx(first, 0, negative_length_low, negative_length_high, &negative_lock))
+        {
+            puts("Failed to unlock negative-length file lock");
+            return false;
+        }
+
         return true;
     }
 
