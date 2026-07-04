@@ -129,7 +129,7 @@ namespace sogen
                 c.win_emu.log.warn("--> File rename requested: %s --> %s\n", u16_to_u8(f->name).c_str(), u16_to_u8(new_name).c_str());
 
                 std::error_code ec{};
-                bool file_exists = std::filesystem::exists(new_name, ec);
+                bool file_exists = std::filesystem::exists(c.win_emu.file_sys.translate(new_name), ec);
 
                 if (ec)
                 {
