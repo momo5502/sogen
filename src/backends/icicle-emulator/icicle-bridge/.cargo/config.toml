@@ -1,0 +1,12 @@
+# Harden the icicle Rust build against the frequent GitHub/crates.io network
+# flakiness seen in CI (curl 56 / OpenSSL "unexpected eof while reading"). The
+# CMake build wraps cargo in a process-level retry loop (see the sibling
+# CMakeLists.txt / cargo_build_with_retry.cmake) as an outer safety net; these
+# settings reduce how often that net is needed in the first place.
+
+[net]
+retry = 10                 # retry transient registry/download failures (cargo default is 3)
+git-fetch-with-cli = true  # fetch git deps via the system git — more robust than libgit2, honors git's http config
+
+[http]
+multiplexing = false       # disable HTTP/2 multiplexing; avoids some mid-stream EOFs on flaky connections
