@@ -779,8 +779,7 @@ namespace sogen
 
         const auto apiset_data = apiset::obtain(this->emulation_root);
 
-        this->process.setup(this->emu(), this->memory, this->registry, this->file_sys, this->version, this->fake_env,
-                            this->application_settings_, *executable, *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32);
+        this->process.setup(*this, this->application_settings_, *executable, *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32);
 
         const auto ntdll_data = emu.read_memory(ntdll->image_base, static_cast<size_t>(ntdll->size_of_image));
         const auto win32u_data = emu.read_memory(win32u->image_base, static_cast<size_t>(win32u->size_of_image));

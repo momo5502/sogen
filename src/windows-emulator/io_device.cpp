@@ -7,6 +7,7 @@
 #include "devices/named_pipe.hpp"
 #include "devices/network_store_interface.hpp"
 #include "devices/gpu_bridge.hpp"
+#include "devices/console.hpp"
 #include <iostream>
 
 namespace sogen
@@ -59,6 +60,11 @@ namespace sogen
             || device == u"ConDrv\\Server")
         {
             return std::make_unique<dummy_device>();
+        }
+
+        if (device == u"Console")
+        {
+            return create_console_device();
         }
 
         if (device == u"Nsi")

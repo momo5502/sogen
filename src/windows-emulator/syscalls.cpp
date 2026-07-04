@@ -3,6 +3,7 @@
 #include "cpu_context.hpp"
 #include "emulator_utils.hpp"
 #include "syscall_utils.hpp"
+#include "devices/console.hpp"
 
 #include <numeric>
 #include <cwctype>
@@ -904,7 +905,8 @@ namespace sogen
                                               const ULONG input_buffer_length, const emulator_pointer output_buffer,
                                               const ULONG output_buffer_length)
         {
-            auto* device = c.proc.devices.get(file_handle);
+            const auto resolved_file_handle = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
+            auto* device = c.proc.devices.get(resolved_file_handle);
             if (!device)
             {
                 return STATUS_INVALID_HANDLE;

@@ -330,10 +330,8 @@ namespace sogen
         {
         }
 
-        void setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, file_system& file_system,
-                   windows_version_manager& version, const fake_environment_config& fake_env, const application_settings& app_settings,
-                   const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container,
-                   const mapped_module* ntdll32 = nullptr);
+        void setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
+                   const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32 = nullptr);
 
         handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, uint32_t create_flags,
                              bool initial_thread = false);
@@ -464,6 +462,7 @@ namespace sogen
         utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
         handle_store<handle_types::section, section> sections{};
         handle_store<handle_types::device, io_device_container> devices{};
+        handle console_handle{};
         handle_store<handle_types::semaphore, semaphore> semaphores{};
         handle_store<handle_types::io_completion, io_completion> io_completions{};
         handle_store<handle_types::wait_completion_packet, wait_completion_packet> wait_completion_packets{};
