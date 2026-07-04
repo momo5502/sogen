@@ -126,6 +126,12 @@ jobs:
     needs: [ci]
     if: ${{ github.repository_owner == 'momo5502' && github.ref == 'refs/heads/main' && needs.ci.result == 'success' }}
     runs-on: ubuntu-24.04
+    # Serialize publishes so two runs never upload to PyPI at once (a concurrent
+    # upload of the same version races and one attempt fails). Let an in-progress
+    # publish finish rather than cancelling it mid-upload.
+    concurrency:
+      group: pypi-publish
+      cancel-in-progress: false
     permissions:
       contents: read
       actions: read
