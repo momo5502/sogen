@@ -1847,6 +1847,13 @@ namespace sogen
 
                 const auto avail = static_cast<uint32_t>(context.output_buffer_length - sizeof(response_t));
                 const auto data_size = std::min<uint32_t>(request.data_size, avail);
+
+                if (request.query_count > 0 && request.stride > 0 &&
+                    static_cast<uint64_t>(request.stride) * request.query_count > data_size)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 std::vector<std::byte> data(data_size);
                 size_t written = 0;
                 const int32_t result =
