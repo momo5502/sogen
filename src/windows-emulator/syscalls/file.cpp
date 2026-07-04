@@ -26,6 +26,36 @@ namespace sogen
                 return path.find_first_of(invalid_characters) == std::u16string_view::npos;
             }
 
+            std::u16string resolve_system_root_path(const syscall_context& c, std::u16string filename)
+            {
+                auto filename_upper = filename;
+                std::ranges::transform(filename_upper, filename_upper.begin(), ::towupper);
+
+                constexpr std::u16string_view system_root_prefix = u"\\SYSTEMROOT";
+                if (filename_upper != system_root_prefix &&
+                    !(filename_upper.size() > system_root_prefix.size() && filename_upper.starts_with(system_root_prefix) &&
+                      windows_path_detail::is_slash(filename_upper[system_root_prefix.size()])))
+                {
+                    return filename;
+                }
+
+                const auto system_root =
+                    c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return std::u16string{kusd.NtSystemRoot.arr}; });
+                const auto suffix = std::u16string_view{filename}.substr(system_root_prefix.size());
+                filename = system_root;
+
+                if (!suffix.empty() && windows_path_detail::is_slash(filename.back()) && windows_path_detail::is_slash(suffix.front()))
+                {
+                    filename.append(suffix.substr(1));
+                }
+                else
+                {
+                    filename.append(suffix);
+                }
+
+                return filename;
+            }
+
             std::pair<utils::file_handle, NTSTATUS> open_file(const file_system& file_sys, const windows_path& path,
                                                               const std::u16string& mode)
             {
@@ -1669,24 +1699,7 @@ namespace sogen
             std::u16string filename_upper = filename;
             std::ranges::transform(filename_upper, filename_upper.begin(), ::towupper);
 
-            constexpr std::u16string_view system_root_prefix = u"\\SYSTEMROOT";
-            if (filename_upper == system_root_prefix ||
-                (filename_upper.size() > system_root_prefix.size() && filename_upper.starts_with(system_root_prefix) &&
-                 windows_path_detail::is_slash(filename_upper[system_root_prefix.size()])))
-            {
-                const std::u16string_view system_root = c.proc.kusd.get().NtSystemRoot.arr;
-                const auto suffix = std::u16string_view{filename}.substr(system_root_prefix.size());
-                filename = std::u16string(system_root);
-
-                if (!suffix.empty() && windows_path_detail::is_slash(filename.back()) && windows_path_detail::is_slash(suffix.front()))
-                {
-                    filename.append(suffix.substr(1));
-                }
-                else
-                {
-                    filename.append(suffix);
-                }
-            }
+            filename = resolve_system_root_path(c, std::move(filename));
 
             // Handle console output device
             if (filename_upper == u"\\??\\CONOUT$" || filename_upper == u"\\DEVICE\\CONOUT$" || filename_upper == u"CONOUT$" ||
@@ -1941,6 +1954,8 @@ namespace sogen
                 filename = root->name + (has_separator ? u"" : u"\\") + filename;
             }
 
+            filename = resolve_system_root_path(c, std::move(filename));
+
             c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
             const windows_path filepath(filename);
@@ -2004,6 +2019,8 @@ namespace sogen
                 const auto has_separator = root->name.ends_with(u"\\") || root->name.ends_with(u"/");
                 filename = root->name + (has_separator ? u"" : u"\\") + filename;
             }
+
+            filename = resolve_system_root_path(c, std::move(filename));
 
             c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
