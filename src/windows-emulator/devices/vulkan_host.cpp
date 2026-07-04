@@ -4677,6 +4677,23 @@ namespace sogen
         // the two info structs must outlive the vkCreateGraphicsPipelines call below.
         std::array<std::vector<VkSpecializationMapEntry>, 2> spec_map_entries;
         std::array<VkSpecializationInfo, 2> spec_infos{};
+
+        const auto valid_spec = [](const specialization& spec) {
+            for (const auto& e : spec.entries)
+            {
+                if (e.offset > spec.data.size() || e.size > spec.data.size() - e.offset)
+                {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        if (!valid_spec(vs_spec) || !valid_spec(fs_spec))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
         const auto build_spec = [&](const specialization& spec, size_t idx) -> const VkSpecializationInfo* {
             if (spec.entries.empty() || spec.data.empty())
             {

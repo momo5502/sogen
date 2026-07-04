@@ -1976,7 +1976,7 @@ namespace sogen
 
                 const size_t bindings_bytes = static_cast<size_t>(request.binding_count) * sizeof(gpu_bridge::vertex_input_binding);
                 const size_t attributes_bytes = static_cast<size_t>(request.attribute_count) * sizeof(gpu_bridge::vertex_input_attribute);
-                if (bindings_bytes + attributes_bytes > trailer.size())
+                if (bindings_bytes > trailer.size() || attributes_bytes > trailer.size() - bindings_bytes)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -2003,7 +2003,11 @@ namespace sogen
 
                 std::vector<uint32_t> dynamic_states(request.dynamic_state_count);
                 const size_t dynamic_bytes = static_cast<size_t>(request.dynamic_state_count) * sizeof(uint32_t);
-                if (bindings_bytes + attributes_bytes + dynamic_bytes <= trailer.size() && request.dynamic_state_count > 0)
+                if (dynamic_bytes > trailer.size() - bindings_bytes - attributes_bytes)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                if (request.dynamic_state_count > 0)
                 {
                     std::memcpy(dynamic_states.data(), trailer.data() + bindings_bytes + attributes_bytes, dynamic_bytes);
                 }
@@ -2016,11 +2020,11 @@ namespace sogen
                 std::vector<uint8_t> vs_data;
                 std::vector<uint8_t> fs_data;
                 const auto parse_spec = [&](uint32_t entry_count, uint32_t data_size, std::vector<vulkan_host::spec_entry>& entries,
-                                            std::vector<uint8_t>& data) {
+                                            std::vector<uint8_t>& data) -> bool {
                     const size_t entries_bytes = static_cast<size_t>(entry_count) * sizeof(gpu_bridge::specialization_map_entry);
-                    if (spec_cursor + entries_bytes + data_size > trailer.size())
+                    if (entries_bytes > trailer.size() - spec_cursor || data_size > trailer.size() - spec_cursor - entries_bytes)
                     {
-                        return;
+                        return false;
                     }
                     entries.resize(entry_count);
                     for (auto& entry : entries)
@@ -2028,6 +2032,11 @@ namespace sogen
                         gpu_bridge::specialization_map_entry e{};
                         std::memcpy(&e, trailer.data() + spec_cursor, sizeof(e));
                         spec_cursor += sizeof(e);
+
+                        if (e.offset > data_size || e.size > data_size - e.offset)
+                        {
+                            return false;
+                        }
                         entry = {.constant_id = e.constant_id, .offset = e.offset, .size = e.size};
                     }
                     data.resize(data_size);
@@ -2036,9 +2045,13 @@ namespace sogen
                         std::memcpy(data.data(), trailer.data() + spec_cursor, data_size);
                         spec_cursor += data_size;
                     }
+                    return true;
                 };
-                parse_spec(request.vs_spec_entry_count, request.vs_spec_data_size, vs_entries, vs_data);
-                parse_spec(request.fs_spec_entry_count, request.fs_spec_data_size, fs_entries, fs_data);
+                if (!parse_spec(request.vs_spec_entry_count, request.vs_spec_data_size, vs_entries, vs_data) ||
+                    !parse_spec(request.fs_spec_entry_count, request.fs_spec_data_size, fs_entries, fs_data))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
 
                 const vulkan_host::depth_state depth{.test_enable = request.depth_test_enable,
                                                      .write_enable = request.depth_write_enable,
