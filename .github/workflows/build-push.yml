@@ -66,6 +66,12 @@ jobs:
     needs: [ci]
     if: ${{ github.repository_owner == 'momo5502' && github.ref == 'refs/heads/main' && needs.ci.result == 'success' }}
     runs-on: ubuntu-24.04
+    # Serialize Pages deployments so two runs never deploy to the github-pages
+    # environment at once (a common cause of "Deployment failed, try again later").
+    # Don't cancel an in-progress deploy — let it finish rather than leaving Pages half-updated.
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
     permissions:
       contents: read
       actions: read
@@ -89,8 +95,30 @@ jobs:
         with:
           path: ./page/dist
 
-      - name: Deploy to GitHub Pages
-        id: deployment
+      # GitHub Pages deployments intermittently fail with "Deployment failed, try
+      # again later" from the Pages backend. Each attempt creates a fresh
+      # deployment, so retry a couple of times before failing the job.
+      - name: Deploy to GitHub Pages (attempt 1)
+        id: deploy_attempt_1
+        continue-on-error: true
+        uses: actions/deploy-pages@v5
+
+      - name: Wait before retry
+        if: steps.deploy_attempt_1.outcome == 'failure'
+        run: sleep 45
+
+      - name: Deploy to GitHub Pages (attempt 2)
+        id: deploy_attempt_2
+        if: steps.deploy_attempt_1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/deploy-pages@v5
+
+      - name: Wait before retry
+        if: steps.deploy_attempt_1.outcome == 'failure' && steps.deploy_attempt_2.outcome == 'failure'
+        run: sleep 45
+
+      - name: Deploy to GitHub Pages (final attempt)
+        if: steps.deploy_attempt_1.outcome == 'failure' && steps.deploy_attempt_2.outcome == 'failure'
         uses: actions/deploy-pages@v5
 
   publish-python-package:
