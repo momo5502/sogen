@@ -4,54 +4,149 @@
 #include "memory_interface.hpp"
 #include "serialization.hpp"
 
-#include <cassert>
+#include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace sogen
 {
 
+    class emulator_stack_leak_collector
+    {
+      public:
+        emulator_stack_leak_collector()
+            : previous_(std::exchange(active_, this))
+        {
+        }
+
+        ~emulator_stack_leak_collector()
+        {
+            active_ = previous_;
+        }
+
+        emulator_stack_leak_collector(const emulator_stack_leak_collector&) = delete;
+        emulator_stack_leak_collector& operator=(const emulator_stack_leak_collector&) = delete;
+        emulator_stack_leak_collector(emulator_stack_leak_collector&&) = delete;
+        emulator_stack_leak_collector& operator=(emulator_stack_leak_collector&&) = delete;
+
+        static void report_leak() noexcept
+        {
+            if (active_)
+            {
+                active_->leaked_ = true;
+            }
+        }
+
+        void throw_if_leaked() const
+        {
+            if (leaked_)
+            {
+                throw std::runtime_error("Emulator stack allocation was not released");
+            }
+        }
+
+      private:
+        inline static thread_local emulator_stack_leak_collector* active_{};
+
+        emulator_stack_leak_collector* previous_{};
+        bool leaked_{};
+    };
+
     struct emulator_stack_allocation
     {
-        uint64_t address{};
-        size_t size{};
-
         emulator_stack_allocation() = default;
 
         ~emulator_stack_allocation()
         {
-            assert(address == 0 && "Emulator stack leak: allocation was not freed before destruction");
+            if (*this)
+            {
+                emulator_stack_leak_collector::report_leak();
+            }
         }
 
         emulator_stack_allocation(const emulator_stack_allocation&) = delete;
         emulator_stack_allocation& operator=(const emulator_stack_allocation&) = delete;
 
         emulator_stack_allocation(emulator_stack_allocation&& other) noexcept
-            : address(std::exchange(other.address, 0)),
-              size(std::exchange(other.size, 0))
+            : address_(std::exchange(other.address_, 0)),
+              previous_stack_pointer_(std::exchange(other.previous_stack_pointer_, 0))
         {
         }
 
-        emulator_stack_allocation& operator=(emulator_stack_allocation&& other) noexcept
+        emulator_stack_allocation& operator=(emulator_stack_allocation&& other)
         {
             if (this != &other)
             {
-                address = std::exchange(other.address, 0);
-                size = std::exchange(other.size, 0);
+                if (*this)
+                {
+                    throw std::logic_error("Attempted to overwrite an active emulator stack allocation");
+                }
+
+                address_ = std::exchange(other.address_, 0);
+                previous_stack_pointer_ = std::exchange(other.previous_stack_pointer_, 0);
             }
             return *this;
         }
 
+        explicit operator bool() const
+        {
+            return previous_stack_pointer_ != 0;
+        }
+
+        uint64_t address() const
+        {
+            return address_;
+        }
+
         void serialize(utils::buffer_serializer& buffer) const
         {
-            buffer.write(address);
-            buffer.write(size);
+            buffer.write(address_);
+            buffer.write(previous_stack_pointer_);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
         {
+            if (*this)
+            {
+                throw std::logic_error("Attempted to deserialize over an active emulator stack allocation");
+            }
+
+            uint64_t address{};
+            uint64_t previous_stack_pointer{};
             buffer.read(address);
-            buffer.read(size);
+            buffer.read(previous_stack_pointer);
+
+            const bool is_active = previous_stack_pointer != 0;
+            if ((!is_active && address != 0) ||
+                (is_active && (previous_stack_pointer <= address || (address & (stack_alignment - 1)) != 0)))
+            {
+                throw std::runtime_error("Invalid serialized emulator stack allocation");
+            }
+
+            address_ = address;
+            previous_stack_pointer_ = previous_stack_pointer;
         }
+
+      private:
+        template <typename>
+        friend class typed_cpu;
+
+        static constexpr uint64_t stack_alignment = 16;
+
+        emulator_stack_allocation(const uint64_t address, const uint64_t previous_stack_pointer)
+            : address_(address),
+              previous_stack_pointer_(previous_stack_pointer)
+        {
+        }
+
+        void release()
+        {
+            address_ = 0;
+            previous_stack_pointer_ = 0;
+        }
+
+        uint64_t address_{};
+        uint64_t previous_stack_pointer_{};
     };
 
     // A single virtual CPU's view of the machine: typed register and stack access
@@ -217,28 +312,37 @@ namespace sogen
 
         template <typename T>
             requires std::is_trivially_copyable_v<T>
-        emulator_stack_allocation push_stack(const T& data)
+        [[nodiscard]] emulator_stack_allocation push_stack(const T& data)
         {
-            uint64_t old_rsp = read_stack_pointer();
-            uint64_t new_rsp = (old_rsp - sizeof(T)) & ~0xF;
+            const auto old_rsp = read_stack_pointer();
+            if (sizeof(T) > static_cast<uint64_t>(old_rsp))
+            {
+                throw std::underflow_error("Emulator stack allocation underflow");
+            }
 
-            reg(stack_pointer, new_rsp);
+            const auto new_rsp = static_cast<pointer_type>((old_rsp - sizeof(T)) & ~(emulator_stack_allocation::stack_alignment - 1));
             write_memory(new_rsp, &data, sizeof(T));
+            reg(stack_pointer, new_rsp);
 
-            emulator_stack_allocation alloc{};
-            alloc.address = new_rsp;
-            alloc.size = static_cast<size_t>(old_rsp - new_rsp);
-
-            return alloc;
+            return emulator_stack_allocation{new_rsp, old_rsp};
         }
 
-        void pop_stack(emulator_stack_allocation allocation)
+        void pop_stack(emulator_stack_allocation&& allocation)
         {
-            uint64_t current_rsp = read_stack_pointer();
-            assert(current_rsp == allocation.address && "Invalid stack deallocation");
+            if (!allocation)
+            {
+                throw std::logic_error("Attempted to release an inactive emulator stack allocation");
+            }
 
-            reg(stack_pointer, current_rsp + allocation.size);
-            allocation = {};
+            const auto current_rsp = read_stack_pointer();
+            if (current_rsp != allocation.address_ || allocation.previous_stack_pointer_ <= allocation.address_ ||
+                allocation.previous_stack_pointer_ > std::numeric_limits<pointer_type>::max())
+            {
+                throw std::runtime_error("Invalid emulator stack deallocation order");
+            }
+
+            reg(stack_pointer, allocation.previous_stack_pointer_);
+            allocation.release();
         }
 
       private:

@@ -1001,13 +1001,20 @@ namespace sogen
                 }
             }
 
-            const auto frame = std::move(t.callback_stack.back());
+            auto frame = std::move(t.callback_stack.back());
             t.callback_stack.pop_back();
 
             frame.restore_registers(c.emu);
 
             auto dispatch_result =
                 c.win_emu.dispatcher.dispatch_completion(c.win_emu, c.vcpu, frame.handler_id, frame.state.get(), callback_result);
+
+            if (dispatch_result == dispatch_result::completed)
+            {
+                emulator_stack_leak_collector leak_collector{};
+                frame.state.reset();
+                leak_collector.throw_if_leaked();
+            }
 
             if (dispatch_result != dispatch_result::new_callback)
             {
