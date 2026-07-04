@@ -396,6 +396,16 @@ namespace sogen
 
                 const auto request = emulator_object<gpu_bridge::destroy_instance_request>{win_emu.emu(), context.input_buffer}.read();
 
+                // destroy_instance internally tears down all devices for this instance via erase_device,
+                // which frees Vulkan memory without consulting direct_mappings_. Release all guest VA
+                // aliases first to prevent stale mappings to freed host pages.
+                for (auto it = this->direct_mappings_.begin(); it != this->direct_mappings_.end();)
+                {
+                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
+                    this->vulkan_.unmap_memory(it->second.device, it->first);
+                    it = this->direct_mappings_.erase(it);
+                }
+
                 this->vulkan_.destroy_instance(request.instance);
                 return STATUS_SUCCESS;
             }
@@ -727,6 +737,19 @@ namespace sogen
                 }
 
                 const auto request = emulator_object<gpu_bridge::destroy_device_request>{win_emu.emu(), context.input_buffer}.read();
+
+                for (auto it = this->direct_mappings_.begin(); it != this->direct_mappings_.end();)
+                {
+                    if (it->second.device != request.device)
+                    {
+                        ++it;
+                        continue;
+                    }
+
+                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
+                    this->vulkan_.unmap_memory(it->second.device, it->first);
+                    it = this->direct_mappings_.erase(it);
+                }
 
                 this->vulkan_.destroy_device(request.device);
                 return STATUS_SUCCESS;
