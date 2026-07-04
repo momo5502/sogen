@@ -2759,7 +2759,8 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    const size_t total = static_cast<size_t>(req.color_attachment_count) + (req.has_depth ? 1u : 0u) + (req.has_stencil ? 1u : 0u);
+                    const size_t total =
+                        static_cast<size_t>(req.color_attachment_count) + (req.has_depth ? 1u : 0u) + (req.has_stencil ? 1u : 0u);
                     if (total * sizeof(gpu_bridge::rendering_attachment) > size - sizeof(req))
                     {
                         return vk_error_initialization_failed;
