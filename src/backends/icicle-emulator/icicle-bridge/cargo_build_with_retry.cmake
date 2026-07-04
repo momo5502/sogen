@@ -5,9 +5,12 @@
 #      pure network, so ANY failure is a fetch failure and is retried to ride out
 #      the frequent GitHub/crates.io flakiness in CI (curl 56, OpenSSL
 #      "unexpected eof while reading", ...).
-#   2. `cargo build --offline` compiles against the already-fetched deps with no
-#      network access and no retries — a failure here is a real build error and
-#      fails fast.
+#   2. `cargo build` compiles against the now-cached deps with no retries — a
+#      failure here is a real build error and fails fast. We deliberately do NOT
+#      pass --offline: cargo still has to check out the git dependencies' working
+#      trees at build time, which --offline refuses even though `cargo fetch`
+#      already populated the git database. The checkout is a local operation, so
+#      after a successful fetch this phase does no network I/O in practice.
 #
 # Invoked via `cmake -P` from CMakeLists.txt; per-request fetch robustness lives
 # in .cargo/config.toml.
@@ -51,12 +54,12 @@ while(TRUE)
   math(EXPR attempt "${attempt} + 1")
 endwhile()
 
-# Phase 2: build offline against the fetched deps. No retries: a failure here is a
-# genuine build error and should surface immediately.
-message(STATUS "icicle: cargo build (offline)")
+# Phase 2: build against the fetched deps. No retries: a failure here is a genuine
+# build error and should surface immediately.
+message(STATUS "icicle: cargo build")
 
 execute_process(
-  COMMAND ${cargo_env} cargo build --offline --lib --profile ${CARGO_PROFILE} ${target_option}
+  COMMAND ${cargo_env} cargo build --lib --profile ${CARGO_PROFILE} ${target_option}
   WORKING_DIRECTORY ${CARGO_MANIFEST_DIR}
   RESULT_VARIABLE build_result
 )
