@@ -191,7 +191,7 @@ namespace sogen
 
             const bool is_active = previous_stack_pointer != 0;
             if ((!is_active && address != 0) ||
-                (is_active && (previous_stack_pointer <= address || (address & (stack_alignment - 1)) != 0)))
+                (is_active && (address == 0 || previous_stack_pointer <= address || (address & (stack_alignment - 1)) != 0)))
             {
                 throw std::runtime_error("Invalid serialized emulator stack allocation");
             }
