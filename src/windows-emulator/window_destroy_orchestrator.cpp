@@ -161,8 +161,8 @@ namespace sogen
                 {.message = WM_KILLFOCUS, .wParam = 0, .lParam = 0},
                 {.message = WM_ACTIVATE, .wParam = 0, .lParam = 0},
                 {.message = WM_NCACTIVATE, .wParam = FALSE, .lParam = 0},
-                {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = frame.window_pos_alloc.address},
-                {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = frame.window_pos_alloc.address},
+                {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = frame.window_pos_alloc.address()},
+                {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = frame.window_pos_alloc.address()},
                 {.message = WM_UAHDESTROYWINDOW, .wParam = 0, .lParam = 0},
             };
         }
@@ -185,9 +185,9 @@ namespace sogen
 
     void window_destroy_orchestrator::pop_frame_allocation(window_destroy_frame& frame) const
     {
-        if (frame.window_pos_alloc.address != 0)
+        if (frame.window_pos_alloc)
         {
-            this->emu_.pop_stack(std::move(frame.window_pos_alloc));
+            this->emu_.pop_stack(frame.window_pos_alloc);
         }
     }
 

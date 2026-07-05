@@ -2881,10 +2881,10 @@ namespace sogen
             state.min_max_info_alloc = c.emu.push_stack(mmi);
 
             state.message_queue = {
-                {.message = WM_CREATE, .wParam = 0, .lParam = state.create_struct_alloc.address},
-                {.message = WM_NCCALCSIZE, .wParam = 0, .lParam = state.window_rect_alloc.address},
-                {.message = WM_NCCREATE, .wParam = 0, .lParam = state.create_struct_alloc.address},
-                {.message = WM_GETMINMAXINFO, .wParam = 0, .lParam = state.min_max_info_alloc.address},
+                {.message = WM_CREATE, .wParam = 0, .lParam = state.create_struct_alloc.address()},
+                {.message = WM_NCCALCSIZE, .wParam = 0, .lParam = state.window_rect_alloc.address()},
+                {.message = WM_NCCREATE, .wParam = 0, .lParam = state.create_struct_alloc.address()},
+                {.message = WM_GETMINMAXINFO, .wParam = 0, .lParam = state.min_max_info_alloc.address()},
             };
 
             if ((style & WS_VISIBLE) != 0)
@@ -2907,12 +2907,12 @@ namespace sogen
                 const std::initializer_list<qmsg> sw_messages = {
                     {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
                     {.message = WM_SIZE, .wParam = 0, .lParam = size_lparam},
-                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.window_pos_alloc.address},
+                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.window_pos_alloc.address()},
                     {.message = WM_SETFOCUS, .wParam = 0, .lParam = 0},
                     {.message = WM_ACTIVATE, .wParam = 1, .lParam = 0},
                     {.message = WM_NCACTIVATE, .wParam = 1, .lParam = 0},
-                    {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address},
-                    {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address},
+                    {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address()},
+                    {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address()},
                     {.message = WM_SHOWWINDOW, .wParam = 1, .lParam = 0},
                 };
                 state.message_queue.insert(state.message_queue.begin(), sw_messages);
@@ -2945,14 +2945,14 @@ namespace sogen
                 return {};
             }
 
-            if (s.window_pos_alloc.address != 0)
+            if (s.window_pos_alloc)
             {
-                c.emu.pop_stack(std::move(s.window_pos_alloc));
+                c.emu.pop_stack(s.window_pos_alloc);
             }
 
-            c.emu.pop_stack(std::move(s.min_max_info_alloc));
-            c.emu.pop_stack(std::move(s.window_rect_alloc));
-            c.emu.pop_stack(std::move(s.create_struct_alloc));
+            c.emu.pop_stack(s.min_max_info_alloc);
+            c.emu.pop_stack(s.window_rect_alloc);
+            c.emu.pop_stack(s.create_struct_alloc);
 
             return s.handle;
         }
@@ -3126,12 +3126,12 @@ namespace sogen
                 state.message_queue = {
                     {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
                     {.message = WM_SIZE, .wParam = 0, .lParam = size_lparam},
-                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.window_pos_alloc.address},
+                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.window_pos_alloc.address()},
                     {.message = WM_SETFOCUS, .wParam = 0, .lParam = 0},
                     {.message = WM_ACTIVATE, .wParam = 1, .lParam = 0},
                     {.message = WM_NCACTIVATE, .wParam = TRUE, .lParam = 0},
-                    {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address},
-                    {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address},
+                    {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address()},
+                    {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address()},
                     {.message = WM_SHOWWINDOW, .wParam = TRUE, .lParam = 0},
                 };
 
@@ -3143,8 +3143,8 @@ namespace sogen
                     {.message = WM_KILLFOCUS, .wParam = 0, .lParam = 0},
                     {.message = WM_ACTIVATE, .wParam = 0, .lParam = 0},
                     {.message = WM_NCACTIVATE, .wParam = FALSE, .lParam = 0},
-                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.window_pos_alloc.address},
-                    {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address},
+                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.window_pos_alloc.address()},
+                    {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address()},
                     {.message = WM_SHOWWINDOW, .wParam = FALSE, .lParam = 0},
                 };
 
@@ -3177,7 +3177,7 @@ namespace sogen
                 return {};
             }
 
-            c.emu.pop_stack(std::move(s.window_pos_alloc));
+            c.emu.pop_stack(s.window_pos_alloc);
 
             return s.was_visible ? TRUE : FALSE;
         }
