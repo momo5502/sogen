@@ -107,7 +107,7 @@ git clone --recurse-submodules https://github.com/momo5502/sogen.git
 cmake --preset=vs2022
 ```
 
-3\. Build the solution that was generated at `build/vs2022/emulator.sln`
+3\. Build the solution that was generated at `build/vs2022/sogen.sln`
 
 4\. Create a registry dump by running the [grab-registry.bat](https://github.com/momo5502/sogen/blob/main/src/tools/grab-registry.bat) as administrator and place it in the artifacts folder next to the `analyzer.exe`
 
