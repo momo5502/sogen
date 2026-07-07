@@ -2570,7 +2570,8 @@ namespace sogen
     {
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->memories.find(memory);
-        if (it == this->impl_->memories.end())
+        // Only the owning device may free the memory; ignore a cross-device free request.
+        if (it == this->impl_->memories.end() || it->second.device_id != device)
         {
             return;
         }
@@ -2658,7 +2659,7 @@ namespace sogen
         const auto buf = this->impl_->buffers.find(buffer);
         const auto mem = this->impl_->memories.find(memory);
         if (dev == this->impl_->devices.end() || buf == this->impl_->buffers.end() || mem == this->impl_->memories.end() ||
-            !dev->second.bind_buffer_memory)
+            buf->second.device_id != device || mem->second.device_id != device || !dev->second.bind_buffer_memory)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -2691,7 +2692,8 @@ namespace sogen
     {
         const auto dev = this->impl_->devices.find(device);
         const auto mem = this->impl_->memories.find(memory);
-        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory || !dev->second.unmap_memory)
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || mem->second.device_id != device ||
+            !dev->second.map_memory || !dev->second.unmap_memory)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -2719,7 +2721,8 @@ namespace sogen
     {
         const auto dev = this->impl_->devices.find(device);
         const auto mem = this->impl_->memories.find(memory);
-        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory || !dev->second.unmap_memory)
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || mem->second.device_id != device ||
+            !dev->second.map_memory || !dev->second.unmap_memory)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -2747,7 +2750,8 @@ namespace sogen
     {
         const auto dev = this->impl_->devices.find(device);
         const auto mem = this->impl_->memories.find(memory);
-        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.flush_mapped_memory_ranges)
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || mem->second.device_id != device ||
+            !dev->second.flush_mapped_memory_ranges)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -2769,7 +2773,8 @@ namespace sogen
     {
         const auto dev = this->impl_->devices.find(device);
         const auto mem = this->impl_->memories.find(memory);
-        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.invalidate_mapped_memory_ranges)
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || mem->second.device_id != device ||
+            !dev->second.invalidate_mapped_memory_ranges)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -2793,7 +2798,8 @@ namespace sogen
         out_size = 0;
         const auto dev = this->impl_->devices.find(device);
         const auto mem = this->impl_->memories.find(memory);
-        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.map_memory)
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || mem->second.device_id != device ||
+            !dev->second.map_memory)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -2824,7 +2830,8 @@ namespace sogen
     {
         const auto dev = this->impl_->devices.find(device);
         const auto mem = this->impl_->memories.find(memory);
-        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || !dev->second.unmap_memory)
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || mem->second.device_id != device ||
+            !dev->second.unmap_memory)
         {
             return;
         }
@@ -2952,7 +2959,7 @@ namespace sogen
         const auto img = this->impl_->images.find(image);
         const auto mem = this->impl_->memories.find(memory);
         if (dev == this->impl_->devices.end() || img == this->impl_->images.end() || mem == this->impl_->memories.end() ||
-            !dev->second.bind_image_memory)
+            img->second.device_id != device || mem->second.device_id != device || !dev->second.bind_image_memory)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }

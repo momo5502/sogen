@@ -1390,7 +1390,10 @@ namespace sogen
                 if (const auto existing = this->direct_mappings_.find(request.memory); existing != this->direct_mappings_.end())
                 {
                     response.vk_result = 0; // VK_SUCCESS
-                    response.guest_address = existing->second.guest_address + request.offset;
+                    // Only hand back an aliased address for offsets inside the mapping; an out-of-range
+                    // offset returns guest_address = 0 so the shim falls back to the bounded staging path.
+                    response.guest_address =
+                        (request.offset < existing->second.size) ? (existing->second.guest_address + request.offset) : 0;
                     return write_output(win_emu, context, response);
                 }
 
@@ -1420,7 +1423,7 @@ namespace sogen
 
                 this->direct_mappings_[request.memory] =
                     direct_mapping{.guest_address = va, .size = mapped_size, .device = request.device, .host_ptr = host_ptr};
-                response.guest_address = va + request.offset;
+                response.guest_address = (request.offset < mapped_size) ? (va + request.offset) : 0;
                 return write_output(win_emu, context, response);
             }
 
