@@ -3,11 +3,27 @@
 
 #include "../windows_emulator.hpp"
 
+#include <utils/string.hpp>
+
 namespace sogen
 {
 
     namespace
     {
+        // Partial layout of the KsecDD ioctl 0x390400 request, covering the two fields the handler
+        // consumes: the operation selector and the requested algorithm name.
+        struct ksec_algorithm_request
+        {
+            std::array<uint8_t, 6> reserved0;
+            uint16_t operation;
+            std::array<uint8_t, 0x28> reserved1;
+            std::array<char16_t, 8> algorithm_name;
+        };
+
+        static_assert(offsetof(ksec_algorithm_request, operation) == 6);
+        static_assert(offsetof(ksec_algorithm_request, algorithm_name) == 0x30);
+        static_assert(sizeof(ksec_algorithm_request) == 0x40);
+
         struct security_support_provider : stateless_device
         {
             // RNG Microsoft Primitive Provider
@@ -48,24 +64,20 @@ namespace sogen
                     return STATUS_NOT_SUPPORTED;
                 }
 
-                // The input/output buffers and their lengths are guest-controlled. Validate the input
-                // covers the fields read below (USHORT at +6, 16 bytes at +0x30) before touching it.
-                if (!c.input_buffer || c.input_buffer_length < 0x40)
+                // The input buffer and its length are guest-controlled; require the full request layout
+                // before reading any field out of it.
+                if (!c.input_buffer || c.input_buffer_length < sizeof(ksec_algorithm_request))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const auto operation = win_emu.emu().read_memory<USHORT>(c.input_buffer + 6);
+                const auto request = win_emu.emu().read_memory<ksec_algorithm_request>(c.input_buffer);
 
-                if (operation == 2)
+                if (request.operation == 2)
                 {
-                    std::array<char16_t, 8> alg_name_buffer{};
-                    win_emu.emu().read_memory(c.input_buffer + 0x30, alg_name_buffer.data(), sizeof(alg_name_buffer));
-
-                    // alg_name_buffer is guest-controlled and may not be NUL-terminated; bound the view to
-                    // the fixed array so we never scan past it looking for a terminator.
-                    const std::u16string_view raw_name(alg_name_buffer.data(), alg_name_buffer.size());
-                    const auto algorithm_name = raw_name.substr(0, raw_name.find(u'\0'));
+                    // algorithm_name is guest-controlled and may not be NUL-terminated; the util bounds the
+                    // view to the fixed array so we never scan past it looking for a terminator.
+                    const auto algorithm_name = utils::string::to_string_view<char16_t>(request.algorithm_name);
 
                     // The response is a fixed-size record; never write past the guest-declared output buffer.
                     const auto write_response = [&](const auto& output_data) -> NTSTATUS {
