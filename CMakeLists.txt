@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.26.4)
 
 option(SOGEN_ENABLE_AVX2 "Enable AVX2 support" ON)
 option(SOGEN_ENABLE_SANITIZER "Enable sanitizer" OFF)
+option(SOGEN_ENABLE_FUZZING "Build the host-side handler fuzzers (libFuzzer); instruments all code with coverage. Pair with SOGEN_ENABLE_SANITIZER=On. Requires clang." OFF)
 option(SOGEN_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(SOGEN_ENABLE_LTO "Enable interprocedural optimization (LTO/IPO)" ON)
 option(SOGEN_ENABLE_RUST_CODE "Enable code parts written in rust" ON)

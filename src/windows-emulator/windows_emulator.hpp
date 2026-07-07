@@ -96,6 +96,12 @@ namespace sogen
         std::filesystem::path emulation_root{};
         std::filesystem::path registry_directory{"./registry"};
 
+        // When false, construct without loading the registry hives. Intended for headless harnesses
+        // (e.g. fuzzing) that never run the guest and don't read the registry, so they can construct
+        // with no emulation root / registry directory on disk. The registry ctor otherwise eagerly
+        // parses the mandatory hives (SYSTEM/SOFTWARE/SAM/...).
+        bool load_registry{true};
+
         std::unordered_map<uint16_t, uint16_t> port_mappings{};
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
 
