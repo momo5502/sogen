@@ -99,8 +99,15 @@ namespace sogen
                 return;
             }
 
-            std::vector<uint8_t> zeroes(static_cast<size_t>(buffer.size), 0);
-            win_emu.emu().write_memory(buffer.address, zeroes.data(), zeroes.size());
+            // buffer.size is a guest-controlled 64-bit value; zero the region in bounded chunks
+            // instead of materializing the whole span as one host allocation.
+            constexpr uint64_t chunk_size = 0x1000;
+            const std::vector<uint8_t> zeroes(static_cast<size_t>(std::min(buffer.size, chunk_size)), 0);
+            for (uint64_t written = 0; written < buffer.size; written += zeroes.size())
+            {
+                const auto count = static_cast<size_t>(std::min<uint64_t>(zeroes.size(), buffer.size - written));
+                win_emu.emu().write_memory(buffer.address + written, zeroes.data(), count);
+            }
         }
 
         void write_adapter_key(windows_emulator& win_emu, const nsi_buffer buffer)

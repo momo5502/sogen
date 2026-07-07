@@ -1523,10 +1523,17 @@ namespace sogen
         std::vector<std::vector<float>> priorities_store;
         queue_infos.reserve(entry_count);
         priorities_store.reserve(entry_count);
+        // A real queue family exposes only a handful of queues; reject an absurd guest-supplied
+        // queue_count before it sizes the priorities allocation below.
+        constexpr uint32_t max_queues_per_family = 64;
         for (size_t i = 0; i < entry_count; ++i)
         {
             const uint32_t family = entries ? entries[i].queue_family_index : 0;
             const uint32_t requested = entries ? entries[i].queue_count : 1;
+            if (requested > max_queues_per_family)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
             const uint32_t queues = (requested == 0) ? 1 : requested;
 
             auto& priorities = priorities_store.emplace_back(queues, 1.0f);

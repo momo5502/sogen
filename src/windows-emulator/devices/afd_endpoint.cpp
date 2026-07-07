@@ -1168,6 +1168,14 @@ namespace sogen
                 const auto send_info = emu.read_memory<AFD_SEND_DATAGRAM_INFO<Traits>>(c.input_buffer);
                 const auto buffer = emu.read_memory<EMU_WSABUF<Traits>>(send_info.BufferArray);
 
+                // RemoteAddressLength is a signed LONG; a negative or oversized value would turn into a
+                // huge read below. A sockaddr is at most sizeof(win_sockaddr_in6).
+                if (send_info.TdiConnInfo.RemoteAddressLength < 0 ||
+                    static_cast<size_t>(send_info.TdiConnInfo.RemoteAddressLength) > sizeof(win_sockaddr_in6))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 auto address_buffer =
                     emu.read_memory(send_info.TdiConnInfo.RemoteAddress, static_cast<size_t>(send_info.TdiConnInfo.RemoteAddressLength));
 
