@@ -48,6 +48,15 @@ namespace sogen
             array[size] = {};
         }
 
+        // View a fixed-size, possibly non-NUL-terminated character buffer as a string, truncated at the
+        // first NUL terminator (or the whole span when none is present) so the scan never leaves the span.
+        template <typename T>
+        std::basic_string_view<T> to_string_view(const std::span<const T> data)
+        {
+            const std::basic_string_view<T> view(data.data(), data.size());
+            return view.substr(0, view.find(T{}));
+        }
+
         inline char char_to_lower(const char val)
         {
             return static_cast<char>(std::tolower(static_cast<unsigned char>(val)));

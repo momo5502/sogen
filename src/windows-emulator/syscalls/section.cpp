@@ -425,6 +425,13 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
+            // The guest fully controls the mapping offset. Reject anything past the file so the
+            // subtraction below cannot underflow into a huge copy that reads past file_data.
+            if (static_cast<uint64_t>(offset) > file_data.size())
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
             const auto size = static_cast<size_t>(file_data.size() - offset);
             const auto aligned_size = static_cast<size_t>(page_align_up(size));
             const auto reserve_only = section_entry->allocation_attributes == SEC_RESERVE;
