@@ -142,7 +142,7 @@ namespace sogen
                 // cap the buffer we read to avoid a huge host allocation.
                 if (c.input_buffer_length > 0x1000)
                 {
-                    return STATUS_INVALID_PARAMETER;
+                    return STATUS_NOT_SUPPORTED;
                 }
 
                 const auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
