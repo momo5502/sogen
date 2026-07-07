@@ -48,6 +48,13 @@ namespace sogen
                     return STATUS_NOT_SUPPORTED;
                 }
 
+                // The input/output buffers and their lengths are guest-controlled. Validate the input
+                // covers the fields read below (USHORT at +6, 16 bytes at +0x30) before touching it.
+                if (!c.input_buffer || c.input_buffer_length < 0x40)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 const auto operation = win_emu.emu().read_memory<USHORT>(c.input_buffer + 6);
 
                 if (operation == 2)
@@ -57,28 +64,31 @@ namespace sogen
 
                     const std::u16string algorithm_name(alg_name_buffer.data());
 
+                    // The response is a fixed-size record; never write past the guest-declared output buffer.
+                    const auto write_response = [&](const auto& output_data) -> NTSTATUS {
+                        if (!c.output_buffer || c.output_buffer_length < sizeof(output_data))
+                        {
+                            return STATUS_BUFFER_TOO_SMALL;
+                        }
+
+                        win_emu.emu().write_memory(c.output_buffer, output_data);
+
+                        if (c.io_status_block)
+                        {
+                            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                            block.Information = sizeof(output_data);
+                            c.io_status_block.write(block);
+                        }
+
+                        return STATUS_SUCCESS;
+                    };
+
                     if (algorithm_name == u"SHA256")
                     {
-                        win_emu.emu().write_memory(c.output_buffer, sha256_output_data);
-
-                        if (c.io_status_block)
-                        {
-                            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                            block.Information = sizeof(sha256_output_data);
-                            c.io_status_block.write(block);
-                        }
+                        return write_response(sha256_output_data);
                     }
-                    else
-                    {
-                        win_emu.emu().write_memory(c.output_buffer, rng_output_data);
 
-                        if (c.io_status_block)
-                        {
-                            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                            block.Information = sizeof(rng_output_data);
-                            c.io_status_block.write(block);
-                        }
-                    }
+                    return write_response(rng_output_data);
                 }
 
                 return STATUS_SUCCESS;
