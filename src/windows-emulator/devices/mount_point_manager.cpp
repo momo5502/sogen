@@ -138,6 +138,13 @@ namespace sogen
                     return STATUS_NOT_SUPPORTED;
                 }
 
+                // input_buffer_length is guest-controlled (up to 4 GiB). A device name is tiny, so
+                // cap the buffer we read to avoid a huge host allocation.
+                if (c.input_buffer_length > 0x1000)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
                 const auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
                 mountdev_target_name_header target_name{};
                 std::memcpy(&target_name, data.data(), sizeof(target_name));
