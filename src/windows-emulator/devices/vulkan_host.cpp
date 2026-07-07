@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -93,6 +94,26 @@ namespace sogen
             }
 
             return size <= allocation_size - offset;
+        }
+
+        // The swapchain readback/present path assumes a 32-bit (4 bytes/texel) color format end to end:
+        // the readback buffer is sized width*height*4 and the present copy converts to BGRA8. Restricting
+        // swapchain formats to 4-byte formats keeps the present-time vkCmdCopyImageToBuffer (which writes
+        // width*height*texelSize bytes) from ever exceeding that buffer. The guest picks the format.
+        bool is_supported_swapchain_format(const VkFormat format)
+        {
+            switch (format)
+            {
+            case VK_FORMAT_B8G8R8A8_UNORM:
+            case VK_FORMAT_B8G8R8A8_SRGB:
+            case VK_FORMAT_R8G8B8A8_UNORM:
+            case VK_FORMAT_R8G8B8A8_SRGB:
+            case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+            case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
+                return true;
+            default:
+                return false;
+            }
         }
 
         // VkPhysicalDeviceProperties crosses the 32/64-bit ABI boundary unchanged except for
@@ -449,6 +470,8 @@ namespace sogen
         {
             VkQueryPool handle{};
             uint64_t device_id{};
+            uint32_t query_type{};
+            uint32_t pipeline_statistics{};
         };
         struct render_pass_data
         {
@@ -3430,6 +3453,13 @@ namespace sogen
         const uint32_t image_count = (min_image_count < 2) ? 2 : min_image_count;
         const auto vk_format = static_cast<VkFormat>(format);
 
+        // The readback buffer below is sized for 4 bytes/texel; reject wider guest-chosen formats so the
+        // present-time copy cannot overflow it.
+        if (!is_supported_swapchain_format(vk_format))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
         impl::swapchain_data sc{};
         sc.device_id = device;
         sc.hwnd = surf_it->second.hwnd;
@@ -4015,7 +4045,9 @@ namespace sogen
         }
 
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->query_pools.emplace(id, impl::query_pool_data{.handle = pool, .device_id = device});
+        this->impl_->query_pools.emplace(
+            id, impl::query_pool_data{
+                    .handle = pool, .device_id = device, .query_type = query_type, .pipeline_statistics = pipeline_statistics});
         out_pool = id;
         return VK_SUCCESS;
     }
@@ -4054,6 +4086,27 @@ namespace sogen
         const auto dev = this->impl_->devices.find(device);
         const auto qp = this->impl_->query_pools.find(query_pool);
         if (dev == this->impl_->devices.end() || qp == this->impl_->query_pools.end() || !dev->second.get_query_pool_results)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        // vkGetQueryPoolResults writes one result element per query at out + i*stride. The element size is
+        // driver-determined by the query type and flags, and can exceed a guest-chosen (small) stride. Bound
+        // the total extent against out_size so the driver cannot write past the caller's buffer, regardless
+        // of the guest-supplied stride (including stride == 0).
+        const uint64_t value_size = (flags & VK_QUERY_RESULT_64_BIT) ? 8u : 4u;
+        uint64_t value_count = 1;
+        if (qp->second.query_type == VK_QUERY_TYPE_PIPELINE_STATISTICS)
+        {
+            value_count = static_cast<uint64_t>(std::popcount(qp->second.pipeline_statistics));
+        }
+        if (flags & VK_QUERY_RESULT_WITH_AVAILABILITY_BIT)
+        {
+            value_count += 1;
+        }
+        const uint64_t element_size = value_count * value_size;
+        const uint64_t effective_stride = std::max<uint64_t>(stride, element_size);
+        if (query_count > 0 && (static_cast<uint64_t>(query_count - 1) * effective_stride + element_size) > out_size)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
