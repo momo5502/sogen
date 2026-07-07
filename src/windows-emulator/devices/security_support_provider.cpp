@@ -62,7 +62,10 @@ namespace sogen
                     std::array<char16_t, 8> alg_name_buffer{};
                     win_emu.emu().read_memory(c.input_buffer + 0x30, alg_name_buffer.data(), sizeof(alg_name_buffer));
 
-                    const std::u16string algorithm_name(alg_name_buffer.data());
+                    // alg_name_buffer is guest-controlled and may not be NUL-terminated; bound the view to
+                    // the fixed array so we never scan past it looking for a terminator.
+                    const std::u16string_view raw_name(alg_name_buffer.data(), alg_name_buffer.size());
+                    const auto algorithm_name = raw_name.substr(0, raw_name.find(u'\0'));
 
                     // The response is a fixed-size record; never write past the guest-declared output buffer.
                     const auto write_response = [&](const auto& output_data) -> NTSTATUS {
