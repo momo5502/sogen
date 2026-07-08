@@ -14,7 +14,14 @@
 #include <network/static_socket_factory.hpp>
 
 #include <io_device.hpp>
+#include <devices/afd_endpoint.hpp>
+#include <devices/console.hpp>
+#include <devices/gpu_bridge.hpp>
+#include <devices/mount_point_manager.hpp>
+#include <devices/network_store_interface.hpp>
 #include <devices/security_support_provider.hpp>
+
+#include <vector>
 
 #include "mock_emulator.hpp"
 
@@ -36,13 +43,41 @@ namespace sogen::fuzz
             return windows_emulator{mock::make_mock_emulator(), settings, {}, std::move(interfaces)};
         }
 
+        // One persistent instance of every fuzzable io_device. Constructing a device that reaches out
+        // to host resources (e.g. gpu_bridge's vulkan_host) may fail on a headless box, so guard each.
+        std::vector<std::unique_ptr<io_device>> make_devices()
+        {
+            std::vector<std::unique_ptr<io_device>> devices;
+            const auto add = [&](auto factory) {
+                try
+                {
+                    if (auto d = factory())
+                    {
+                        devices.push_back(std::move(d));
+                    }
+                }
+                catch (...)
+                {
+                }
+            };
+
+            add([] { return create_security_support_provider(); });
+            add([] { return create_console_device(); });
+            add([] { return create_mount_point_manager(); });
+            add([] { return create_network_store_interface(); });
+            add([] { return create_afd_endpoint(false); });
+            add([] { return create_afd_async_connect_hlp(false); });
+            add([] { return create_gpu_bridge(); });
+            return devices;
+        }
+
         // Persistent across iterations: building the emulator is expensive, so do it once.
         struct fuzz_state
         {
             static constexpr size_t scratch_size = 0x2000;
 
             windows_emulator emu = make_bare_emulator();
-            std::unique_ptr<io_device> device = create_security_support_provider();
+            std::vector<std::unique_ptr<io_device>> devices = make_devices();
             uint64_t scratch = emu.memory.allocate_memory(scratch_size, memory_permission::read_write);
         };
 
@@ -55,17 +90,25 @@ namespace sogen::fuzz
 
     void run(std::span<const uint8_t> data)
     {
-        if (data.size() < sizeof(uint32_t))
+        // Header: [u32 device selector][u32 ioctl code], then the request/input buffer.
+        if (data.size() < 2 * sizeof(uint32_t))
         {
             return;
         }
 
         auto& s = state();
+        if (s.devices.empty())
+        {
+            return;
+        }
 
-        // First 4 bytes select the ioctl code; the remainder is the request/input buffer.
+        uint32_t selector = 0;
         uint32_t code = 0;
-        std::memcpy(&code, data.data(), sizeof(code));
-        const auto payload = data.subspan(sizeof(code));
+        std::memcpy(&selector, data.data(), sizeof(selector));
+        std::memcpy(&code, data.data() + sizeof(selector), sizeof(code));
+
+        io_device& device = *s.devices[selector % s.devices.size()];
+        const auto payload = data.subspan(2 * sizeof(uint32_t));
 
         constexpr size_t half = fuzz_state::scratch_size / 2;
         const uint64_t in_buf = s.scratch;
@@ -87,7 +130,7 @@ namespace sogen::fuzz
         try
         {
             // Guest memory access is MMU-checked and throws by design; only sanitizer aborts are real bugs.
-            (void)s.device->io_control(s.emu, ctx);
+            (void)device.io_control(s.emu, ctx);
         }
         catch (...)
         {
