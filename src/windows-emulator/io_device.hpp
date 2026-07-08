@@ -1,8 +1,8 @@
 #pragma once
 
+#include <map>
 #include <memory>
 #include <string_view>
-#include <unordered_map>
 #include <arch_emulator.hpp>
 #include <serialization.hpp>
 
@@ -153,7 +153,8 @@ namespace sogen
     // map to the same factory (e.g. the transport stub serves Tcp/Tcp6/Udp/RawIp). create_device() looks a
     // name up here, and consumers that need every device type (e.g. the handler fuzzer) enumerate it and
     // dedupe by factory, so a newly added device is visible everywhere without a second list to update.
-    const std::unordered_map<std::u16string_view, device_factory>& get_device_registry();
+    // Ordered so the fuzzer's enumeration is deterministic across runs.
+    const std::map<std::u16string_view, device_factory>& get_device_registry();
 
     class io_device_container : public io_device
     {
@@ -202,7 +203,8 @@ namespace sogen
 
         void setup()
         {
-            this->device_ = create_device(this->device_name_, device_creation_context{.is_32_bit = this->is_32_bit_});
+            const device_creation_context context{.is_32_bit = this->is_32_bit_};
+            this->device_ = create_device(this->device_name_, context);
         }
 
         void assert_validity() const

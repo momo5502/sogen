@@ -61,11 +61,11 @@ namespace sogen
 
     }
 
-    const std::unordered_map<std::u16string_view, device_factory>& get_device_registry()
+    const std::map<std::u16string_view, device_factory>& get_device_registry()
     {
         using namespace std::string_view_literals;
 
-        static const std::unordered_map<std::u16string_view, device_factory> registry = {
+        static const std::map<std::u16string_view, device_factory> registry = {
             // Dummy
             {u"CNG"sv, create_dummy_device},
             {u"RasAcd"sv, create_dummy_device},
@@ -76,12 +76,13 @@ namespace sogen
             // Generic
             {u"Console"sv, create_console_device},
             {u"Nsi"sv, create_network_store_interface},
-            {u"Afd\\Endpoint"sv, create_afd_endpoint},
-            {u"Afd\\AsyncConnectHlp"sv, create_afd_async_connect_hlp},
             {u"MountPointManager"sv, create_mount_point_manager},
             {u"KsecDD"sv, create_security_support_provider},
             {u"NamedPipe"sv, create_named_pipe_device},
             {u"SogenGpu"sv, create_gpu_bridge},
+            // AFD
+            {u"Afd\\Endpoint"sv, create_afd_endpoint},
+            {u"Afd\\AsyncConnectHlp"sv, create_afd_async_connect_hlp},
             // Transport
             {u"Tcp"sv, create_transport_stub_device},
             {u"Tcp6"sv, create_transport_stub_device},
