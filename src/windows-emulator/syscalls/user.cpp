@@ -3070,9 +3070,14 @@ namespace sogen
             return data;
         }
 
-        uint64_t handle_NtUserChangeWindowMessageFilterEx()
+        BOOL handle_NtUserChangeWindowMessageFilterEx()
         {
-            return 0;
+            return TRUE;
+        }
+
+        BOOL handle_NtUserChangeWindowMessageFilter()
+        {
+            return TRUE;
         }
 
         BOOL handle_NtUserShowWindow(const syscall_context& c, const hwnd hwnd, const LONG cmd_show)
@@ -5750,6 +5755,21 @@ namespace sogen
             info = {.cbSize = sizeof(info), .hwndActive = active, .hwndFocus = active, .hwndCapture = capture};
             c.emu.write_memory(info_address, info);
 
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetWinEventHook()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserUnhookWinEvent()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserDisableThreadIme()
+        {
             return TRUE;
         }
     }

@@ -547,7 +547,8 @@ namespace sogen
         uint64_t handle_NtUserGetProp(const syscall_context& c, hwnd window, uint16_t atom);
         uint64_t handle_NtUserGetProp2(const syscall_context& c, hwnd window, emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> str);
         uint64_t handle_NtUserRemoveProp(const syscall_context& c, hwnd window, uint16_t atom);
-        uint64_t handle_NtUserChangeWindowMessageFilterEx();
+        BOOL handle_NtUserChangeWindowMessageFilterEx();
+        BOOL handle_NtUserChangeWindowMessageFilter();
         BOOL handle_NtUserShowWindow(const syscall_context& c, hwnd hwnd, LONG cmd_show);
         BOOL completion_NtUserShowWindow(const syscall_context& c, hwnd hwnd, LONG cmd_show);
         uint64_t handle_NtUserMessageCall(const syscall_context& c, hwnd hwnd, UINT msg, uint64_t w_param, uint64_t l_param,
@@ -683,6 +684,9 @@ namespace sogen
         uint64_t handle_NtUserAttachThreadInput();
         BOOL handle_NtUserRegisterTouchHitTestingWindow();
         BOOL handle_NtUserGetGUIThreadInfo(const syscall_context& c, uint32_t thread_id, emulator_pointer info);
+        BOOL handle_NtUserSetWinEventHook();
+        BOOL handle_NtUserUnhookWinEvent();
+        BOOL handle_NtUserDisableThreadIme();
 
         // syscalls/gdi.cpp:
         NTSTATUS handle_NtDxgkIsFeatureEnabled();
@@ -737,6 +741,9 @@ namespace sogen
                                    emulator_pointer face_name, ULONG charset, emulator_pointer count, emulator_pointer buffer);
         uint32_t handle_NtGdiGetTextCharsetInfo(const syscall_context& c, hdc dc, emulator_pointer sig, uint32_t flags);
         uint32_t handle_NtGdiQueryFontAssocInfo(const syscall_context& c, hdc dc);
+        uint32_t handle_NtGdiGetPublicFontTableChangeCookie();
+        int32_t handle_NtGdiAddFontResourceW(const syscall_context& c, emulator_pointer files, uint32_t character_count,
+                                             uint32_t file_count, uint32_t flags, uint32_t thread_id, emulator_pointer design_vector);
         uint32_t handle_NtGdiGetTextMetricsW(const syscall_context& c, hdc dc, emulator_pointer ptm, uint32_t cj);
         int32_t handle_NtGdiGetTextFaceW(const syscall_context& c, hdc dc, int32_t count, emulator_pointer face_name, BOOL alias_name);
         uint32_t handle_NtGdiGetGlyphOutline(const syscall_context& c, hdc dc, UINT character, UINT format, emulator_pointer glyph_metrics,
@@ -1272,6 +1279,8 @@ namespace sogen
         add_handler(NtGdiEnumFonts);
         add_handler(NtGdiGetTextCharsetInfo);
         add_handler(NtGdiQueryFontAssocInfo);
+        add_handler(NtGdiGetPublicFontTableChangeCookie);
+        add_handler(NtGdiAddFontResourceW);
         add_handler(NtGdiGetTextMetricsW);
         add_handler(NtGdiGetTextFaceW);
         add_handler(NtGdiGetTextExtent);
@@ -1632,6 +1641,10 @@ namespace sogen
         add_handler(NtUserActivateKeyboardLayout);
         add_handler(NtUserGetGUIThreadInfo);
         add_handler(NtNotifyChangeDirectoryFile);
+        add_handler(NtUserChangeWindowMessageFilter);
+        add_handler(NtUserSetWinEventHook);
+        add_handler(NtUserUnhookWinEvent);
+        add_handler(NtUserDisableThreadIme);
 
 #undef add_handler
     }
