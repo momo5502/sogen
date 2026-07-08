@@ -331,7 +331,9 @@ endmacro()
 ##########################################
 
 function(sogen_strip_target target)
-  if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR SOGEN_ENABLE_SANITIZER)
+  # Keep symbols for builds whose whole point is debuggability: Debug, RelWithDebInfo, and any
+  # sanitizer build (stripping there yields unusable ASAN/UBSan stack traces).
+  if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo" OR SOGEN_ENABLE_SANITIZER)
     return()
   endif()
 
