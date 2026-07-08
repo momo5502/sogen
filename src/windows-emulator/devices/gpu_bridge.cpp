@@ -468,7 +468,9 @@ namespace sogen
 
                 const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
 
-                std::vector<std::byte> properties(context.output_buffer_length);
+                // output_buffer_length is guest-controlled; the response is a small fixed-size struct, so
+                // bound the staging allocation instead of trusting the declared length.
+                std::vector<std::byte> properties(std::min<uint64_t>(context.output_buffer_length, max_readback_bytes));
                 const int32_t result = this->vulkan_.get_physical_device_properties(request.physical_device, properties.data(),
                                                                                     properties.size(), win_emu.process.is_wow64_process);
                 if (result != 0)
@@ -1181,7 +1183,9 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                std::vector<std::byte> properties(context.output_buffer_length);
+                // output_buffer_length is guest-controlled; the response is a small fixed-size struct, so
+                // bound the staging allocation instead of trusting the declared length.
+                std::vector<std::byte> properties(std::min<uint64_t>(context.output_buffer_length, max_readback_bytes));
                 const int32_t result =
                     this->vulkan_.get_physical_device_memory_properties(request.physical_device, properties.data(), properties.size());
                 if (result != 0)
@@ -2247,6 +2251,10 @@ namespace sogen
             // Cap guest-declared descriptor-update payloads so a bogus IOCTL length can't force a huge allocation.
             static constexpr size_t max_descriptor_update_input_bytes = size_t{256} * 1024 * 1024;
 
+            // Cap for property/capability readbacks staged from output_buffer_length: these responses are
+            // small fixed-size structs, so a bogus output length can't force a huge allocation.
+            static constexpr size_t max_readback_bytes = 64 * 1024;
+
             // Applies one update_descriptor_sets_request blob (header + write_count descriptor_write records) and
             // advances `offset` past it. Shared by the single and coalesced-batch IOCTLs.
             int32_t apply_update_descriptor_sets(const std::byte* data, size_t size, size_t& offset)
@@ -3040,7 +3048,9 @@ namespace sogen
                     }
                 }
 
-                std::vector<std::byte> caps(context.output_buffer_length);
+                // output_buffer_length is guest-controlled; the response is a small fixed-size struct, so
+                // bound the staging allocation instead of trusting the declared length.
+                std::vector<std::byte> caps(std::min<uint64_t>(context.output_buffer_length, max_readback_bytes));
                 const int32_t result = this->vulkan_.get_surface_capabilities(request.physical_device, request.surface, window_width,
                                                                               window_height, caps.data(), caps.size());
                 if (result != 0)

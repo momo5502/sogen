@@ -29,8 +29,15 @@ namespace sogen
             {
                 if (context.output_buffer && context.output_buffer_length)
                 {
-                    std::vector<std::byte> output(context.output_buffer_length, std::byte{0});
-                    win_emu.emu().write_memory(context.output_buffer, output.data(), output.size());
+                    // output_buffer_length is guest-controlled; zero the region in bounded chunks instead
+                    // of materializing the whole (possibly multi-GB) span as one host allocation.
+                    constexpr size_t chunk_size = 0x1000;
+                    const std::vector<std::byte> zeros(std::min<size_t>(context.output_buffer_length, chunk_size), std::byte{0});
+                    for (ULONG offset = 0; offset < context.output_buffer_length; offset += static_cast<ULONG>(zeros.size()))
+                    {
+                        const auto count = std::min<size_t>(zeros.size(), context.output_buffer_length - offset);
+                        win_emu.emu().write_memory(context.output_buffer + offset, zeros.data(), count);
+                    }
                 }
 
                 if (context.io_status_block)
