@@ -575,6 +575,8 @@ namespace sogen
                                             DWORD thread_id, UINT hwnd_max, emulator_pointer hwnd_list, emulator_object<UINT> hwnd_needed);
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
                                               uint64_t param);
+        BOOL handle_NtUserGetDpiForMonitor(const syscall_context& c, handle monitor, uint32_t dpi_type, emulator_object<uint32_t> dpi_x,
+                                           emulator_object<uint32_t> dpi_y);
         BOOL completion_NtUserEnumDisplayMonitors(const syscall_context& c, hdc hdc_in, uint64_t clip_rect_ptr, uint64_t callback,
                                                   uint64_t param);
         BOOL handle_NtUserInheritWindowMonitor(const syscall_context& c, hwnd hwnd_tgt, hwnd hwnd_inherit);
@@ -1458,6 +1460,7 @@ namespace sogen
         add_handler(NtUserChangeDisplaySettings);
         add_handler(NtUserBuildHwndList);
         add_handler(NtUserEnumDisplayMonitors);
+        add_handler(NtUserGetDpiForMonitor);
         add_handler(NtUserInheritWindowMonitor);
         add_handler(NtUserSetProp);
         add_handler(NtUserSetProp2);
