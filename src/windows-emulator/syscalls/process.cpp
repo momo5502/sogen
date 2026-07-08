@@ -23,7 +23,11 @@ namespace sogen
             switch (info_class)
             {
             case ProcessExecuteFlags:
-                return STATUS_NOT_SUPPORTED;
+                return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length, [&](ULONG& flags) {
+                    constexpr ULONG dep_enabled_execute_flags = 0x0D;
+                    constexpr ULONG dep_disabled_execute_flags = 0x32;
+                    flags = c.win_emu.memory.is_dep_enabled() ? dep_enabled_execute_flags : dep_disabled_execute_flags;
+                });
             case ProcessGroupInformation:
             case ProcessMitigationPolicy: {
                 // ProcessMitigationPolicy requires special handling because the caller

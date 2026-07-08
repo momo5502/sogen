@@ -602,6 +602,7 @@ namespace sogen
 
         // Store PE header fields
         binary.machine = static_cast<uint16_t>(nt_headers.FileHeader.Machine);
+        binary.dll_characteristics = optional_header.DllCharacteristics;
         binary.size_of_stack_reserve = optional_header.SizeOfStackReserve;
         binary.size_of_stack_commit = optional_header.SizeOfStackCommit;
         binary.size_of_heap_reserve = optional_header.SizeOfHeapReserve;
@@ -686,6 +687,7 @@ namespace sogen
 
             // Store PE header fields
             binary.machine = static_cast<uint16_t>(nt_headers.FileHeader.Machine);
+            binary.dll_characteristics = optional_header.DllCharacteristics;
             binary.size_of_stack_reserve = optional_header.SizeOfStackReserve;
             binary.size_of_stack_commit = optional_header.SizeOfStackCommit;
             binary.size_of_heap_reserve = optional_header.SizeOfHeapReserve;
