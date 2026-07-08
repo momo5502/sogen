@@ -96,6 +96,7 @@ namespace sogen
             buffer.write(mod.entry_point);
 
             buffer.write(mod.machine);
+            buffer.write(mod.dll_characteristics);
             buffer.write(mod.size_of_stack_reserve);
             buffer.write(mod.size_of_stack_commit);
             buffer.write(mod.size_of_heap_reserve);
@@ -121,6 +122,7 @@ namespace sogen
             buffer.read(mod.entry_point);
 
             buffer.read(mod.machine);
+            buffer.read(mod.dll_characteristics);
             buffer.read(mod.size_of_stack_reserve);
             buffer.read(mod.size_of_stack_commit);
             buffer.read(mod.size_of_heap_reserve);
@@ -287,6 +289,9 @@ namespace sogen
                                                    const windows_path& win32u_path, const logger& logger)
     {
         this->executable = this->map_module_or_throw(executable_path, logger, true);
+        this->memory_->set_dep_enabled(this->executable->machine != static_cast<uint16_t>(PEMachineType::I386) ||
+                                       (this->executable->dll_characteristics & IMAGE_DLLCHARACTERISTICS_NX_COMPAT) != 0);
+
         this->ntdll = this->map_module_or_throw(ntdll_path, logger, true);
         this->win32u = this->map_module_or_throw(win32u_path, logger, true);
     }
