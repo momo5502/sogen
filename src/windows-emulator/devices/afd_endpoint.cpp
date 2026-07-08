@@ -1340,9 +1340,9 @@ namespace sogen
         };
     }
 
-    std::unique_ptr<io_device> create_afd_endpoint(const bool is_32_bit)
+    std::unique_ptr<io_device> create_afd_endpoint(const device_creation_context& context)
     {
-        if (is_32_bit)
+        if (context.is_32_bit)
         {
             return std::make_unique<afd_endpoint<EmulatorTraits<Emu32>>>();
         }
@@ -1350,9 +1350,9 @@ namespace sogen
         return std::make_unique<afd_endpoint<EmulatorTraits<Emu64>>>();
     }
 
-    std::unique_ptr<io_device> create_afd_async_connect_hlp(const bool is_32_bit)
+    std::unique_ptr<io_device> create_afd_async_connect_hlp(const device_creation_context& context)
     {
-        if (is_32_bit)
+        if (context.is_32_bit)
         {
             return std::make_unique<afd_async_connect_hlp<EmulatorTraits<Emu32>>>();
         }

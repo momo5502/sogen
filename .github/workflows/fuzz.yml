@@ -85,11 +85,11 @@ jobs:
       - name: Build fuzzer
         run: cmake --build build/fuzz --target windows-emulator-fuzz
 
-      # Accumulate coverage across nightly runs. actions/cache restores the newest matching key and
-      # saves under the run-specific key at job end, so the corpus grows over time.
+      # Accumulate coverage across nightly runs: restore the newest existing corpus, and save the grown
+      # one under a run-specific key at the end. Restore/save are split (not the combined cache action) so
+      # the save still runs when the fuzzer finds a crash and fails the job (see "Save corpus" below).
       - name: Restore corpus
-        id: corpus
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: corpus
           key: fuzz-corpus-${{ github.run_id }}
@@ -112,6 +112,14 @@ jobs:
           echo "fuzz_status=${status}" >> "$GITHUB_ENV"
           # A nonzero exit means libFuzzer saved a crash reproducer in artifacts/.
           exit 0
+
+      # Persist the grown corpus even when the fuzzer found a crash (the job fails below).
+      - name: Save corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: corpus
+          key: fuzz-corpus-${{ github.run_id }}
 
       - name: Upload crash artifacts
         if: ${{ env.fuzz_status != '0' }}

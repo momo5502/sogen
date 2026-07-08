@@ -11,17 +11,12 @@
 #include <exception>
 #include <filesystem>
 #include <memory>
+#include <unordered_set>
 
 #include <windows_emulator.hpp>
 #include <network/static_socket_factory.hpp>
 
 #include <io_device.hpp>
-#include <devices/afd_endpoint.hpp>
-#include <devices/console.hpp>
-#include <devices/gpu_bridge.hpp>
-#include <devices/mount_point_manager.hpp>
-#include <devices/network_store_interface.hpp>
-#include <devices/security_support_provider.hpp>
 
 #include <vector>
 
@@ -61,31 +56,34 @@ namespace sogen::fuzz
             return windows_emulator{mock::make_mock_emulator(), settings, {}, std::move(interfaces)};
         }
 
-        // One persistent instance of every fuzzable io_device. Constructing a device that reaches out
-        // to host resources (e.g. gpu_bridge's vulkan_host) may fail on a headless box, so guard each.
+        // One persistent instance of every registered io_device type, drawn from the shared device
+        // registry so newly added devices are fuzzed automatically. The registry maps names to factories
+        // and several names share a factory (e.g. the transport stub), so dedupe by factory pointer.
+        // Constructing a device that reaches out to host resources (e.g. gpu_bridge's vulkan_host) may
+        // fail on a headless box, so guard each.
         std::vector<std::unique_ptr<io_device>> make_devices()
         {
             std::vector<std::unique_ptr<io_device>> devices;
-            const auto add = [&](auto factory) {
+            const device_creation_context context{.is_32_bit = false};
+            std::unordered_set<device_factory> seen;
+            for (const auto& [name, factory] : get_device_registry())
+            {
+                if (!seen.insert(factory).second)
+                {
+                    continue;
+                }
+
                 try
                 {
-                    if (auto d = factory())
+                    if (auto d = factory(context))
                     {
                         devices.push_back(std::move(d));
                     }
                 }
-                catch (...)
+                catch (const std::exception&)
                 {
                 }
-            };
-
-            add([] { return create_security_support_provider(); });
-            add([] { return create_console_device(); });
-            add([] { return create_mount_point_manager(); });
-            add([] { return create_network_store_interface(); });
-            add([] { return create_afd_endpoint(false); });
-            add([] { return create_afd_async_connect_hlp(false); });
-            add([] { return create_gpu_bridge(); });
+            }
             return devices;
         }
 

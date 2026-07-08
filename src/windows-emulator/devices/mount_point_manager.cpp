@@ -230,7 +230,7 @@ namespace sogen
         };
     }
 
-    std::unique_ptr<io_device> create_mount_point_manager()
+    std::unique_ptr<io_device> create_mount_point_manager(const device_creation_context&)
     {
         return std::make_unique<mount_point_manager>();
     }
