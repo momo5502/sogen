@@ -40,6 +40,16 @@ endif()
 
 ##########################################
 
+# Let handler code shrink fuzz-only tunables (e.g. gpu_bridge's bulk-transfer staging cap) so the
+# fuzzer doesn't burn most of its time on large allocations that are already proven bounded.
+if(SOGEN_ENABLE_FUZZING)
+    add_compile_definitions(SOGEN_ENABLE_FUZZING=1)
+else()
+    add_compile_definitions(SOGEN_ENABLE_FUZZING=0)
+endif()
+
+##########################################
+
 set(SOGEN_ENABLE_RUST OFF)
 if(SOGEN_ENABLE_RUST_CODE AND NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   find_program(CARGO cargo)
