@@ -372,8 +372,11 @@ namespace sogen
                 return STATUS_INVALID_ADDRESS;
             }
 
-            const auto current_protection = map_emulator_to_nt_protection(old_protection_value);
-            old_protection.write(current_protection);
+            if (old_protection)
+            {
+                const auto current_protection = map_emulator_to_nt_protection(old_protection_value);
+                old_protection.write(current_protection);
+            }
 
             return STATUS_SUCCESS;
         }

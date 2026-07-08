@@ -1944,6 +1944,18 @@ namespace sogen
             return handle_value;
         }
 
+        int32_t handle_NtGdiAddFontResourceW(const syscall_context&, const emulator_pointer files, const uint32_t character_count,
+                                             const uint32_t file_count, const uint32_t /*flags*/, const uint32_t /*thread_id*/,
+                                             const emulator_pointer /*design_vector*/)
+        {
+            if (files == 0 || character_count == 0 || file_count == 0)
+            {
+                return 0;
+            }
+
+            return static_cast<int32_t>(file_count);
+        }
+
         BOOL handle_NtGdiRemoveFontMemResourceEx(const syscall_context& /*c*/, const uint64_t font_handle)
         {
             return font_handle != 0 ? TRUE : FALSE;
@@ -4896,6 +4908,11 @@ namespace sogen
             }
 
             return bgra_to_colorref(*pixel);
+        }
+
+        uint32_t handle_NtGdiGetPublicFontTableChangeCookie()
+        {
+            return 1;
         }
     }
 

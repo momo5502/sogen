@@ -232,7 +232,7 @@ namespace sogen
 
             if (!is_knowndll && attributes.RootDirectory != BASE_NAMED_OBJECTS_DIRECTORY)
             {
-                c.win_emu.log.error("Unsupported section\n");
+                c.win_emu.log.error("Unsupported section: %s\n", u16_to_u8(filename_sv).c_str());
                 c.emu.stop();
                 return STATUS_NOT_SUPPORTED;
             }
