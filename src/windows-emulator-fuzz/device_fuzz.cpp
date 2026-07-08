@@ -11,6 +11,7 @@
 #include <exception>
 #include <filesystem>
 #include <memory>
+#include <unordered_set>
 
 #include <windows_emulator.hpp>
 #include <network/static_socket_factory.hpp>
@@ -64,14 +65,13 @@ namespace sogen::fuzz
         {
             std::vector<std::unique_ptr<io_device>> devices;
             const device_creation_context context{.is_32_bit = false};
-            std::vector<device_factory> seen;
+            std::unordered_set<device_factory> seen;
             for (const auto& [name, factory] : get_device_registry())
             {
-                if (std::ranges::find(seen, factory) != seen.end())
+                if (!seen.insert(factory).second)
                 {
                     continue;
                 }
-                seen.push_back(factory);
 
                 try
                 {
