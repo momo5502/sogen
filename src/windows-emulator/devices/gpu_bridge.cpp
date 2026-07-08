@@ -427,8 +427,9 @@ namespace sogen
 
                 const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
 
-                const auto array_capacity =
-                    static_cast<uint32_t>((context.output_buffer_length - sizeof(response_t)) / sizeof(gpu_bridge::object_id));
+                const auto array_capacity = static_cast<uint32_t>(
+                    std::min<uint64_t>((context.output_buffer_length - sizeof(response_t)) / sizeof(gpu_bridge::object_id),
+                                       max_array_readback_bytes / sizeof(gpu_bridge::object_id)));
                 const auto max_count = std::min(request.max_count, array_capacity);
 
                 std::vector<uint64_t> ids(max_count);
@@ -497,7 +498,7 @@ namespace sogen
                 }
 
                 const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
-                const auto array_bytes = context.output_buffer_length - static_cast<uint32_t>(sizeof(response_t));
+                const auto array_bytes = std::min<size_t>(context.output_buffer_length - sizeof(response_t), max_array_readback_bytes);
 
                 std::vector<std::byte> properties(array_bytes);
                 uint32_t count = 0;
@@ -536,7 +537,7 @@ namespace sogen
                 }
 
                 const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
-                const auto array_bytes = context.output_buffer_length - static_cast<uint32_t>(sizeof(response_t));
+                const auto array_bytes = std::min<size_t>(context.output_buffer_length - sizeof(response_t), max_array_readback_bytes);
 
                 std::vector<std::byte> properties(array_bytes);
                 uint32_t count = 0;
@@ -1317,7 +1318,7 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                const auto copy_bytes = std::min<uint64_t>(request.size, context.output_buffer_length);
+                const auto copy_bytes = std::min<uint64_t>({request.size, context.output_buffer_length, max_memory_transfer_bytes});
 
                 std::vector<std::byte> bytes(static_cast<size_t>(copy_bytes));
                 const auto direct = this->direct_mappings_.find(request.memory);
@@ -1662,8 +1663,9 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                const auto array_capacity =
-                    static_cast<uint32_t>((context.output_buffer_length - sizeof(response_t)) / sizeof(gpu_bridge::object_id));
+                const auto array_capacity = static_cast<uint32_t>(
+                    std::min<uint64_t>((context.output_buffer_length - sizeof(response_t)) / sizeof(gpu_bridge::object_id),
+                                       max_array_readback_bytes / sizeof(gpu_bridge::object_id)));
                 const auto max_count = std::min(request.max_count, array_capacity);
 
                 std::vector<uint64_t> ids(max_count);
@@ -1849,7 +1851,8 @@ namespace sogen
                 }
 
                 const auto avail = static_cast<uint32_t>(context.output_buffer_length - sizeof(response_t));
-                const auto data_size = std::min<uint32_t>(request.data_size, avail);
+                const auto data_size =
+                    std::min<uint32_t>(request.data_size, std::min<uint32_t>(avail, static_cast<uint32_t>(max_array_readback_bytes)));
 
                 if (request.query_count > 0 && request.stride > 0 &&
                     static_cast<uint64_t>(request.stride) * request.query_count > data_size)
@@ -2225,8 +2228,9 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const auto array_capacity =
-                    static_cast<uint32_t>((context.output_buffer_length - sizeof(response_t)) / sizeof(gpu_bridge::object_id));
+                const auto array_capacity = static_cast<uint32_t>(
+                    std::min<uint64_t>((context.output_buffer_length - sizeof(response_t)) / sizeof(gpu_bridge::object_id),
+                                       max_array_readback_bytes / sizeof(gpu_bridge::object_id)));
                 std::vector<uint64_t> ids(std::min(request.set_count, array_capacity));
                 uint32_t count = 0;
                 const int32_t result =
@@ -2250,6 +2254,17 @@ namespace sogen
             // Cap for property/capability readbacks staged from output_buffer_length: these responses are
             // small fixed-size structs, so a bogus output length can't force a huge allocation.
             static constexpr size_t max_readback_bytes = 64 * 1024;
+
+            // Cap for variable-length array readbacks staged from output_buffer_length (object-id lists,
+            // queue-family/extension property arrays). Larger than a single struct but still bounded, so a
+            // bogus output length can't force a huge allocation while never truncating a realistic result.
+            static constexpr size_t max_array_readback_bytes = size_t{16} * 1024 * 1024;
+
+            // Cap for bulk memory transfers (download_memory). A real transfer is bounded by the memory
+            // object, but we don't track its size for the general path, so bound the host staging buffer so a
+            // bogus request.size/output length can't force a huge allocation. Sized to fit realistic
+            // single-resource readbacks (4K/8K textures, large buffers).
+            static constexpr size_t max_memory_transfer_bytes = size_t{256} * 1024 * 1024;
 
             // Applies one update_descriptor_sets_request blob (header + write_count descriptor_write records) and
             // advances `offset` past it. Shared by the single and coalesced-batch IOCTLs.
