@@ -5710,6 +5710,48 @@ namespace sogen
         {
             return TRUE;
         }
+
+        BOOL handle_NtUserGetGUIThreadInfo(const syscall_context& c, const uint32_t thread_id, const emulator_pointer info_address)
+        {
+            if (info_address == 0)
+            {
+                return FALSE;
+            }
+
+            const auto target_thread_id = thread_id == 0 ? c.vcpu.active_thread->id : thread_id;
+            if (c.proc.find_thread_by_id(target_thread_id) == nullptr)
+            {
+                return FALSE;
+            }
+
+            const auto* foreground = c.proc.windows.get(c.proc.foreground_window);
+            const auto active = foreground && foreground->thread_id == target_thread_id ? c.proc.foreground_window : 0;
+            const auto* captured = c.proc.windows.get(c.proc.mouse_capture_window);
+            const auto capture = captured && captured->thread_id == target_thread_id ? c.proc.mouse_capture_window : 0;
+
+            struct gui_thread_info
+            {
+                DWORD cbSize;
+                DWORD flags;
+                hwnd hwndActive;
+                hwnd hwndFocus;
+                hwnd hwndCapture;
+                hwnd hwndMenuOwner;
+                hwnd hwndMoveSize;
+                hwnd hwndCaret;
+                RECT rcCaret;
+            };
+
+            auto info = emulator_object<gui_thread_info>{c.emu, info_address}.read();
+            if (info.cbSize != sizeof(info))
+            {
+                return FALSE;
+            }
+            info = {.cbSize = sizeof(info), .hwndActive = active, .hwndFocus = active, .hwndCapture = capture};
+            c.emu.write_memory(info_address, info);
+
+            return TRUE;
+        }
     }
 
 } // namespace sogen
