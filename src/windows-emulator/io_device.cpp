@@ -59,37 +59,33 @@ namespace sogen
             return std::make_unique<named_pipe>();
         }
 
-        using namespace std::string_view_literals;
-
-        constexpr std::u16string_view dummy_names[] = {
-            u"CNG"sv, u"RasAcd"sv, u"PcwDrv"sv, u"DeviceApi\\CMApi"sv, u"DeviceApi\\CMNotify"sv, u"ConDrv\\Server"sv};
-        constexpr std::u16string_view console_names[] = {u"Console"sv};
-        constexpr std::u16string_view nsi_names[] = {u"Nsi"sv};
-        constexpr std::u16string_view afd_endpoint_names[] = {u"Afd\\Endpoint"sv};
-        constexpr std::u16string_view afd_hlp_names[] = {u"Afd\\AsyncConnectHlp"sv};
-        constexpr std::u16string_view mount_names[] = {u"MountPointManager"sv};
-        constexpr std::u16string_view ksecdd_names[] = {u"KsecDD"sv};
-        constexpr std::u16string_view named_pipe_names[] = {u"NamedPipe"sv};
-        constexpr std::u16string_view gpu_names[] = {u"SogenGpu"sv};
-        constexpr std::u16string_view transport_names[] = {u"Tcp"sv, u"Tcp6"sv, u"Udp"sv, u"RawIp"sv};
-
-        constexpr device_registration registrations[] = {
-            {dummy_names, create_dummy_device},
-            {console_names, create_console_device},
-            {nsi_names, create_network_store_interface},
-            {afd_endpoint_names, create_afd_endpoint},
-            {afd_hlp_names, create_afd_async_connect_hlp},
-            {mount_names, create_mount_point_manager},
-            {ksecdd_names, create_security_support_provider},
-            {named_pipe_names, create_named_pipe_device},
-            {gpu_names, create_gpu_bridge},
-            {transport_names, create_transport_stub_device},
-        };
     }
 
-    std::span<const device_registration> get_device_registrations()
+    const std::unordered_map<std::u16string_view, device_factory>& get_device_registry()
     {
-        return registrations;
+        using namespace std::string_view_literals;
+
+        static const std::unordered_map<std::u16string_view, device_factory> registry = {
+            {u"CNG"sv, create_dummy_device},
+            {u"RasAcd"sv, create_dummy_device},
+            {u"PcwDrv"sv, create_dummy_device},
+            {u"DeviceApi\\CMApi"sv, create_dummy_device},
+            {u"DeviceApi\\CMNotify"sv, create_dummy_device},
+            {u"ConDrv\\Server"sv, create_dummy_device},
+            {u"Console"sv, create_console_device},
+            {u"Nsi"sv, create_network_store_interface},
+            {u"Afd\\Endpoint"sv, create_afd_endpoint},
+            {u"Afd\\AsyncConnectHlp"sv, create_afd_async_connect_hlp},
+            {u"MountPointManager"sv, create_mount_point_manager},
+            {u"KsecDD"sv, create_security_support_provider},
+            {u"NamedPipe"sv, create_named_pipe_device},
+            {u"SogenGpu"sv, create_gpu_bridge},
+            {u"Tcp"sv, create_transport_stub_device},
+            {u"Tcp6"sv, create_transport_stub_device},
+            {u"Udp"sv, create_transport_stub_device},
+            {u"RawIp"sv, create_transport_stub_device},
+        };
+        return registry;
     }
 
     bool needs_32_bit_devices(const windows_emulator& win_emu)
@@ -99,18 +95,14 @@ namespace sogen
 
     std::unique_ptr<io_device> create_device(const std::u16string_view device, const device_creation_context& context)
     {
-        for (const auto& registration : registrations)
+        const auto& registry = get_device_registry();
+        const auto it = registry.find(device);
+        if (it == registry.end())
         {
-            for (const auto name : registration.names)
-            {
-                if (name == device)
-                {
-                    return registration.create(context);
-                }
-            }
+            throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
         }
 
-        throw std::runtime_error("Unsupported device: " + u16_to_u8(device));
+        return it->second(context);
     }
 
     emulator_thread& io_device_context::thread() const

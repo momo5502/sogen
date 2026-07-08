@@ -55,18 +55,27 @@ namespace sogen::fuzz
             return windows_emulator{mock::make_mock_emulator(), settings, {}, std::move(interfaces)};
         }
 
-        // One persistent instance of every registered io_device, drawn from the shared device registry
-        // so newly added devices are fuzzed automatically. Constructing a device that reaches out to host
-        // resources (e.g. gpu_bridge's vulkan_host) may fail on a headless box, so guard each.
+        // One persistent instance of every registered io_device type, drawn from the shared device
+        // registry so newly added devices are fuzzed automatically. The registry maps names to factories
+        // and several names share a factory (e.g. the transport stub), so dedupe by factory pointer.
+        // Constructing a device that reaches out to host resources (e.g. gpu_bridge's vulkan_host) may
+        // fail on a headless box, so guard each.
         std::vector<std::unique_ptr<io_device>> make_devices()
         {
             std::vector<std::unique_ptr<io_device>> devices;
             const device_creation_context context{.is_32_bit = false};
-            for (const auto& registration : get_device_registrations())
+            std::vector<device_factory> seen;
+            for (const auto& [name, factory] : get_device_registry())
             {
+                if (std::ranges::find(seen, factory) != seen.end())
+                {
+                    continue;
+                }
+                seen.push_back(factory);
+
                 try
                 {
-                    if (auto d = registration.create(context))
+                    if (auto d = factory(context))
                     {
                         devices.push_back(std::move(d));
                     }

@@ -1,8 +1,8 @@
 #pragma once
 
 #include <memory>
-#include <span>
 #include <string_view>
+#include <unordered_map>
 #include <arch_emulator.hpp>
 #include <serialization.hpp>
 
@@ -145,19 +145,15 @@ namespace sogen
         bool is_32_bit{};
     };
 
+    using device_factory = std::unique_ptr<io_device> (*)(const device_creation_context& context);
+
     std::unique_ptr<io_device> create_device(std::u16string_view device, const device_creation_context& context);
 
-    // Single source of truth for the emulator's IO devices: which NT device names each handler serves
-    // and how to construct it. create_device() resolves a name through this table, and consumers that
-    // need every device (e.g. the handler fuzzer) can enumerate it, so a newly added device is visible
-    // everywhere without a second list to update.
-    struct device_registration
-    {
-        std::span<const std::u16string_view> names;
-        std::unique_ptr<io_device> (*create)(const device_creation_context& context);
-    };
-
-    std::span<const device_registration> get_device_registrations();
+    // Single source of truth for the emulator's IO devices: NT device name -> factory. Several names may
+    // map to the same factory (e.g. the transport stub serves Tcp/Tcp6/Udp/RawIp). create_device() looks a
+    // name up here, and consumers that need every device type (e.g. the handler fuzzer) enumerate it and
+    // dedupe by factory, so a newly added device is visible everywhere without a second list to update.
+    const std::unordered_map<std::u16string_view, device_factory>& get_device_registry();
 
     class io_device_container : public io_device
     {
