@@ -2004,12 +2004,12 @@ namespace sogen
                     attribute = {.location = a.location, .binding = a.binding, .format = a.format, .offset = a.offset};
                 }
 
-                std::vector<uint32_t> dynamic_states(request.dynamic_state_count);
                 const size_t dynamic_bytes = static_cast<size_t>(request.dynamic_state_count) * sizeof(uint32_t);
                 if (dynamic_bytes > trailer.size() - bindings_bytes - attributes_bytes)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
+                std::vector<uint32_t> dynamic_states(request.dynamic_state_count);
                 if (request.dynamic_state_count > 0)
                 {
                     std::memcpy(dynamic_states.data(), trailer.data() + bindings_bytes + attributes_bytes, dynamic_bytes);
