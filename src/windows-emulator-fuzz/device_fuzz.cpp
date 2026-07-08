@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 
 #include <windows_emulator.hpp>
@@ -29,13 +30,29 @@ namespace sogen::fuzz
 {
     namespace
     {
-        // Bare emulator: mock backend (no unicorn), empty root, no registry hives, never start()'d.
-        // Just a guest-memory arena to back the device handler's reads/writes.
+        // Bare emulator: mock backend (no unicorn), no registry hives, never start()'d. Just a
+        // guest-memory arena to back the device handler's reads/writes.
+        //
+        // The emulation root must be a real, existing directory: file_system's constructor calls
+        // std::filesystem::canonical(root/"filesys"), which throws on a missing path (an empty root
+        // happens to work on Windows' STL but not on libstdc++). We never touch the guest filesystem
+        // here, so an empty temp directory is enough.
+        const std::filesystem::path& fuzz_emulation_root()
+        {
+            static const std::filesystem::path root = [] {
+                const auto dir = std::filesystem::temp_directory_path() / "sogen-fuzz-root";
+                std::filesystem::create_directories(dir / "filesys");
+                return dir;
+            }();
+            return root;
+        }
+
         windows_emulator make_bare_emulator()
         {
             emulator_settings settings{};
             settings.use_relative_time = true;
             settings.load_registry = false;
+            settings.emulation_root = fuzz_emulation_root();
 
             emulator_interfaces interfaces{};
             interfaces.socket_factory = network::create_static_socket_factory();
