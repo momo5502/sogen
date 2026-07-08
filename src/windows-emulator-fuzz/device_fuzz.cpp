@@ -94,6 +94,8 @@ namespace sogen::fuzz
             static constexpr size_t scratch_size = 0x2000;
 
             windows_emulator emu = make_bare_emulator();
+            // Fuzzed garbage makes the handlers log constantly; fully mute the terminal (errors included).
+            bool muted = (emu.log.disable_output(true), emu.log.set_silent(true), true);
             std::vector<std::unique_ptr<io_device>> devices = make_devices();
             uint64_t scratch = emu.memory.allocate_memory(scratch_size, memory_permission::read_write);
         };
