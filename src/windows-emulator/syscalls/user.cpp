@@ -3771,6 +3771,19 @@ namespace sogen
             return {};
         }
 
+        BOOL handle_NtUserGetDpiForMonitor(const syscall_context& c, const handle monitor, const uint32_t dpi_type,
+                                           const emulator_object<uint32_t> dpi_x, const emulator_object<uint32_t> dpi_y)
+        {
+            if (monitor != c.proc.default_monitor_handle || dpi_type > 2 || !dpi_x || !dpi_y)
+            {
+                return FALSE;
+            }
+
+            dpi_x.write(96);
+            dpi_y.write(96);
+            return TRUE;
+        }
+
         BOOL completion_NtUserEnumDisplayMonitors(const syscall_context& c, const hdc /*hdc_in*/, const uint64_t /*clip_rect_ptr*/,
                                                   const uint64_t /*callback*/, const uint64_t /*param*/)
         {

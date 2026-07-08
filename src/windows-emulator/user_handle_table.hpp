@@ -39,19 +39,21 @@ namespace sogen
                 srv.defaultFontHeightScale = -11;
                 srv.defaultFontWidthScale = 0;
                 srv.systemDpi = 96;
-                srv.systemMetrics[0] = 1920; // SM_CXSCREEN
-                srv.systemMetrics[1] = 1080; // SM_CYSCREEN
-                srv.systemMetrics[2] = 17;   // SM_CXVSCROLL
-                srv.systemMetrics[3] = 17;   // SM_CYHSCROLL
-                srv.systemMetrics[10] = 17;  // SM_CXHTHUMB
-                srv.systemMetrics[11] = 32;  // SM_CXICON
-                srv.systemMetrics[12] = 32;  // SM_CYICON
-                srv.systemMetrics[19] = 1;   // SM_MOUSEPRESENT
-                srv.systemMetrics[20] = 17;  // SM_CYVSCROLL
-                srv.systemMetrics[21] = 17;  // SM_CXHSCROLL
-                srv.systemMetrics[43] = 3;   // SM_CMOUSEBUTTONS
-                srv.systemMetrics[75] = 1;   // SM_MOUSEWHEELPRESENT
-                srv.systemMetrics[91] = 1;   // SM_MOUSEHORIZONTALWHEELPRESENT
+                srv.systemMetrics[0] = 1920;  // SM_CXSCREEN
+                srv.systemMetrics[1] = 1080;  // SM_CYSCREEN
+                srv.systemMetrics[2] = 17;    // SM_CXVSCROLL
+                srv.systemMetrics[3] = 17;    // SM_CYHSCROLL
+                srv.systemMetrics[10] = 17;   // SM_CXHTHUMB
+                srv.systemMetrics[11] = 32;   // SM_CXICON
+                srv.systemMetrics[12] = 32;   // SM_CYICON
+                srv.systemMetrics[19] = 1;    // SM_MOUSEPRESENT
+                srv.systemMetrics[20] = 17;   // SM_CYVSCROLL
+                srv.systemMetrics[21] = 17;   // SM_CXHSCROLL
+                srv.systemMetrics[43] = 3;    // SM_CMOUSEBUTTONS
+                srv.systemMetrics[75] = 1;    // SM_MOUSEWHEELPRESENT
+                srv.systemMetrics[78] = 1920; // SM_CXVIRTUALSCREEN
+                srv.systemMetrics[79] = 1080; // SM_CYVIRTUALSCREEN
+                srv.systemMetrics[91] = 1;    // SM_MOUSEHORIZONTALWHEELPRESENT
             });
 
             const auto handle_table_size = static_cast<size_t>(page_align_up(sizeof(USER_HANDLEENTRY) * MAX_HANDLES));

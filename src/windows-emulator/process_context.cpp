@@ -559,6 +559,7 @@ namespace sogen
         user_display_info.access([&](USER_DISPINFO& display_info) {
             display_info.dwMonitorCount = 1;
             display_info.pPrimaryMonitor = monitor_obj.value();
+            display_info.rcScreen = {.left = 0, .top = 0, .right = 1920, .bottom = 1080};
         });
     }
 
