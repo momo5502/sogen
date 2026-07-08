@@ -157,8 +157,6 @@ namespace sogen
         // terminal (e.g. --silent, or a Python wrapper capturing via callback).
         this->sink_(c, message);
 
-        // silent_ suppresses everything (even force-printed errors); disable_output_ suppresses all but
-        // force-printed messages. Sinks above still see every line.
         if (this->silent_ || (!force && this->disable_output_))
         {
             return;

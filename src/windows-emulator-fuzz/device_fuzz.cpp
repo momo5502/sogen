@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <memory>
 
@@ -151,8 +152,10 @@ namespace sogen::fuzz
             // Guest memory access is MMU-checked and throws by design; only sanitizer aborts are real bugs.
             (void)device.io_control(s.emu, ctx);
         }
-        catch (...)
+        catch (const std::exception&)
         {
+            // Only swallow C++ exceptions. Under /EHa a bare catch(...) would also catch SEH (access
+            // violations etc.), which must stay fatal so the fuzzer reports them.
         }
     }
 }

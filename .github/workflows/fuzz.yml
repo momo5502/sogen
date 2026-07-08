@@ -5,12 +5,6 @@ name: Fuzz
 # Runs nightly for an hour and can be dispatched manually. Not attached to PRs.
 
 on:
-  # TEMPORARY: run on push to the spike branch so the workflow can be exercised before it lands on
-  # the default branch (workflow_dispatch's "Run workflow" button only appears once it's on main).
-  # Remove this push trigger before merge.
-  push:
-    branches:
-      - spike/handler-fuzzing
   schedule:
     # 03:00 UTC nightly.
     - cron: "0 3 * * *"
