@@ -26,12 +26,9 @@ jobs:
   fuzz:
     name: Fuzz IO device handlers
     runs-on: ubuntu-24.04
-    # Build (~30 min) + up to an hour of fuzzing, with margin.
-    timeout-minutes: 120
     env:
       CLANG_VERSION: 21
-      # Shortened to 10 minutes for testing the workflow (restore to 3600 for real nightly runs).
-      DURATION: ${{ github.event.inputs.duration_seconds || '600' }}
+      DURATION: ${{ github.event.inputs.duration_seconds || '3600' }}
     steps:
       - name: Checkout Source
         uses: actions/checkout@v7
