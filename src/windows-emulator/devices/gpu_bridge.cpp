@@ -2264,10 +2264,8 @@ namespace sogen
             // object, but we don't track its size for the general path, so bound the host staging buffer so a
             // bogus request.size/output length can't force a huge allocation. Sized to fit realistic
             // single-resource readbacks (4K/8K textures, large buffers).
-#if SOGEN_ENABLE_FUZZING
-            // Fuzz builds shrink it: the fuzzer drives download_memory with bogus requests and no real GPU
-            // memory behind them, so the full 256 MiB staging buffer is pure zero-fill overhead (~121 ms per
-            // execution) that dominates throughput. 1 MiB still exercises the path; the shipped cap is 256 MiB.
+#ifdef SOGEN_ENABLE_FUZZING
+            // Shrunk for fuzzing: bogus download requests would otherwise zero-fill 256 MiB every execution.
             static constexpr size_t max_memory_transfer_bytes = size_t{1} * 1024 * 1024;
 #else
             static constexpr size_t max_memory_transfer_bytes = size_t{256} * 1024 * 1024;
