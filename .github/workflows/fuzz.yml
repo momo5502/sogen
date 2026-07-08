@@ -113,9 +113,9 @@ jobs:
             -print_final_stats=1 \
             -artifact_prefix=artifacts/ \
             2>&1 | tee fuzz.log
-          # In fork mode the process exit code is unreliable, so detect a crash by the reproducer files
-          # libFuzzer writes to artifacts/ (crash-*/oom-*/timeout-*/leak-*).
-          if ls artifacts/crash-* artifacts/oom-* artifacts/timeout-* artifacts/leak-* >/dev/null 2>&1; then
+          # In fork mode the process exit code is unreliable, so detect a finding by the reproducer files
+          # libFuzzer writes to artifacts/ (crash-*/oom-*/timeout-*/leak-*). Any match is a failure.
+          if find artifacts -type f \( -name 'crash-*' -o -name 'oom-*' -o -name 'timeout-*' -o -name 'leak-*' \) | grep -q .; then
             echo "fuzz_status=1" >> "$GITHUB_ENV"
           else
             echo "fuzz_status=0" >> "$GITHUB_ENV"
