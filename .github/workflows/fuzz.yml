@@ -13,7 +13,7 @@ on:
       duration_seconds:
         description: "Total fuzzing time in seconds"
         required: false
-        default: "3600"
+        default: "600"
 
 permissions:
   contents: read
@@ -30,8 +30,8 @@ jobs:
     timeout-minutes: 120
     env:
       CLANG_VERSION: 21
-      # Manual runs honor the input; the nightly schedule fuzzes for an hour.
-      DURATION: ${{ github.event.inputs.duration_seconds || '3600' }}
+      # Shortened to 10 minutes for testing the workflow (restore to 3600 for real nightly runs).
+      DURATION: ${{ github.event.inputs.duration_seconds || '600' }}
     steps:
       - name: Checkout Source
         uses: actions/checkout@v7
