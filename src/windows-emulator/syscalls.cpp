@@ -432,6 +432,10 @@ namespace sogen
                                                        emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> attributes,
                                                        ULONG number_of_attributes, uint64_t buffer, ULONG buffer_length,
                                                        emulator_object<ULONG> return_length);
+        NTSTATUS handle_NtAccessCheck(const syscall_context& c, uint64_t security_descriptor, handle client_token,
+                                      ACCESS_MASK desired_access, emulator_object<EMU_GENERIC_MAPPING> generic_mapping,
+                                      uint64_t privilege_set, emulator_object<ULONG> privilege_set_length,
+                                      emulator_object<ACCESS_MASK> granted_access, emulator_object<NTSTATUS> access_status);
         NTSTATUS handle_NtAdjustPrivilegesToken();
         NTSTATUS handle_NtQuerySecurityPolicy();
         NTSTATUS handle_NtFlushInstructionCache(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
@@ -964,11 +968,6 @@ namespace sogen
         }
 
         NTSTATUS handle_NtQueryInformationJobObject()
-        {
-            return STATUS_NOT_SUPPORTED;
-        }
-
-        NTSTATUS handle_NtAccessCheck()
         {
             return STATUS_NOT_SUPPORTED;
         }
