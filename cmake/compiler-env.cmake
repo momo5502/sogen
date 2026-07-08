@@ -40,6 +40,12 @@ endif()
 
 ##########################################
 
+if(SOGEN_ENABLE_FUZZING)
+    add_compile_definitions(SOGEN_ENABLE_FUZZING)
+endif()
+
+##########################################
+
 set(SOGEN_ENABLE_RUST OFF)
 if(SOGEN_ENABLE_RUST_CODE AND NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   find_program(CARGO cargo)
