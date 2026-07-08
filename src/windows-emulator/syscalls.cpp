@@ -133,7 +133,10 @@ namespace sogen
                                            emulator_object<ULONG> section_size);
         NTSTATUS handle_NtGetMUIRegistryInfo();
         NTSTATUS handle_NtIsUILanguageComitted();
-        NTSTATUS handle_NtUserGetKeyboardLayout();
+        uint64_t handle_NtUserActivateKeyboardLayout(const syscall_context& c, uint64_t keyboard_layout, uint32_t flags);
+        uint64_t handle_NtUserGetKeyboardLayout(const syscall_context& c, uint32_t thread_id);
+        uint32_t handle_NtUserGetKeyboardLayoutList(const syscall_context& c, uint32_t buffer_count, emulator_pointer keyboard_layouts);
+        BOOL handle_NtUserGetKeyboardLayoutName(const syscall_context& c, emulator_pointer name);
         NTSTATUS handle_NtQueryDefaultUILanguage(const syscall_context&, emulator_object<LANGID> language_id);
         NTSTATUS handle_NtQueryInstallUILanguage(const syscall_context&, emulator_object<LANGID> language_id);
 
@@ -675,7 +678,6 @@ namespace sogen
         uint64_t handle_NtUserSetKeyboardState();
         uint64_t handle_NtUserAttachThreadInput();
         BOOL handle_NtUserRegisterTouchHitTestingWindow();
-        uint64_t handle_NtUserActivateKeyboardLayout();
 
         // syscalls/gdi.cpp:
         NTSTATUS handle_NtDxgkIsFeatureEnabled();
@@ -1355,6 +1357,8 @@ namespace sogen
         add_handler(NtQueryTimerResolution);
         add_handler(NtSetInformationKey);
         add_handler(NtUserGetKeyboardLayout);
+        add_handler(NtUserGetKeyboardLayoutList);
+        add_handler(NtUserGetKeyboardLayoutName);
         add_handler(NtQueryDirectoryFileEx);
         add_handler(NtQueryDirectoryFile);
         add_handler(NtUserSystemParametersInfo);

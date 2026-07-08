@@ -5710,11 +5710,6 @@ namespace sogen
         {
             return TRUE;
         }
-
-        uint64_t handle_NtUserActivateKeyboardLayout()
-        {
-            return 0x1337;
-        }
     }
 
 } // namespace sogen

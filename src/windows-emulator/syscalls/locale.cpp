@@ -73,9 +73,54 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
-        NTSTATUS handle_NtUserGetKeyboardLayout()
+        uint64_t handle_NtUserActivateKeyboardLayout(const syscall_context&, const uint64_t /*keyboard_layout*/, const uint32_t /*flags*/)
         {
-            return STATUS_NOT_SUPPORTED;
+            return 0x04070407;
+        }
+
+        uint64_t handle_NtUserGetKeyboardLayout(const syscall_context&, const uint32_t /*thread_id*/)
+        {
+            return 0x04070407;
+        }
+
+        uint32_t handle_NtUserGetKeyboardLayoutList(const syscall_context& c, const uint32_t buffer_count,
+                                                    const emulator_pointer keyboard_layouts)
+        {
+            constexpr uint64_t keyboard_layout = 0x04070407;
+
+            if (buffer_count == 0)
+            {
+                return 1;
+            }
+
+            if (keyboard_layouts == 0)
+            {
+                return 0;
+            }
+
+            if (c.proc.is_wow64_process)
+            {
+                c.emu.write_memory(keyboard_layouts, static_cast<uint32_t>(keyboard_layout));
+            }
+            else
+            {
+                c.emu.write_memory(keyboard_layouts, keyboard_layout);
+            }
+
+            return 1;
+        }
+
+        BOOL handle_NtUserGetKeyboardLayoutName(const syscall_context& c, const emulator_pointer name)
+        {
+            static constexpr char16_t keyboard_layout_name[] = u"00000407";
+
+            if (name == 0)
+            {
+                return FALSE;
+            }
+
+            c.emu.write_memory(name, keyboard_layout_name, sizeof(keyboard_layout_name));
+            return TRUE;
         }
 
         NTSTATUS handle_NtQueryDefaultUILanguage(const syscall_context&, const emulator_object<LANGID> language_id)
