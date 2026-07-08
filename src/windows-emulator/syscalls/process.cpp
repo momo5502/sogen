@@ -236,6 +236,31 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            case ProcessImageFileName: {
+                const auto image_path = c.win_emu.mod_manager.executable->module_path.to_device_path();
+                const auto string_length = image_path.size() * sizeof(char16_t);
+                const auto required_length = sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>) + string_length + sizeof(char16_t);
+
+                if (return_length)
+                {
+                    return_length.write(static_cast<uint32_t>(required_length));
+                }
+
+                if (process_information_length < required_length)
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                const auto buffer = process_information + sizeof(UNICODE_STRING<EmulatorTraits<Emu64>>);
+                c.emu.write_memory(buffer, image_path.c_str(), string_length + sizeof(char16_t));
+                emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{c.emu, process_information}.write({
+                    .Length = static_cast<USHORT>(string_length),
+                    .MaximumLength = static_cast<USHORT>(string_length + sizeof(char16_t)),
+                    .Buffer = buffer,
+                });
+                return STATUS_SUCCESS;
+            }
+
             case ProcessImageFileNameWin32: {
                 const auto peb = c.proc.peb64.read();
                 emulator_object<RTL_USER_PROCESS_PARAMETERS64> proc_params{c.emu, peb.ProcessParameters};
@@ -266,7 +291,7 @@ namespace sogen
             }
 
             default:
-                c.win_emu.log.error("Unsupported process info class: %X\n", info_class);
+                c.win_emu.log.error("Unsupported process info class: 0x%X\n", info_class);
                 c.emu.stop();
 
                 return STATUS_NOT_SUPPORTED;
