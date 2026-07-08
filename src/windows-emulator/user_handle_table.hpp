@@ -51,6 +51,8 @@ namespace sogen
                 srv.systemMetrics[21] = 17;  // SM_CXHSCROLL
                 srv.systemMetrics[43] = 3;   // SM_CMOUSEBUTTONS
                 srv.systemMetrics[75] = 1;   // SM_MOUSEWHEELPRESENT
+                srv.systemMetrics[78] = 1920; // SM_CXVIRTUALSCREEN
+                srv.systemMetrics[79] = 1080; // SM_CYVIRTUALSCREEN
                 srv.systemMetrics[91] = 1;   // SM_MOUSEHORIZONTALWHEELPRESENT
             });
 
