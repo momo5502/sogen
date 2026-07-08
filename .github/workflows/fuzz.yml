@@ -99,16 +99,22 @@ jobs:
         run: |
           mkdir -p corpus artifacts
           set +e
+          # -fork=$(nproc): parallel fuzzing across all cores, sharing the corpus dir.
           ./build/fuzz/artifacts/windows-emulator-fuzz \
             corpus \
+            -fork=$(nproc) \
             -max_total_time=${DURATION} \
             -use_value_profile=1 \
             -print_final_stats=1 \
             -artifact_prefix=artifacts/ \
             2>&1 | tee fuzz.log
-          status=${PIPESTATUS[0]}
-          echo "fuzz_status=${status}" >> "$GITHUB_ENV"
-          # A nonzero exit means libFuzzer saved a crash reproducer in artifacts/.
+          # In fork mode the process exit code is unreliable, so detect a crash by the reproducer files
+          # libFuzzer writes to artifacts/ (crash-*/oom-*/timeout-*/leak-*).
+          if ls artifacts/crash-* artifacts/oom-* artifacts/timeout-* artifacts/leak-* >/dev/null 2>&1; then
+            echo "fuzz_status=1" >> "$GITHUB_ENV"
+          else
+            echo "fuzz_status=0" >> "$GITHUB_ENV"
+          fi
           exit 0
 
       # Persist the grown corpus even when the fuzzer found a crash (the job fails below).
