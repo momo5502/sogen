@@ -90,7 +90,9 @@ namespace sogen::fuzz
         // Persistent across iterations: building the emulator is expensive, so do it once.
         struct fuzz_state
         {
-            static constexpr size_t scratch_size = 0x2000;
+            static constexpr size_t input_capacity = 0x1000;
+            static constexpr size_t output_capacity = 0x1000;
+            static constexpr size_t scratch_size = input_capacity + output_capacity;
 
             windows_emulator emu = make_bare_emulator();
             // Fuzzed garbage makes the handlers log constantly; fully mute the terminal (errors included).
@@ -108,8 +110,9 @@ namespace sogen::fuzz
 
     void run(std::span<const uint8_t> data)
     {
-        // Header: [u32 device selector][u32 ioctl code], then the request/input buffer.
-        if (data.size() < 2 * sizeof(uint32_t))
+        // Header: [u32 device selector][u32 ioctl code][u32 output_buffer_length], then the input payload.
+        constexpr size_t header_size = 3 * sizeof(uint32_t);
+        if (data.size() < header_size)
         {
             return;
         }
@@ -122,16 +125,17 @@ namespace sogen::fuzz
 
         uint32_t selector = 0;
         uint32_t code = 0;
-        std::memcpy(&selector, data.data(), sizeof(selector));
-        std::memcpy(&code, data.data() + sizeof(selector), sizeof(code));
+        uint32_t output_len = 0;
+        std::memcpy(&selector, data.data() + 0, sizeof(selector));
+        std::memcpy(&code, data.data() + 4, sizeof(code));
+        std::memcpy(&output_len, data.data() + 8, sizeof(output_len));
 
         io_device& device = *s.devices[selector % s.devices.size()];
-        const auto payload = data.subspan(2 * sizeof(uint32_t));
+        const auto payload = data.subspan(header_size);
 
-        constexpr size_t half = fuzz_state::scratch_size / 2;
         const uint64_t in_buf = s.scratch;
-        const uint64_t out_buf = s.scratch + half;
-        const size_t in_len = std::min(payload.size(), half);
+        const uint64_t out_buf = s.scratch + fuzz_state::input_capacity;
+        const size_t in_len = std::min(payload.size(), fuzz_state::input_capacity);
 
         if (in_len > 0)
         {
@@ -143,7 +147,10 @@ namespace sogen::fuzz
         ctx.input_buffer = in_buf;
         ctx.input_buffer_length = static_cast<ULONG>(in_len);
         ctx.output_buffer = out_buf;
-        ctx.output_buffer_length = static_cast<ULONG>(half);
+        // Guest-controlled output length from the fuzz input. The backing buffer is only output_capacity
+        // bytes, so a handler that honors an oversized length faults in the (contained) guest domain, while
+        // one that sizes a host allocation/arithmetic from it can be caught by the sanitizer.
+        ctx.output_buffer_length = output_len;
 
         try
         {

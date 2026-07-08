@@ -105,6 +105,7 @@ jobs:
           ./build/fuzz/artifacts/windows-emulator-fuzz \
             corpus \
             -max_total_time=${DURATION} \
+            -use_value_profile=1 \
             -print_final_stats=1 \
             -artifact_prefix=artifacts/ \
             2>&1 | tee fuzz.log
