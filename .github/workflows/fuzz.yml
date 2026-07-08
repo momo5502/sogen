@@ -100,9 +100,14 @@ jobs:
           mkdir -p corpus artifacts
           set +e
           # -fork=$(nproc): parallel fuzzing across all cores, sharing the corpus dir.
+          # -ignore_ooms/timeouts=0: fork mode ignores OOMs and timeouts by default; treat them as
+          # findings so they fail the job (a huge guest-driven allocation is a real bug here).
           ./build/fuzz/artifacts/windows-emulator-fuzz \
             corpus \
             -fork=$(nproc) \
+            -ignore_ooms=0 \
+            -ignore_timeouts=0 \
+            -ignore_crashes=0 \
             -max_total_time=${DURATION} \
             -use_value_profile=1 \
             -print_final_stats=1 \
