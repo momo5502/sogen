@@ -43,6 +43,81 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
         };
+
+        // Uniform factory signature (bool is_32_bit) so every device fits one table entry; nullary
+        // factories just ignore the flag.
+        std::unique_ptr<io_device> make_dummy(bool)
+        {
+            return std::make_unique<dummy_device>();
+        }
+        std::unique_ptr<io_device> make_transport_stub(bool)
+        {
+            return std::make_unique<transport_stub_device>();
+        }
+        std::unique_ptr<io_device> make_named_pipe(bool)
+        {
+            return std::make_unique<named_pipe>();
+        }
+        std::unique_ptr<io_device> make_console(bool)
+        {
+            return create_console_device();
+        }
+        std::unique_ptr<io_device> make_nsi(bool)
+        {
+            return create_network_store_interface();
+        }
+        std::unique_ptr<io_device> make_afd_endpoint(bool is_32_bit)
+        {
+            return create_afd_endpoint(is_32_bit);
+        }
+        std::unique_ptr<io_device> make_afd_async_connect_hlp(bool is_32_bit)
+        {
+            return create_afd_async_connect_hlp(is_32_bit);
+        }
+        std::unique_ptr<io_device> make_mount_point_manager(bool)
+        {
+            return create_mount_point_manager();
+        }
+        std::unique_ptr<io_device> make_ksecdd(bool)
+        {
+            return create_security_support_provider();
+        }
+        std::unique_ptr<io_device> make_gpu(bool)
+        {
+            return create_gpu_bridge();
+        }
+
+        using namespace std::string_view_literals;
+
+        constexpr std::u16string_view dummy_names[] = {
+            u"CNG"sv, u"RasAcd"sv, u"PcwDrv"sv, u"DeviceApi\\CMApi"sv, u"DeviceApi\\CMNotify"sv, u"ConDrv\\Server"sv};
+        constexpr std::u16string_view console_names[] = {u"Console"sv};
+        constexpr std::u16string_view nsi_names[] = {u"Nsi"sv};
+        constexpr std::u16string_view afd_endpoint_names[] = {u"Afd\\Endpoint"sv};
+        constexpr std::u16string_view afd_hlp_names[] = {u"Afd\\AsyncConnectHlp"sv};
+        constexpr std::u16string_view mount_names[] = {u"MountPointManager"sv};
+        constexpr std::u16string_view ksecdd_names[] = {u"KsecDD"sv};
+        constexpr std::u16string_view named_pipe_names[] = {u"NamedPipe"sv};
+        constexpr std::u16string_view gpu_names[] = {u"SogenGpu"sv};
+        constexpr std::u16string_view transport_names[] = {u"Tcp"sv, u"Tcp6"sv, u"Udp"sv, u"RawIp"sv};
+
+        constexpr device_registration registrations[] = {
+            {dummy_names, make_dummy},
+            {console_names, make_console},
+            {nsi_names, make_nsi},
+            {afd_endpoint_names, make_afd_endpoint},
+            {afd_hlp_names, make_afd_async_connect_hlp},
+            {mount_names, make_mount_point_manager},
+            {ksecdd_names, make_ksecdd},
+            {named_pipe_names, make_named_pipe},
+            {gpu_names, make_gpu},
+            {transport_names, make_transport_stub},
+        };
+    }
+
+    std::span<const device_registration> get_device_registrations()
+    {
+        return registrations;
     }
 
     bool needs_32_bit_devices(const windows_emulator& win_emu)
@@ -52,59 +127,15 @@ namespace sogen
 
     std::unique_ptr<io_device> create_device(const std::u16string_view device, const bool is_32_bit)
     {
-        if (device == u"CNG"                    //
-            || device == u"RasAcd"              //
-            || device == u"PcwDrv"              //
-            || device == u"DeviceApi\\CMApi"    //
-            || device == u"DeviceApi\\CMNotify" //
-            || device == u"ConDrv\\Server")
+        for (const auto& registration : registrations)
         {
-            return std::make_unique<dummy_device>();
-        }
-
-        if (device == u"Console")
-        {
-            return create_console_device();
-        }
-
-        if (device == u"Nsi")
-        {
-            return create_network_store_interface();
-        }
-
-        if (device == u"Afd\\Endpoint")
-        {
-            return create_afd_endpoint(is_32_bit);
-        }
-
-        if (device == u"Afd\\AsyncConnectHlp")
-        {
-            return create_afd_async_connect_hlp(is_32_bit);
-        }
-
-        if (device == u"MountPointManager")
-        {
-            return create_mount_point_manager();
-        }
-
-        if (device == u"KsecDD")
-        {
-            return create_security_support_provider();
-        }
-
-        if (device == u"NamedPipe")
-        {
-            return std::make_unique<named_pipe>();
-        }
-
-        if (device == u"SogenGpu")
-        {
-            return create_gpu_bridge();
-        }
-
-        if (device == u"Tcp" || device == u"Tcp6" || device == u"Udp" || device == u"RawIp")
-        {
-            return std::make_unique<transport_stub_device>();
+            for (const auto name : registration.names)
+            {
+                if (name == device)
+                {
+                    return registration.create(is_32_bit);
+                }
+            }
         }
 
         throw std::runtime_error("Unsupported device: " + u16_to_u8(device));

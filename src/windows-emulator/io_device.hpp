@@ -1,6 +1,8 @@
 #pragma once
 
 #include <memory>
+#include <span>
+#include <string_view>
 #include <arch_emulator.hpp>
 #include <serialization.hpp>
 
@@ -136,6 +138,18 @@ namespace sogen
 
     bool needs_32_bit_devices(const windows_emulator& win_emu);
     std::unique_ptr<io_device> create_device(std::u16string_view device, bool is_32_bit);
+
+    // Single source of truth for the emulator's IO devices: which NT device names each handler serves
+    // and how to construct it. create_device() resolves a name through this table, and consumers that
+    // need every device (e.g. the handler fuzzer) can enumerate it, so a newly added device is visible
+    // everywhere without a second list to update.
+    struct device_registration
+    {
+        std::span<const std::u16string_view> names;
+        std::unique_ptr<io_device> (*create)(bool is_32_bit);
+    };
+
+    std::span<const device_registration> get_device_registrations();
 
     class io_device_container : public io_device
     {
