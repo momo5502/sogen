@@ -29,8 +29,7 @@ namespace sogen
             {
                 if (context.output_buffer && context.output_buffer_length)
                 {
-                    std::vector<std::byte> output(context.output_buffer_length, std::byte{0});
-                    win_emu.emu().write_memory(context.output_buffer, output.data(), output.size());
+                    win_emu.emu().set_memory(context.output_buffer, 0, context.output_buffer_length);
                 }
 
                 if (context.io_status_block)
