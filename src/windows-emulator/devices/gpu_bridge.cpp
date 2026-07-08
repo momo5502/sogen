@@ -478,7 +478,7 @@ namespace sogen
                 }
 
                 win_emu.emu().write_memory(context.output_buffer, properties.data(), properties.size());
-                set_information(context, context.output_buffer_length);
+                set_information(context, static_cast<ULONG>(properties.size()));
                 return STATUS_SUCCESS;
             }
 
@@ -1191,7 +1191,7 @@ namespace sogen
                 }
 
                 win_emu.emu().write_memory(context.output_buffer, properties.data(), properties.size());
-                set_information(context, context.output_buffer_length);
+                set_information(context, static_cast<ULONG>(properties.size()));
                 return STATUS_SUCCESS;
             }
 
@@ -3068,7 +3068,7 @@ namespace sogen
                 }
 
                 win_emu.emu().write_memory(context.output_buffer, caps.data(), caps.size());
-                set_information(context, context.output_buffer_length);
+                set_information(context, static_cast<ULONG>(caps.size()));
                 return STATUS_SUCCESS;
             }
         };
