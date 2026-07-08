@@ -86,7 +86,7 @@ jobs:
       # one under a run-specific key at the end. Restore/save are split (not the combined cache action) so
       # the save still runs when the fuzzer finds a crash and fails the job (see "Save corpus" below).
       - name: Restore corpus
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: corpus
           key: fuzz-corpus-${{ github.run_id }}
@@ -125,7 +125,7 @@ jobs:
       # Persist the grown corpus even when the fuzzer found a crash (the job fails below).
       - name: Save corpus
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: corpus
           key: fuzz-corpus-${{ github.run_id }}
