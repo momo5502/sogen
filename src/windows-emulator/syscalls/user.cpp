@@ -5736,15 +5736,15 @@ namespace sogen
 
             struct gui_thread_info
             {
-                DWORD cbSize;
-                DWORD flags;
-                hwnd hwndActive;
-                hwnd hwndFocus;
-                hwnd hwndCapture;
-                hwnd hwndMenuOwner;
-                hwnd hwndMoveSize;
-                hwnd hwndCaret;
-                RECT rcCaret;
+                DWORD cbSize{};
+                DWORD flags{};
+                hwnd hwndActive{};
+                hwnd hwndFocus{};
+                hwnd hwndCapture{};
+                hwnd hwndMenuOwner{};
+                hwnd hwndMoveSize{};
+                hwnd hwndCaret{};
+                RECT rcCaret{};
             };
 
             auto info = emulator_object<gui_thread_info>{c.emu, info_address}.read();

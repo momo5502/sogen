@@ -112,14 +112,14 @@ namespace sogen
 
         BOOL handle_NtUserGetKeyboardLayoutName(const syscall_context& c, const emulator_pointer name)
         {
-            static constexpr char16_t keyboard_layout_name[] = u"00000407";
+            static const std::u16string keyboard_layout_name = u"00000407";
 
             if (name == 0)
             {
                 return FALSE;
             }
 
-            c.emu.write_memory(name, keyboard_layout_name, sizeof(keyboard_layout_name));
+            c.emu.write_memory(name, keyboard_layout_name.data(), keyboard_layout_name.size() * sizeof(char16_t));
             return TRUE;
         }
 
