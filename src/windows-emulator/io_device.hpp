@@ -137,7 +137,15 @@ namespace sogen
     };
 
     bool needs_32_bit_devices(const windows_emulator& win_emu);
-    std::unique_ptr<io_device> create_device(std::u16string_view device, bool is_32_bit);
+
+    // Everything a device factory needs to construct its device. Only the WoW64 flag for now; grows as
+    // more construction-time context is required, without touching every factory signature again.
+    struct device_creation_context
+    {
+        bool is_32_bit{};
+    };
+
+    std::unique_ptr<io_device> create_device(std::u16string_view device, const device_creation_context& context);
 
     // Single source of truth for the emulator's IO devices: which NT device names each handler serves
     // and how to construct it. create_device() resolves a name through this table, and consumers that
@@ -146,7 +154,7 @@ namespace sogen
     struct device_registration
     {
         std::span<const std::u16string_view> names;
-        std::unique_ptr<io_device> (*create)(bool is_32_bit);
+        std::unique_ptr<io_device> (*create)(const device_creation_context& context);
     };
 
     std::span<const device_registration> get_device_registrations();
@@ -198,7 +206,7 @@ namespace sogen
 
         void setup()
         {
-            this->device_ = create_device(this->device_name_, this->is_32_bit_);
+            this->device_ = create_device(this->device_name_, device_creation_context{.is_32_bit = this->is_32_bit_});
         }
 
         void assert_validity() const

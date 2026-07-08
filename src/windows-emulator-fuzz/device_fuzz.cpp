@@ -61,11 +61,12 @@ namespace sogen::fuzz
         std::vector<std::unique_ptr<io_device>> make_devices()
         {
             std::vector<std::unique_ptr<io_device>> devices;
+            const device_creation_context context{.is_32_bit = false};
             for (const auto& registration : get_device_registrations())
             {
                 try
                 {
-                    if (auto d = registration.create(false))
+                    if (auto d = registration.create(context))
                     {
                         devices.push_back(std::move(d));
                     }

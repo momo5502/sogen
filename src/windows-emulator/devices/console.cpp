@@ -206,7 +206,7 @@ namespace sogen
         };
     }
 
-    std::unique_ptr<io_device> create_console_device()
+    std::unique_ptr<io_device> create_console_device(const device_creation_context&)
     {
         return std::make_unique<console_device>();
     }

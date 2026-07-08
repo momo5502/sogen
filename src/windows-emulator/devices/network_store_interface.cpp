@@ -243,7 +243,7 @@ namespace sogen
         };
     }
 
-    std::unique_ptr<io_device> create_network_store_interface()
+    std::unique_ptr<io_device> create_network_store_interface(const device_creation_context&)
     {
         return std::make_unique<network_store_interface_device>();
     }

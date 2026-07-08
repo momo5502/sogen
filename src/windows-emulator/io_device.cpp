@@ -44,47 +44,19 @@ namespace sogen
             }
         };
 
-        // Uniform factory signature (bool is_32_bit) so every device fits one table entry; nullary
-        // factories just ignore the flag.
-        std::unique_ptr<io_device> make_dummy(bool)
+        // Factories for the devices defined locally in this file, matching the shared create_*
+        // (device_creation_context) signature so they slot straight into the registry.
+        std::unique_ptr<io_device> create_dummy_device(const device_creation_context&)
         {
             return std::make_unique<dummy_device>();
         }
-        std::unique_ptr<io_device> make_transport_stub(bool)
+        std::unique_ptr<io_device> create_transport_stub_device(const device_creation_context&)
         {
             return std::make_unique<transport_stub_device>();
         }
-        std::unique_ptr<io_device> make_named_pipe(bool)
+        std::unique_ptr<io_device> create_named_pipe_device(const device_creation_context&)
         {
             return std::make_unique<named_pipe>();
-        }
-        std::unique_ptr<io_device> make_console(bool)
-        {
-            return create_console_device();
-        }
-        std::unique_ptr<io_device> make_nsi(bool)
-        {
-            return create_network_store_interface();
-        }
-        std::unique_ptr<io_device> make_afd_endpoint(bool is_32_bit)
-        {
-            return create_afd_endpoint(is_32_bit);
-        }
-        std::unique_ptr<io_device> make_afd_async_connect_hlp(bool is_32_bit)
-        {
-            return create_afd_async_connect_hlp(is_32_bit);
-        }
-        std::unique_ptr<io_device> make_mount_point_manager(bool)
-        {
-            return create_mount_point_manager();
-        }
-        std::unique_ptr<io_device> make_ksecdd(bool)
-        {
-            return create_security_support_provider();
-        }
-        std::unique_ptr<io_device> make_gpu(bool)
-        {
-            return create_gpu_bridge();
         }
 
         using namespace std::string_view_literals;
@@ -102,16 +74,16 @@ namespace sogen
         constexpr std::u16string_view transport_names[] = {u"Tcp"sv, u"Tcp6"sv, u"Udp"sv, u"RawIp"sv};
 
         constexpr device_registration registrations[] = {
-            {dummy_names, make_dummy},
-            {console_names, make_console},
-            {nsi_names, make_nsi},
-            {afd_endpoint_names, make_afd_endpoint},
-            {afd_hlp_names, make_afd_async_connect_hlp},
-            {mount_names, make_mount_point_manager},
-            {ksecdd_names, make_ksecdd},
-            {named_pipe_names, make_named_pipe},
-            {gpu_names, make_gpu},
-            {transport_names, make_transport_stub},
+            {dummy_names, create_dummy_device},
+            {console_names, create_console_device},
+            {nsi_names, create_network_store_interface},
+            {afd_endpoint_names, create_afd_endpoint},
+            {afd_hlp_names, create_afd_async_connect_hlp},
+            {mount_names, create_mount_point_manager},
+            {ksecdd_names, create_security_support_provider},
+            {named_pipe_names, create_named_pipe_device},
+            {gpu_names, create_gpu_bridge},
+            {transport_names, create_transport_stub_device},
         };
     }
 
@@ -125,7 +97,7 @@ namespace sogen
         return win_emu.process.is_wow64_process;
     }
 
-    std::unique_ptr<io_device> create_device(const std::u16string_view device, const bool is_32_bit)
+    std::unique_ptr<io_device> create_device(const std::u16string_view device, const device_creation_context& context)
     {
         for (const auto& registration : registrations)
         {
@@ -133,7 +105,7 @@ namespace sogen
             {
                 if (name == device)
                 {
-                    return registration.create(is_32_bit);
+                    return registration.create(context);
                 }
             }
         }
