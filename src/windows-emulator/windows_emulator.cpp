@@ -691,7 +691,9 @@ namespace sogen
           callbacks(std::move(callbacks)),
           file_sys(emulation_root.empty() ? emulation_root : emulation_root / "filesys"),
           memory(*this->emu_),
-          registry(emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"),
+          registry(settings.load_registry
+                       ? registry_manager{emulation_root.empty() ? settings.registry_directory : emulation_root / "registry"}
+                       : registry_manager{}),
           mod_manager(memory, file_sys, this->callbacks),
           process(*this->emu_, memory, *this->clock_, this->callbacks),
           use_relative_time_(settings.use_relative_time),

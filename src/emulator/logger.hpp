@@ -44,6 +44,18 @@ namespace sogen
             return this->disable_output_;
         }
 
+        // Fully mute terminal output, including force-printed errors that disable_output() lets through.
+        // Sinks still observe everything. Intended for headless consumers (e.g. fuzzing).
+        void set_silent(const bool value)
+        {
+            this->silent_ = value;
+        }
+
+        bool is_silent() const
+        {
+            return this->silent_;
+        }
+
         // Install a sink callback. Passing an empty std::function clears it.
         // Single-sink: installing replaces any previously installed sink.
         void set_sink(sink s)
@@ -56,6 +68,7 @@ namespace sogen
         UINT old_cp{};
 #endif
         bool disable_output_{false};
+        bool silent_{false};
         sink sink_{};
         mutable std::mutex print_mutex_{};
         void print_message(color c, std::string_view message, bool force = false) const;

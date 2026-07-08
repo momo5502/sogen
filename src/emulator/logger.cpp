@@ -157,7 +157,7 @@ namespace sogen
         // terminal (e.g. --silent, or a Python wrapper capturing via callback).
         this->sink_(c, message);
 
-        if (!force && this->disable_output_)
+        if (this->silent_ || (!force && this->disable_output_))
         {
             return;
         }
