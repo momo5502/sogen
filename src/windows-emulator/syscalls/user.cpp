@@ -2736,6 +2736,7 @@ namespace sogen
                 guest_win.spwndOwner = parent_win && has_owner ? parent_win->guest.value() : 0;
                 guest_win.lpfnWndProc = win.wnd_proc;
                 guest_win.pcls = class_obj_addr;
+                guest_win.hrgnUpdate = !is_message_only ? 0x12345678 : 0;
                 guest_win.cbWndExtra = wnd_class->cbWndExtra;
                 // Control id offset is build-specific: Win11 reads wID (WND+0x140), Server 2022 reads
                 // spmenu (WND+0x98). Populate both so builtin wndprocs emit the right WM_COMMAND id.
@@ -3460,6 +3461,22 @@ namespace sogen
 
             validate_window(*win);
             return TRUE;
+        }
+
+        BOOL handle_NtUserGetUpdateRect(const syscall_context& c, const hwnd hwnd, const emulator_object<RECT> rect, const BOOL /*erase*/)
+        {
+            const auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            if (rect)
+            {
+                rect.write(win->update_pending ? win->update_rect : RECT{});
+            }
+
+            return win->update_pending ? TRUE : FALSE;
         }
 
         void collect_pending_paint_tree(const syscall_context& c, window& win, std::vector<uint64_t>& order)

@@ -278,7 +278,8 @@ namespace sogen
         RECT rcClient;
         uint64_t lpfnWndProc;
         uint64_t pcls;
-        uint8_t pad_088[16];
+        uint64_t hrgnUpdate;
+        uint8_t pad_090[8];
         uint64_t spmenu;
         uint8_t pad_0A0[24];
         uint32_t dwTextLengthBytes;
