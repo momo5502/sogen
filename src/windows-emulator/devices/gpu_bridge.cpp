@@ -468,8 +468,6 @@ namespace sogen
 
                 const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
 
-                // output_buffer_length is guest-controlled; the response is a small fixed-size struct, so
-                // bound the staging allocation instead of trusting the declared length.
                 std::vector<std::byte> properties(std::min<size_t>(context.output_buffer_length, max_readback_bytes));
                 const int32_t result = this->vulkan_.get_physical_device_properties(request.physical_device, properties.data(),
                                                                                     properties.size(), win_emu.process.is_wow64_process);
@@ -1183,8 +1181,6 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                // output_buffer_length is guest-controlled; the response is a small fixed-size struct, so
-                // bound the staging allocation instead of trusting the declared length.
                 std::vector<std::byte> properties(std::min<size_t>(context.output_buffer_length, max_readback_bytes));
                 const int32_t result =
                     this->vulkan_.get_physical_device_memory_properties(request.physical_device, properties.data(), properties.size());
@@ -3048,8 +3044,6 @@ namespace sogen
                     }
                 }
 
-                // output_buffer_length is guest-controlled; the response is a small fixed-size struct, so
-                // bound the staging allocation instead of trusting the declared length.
                 std::vector<std::byte> caps(std::min<size_t>(context.output_buffer_length, max_readback_bytes));
                 const int32_t result = this->vulkan_.get_surface_capabilities(request.physical_device, request.surface, window_width,
                                                                               window_height, caps.data(), caps.size());

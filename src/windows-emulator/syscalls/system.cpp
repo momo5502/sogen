@@ -618,8 +618,7 @@ namespace sogen
                 // of rejecting an unexpected size.
                 if (system_information)
                 {
-                    const std::vector<std::byte> zeros(system_information_length, std::byte{});
-                    c.emu.write_memory(system_information, zeros.data(), zeros.size());
+                    c.emu.set_memory(system_information, 0, system_information_length);
                 }
                 if (return_length)
                 {
@@ -737,8 +736,7 @@ namespace sogen
             // "power/idle status" queries without modeling the full power subsystem.
             if (output_buffer && output_buffer_length > 0)
             {
-                const std::vector<std::byte> zeros(output_buffer_length, std::byte{});
-                c.emu.write_memory(output_buffer, zeros.data(), zeros.size());
+                c.emu.set_memory(output_buffer, 0, output_buffer_length);
             }
 
             return STATUS_SUCCESS;

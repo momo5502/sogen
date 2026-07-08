@@ -310,6 +310,11 @@ namespace sogen
             return this->memory().try_write_memory(address, data, size);
         }
 
+        void set_memory(const uint64_t address, const uint8_t value, const uint64_t size)
+        {
+            this->memory().set_memory(address, value, size);
+        }
+
         template <typename T>
         T read_memory(const uint64_t address) const
         {

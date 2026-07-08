@@ -1,4 +1,8 @@
 #pragma once
+#include <array>
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 #include <functional>
 #include <stdexcept>
@@ -114,6 +118,22 @@ namespace sogen
                 this->write_memory(p_dst, elem);
                 p_src += increment;
                 p_dst += increment;
+            }
+        }
+
+        // Fill a guest range with a byte value (memset). Writes in bounded chunks so a large size never
+        // materializes a matching host allocation.
+        void set_memory(uint64_t address, uint8_t value, uint64_t size)
+        {
+            std::array<std::byte, 0x1000> buffer{};
+            buffer.fill(static_cast<std::byte>(value));
+
+            while (size > 0)
+            {
+                const auto count = static_cast<size_t>(std::min<uint64_t>(buffer.size(), size));
+                this->write_memory(address, buffer.data(), count);
+                address += count;
+                size -= count;
             }
         }
     };

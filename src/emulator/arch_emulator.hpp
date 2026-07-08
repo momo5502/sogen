@@ -62,6 +62,7 @@ namespace sogen
         using arch_emulator<Traits>::write_memory;
         using arch_emulator<Traits>::try_write_memory;
         using arch_emulator<Traits>::move_memory;
+        using arch_emulator<Traits>::set_memory;
 
         virtual size_t vcpu_count() const
         {
