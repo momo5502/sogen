@@ -6,8 +6,8 @@ name: Fuzz
 
 on:
   schedule:
-    # 03:00 UTC nightly.
-    - cron: "0 3 * * *"
+    # 00:00 UTC = 02:00 Berlin (CEST); 01:00 Berlin under winter time (CET) — GitHub cron is UTC-only.
+    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       duration_seconds:
