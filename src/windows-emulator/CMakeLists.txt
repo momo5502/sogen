@@ -26,7 +26,14 @@ if(NOT SOGEN_ENABLE_CLANG_TIDY)
 endif()
 
 target_link_libraries(windows-emulator PUBLIC emulator minidump)
-target_link_libraries(windows-emulator PRIVATE gpu-bridge-protocol vulkan-headers)
+target_link_libraries(windows-emulator PRIVATE gpu-bridge-protocol vulkan-headers steam-bridge-protocol)
+
+# When the Steamworks SDK was provided, link the real Steam host backend (owns the SDK headers + the
+# real steamclient64.dll connection behind a clean C ABI) and let the device use it.
+if(TARGET steam-host-backend)
+  target_link_libraries(windows-emulator PRIVATE steam-host-backend)
+  target_compile_definitions(windows-emulator PRIVATE SOGEN_STEAM_REAL_BACKEND=1)
+endif()
 
 if(TARGET SDL3::SDL3)
   target_link_libraries(windows-emulator PRIVATE SDL3::SDL3)

@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "MIT-safe MOCK of a tiny slice of Valve's steam_api.json, hand-written for this repo so the",
+    "generator runs and the bridge builds WITHOUT shipping any Valve-licensed data. The real file",
+    "ships in the Steamworks SDK (partner.steamgames.com) and is NOT redistributable -- generate",
+    "against your local SDK copy and keep the output out of the tree. See README.md.",
+    "The schema below mirrors the real steam_api.json fields the generator consumes."
+  ],
+  "interfaces": [
+    {
+      "classname": "ISteamUser",
+      "version": "SteamUser023",
+      "methods": [
+        { "methodname": "GetHSteamUser", "returntype": "HSteamUser", "params": [] },
+        { "methodname": "BLoggedOn", "returntype": "bool", "params": [] },
+        { "methodname": "GetSteamID", "returntype": "uint64_steamid", "params": [] },
+        {
+          "methodname": "GetUserDataFolder",
+          "returntype": "bool",
+          "params": [
+            { "paramname": "pchBuffer", "paramtype": "char *", "out": true, "buffer_count": "cubBuffer" },
+            { "paramname": "cubBuffer", "paramtype": "int" }
+          ]
+        }
+      ]
+    },
+    {
+      "classname": "ISteamFriends",
+      "version": "SteamFriends017",
+      "methods": [
+        { "methodname": "GetPersonaName", "returntype": "const char *", "params": [] },
+        {
+          "methodname": "GetFriendCount",
+          "returntype": "int",
+          "params": [
+            { "paramname": "iFriendFlags", "paramtype": "int" }
+          ]
+        }
+      ]
+    }
+  ]
+}

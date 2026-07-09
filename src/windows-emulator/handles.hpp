@@ -613,6 +613,13 @@ namespace sogen
 
     constexpr auto GUEST_PROCESS_HANDLE = make_handle(0x1, handle_types::process, false);
 
+    // Synthetic "Steam client" process. A guest steam_api reads a pid from
+    // HKCU\...\Valve\Steam\ActiveProcess\pid and opens it to confirm Steam is running; we hand back a
+    // pseudo handle for that one pid so the liveness check passes. STEAM_FAKE_PROCESS_ID must match the
+    // pid value seeded into that registry key.
+    constexpr uint32_t STEAM_FAKE_PROCESS_ID = 0x8B0;
+    constexpr auto STEAM_PROCESS_HANDLE = make_pseudo_handle(0x1, handle_types::process);
+
     constexpr auto CURRENT_PROCESS = make_handle(~0ULL);
     constexpr auto CURRENT_THREAD = make_handle(~1ULL);
 

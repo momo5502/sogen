@@ -1,5 +1,11 @@
 add_subdirectory(common)
 add_subdirectory(gpu-bridge-protocol)
+add_subdirectory(steam-bridge-protocol)
+
+# Path to the Steamworks SDK's public/steam directory. When set (and the generated code is present),
+# the real Steam paravirtualization backend is built; otherwise the device falls back to a null backend.
+set(SOGEN_STEAMWORKS_SDK_DIR "" CACHE PATH "Steamworks SDK public/steam dir (enables the real Steam bridge)")
+add_subdirectory(steam-host-backend)
 add_subdirectory(vulkan-bridge-marshal)
 add_subdirectory(emulator-platform)
 add_subdirectory(disassembler)

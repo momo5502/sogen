@@ -15,6 +15,40 @@ namespace sogen
         {
             if (!c.proc.is_current_process_handle(process_handle))
             {
+                // The synthetic Steam process: report it as alive so a guest steam_api's GetExitCodeProcess
+                // liveness check succeeds. Only ProcessBasicInformation is meaningful; any other class is
+                // rejected cleanly rather than falling through to the default (which stops the emulator).
+                if (process_handle == STEAM_PROCESS_HANDLE)
+                {
+                    if (info_class != ProcessBasicInformation)
+                    {
+                        return STATUS_NOT_SUPPORTED;
+                    }
+
+                    const auto init_steam_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
+                        basic_info = {};
+                        basic_info.ExitStatus = STATUS_PENDING; // STILL_ACTIVE
+                        basic_info.UniqueProcessId = STEAM_FAKE_PROCESS_ID;
+                    };
+
+                    switch (process_information_length)
+                    {
+                    case sizeof(PROCESS_BASIC_INFORMATION64):
+                        return handle_query<PROCESS_BASIC_INFORMATION64>(c.emu, process_information, process_information_length,
+                                                                         return_length, init_steam_info);
+                    case sizeof(PROCESS_EXTENDED_BASIC_INFORMATION):
+                        return handle_query<PROCESS_EXTENDED_BASIC_INFORMATION>(
+                            c.emu, process_information, process_information_length, return_length,
+                            [&](PROCESS_EXTENDED_BASIC_INFORMATION& ext) {
+                                ext = {};
+                                ext.Size = sizeof(PROCESS_EXTENDED_BASIC_INFORMATION);
+                                init_steam_info(ext.BasicInfo);
+                            });
+                    default:
+                        return STATUS_INFO_LENGTH_MISMATCH;
+                    }
+                }
+
                 return STATUS_NOT_SUPPORTED;
             }
 
@@ -491,9 +525,35 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
-        NTSTATUS handle_NtOpenProcess()
+        NTSTATUS handle_NtOpenProcess(const syscall_context& /*c*/, const emulator_object<handle> process_handle,
+                                      const ACCESS_MASK /*desired_access*/,
+                                      const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                      const emulator_object<CLIENT_ID64> client_id)
         {
-            return STATUS_NOT_SUPPORTED;
+            if (!process_handle || !client_id)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto id = client_id.read();
+
+            // The guest opening its own pid resolves to the real guest process handle.
+            if (id.UniqueProcess == process_context::process_id)
+            {
+                process_handle.write(GUEST_PROCESS_HANDLE);
+                return STATUS_SUCCESS;
+            }
+
+            // The one synthetic external process we vouch for: the Steam client. A guest steam_api reads
+            // this pid from HKCU\...\Valve\Steam\ActiveProcess and opens it to confirm Steam is running.
+            if (id.UniqueProcess == STEAM_FAKE_PROCESS_ID)
+            {
+                process_handle.write(STEAM_PROCESS_HANDLE);
+                return STATUS_SUCCESS;
+            }
+
+            // The emulator hosts a single process; any other pid does not exist.
+            return STATUS_INVALID_CID;
         }
 
         NTSTATUS handle_NtOpenProcessToken(const syscall_context& c, const handle process_handle, const ACCESS_MASK /*desired_access*/,

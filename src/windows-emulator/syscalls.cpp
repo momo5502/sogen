@@ -264,7 +264,9 @@ namespace sogen
                                                   emulator_object<uint32_t> return_length);
         NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, handle process_handle, uint32_t info_class,
                                                 uint64_t process_information, uint32_t process_information_length);
-        NTSTATUS handle_NtOpenProcess();
+        NTSTATUS handle_NtOpenProcess(const syscall_context& c, emulator_object<handle> process_handle, ACCESS_MASK desired_access,
+                                      emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                      emulator_object<CLIENT_ID64> client_id);
         NTSTATUS handle_NtOpenProcessToken(const syscall_context&, handle process_handle, ACCESS_MASK /*desired_access*/,
                                            emulator_object<handle> token_handle);
         NTSTATUS handle_NtOpenProcessTokenEx(const syscall_context& c, handle process_handle, ACCESS_MASK desired_access,

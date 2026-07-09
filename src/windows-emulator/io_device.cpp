@@ -7,6 +7,7 @@
 #include "devices/named_pipe.hpp"
 #include "devices/network_store_interface.hpp"
 #include "devices/gpu_bridge.hpp"
+#include "devices/steam_bridge.hpp"
 #include "devices/console.hpp"
 #include <iostream>
 
@@ -79,6 +80,7 @@ namespace sogen
             {u"KsecDD"sv, create_security_support_provider},
             {u"NamedPipe"sv, create_named_pipe_device},
             {u"SogenGpu"sv, create_gpu_bridge},
+            {u"SogenSteam"sv, create_steam_bridge},
             // AFD
             {u"Afd\\Endpoint"sv, create_afd_endpoint},
             {u"Afd\\AsyncConnectHlp"sv, create_afd_async_connect_hlp},
