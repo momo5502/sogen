@@ -13,6 +13,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "steam_host_runtime.hpp"
 #include "steam_host_backend.h"
@@ -320,6 +321,25 @@ extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uin
 
     const bool trace = std::getenv("SOGEN_STEAM_TRACE") != nullptr;
     std::string traced_ids;
+
+    // Our host Steam session was already connected before the guest attached, so Steam never re-fires the
+    // "you're online now" callback to the guest's pipe. Retail MW2 waits for SteamServersConnected_t
+    // (k_iSteamUserCallbacks + 1 = 101) before starting its IWNet connection. Synthesize it once per pipe so
+    // the guest sees it. Record layout = [int32 callback id][uint32 payload bytes = 0].
+    static std::unordered_set<int32_t> announced_connected;
+    if (out && announced_connected.insert(use_pipe).second && written + 8u <= out_cap)
+    {
+        const int32_t servers_connected_id = 101;
+        const uint32_t zero_bytes = 0;
+        std::memcpy(out + written, &servers_connected_id, 4);
+        std::memcpy(out + written + 4, &zero_bytes, 4);
+        written += 8u;
+        ++n_records;
+        if (trace)
+        {
+            traced_ids += " 101(synthetic)";
+        }
+    }
 
     CallbackMsg_t msg{};
     while (n_records < max_records && g_bgetcallback(use_pipe, &msg))
