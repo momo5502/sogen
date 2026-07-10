@@ -542,12 +542,15 @@ namespace sogen
         auto [wh, desktop_win] = this->windows.create(win_emu.memory);
         this->default_desktop_window_handle = wh;
         desktop_win.handle = wh.bits;
+        desktop_win.class_name = u"#32769";
         desktop_win.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
         desktop_win.width = 1920;
         desktop_win.height = 1080;
+        const auto desktop_class = allocate_user_class(win_emu.memory, desktop_win.class_name);
         desktop_win.guest.access([&](USER_WINDOW& window) {
             window.hWnd = wh.bits;
             window.ptrBase = desktop_win.guest.value();
+            window.pcls = desktop_class;
             window.dwStyle = desktop_win.style;
             window.rcWindow = {.left = 0, .top = 0, .right = desktop_win.width, .bottom = desktop_win.height};
             window.rcClient = window.rcWindow;
@@ -563,6 +566,21 @@ namespace sogen
             display_info.pPrimaryMonitor = monitor_obj.value();
             display_info.rcScreen = {.left = 0, .top = 0, .right = 1920, .bottom = 1080};
         });
+    }
+
+    emulator_pointer process_context::allocate_user_class(memory_manager& memory, const std::u16string_view class_name)
+    {
+        const auto ansi_class_name = u16_to_cp1252(class_name);
+        const auto cls_size = static_cast<size_t>(page_align_up(sizeof(USER_CLASS) + ansi_class_name.size() + 1));
+        const auto cls_ptr = memory.allocate_memory(cls_size, memory_permission::read);
+        const auto ansi_class_name_ptr = cls_ptr + sizeof(USER_CLASS);
+
+        memory.write_memory(ansi_class_name_ptr, ansi_class_name.c_str(), ansi_class_name.size() + 1);
+
+        const emulator_object<USER_CLASS> cls{memory, cls_ptr};
+        cls.access([&](USER_CLASS& value) { value.lpszAnsiClassName = ansi_class_name_ptr; });
+
+        return cls_ptr;
     }
 
     void process_context::serialize(utils::buffer_serializer& buffer, const emulator_thread* active_thread) const
