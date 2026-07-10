@@ -1,51 +1,46 @@
-# The guest shim derives from the real SDK interfaces (via the generated proxies), so it needs the SDK.
-if(NOT SOGEN_STEAMWORKS_SDK_DIR OR NOT EXISTS "${SOGEN_STEAMWORKS_SDK_DIR}/steam_api.h")
+# The guest steamclient shim: the game's own steam_api loads this in place of Valve's steamclient(64).dll.
+# It forwards guest interface calls over the \\.\SogenSteam device to the host backend. Built version-exact:
+# one guest-proxy object library per SDK snapshot (compiled against ONLY that snapshot's headers), linked
+# into a single shim DLL alongside the version-agnostic entry points. Requires SOGEN_STEAM_ENABLED.
+if(NOT SOGEN_STEAM_ENABLED)
   return()
 endif()
 
-# Each old-SDK generation is compiled in its own TU against ITS headers only (identically-named ISteam*
-# classes across SDK versions can't share a translation unit). Keep those TUs out of the main target.
-set(_v105_tu "${CMAKE_CURRENT_SOURCE_DIR}/steam_shim_interfaces_v105.cpp")
-
-file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
-  *.cpp
-  *.hpp
-)
-list(REMOVE_ITEM SRC_FILES "${_v105_tu}")
-list(SORT SRC_FILES)
+# Version-agnostic base TUs: the flat Steamworks entry points + steamclient boundary (steam_shim.cpp, SDK-
+# free so its exported SteamAPI_* don't clash with the SDK's inline ones) and the reverse-callback dispatch
+# (steam_shim_reverse.cpp, built against the newest snapshot for the stable response interface types).
+set(_base_srcs
+  "${CMAKE_CURRENT_SOURCE_DIR}/steam_shim.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/steam_shim_reverse.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/steam_shim_runtime.hpp")
 
 # Export the flat Steamworks entry points under undecorated names on both x86 and x64 (see steam_shim.def).
 if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
-  list(APPEND SRC_FILES ${CMAKE_CURRENT_SOURCE_DIR}/steam_shim.def)
+  list(APPEND _base_srcs "${CMAKE_CURRENT_SOURCE_DIR}/steam_shim.def")
 endif()
 
-add_library(steam-shim SHARED ${SRC_FILES})
-
-sogen_assign_source_group(${SRC_FILES})
-
+add_library(steam-shim SHARED ${_base_srcs})
+sogen_assign_source_group(${_base_srcs})
 target_link_libraries(steam-shim PRIVATE steam-bridge-protocol)
 target_include_directories(steam-shim PRIVATE
-  "${SOGEN_STEAMWORKS_SDK_DIR}"
-  "${CMAKE_SOURCE_DIR}/src/steam-generated"
-  "${CMAKE_CURRENT_SOURCE_DIR}")
+  "${SOGEN_STEAM_BASE_DIR}" "${SOGEN_STEAM_GEN_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
+sogen_target_disable_warnings(steam-shim)  # SDK headers + generated proxies are not warning-clean
 
-# SDK headers + generated proxies are not warning-clean; opt out of the strict warnings-as-errors pass.
-sogen_target_disable_warnings(steam-shim)
-
-# Old-SDK tag: Steamworks 1.05 (SteamClient008 et al., what 2009-era games such as MW2 were built against).
-# Its proxies are generated into src/steam-generated/v105 and compiled here against the 1.05 headers only,
-# then linked in as objects. Absent the SDK/generation, the shim simply builds without legacy support.
-if(SOGEN_STEAMWORKS_SDK_105_DIR AND EXISTS "${SOGEN_STEAMWORKS_SDK_105_DIR}/steam_api.h"
-   AND EXISTS "${CMAKE_SOURCE_DIR}/src/steam-generated/v105/steam_shim_proxies.generated.hxx")
-  add_library(steam-shim-v105 OBJECT "${_v105_tu}")
-  target_include_directories(steam-shim-v105 PRIVATE
-    "${SOGEN_STEAMWORKS_SDK_105_DIR}"
-    "${CMAKE_SOURCE_DIR}/src/steam-generated/v105"
-    "${CMAKE_CURRENT_SOURCE_DIR}")
-  sogen_target_disable_warnings(steam-shim-v105)
-  target_sources(steam-shim PRIVATE $<TARGET_OBJECTS:steam-shim-v105>)
-  target_compile_definitions(steam-shim PRIVATE SOGEN_STEAM_HAVE_V105)
-endif()
+# One isolated guest-proxy object library per version tag, each compiled against ONLY that snapshot's
+# headers (identically-named ISteam* classes across snapshots can't share a translation unit) and linked in.
+foreach(_entry ${SOGEN_STEAM_TAG_LIST})
+  string(REPLACE "=" ";" _kv "${_entry}")
+  list(GET _kv 0 _tag)
+  list(GET _kv 1 _dir)
+  set(STEAM_TAG "${_tag}")
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/steam_shim_tag.cpp.in"
+                 "${CMAKE_CURRENT_BINARY_DIR}/steam_shim_${_tag}.gen.cpp" @ONLY)
+  add_library(steam-shim-${_tag} OBJECT "${CMAKE_CURRENT_BINARY_DIR}/steam_shim_${_tag}.gen.cpp")
+  sogen_target_disable_warnings(steam-shim-${_tag})
+  target_include_directories(steam-shim-${_tag} PRIVATE
+    "${_dir}" "${SOGEN_STEAM_GEN_DIR}/${_tag}" "${CMAKE_CURRENT_SOURCE_DIR}")
+  target_sources(steam-shim PRIVATE $<TARGET_OBJECTS:steam-shim-${_tag}>)
+endforeach()
 
 # It replaces steamclient (loaded by the game's own steam_api): steamclient64.dll on x64, steamclient.dll
 # on x86. The game's steam_api DLL is left untouched.

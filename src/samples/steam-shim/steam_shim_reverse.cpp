@@ -1,30 +1,14 @@
-// SDK-including half of the guest shim: pulls in the generated proxies (which derive from the real
-// ISteam* interfaces) and exposes a single C entry point for the flat TU to build a proxy by version.
-// Kept separate from steam_shim.cpp because the SDK's inline SteamAPI_Init would clash with our exported
-// extern "C" SteamAPI_Init if both lived in the same translation unit.
+// Reverse-callback dispatch for the guest shim. Game-implemented response objects (the matchmaking server
+// browser) are registered here; the host replays their calls back and we invoke the real object. Compiled
+// once against the base SDK -- the ISteamMatchmaking*Response interfaces are stable across versions, so one
+// definition serves every version tag. register_response_object itself is SDK-type-free (void* + type id).
+#include "steam_shim_runtime.hpp" // base SDK: response interface types + the register_response_object decl
 
-#include "steam_shim_proxies.generated.hxx" // pulls steam_shim_runtime.hpp (SDK headers + invoker)
-
+#include <cstdint>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
 
-// A few SDK interfaces declare a protected, deliberately-undefined destructor to prevent deletion. A
-// proxy that derives from them needs that symbol at link time; provide an empty definition (proxies live
-// for the process and are never destroyed). Add more here if the linker reports further such interfaces.
-ISteamNetworkingSockets::~ISteamNetworkingSockets() {}
-ISteamNetworkingUtils::~ISteamNetworkingUtils() {}
-
-// One entry point per SDK generation (this TU is the latest SDK). The flat shim TU tries the old-SDK
-// tags first (exact old-version match), then this one (which also family-falls-back for unknown versions).
-extern "C" void* sogen_make_proxy_latest(const char* version, uint64_t handle)
-{
-    return sogen::steam_shim::create_proxy(version, handle);
-}
-
-// --- reverse-callback dispatch -----------------------------------------------------------------------
-// Game-implemented response objects are registered here; the host, via our proxies, replays their calls
-// back to us and we invoke the real object (this TU has the SDK interface types).
 namespace
 {
     struct response_entry

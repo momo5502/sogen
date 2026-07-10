@@ -1,26 +1,30 @@
-# The real Steam bridge backend links against the Steamworks SDK headers (Valve-licensed, not shipped)
-# and generated marshalling code. It is built only when the SDK path is provided.
-if(NOT SOGEN_STEAMWORKS_SDK_DIR)
-  message(STATUS "SOGEN_STEAMWORKS_SDK_DIR not set: building without the real Steam bridge (null backend).")
+# The Steam host backend: loads the host steamclient64.dll and runs the generated marshalling thunks. It
+# runs inside the 64-bit emulator host, so it is only meaningful for a 64-bit build; the 32-bit build only
+# produces the guest shim. Built when SOGEN_STEAM_ENABLED (set in ../CMakeLists.txt after code generation).
+if(NOT SOGEN_STEAM_ENABLED OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   return()
 endif()
 
-if(NOT EXISTS "${SOGEN_STEAMWORKS_SDK_DIR}/steam_api.h")
-  message(WARNING "SOGEN_STEAMWORKS_SDK_DIR='${SOGEN_STEAMWORKS_SDK_DIR}' has no steam_api.h; skipping Steam bridge.")
-  return()
-endif()
-
-set(_steam_gen "${CMAKE_SOURCE_DIR}/src/steam-generated")
-if(NOT EXISTS "${_steam_gen}/steam_host_thunks.generated.hxx")
-  message(FATAL_ERROR
-    "Generated Steam bridge code is missing. Generate it (kept out of the tree; it is SDK-derived):\n"
-    "  python src/tools/steam-bridge-generator/generate.py --sdk \"${SOGEN_STEAMWORKS_SDK_DIR}\" --out-dir \"${_steam_gen}\"")
-endif()
-
+# Base TU: the C ABI + host client bring-up + reverse-callback proxies (stable response interfaces), built
+# against the newest snapshot. It does not include any version's thunks -- those live in the per-tag TUs.
 add_library(steam-host-backend STATIC steam_host_backend.cpp steam_reverse.cpp)
-
-# SDK headers + generated code are not warning-clean; opt out of the strict warnings-as-errors pass.
-sogen_target_disable_warnings(steam-host-backend)
-
-target_include_directories(steam-host-backend PRIVATE "${SOGEN_STEAMWORKS_SDK_DIR}" "${_steam_gen}")
+sogen_target_disable_warnings(steam-host-backend)  # SDK headers + generated code are not warning-clean
+target_include_directories(steam-host-backend PRIVATE
+  "${SOGEN_STEAM_BASE_DIR}" "${SOGEN_STEAM_GEN_DIR}" "${CMAKE_CURRENT_LIST_DIR}")
 target_include_directories(steam-host-backend PUBLIC "${CMAKE_CURRENT_LIST_DIR}")  # the C ABI header
+
+# One isolated dispatch object library per version tag, each compiled against ONLY that snapshot's headers
+# (identically-named ISteam* classes across snapshots can't share a translation unit) and linked in.
+foreach(_entry ${SOGEN_STEAM_TAG_LIST})
+  string(REPLACE "=" ";" _kv "${_entry}")
+  list(GET _kv 0 _tag)
+  list(GET _kv 1 _dir)
+  set(STEAM_TAG "${_tag}")
+  configure_file("${CMAKE_CURRENT_LIST_DIR}/steam_host_tag.cpp.in"
+                 "${CMAKE_CURRENT_BINARY_DIR}/steam_host_${_tag}.gen.cpp" @ONLY)
+  add_library(steam-host-${_tag} OBJECT "${CMAKE_CURRENT_BINARY_DIR}/steam_host_${_tag}.gen.cpp")
+  sogen_target_disable_warnings(steam-host-${_tag})
+  target_include_directories(steam-host-${_tag} PRIVATE
+    "${_dir}" "${SOGEN_STEAM_GEN_DIR}/${_tag}" "${CMAKE_CURRENT_LIST_DIR}")
+  target_sources(steam-host-backend PRIVATE $<TARGET_OBJECTS:steam-host-${_tag}>)
+endforeach()

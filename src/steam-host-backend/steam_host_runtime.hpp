@@ -171,8 +171,15 @@ namespace sogen::steam_host
     // wrap in a proxy for `version`. Defined in the backend TU; called from the generated thunks.
     uint64_t register_returned_interface(const char* version, void* iface);
 
+    // When a typed getter returns null (a modern host steamclient no longer vends a very old interface
+    // version), obtain a newer version of the same family via GetISteamGenericInterface. Steam interfaces
+    // are append-only, so the newer object is vtable-compatible for the requested version's method prefix.
+    // Defined in the backend TU; must be called with the backend lock held (as the thunks are).
+    void* host_resolve_fallback(const char* version);
+
 }
 
-#include "steam_reverse.hpp"  // create_response_proxy(), referenced by the generated thunks below
+#include "steam_reverse.hpp"  // create_response_proxy(), referenced by the generated thunks
 
-#include "steam_host_thunks.generated.hxx"
+// Each version tag's thunks are included by its own generated TU (steam_host_tag.cpp.in), not here, so
+// identically-named ISteam* classes from different SDK snapshots never share a translation unit.

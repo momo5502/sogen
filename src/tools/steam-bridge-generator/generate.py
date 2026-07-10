@@ -336,6 +336,7 @@ class Interface:
     version: str
     methods: list[Method] = field(default_factory=list)
     nested_enums: set = field(default_factory=set)  # enums declared inside the class (need qualification host-side)
+    needs_dtor: bool = False  # has a non-public, undefined destructor -> a deriving proxy needs the symbol
 
 
 # Attribute keys that mark a pointer as an array/buffer (needs a runtime count) -- deferred to a later
@@ -603,7 +604,9 @@ def build_interfaces(sdk_dir: str, bits: int = 32) -> tuple[list[Interface], lis
             if methods:
                 seen.add(c.spelling)
                 nested = {e.spelling for e in c.get_children() if e.kind == cx.CursorKind.ENUM_DECL and e.spelling}
-                interfaces.append(Interface(c.spelling, version_of(c.spelling), methods, nested))
+                needs_dtor = any(d.kind == cx.CursorKind.DESTRUCTOR and d.access_specifier != cx.AccessSpecifier.PUBLIC
+                                 and not d.is_definition() for d in c.get_children())
+                interfaces.append(Interface(c.spelling, version_of(c.spelling), methods, nested, needs_dtor))
             else:
                 skipped.append(c.spelling)
         for ch in c.get_children():
@@ -700,8 +703,12 @@ def emit_guest(interfaces: list[Interface], tag: str) -> str:
                     # memcpy (not static_cast) so opaque-pointer handles (void*) convert too.
                     L.append(f"            {m.ret} _r; uint64_t _v = inv.ret_value(); std::memcpy(&_r, &_v, sizeof(_r)); return _r;")
                 elif m.ret_kind == "iface_return":
+                    # Resolve the returned sub-interface GLOBALLY (across every tag), not via this tag's
+                    # local create_proxy: the requested version may be owned by a different SDK snapshot
+                    # than the interface returning it (a game mixes versions that share no single snapshot).
                     L.append("            uint64_t _sub = inv.ret_value();")
-                    L.append(f"            return _sub ? reinterpret_cast<{m.ret}>(create_proxy({m.iface_version}, _sub)) : nullptr;")
+                    L.append(f"            return _sub ? reinterpret_cast<{m.ret}>("
+                             f"::sogen::steam_shim::resolve_proxy({m.iface_version}, _sub)) : nullptr;")
                 elif m.ret_kind == "struct_return":
                     L.append(f"            {m.ret} _r{{}}; inv.get_out(&_r, sizeof(_r)); return _r;")
                 elif m.ret_kind == "struct_ptr_return":
@@ -731,6 +738,13 @@ def emit_guest(interfaces: list[Interface], tag: str) -> str:
     L.append("        return nullptr;")
     L.append("    }")
     L += ["} // namespace", ""]
+    # A proxy that derives from an interface with a protected/undefined destructor needs that base symbol at
+    # link time; provide an empty definition (proxies live for the process and are never destroyed). It is
+    # emitted `inline` because the same globally-named SDK class (e.g. ISteamNetworkingSockets) recurs across
+    # version tags: the tag TUs share one DLL, so a plain definition would clash (LNK2005); inline COMDAT-folds.
+    for i in interfaces:
+        if i.needs_dtor:
+            L.append(f"inline {i.classname}::~{i.classname}() {{}}")
     return "\n".join(L)
 
 
@@ -854,7 +868,12 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                 elif m.ret_kind == "scalar":
                     L.append("            out.put_ret_value(_r);")
                 elif m.ret_kind == "iface_return":
-                    L.append(f"            out.put_ret_value(register_returned_interface({local_of[m.iface_version]}, _iface));")
+                    # A modern host steamclient may not vend a very old interface version; fall back to a
+                    # newer version of the same family (vtable-compatible for the requested prefix) but keep
+                    # registering under the requested version so the guest's exact old vtable is used.
+                    L.append(f"            void* _ifb = _iface ? static_cast<void*>(_iface) "
+                             f": host_resolve_fallback({local_of[m.iface_version]});")
+                    L.append(f"            out.put_ret_value(register_returned_interface({local_of[m.iface_version]}, _ifb));")
                 elif m.ret_kind == "struct_return":
                     L.append("            out.put_out(&_sret, sizeof(_sret));")
                 elif m.ret_kind == "struct_ptr_return":

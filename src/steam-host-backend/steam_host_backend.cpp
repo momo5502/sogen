@@ -9,13 +9,22 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 
 #include "steam_host_runtime.hpp"
 #include "steam_host_backend.h"
+
+// Each SDK version tag is generated + compiled in its own TU and exposes sogen_steam_dispatch_<tag>.
+#include "steam_tags.generated.hxx"
+#define SOGEN_STEAM_DECL_DISPATCH(tag)                                                                     \
+    extern "C" int sogen_steam_dispatch_##tag(const char* version, void* iface, uint32_t method,           \
+                                              const unsigned char* in, uint32_t in_len, unsigned char* out, \
+                                              uint32_t out_cap, uint32_t* out_len, uint64_t* ret);
+SOGEN_STEAM_TAGS(SOGEN_STEAM_DECL_DISPATCH)
+#undef SOGEN_STEAM_DECL_DISPATCH
 
 namespace
 {
@@ -116,6 +125,12 @@ namespace sogen::steam_host
     {
         if (!iface || !version)
         {
+            if (std::getenv("SOGEN_STEAM_TRACE"))
+            {
+                std::fprintf(stderr, "[steam-returned-iface] version=%s -> NULL from host\n",
+                             version ? version : "(null)");
+                std::fflush(stderr);
+            }
             return 0;
         }
         for (const auto& [h, e] : g_handles)
@@ -127,7 +142,51 @@ namespace sogen::steam_host
         }
         const uint64_t handle = g_next_handle++;
         g_handles[handle] = {std::string(version), iface};
+        if (std::getenv("SOGEN_STEAM_TRACE"))
+        {
+            std::fprintf(stderr, "[steam-returned-iface] version=%s -> handle=%llu\n", version,
+                         static_cast<unsigned long long>(handle));
+            std::fflush(stderr);
+        }
         return handle;
+    }
+
+    void* host_resolve_fallback(const char* version)
+    {
+        if (!version || !g_get_generic || !g_client)
+        {
+            return nullptr;
+        }
+        // Split into the family prefix and its trailing numeric suffix (e.g. "...VERSION006" -> +"006").
+        const size_t len = std::strlen(version);
+        size_t p = len;
+        while (p > 0 && version[p - 1] >= '0' && version[p - 1] <= '9')
+        {
+            --p;
+        }
+        if (p == len)
+        {
+            return nullptr; // no numeric suffix to bump
+        }
+        const std::string prefix(version, p);
+        const int width = static_cast<int>(len - p);
+        const int base = std::atoi(version + p);
+        // Ask for progressively newer versions of the family; the modern client vends one of these.
+        for (int cand = base + 1; cand <= base + 40; ++cand)
+        {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "%s%0*d", prefix.c_str(), width, cand);
+            if (void* iface = g_get_generic(g_client, g_user, g_pipe, buf))
+            {
+                if (std::getenv("SOGEN_STEAM_TRACE"))
+                {
+                    std::fprintf(stderr, "[steam-fallback] %s -> %s (host has no exact version)\n", version, buf);
+                    std::fflush(stderr);
+                }
+                return iface;
+            }
+        }
+        return nullptr;
     }
 }
 
@@ -196,39 +255,33 @@ extern "C" int sogen_steam_backend_invoke(uint64_t handle, uint32_t method, cons
         return sh::steam_host_unknown_interface;
     }
 
-    const unsigned char* begin = in ? in : reinterpret_cast<const unsigned char*>("");
-    sh::steam_host_reader reader{begin, begin + (in ? in_len : 0)};
-    std::vector<unsigned char> reply;
-    uint64_t local_ret = 0;
-    sh::steam_host_writer writer{reply, local_ret};
+    const char* version = it->second.version.c_str();
+    void* iface = it->second.iface;
+    const unsigned char* inb = in ? in : reinterpret_cast<const unsigned char*>("");
+    const uint32_t inlen = in ? in_len : 0;
 
     if (std::getenv("SOGEN_STEAM_TRACE"))
     {
-        std::fprintf(stderr, "[steam-invoke] %s::%s (version=%s method=%u handle=%llu)\n", it->second.version.c_str(),
-                     sh::method_name(it->second.version.c_str(), method), it->second.version.c_str(), method,
+        std::fprintf(stderr, "[steam-invoke] version=%s method=%u handle=%llu\n", version, method,
                      static_cast<unsigned long long>(handle));
         std::fflush(stderr);
     }
-    const int status = sh::dispatch(it->second.version.c_str(), it->second.iface, method, reader, writer);
+
+    // Each version tag's isolated TU exposes sogen_steam_dispatch_<tag>; try each until one owns the
+    // requested interface version (the rest return steam_host_unknown_interface).
+    int status = sh::steam_host_unknown_interface;
+#define SOGEN_STEAM_TRY_DISPATCH(tag)                                                                     \
+    if (status == sh::steam_host_unknown_interface)                                                       \
+    {                                                                                                    \
+        status = sogen_steam_dispatch_##tag(version, iface, method, inb, inlen, out, out_cap, out_len, ret); \
+    }
+    SOGEN_STEAM_TAGS(SOGEN_STEAM_TRY_DISPATCH)
+#undef SOGEN_STEAM_TRY_DISPATCH
     if (std::getenv("SOGEN_STEAM_TRACE"))
     {
-        std::fprintf(stderr, "[steam-invoke]   -> status=%d ret=%llu\n", status,
-                     static_cast<unsigned long long>(local_ret));
+        std::fprintf(stderr, "[steam-invoke] version=%s method=%u -> status=%d ret=%llu\n", version, method,
+                     status, static_cast<unsigned long long>(ret ? *ret : 0));
         std::fflush(stderr);
-    }
-
-    if (ret)
-    {
-        *ret = local_ret;
-    }
-    if (out && out_cap && !reply.empty())
-    {
-        const uint32_t n = reply.size() < out_cap ? static_cast<uint32_t>(reply.size()) : out_cap;
-        std::memcpy(out, reply.data(), n);
-        if (out_len)
-        {
-            *out_len = n;
-        }
     }
     return status;
 }
@@ -267,25 +320,6 @@ extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uin
 
     const bool trace = std::getenv("SOGEN_STEAM_TRACE") != nullptr;
     std::string traced_ids;
-
-    // Our host Steam session was already connected before the guest attached, so Steam never re-fires the
-    // "you're online now" callback to the guest's pipe. Some titles (e.g. retail MW2's Demonware/IWNet)
-    // wait for SteamServersConnected_t (k_iSteamUserCallbacks + 1 = 101) before starting their online
-    // connection. Synthesize it once per pipe so the guest sees it. Record = [int32 id][uint32 bytes=0].
-    static std::unordered_set<int32_t> announced_connected;
-    if (out && announced_connected.insert(use_pipe).second && written + 8u <= out_cap)
-    {
-        const int32_t servers_connected_id = 101;
-        const uint32_t zero_bytes = 0;
-        std::memcpy(out + written, &servers_connected_id, 4);
-        std::memcpy(out + written + 4, &zero_bytes, 4);
-        written += 8u;
-        ++n_records;
-        if (trace)
-        {
-            traced_ids += " 101(synthetic)";
-        }
-    }
 
     CallbackMsg_t msg{};
     while (n_records < max_records && g_bgetcallback(use_pipe, &msg))

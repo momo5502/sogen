@@ -1,0 +1,36 @@
+// Configured per SDK version tag from steam_host_tag.cpp.in. Compiled against that tag's headers only, it
+// dispatches an invoke onto the genuine version-exact interface object the host fetched. The backend tries
+// every tag's entry (SOGEN_STEAM_TAGS) until one owns the requested version.
+#include "steam_host_runtime.hpp"
+#include "steam_host_thunks.generated.hxx"
+
+#include <cstdint>
+#include <cstring>
+#include <vector>
+
+extern "C" int sogen_steam_dispatch_@STEAM_TAG@(const char* version, void* iface, uint32_t method,
+                                                const unsigned char* in, uint32_t in_len, unsigned char* out,
+                                                uint32_t out_cap, uint32_t* out_len, uint64_t* ret)
+{
+    sogen::steam_host::steam_host_reader reader{in, in + in_len};
+    std::vector<unsigned char> reply;
+    uint64_t local_ret = 0;
+    sogen::steam_host::steam_host_writer writer{reply, local_ret};
+
+    const int status = sogen::steam_host::@STEAM_TAG@::dispatch(version, iface, method, reader, writer);
+
+    if (ret)
+    {
+        *ret = local_ret;
+    }
+    const uint32_t n = reply.size() < out_cap ? static_cast<uint32_t>(reply.size()) : out_cap;
+    if (out && n)
+    {
+        std::memcpy(out, reply.data(), n);
+    }
+    if (out_len)
+    {
+        *out_len = n;
+    }
+    return status;
+}

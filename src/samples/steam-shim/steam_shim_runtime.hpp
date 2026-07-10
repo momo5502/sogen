@@ -28,6 +28,12 @@ namespace sogen::steam_shim
     // handing the game the old vtable. Returns `requested` unchanged for an unknown family.
     const char* latest_version_for(const char* requested);
 
+    // Resolves a guest proxy for a sub-interface returned by another interface's method (e.g. the object
+    // ISteamClient::GetISteamUser hands back). Unlike a tag's local create_proxy this searches EVERY built
+    // version tag: the interface versions a game mixes need not all originate from one SDK snapshot, so the
+    // requested version may be owned by a different tag than the interface that returned it. In steam_shim.cpp.
+    void* resolve_proxy(const char* version, uint64_t handle);
+
     // Registers a game-implemented response object (with its interface `type` = RESPONSE_IFACE_ID) and
     // returns an opaque token; reverse callbacks for that token are dispatched back to this object.
     uint64_t register_response_object(void* obj, int32_t type);

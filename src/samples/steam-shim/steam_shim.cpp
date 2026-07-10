@@ -7,7 +7,7 @@
 // the callbacks the host client produces.
 //
 // This TU deliberately does NOT include the SDK headers (they declare these entry points and would clash);
-// the generated proxies live in steam_shim_interfaces.cpp, reached here via sogen_make_proxy.
+// each version tag's generated proxies live in their own TU, reached here via sogen_make_proxy.
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -26,24 +26,28 @@
 
 namespace sb = sogen::steam_bridge;
 
-// One per isolated SDK-generation TU: build the proxy whose vtable matches `version`. Old-SDK tags are
-// tried first (they match a legacy version string exactly); the latest TU is the catch-all (exact match
-// plus a same-family fallback). sogen_dispatch_reverse replays a host reverse-call onto a game object.
-#ifdef SOGEN_STEAM_HAVE_V105
-extern "C" void* sogen_make_proxy_v105(const char* version, uint64_t handle);
-#endif
-extern "C" void* sogen_make_proxy_latest(const char* version, uint64_t handle);
+// Each SDK version tag is generated + compiled in isolation and exposes sogen_make_proxy_<tag>, returning
+// a version-exact proxy for the versions that tag owns (or null). SOGEN_STEAM_TAGS lists the built tags;
+// try each until one recognizes the requested interface version. sogen_dispatch_reverse replays a host
+// reverse-call onto a game object (defined in the reverse TU).
+#include "steam_tags.generated.hxx"
+
+#define SOGEN_STEAM_DECL_MAKE_PROXY(tag) extern "C" void* sogen_make_proxy_##tag(const char* version, uint64_t handle);
+SOGEN_STEAM_TAGS(SOGEN_STEAM_DECL_MAKE_PROXY)
+#undef SOGEN_STEAM_DECL_MAKE_PROXY
+
 extern "C" void sogen_dispatch_reverse(uint64_t token, int32_t method, const void* data, uint32_t bytes);
 
 static void* sogen_make_proxy(const char* version, uint64_t handle)
 {
-#ifdef SOGEN_STEAM_HAVE_V105
-    if (void* p = sogen_make_proxy_v105(version, handle))
-    {
-        return p;
+#define SOGEN_STEAM_TRY_MAKE_PROXY(tag)          \
+    if (void* p = sogen_make_proxy_##tag(version, handle)) \
+    {                                            \
+        return p;                                \
     }
-#endif
-    return sogen_make_proxy_latest(version, handle);
+    SOGEN_STEAM_TAGS(SOGEN_STEAM_TRY_MAKE_PROXY)
+#undef SOGEN_STEAM_TRY_MAKE_PROXY
+    return nullptr;
 }
 
 // The generated proxies call these (declared in steam_shim_runtime.hpp); defined here without the SDK
@@ -53,6 +57,7 @@ namespace sogen::steam_shim
     void bridge_invoke(uint64_t handle, uint32_t method, const void* in, uint32_t in_len, void* out, uint32_t out_cap,
                        uint32_t* out_len, uint64_t* ret);
     void report_unsupported(const char* iface, const char* method);
+    void* resolve_proxy(const char* version, uint64_t handle);
 }
 
 namespace
@@ -142,27 +147,33 @@ void sogen::steam_shim::bridge_invoke(const uint64_t handle, const uint32_t meth
     *out_len = n;
 }
 
-// A generated proxy calls this when it can't marshal a method (no compatible latest twin). GUI guests have
-// no console, so guest stderr is lost; surface the stub on the analyzer side by sending a sentinel
-// create_interface the device logs. Each unique method is reported once.
-void sogen::steam_shim::report_unsupported(const char* iface, const char* method)
+// A generated proxy calls this for the rare method its SDK version declares that the bridge can't marshal
+// (function-pointer / double-pointer tail). No-op: the override returns a default so the vtable stays valid.
+void sogen::steam_shim::report_unsupported(const char* /*iface*/, const char* /*method*/)
 {
-    static std::mutex mutex;
-    static std::unordered_map<std::string, bool> seen;
-    std::string key = std::string(iface ? iface : "?") + "::" + (method ? method : "?");
+}
+
+// A method returning a sub-interface hands us the host handle plus the exact version the game asked for.
+// Resolve a guest proxy for THAT version across every built tag (see the header): the interface that
+// returned it need not belong to the same SDK snapshot. Cache like top-level interfaces (Steam objects are
+// per-version singletons, and games may compare the pointers).
+void* sogen::steam_shim::resolve_proxy(const char* version, uint64_t handle)
+{
+    if (!version || !handle)
     {
-        std::lock_guard lock{mutex};
-        if (!seen.emplace(key, true).second)
-        {
-            return;
-        }
+        return nullptr;
     }
-    sb::create_interface_request request{};
-    const std::string sentinel = "!unsupported:" + key;
-    std::strncpy(request.version.data(), sentinel.c_str(), request.version.size() - 1);
-    sb::create_interface_response response{};
-    uint32_t returned = 0;
-    ioctl(sb::ioctl_create_interface, &request, sizeof(request), &response, sizeof(response), returned);
+    std::lock_guard lock{g_mutex};
+    if (const auto it = g_interfaces.find(version); it != g_interfaces.end())
+    {
+        return it->second;
+    }
+    void* proxy = sogen_make_proxy(version, handle);
+    if (proxy)
+    {
+        g_interfaces.emplace(version, proxy);
+    }
+    return proxy;
 }
 
 // --- callback pump (steamclient's Steam_* entry points) --------------------------------------------------
