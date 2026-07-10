@@ -37,6 +37,7 @@ CALL :collect bcryptprimitives.dll
 CALL :collect cabinet.dll
 CALL :collect cfgmgr32.dll
 CALL :collect ci.dll
+CALL :collect clbcatq.dll
 CALL :collect coloradapterclient.dll
 CALL :collect combase.dll
 CALL :collect comctl32.dll
@@ -46,6 +47,7 @@ CALL :collect cryptbase.dll
 CALL :collect cryptsp.dll
 CALL :collect d3d10.dll
 CALL :collect d3d10core.dll
+CALL :collect d3d10warp.dll
 CALL :collect d3d11.dll
 CALL :collect d3d12.dll
 CALL :collect d3d9.dll
@@ -53,6 +55,8 @@ CALL :collect d3dcompiler_43.dll
 CALL :collect d3dcompiler_47.dll
 CALL :collect dbghelp.dll
 CALL :collect dbgcore.dll
+CALL :collect dciman32.dll
+CALL :collect ddraw.dll
 CALL :collect devobj.dll
 CALL :collect diagnosticdatasettings.dll
 CALL :collect dinput8.dll
@@ -79,6 +83,7 @@ CALL :collect kernelbase.dll
 CALL :collect ktmw32.dll
 CALL :collect mfplat.dll
 CALL :collect mfreadwrite.dll
+CALL :collect mmdevapi.dll
 CALL :collect mobilenetworking.dll
 CALL :collect mpr.dll
 CALL :collect msacm32.dll
@@ -93,6 +98,7 @@ CALL :collect msvcp_win.dll
 CALL :collect msvcr120_clr0400.dll
 CALL :collect msvcrt.dll
 CALL :collect mswsock.dll
+CALL :collect napinsp.dll
 CALL :collect ncrypt.dll
 CALL :collect netapi32.dll
 CALL :collect netmsg.dll
@@ -157,6 +163,7 @@ CALL :collect wow64con.dll
 CALL :collect wow64cpu.dll
 CALL :collect wow64win.dll
 CALL :collect ws2_32.dll
+CALL :collect wshbth.dll
 CALL :collect wsock32.dll
 CALL :collect wtsapi32.dll
 CALL :collect x3daudio1_7.dll
@@ -169,6 +176,8 @@ CALL :collect locale.nls
 CALL :collect c_1252.nls
 CALL :collect c_437.nls
 CALL :collect c_850.nls
+
+CALL :collect wdmaud.drv
 
 CALL :collect_file "%WINDIR%\Cursors", aero_arrow.cur, %EMU_CURSORDIR%
 
