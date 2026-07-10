@@ -32,13 +32,12 @@ namespace sogen
 
         std::string make_host_window_title(const std::u16string_view title)
         {
-            constexpr std::string_view brand = "Sogen";
-            const auto guest_title = u16_to_u8(title);
+            auto guest_title = u16_to_u8(title);
             if (guest_title.empty())
             {
-                return std::string{brand};
+                return guest_title;
             }
-            return std::string{brand} + " - " + guest_title;
+            return "Sogen - " + guest_title;
         }
 
         uint64_t pack_point(const int x, const int y)
