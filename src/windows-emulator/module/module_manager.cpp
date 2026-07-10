@@ -188,9 +188,10 @@ namespace sogen
     }
 
     // PE32 Mapping Strategy Implementation
-    mapped_module pe32_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path)
+    mapped_module pe32_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
+                                                       const uint64_t relocation_base)
     {
-        return map_module_from_file<std::uint32_t>(memory, std::move(file), std::move(module_path));
+        return map_module_from_file<std::uint32_t>(memory, std::move(file), std::move(module_path), relocation_base);
     }
 
     mapped_module pe32_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -200,9 +201,10 @@ namespace sogen
     }
 
     // PE64 Mapping Strategy Implementation
-    mapped_module pe64_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path)
+    mapped_module pe64_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
+                                                       const uint64_t relocation_base)
     {
-        return map_module_from_file<std::uint64_t>(memory, std::move(file), std::move(module_path));
+        return map_module_from_file<std::uint64_t>(memory, std::move(file), std::move(module_path), relocation_base);
     }
 
     mapped_module pe64_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -249,34 +251,25 @@ namespace sogen
         try
         {
             [[maybe_unused]] auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
-            return this->register_mapped_module(mapper(), is_static);
+            mapped_module mod = mapper();
+            mod.is_static = is_static;
+
+            if (!mod.path.empty())
+            {
+                this->modules_load_count[mod.path]++;
+            }
+
+            const auto image_base = mod.image_base;
+            const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
+            this->last_module_cache_ = this->modules_.end();
+            this->callbacks_->on_module_load(entry.first->second);
+            return &entry.first->second;
         }
         catch (const std::exception& e)
         {
             logger.error("Failed to map module: %s\n", e.what());
             return nullptr;
         }
-    }
-
-    mapped_module* module_manager::register_mapped_module(mapped_module module, const bool is_static)
-    {
-        module.is_static = is_static;
-
-        const auto image_base = module.image_base;
-        const auto entry = this->modules_.try_emplace(image_base, std::move(module));
-        if (!entry.second)
-        {
-            throw std::runtime_error("Module already mapped at base 0x" + std::to_string(image_base));
-        }
-
-        if (!entry.first->second.path.empty())
-        {
-            this->modules_load_count[entry.first->second.path]++;
-        }
-
-        this->last_module_cache_ = this->modules_.end();
-        this->callbacks_->on_module_load(entry.first->second);
-        return &entry.first->second;
     }
 
     execution_mode module_manager::detect_execution_mode(const windows_path& executable_path, const logger& logger)
@@ -496,16 +489,17 @@ namespace sogen
         return {};
     }
 
-    mapped_module* module_manager::map_module(windows_path file, const logger& logger, const bool is_static, bool allow_duplicate)
+    mapped_module* module_manager::map_module(windows_path file, const logger& logger, const bool is_static, bool allow_duplicate,
+                                              const uint64_t relocation_base)
     {
         auto local_file = this->file_sys_->translate(file);
 
         if (local_file.filename() == "win32u.dll")
         {
-            return this->map_local_module(local_file, std::move(file), logger, is_static, false);
+            return this->map_local_module(local_file, std::move(file), logger, is_static, false, relocation_base);
         }
 
-        return this->map_local_module(local_file, std::move(file), logger, is_static, allow_duplicate);
+        return this->map_local_module(local_file, std::move(file), logger, is_static, allow_duplicate, relocation_base);
     }
 
     mapped_module* module_manager::map_module_or_throw(const windows_path& file, const logger& logger, const bool is_static,
@@ -521,7 +515,7 @@ namespace sogen
     }
 
     mapped_module* module_manager::map_local_module(const std::filesystem::path& file, windows_path module_path, const logger& logger,
-                                                    const bool is_static, bool allow_duplicate)
+                                                    const bool is_static, bool allow_duplicate, const uint64_t relocation_base)
     {
         auto local_file = weakly_canonical(absolute(file));
 
@@ -542,7 +536,7 @@ namespace sogen
             detection_result,
             [&]() {
                 auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
-                return strategy.map_from_file(*this->memory_, std::move(local_file), std::move(module_path));
+                return strategy.map_from_file(*this->memory_, std::move(local_file), std::move(module_path), relocation_base);
             },
             logger, is_static);
     }
