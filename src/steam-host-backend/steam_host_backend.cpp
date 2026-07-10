@@ -39,6 +39,7 @@ namespace
     int32_t g_pipe = 0;
     int32_t g_user = 0;
     void* (*g_get_generic)(void*, int32_t, int32_t, const char*) = nullptr;
+    void* (*g_create_interface)(const char*, int*) = nullptr; // steamclient's CreateInterface (version-exact roots)
 
     // Low-level callback pump exported by steamclient64.dll (works on our own pipe; no SteamAPI_Init).
     // CallbackMsg_t is the SDK's type (m_hSteamUser, m_iCallback, m_pubParam, m_cubParam).
@@ -89,6 +90,7 @@ namespace
         {
             return false;
         }
+        g_create_interface = create_interface;
         for (const char* v : {"SteamClient021", "SteamClient020", "SteamClient019", "SteamClient018"})
         {
             int err = 0;
@@ -221,9 +223,29 @@ extern "C" uint64_t sogen_steam_backend_create_interface(const char* version)
     {
         return 0;
     }
-    // "SteamClient0xx" is the root, obtained via steamclient's own CreateInterface (our g_client). Every
-    // other interface is reached through it (GetISteamGenericInterface etc.), which the proxy forwards.
-    void* iface = (std::strncmp(safe, "SteamClient", 11) == 0) ? g_client : g_get_generic(g_client, g_user, g_pipe, safe);
+    // "SteamClient0xx" is the root. Fetch the VERSION-EXACT object via steamclient's CreateInterface so its
+    // vtable matches the version the guest was built against -- some root methods changed ABI across versions
+    // (e.g. SetLocalIPBinding: uint32 IP -> const SteamIPAddress_t&), so dispatching an old-version call on the
+    // modern g_client faults. Only fall back to the modern root if this exact version isn't vended.
+    void* iface = nullptr;
+    if (std::strncmp(safe, "SteamClient", 11) == 0)
+    {
+        int err = 0;
+        iface = g_create_interface ? g_create_interface(safe, &err) : nullptr;
+        if (!iface)
+        {
+            iface = g_client;
+        }
+        if (std::getenv("SOGEN_STEAM_TRACE"))
+        {
+            std::fprintf(stderr, "[steam-root] %s -> %s\n", safe, iface == g_client ? "modern g_client (no exact)" : "version-exact");
+            std::fflush(stderr);
+        }
+    }
+    else
+    {
+        iface = g_get_generic(g_client, g_user, g_pipe, safe);
+    }
     if (!iface)
     {
         return 0;
