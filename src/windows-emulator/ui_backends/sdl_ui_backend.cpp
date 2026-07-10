@@ -30,6 +30,17 @@ namespace sogen
         }
 #endif
 
+        std::string make_host_window_title(const std::u16string_view title)
+        {
+            constexpr std::string_view brand = "Sogen";
+            const auto guest_title = u16_to_u8(title);
+            if (guest_title.empty())
+            {
+                return std::string{brand};
+            }
+            return std::string{brand} + " - " + guest_title;
+        }
+
         uint64_t pack_point(const int x, const int y)
         {
             return (static_cast<uint64_t>(static_cast<uint32_t>(y) & 0xFFFFu) << 16) |
@@ -895,7 +906,7 @@ namespace sogen
                                                         desc.client_insets.right);
                 const auto height = std::max<int>(1, static_cast<int>(desc.rect.bottom - desc.rect.top) - desc.client_insets.top -
                                                          desc.client_insets.bottom);
-                const auto title = u16_to_u8(desc.title);
+                const auto title = make_host_window_title(desc.title);
                 auto* window = SDL_CreateWindow(title.c_str(), static_cast<int>(width), static_cast<int>(height), flags);
                 if (!window)
                 {
@@ -1000,8 +1011,8 @@ namespace sogen
                         state->desc.title = title;
                         if (state->desc.top_level)
                         {
-                            const auto utf8 = u16_to_u8(title);
-                            SDL_SetWindowTitle(state->window, utf8.c_str());
+                            const auto host_title = make_host_window_title(title);
+                            SDL_SetWindowTitle(state->window, host_title.c_str());
                         }
                         this->redraw_related(window);
                     }
