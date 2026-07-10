@@ -121,6 +121,78 @@ namespace sogen
                     ucs.Buffer = ucs.Buffer - obj_address;
                 });
             }
+
+            bool map_existing_image_view(const syscall_context& c, const mapped_module& source, const section& section_entry,
+                                         uint64_t& mapped_address)
+            {
+                const auto image_size = static_cast<size_t>(source.size_of_image);
+                const auto start_address =
+                    source.machine == IMAGE_FILE_MACHINE_I386 ? DEFAULT_DYNAMIC_MODULE_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
+                const auto address = c.win_emu.memory.allocate_memory(image_size, memory_permission::all, true, start_address,
+                                                                      memory_region_kind::section_image);
+                if (!address)
+                {
+                    return false;
+                }
+
+                const auto header_end = source.sections.empty() ? image_size : source.sections.front().region.start - source.image_base;
+                if (header_end &&
+                    !c.win_emu.memory.commit_image_memory(address, static_cast<size_t>(header_end), memory_permission::read_write))
+                {
+                    c.win_emu.memory.release_memory(address, 0);
+                    return false;
+                }
+
+                try
+                {
+                    const auto copy_memory = [&](const uint64_t source_address, const uint64_t target_address, const size_t size) {
+                        constexpr size_t page_size = 0x1000;
+                        std::vector<std::byte> data(std::min(size, page_size));
+                        for (size_t offset = 0; offset < size;)
+                        {
+                            const auto remaining_page_size = page_size - ((source_address + offset) & (page_size - 1));
+                            const auto chunk_size = std::min({data.size(), size - offset, static_cast<size_t>(remaining_page_size)});
+                            if (!c.win_emu.memory.try_read_memory(source_address + offset, data.data(), chunk_size))
+                            {
+                                std::fill_n(data.begin(), chunk_size, std::byte{});
+                            }
+                            c.emu.write_memory(target_address + offset, data.data(), chunk_size);
+                            offset += chunk_size;
+                        }
+                    };
+
+                    if (header_end)
+                    {
+                        copy_memory(source.image_base, address, static_cast<size_t>(header_end));
+                    }
+
+                    for (const auto& image_section : source.sections)
+                    {
+                        const auto section_size = image_section.region.length;
+                        const auto section_offset = image_section.region.start - source.image_base;
+                        if (!c.win_emu.memory.commit_image_memory(address + section_offset, section_size, memory_permission::read_write))
+                        {
+                            throw std::runtime_error("Failed to commit image section view");
+                        }
+
+                        copy_memory(image_section.region.start, address + section_offset, section_size);
+
+                        if (!c.win_emu.memory.protect_memory(address + section_offset, section_size, image_section.region.permissions))
+                        {
+                            throw std::runtime_error("Failed to protect image section view");
+                        }
+                    }
+                }
+                catch (...)
+                {
+                    c.win_emu.memory.release_memory(address, 0);
+                    return false;
+                }
+
+                c.win_emu.memory.set_region_mapped_filename(address, section_entry.file_name);
+                mapped_address = address;
+                return true;
+            }
         }
 
         NTSTATUS handle_NtCreateSection(const syscall_context& c, const emulator_object<handle> section_handle,
@@ -341,6 +413,33 @@ namespace sogen
 
             if (section_entry->is_image())
             {
+                const auto file_path =
+                    std::filesystem::weakly_canonical(std::filesystem::absolute(c.win_emu.file_sys.translate(section_entry->file_name)));
+                for (const auto& loaded_module : c.win_emu.mod_manager.modules() | std::views::values)
+                {
+                    if (loaded_module.path != file_path)
+                    {
+                        continue;
+                    }
+
+                    uint64_t mapped_address{};
+                    if (!map_existing_image_view(c, loaded_module, *section_entry, mapped_address))
+                    {
+                        return STATUS_NO_MEMORY;
+                    }
+
+                    std::u16string wide_name(loaded_module.name.begin(), loaded_module.name.end());
+                    section_entry->name = utils::string::to_lower_consume(wide_name);
+
+                    if (view_size.value())
+                    {
+                        view_size.write(loaded_module.size_of_image);
+                    }
+
+                    base_address.write(mapped_address);
+                    return STATUS_SUCCESS;
+                }
+
                 const auto* binary = c.win_emu.mod_manager.map_module(section_entry->file_name, c.win_emu.log, false, true);
                 if (!binary)
                 {

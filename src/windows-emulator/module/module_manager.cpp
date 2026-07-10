@@ -259,6 +259,11 @@ namespace sogen
 
             const auto image_base = mod.image_base;
             const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
+            if (!entry.second)
+            {
+                throw std::runtime_error("Module already mapped at base 0x" + std::to_string(image_base));
+            }
+
             this->last_module_cache_ = this->modules_.end();
             this->callbacks_->on_module_load(entry.first->second);
             return &entry.first->second;
