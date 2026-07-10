@@ -394,6 +394,7 @@ namespace sogen
                 return handle_system_process_information(c, system_information, system_information_length, return_length);
 
             case 250: // Build 27744
+            case 252:
             case SystemFlushInformation:
             case SystemCodeIntegrityPolicyInformation:
             case SystemHypervisorSharedPageInformation:
@@ -401,6 +402,7 @@ namespace sogen
             case SystemSupportedProcessorArchitectures2:
             case SystemFeatureConfigurationSectionInformation:
             case SystemFirmwareTableInformation:
+            case SystemPolicyInformation:
                 return STATUS_NOT_SUPPORTED;
 
             case SystemControlFlowTransition:
