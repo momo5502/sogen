@@ -635,7 +635,8 @@ namespace sogen
 
                 auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
 
-                constexpr auto address_offset = 24;
+                // AFD_CONNECT_INFO::RemoteAddress follows BOOLEAN + two ULONG_PTR (pointer-aligned): 24 on x64, 12 on WoW64.
+                constexpr auto address_offset = 3 * sizeof(typename Traits::ULONG_PTR);
 
                 if (data.size() < address_offset)
                 {
