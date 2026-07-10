@@ -3448,18 +3448,9 @@ namespace sogen::whp
                        type == x86_hookable_instructions::rdtscp;
             }
 
-            bool handle_unrecoverable_exception(whp_vcpu& vcpu)
+            bool handle_software_interrupt(whp_vcpu& vcpu, const uint64_t rip, const std::array<std::byte, 2>& opcode)
             {
-                const auto rip = vcpu.read_instruction_pointer();
-
-                std::array<std::byte, 2> opcode{};
-                bool opcode_read = false;
-                {
-                    std::shared_lock lock(this->partition_mutex_);
-                    opcode_read = this->access_memory(rip, opcode.data(), opcode.size(), false);
-                }
-
-                if (opcode_read && opcode[0] == std::byte{0xCD})
+                if (opcode[0] == std::byte{0xCD})
                 {
                     if (const auto hook = this->copy_first_interrupt_hook())
                     {
@@ -3473,7 +3464,27 @@ namespace sogen::whp
                         return true;
                     }
                 }
-                else if (opcode_read && opcode[0] == std::byte{0x0F} && opcode[1] == std::byte{0x0B})
+
+                return false;
+            }
+
+            bool handle_unrecoverable_exception(whp_vcpu& vcpu)
+            {
+                const auto rip = vcpu.read_instruction_pointer();
+
+                std::array<std::byte, 2> opcode{};
+                bool opcode_read = false;
+                {
+                    std::shared_lock lock(this->partition_mutex_);
+                    opcode_read = this->access_memory(rip, opcode.data(), opcode.size(), false);
+                }
+
+                if (opcode_read && this->handle_software_interrupt(vcpu, rip, opcode))
+                {
+                    return true;
+                }
+
+                if (opcode_read && opcode[0] == std::byte{0x0F} && opcode[1] == std::byte{0x0B})
                 {
                     bool skip = false;
                     bool consumed = false;
@@ -3774,6 +3785,21 @@ namespace sogen::whp
 
                 if (exception.ExceptionType == WHvX64ExceptionTypePageFault)
                 {
+                    // User-mode guests have no IDT. A software interrupt faults while loading its gate, so dispatch it through
+                    // the emulator's interrupt hook before handling the page fault as a guest memory violation.
+                    const auto rip = vcpu.read_instruction_pointer();
+                    std::array<std::byte, 2> opcode{};
+                    bool opcode_read = false;
+                    {
+                        std::shared_lock lock(this->partition_mutex_);
+                        opcode_read = this->access_memory(rip, opcode.data(), opcode.size(), false);
+                    }
+
+                    if (opcode_read && this->handle_software_interrupt(vcpu, rip, opcode))
+                    {
+                        return true;
+                    }
+
                     const auto fault_address = exception.ExceptionParameter;
                     const bool is_write = (exception.ErrorCode & 0x2u) != 0;
                     const bool is_present = (exception.ErrorCode & 0x1u) != 0;

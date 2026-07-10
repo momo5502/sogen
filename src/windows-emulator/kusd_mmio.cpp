@@ -96,6 +96,7 @@ namespace sogen
             kusd.ProcessorFeatures.arr[PF_COMPARE_EXCHANGE128] = 1;
             kusd.ProcessorFeatures.arr[PF_XSAVE_ENABLED] = 1;
             kusd.ProcessorFeatures.arr[PF_SSSE3_INSTRUCTIONS_AVAILABLE] = 1;
+            kusd.ProcessorFeatures.arr[PF_FASTFAIL_AVAILABLE] = 1;
 
             const auto& system_root = version.get_system_root();
             utils::string::copy(kusd.NtSystemRoot.arr, std::u16string_view{system_root.u16string()});
