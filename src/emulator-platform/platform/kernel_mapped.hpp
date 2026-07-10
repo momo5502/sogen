@@ -943,14 +943,6 @@ namespace sogen
     static_assert(sizeof(GDI_TEB_BATCH32) == 1248, "sizeof(GDI_TEB_BATCH32) is incorrect");
 
 #ifndef OS_WINDOWS
-    typedef struct _GUID
-    {
-        uint32_t Data1;
-        uint16_t Data2;
-        uint16_t Data3;
-        uint8_t Data4[8];
-    } GUID;
-
     typedef struct _PROCESSOR_NUMBER
     {
         WORD Group;
