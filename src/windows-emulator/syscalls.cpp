@@ -952,7 +952,24 @@ namespace sogen
             context.output_buffer_length = output_buffer_length;
             context.vcpu = &c.vcpu;
 
-            return device->execute_ioctl(c.win_emu, context);
+            try
+            {
+                return device->execute_ioctl(c.win_emu, context);
+            }
+            catch (const std::exception& e)
+            {
+                c.win_emu.log.error("NtDeviceIoControlFile: device '%s' ioctl 0x%X threw: %s (in=%u out=%u)\n",
+                                    u16_to_u8(device->get_device_name()).c_str(), io_control_code, e.what(),
+                                    input_buffer_length, output_buffer_length);
+                throw;
+            }
+            catch (...)
+            {
+                c.win_emu.log.error("NtDeviceIoControlFile: device '%s' ioctl 0x%X threw unknown exception (in=%u out=%u)\n",
+                                    u16_to_u8(device->get_device_name()).c_str(), io_control_code, input_buffer_length,
+                                    output_buffer_length);
+                throw;
+            }
         }
 
         NTSTATUS handle_NtQueryWnfStateData()
