@@ -717,6 +717,17 @@ namespace sogen
                                                                       });
             }
 
+            case SystemBootEnvironmentInformation:
+                return handle_query<SYSTEM_BOOT_ENVIRONMENT_INFORMATION>(
+                    c.emu, system_information, system_information_length, return_length, [&](SYSTEM_BOOT_ENVIRONMENT_INFORMATION& info) {
+                        info.BootIdentifier = {.Data1 = 0x7B5E10A1,
+                                               .Data2 = 0xF859,
+                                               .Data3 = 0x4BD4,
+                                               .Data4 = {0xA6, 0x35, 0x15, 0xC2, 0xA4, 0x4D, 0xD1, 0xE3}};
+                        info.FirmwareType = 2; // FirmwareTypeUefi
+                        info.BootFlags = 0;
+                    });
+
             default:
                 c.win_emu.log.error("Unsupported system info class: 0x%X\n", info_class);
                 c.emu.stop();
