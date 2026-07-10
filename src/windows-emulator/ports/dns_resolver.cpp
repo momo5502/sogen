@@ -4,8 +4,6 @@
 #include "binary_writer.hpp"
 #include "../windows_emulator.hpp"
 
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 
 #define DNS_TYPE_A     0x01
@@ -56,11 +54,9 @@ namespace sogen
                 if (record)
                 {
                     writer.write_ndr_pointer(false);
-                    // The 32-bit (WoW64) DnsResolver reply carries one extra null pointer field before the
-                    // name pointer that the 64-bit layout does not. Without it the record is shifted and the
-                    // 32-bit dnsapi stub rejects the whole reply with ERROR_INVALID_PARAMETER (confirmed by
-                    // diffing a real dnscache reply). Match the real wire layout per caller width.
-                    if (writer.pointer_size() == 4)
+                    // A real 32-bit dnscache reply carries one extra null pointer here that the 64-bit layout
+                    // lacks; without it the record is shifted and the 32-bit dnsapi stub rejects the reply.
+                    if (writer.pointer_size() == utils::aligned_binary_writer::pointer_size_32)
                     {
                         writer.write_ndr_pointer(false);
                     }
@@ -86,10 +82,8 @@ namespace sogen
 
         bool parse_dns_query_request(windows_emulator& win_emu, const lpc_request_context& c, dns_query_request& request)
         {
-            // The DnsQuery request is a run of pointer-sized fields followed by the UTF-16 hostname: a header
-            // word, the name character count, a word, the name max count, then the name. Its offsets are
-            // therefore pointer-sized -- a 32-bit (WoW64) caller packs them at half the 64-bit offsets, so
-            // parse relative to the caller's pointer width (matches the reply writer in handle_rpc_call).
+            // The hostname length/name follow a run of pointer-sized fields, so a 32-bit (WoW64) caller packs
+            // them at half the 64-bit offsets; parse relative to the caller's pointer width.
             const size_t ptr = win_emu.process.is_wow64_process ? sizeof(uint32_t) : sizeof(uint64_t);
             const ULONG length_offset = static_cast<ULONG>(1 * ptr);   // name character count (incl. NUL)
             const ULONG actual_length_offset = static_cast<ULONG>(3 * ptr);
@@ -138,13 +132,6 @@ namespace sogen
         {
             const auto family = dns_type == DNS_TYPE_A ? AF_INET : AF_INET6;
             const auto results = win_emu.dns_lookup().resolve_host(u16_to_u8(host), family);
-
-            if (std::getenv("SOGEN_AFD_TRACE"))
-            {
-                std::fprintf(stderr, "[dns] resolve %s (type=%u) -> %zu result(s)\n", u16_to_u8(host).c_str(),
-                             static_cast<unsigned>(dns_type), results.size());
-                std::fflush(stderr);
-            }
 
             std::vector<resolved_dns_record> records;
             for (const auto& current : results)
