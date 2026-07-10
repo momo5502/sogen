@@ -1588,9 +1588,7 @@ int main(const int argc, const char* argv[])
 
     bool valid = true;
 
-#ifdef _WIN64
     RUN_TEST(test_dns, "DNS")
-#endif
     RUN_TEST(test_io, "I/O")
     RUN_TEST(test_file_locking, "File Locking")
     RUN_TEST(test_dir_io, "Dir I/O")
