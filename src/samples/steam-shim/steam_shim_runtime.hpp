@@ -23,6 +23,11 @@ namespace sogen::steam_shim
                        uint32_t* out_len, uint64_t* ret);
     void report_unsupported(const char* iface, const char* method);
 
+    // Maps an interface version string to the LATEST version of its family (defined by the latest-SDK
+    // generated proxies). Old-SDK proxies use it to request the modern object from the host while still
+    // handing the game the old vtable. Returns `requested` unchanged for an unknown family.
+    const char* latest_version_for(const char* requested);
+
     // Registers a game-implemented response object (with its interface `type` = RESPONSE_IFACE_ID) and
     // returns an opaque token; reverse callbacks for that token are dispatched back to this object.
     uint64_t register_response_object(void* obj, int32_t type);

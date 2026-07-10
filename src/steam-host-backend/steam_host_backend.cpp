@@ -7,10 +7,12 @@
 #endif
 #include <windows.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "steam_host_runtime.hpp"
 #include "steam_host_backend.h"
@@ -200,7 +202,20 @@ extern "C" int sogen_steam_backend_invoke(uint64_t handle, uint32_t method, cons
     uint64_t local_ret = 0;
     sh::steam_host_writer writer{reply, local_ret};
 
+    if (std::getenv("SOGEN_STEAM_TRACE"))
+    {
+        std::fprintf(stderr, "[steam-invoke] %s::%s (version=%s method=%u handle=%llu)\n", it->second.version.c_str(),
+                     sh::method_name(it->second.version.c_str(), method), it->second.version.c_str(), method,
+                     static_cast<unsigned long long>(handle));
+        std::fflush(stderr);
+    }
     const int status = sh::dispatch(it->second.version.c_str(), it->second.iface, method, reader, writer);
+    if (std::getenv("SOGEN_STEAM_TRACE"))
+    {
+        std::fprintf(stderr, "[steam-invoke]   -> status=%d ret=%llu\n", status,
+                     static_cast<unsigned long long>(local_ret));
+        std::fflush(stderr);
+    }
 
     if (ret)
     {
@@ -250,6 +265,28 @@ extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uin
     uint32_t written = 0;
     uint32_t n_records = 0;
 
+    const bool trace = std::getenv("SOGEN_STEAM_TRACE") != nullptr;
+    std::string traced_ids;
+
+    // Our host Steam session was already connected before the guest attached, so Steam never re-fires the
+    // "you're online now" callback to the guest's pipe. Some titles (e.g. retail MW2's Demonware/IWNet)
+    // wait for SteamServersConnected_t (k_iSteamUserCallbacks + 1 = 101) before starting their online
+    // connection. Synthesize it once per pipe so the guest sees it. Record = [int32 id][uint32 bytes=0].
+    static std::unordered_set<int32_t> announced_connected;
+    if (out && announced_connected.insert(use_pipe).second && written + 8u <= out_cap)
+    {
+        const int32_t servers_connected_id = 101;
+        const uint32_t zero_bytes = 0;
+        std::memcpy(out + written, &servers_connected_id, 4);
+        std::memcpy(out + written + 4, &zero_bytes, 4);
+        written += 8u;
+        ++n_records;
+        if (trace)
+        {
+            traced_ids += " 101(synthetic)";
+        }
+    }
+
     CallbackMsg_t msg{};
     while (n_records < max_records && g_bgetcallback(use_pipe, &msg))
     {
@@ -257,6 +294,11 @@ extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uin
         if (n > max_param)
         {
             n = max_param;
+        }
+        if (trace)
+        {
+            traced_ids += ' ';
+            traced_ids += std::to_string(msg.m_iCallback);
         }
         // Record = int32 callback_id, uint32 data_bytes, then the payload. Only recorded if it fits;
         // the callback is freed either way so the client's queue never stalls.
@@ -299,6 +341,11 @@ extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uin
             *reverse_count = rcount;
         }
     }
+    if ((n_records || rcount) && trace)
+    {
+        std::fprintf(stderr, "[steam-callbacks] normal=%u reverse=%u ids:%s\n", n_records, rcount, traced_ids.c_str());
+        std::fflush(stderr);
+    }
     return sh::steam_host_ok;
 }
 
@@ -325,6 +372,12 @@ extern "C" int sogen_steam_backend_get_api_call_result(int32_t pipe, uint64_t ca
     uint32_t n = (data_bytes < out_cap) ? data_bytes : out_cap;
     bool failed = false;
     const bool ok = g_getapicallresult(use_pipe, call, out, static_cast<int32_t>(n), callback_id, &failed);
+    if (std::getenv("SOGEN_STEAM_TRACE"))
+    {
+        std::fprintf(stderr, "[steam-callresult] call=%llu callback_id=%d -> ok=%d failed=%d\n",
+                     static_cast<unsigned long long>(call), callback_id, ok ? 1 : 0, failed ? 1 : 0);
+        std::fflush(stderr);
+    }
     if (io_failure)
     {
         *io_failure = failed ? 1 : 0;

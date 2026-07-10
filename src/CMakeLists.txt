@@ -5,6 +5,9 @@ add_subdirectory(steam-bridge-protocol)
 # Path to the Steamworks SDK's public/steam directory. When set (and the generated code is present),
 # the real Steam paravirtualization backend is built; otherwise the device falls back to a null backend.
 set(SOGEN_STEAMWORKS_SDK_DIR "" CACHE PATH "Steamworks SDK public/steam dir (enables the real Steam bridge)")
+# Optional old-SDK header dir (e.g. lsteamclient/steamworks_sdk_105) enabling legacy interface versions
+# (SteamClient008 etc.) that pre-2010 games request. Generate its proxies with generate.py --old-sdk v105=...
+set(SOGEN_STEAMWORKS_SDK_105_DIR "" CACHE PATH "Steamworks SDK 1.05 header dir (enables legacy Steam interfaces)")
 add_subdirectory(steam-host-backend)
 add_subdirectory(vulkan-bridge-marshal)
 add_subdirectory(emulator-platform)

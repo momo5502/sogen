@@ -15,7 +15,9 @@
 ISteamNetworkingSockets::~ISteamNetworkingSockets() {}
 ISteamNetworkingUtils::~ISteamNetworkingUtils() {}
 
-extern "C" void* sogen_make_proxy(const char* version, uint64_t handle)
+// One entry point per SDK generation (this TU is the latest SDK). The flat shim TU tries the old-SDK
+// tags first (exact old-version match), then this one (which also family-falls-back for unknown versions).
+extern "C" void* sogen_make_proxy_latest(const char* version, uint64_t handle)
 {
     return sogen::steam_shim::create_proxy(version, handle);
 }

@@ -15,6 +15,7 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -25,10 +26,25 @@
 
 namespace sb = sogen::steam_bridge;
 
-// Defined in steam_shim_interfaces.cpp (the SDK-including TU): construct the proxy for a version string,
-// and replay a host reverse-call onto the registered game response object.
-extern "C" void* sogen_make_proxy(const char* version, uint64_t handle);
+// One per isolated SDK-generation TU: build the proxy whose vtable matches `version`. Old-SDK tags are
+// tried first (they match a legacy version string exactly); the latest TU is the catch-all (exact match
+// plus a same-family fallback). sogen_dispatch_reverse replays a host reverse-call onto a game object.
+#ifdef SOGEN_STEAM_HAVE_V105
+extern "C" void* sogen_make_proxy_v105(const char* version, uint64_t handle);
+#endif
+extern "C" void* sogen_make_proxy_latest(const char* version, uint64_t handle);
 extern "C" void sogen_dispatch_reverse(uint64_t token, int32_t method, const void* data, uint32_t bytes);
+
+static void* sogen_make_proxy(const char* version, uint64_t handle)
+{
+#ifdef SOGEN_STEAM_HAVE_V105
+    if (void* p = sogen_make_proxy_v105(version, handle))
+    {
+        return p;
+    }
+#endif
+    return sogen_make_proxy_latest(version, handle);
+}
 
 // The generated proxies call these (declared in steam_shim_runtime.hpp); defined here without the SDK
 // headers -- the signatures use only primitive types, so the definitions match across the two TUs.
@@ -36,9 +52,7 @@ namespace sogen::steam_shim
 {
     void bridge_invoke(uint64_t handle, uint32_t method, const void* in, uint32_t in_len, void* out, uint32_t out_cap,
                        uint32_t* out_len, uint64_t* ret);
-    void report_unsupported(const char* /*iface*/, const char* /*method*/)
-    {
-    }
+    void report_unsupported(const char* iface, const char* method);
 }
 
 namespace
@@ -126,6 +140,29 @@ void sogen::steam_shim::bridge_invoke(const uint64_t handle, const uint32_t meth
         std::memcpy(out, output.data() + sizeof(sb::invoke_response), n);
     }
     *out_len = n;
+}
+
+// A generated proxy calls this when it can't marshal a method (no compatible latest twin). GUI guests have
+// no console, so guest stderr is lost; surface the stub on the analyzer side by sending a sentinel
+// create_interface the device logs. Each unique method is reported once.
+void sogen::steam_shim::report_unsupported(const char* iface, const char* method)
+{
+    static std::mutex mutex;
+    static std::unordered_map<std::string, bool> seen;
+    std::string key = std::string(iface ? iface : "?") + "::" + (method ? method : "?");
+    {
+        std::lock_guard lock{mutex};
+        if (!seen.emplace(key, true).second)
+        {
+            return;
+        }
+    }
+    sb::create_interface_request request{};
+    const std::string sentinel = "!unsupported:" + key;
+    std::strncpy(request.version.data(), sentinel.c_str(), request.version.size() - 1);
+    sb::create_interface_response response{};
+    uint32_t returned = 0;
+    ioctl(sb::ioctl_create_interface, &request, sizeof(request), &response, sizeof(response), returned);
 }
 
 // --- callback pump (steamclient's Steam_* entry points) --------------------------------------------------
