@@ -689,6 +689,8 @@ namespace sogen
         BOOL handle_NtUserSetWinEventHook();
         BOOL handle_NtUserUnhookWinEvent();
         BOOL handle_NtUserDisableThreadIme();
+        BOOL handle_NtUserGetPointerDevices();
+        BOOL handle_NtUserHwndQueryRedirectionInfo();
 
         // syscalls/gdi.cpp:
         NTSTATUS handle_NtDxgkIsFeatureEnabled();
@@ -813,6 +815,8 @@ namespace sogen
         NTSTATUS handle_NtGdiDdDDIMarkDeviceAsError(const syscall_context& c, emulator_object<EMU_D3DKMT_MARKDEVICEASERROR> mark_error);
         NTSTATUS handle_NtGdiDdDDIGetCachedHybridQueryValue(const syscall_context& c, emulator_object<uint32_t> value);
         NTSTATUS handle_NtGdiDdDDICacheHybridQueryValue();
+        NTSTATUS handle_NtGdiDdDDINetDispQueryMiracastDisplayDeviceSupport(
+            const syscall_context& c, emulator_object<EMU_D3DKMT_MIRACAST_DISPLAY_DEVICE_CAPS> display_caps);
         NTSTATUS handle_NtGdiDdDDIDestroyAllocation2(const syscall_context& c,
                                                      emulator_object<EMU_D3DKMT_DESTROYALLOCATION2> destroy_allocation);
         NTSTATUS handle_NtGdiDdDDIDestroyAllocation(const syscall_context& c,
@@ -1151,6 +1155,7 @@ namespace sogen
         {
             return STATUS_SUCCESS;
         }
+
     }
 
     // NOLINTNEXTLINE(readability-function-size,hicpp-function-size)
@@ -1560,6 +1565,7 @@ namespace sogen
         add_handler(NtGdiDdDDIMarkDeviceAsError);
         add_handler(NtGdiDdDDIGetCachedHybridQueryValue);
         add_handler(NtGdiDdDDICacheHybridQueryValue);
+        add_handler(NtGdiDdDDINetDispQueryMiracastDisplayDeviceSupport);
         add_handler(NtGdiDdDDIUnlock);
         add_handler(NtGdiDdDDIDestroyAllocation2);
         add_handler(NtGdiDdDDIDestroyAllocation);
@@ -1648,6 +1654,8 @@ namespace sogen
         add_handler(NtUserSetWinEventHook);
         add_handler(NtUserUnhookWinEvent);
         add_handler(NtUserDisableThreadIme);
+        add_handler(NtUserGetPointerDevices);
+        add_handler(NtUserHwndQueryRedirectionInfo);
 
 #undef add_handler
     }

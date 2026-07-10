@@ -5783,6 +5783,16 @@ namespace sogen
         {
             return TRUE;
         }
+
+        BOOL handle_NtUserGetPointerDevices()
+        {
+            return FALSE;
+        }
+
+        BOOL handle_NtUserHwndQueryRedirectionInfo()
+        {
+            return FALSE;
+        }
     }
 
 } // namespace sogen

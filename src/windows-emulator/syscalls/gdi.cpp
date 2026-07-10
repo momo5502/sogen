@@ -4649,6 +4649,18 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtGdiDdDDINetDispQueryMiracastDisplayDeviceSupport(
+            const syscall_context&, const emulator_object<EMU_D3DKMT_MIRACAST_DISPLAY_DEVICE_CAPS> display_caps)
+        {
+            if (!display_caps)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            display_caps.write({});
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtGdiDdDDIUnlock()
         {
             return STATUS_SUCCESS;
