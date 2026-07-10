@@ -85,7 +85,7 @@ namespace sogen
             // The hostname length/name follow a run of pointer-sized fields, so a 32-bit (WoW64) caller packs
             // them at half the 64-bit offsets; parse relative to the caller's pointer width.
             const size_t ptr = win_emu.process.is_wow64_process ? sizeof(uint32_t) : sizeof(uint64_t);
-            const auto length_offset = static_cast<ULONG>(1 * ptr);   // name character count (incl. NUL)
+            const auto length_offset = static_cast<ULONG>(1 * ptr); // name character count (incl. NUL)
             const auto actual_length_offset = static_cast<ULONG>(3 * ptr);
             const auto hostname_offset = static_cast<ULONG>(4 * ptr); // UTF-16 hostname
             constexpr ULONG fixed_trailer_size = 8;
