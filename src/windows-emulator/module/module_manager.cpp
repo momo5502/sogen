@@ -249,30 +249,34 @@ namespace sogen
         try
         {
             [[maybe_unused]] auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
-            mapped_module mod = mapper();
-            mod.is_static = is_static;
-
-            if (!mod.path.empty())
-            {
-                this->modules_load_count[mod.path]++;
-            }
-
-            const auto image_base = mod.image_base;
-            const auto entry = this->modules_.try_emplace(image_base, std::move(mod));
-            if (!entry.second)
-            {
-                throw std::runtime_error("Module already mapped at base 0x" + std::to_string(image_base));
-            }
-
-            this->last_module_cache_ = this->modules_.end();
-            this->callbacks_->on_module_load(entry.first->second);
-            return &entry.first->second;
+            return this->register_mapped_module(mapper(), is_static);
         }
         catch (const std::exception& e)
         {
             logger.error("Failed to map module: %s\n", e.what());
             return nullptr;
         }
+    }
+
+    mapped_module* module_manager::register_mapped_module(mapped_module module, const bool is_static)
+    {
+        module.is_static = is_static;
+
+        const auto image_base = module.image_base;
+        const auto entry = this->modules_.try_emplace(image_base, std::move(module));
+        if (!entry.second)
+        {
+            throw std::runtime_error("Module already mapped at base 0x" + std::to_string(image_base));
+        }
+
+        if (!entry.first->second.path.empty())
+        {
+            this->modules_load_count[entry.first->second.path]++;
+        }
+
+        this->last_module_cache_ = this->modules_.end();
+        this->callbacks_->on_module_load(entry.first->second);
+        return &entry.first->second;
     }
 
     execution_mode module_manager::detect_execution_mode(const windows_path& executable_path, const logger& logger)

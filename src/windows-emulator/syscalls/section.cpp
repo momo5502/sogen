@@ -2,6 +2,7 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 #include "../memory_manager.hpp"
+#include "../module/module_mapping.hpp"
 
 #include <utils/io.hpp>
 
@@ -34,6 +35,81 @@ namespace sogen
             };
 
             static_assert(sizeof(ini_file_mapping64) == 0x20);
+
+            struct ldr_data_table_entry_prefix32
+            {
+                LIST_ENTRY32 in_load_order_links;
+                LIST_ENTRY32 in_memory_order_links;
+                LIST_ENTRY32 in_initialization_order_links;
+                uint32_t dll_base;
+            };
+
+            struct ldr_data_table_entry_prefix64
+            {
+                LIST_ENTRY64 in_load_order_links;
+                LIST_ENTRY64 in_memory_order_links;
+                LIST_ENTRY64 in_initialization_order_links;
+                uint64_t dll_base;
+            };
+
+            static_assert(offsetof(ldr_data_table_entry_prefix32, dll_base) == 0x18);
+            static_assert(offsetof(ldr_data_table_entry_prefix64, dll_base) == 0x30);
+
+            template <typename Pointer, typename Entry>
+            bool loader_list_contains_image(const syscall_context& c, const uint64_t ldr_address, const uint64_t image_base)
+            {
+                if (!ldr_address)
+                {
+                    return false;
+                }
+
+                using ldr_data = std::conditional_t<sizeof(Pointer) == sizeof(uint32_t), PEB_LDR_DATA32, PEB_LDR_DATA64>;
+                const auto list_head = ldr_address + offsetof(ldr_data, InLoadOrderModuleList);
+                Pointer current{};
+                if (!c.win_emu.memory.try_read_memory(list_head, &current, sizeof(current)))
+                {
+                    return false;
+                }
+
+                for (size_t i = 0; i < 1024 && current != list_head; ++i)
+                {
+                    if (!current)
+                    {
+                        return false;
+                    }
+
+                    Pointer dll_base{};
+                    if (!c.win_emu.memory.try_read_memory(static_cast<uint64_t>(current) + offsetof(Entry, dll_base), &dll_base,
+                                                          sizeof(dll_base)))
+                    {
+                        return false;
+                    }
+
+                    if (dll_base == image_base)
+                    {
+                        return true;
+                    }
+
+                    if (!c.win_emu.memory.try_read_memory(current, &current, sizeof(current)))
+                    {
+                        return false;
+                    }
+                }
+
+                return false;
+            }
+
+            bool loader_list_contains_image(const syscall_context& c, const mapped_module& module)
+            {
+                if (module.machine == IMAGE_FILE_MACHINE_I386 && c.proc.peb32)
+                {
+                    const auto ldr = c.proc.peb32->read().Ldr;
+                    return loader_list_contains_image<uint32_t, ldr_data_table_entry_prefix32>(c, ldr, module.image_base);
+                }
+
+                const auto ldr = c.proc.peb64.read().Ldr;
+                return loader_list_contains_image<uint64_t, ldr_data_table_entry_prefix64>(c, ldr, module.image_base);
+            }
 
             NTSTATUS initialize_shared_section_base_static_server_data_mapping(const syscall_context& c,
                                                                                const uint64_t shared_section_address,
@@ -125,73 +201,37 @@ namespace sogen
             bool map_existing_image_view(const syscall_context& c, const mapped_module& source, const section& section_entry,
                                          uint64_t& mapped_address)
             {
-                const auto image_size = static_cast<size_t>(source.size_of_image);
-                const auto start_address =
-                    source.machine == IMAGE_FILE_MACHINE_I386 ? DEFAULT_DYNAMIC_MODULE_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
-                const auto address = c.win_emu.memory.allocate_memory(image_size, memory_permission::all, true, start_address,
-                                                                      memory_region_kind::section_image);
-                if (!address)
-                {
-                    return false;
-                }
-
-                const auto header_end = source.sections.empty() ? image_size : source.sections.front().region.start - source.image_base;
-                if (header_end &&
-                    !c.win_emu.memory.commit_image_memory(address, static_cast<size_t>(header_end), memory_permission::read_write))
-                {
-                    c.win_emu.memory.release_memory(address, 0);
-                    return false;
-                }
-
                 try
                 {
-                    const auto copy_memory = [&](const uint64_t source_address, const uint64_t target_address, const size_t size) {
-                        constexpr size_t page_size = 0x1000;
-                        std::vector<std::byte> data(std::min(size, page_size));
-                        for (size_t offset = 0; offset < size;)
-                        {
-                            const auto remaining_page_size = page_size - ((source_address + offset) & (page_size - 1));
-                            const auto chunk_size = std::min({data.size(), size - offset, static_cast<size_t>(remaining_page_size)});
-                            if (!c.win_emu.memory.try_read_memory(source_address + offset, data.data(), chunk_size))
-                            {
-                                std::fill_n(data.begin(), chunk_size, std::byte{});
-                            }
-                            c.emu.write_memory(target_address + offset, data.data(), chunk_size);
-                            offset += chunk_size;
-                        }
-                    };
-
-                    if (header_end)
+                    const auto is_loader_module = loader_list_contains_image(c, source);
+                    mapped_module view{};
+                    if (source.machine == IMAGE_FILE_MACHINE_I386)
                     {
-                        copy_memory(source.image_base, address, static_cast<size_t>(header_end));
+                        view = is_loader_module ? map_image_view_from_file<uint32_t>(c.win_emu.memory, source.path, source.module_path,
+                                                                                     source.image_base)
+                                                : map_module_from_file<uint32_t>(c.win_emu.memory, source.path, source.module_path);
+                    }
+                    else if (source.machine == IMAGE_FILE_MACHINE_AMD64)
+                    {
+                        view = is_loader_module ? map_image_view_from_file<uint64_t>(c.win_emu.memory, source.path, source.module_path,
+                                                                                     source.image_base)
+                                                : map_module_from_file<uint64_t>(c.win_emu.memory, source.path, source.module_path);
+                    }
+                    else
+                    {
+                        return false;
                     }
 
-                    for (const auto& image_section : source.sections)
-                    {
-                        const auto section_size = image_section.region.length;
-                        const auto section_offset = image_section.region.start - source.image_base;
-                        if (!c.win_emu.memory.commit_image_memory(address + section_offset, section_size, memory_permission::read_write))
-                        {
-                            throw std::runtime_error("Failed to commit image section view");
-                        }
-
-                        copy_memory(image_section.region.start, address + section_offset, section_size);
-
-                        if (!c.win_emu.memory.protect_memory(address + section_offset, section_size, image_section.region.permissions))
-                        {
-                            throw std::runtime_error("Failed to protect image section view");
-                        }
-                    }
+                    mapped_address = view.image_base;
+                    c.win_emu.memory.set_region_mapped_filename(mapped_address, section_entry.file_name);
+                    c.win_emu.mod_manager.register_mapped_module(std::move(view));
+                    return true;
                 }
-                catch (...)
+                catch (const std::exception& e)
                 {
-                    c.win_emu.memory.release_memory(address, 0);
+                    c.win_emu.log.error("Failed to map existing image view: %s\n", e.what());
                     return false;
                 }
-
-                c.win_emu.memory.set_region_mapped_filename(address, section_entry.file_name);
-                mapped_address = address;
-                return true;
             }
         }
 
@@ -437,7 +477,7 @@ namespace sogen
                     }
 
                     base_address.write(mapped_address);
-                    return STATUS_SUCCESS;
+                    return STATUS_IMAGE_NOT_AT_BASE;
                 }
 
                 const auto* binary = c.win_emu.mod_manager.map_module(section_entry->file_name, c.win_emu.log, false, true);

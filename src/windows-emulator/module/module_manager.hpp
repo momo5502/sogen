@@ -103,6 +103,7 @@ namespace sogen
                                         bool is_static = false, bool allow_duplicate = false);
         mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, windows_path module_path, const logger& logger,
                                          bool is_static = false, bool allow_duplicate = false);
+        mapped_module* register_mapped_module(mapped_module module, bool is_static = false);
 
         mapped_module* find_by_address(const uint64_t address)
         {
