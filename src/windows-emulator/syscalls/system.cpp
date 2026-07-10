@@ -92,6 +92,13 @@ namespace sogen
                 constexpr auto group_size = group_root_size + sizeof(EMU_GROUP_RELATIONSHIP64);
                 constexpr auto numa_root_size = offsetof(EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64, NumaNode);
                 constexpr auto numa_size = numa_root_size + sizeof(EMU_NUMA_NODE_RELATIONSHIP64);
+                constexpr auto core_root_size = offsetof(EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64, Processor);
+                constexpr auto core_size = core_root_size + sizeof(EMU_PROCESSOR_RELATIONSHIP64);
+
+                const auto active_processor_count =
+                    std::min<uint32_t>(c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; }), 64);
+                const auto active_processor_mask =
+                    active_processor_count == 64 ? ~uint64_t{0} : (uint64_t{1} << active_processor_count) - 1;
 
                 const auto write_group = [&](const uint64_t output_buffer) {
                     EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64 proc_info{};
@@ -105,9 +112,8 @@ namespace sogen
                     group.MaximumGroupCount = 1;
 
                     auto& group_info = group.GroupInfo[0];
-                    group_info.ActiveProcessorCount =
-                        static_cast<uint8_t>(c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; }));
-                    group_info.ActiveProcessorMask = (1ULL << group_info.ActiveProcessorCount) - 1;
+                    group_info.ActiveProcessorCount = static_cast<uint8_t>(active_processor_count);
+                    group_info.ActiveProcessorMask = active_processor_mask;
                     group_info.MaximumProcessorCount = group_info.ActiveProcessorCount;
 
                     c.emu.write_memory(output_buffer + group_root_size, group);
@@ -126,6 +132,23 @@ namespace sogen
                     c.emu.write_memory(output_buffer + numa_root_size, numa_node);
                 };
 
+                const auto write_cores = [&](const uint64_t output_buffer) {
+                    for (uint32_t processor = 0; processor < active_processor_count; ++processor)
+                    {
+                        const auto entry_buffer = output_buffer + processor * core_size;
+
+                        EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX64 proc_info{};
+                        proc_info.Size = core_size;
+                        proc_info.Relationship = RelationProcessorCore;
+                        c.emu.write_memory(entry_buffer, &proc_info, core_root_size);
+
+                        EMU_PROCESSOR_RELATIONSHIP64 core{};
+                        core.GroupCount = 1;
+                        core.GroupMask[0].Mask = uint64_t{1} << processor;
+                        c.emu.write_memory(entry_buffer + core_root_size, core);
+                    }
+                };
+
                 if (input_buffer_length != sizeof(LOGICAL_PROCESSOR_RELATIONSHIP))
                 {
                     return STATUS_INVALID_PARAMETER;
@@ -135,7 +158,8 @@ namespace sogen
 
                 if (request == RelationAll)
                 {
-                    constexpr auto required_size = group_size + numa_size;
+                    const auto core_total_size = static_cast<uint32_t>(core_size * active_processor_count);
+                    const auto required_size = static_cast<uint32_t>(core_total_size + group_size + numa_size);
 
                     if (return_length)
                     {
@@ -147,8 +171,27 @@ namespace sogen
                         return STATUS_INFO_LENGTH_MISMATCH;
                     }
 
-                    write_group(system_information);
-                    write_numa(system_information + group_size);
+                    write_cores(system_information);
+                    write_numa(system_information + core_total_size);
+                    write_group(system_information + core_total_size + numa_size);
+                    return STATUS_SUCCESS;
+                }
+
+                if (request == RelationProcessorCore)
+                {
+                    const auto required_size = static_cast<uint32_t>(core_size * active_processor_count);
+
+                    if (return_length)
+                    {
+                        return_length.write(required_size);
+                    }
+
+                    if (system_information_length < required_size)
+                    {
+                        return STATUS_INFO_LENGTH_MISMATCH;
+                    }
+
+                    write_cores(system_information);
                     return STATUS_SUCCESS;
                 }
 
@@ -184,7 +227,7 @@ namespace sogen
                     return STATUS_SUCCESS;
                 }
 
-                c.win_emu.log.error("Unsupported processor relationship: %X\n", request);
+                c.win_emu.log.error("Unsupported processor relationship: 0x%X\n", request);
                 c.emu.stop();
                 return STATUS_NOT_SUPPORTED;
             }
