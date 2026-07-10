@@ -575,12 +575,18 @@ namespace sogen
         std::filesystem::path file_path{};
         uint64_t file_size{};
         bool is_directory{};
+        LARGE_INTEGER creation_time{};
+        LARGE_INTEGER last_access_time{};
+        LARGE_INTEGER last_write_time{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->file_path);
             buffer.write(this->file_size);
             buffer.write(this->is_directory);
+            buffer.write(this->creation_time);
+            buffer.write(this->last_access_time);
+            buffer.write(this->last_write_time);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -588,6 +594,9 @@ namespace sogen
             buffer.read(this->file_path);
             buffer.read(this->file_size);
             buffer.read(this->is_directory);
+            buffer.read(this->creation_time);
+            buffer.read(this->last_access_time);
+            buffer.read(this->last_write_time);
         }
     };
 
