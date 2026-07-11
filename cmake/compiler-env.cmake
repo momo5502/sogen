@@ -178,6 +178,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   add_link_options(
     -fexceptions
     -sALLOW_MEMORY_GROWTH=1
+    -sGROWABLE_ARRAYBUFFERS=0
     $<$<CONFIG:Debug>:-sASSERTIONS>
     -sWASM_BIGINT
     #-sUSE_OFFSET_CONVERTER
