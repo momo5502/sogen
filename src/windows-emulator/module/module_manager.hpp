@@ -39,7 +39,8 @@ namespace sogen
     {
       public:
         virtual ~module_mapping_strategy() = default;
-        virtual mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path) = 0;
+        virtual mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
+                                            uint64_t relocation_base) = 0;
         virtual mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                               windows_path module_path) = 0;
     };
@@ -47,7 +48,8 @@ namespace sogen
     class pe32_mapping_strategy : public module_mapping_strategy
     {
       public:
-        mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path) override;
+        mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
+                                    uint64_t relocation_base) override;
         mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                       windows_path module_path) override;
     };
@@ -55,7 +57,8 @@ namespace sogen
     class pe64_mapping_strategy : public module_mapping_strategy
     {
       public:
-        mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path) override;
+        mapped_module map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
+                                    uint64_t relocation_base) override;
         mapped_module map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                       windows_path module_path) override;
     };
@@ -96,14 +99,14 @@ namespace sogen
                               const logger& logger);
 
         std::optional<uint64_t> get_module_load_count_by_path(const windows_path& path);
-        mapped_module* map_module(windows_path file, const logger& logger, bool is_static = false, bool allow_duplicate = false);
+        mapped_module* map_module(windows_path file, const logger& logger, bool is_static = false, bool allow_duplicate = false,
+                                  uint64_t relocation_base = 0);
         mapped_module* map_module_or_throw(const windows_path& file, const logger& logger, bool is_static = false,
                                            bool allow_duplicate = false);
         mapped_module* map_local_module(const std::filesystem::path& file, windows_path module_path, const logger& logger,
-                                        bool is_static = false, bool allow_duplicate = false);
+                                        bool is_static = false, bool allow_duplicate = false, uint64_t relocation_base = 0);
         mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, windows_path module_path, const logger& logger,
                                          bool is_static = false, bool allow_duplicate = false);
-
         mapped_module* find_by_address(const uint64_t address)
         {
             const auto entry = this->get_module(address);
