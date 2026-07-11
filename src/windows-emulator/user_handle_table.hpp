@@ -39,6 +39,8 @@ namespace sogen
                 srv.cHandleEntries = MAX_HANDLES - 1; //
                 srv.defaultFontHeightScale = -11;
                 srv.defaultFontWidthScale = 0;
+                srv.dpi96DialogBaseUnitWidth = 8;
+                srv.dpi96DialogBaseUnitHeight = 16;
                 srv.systemDpi = 96;
                 srv.systemMetrics[0] = 1920;  // SM_CXSCREEN
                 srv.systemMetrics[1] = 1080;  // SM_CYSCREEN
