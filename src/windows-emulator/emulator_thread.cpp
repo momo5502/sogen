@@ -538,7 +538,7 @@ namespace sogen
         // Initialize 32-bit TEB
         this->teb32->access([&](TEB32& teb32_obj) {
             // Set NT_TIB32 fields
-            teb32_obj.DeallocationStack = static_cast<uint32_t>(nttib32_stack_base);
+            teb32_obj.DeallocationStack = static_cast<uint32_t>(nttib32_stack_limit);
             // TODO: Proper GuaranteedStack implementation.
             teb32_obj.GuaranteedStackBytes = static_cast<ULONG>(this->wow64_stack_size.value());
             teb32_obj.NtTib.Self = static_cast<uint32_t>(teb32_addr);                // Self pointer to 32-bit TEB
