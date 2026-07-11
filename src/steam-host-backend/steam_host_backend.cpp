@@ -65,10 +65,21 @@ namespace
         }
         g_init_attempted = true;
 
-        if (!std::getenv("SteamAppId"))
+        if (const char* app_id = std::getenv("SteamAppId"))
         {
-            _putenv("SteamAppId=480"); // Spacewar (free SDK test app) gives a valid app context
+            std::fprintf(stderr, "[steam] host session bound to app %s\n", app_id);
         }
+        else
+        {
+            // Steam scopes lobbies, rich presence and matchmaking to the running app. Without a real app id
+            // the host session lands in Spacewar (480), which can create/enter its own lobbies but fails to
+            // join another app's lobbies with k_EChatRoomEnterResponseDoesntExist -- silently breaking real
+            // multiplayer. Fall back so the SDK test harness still works, but say so loudly.
+            _putenv("SteamAppId=480");
+            std::fprintf(stderr, "[steam] SteamAppId not set; host session falls back to 480 (Spacewar). "
+                                 "Set SteamAppId to the game's app id or real multiplayer lobbies will fail.\n");
+        }
+        std::fflush(stderr);
 
         const char* env = std::getenv("SOGEN_STEAMCLIENT");
         const std::string dll = env ? env : R"(C:\Program Files (x86)\Steam\steamclient64.dll)";

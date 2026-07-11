@@ -109,10 +109,25 @@ Nothing in the game folder is modified.
    `reg load` / `reg add` / `reg unload` the `ActiveProcess` block
    (`SteamClientDll`, `SteamClientDll64`, `Universe`, `ActiveUser`, `pid`) plus
    `HKCU\Software\Valve\Steam\{SteamPath,SteamExe}`, and run `analyzer -r <that-registry-dir>`.
-3. **App ID.** The guest process must know its App ID or `steam_api` fails `SteamAPI_Init` with
-   "Steam must be running to play this game." Pass `--env SteamAppId <id>` (and `SteamGameId`), or
-   drop a `steam_appid.txt`. Separately, set the host env `SteamAppId=<id>` so the backend's own
-   connection is scoped to the right app (ownership/stats/DLC); user-scoped calls work regardless.
+3. **App ID.** Two *independent* App ID contexts must both be correct:
+   - **Guest side** — the guest process must know its App ID or `steam_api` fails `SteamAPI_Init`
+     with "Steam must be running to play this game." Pass `--env SteamAppId <id>` (and `SteamGameId`),
+     or drop a `steam_appid.txt`. Many retail games (e.g. `iw4mp.exe`) also bake the id in internally.
+   - **Host side** — set the host env `SteamAppId=<id>` (on the `analyzer.exe`/`sandbox.exe` process)
+     so the backend's `steamclient64` session is scoped to the right app. `connect_locked()` reads it
+     via `std::getenv` at first use and, if unset, **falls back to 480 (Spacewar) with a loud stderr
+     warning** so the SDK test harness still works.
+
+   > **This host-side scoping is not optional for multiplayer.** Steam scopes lobbies, matchmaking,
+   > rich presence and P2P to the running app. A session in the wrong app (e.g. the 480 fallback) can
+   > `CreateLobby` and auto-enter its *own* lobby (`LobbyEnter_t response=1`), but real Steam rejects
+   > joining *another app's* lobby with `k_EChatRoomEnterResponseDoesntExist (2)`. In MW2 this
+   > surfaced as an instant `EXE_HOSTUNREACH` public-match kick: the failed `JoinLobby` left the game
+   > alone in a solo lobby (`GetNumLobbyMembers==1`), so the CL connect code fell back to an empty
+   > default lobby-id, `sscanf` parsed nothing, and the connect bailed. Setting host `SteamAppId` to
+   > the game's real id (MW2 Multiplayer = **10190**) fixes it and the account shows as in-game in the
+   > friends list. So "user-scoped calls work regardless" holds only for identity/friends reads —
+   > **lobby/matchmaking joins require the correct host app context.**
 
 ### Faking "Steam is running"
 
@@ -133,7 +148,27 @@ Proven in-emulator against real Steam (both 32- and 64-bit guests): interface ca
 account (persona, SteamID, friends), plain callbacks, and async call-results. The registry spoof and
 the synthetic Steam process are verified end-to-end.
 
-Not yet proven: reverse-callback delivery (server browser); a full retail game booting to menu.
-`iw4mp.exe` (MW2), for example, reaches its own `steam_api` and our bridge, but in a headless run it
-blocks earlier on a D3D9-init modal dialog before Steam is fully exercised — a graphics/bring-up
-issue upstream of the bridge, not a Steam issue.
+**MW2 (`iw4mp.exe`, 32-bit WoW64) boots to menu, goes online, and joins public matches.** With the
+correct host `SteamAppId=10190` (see "App ID" above) the full Steam matchmaking path works:
+`RequestLobbyList`/`CreateLobby`/`JoinLobby`, lobby data/member reads, `LobbyEnter_t`/`LobbyCreated_t`
+callbacks, and `ISteamUser::InitiateGameConnection` for the IWNet Steam-auth handshake. The earlier
+"blocks on a D3D9-init modal dialog" note is obsolete (that dialog is dismissed by seeding the game's
+first-run state; unrelated to the bridge).
+
+## WIP / known gaps
+
+- **Reverse-callback delivery (server browser) — unproven.** Steam calling *into* game-implemented
+  `ISteamMatchmaking*Response` objects is wired generically (host response proxies + reverse-record
+  channel + guest dispatch) but never observed firing in testing. Suspected fix: pump the matchmaking
+  frame host-side (`SteamAPI_ManualDispatch_RunFrame`) and/or test against a LAN list. Treat as "the
+  shape is there, nothing crashes," not "works." MW2's match path does not depend on it (it uses
+  lobbies + direct UDP), so this is only a gap for games that drive the server browser.
+- **Method coverage ~95% (865/903).** The bespoke tail (function-pointer params, type-tagged `void*`
+  configs, a few double-pointers) is stubbed and needs per-method handling.
+- **Advertised local address is loopback.** The client advertises `addrLoc=127.0.0.1` in lobby data
+  (`get_local_address`→`getsockname` returns loopback under the emulator). Harmless for the paths
+  exercised so far, but a real defect for any peer that would dial the local address.
+- **Generated code is never committed** (Valve-derived; see "Building with the SDK"). The private
+  branch carries only the hand-written bridge; regenerate `src/steam-generated/` locally.
+- **Distribution is gated on licensing** (Steamworks SDK license / EU DB Art. 6). The bridge lives on
+  the private `steam-bridge` branch and is **not** pushed to the public `origin`.
