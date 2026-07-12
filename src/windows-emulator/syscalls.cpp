@@ -134,6 +134,10 @@ namespace sogen
         NTSTATUS handle_NtGetMUIRegistryInfo();
         NTSTATUS handle_NtIsUILanguageComitted();
         uint64_t handle_NtUserActivateKeyboardLayout(const syscall_context& c, uint64_t keyboard_layout, uint32_t flags);
+        uint64_t handle_NtUserLoadKeyboardLayoutEx(const syscall_context& c, handle file, uint32_t table_offset, emulator_pointer tables,
+                                                   uint64_t old_keyboard_layout,
+                                                   emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> keyboard_layout_id,
+                                                   uint32_t new_keyboard_layout, uint32_t flags);
         uint64_t handle_NtUserGetKeyboardLayout(const syscall_context& c, uint32_t thread_id);
         uint32_t handle_NtUserGetKeyboardLayoutList(const syscall_context& c, uint32_t buffer_count, emulator_pointer keyboard_layouts);
         BOOL handle_NtUserGetKeyboardLayoutName(const syscall_context& c, emulator_pointer name);
@@ -1703,6 +1707,7 @@ namespace sogen
         add_handler(NtUserAttachThreadInput);
         add_handler(NtUserRegisterTouchHitTestingWindow);
         add_handler(NtUserActivateKeyboardLayout);
+        add_handler(NtUserLoadKeyboardLayoutEx);
         add_handler(NtUserGetGUIThreadInfo);
         add_handler(NtNotifyChangeDirectoryFile);
         add_handler(NtUserChangeWindowMessageFilter);

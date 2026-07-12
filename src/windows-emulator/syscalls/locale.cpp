@@ -78,6 +78,14 @@ namespace sogen
             return 0x04070407;
         }
 
+        uint64_t handle_NtUserLoadKeyboardLayoutEx(const syscall_context&, const handle /*file*/, const uint32_t /*table_offset*/,
+                                                   const emulator_pointer /*tables*/, const uint64_t /*old_keyboard_layout*/,
+                                                   const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*keyboard_layout_id*/,
+                                                   const uint32_t /*new_keyboard_layout*/, const uint32_t /*flags*/)
+        {
+            return 0x04070407;
+        }
+
         uint64_t handle_NtUserGetKeyboardLayout(const syscall_context&, const uint32_t /*thread_id*/)
         {
             return 0x04070407;
