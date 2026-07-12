@@ -160,13 +160,19 @@ namespace sogen::steam_host
 
     // A method that marshals a struct self-stubs at compile time if that struct is only forward-declared.
     template <typename T, typename = void>
-    struct is_complete : std::false_type {};
+    struct is_complete : std::false_type
+    {
+    };
     template <typename T>
-    struct is_complete<T, std::void_t<decltype(sizeof(T))>> : std::true_type {};
+    struct is_complete<T, std::void_t<decltype(sizeof(T))>> : std::true_type
+    {
+    };
     template <typename T>
     inline constexpr bool is_complete_v = is_complete<T>::value;
 
-    inline void unsupported(const char*, const char*) {}
+    inline void unsupported(const char*, const char*)
+    {
+    }
 
     // A method the security policy refuses to forward to the real Steam client (host filesystem access,
     // account-credential minting, arbitrary host-path/URL primitives). The guest gets steam_host_unsupported,
@@ -192,7 +198,7 @@ namespace sogen::steam_host
 
 }
 
-#include "steam_reverse.hpp"  // create_response_proxy(), referenced by the generated thunks
+#include "steam_reverse.hpp" // create_response_proxy(), referenced by the generated thunks
 
 // Each version tag's thunks are included by its own generated TU (steam_host_tag.cpp.in), not here, so
 // identically-named ISteam* classes from different SDK snapshots never share a translation unit.

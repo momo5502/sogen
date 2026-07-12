@@ -23,20 +23,20 @@ extern "C"
     // Invokes method `method` on `handle`. `in`/`in_len` is the marshalled argument blob (treated as
     // hostile). Out-parameter payload is written to `out` (bounded by `out_cap`, actual length in
     // `*out_len`); the raw return value goes to `*ret`. Returns a steam_host status (0 == ok).
-    int sogen_steam_backend_invoke(uint64_t handle, uint32_t method, const uint8_t* in, uint32_t in_len,
-                                   uint8_t* out, uint32_t out_cap, uint32_t* out_len, uint64_t* ret);
+    int sogen_steam_backend_invoke(uint64_t handle, uint32_t method, const uint8_t* in, uint32_t in_len, uint8_t* out, uint32_t out_cap,
+                                   uint32_t* out_len, uint64_t* ret);
 
     // Drains pending callbacks from the host client. `out` receives the normal-callback records (each:
     // int32 callback_id, uint32 data_bytes, payload) followed by the reverse-callback records (each:
     // uint64 token, int32 method, uint32 data_bytes, payload). `*normal_len`/`*normal_count` and
     // `*reverse_len`/`*reverse_count` report each section. Returns 0 on success.
-    int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uint32_t out_cap, uint32_t* normal_len,
-                                          uint32_t* normal_count, uint32_t* reverse_len, uint32_t* reverse_count);
+    int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uint32_t out_cap, uint32_t* normal_len, uint32_t* normal_count,
+                                          uint32_t* reverse_len, uint32_t* reverse_count);
 
     // Retrieves a completed async-call result (Steam_GetAPICallResult) for CCallResult dispatch. Writes up
     // to min(data_bytes, out_cap) bytes to `out`; sets *io_failure; returns 1 if the result was available.
-    int sogen_steam_backend_get_api_call_result(int32_t pipe, uint64_t call, int32_t callback_id, uint32_t data_bytes,
-                                                uint8_t* out, uint32_t out_cap, uint32_t* out_len, uint8_t* io_failure);
+    int sogen_steam_backend_get_api_call_result(int32_t pipe, uint64_t call, int32_t callback_id, uint32_t data_bytes, uint8_t* out,
+                                                uint32_t out_cap, uint32_t* out_len, uint8_t* io_failure);
 
 #ifdef __cplusplus
 }

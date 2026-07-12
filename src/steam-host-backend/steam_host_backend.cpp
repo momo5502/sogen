@@ -20,10 +20,9 @@
 
 // Each SDK version tag is generated + compiled in its own TU and exposes sogen_steam_dispatch_<tag>.
 #include "steam_tags.generated.hxx"
-#define SOGEN_STEAM_DECL_DISPATCH(tag)                                                                     \
-    extern "C" int sogen_steam_dispatch_##tag(const char* version, void* iface, uint32_t method,           \
-                                              const unsigned char* in, uint32_t in_len, unsigned char* out, \
-                                              uint32_t out_cap, uint32_t* out_len, uint64_t* ret);         \
+#define SOGEN_STEAM_DECL_DISPATCH(tag)                                                                                                     \
+    extern "C" int sogen_steam_dispatch_##tag(const char* version, void* iface, uint32_t method, const unsigned char* in, uint32_t in_len, \
+                                              unsigned char* out, uint32_t out_cap, uint32_t* out_len, uint64_t* ret);                     \
     extern "C" uint32_t sogen_steam_method_count_##tag(const char* version);
 SOGEN_STEAM_TAGS(SOGEN_STEAM_DECL_DISPATCH)
 #undef SOGEN_STEAM_DECL_DISPATCH
@@ -118,14 +117,14 @@ namespace
         }
 
         void** vt = *static_cast<void***>(g_client);
-        g_pipe = reinterpret_cast<int32_t (*)(void*)>(vt[0])(g_client);                       // CreateSteamPipe
-        g_user = reinterpret_cast<int32_t (*)(void*, int32_t)>(vt[2])(g_client, g_pipe);       // ConnectToGlobalUser
+        g_pipe = reinterpret_cast<int32_t (*)(void*)>(vt[0])(g_client);                  // CreateSteamPipe
+        g_user = reinterpret_cast<int32_t (*)(void*, int32_t)>(vt[2])(g_client, g_pipe); // ConnectToGlobalUser
         g_get_generic = reinterpret_cast<void* (*)(void*, int32_t, int32_t, const char*)>(vt[12]);
 
         g_bgetcallback = reinterpret_cast<bool (*)(int32_t, CallbackMsg_t*)>(GetProcAddress(module, "Steam_BGetCallback"));
         g_freelastcallback = reinterpret_cast<void (*)(int32_t)>(GetProcAddress(module, "Steam_FreeLastCallback"));
-        g_getapicallresult = reinterpret_cast<bool (*)(int32_t, uint64_t, void*, int32_t, int32_t, bool*)>(
-            GetProcAddress(module, "Steam_GetAPICallResult"));
+        g_getapicallresult =
+            reinterpret_cast<bool (*)(int32_t, uint64_t, void*, int32_t, int32_t, bool*)>(GetProcAddress(module, "Steam_GetAPICallResult"));
 
         g_connected = (g_pipe != 0 && g_user != 0 && g_get_generic != nullptr);
         return g_connected;
@@ -142,8 +141,7 @@ namespace sogen::steam_host
         {
             if (std::getenv("SOGEN_STEAM_TRACE"))
             {
-                std::fprintf(stderr, "[steam-returned-iface] version=%s -> NULL from host\n",
-                             version ? version : "(null)");
+                std::fprintf(stderr, "[steam-returned-iface] version=%s -> NULL from host\n", version ? version : "(null)");
                 std::fflush(stderr);
             }
             return 0;
@@ -159,8 +157,7 @@ namespace sogen::steam_host
         g_handles[handle] = {std::string(version), iface};
         if (std::getenv("SOGEN_STEAM_TRACE"))
         {
-            std::fprintf(stderr, "[steam-returned-iface] version=%s -> handle=%llu\n", version,
-                         static_cast<unsigned long long>(handle));
+            std::fprintf(stderr, "[steam-returned-iface] version=%s -> handle=%llu\n", version, static_cast<unsigned long long>(handle));
             std::fflush(stderr);
         }
         return handle;
@@ -271,8 +268,8 @@ extern "C" void sogen_steam_backend_release(uint64_t handle)
     g_handles.erase(handle);
 }
 
-extern "C" int sogen_steam_backend_invoke(uint64_t handle, uint32_t method, const uint8_t* in, uint32_t in_len,
-                                          uint8_t* out, uint32_t out_cap, uint32_t* out_len, uint64_t* ret)
+extern "C" int sogen_steam_backend_invoke(uint64_t handle, uint32_t method, const uint8_t* in, uint32_t in_len, uint8_t* out,
+                                          uint32_t out_cap, uint32_t* out_len, uint64_t* ret)
 {
     if (out_len)
     {
@@ -297,40 +294,39 @@ extern "C" int sogen_steam_backend_invoke(uint64_t handle, uint32_t method, cons
 
     if (std::getenv("SOGEN_STEAM_TRACE"))
     {
-        std::fprintf(stderr, "[steam-invoke] version=%s method=%u handle=%llu\n", version, method,
-                     static_cast<unsigned long long>(handle));
+        std::fprintf(stderr, "[steam-invoke] version=%s method=%u handle=%llu\n", version, method, static_cast<unsigned long long>(handle));
         std::fflush(stderr);
     }
 
     // Each version tag's isolated TU exposes sogen_steam_dispatch_<tag>. A version string is not unique across
     // snapshots (Valve appended methods without bumping it), so pick the snapshot with the MOST methods -- the
     // same rule the guest shim uses to build the proxy, so the method index we receive means the same thing here.
-    using dispatch_fn = int (*)(const char*, void*, uint32_t, const unsigned char*, uint32_t, unsigned char*,
-                                uint32_t, uint32_t*, uint64_t*);
+    using dispatch_fn =
+        int (*)(const char*, void*, uint32_t, const unsigned char*, uint32_t, unsigned char*, uint32_t, uint32_t*, uint64_t*);
     dispatch_fn dispatch = nullptr;
     uint32_t best = 0;
-#define SOGEN_STEAM_PICK_DISPATCH(tag)                                                                    \
-    if (const uint32_t methods = sogen_steam_method_count_##tag(version); methods > best)                 \
-    {                                                                                                     \
-        best = methods;                                                                                   \
-        dispatch = &sogen_steam_dispatch_##tag;                                                           \
+#define SOGEN_STEAM_PICK_DISPATCH(tag)                                                    \
+    if (const uint32_t methods = sogen_steam_method_count_##tag(version); methods > best) \
+    {                                                                                     \
+        best = methods;                                                                   \
+        dispatch = &sogen_steam_dispatch_##tag;                                           \
     }
     SOGEN_STEAM_TAGS(SOGEN_STEAM_PICK_DISPATCH)
 #undef SOGEN_STEAM_PICK_DISPATCH
 
-    const int status = dispatch ? dispatch(version, iface, method, inb, inlen, out, out_cap, out_len, ret)
-                                : sh::steam_host_unknown_interface;
+    const int status =
+        dispatch ? dispatch(version, iface, method, inb, inlen, out, out_cap, out_len, ret) : sh::steam_host_unknown_interface;
     if (std::getenv("SOGEN_STEAM_TRACE"))
     {
-        std::fprintf(stderr, "[steam-invoke] version=%s method=%u -> status=%d ret=%llu\n", version, method,
-                     status, static_cast<unsigned long long>(ret ? *ret : 0));
+        std::fprintf(stderr, "[steam-invoke] version=%s method=%u -> status=%d ret=%llu\n", version, method, status,
+                     static_cast<unsigned long long>(ret ? *ret : 0));
         std::fflush(stderr);
     }
     return status;
 }
 
-extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uint32_t out_cap, uint32_t* normal_len,
-                                                 uint32_t* normal_count, uint32_t* reverse_len, uint32_t* reverse_count)
+extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uint32_t out_cap, uint32_t* normal_len, uint32_t* normal_count,
+                                                 uint32_t* reverse_len, uint32_t* reverse_count)
 {
     if (normal_len)
     {
@@ -445,9 +441,8 @@ extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uin
     return sh::steam_host_ok;
 }
 
-extern "C" int sogen_steam_backend_get_api_call_result(int32_t pipe, uint64_t call, int32_t callback_id,
-                                                       uint32_t data_bytes, uint8_t* out, uint32_t out_cap,
-                                                       uint32_t* out_len, uint8_t* io_failure)
+extern "C" int sogen_steam_backend_get_api_call_result(int32_t pipe, uint64_t call, int32_t callback_id, uint32_t data_bytes, uint8_t* out,
+                                                       uint32_t out_cap, uint32_t* out_len, uint8_t* io_failure)
 {
     if (out_len)
     {
@@ -470,8 +465,8 @@ extern "C" int sogen_steam_backend_get_api_call_result(int32_t pipe, uint64_t ca
     const bool ok = g_getapicallresult(use_pipe, call, out, static_cast<int32_t>(n), callback_id, &failed);
     if (std::getenv("SOGEN_STEAM_TRACE"))
     {
-        std::fprintf(stderr, "[steam-callresult] call=%llu callback_id=%d -> ok=%d failed=%d\n",
-                     static_cast<unsigned long long>(call), callback_id, ok ? 1 : 0, failed ? 1 : 0);
+        std::fprintf(stderr, "[steam-callresult] call=%llu callback_id=%d -> ok=%d failed=%d\n", static_cast<unsigned long long>(call),
+                     callback_id, ok ? 1 : 0, failed ? 1 : 0);
         std::fflush(stderr);
     }
     if (io_failure)

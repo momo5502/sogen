@@ -253,10 +253,10 @@ namespace sogen
                 put16(static_cast<uint16_t>(x & 0xffff));
             };
 
-            resp.push_back(std::byte{0});                            // version
-            resp.push_back(static_cast<std::byte>(0x80 | opcode));   // response = 0x80 | request opcode
-            put16(0);                                                // result code: 0 = success
-            put32(1);                                                // seconds since gateway epoch (any value)
+            resp.push_back(std::byte{0});                          // version
+            resp.push_back(static_cast<std::byte>(0x80 | opcode)); // response = 0x80 | request opcode
+            put16(0);                                              // result code: 0 = success
+            put32(1);                                              // seconds since gateway epoch (any value)
 
             if (opcode == 0) // public-address request
             {
@@ -265,8 +265,8 @@ namespace sogen
             }
             if ((opcode == 1 || opcode == 2) && request.size() >= 12) // map UDP (1) / TCP (2)
             {
-                const uint16_t internal_port = static_cast<uint16_t>((u8(4) << 8) | u8(5));
-                const uint16_t suggested_ext = static_cast<uint16_t>((u8(6) << 8) | u8(7));
+                const auto internal_port = static_cast<uint16_t>((u8(4) << 8) | u8(5));
+                const auto suggested_ext = static_cast<uint16_t>((u8(6) << 8) | u8(7));
                 const uint32_t lifetime = (static_cast<uint32_t>(u8(8)) << 24) | (static_cast<uint32_t>(u8(9)) << 16) |
                                           (static_cast<uint32_t>(u8(10)) << 8) | u8(11);
                 put16(internal_port);
@@ -689,8 +689,7 @@ namespace sogen
                 const auto status = dispatch();
                 if (std::getenv("SOGEN_AFD_TRACE"))
                 {
-                    std::fprintf(stderr, "[afd] request=%u status=0x%08X\n", static_cast<uint32_t>(request),
-                                 static_cast<uint32_t>(status));
+                    std::fprintf(stderr, "[afd] request=%u status=0x%08X\n", static_cast<uint32_t>(request), static_cast<uint32_t>(status));
                     std::fflush(stderr);
                 }
                 return status;

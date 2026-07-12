@@ -959,8 +959,8 @@ namespace sogen
             catch (const std::exception& e)
             {
                 c.win_emu.log.error("NtDeviceIoControlFile: device '%s' ioctl 0x%X threw: %s (in=%u out=%u)\n",
-                                    u16_to_u8(device->get_device_name()).c_str(), io_control_code, e.what(),
-                                    input_buffer_length, output_buffer_length);
+                                    u16_to_u8(device->get_device_name()).c_str(), io_control_code, e.what(), input_buffer_length,
+                                    output_buffer_length);
                 throw;
             }
             catch (...)

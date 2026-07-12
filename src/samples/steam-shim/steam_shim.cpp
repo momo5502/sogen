@@ -32,7 +32,7 @@ namespace sb = sogen::steam_bridge;
 // reverse-call onto a game object (defined in the reverse TU).
 #include "steam_tags.generated.hxx"
 
-#define SOGEN_STEAM_DECL_MAKE_PROXY(tag)                                    \
+#define SOGEN_STEAM_DECL_MAKE_PROXY(tag)                                           \
     extern "C" void* sogen_make_proxy_##tag(const char* version, uint64_t handle); \
     extern "C" uint32_t sogen_steam_method_count_##tag(const char* version);
 SOGEN_STEAM_TAGS(SOGEN_STEAM_DECL_MAKE_PROXY)
@@ -53,11 +53,11 @@ static void* sogen_make_proxy(const char* version, uint64_t handle)
     make_proxy_fn make = nullptr;
     uint32_t best = 0;
 
-#define SOGEN_STEAM_PICK_MAKE_PROXY(tag)                                \
+#define SOGEN_STEAM_PICK_MAKE_PROXY(tag)                                                  \
     if (const uint32_t methods = sogen_steam_method_count_##tag(version); methods > best) \
-    {                                                                   \
-        best = methods;                                                 \
-        make = &sogen_make_proxy_##tag;                                 \
+    {                                                                                     \
+        best = methods;                                                                   \
+        make = &sogen_make_proxy_##tag;                                                   \
     }
     SOGEN_STEAM_TAGS(SOGEN_STEAM_PICK_MAKE_PROXY)
 #undef SOGEN_STEAM_PICK_MAKE_PROXY
@@ -69,8 +69,8 @@ static void* sogen_make_proxy(const char* version, uint64_t handle)
 // headers -- the signatures use only primitive types, so the definitions match across the two TUs.
 namespace sogen::steam_shim
 {
-    void bridge_invoke(uint64_t handle, uint32_t method, const void* in, uint32_t in_len, void* out, uint32_t out_cap,
-                       uint32_t* out_len, uint64_t* ret);
+    void bridge_invoke(uint64_t handle, uint32_t method, const void* in, uint32_t in_len, void* out, uint32_t out_cap, uint32_t* out_len,
+                       uint64_t* ret);
     void report_unsupported(const char* iface, const char* method);
     void* resolve_proxy(const char* version, uint64_t handle);
 }
@@ -115,16 +115,16 @@ namespace
         done = true;
         uint32_t returned = 0;
         sb::version_response version{};
-        ok = ioctl(sb::ioctl_get_version, nullptr, 0, &version, sizeof(version), returned) &&
-             returned >= sizeof(version) && version.magic == sb::protocol_magic && version.version == sb::protocol_version;
+        ok = ioctl(sb::ioctl_get_version, nullptr, 0, &version, sizeof(version), returned) && returned >= sizeof(version) &&
+             version.magic == sb::protocol_magic && version.version == sb::protocol_version;
         return ok;
     }
 }
 
 // Transport used by every generated proxy: pack (handle, method, in-blob) into an invoke IOCTL and
 // scatter the reply back (raw return in *ret, out-parameter payload in out/out_len).
-void sogen::steam_shim::bridge_invoke(const uint64_t handle, const uint32_t method, const void* in, const uint32_t in_len,
-                                      void* out, const uint32_t out_cap, uint32_t* out_len, uint64_t* ret)
+void sogen::steam_shim::bridge_invoke(const uint64_t handle, const uint32_t method, const void* in, const uint32_t in_len, void* out,
+                                      const uint32_t out_cap, uint32_t* out_len, uint64_t* ret)
 {
     *out_len = 0;
     *ret = 0;
@@ -206,9 +206,9 @@ namespace
 
     struct callback_queue
     {
-        std::vector<unsigned char> blob; // whole run_callbacks reply
-        uint32_t off = 0;                // read cursor within blob
-        uint32_t end = 0;                // valid extent
+        std::vector<unsigned char> blob;    // whole run_callbacks reply
+        uint32_t off = 0;                   // read cursor within blob
+        uint32_t end = 0;                   // valid extent
         std::vector<unsigned char> current; // keeps the payload alive until the next BGetCallback
     };
     thread_local callback_queue g_cbq;
@@ -218,8 +218,8 @@ namespace
         const sb::run_callbacks_request request{.pipe = static_cast<uint32_t>(pipe)};
         g_cbq.blob.assign(sizeof(sb::run_callbacks_response) + 64u * 1024u, 0);
         uint32_t returned = 0;
-        if (!ioctl(sb::ioctl_run_callbacks, &request, sizeof(request), g_cbq.blob.data(),
-                   static_cast<uint32_t>(g_cbq.blob.size()), returned) ||
+        if (!ioctl(sb::ioctl_run_callbacks, &request, sizeof(request), g_cbq.blob.data(), static_cast<uint32_t>(g_cbq.blob.size()),
+                   returned) ||
             returned < sizeof(sb::run_callbacks_response))
         {
             g_cbq.off = g_cbq.end = 0;
@@ -343,8 +343,8 @@ extern "C"
     }
 
     // Retrieves a completed async-call result (for the game's CCallResult dispatch).
-    bool Steam_GetAPICallResult(int32_t hSteamPipe, uint64_t hSteamAPICall, void* pCallback, int cubCallback,
-                                int iCallbackExpected, bool* pbFailed)
+    bool Steam_GetAPICallResult(int32_t hSteamPipe, uint64_t hSteamAPICall, void* pCallback, int cubCallback, int iCallbackExpected,
+                                bool* pbFailed)
     {
         const sb::api_call_result_request request{.call = hSteamAPICall,
                                                   .callback_id = iCallbackExpected,
@@ -353,8 +353,7 @@ extern "C"
                                                   .reserved = 0};
         std::vector<unsigned char> buf(sizeof(sb::api_call_result_response) + request.data_bytes);
         uint32_t returned = 0;
-        if (!ioctl(sb::ioctl_get_api_call_result, &request, sizeof(request), buf.data(), static_cast<uint32_t>(buf.size()),
-                   returned) ||
+        if (!ioctl(sb::ioctl_get_api_call_result, &request, sizeof(request), buf.data(), static_cast<uint32_t>(buf.size()), returned) ||
             returned < sizeof(sb::api_call_result_response))
         {
             if (pbFailed)

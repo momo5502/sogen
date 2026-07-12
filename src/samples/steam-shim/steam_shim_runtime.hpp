@@ -19,8 +19,8 @@ namespace sogen::steam_shim
 {
     // Implemented by the shim TU: pack (handle, method, in-blob) into an invoke IOCTL and return the
     // response (raw return value, plus an out-blob for string/out-param payloads).
-    void bridge_invoke(uint64_t handle, uint32_t method, const void* in, uint32_t in_len, void* out, uint32_t out_cap,
-                       uint32_t* out_len, uint64_t* ret);
+    void bridge_invoke(uint64_t handle, uint32_t method, const void* in, uint32_t in_len, void* out, uint32_t out_cap, uint32_t* out_len,
+                       uint64_t* ret);
     void report_unsupported(const char* iface, const char* method);
 
     // Maps an interface version string to the LATEST version of its family (defined by the latest-SDK
@@ -41,16 +41,22 @@ namespace sogen::steam_shim
     // True only for a complete type (one whose sizeof is valid). Lets a method that marshals a struct
     // self-stub at compile time when that struct is only forward-declared under the build's macros.
     template <typename T, typename = void>
-    struct is_complete : std::false_type {};
+    struct is_complete : std::false_type
+    {
+    };
     template <typename T>
-    struct is_complete<T, std::void_t<decltype(sizeof(T))>> : std::true_type {};
+    struct is_complete<T, std::void_t<decltype(sizeof(T))>> : std::true_type
+    {
+    };
     template <typename T>
     inline constexpr bool is_complete_v = is_complete<T>::value;
 
     // Collects a call's in-arguments, performs the round-trip, and decodes the reply. One per call.
     struct invoker
     {
-        invoker(uint64_t handle, uint32_t method) : handle_(handle), method_(method)
+        invoker(uint64_t handle, uint32_t method)
+            : handle_(handle),
+              method_(method)
         {
             out_.resize(initial_out_capacity);
         }
@@ -131,8 +137,8 @@ namespace sogen::steam_shim
 
         void call()
         {
-            bridge_invoke(handle_, method_, in_.data(), static_cast<uint32_t>(in_.size()), out_.data(),
-                          static_cast<uint32_t>(out_.size()), &out_len_, &ret_);
+            bridge_invoke(handle_, method_, in_.data(), static_cast<uint32_t>(in_.size()), out_.data(), static_cast<uint32_t>(out_.size()),
+                          &out_len_, &ret_);
         }
 
         uint64_t ret_value() const
@@ -172,8 +178,8 @@ namespace sogen::steam_shim
         }
 
       private:
-        static constexpr size_t max_payload = 16u << 20;  // 16 MiB cap per variable payload
-        static constexpr size_t initial_out_capacity = 256u * 1024;  // room for array/buffer replies
+        static constexpr size_t max_payload = 16u << 20;            // 16 MiB cap per variable payload
+        static constexpr size_t initial_out_capacity = 256u * 1024; // room for array/buffer replies
         uint64_t handle_;
         uint32_t method_;
         std::vector<unsigned char> in_{};

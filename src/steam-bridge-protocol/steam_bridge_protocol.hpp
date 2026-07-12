@@ -24,7 +24,7 @@
 namespace sogen::steam_bridge
 {
     // Lets the guest confirm it is talking to a matching bridge before issuing any interface calls.
-    inline constexpr uint32_t protocol_magic = 0x4d545353;  // 'SSTM'
+    inline constexpr uint32_t protocol_magic = 0x4d545353; // 'SSTM'
     inline constexpr uint32_t protocol_version = 1;
 
     // A host-side interface pointer id. Opaque to the guest; 0 means "no such interface".
@@ -33,7 +33,7 @@ namespace sogen::steam_bridge
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access). Mirrors the GPU bridge:
     // FILE_DEVICE_UNKNOWN (0x22), METHOD_BUFFERED (0), FILE_ANY_ACCESS (0), vendor function range.
-    inline constexpr uint32_t device_type = 0x22;  // FILE_DEVICE_UNKNOWN
+    inline constexpr uint32_t device_type = 0x22; // FILE_DEVICE_UNKNOWN
     inline constexpr uint32_t method_buffered = 0;
     inline constexpr uint32_t file_any_access = 0;
 
@@ -44,11 +44,11 @@ namespace sogen::steam_bridge
 
     enum class command : uint32_t
     {
-        get_version = 0x800,       // handshake: no input; output = version_response
-        create_interface = 0x801,  // input = create_interface_request; output = create_interface_response
-        release_interface = 0x802, // input = release_interface_request; no output
-        invoke_method = 0x803,     // input = invoke_header + arg blob; output = invoke_response + out blob
-        run_callbacks = 0x804,     // input = run_callbacks_request; output = run_callbacks_response + callback blob
+        get_version = 0x800,         // handshake: no input; output = version_response
+        create_interface = 0x801,    // input = create_interface_request; output = create_interface_response
+        release_interface = 0x802,   // input = release_interface_request; no output
+        invoke_method = 0x803,       // input = invoke_header + arg blob; output = invoke_response + out blob
+        run_callbacks = 0x804,       // input = run_callbacks_request; output = run_callbacks_response + callback blob
         get_api_call_result = 0x805, // input = api_call_result_request; output = api_call_result_response + data
     };
 
@@ -76,7 +76,7 @@ namespace sogen::steam_bridge
 
     struct create_interface_response
     {
-        interface_handle handle;  // null_interface if the host could not resolve the interface
+        interface_handle handle; // null_interface if the host could not resolve the interface
     };
 
     struct release_interface_request
@@ -90,8 +90,8 @@ namespace sogen::steam_bridge
     struct invoke_header
     {
         interface_handle handle;
-        uint32_t method_index;  // vtable slot / steam_api.json method ordinal
-        uint32_t arg_bytes;     // length of the trailing in-argument blob
+        uint32_t method_index; // vtable slot / steam_api.json method ordinal
+        uint32_t arg_bytes;    // length of the trailing in-argument blob
     };
 
     // invoke_method output buffer := invoke_response followed by `out_bytes` of out-buffer payload (the
@@ -99,18 +99,18 @@ namespace sogen::steam_bridge
     // raw return, zero-extended to 64 bits (covers bool/int/uint64/CSteamID/pointer-as-string-length, etc).
     struct invoke_response
     {
-        int32_t status;         // bridge-level status: 0 = ok, negative = bridge error (see invoke_status)
-        uint32_t out_bytes;     // length of the trailing out-buffer blob
-        uint64_t return_value;  // method return, zero-extended
+        int32_t status;        // bridge-level status: 0 = ok, negative = bridge error (see invoke_status)
+        uint32_t out_bytes;    // length of the trailing out-buffer blob
+        uint64_t return_value; // method return, zero-extended
     };
 
-    enum invoke_status : int32_t
+    enum class invoke_status : int32_t
     {
-        invoke_ok = 0,
-        invoke_unknown_interface = -1,
-        invoke_unknown_method = -2,
-        invoke_backend_error = -3,
-        invoke_output_too_small = -4,
+        ok = 0,
+        unknown_interface = -1,
+        unknown_method = -2,
+        backend_error = -3,
+        output_too_small = -4,
     };
 
     struct run_callbacks_request
@@ -124,42 +124,42 @@ namespace sogen::steam_bridge
     // reverse records are calls the host made into a game-implemented response object (server browser etc.).
     struct run_callbacks_response
     {
-        uint32_t count;          // number of normal callback records
-        uint32_t blob_bytes;     // length of the normal-record blob
-        uint32_t reverse_count;  // number of reverse-callback records
-        uint32_t reverse_bytes;  // length of the reverse-record blob (follows the normal blob)
+        uint32_t count;         // number of normal callback records
+        uint32_t blob_bytes;    // length of the normal-record blob
+        uint32_t reverse_count; // number of reverse-callback records
+        uint32_t reverse_bytes; // length of the reverse-record blob (follows the normal blob)
     };
 
     struct callback_record
     {
-        int32_t callback_id;  // iCallback (the k_iCallback constant of the callback struct)
-        uint32_t data_bytes;  // length of the payload that immediately follows this header
+        int32_t callback_id; // iCallback (the k_iCallback constant of the callback struct)
+        uint32_t data_bytes; // length of the payload that immediately follows this header
     };
 
     // A call the host made into a game response object, to be replayed on the guest object for `token`.
     struct reverse_record
     {
-        uint64_t token;       // response-object token (from put_callback_token)
-        int32_t method;       // method index within the response interface
-        uint32_t data_bytes;  // length of the serialized-args payload that follows
+        uint64_t token;      // response-object token (from put_callback_token)
+        int32_t method;      // method index within the response interface
+        uint32_t data_bytes; // length of the serialized-args payload that follows
     };
 
     // Fetch the result of a completed async call (SteamAPICall_t), for CCallResult dispatch.
     struct api_call_result_request
     {
-        uint64_t call;         // SteamAPICall_t handle from SteamAPICallCompleted_t
-        int32_t callback_id;   // expected iCallback of the result struct
-        uint32_t data_bytes;   // expected result size (m_cubParam)
-        int32_t pipe;          // the game's HSteamPipe (callbacks/results are per-pipe)
+        uint64_t call;       // SteamAPICall_t handle from SteamAPICallCompleted_t
+        int32_t callback_id; // expected iCallback of the result struct
+        uint32_t data_bytes; // expected result size (m_cubParam)
+        int32_t pipe;        // the game's HSteamPipe (callbacks/results are per-pipe)
         int32_t reserved;
     };
 
     // Followed by `data_bytes` of the result struct when ok != 0.
     struct api_call_result_response
     {
-        int32_t ok;          // non-zero if the result was retrieved
-        uint8_t io_failure;  // non-zero if the call failed (bIOFailure)
-        uint8_t reserved[3];
+        int32_t ok;         // non-zero if the result was retrieved
+        uint8_t io_failure; // non-zero if the call failed (bIOFailure)
+        std::array<uint8_t, 3> reserved;
         uint32_t data_bytes;
     };
 

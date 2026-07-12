@@ -37,13 +37,13 @@ namespace sogen
                         return handle_query<PROCESS_BASIC_INFORMATION64>(c.emu, process_information, process_information_length,
                                                                          return_length, init_steam_info);
                     case sizeof(PROCESS_EXTENDED_BASIC_INFORMATION):
-                        return handle_query<PROCESS_EXTENDED_BASIC_INFORMATION>(
-                            c.emu, process_information, process_information_length, return_length,
-                            [&](PROCESS_EXTENDED_BASIC_INFORMATION& ext) {
-                                ext = {};
-                                ext.Size = sizeof(PROCESS_EXTENDED_BASIC_INFORMATION);
-                                init_steam_info(ext.BasicInfo);
-                            });
+                        return handle_query<PROCESS_EXTENDED_BASIC_INFORMATION>(c.emu, process_information, process_information_length,
+                                                                                return_length,
+                                                                                [&](PROCESS_EXTENDED_BASIC_INFORMATION& ext) {
+                                                                                    ext = {};
+                                                                                    ext.Size = sizeof(PROCESS_EXTENDED_BASIC_INFORMATION);
+                                                                                    init_steam_info(ext.BasicInfo);
+                                                                                });
                     default:
                         return STATUS_INFO_LENGTH_MISMATCH;
                     }

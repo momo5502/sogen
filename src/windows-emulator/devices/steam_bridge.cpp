@@ -32,8 +32,8 @@ namespace sogen
                                    std::vector<std::byte>& out, uint64_t& ret) = 0;
             // Drains pending host callbacks for `pipe`. `out` receives the normal-record blob (bytes in
             // `normal_bytes`, count `normal_count`) followed by the reverse-record blob (count `reverse_count`).
-            virtual void run_callbacks(int32_t pipe, std::vector<std::byte>& out, uint32_t& normal_count,
-                                       uint32_t& normal_bytes, uint32_t& reverse_count) = 0;
+            virtual void run_callbacks(int32_t pipe, std::vector<std::byte>& out, uint32_t& normal_count, uint32_t& normal_bytes,
+                                       uint32_t& reverse_count) = 0;
             // Fetches a completed async-call result; returns true if available (out = result bytes).
             virtual bool get_api_call_result(int32_t pipe, uint64_t call, int32_t callback_id, uint32_t data_bytes,
                                              std::vector<std::byte>& out, bool& io_failure) = 0;
@@ -50,11 +50,10 @@ namespace sogen
             void release_interface(sb::interface_handle) override
             {
             }
-            int32_t invoke(sb::interface_handle, uint32_t, std::span<const std::byte>, std::vector<std::byte>&,
-                           uint64_t& ret) override
+            int32_t invoke(sb::interface_handle, uint32_t, std::span<const std::byte>, std::vector<std::byte>&, uint64_t& ret) override
             {
                 ret = 0;
-                return sb::invoke_unknown_interface;
+                return static_cast<int32_t>(sb::invoke_status::unknown_interface);
             }
             void run_callbacks(int32_t, std::vector<std::byte>&, uint32_t& normal_count, uint32_t& normal_bytes,
                                uint32_t& reverse_count) override
@@ -89,11 +88,10 @@ namespace sogen
                 thread_local std::vector<uint8_t> buffer(256u * 1024u);
                 uint32_t out_len = 0;
                 uint64_t r = 0;
-                const int status = sogen_steam_backend_invoke(
-                    handle, method_index, reinterpret_cast<const uint8_t*>(args.data()),
-                    static_cast<uint32_t>(args.size()), buffer.data(), static_cast<uint32_t>(buffer.size()), &out_len, &r);
-                out.assign(reinterpret_cast<const std::byte*>(buffer.data()),
-                           reinterpret_cast<const std::byte*>(buffer.data()) + out_len);
+                const int status = sogen_steam_backend_invoke(handle, method_index, reinterpret_cast<const uint8_t*>(args.data()),
+                                                              static_cast<uint32_t>(args.size()), buffer.data(),
+                                                              static_cast<uint32_t>(buffer.size()), &out_len, &r);
+                out.assign(reinterpret_cast<const std::byte*>(buffer.data()), reinterpret_cast<const std::byte*>(buffer.data()) + out_len);
                 ret = r;
                 return status;
             }
@@ -102,24 +100,23 @@ namespace sogen
             {
                 thread_local std::vector<uint8_t> buffer(256u * 1024u);
                 uint32_t normal_len = 0, rev_len = 0;
-                sogen_steam_backend_run_callbacks(pipe, buffer.data(), static_cast<uint32_t>(buffer.size()), &normal_len,
-                                                  &normal_count, &rev_len, &reverse_count);
+                sogen_steam_backend_run_callbacks(pipe, buffer.data(), static_cast<uint32_t>(buffer.size()), &normal_len, &normal_count,
+                                                  &rev_len, &reverse_count);
                 normal_bytes = normal_len;
                 out.assign(reinterpret_cast<const std::byte*>(buffer.data()),
                            reinterpret_cast<const std::byte*>(buffer.data()) + normal_len + rev_len);
             }
-            bool get_api_call_result(int32_t pipe, uint64_t call, int32_t callback_id, uint32_t data_bytes,
-                                     std::vector<std::byte>& out, bool& io_failure) override
+            bool get_api_call_result(int32_t pipe, uint64_t call, int32_t callback_id, uint32_t data_bytes, std::vector<std::byte>& out,
+                                     bool& io_failure) override
             {
                 thread_local std::vector<uint8_t> buffer(64u * 1024u);
                 const uint32_t cap = data_bytes < buffer.size() ? data_bytes : static_cast<uint32_t>(buffer.size());
                 uint32_t out_len = 0;
                 uint8_t failed = 0;
-                const int status = sogen_steam_backend_get_api_call_result(pipe, call, callback_id, cap, buffer.data(),
-                                                                           cap, &out_len, &failed);
+                const int status =
+                    sogen_steam_backend_get_api_call_result(pipe, call, callback_id, cap, buffer.data(), cap, &out_len, &failed);
                 io_failure = failed != 0;
-                out.assign(reinterpret_cast<const std::byte*>(buffer.data()),
-                           reinterpret_cast<const std::byte*>(buffer.data()) + out_len);
+                out.assign(reinterpret_cast<const std::byte*>(buffer.data()), reinterpret_cast<const std::byte*>(buffer.data()) + out_len);
                 return status == 0;
             }
         };
@@ -225,12 +222,13 @@ namespace sogen
 
                 // The version name is fixed-size and must be NUL-terminated within the buffer.
                 const auto& name = request.version;
-                const auto term = std::find(name.begin(), name.end(), '\0');
-                if (term == name.end())
+                const std::string_view raw{name.data(), name.size()};
+                const auto nul = raw.find('\0');
+                if (nul == std::string_view::npos)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
-                const std::string_view version{name.data(), static_cast<size_t>(term - name.begin())};
+                const std::string_view version = raw.substr(0, nul);
 
                 const sb::create_interface_response response{.handle = this->backend(win_emu).create_interface(version)};
                 win_emu.log.info("[steam-bridge] create_interface('%.*s') -> handle %llu\n", static_cast<int>(version.size()),
@@ -287,7 +285,7 @@ namespace sogen
                 {
                     if (context.output_buffer && context.output_buffer_length >= sizeof(sb::invoke_response))
                     {
-                        const sb::invoke_response resp{.status = sb::invoke_output_too_small,
+                        const sb::invoke_response resp{.status = static_cast<int32_t>(sb::invoke_status::output_too_small),
                                                        .out_bytes = static_cast<uint32_t>(out.size()),
                                                        .return_value = 0};
                         emulator_object<sb::invoke_response>{win_emu.emu(), context.output_buffer}.write(resp);
@@ -296,8 +294,7 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                const sb::invoke_response resp{
-                    .status = status, .out_bytes = static_cast<uint32_t>(out.size()), .return_value = ret};
+                const sb::invoke_response resp{.status = status, .out_bytes = static_cast<uint32_t>(out.size()), .return_value = ret};
                 emulator_object<sb::invoke_response>{win_emu.emu(), context.output_buffer}.write(resp);
                 if (!out.empty())
                 {
@@ -312,12 +309,14 @@ namespace sogen
                 int32_t pipe = 0;
                 if (context.input_buffer && context.input_buffer_length >= sizeof(sb::run_callbacks_request))
                 {
-                    pipe = static_cast<int32_t>(
-                        emulator_object<sb::run_callbacks_request>{win_emu.emu(), context.input_buffer}.read().pipe);
+                    pipe =
+                        static_cast<int32_t>(emulator_object<sb::run_callbacks_request>{win_emu.emu(), context.input_buffer}.read().pipe);
                 }
 
                 std::vector<std::byte> blob{};
-                uint32_t normal_count = 0, normal_bytes = 0, reverse_count = 0;
+                uint32_t normal_count = 0;
+                uint32_t normal_bytes = 0;
+                uint32_t reverse_count = 0;
                 this->backend(win_emu).run_callbacks(pipe, blob, normal_count, normal_bytes, reverse_count);
                 if (reverse_count)
                 {
@@ -329,11 +328,10 @@ namespace sogen
                 {
                     return STATUS_BUFFER_TOO_SMALL;
                 }
-                const sb::run_callbacks_response response{
-                    .count = normal_count,
-                    .blob_bytes = normal_bytes,
-                    .reverse_count = reverse_count,
-                    .reverse_bytes = static_cast<uint32_t>(blob.size() - normal_bytes)};
+                const sb::run_callbacks_response response{.count = normal_count,
+                                                          .blob_bytes = normal_bytes,
+                                                          .reverse_count = reverse_count,
+                                                          .reverse_bytes = static_cast<uint32_t>(blob.size() - normal_bytes)};
                 emulator_object<sb::run_callbacks_response>{win_emu.emu(), context.output_buffer}.write(response);
                 if (!blob.empty())
                 {
@@ -349,8 +347,7 @@ namespace sogen
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
-                const auto request =
-                    emulator_object<sb::api_call_result_request>{win_emu.emu(), context.input_buffer}.read();
+                const auto request = emulator_object<sb::api_call_result_request>{win_emu.emu(), context.input_buffer}.read();
 
                 std::vector<std::byte> data{};
                 bool io_failure = false;
@@ -369,8 +366,7 @@ namespace sogen
                 emulator_object<sb::api_call_result_response>{win_emu.emu(), context.output_buffer}.write(response);
                 if (!data.empty())
                 {
-                    win_emu.emu().write_memory(context.output_buffer + sizeof(sb::api_call_result_response), data.data(),
-                                               data.size());
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(sb::api_call_result_response), data.data(), data.size());
                 }
                 set_information(context, static_cast<ULONG>(needed));
                 return STATUS_SUCCESS;

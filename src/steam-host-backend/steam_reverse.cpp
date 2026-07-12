@@ -30,9 +30,18 @@ namespace sogen::steam_host
                 const auto* c = static_cast<const unsigned char*>(p);
                 b.insert(b.end(), c, c + n);
             }
-            void u64(uint64_t v) { put(&v, 8); }
-            void i32(int32_t v) { put(&v, 4); }
-            void f32(float v) { put(&v, 4); }
+            void u64(uint64_t v)
+            {
+                put(&v, 8);
+            }
+            void i32(int32_t v)
+            {
+                put(&v, 4);
+            }
+            void f32(float v)
+            {
+                put(&v, 4);
+            }
             void cstr(const char* s)
             {
                 if (!s)
@@ -63,15 +72,24 @@ namespace sogen::steam_host
             uint64_t token;
             void ServerResponded(HServerListRequest hReq, int iServer) override
             {
-                args a; a.u64(reinterpret_cast<uint64_t>(hReq)); a.i32(iServer); enqueue(token, 0, a);
+                args a;
+                a.u64(reinterpret_cast<uint64_t>(hReq));
+                a.i32(iServer);
+                enqueue(token, 0, a);
             }
             void ServerFailedToRespond(HServerListRequest hReq, int iServer) override
             {
-                args a; a.u64(reinterpret_cast<uint64_t>(hReq)); a.i32(iServer); enqueue(token, 1, a);
+                args a;
+                a.u64(reinterpret_cast<uint64_t>(hReq));
+                a.i32(iServer);
+                enqueue(token, 1, a);
             }
             void RefreshComplete(HServerListRequest hReq, EMatchMakingServerResponse response) override
             {
-                args a; a.u64(reinterpret_cast<uint64_t>(hReq)); a.i32(static_cast<int32_t>(response)); enqueue(token, 2, a);
+                args a;
+                a.u64(reinterpret_cast<uint64_t>(hReq));
+                a.i32(static_cast<int32_t>(response));
+                enqueue(token, 2, a);
             }
         };
 
@@ -80,11 +98,14 @@ namespace sogen::steam_host
             uint64_t token;
             void ServerResponded(gameserveritem_t& server) override
             {
-                args a; a.put(&server, sizeof(server)); enqueue(token, 0, a);
+                args a;
+                a.put(&server, sizeof(server));
+                enqueue(token, 0, a);
             }
             void ServerFailedToRespond() override
             {
-                args a; enqueue(token, 1, a);
+                args a;
+                enqueue(token, 1, a);
             }
         };
 
@@ -93,15 +114,21 @@ namespace sogen::steam_host
             uint64_t token;
             void AddPlayerToList(const char* pchName, int nScore, float flTimePlayed) override
             {
-                args a; a.cstr(pchName); a.i32(nScore); a.f32(flTimePlayed); enqueue(token, 0, a);
+                args a;
+                a.cstr(pchName);
+                a.i32(nScore);
+                a.f32(flTimePlayed);
+                enqueue(token, 0, a);
             }
             void PlayersFailedToRespond() override
             {
-                args a; enqueue(token, 1, a);
+                args a;
+                enqueue(token, 1, a);
             }
             void PlayersRefreshComplete() override
             {
-                args a; enqueue(token, 2, a);
+                args a;
+                enqueue(token, 2, a);
             }
         };
 
@@ -110,15 +137,20 @@ namespace sogen::steam_host
             uint64_t token;
             void RulesResponded(const char* pchRule, const char* pchValue) override
             {
-                args a; a.cstr(pchRule); a.cstr(pchValue); enqueue(token, 0, a);
+                args a;
+                a.cstr(pchRule);
+                a.cstr(pchValue);
+                enqueue(token, 0, a);
             }
             void RulesFailedToRespond() override
             {
-                args a; enqueue(token, 1, a);
+                args a;
+                enqueue(token, 1, a);
             }
             void RulesRefreshComplete() override
             {
-                args a; enqueue(token, 2, a);
+                args a;
+                enqueue(token, 2, a);
             }
         };
     }
@@ -133,11 +165,32 @@ namespace sogen::steam_host
         void* p = nullptr;
         switch (type)
         {
-        case 0: { auto* o = new ServerListProxy(); o->token = token; p = o; break; }
-        case 1: { auto* o = new PingProxy(); o->token = token; p = o; break; }
-        case 2: { auto* o = new PlayersProxy(); o->token = token; p = o; break; }
-        case 3: { auto* o = new RulesProxy(); o->token = token; p = o; break; }
-        default: return nullptr;
+        case 0: {
+            auto* o = new ServerListProxy();
+            o->token = token;
+            p = o;
+            break;
+        }
+        case 1: {
+            auto* o = new PingProxy();
+            o->token = token;
+            p = o;
+            break;
+        }
+        case 2: {
+            auto* o = new PlayersProxy();
+            o->token = token;
+            p = o;
+            break;
+        }
+        case 3: {
+            auto* o = new RulesProxy();
+            o->token = token;
+            p = o;
+            break;
+        }
+        default:
+            return nullptr;
         }
         g_proxies[token] = p;
         return p;
