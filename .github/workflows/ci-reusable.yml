@@ -140,19 +140,25 @@ jobs:
         with:
           submodules: recursive
 
+      # libclang lets the Steam-bridge generator run at configure time, so the guest steamclient shims are
+      # actually built (and their generated marshalling compiled) here rather than silently skipped.
+      - name: Install libclang (Steam bridge codegen)
+        run: python -m pip install --disable-pip-version-check libclang
+
       - name: Enable Developer Command Prompt (x86)
         uses: ilammy/msvc-dev-cmd@v1.13.0
         with:
           arch: x86
 
-      - name: Build 32-bit Vulkan Shim
-        run: cmake --preset=release && cmake --build --preset=release -t vulkan-shim
+      - name: Build 32-bit Vulkan and Steam Shims
+        run: cmake --preset=release && cmake --build --preset=release -t vulkan-shim steam-shim
 
-      - name: Stash 32-bit Vulkan Shim
+      - name: Stash 32-bit Shims
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path shims -Force | Out-Null
           Copy-Item build/release/artifacts/vulkan-shim.dll shims/vulkan-shim-x86.dll -Force
+          Copy-Item build/release/artifacts/steamclient.dll shims/steamclient.dll -Force
           Remove-Item build/release -Recurse -Force
 
       - name: Enable Developer Command Prompt (x64)
@@ -160,14 +166,15 @@ jobs:
         with:
           arch: x64
 
-      - name: Build API Set Dumper and 64-bit Vulkan Shim
-        run: cmake --preset=release && cmake --build --preset=release -t dump-apiset vulkan-shim
+      - name: Build API Set Dumper and 64-bit Vulkan and Steam Shims
+        run: cmake --preset=release && cmake --build --preset=release -t dump-apiset vulkan-shim steam-shim
 
-      - name: Stage Vulkan Shims
+      - name: Stage Shims
         shell: pwsh
         run: |
           Move-Item build/release/artifacts/vulkan-shim.dll build/release/artifacts/vulkan-shim-x64.dll -Force
           Copy-Item shims/vulkan-shim-x86.dll build/release/artifacts/vulkan-shim-x86.dll -Force
+          Copy-Item shims/steamclient.dll build/release/artifacts/steamclient.dll -Force
 
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v7
