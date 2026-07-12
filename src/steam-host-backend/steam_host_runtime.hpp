@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <type_traits>
 #include <vector>
@@ -165,6 +167,18 @@ namespace sogen::steam_host
     inline constexpr bool is_complete_v = is_complete<T>::value;
 
     inline void unsupported(const char*, const char*) {}
+
+    // A method the security policy refuses to forward to the real Steam client (host filesystem access,
+    // account-credential minting, arbitrary host-path/URL primitives). The guest gets steam_host_unsupported,
+    // exactly as for an unimplemented method, so it fails closed. See the blocklist in the generator.
+    inline void blocked(const char* iface, const char* method)
+    {
+        if (std::getenv("SOGEN_STEAM_TRACE"))
+        {
+            std::fprintf(stderr, "[steam-blocked] %s::%s denied by sandbox policy\n", iface, method);
+            std::fflush(stderr);
+        }
+    }
 
     // Registers an interface pointer returned by a GetISteamXxx method and yields a handle the guest can
     // wrap in a proxy for `version`. Defined in the backend TU; called from the generated thunks.

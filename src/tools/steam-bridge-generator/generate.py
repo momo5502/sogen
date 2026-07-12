@@ -421,6 +421,54 @@ def classify_param(types: Types, ptype: str, pname: str, attrs: dict, param_name
     return Param(pname, t, "complex")
 
 
+# --- Sandbox security policy ------------------------------------------------------------------------
+# The guest is untrusted (malware may run in the emulator). The bridge forwards to the host's REAL Steam
+# client, which runs OUTSIDE the sandbox with the host user's account and filesystem. These methods are
+# escape/exfil primitives regardless of marshalling correctness, so the generated host thunk refuses to
+# forward them (returns steam_host_unsupported -- fail closed). Matched by NAME per snapshot, so a version
+# that lacks a listed method simply never matches. Network-only reach (HTTP/sockets) is intentionally NOT
+# blocked: the guest already has host network access via the emulated AFD socket device, so blocking it
+# here buys nothing. The focus is host FILESYSTEM access and host-account credential minting.
+BLOCKED_INTERFACES = {
+    "ISteamUGC",          # SetItemContent/SetItemPreview take an arbitrary host path and upload its contents
+    "ISteamScreenshots",  # AddScreenshotToLibrary/WriteScreenshot read arbitrary host file paths
+    "ISteamHTMLSurface",  # LoadURL file:// reads arbitrary host files; ExecuteJavascript; host clipboard R/W
+}
+
+BLOCKED_METHODS = {
+    # Host filesystem: Steam Cloud storage lives in the host userdata dir, outside the sandbox; a crafted
+    # file name could also traverse it. UGCDownloadToLocation writes to an arbitrary guest-chosen host path.
+    "ISteamRemoteStorage": {
+        "FileWrite", "FileWriteAsync", "FileWriteStreamOpen", "FileWriteStreamWriteChunk",
+        "FileWriteStreamClose", "FileRead", "FileReadAsync", "UGCRead", "UGCDownloadToLocation",
+        "FileDelete", "FileForget", "FileShare", "PublishWorkshopFile", "PublishVideo",
+        "UpdatePublishedFileFile", "UpdatePublishedFilePreviewFile",
+    },
+    # Host filesystem oracle / path disclosure / forced host disk+network work.
+    "ISteamApps": {
+        "GetFileDetails", "GetAppInstallDir", "MarkContentCorrupt", "InstallDLC", "UninstallDLC",
+        "RequestAppProofOfPurchaseKey", "RequestAllProofOfPurchaseKeys",
+    },
+    "ISteamInput": {"SetInputActionManifestFilePath"},  # host reads/parses a guest-supplied absolute path
+    # Credential minting: tickets/URLs that authenticate as the host's real Steam account to third parties.
+    "ISteamUser": {
+        "GetAuthSessionTicket", "GetAuthTicketForWebApi", "RequestStoreAuthURL", "GetEncryptedAppTicket",
+        "RequestEncryptedAppTicket", "AdvertiseGame",
+    },
+    "ISteamGameServer": {"GetAuthSessionTicket"},
+    # Host-account mutation / shell-open. ActivateGameOverlayToStore is intentionally NOT here (the DLC/store
+    # button is a wanted feature and only opens the in-Steam overlay).
+    "ISteamFriends": {
+        "ActivateGameOverlayToWebPage", "RegisterProtocolInOverlayBrowser", "SetPersonaName",
+        "InviteUserToGame", "SendClanChatMessage", "ReplyToFriendMessage", "SetListenForFriendsMessages",
+    },
+}
+
+
+def is_blocked(classname: str, methodname: str) -> bool:
+    return classname in BLOCKED_INTERFACES or methodname in BLOCKED_METHODS.get(classname, ())
+
+
 # Game-implemented response interfaces routed via the reverse-callback channel; id shared with the host.
 RESPONSE_IFACE_ID = {
     "ISteamMatchmakingServerListResponse": 0,
@@ -779,6 +827,10 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
         for m in i.methods:
             L.append(f"        case {m.index}: // {m.name}")
             L.append("        {")
+            if is_blocked(i.classname, m.name):
+                L.append(f'            blocked("{i.classname}", "{m.name}"); return steam_host_unsupported;')
+                L.append("        }")
+                continue
             guard = struct_guard(m, "sogen::steam_host")
             if m.simple and guard:
                 L.append(f"            if constexpr ({guard}) {{")
@@ -789,6 +841,16 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
 
                 def count_expr(tok: str) -> str:
                     return local_of.get(tok, tok)
+
+                # SECURITY: the buffer allocation is capped (cap_bytes/cap_count) but the count is a separate
+                # by-value arg passed straight to the real Steam method. If the guest sends a count larger than
+                # the cap, the method would read/write past the (smaller) host buffer. Clamp the count handed to
+                # Steam down to the actual capacity so buffer size and declared size can never diverge. Only when
+                # the count is a real param (a constant count is already fixed and matches the allocation).
+                def clamp_count(cap_expr: str, tok: str) -> None:
+                    if tok in local_of:
+                        cnt = local_of[tok]
+                        L.append(f"            {cnt} = static_cast<decltype({cnt})>({cap_expr});")
 
                 args = []
                 out_writes = []
@@ -824,6 +886,9 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                     elif p.kind == "callback_token":
                         L.append(f"            auto* {v} = reinterpret_cast<{p.type}*>("
                                  f"create_response_proxy({v}_type, {v}_tok));")
+                        # A guest-supplied type outside the known range yields a null proxy; never hand that to
+                        # Steam (it would store it and later virtual-dispatch through null -> host crash).
+                        L.append(f"            if (!{v}) return steam_host_unsupported;")
                         args.append(v)
                     elif p.kind == "null_ptr":
                         args.append("nullptr")
@@ -837,6 +902,7 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                         # Manual min (avoid std::min: windows.h's min macro would break it in some TUs).
                         L.append(f"            std::memcpy({v}_buf.data(), {v}_raw.data(), "
                                  f"{v}_buf.size() < {v}_raw.size() ? {v}_buf.size() : {v}_raw.size());")
+                        clamp_count(f"({v}_buf.size() / {elem_sizeof})", p.count)
                         args.append(f"reinterpret_cast<{cast}>({v}_buf.data())")
                     elif p.kind == "out_single":
                         L.append(f"            {p.type} {v}{{}};")
@@ -846,16 +912,19 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                         L.append(f"            std::vector<{p.type}> {v}_vec(cap_count<{p.type}>("
                                  f"static_cast<size_t>({count_expr(p.count)})));")
                         L.append(f"            {p.type}* {v} = {v}_vec.empty() ? nullptr : {v}_vec.data();")
+                        clamp_count(f"{v}_vec.size()", p.count)
                         args.append(v)
                         out_writes.append(f"            out.put_out({v}_vec.data(), {v}_vec.size() * sizeof({p.type}));")
                     elif p.kind == "out_string":
                         L.append(f"            size_t {v}_cap = cap_bytes(static_cast<size_t>({count_expr(p.count)}));")
                         L.append(f"            std::vector<char> {v}_vec({v}_cap + 1, 0);")
+                        clamp_count(f"{v}_cap", p.count)
                         args.append(f"{v}_vec.data()")
                         out_writes.append(f"            out.put_out({v}_vec.data(), {v}_cap);")
                     elif p.kind == "out_buffer":
                         L.append(f"            size_t {v}_cap = cap_bytes(static_cast<size_t>({count_expr(p.count)}));")
                         L.append(f"            std::vector<unsigned char> {v}_vec({v}_cap ? {v}_cap : size_t{{1}});")
+                        clamp_count(f"{v}_cap", p.count)
                         args.append(f"reinterpret_cast<{p.type}>({v}_vec.data())")
                         out_writes.append(f"            out.put_out({v}_vec.data(), {v}_cap);")
                 # Call exactly once (it fills the out locals), then serialize outputs in the guest's read order.

@@ -109,12 +109,51 @@ default):
 
 ## Security model
 
-The `\\.\SogenSteam` device assumes the guest is an attacker. Every length/offset from the guest is
-bounds-checked against the payload; the invoke arg blob is bounded by the input buffer and the reply
-by the output buffer; guest-supplied allocation sizes are capped. Buffer marshalling is two-pass on
-the host (read all self-delimiting inputs → sizes known → allocate capped output buffers → call →
-write back). Unsized `char*`/`void*` pointers are never treated as single elements (that was a real
-overflow) — they are stubbed unless an explicit size attribute or an adjacent size param is present.
+The guest is untrusted (it may be malware). The bridge forwards to the host's **real** Steam client,
+which runs *outside* the sandbox with the host user's account and filesystem — so there are two distinct
+attack surfaces: memory corruption in the marshalling, and Steam methods that are unsafe by *semantics*.
+
+### Memory safety of the wire path
+
+The `\\.\SogenSteam` device bounds-checks every length/offset from the guest: the invoke arg blob is
+bounded by the input buffer and the reply by the output buffer; guest-supplied allocation sizes are
+capped (`cap_bytes`/`cap_count`, 16 MiB). Buffer marshalling is two-pass on the host (read all
+self-delimiting inputs → sizes known → allocate capped buffers → call → write back). Unsized
+`char*`/`void*` pointers are never treated as single elements — they are stubbed unless an explicit
+size attribute or an adjacent size param is present.
+
+> **Buffer counts are clamped to the allocation, not just the allocation to the cap.** A buffer's size
+> param is a separate by-value arg that also travels to the real Steam method. Capping only the
+> allocation while passing the raw count would let a guest count `> 16 MiB` make the method read/write
+> past the (smaller) host buffer — a host-heap OOB and the one real corruption bug found in audit. The
+> generator therefore clamps the count handed to Steam down to the allocated capacity, so declared size
+> and buffer size can never diverge. (`generate.py`, `clamp_count`.)
+
+### API-level policy (default-forward, with a blocklist)
+
+Marshalling correctness is not enough: some Steamworks methods are escape/exfil primitives regardless of
+how safely they are marshalled. The generator refuses to forward a blocklist of them — the host thunk
+emits `blocked(...); return steam_host_unsupported;` (fail closed; the guest sees an unimplemented
+method). See `BLOCKED_INTERFACES` / `BLOCKED_METHODS` in `generate.py`. The blocklist focuses on:
+
+- **Host filesystem** — `ISteamUGC` (host-path read → public upload), `ISteamScreenshots` (host-path
+  read), `ISteamHTMLSurface` (`file://`, JS, host clipboard), `ISteamRemoteStorage` file read/write/
+  delete/share/publish + `UGCDownloadToLocation` (host Steam-Cloud dir, outside the sandbox; a crafted
+  name could also traverse), `ISteamApps::{GetFileDetails,GetAppInstallDir,MarkContentCorrupt,InstallDLC,
+  UninstallDLC,Request*ProofOfPurchaseKey*}`, `ISteamInput::SetInputActionManifestFilePath`.
+- **Credential minting / account mutation** — `ISteamUser` auth tickets
+  (`GetAuthSessionTicket`/`GetAuthTicketForWebApi`/`RequestStoreAuthURL`/`*EncryptedAppTicket`/
+  `AdvertiseGame`), `ISteamGameServer::GetAuthSessionTicket`, and `ISteamFriends` overlay-web /
+  protocol-registration / persona-rename / social-send methods.
+
+Network reach (`ISteamHTTP`, the networking/sockets interfaces) is deliberately **not** blocked: the
+guest already has host network access through the emulated AFD socket device, so blocking it here buys
+nothing. Identity reads and `ISteamFriends::ActivateGameOverlayToStore` (the DLC/store button) are
+intentionally allowed. Matching is by method *name* per snapshot, so a version that lacks a listed
+method simply never matches, and the list survives the version-drift the bridge already handles.
+
+Reverse-callback (`callback_token`) params also reject a guest `type` outside the known range instead of
+handing a null proxy to Steam (which would crash the host on the next virtual dispatch).
 
 ## Callbacks
 
