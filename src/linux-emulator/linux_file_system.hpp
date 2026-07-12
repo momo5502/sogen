@@ -94,7 +94,14 @@ namespace sogen
             const auto link_parent_path = normalize_guest_path(resolved_link_guest).parent_path();
             const auto link_parent = link_parent_path.empty() ? std::string{"/"} : link_parent_path.string();
             const auto resolved_target = resolve_guest_path_string(link_parent, target_guest);
-            return this->translate(resolved_target).lexically_normal();
+            const auto target_host = this->translate(resolved_target).lexically_normal();
+            const auto link_parent_host = this->translate(link_parent).lexically_normal();
+            auto relative = target_host.lexically_relative(link_parent_host);
+            if (relative.empty())
+            {
+                return target_host;
+            }
+            return relative;
         }
 
         std::filesystem::path translate_relative_to(const std::filesystem::path& base, const std::string_view guest_path) const
