@@ -18,6 +18,12 @@ set(SOGEN_STEAMWORKS_PROTON_TAG "proton_7.0" CACHE STRING "Ref of SOGEN_STEAMWOR
 
 set(SOGEN_STEAM_ENABLED FALSE)
 if(SOGEN_ENABLE_STEAM)
+  # Resolve the interpreter on PATH (the one `python -m pip install libclang` targets) rather than the
+  # highest version CMake can discover -- otherwise the generator can run under a different Python that
+  # lacks the freshly installed libclang module and the bridge silently disables itself.
+  if(NOT DEFINED Python3_FIND_STRATEGY)
+    set(Python3_FIND_STRATEGY LOCATION)
+  endif()
   find_package(Python3 COMPONENTS Interpreter)
   if(NOT Python3_Interpreter_FOUND)
     message(WARNING "SOGEN_ENABLE_STEAM: Python3 not found; Steam bridge disabled.")
