@@ -140,14 +140,22 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # libclang lets the Steam-bridge generator run at configure time, so the guest steamclient shims are
+      # actually built here rather than silently skipped. The root CMakeLists resolves the PATH interpreter
+      # (this one), so it and pip agree.
+      - name: Install libclang (Steam bridge codegen)
+        run: python -m pip install --disable-pip-version-check libclang
+
       - name: Enable Developer Command Prompt (x86)
         uses: ilammy/msvc-dev-cmd@v1.13.0
         with:
           arch: x86
 
-      # SOGEN_ENABLE_STEAM (on by default) generates and compiles the guest steamclient shims here; the
-      # configure installs libclang for its own interpreter as needed (see src/CMakeLists.txt), so the shims
-      # are actually built rather than silently skipped.
       - name: Build 32-bit Vulkan and Steam Shims
         run: cmake --preset=release && cmake --build --preset=release -t vulkan-shim steam-shim
 

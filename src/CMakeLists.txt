@@ -22,20 +22,6 @@ if(SOGEN_ENABLE_STEAM)
   if(NOT Python3_Interpreter_FOUND)
     message(WARNING "SOGEN_ENABLE_STEAM: Python3 not found; Steam bridge disabled.")
   else()
-    # The generator needs the libclang module. CMake may resolve a different interpreter than the one a
-    # `pip install libclang` on PATH targeted (it prefers the highest version it can discover), so verify
-    # THIS interpreter has it and install it here if not -- guaranteeing the pip target and the generator
-    # are the same Python. A no-op when it is already present (e.g. local dev), so no surprise network use.
-    execute_process(COMMAND "${Python3_EXECUTABLE}" -c "import clang.cindex"
-                    RESULT_VARIABLE _sogen_have_libclang OUTPUT_QUIET ERROR_QUIET)
-    if(NOT _sogen_have_libclang EQUAL 0)
-      message(STATUS "Steam bridge: installing libclang for ${Python3_EXECUTABLE}")
-      execute_process(COMMAND "${Python3_EXECUTABLE}" -m pip install --disable-pip-version-check libclang
-                      RESULT_VARIABLE _sogen_pip_res)
-      if(NOT _sogen_pip_res EQUAL 0)
-        message(WARNING "SOGEN_ENABLE_STEAM: could not install libclang for ${Python3_EXECUTABLE}; Steam bridge disabled.")
-      endif()
-    endif()
     include(FetchContent)
     # Headers only: fetch shallow and skip Proton's heavy submodules (wine/dxvk/...). SOURCE_SUBDIR points at
     # a nonexistent path so MakeAvailable populates the checkout but never runs Proton's own build system --
