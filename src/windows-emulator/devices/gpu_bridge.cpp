@@ -3008,8 +3008,7 @@ namespace sogen
             // stream, amortising the per-command boundary crossing. See ioctl_record_commands.
             NTSTATUS handle_record_commands(windows_emulator& win_emu, const io_device_context& context)
             {
-                if (!context.input_buffer || context.input_buffer_length == 0 ||
-                    context.input_buffer_length > max_recorded_command_bytes)
+                if (!context.input_buffer || context.input_buffer_length == 0 || context.input_buffer_length > max_recorded_command_bytes)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }

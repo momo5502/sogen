@@ -2173,8 +2173,7 @@ namespace sogen::whp
                 this->next_internal_gpa_ += page_size;
 
                 WHP_CHECK_HR(WHvMapGpaRange(this->partition_, raw_page, page_gpa, page_size,
-                                            static_cast<WHV_MAP_GPA_RANGE_FLAGS>(WHvMapGpaRangeFlagRead |
-                                                                                 WHvMapGpaRangeFlagWrite)));
+                                            static_cast<WHV_MAP_GPA_RANGE_FLAGS>(WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite)));
                 this->internal_pages_[page_gpa] = std::move(backing);
                 this->page_table_views_[page_gpa] = reinterpret_cast<uint64_t*>(raw_page);
 
