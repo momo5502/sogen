@@ -8,11 +8,6 @@
 #include <network/address.hpp>
 #include <network/socket.hpp>
 
-#include <cstdio>
-#include <cstdlib>
-#include <deque>
-#include <optional>
-
 #include <utils/finally.hpp>
 #include <utils/time.hpp>
 
@@ -229,54 +224,6 @@ namespace sogen
             throw std::runtime_error("Unsupported win address family for conversion: " + std::to_string(family));
         }
 
-        // Builds a NAT-PMP (RFC 6886) response for a request the guest sent to a gateway's UDP port 5351.
-        // Returns nullopt for anything that isn't a well-formed NAT-PMP v0 request. Games (via miniupnpc)
-        // ask a gateway to open a port before online play; the emulator has no real NAT-PMP gateway, so we
-        // answer locally with success and grant the requested mapping, letting the game proceed. The
-        // reported external address is synthetic (not used when merely browsing/joining servers).
-        std::optional<std::vector<std::byte>> build_natpmp_response(const std::span<const std::byte> request)
-        {
-            const auto u8 = [&](size_t i) { return static_cast<uint8_t>(request[i]); };
-            if (request.size() < 2 || u8(0) != 0)
-            {
-                return std::nullopt; // not NAT-PMP version 0
-            }
-            const uint8_t opcode = u8(1);
-
-            std::vector<std::byte> resp;
-            const auto put16 = [&](uint16_t x) {
-                resp.push_back(static_cast<std::byte>((x >> 8) & 0xff));
-                resp.push_back(static_cast<std::byte>(x & 0xff));
-            };
-            const auto put32 = [&](uint32_t x) {
-                put16(static_cast<uint16_t>(x >> 16));
-                put16(static_cast<uint16_t>(x & 0xffff));
-            };
-
-            resp.push_back(std::byte{0});                          // version
-            resp.push_back(static_cast<std::byte>(0x80 | opcode)); // response = 0x80 | request opcode
-            put16(0);                                              // result code: 0 = success
-            put32(1);                                              // seconds since gateway epoch (any value)
-
-            if (opcode == 0) // public-address request
-            {
-                put32(0x0a000002u); // synthetic external IP 10.0.0.2
-                return resp;
-            }
-            if ((opcode == 1 || opcode == 2) && request.size() >= 12) // map UDP (1) / TCP (2)
-            {
-                const auto internal_port = static_cast<uint16_t>((u8(4) << 8) | u8(5));
-                const auto suggested_ext = static_cast<uint16_t>((u8(6) << 8) | u8(7));
-                const uint32_t lifetime = (static_cast<uint32_t>(u8(8)) << 24) | (static_cast<uint32_t>(u8(9)) << 16) |
-                                          (static_cast<uint32_t>(u8(10)) << 8) | u8(11);
-                put16(internal_port);
-                put16(suggested_ext ? suggested_ext : internal_port); // grant the requested external port
-                put32(lifetime ? lifetime : 3600u);
-                return resp;
-            }
-            return std::nullopt;
-        }
-
         afd_creation_data get_creation_data(windows_emulator& win_emu, const io_device_creation_data& data)
         {
             if (!data.buffer || data.length < sizeof(afd_creation_data))
@@ -432,12 +379,6 @@ namespace sogen
             // WSAEWOULDBLOCK) instead of pending, because the guest's synchronous recv/send call would
             // otherwise wait forever on a packet that never arrives.
             bool non_blocking_{false};
-
-            // Datagrams the device synthesizes and hands back to the guest on its next recvfrom, as if from a
-            // remote peer. Used to answer NAT-PMP locally (see maybe_answer_natpmp) so games that gate online
-            // play behind a port-mapping request proceed even though the emulator has no real gateway that
-            // speaks NAT-PMP. Transient (not serialized): NAT traversal is redone after a snapshot restore.
-            std::deque<std::pair<network::address, std::vector<std::byte>>> synthetic_datagrams_{};
 
             afd_endpoint()
             {
@@ -641,58 +582,48 @@ namespace sogen
 
                 const auto request = _AFD_REQUEST(c.io_control_code);
 
-                const auto dispatch = [&]() -> NTSTATUS {
-                    switch (request)
-                    {
-                    case AFD_BIND:
-                        return this->ioctl_bind(win_emu, c);
-                    case AFD_CONNECT:
-                        return this->ioctl_connect(win_emu, c);
-                    case AFD_START_LISTEN:
-                        return this->ioctl_listen(win_emu, c);
-                    case AFD_WAIT_FOR_LISTEN:
-                        return this->ioctl_wait_for_listen(win_emu, c);
-                    case AFD_ACCEPT:
-                        return this->ioctl_accept(win_emu, c);
-                    case AFD_SEND:
-                        return this->ioctl_send(win_emu, c);
-                    case AFD_RECEIVE:
-                        return this->ioctl_receive(win_emu, c);
-                    case AFD_SEND_DATAGRAM:
-                        return this->ioctl_send_datagram(win_emu, c);
-                    case AFD_RECEIVE_DATAGRAM:
-                        return this->ioctl_receive_datagram(win_emu, c);
-                    case AFD_POLL:
-                        return this->ioctl_poll(win_emu, c);
-                    case AFD_GET_ADDRESS:
-                        return this->ioctl_get_address(win_emu, c);
-                    case AFD_EVENT_SELECT:
-                        return this->ioctl_event_select(win_emu, c);
-                    case AFD_ENUM_NETWORK_EVENTS:
-                        return this->ioctl_enum_network_events(win_emu, c);
-                    case AFD_SET_CONTEXT:
-                        this->update_shared_info(win_emu, c);
-                        return STATUS_SUCCESS;
-                    case AFD_GET_INFORMATION:
-                    case AFD_SET_INFORMATION:
-                    case AFD_QUERY_HANDLES:
-                    case AFD_TRANSPORT_IOCTL:
-                    case AFD_PARTIAL_DISCONNECT:
-                        return STATUS_SUCCESS;
-                    default:
-                        win_emu.log.error("Unsupported AFD IOCTL: 0x%X (%u)\n", static_cast<uint32_t>(c.io_control_code),
-                                          static_cast<uint32_t>(request));
-                        return STATUS_NOT_SUPPORTED;
-                    }
-                };
-
-                const auto status = dispatch();
-                if (std::getenv("SOGEN_AFD_TRACE"))
+                switch (request)
                 {
-                    std::fprintf(stderr, "[afd] request=%u status=0x%08X\n", static_cast<uint32_t>(request), static_cast<uint32_t>(status));
-                    std::fflush(stderr);
+                case AFD_BIND:
+                    return this->ioctl_bind(win_emu, c);
+                case AFD_CONNECT:
+                    return this->ioctl_connect(win_emu, c);
+                case AFD_START_LISTEN:
+                    return this->ioctl_listen(win_emu, c);
+                case AFD_WAIT_FOR_LISTEN:
+                    return this->ioctl_wait_for_listen(win_emu, c);
+                case AFD_ACCEPT:
+                    return this->ioctl_accept(win_emu, c);
+                case AFD_SEND:
+                    return this->ioctl_send(win_emu, c);
+                case AFD_RECEIVE:
+                    return this->ioctl_receive(win_emu, c);
+                case AFD_SEND_DATAGRAM:
+                    return this->ioctl_send_datagram(win_emu, c);
+                case AFD_RECEIVE_DATAGRAM:
+                    return this->ioctl_receive_datagram(win_emu, c);
+                case AFD_POLL:
+                    return this->ioctl_poll(win_emu, c);
+                case AFD_GET_ADDRESS:
+                    return this->ioctl_get_address(win_emu, c);
+                case AFD_EVENT_SELECT:
+                    return this->ioctl_event_select(win_emu, c);
+                case AFD_ENUM_NETWORK_EVENTS:
+                    return this->ioctl_enum_network_events(win_emu, c);
+                case AFD_SET_CONTEXT:
+                    this->update_shared_info(win_emu, c);
+                    return STATUS_SUCCESS;
+                case AFD_GET_INFORMATION:
+                case AFD_SET_INFORMATION:
+                case AFD_QUERY_HANDLES:
+                case AFD_TRANSPORT_IOCTL:
+                case AFD_PARTIAL_DISCONNECT:
+                    return STATUS_SUCCESS;
+                default:
+                    win_emu.log.error("Unsupported AFD IOCTL: 0x%X (%u)\n", static_cast<uint32_t>(c.io_control_code),
+                                      static_cast<uint32_t>(request));
+                    return STATUS_NOT_SUPPORTED;
                 }
-                return status;
             }
 
             NTSTATUS ioctl_connect(windows_emulator& win_emu, const io_device_context& c)
@@ -713,13 +644,6 @@ namespace sogen
                 }
 
                 const auto addr = convert_to_host_address(win_emu, std::span(data).subspan(address_offset));
-
-                if (std::getenv("SOGEN_AFD_TRACE"))
-                {
-                    std::fprintf(stderr, "[afd] connect -> %s (win_type=%d)\n", addr.to_string().c_str(),
-                                 this->creation_data ? this->creation_data->type : -1);
-                    std::fflush(stderr);
-                }
 
                 if (!this->s_->connect(addr))
                 {
@@ -758,12 +682,6 @@ namespace sogen
                 }
 
                 const auto addr = convert_to_host_address(win_emu, std::span(data).subspan(address_offset));
-
-                if (std::getenv("SOGEN_AFD_TRACE"))
-                {
-                    std::fprintf(stderr, "[afd] bind %s\n", addr.to_string().c_str());
-                    std::fflush(stderr);
-                }
 
                 if (!this->s_->bind(addr))
                 {
@@ -931,12 +849,6 @@ namespace sogen
 
                 const auto bytes_received = this->s_->recv(host_buffer);
 
-                if (bytes_received >= 0 && std::getenv("SOGEN_AFD_TRACE"))
-                {
-                    std::fprintf(stderr, "[afd] recv (connected) %d bytes\n", static_cast<int>(bytes_received));
-                    std::fflush(stderr);
-                }
-
                 if (bytes_received < 0)
                 {
                     const auto error = this->s_->get_last_error();
@@ -1002,12 +914,6 @@ namespace sogen
                 host_buffer.resize(wsabuf.len);
 
                 emu.read_memory(wsabuf.buf, host_buffer.data(), host_buffer.size());
-
-                if (std::getenv("SOGEN_AFD_TRACE"))
-                {
-                    std::fprintf(stderr, "[afd] send (connected) %zu bytes\n", host_buffer.size());
-                    std::fflush(stderr);
-                }
 
                 const auto bytes_sent = this->s_->send(host_buffer);
 
@@ -1202,34 +1108,6 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                // Hand back any locally-synthesized datagram (e.g. a NAT-PMP reply) before touching the real
-                // socket, as if it arrived from the peer the guest addressed.
-                if (!this->synthetic_datagrams_.empty())
-                {
-                    auto [synth_from, payload] = std::move(this->synthetic_datagrams_.front());
-                    this->synthetic_datagrams_.pop_front();
-
-                    const auto n = std::min<size_t>(payload.size(), buffer.len);
-                    emu.write_memory(buffer.buf, payload.data(), n);
-
-                    const auto win_from = convert_to_win_address(win_emu, synth_from);
-                    if (receive_info.Address && receive_info.AddressLength)
-                    {
-                        const emulator_object<ULONG> address_length{emu, receive_info.AddressLength};
-                        const auto address_size = std::min(win_from.size(), static_cast<size_t>(address_length.read()));
-                        emu.write_memory(receive_info.Address, win_from.data(), address_size);
-                        address_length.write(static_cast<ULONG>(address_size));
-                    }
-
-                    if (c.io_status_block)
-                    {
-                        status_block block{};
-                        block.Information = static_cast<uint32_t>(n);
-                        c.io_status_block.write(block);
-                    }
-                    return STATUS_SUCCESS;
-                }
-
                 network::address from{};
                 std::vector<std::byte> data{};
                 // The guest may hand us a buffer larger than any datagram (iw4x uses a 128 KiB packet
@@ -1252,13 +1130,6 @@ namespace sogen
 
                 const auto data_size = std::min(data.size(), static_cast<size_t>(recevied_data));
                 emu.write_memory(buffer.buf, data.data(), data_size);
-
-                if (std::getenv("SOGEN_AFD_TRACE"))
-                {
-                    std::fprintf(stderr, "[afd] recv_datagram <- %s (%d bytes)\n", from.to_string().c_str(),
-                                 static_cast<int>(recevied_data));
-                    std::fflush(stderr);
-                }
 
                 const auto win_from = convert_to_win_address(win_emu, from);
 
@@ -1311,30 +1182,6 @@ namespace sogen
 
                 const auto target = convert_to_host_address(win_emu, address_buffer);
                 const auto data = emu.read_memory(buffer.buf, buffer.len);
-
-                if (std::getenv("SOGEN_AFD_TRACE"))
-                {
-                    std::fprintf(stderr, "[afd] send_datagram -> %s (%zu bytes)\n", target.to_string().c_str(), data.size());
-                    std::fflush(stderr);
-                }
-
-                // Answer NAT-PMP locally: the seeded gateway either isn't a real NAT-PMP responder or returns
-                // garbage, which stalls the game's port-mapping step. Synthesize a success reply (queued for
-                // the next recvfrom) instead of sending to the network, so online play can proceed.
-                if (target.get_port() == 5351)
-                {
-                    if (auto reply = build_natpmp_response(data))
-                    {
-                        this->synthetic_datagrams_.emplace_back(target, std::move(*reply));
-                    }
-                    if (c.io_status_block)
-                    {
-                        status_block block{};
-                        block.Information = static_cast<uint32_t>(data.size());
-                        c.io_status_block.write(block);
-                    }
-                    return STATUS_SUCCESS;
-                }
 
                 const auto sent_data = this->s_->sendto(target, data);
                 if (sent_data < 0)
