@@ -21,7 +21,10 @@ if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
   list(APPEND _base_srcs "${CMAKE_CURRENT_SOURCE_DIR}/steam_shim.def")
 endif()
 
-add_library(steam-shim SHARED ${_base_srcs})
+# EXCLUDE_FROM_ALL: the standalone shim is an emulation-root artifact (built via the emulation-root-tools
+# meta target), not part of the emulator build -- so the ordinary build jobs don't spend time on it (and
+# don't hit the SDK's snprintf clash under MinGW gcc).
+add_library(steam-shim SHARED EXCLUDE_FROM_ALL ${_base_srcs})
 sogen_assign_source_group(${_base_srcs})
 target_link_libraries(steam-shim PRIVATE steam-bridge-protocol)
 target_include_directories(steam-shim PRIVATE
