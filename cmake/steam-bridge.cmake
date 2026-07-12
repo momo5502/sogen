@@ -3,12 +3,12 @@
 # SOGEN_STEAM_ENABLED for the backend/shim targets. The host backend loads the real Steam client
 # dynamically (steamclient64.dll / steamclient.so / steamclient.dylib), so it builds on the desktop hosts
 # a real Steam runs on (Windows, Linux, macOS) -- not the mobile/web targets. The Valve-licensed headers
-# are fetched, never committed. proton_7.0 is the last branch that vendors the steamworks_sdk_* dirs.
+# are fetched, never committed.
 
 option(SOGEN_ENABLE_STEAM "Build the Steam bridge (fetches Proton SDK snapshots; needs the libclang pip package)" ON)
 set(SOGEN_STEAMWORKS_PROTON_REPO "https://github.com/ValveSoftware/Proton.git"
     CACHE STRING "Repo carrying vendored steamworks_sdk_* header snapshots")
-set(SOGEN_STEAMWORKS_PROTON_TAG "proton_7.0" CACHE STRING "Ref of SOGEN_STEAMWORKS_PROTON_REPO to fetch")
+set(SOGEN_STEAMWORKS_PROTON_TAG "proton_11.0" CACHE STRING "Ref of SOGEN_STEAMWORKS_PROTON_REPO to fetch")
 
 # Desktop hosts where a real Steam client exists (macOS = Darwin, excluding iOS).
 set(SOGEN_STEAM_HOST_PLATFORM FALSE)
