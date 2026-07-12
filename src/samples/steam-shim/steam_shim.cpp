@@ -27,10 +27,6 @@
 
 namespace sb = sogen::steam_bridge;
 
-// Each SDK version tag is generated + compiled in isolation and exposes sogen_make_proxy_<tag>, returning
-// a version-exact proxy for the versions that tag owns (or null). SOGEN_STEAM_TAGS lists the built tags;
-// try each until one recognizes the requested interface version. sogen_dispatch_reverse replays a host
-// reverse-call onto a game object (defined in the reverse TU).
 #include "steam_tags.generated.hxx"
 
 #define SOGEN_STEAM_DECL_MAKE_PROXY(tag)                                           \
@@ -122,8 +118,6 @@ namespace
     }
 }
 
-// Transport used by every generated proxy: pack (handle, method, in-blob) into an invoke IOCTL and
-// scatter the reply back (raw return in *ret, out-parameter payload in out/out_len).
 void sogen::steam_shim::bridge_invoke(const uint64_t handle, const uint32_t method, const void* in, const uint32_t in_len, void* out,
                                       const uint32_t out_cap, uint32_t* out_len, uint64_t* ret)
 {
@@ -189,9 +183,8 @@ void* sogen::steam_shim::resolve_proxy(const char* version, uint64_t handle)
     return proxy;
 }
 
-// --- callback pump (steamclient's Steam_* entry points) --------------------------------------------------
-// The host drains all pending callbacks in one batch; we hand them to the caller one at a time, exactly as
-// steamclient's Steam_BGetCallback / Steam_FreeLastCallback contract expects.
+// The host drains all pending callbacks in one batch; we hand them back one at a time, as the
+// Steam_BGetCallback / Steam_FreeLastCallback contract expects.
 namespace
 {
     struct CallbackMsg_t
@@ -233,6 +226,7 @@ namespace
         uint32_t roff = sizeof(sb::run_callbacks_response) + resp.blob_bytes;
         uint32_t rend = roff + resp.reverse_bytes;
         rend = (std::min)(rend, returned);
+
         while (roff + 16 <= rend)
         {
             uint64_t token = 0;

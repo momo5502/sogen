@@ -52,6 +52,7 @@ namespace
         const char* cstr()
         {
             const char* s = reinterpret_cast<const char*>(p);
+
             while (p < end && *p)
             {
                 ++p;

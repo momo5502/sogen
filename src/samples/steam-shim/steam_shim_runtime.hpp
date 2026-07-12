@@ -153,6 +153,7 @@ namespace sogen::steam_shim
         {
             static thread_local std::vector<char> buf;
             buf.clear();
+
             while (out_pos_ < out_len_ && out_[out_pos_] != '\0')
             {
                 buf.push_back(static_cast<char>(out_[out_pos_++]));

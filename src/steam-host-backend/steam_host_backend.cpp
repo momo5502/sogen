@@ -25,7 +25,6 @@
 #include "steam_host_runtime.hpp"
 #include "steam_host_backend.h"
 
-// Each SDK version tag is generated + compiled in its own TU and exposes sogen_steam_dispatch_<tag>.
 #include "steam_tags.generated.hxx"
 #define SOGEN_STEAM_DECL_DISPATCH(tag)                                                                                                     \
     extern "C" int sogen_steam_dispatch_##tag(const char* version, void* iface, uint32_t method, const unsigned char* in, uint32_t in_len, \
@@ -48,8 +47,7 @@ namespace
     void* (*g_get_generic)(void*, int32_t, int32_t, const char*) = nullptr;
     void* (*g_create_interface)(const char*, int*) = nullptr; // steamclient's CreateInterface (version-exact roots)
 
-    // Low-level callback pump exported by steamclient64.dll (works on our own pipe; no SteamAPI_Init).
-    // CallbackMsg_t is the SDK's type (m_hSteamUser, m_iCallback, m_pubParam, m_cubParam).
+    // steamclient's low-level pump, so we drive our own pipe without SteamAPI_Init.
     bool (*g_bgetcallback)(int32_t, CallbackMsg_t*) = nullptr;
     void (*g_freelastcallback)(int32_t) = nullptr;
     bool (*g_getapicallresult)(int32_t, uint64_t, void*, int32_t, int32_t, bool*) = nullptr;
@@ -62,8 +60,6 @@ namespace
     std::unordered_map<uint64_t, entry> g_handles;
     uint64_t g_next_handle = 1;
 
-    // Platform layer: load the host's real Steam client library and resolve its C exports. The generated
-    // thunks call the interface methods directly, so the compiler emits each host's native C++ ABI.
 #ifdef _WIN32
     using lib_handle = HMODULE;
     lib_handle load_client(const std::string& path)
@@ -153,6 +149,7 @@ namespace
             return false;
         }
         g_create_interface = create_interface;
+
         for (const char* v : {"SteamClient021", "SteamClient020", "SteamClient019", "SteamClient018"})
         {
             int err = 0;
@@ -182,8 +179,7 @@ namespace
     }
 }
 
-// Called from the generated thunks (holding g_mutex via invoke) to register a sub-interface returned by a
-// GetISteamXxx method. Dedupes by pointer so repeated getters reuse one handle.
+// Dedupes by pointer, so repeated getters for the same object share one handle.
 namespace sogen::steam_host
 {
     uint64_t register_returned_interface(const char* version, void* iface)
@@ -220,9 +216,9 @@ namespace sogen::steam_host
         {
             return nullptr;
         }
-        // Split into the family prefix and its trailing numeric suffix (e.g. "...VERSION006" -> +"006").
         const size_t len = std::strlen(version);
         size_t p = len;
+
         while (p > 0 && version[p - 1] >= '0' && version[p - 1] <= '9')
         {
             --p;
@@ -234,7 +230,7 @@ namespace sogen::steam_host
         const std::string prefix(version, p);
         const int width = static_cast<int>(len - p);
         const int base = std::atoi(version + p);
-        // Ask for progressively newer versions of the family; the modern client vends one of these.
+
         for (int cand = base + 1; cand <= base + 40; ++cand)
         {
             std::array<char, 96> buf{};
@@ -268,6 +264,7 @@ extern "C" uint64_t sogen_steam_backend_create_interface(const char* version)
     // Bound the untrusted version string before using it.
     char safe[64];
     size_t n = 0;
+
     for (; n + 1 < sizeof(safe) && version[n]; ++n)
     {
         safe[n] = version[n];
@@ -431,6 +428,7 @@ extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uin
     }
 
     CallbackMsg_t msg{};
+
     while (n_records < max_records && g_bgetcallback(use_pipe, &msg))
     {
         uint32_t n = (msg.m_cubParam > 0) ? static_cast<uint32_t>(msg.m_cubParam) : 0;
@@ -440,8 +438,7 @@ extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uin
             traced_ids += ' ';
             traced_ids += std::to_string(msg.m_iCallback);
         }
-        // Record = int32 callback_id, uint32 data_bytes, then the payload. Only recorded if it fits;
-        // the callback is freed either way so the client's queue never stalls.
+        // Freed whether or not it fit the reply buffer, so the client's queue never stalls.
         if (out && written + 8u + n <= out_cap)
         {
             std::memcpy(out + written, &msg.m_iCallback, 4);
@@ -465,8 +462,7 @@ extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uin
         *normal_count = n_records;
     }
 
-    // Steam calls our host response proxies during the pump above; drain those reverse calls now, appending
-    // them after the normal records.
+    // The pump above may have driven Steam into our response proxies; append their reverse calls.
     std::vector<unsigned char> reverse;
     const uint32_t rcount = sh::drain_reverse_callbacks(reverse);
     if (out && !reverse.empty() && written + reverse.size() <= out_cap)

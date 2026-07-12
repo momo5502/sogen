@@ -63,6 +63,7 @@ namespace sogen::steam_host
         const char* get_cstr()
         {
             const char* s = reinterpret_cast<const char*>(p);
+
             while (p < end && *p)
             {
                 ++p;
@@ -185,8 +186,6 @@ namespace sogen::steam_host
         }
     }
 
-    // Registers an interface pointer returned by a GetISteamXxx method and yields a handle the guest can
-    // wrap in a proxy for `version`. Defined in the backend TU; called from the generated thunks.
     uint64_t register_returned_interface(const char* version, void* iface);
 
     // When a typed getter returns null (a modern host steamclient no longer vends a very old interface

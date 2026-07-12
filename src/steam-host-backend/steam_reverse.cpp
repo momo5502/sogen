@@ -202,6 +202,7 @@ namespace sogen::steam_host
         out.insert(out.end(), g_queue.begin(), g_queue.end()); // records are already reverse_record + args
         uint32_t count = 0;
         size_t off = 0;
+
         while (off + 16 <= g_queue.size())
         {
             uint32_t bytes = 0;
