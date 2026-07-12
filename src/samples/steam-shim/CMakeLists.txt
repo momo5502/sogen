@@ -8,11 +8,13 @@ endif()
 
 # Version-agnostic base TUs: the flat Steamworks entry points + steamclient boundary (steam_shim.cpp, SDK-
 # free so its exported SteamAPI_* don't clash with the SDK's inline ones) and the reverse-callback dispatch
-# (steam_shim_reverse.cpp, built against the newest snapshot for the stable response interface types).
-set(_base_srcs
-  "${CMAKE_CURRENT_SOURCE_DIR}/steam_shim.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/steam_shim_reverse.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/steam_shim_runtime.hpp")
+# (steam_shim_reverse.cpp, built against the newest snapshot for the stable response interface types). The
+# per-version proxy TUs are generated into the binary dir and linked in as object libraries further down.
+file(GLOB_RECURSE _base_srcs CONFIGURE_DEPENDS
+  *.cpp
+  *.hpp
+)
+list(SORT _base_srcs)
 
 # Export the flat Steamworks entry points under undecorated names on both x86 and x64 (see steam_shim.def).
 if(MSVC OR CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")

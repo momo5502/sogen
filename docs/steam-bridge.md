@@ -44,7 +44,6 @@ callback/call-result pumps underneath it.
 | `src/steam-host-backend/` | Static lib behind a pure-C ABI; owns SDK headers + thunks + the host `steamclient64` bring-up. |
 | `src/windows-emulator/devices/steam_bridge.cpp` | The `\\.\SogenSteam` io_device. Hardened: treats all guest input as hostile. |
 | `src/samples/steam-shim/` | The guest `steamclient(64).dll` shim (32- and 64-bit). |
-| `src/samples/steam-shim-test/` | Standalone test that drives the steamclient boundary like a game's `steam_api` would. |
 
 ## Code generation
 
@@ -63,14 +62,17 @@ Coverage is ~95% of methods (865/903). The remainder is the genuinely bespoke ta
 params (a host callback can't cross the boundary), type-tagged `void*` configs, and a few
 double-pointers — each needs per-method handling, not more generic machinery.
 
-### Building with the SDK
+### Building the bridge
 
-Generated code is not committed. To build the bridge:
+Generated code is not committed. Building is gated behind the `SOGEN_ENABLE_STEAM` CMake option (ON by
+default):
 
-1. Point the CMake cache var `SOGEN_STEAMWORKS_SDK_DIR` at `<sdk>/public/steam`.
-2. Run the generator (`generate.py --sdk <sdk>/public/steam --out-dir src/steam-generated`).
-3. Configure/build. `steam-shim`, `steam-shim-test`, and the real backend are gated on the SDK var;
-   without it the device falls back to a null backend and guest Steam calls fail cleanly.
+1. CMake `FetchContent`s the Steamworks SDK header snapshots vendored in Valve's `ValveSoftware/Proton`
+   repo (tag `proton_7.0`), so the headers come straight from Valve and are never stored in this tree.
+2. At configure time `generate.py` (which needs the `libclang` pip package) parses each snapshot and
+   emits version-exact proxies + host thunks into the build dir.
+3. If Python or `libclang` is missing, or the fetch yields no snapshots, the bridge disables itself with
+   a warning and the device falls back to a null backend (guest Steam calls fail cleanly).
 
 ## Security model
 

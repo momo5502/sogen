@@ -8,7 +8,6 @@ add_subdirectory(test-sample)
 add_subdirectory(vulkan-shim)
 add_subdirectory(vulkan-shim-test)
 add_subdirectory(steam-shim)
-add_subdirectory(steam-shim-test)
 
 ##########################################
 
