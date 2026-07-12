@@ -40,10 +40,6 @@ namespace sogen
                 return "/dev/urandom";
             }
 
-            if (is_proc_self(normalized_guest_string))
-            {
-                return std::filesystem::path{normalized_guest_string};
-            }
             if (auto mapped = this->translate_mapped_path(normalized_guest))
             {
                 return std::move(*mapped);
@@ -85,6 +81,20 @@ namespace sogen
 
             const auto absolute_guest = resolve_guest_path_string(cwd, guest_path);
             return this->translate(absolute_guest);
+        }
+
+        std::filesystem::path translate_symlink_target(const std::string_view target_guest,
+                                                       const std::string_view resolved_link_guest) const
+        {
+            if (target_guest.empty())
+            {
+                return {};
+            }
+
+            const auto link_parent_path = normalize_guest_path(resolved_link_guest).parent_path();
+            const auto link_parent = link_parent_path.empty() ? std::string{"/"} : link_parent_path.string();
+            const auto resolved_target = resolve_guest_path_string(link_parent, target_guest);
+            return this->translate(resolved_target).lexically_normal();
         }
 
         std::filesystem::path translate_relative_to(const std::filesystem::path& base, const std::string_view guest_path) const
