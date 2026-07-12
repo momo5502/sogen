@@ -170,7 +170,7 @@ first-run state; unrelated to the bridge).
 - **Advertised local address is loopback.** The client advertises `addrLoc=127.0.0.1` in lobby data
   (`get_local_address`→`getsockname` returns loopback under the emulator). Harmless for the paths
   exercised so far, but a real defect for any peer that would dial the local address.
-- **Generated code is never committed** (Valve-derived; see "Building with the SDK"). The private
-  branch carries only the hand-written bridge; regenerate `src/steam-generated/` locally.
-- **Distribution is gated on licensing** (Steamworks SDK license / EU DB Art. 6). The bridge lives on
-  the private `steam-bridge` branch and is **not** pushed to the public `origin`.
+- **Generated code is never committed** (Valve-derived; see "Building the bridge"). Only the
+  hand-written bridge is tracked; regenerate `src/steam-generated/` locally.
+- **Distribution rests on an open interoperability question** (Steamworks SDK license vs. EU Software
+  Directive Art. 6 / US §1201(f)) — tracked in `steam-bridge-versioning.md`, not a settled clearance.
