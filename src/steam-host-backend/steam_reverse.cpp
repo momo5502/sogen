@@ -19,7 +19,8 @@ namespace sogen::steam_host
         std::mutex g_mutex;
         // Queued reverse calls: each record is uint64 token, int32 method, uint32 bytes, then the args.
         std::vector<unsigned char> g_queue;
-        std::unordered_map<uint64_t, void*> g_proxies; // token -> host proxy object (one per token)
+        std::unordered_map<uint64_t, void*> g_proxies;       // token -> host proxy object (one per token)
+        std::unordered_map<uint64_t, uint32_t> g_proxy_refs; // token -> count of Steam requests still using it
 
         // Serializes one reverse call's argument buffer (built by each proxy method).
         struct args
@@ -67,6 +68,28 @@ namespace sogen::steam_host
             }
         }
 
+        // A terminal reverse callback fired (RefreshComplete / *FailedToRespond): drop one active-request ref.
+        // Steam issues exactly one terminal callback per request, so this balances create_response_proxy's
+        // increments; when the last request clears, the proxy is retired. Returns true if the caller now owns
+        // `self` and must delete it (done outside the lock).
+        [[nodiscard]] bool retire_proxy(uint64_t token, void* self)
+        {
+            std::lock_guard lock{g_mutex};
+            const auto it = g_proxies.find(token);
+            if (it == g_proxies.end() || it->second != self)
+            {
+                return false;
+            }
+            if (const auto rc = g_proxy_refs.find(token); rc != g_proxy_refs.end() && rc->second > 1)
+            {
+                --rc->second;
+                return false;
+            }
+            g_proxy_refs.erase(token);
+            g_proxies.erase(it);
+            return true;
+        }
+
         struct ServerListProxy : ISteamMatchmakingServerListResponse
         {
             uint64_t token;
@@ -90,6 +113,10 @@ namespace sogen::steam_host
                 a.u64(reinterpret_cast<uint64_t>(hReq));
                 a.i32(static_cast<int32_t>(response));
                 enqueue(token, 2, a);
+                if (retire_proxy(token, this))
+                {
+                    delete this;
+                }
             }
         };
 
@@ -101,11 +128,19 @@ namespace sogen::steam_host
                 args a;
                 a.put(&server, sizeof(server));
                 enqueue(token, 0, a);
+                if (retire_proxy(token, this))
+                {
+                    delete this;
+                }
             }
             void ServerFailedToRespond() override
             {
                 args a;
                 enqueue(token, 1, a);
+                if (retire_proxy(token, this))
+                {
+                    delete this;
+                }
             }
         };
 
@@ -124,11 +159,19 @@ namespace sogen::steam_host
             {
                 args a;
                 enqueue(token, 1, a);
+                if (retire_proxy(token, this))
+                {
+                    delete this;
+                }
             }
             void PlayersRefreshComplete() override
             {
                 args a;
                 enqueue(token, 2, a);
+                if (retire_proxy(token, this))
+                {
+                    delete this;
+                }
             }
         };
 
@@ -146,11 +189,19 @@ namespace sogen::steam_host
             {
                 args a;
                 enqueue(token, 1, a);
+                if (retire_proxy(token, this))
+                {
+                    delete this;
+                }
             }
             void RulesRefreshComplete() override
             {
                 args a;
                 enqueue(token, 2, a);
+                if (retire_proxy(token, this))
+                {
+                    delete this;
+                }
             }
         };
     }
@@ -160,6 +211,7 @@ namespace sogen::steam_host
         std::lock_guard lock{g_mutex};
         if (const auto it = g_proxies.find(token); it != g_proxies.end())
         {
+            ++g_proxy_refs[token]; // another concurrent request reuses this response object
             return it->second;
         }
         void* p = nullptr;
@@ -193,6 +245,7 @@ namespace sogen::steam_host
             return nullptr;
         }
         g_proxies[token] = p;
+        g_proxy_refs[token] = 1;
         return p;
     }
 
