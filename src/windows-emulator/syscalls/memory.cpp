@@ -708,20 +708,47 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
-            std::vector<uint8_t> memory(number_of_bytes_to_write, 0);
-
-            if (!c.emu.try_read_memory(buffer, memory.data(), number_of_bytes_to_write))
+            if (number_of_bytes_to_write == 0)
             {
-                return STATUS_INVALID_ADDRESS;
+                return STATUS_SUCCESS;
             }
 
-            if (!c.emu.try_write_memory(base_address, memory.data(), number_of_bytes_to_write))
+            constexpr size_t page_size = 0x1000;
+            const auto bytes_until_page_boundary = [](const uint64_t address) {
+                const auto offset = address % page_size;
+                return static_cast<size_t>(offset == 0 ? page_size : page_size - offset);
+            };
+
+            std::vector<uint8_t> memory(page_size, 0);
+            size_t bytes_written = 0;
+            while (bytes_written < number_of_bytes_to_write)
             {
-                return STATUS_INVALID_ADDRESS;
+                const auto current_buffer = static_cast<uint64_t>(buffer) + bytes_written;
+                const auto current_base = static_cast<uint64_t>(base_address) + bytes_written;
+                const auto bytes_remaining = static_cast<size_t>(number_of_bytes_to_write) - bytes_written;
+                const auto chunk_size =
+                    std::min({bytes_remaining, bytes_until_page_boundary(current_buffer), bytes_until_page_boundary(current_base)});
+
+                if (!c.emu.try_read_memory(current_buffer, memory.data(), chunk_size))
+                {
+                    break;
+                }
+
+                if (!c.emu.try_write_memory(current_base, memory.data(), chunk_size))
+                {
+                    break;
+                }
+
+                bytes_written += chunk_size;
             }
 
-            number_of_bytes_write.try_write(number_of_bytes_to_write);
-            return STATUS_SUCCESS;
+            number_of_bytes_write.try_write(static_cast<ULONG>(bytes_written));
+            if (bytes_written == number_of_bytes_to_write)
+            {
+                return STATUS_SUCCESS;
+            }
+
+            return bytes_written == 0 ? STATUS_INVALID_ADDRESS : STATUS_PARTIAL_COPY;
         }
 
         NTSTATUS handle_NtSetInformationVirtualMemory()
