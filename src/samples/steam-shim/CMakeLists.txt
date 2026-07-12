@@ -40,7 +40,7 @@ foreach(_entry ${SOGEN_STEAM_TAG_LIST})
   set(STEAM_TAG "${_tag}")
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/steam_shim_tag.cpp.in"
                  "${CMAKE_CURRENT_BINARY_DIR}/steam_shim_${_tag}.gen.cpp" @ONLY)
-  add_library(steam-shim-${_tag} OBJECT "${CMAKE_CURRENT_BINARY_DIR}/steam_shim_${_tag}.gen.cpp")
+  add_library(steam-shim-${_tag} OBJECT EXCLUDE_FROM_ALL "${CMAKE_CURRENT_BINARY_DIR}/steam_shim_${_tag}.gen.cpp")
   sogen_target_disable_warnings(steam-shim-${_tag})
   target_include_directories(steam-shim-${_tag} PRIVATE
     "${_dir}" "${SOGEN_STEAM_GEN_DIR}/${_tag}" "${CMAKE_CURRENT_SOURCE_DIR}")
