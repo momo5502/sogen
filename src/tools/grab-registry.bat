@@ -10,15 +10,19 @@ IF %ERRORLEVEL% NEQ 0 (
 	EXIT /B 1
 )
 
-SET REGDIR=registry
+REM --- Target registry dir: first argument, or "registry" by default (create-root.bat passes root\registry).
+SET REGDIR=%~1
+IF "%REGDIR%"=="" SET REGDIR=registry
 
 REM --- Steam bridge seed. STEAM_PID MUST equal STEAM_FAKE_PROCESS_ID in src/windows-emulator/handles.hpp
 REM --- (the guest opens this pid to confirm "Steam is running"). ACTIVE_USER is the Steam account id.
+REM --- The steamclient shim DLLs live in C:\steam\ inside the guest (placed there by install-steam-shim.ps1).
 SET STEAM_PID=0x8B0
 SET STEAM_ACTIVE_USER=100691295
-SET STEAM_CLIENT_DLL=C:\steamclient.dll
-SET STEAM_CLIENT_DLL64=C:\steamclient64.dll
-SET STEAM_PATH=C:\
+SET STEAM_DIR=C:\steam
+SET STEAM_CLIENT_DLL=%STEAM_DIR%\steamclient.dll
+SET STEAM_CLIENT_DLL64=%STEAM_DIR%\steamclient64.dll
+SET STEAM_PATH=%STEAM_DIR%
 
 IF NOT EXIST "%REGDIR%" MKDIR "%REGDIR%"
 
@@ -40,7 +44,7 @@ REG ADD HKLM\SogenSeed\Software\Valve\Steam\ActiveProcess /v Universe         /t
 REG ADD HKLM\SogenSeed\Software\Valve\Steam\ActiveProcess /v pid              /t REG_DWORD /d %STEAM_PID%             /f
 REG ADD HKLM\SogenSeed\Software\Valve\Steam\ActiveProcess /v ActiveUser       /t REG_DWORD /d %STEAM_ACTIVE_USER%    /f
 REG ADD HKLM\SogenSeed\Software\Valve\Steam               /v SteamPath        /t REG_SZ    /d "%STEAM_PATH%"         /f
-REG ADD HKLM\SogenSeed\Software\Valve\Steam               /v SteamExe         /t REG_SZ    /d "%STEAM_PATH%steam.exe" /f
+REG ADD HKLM\SogenSeed\Software\Valve\Steam               /v SteamExe         /t REG_SZ    /d "%STEAM_PATH%\steam.exe" /f
 REG UNLOAD HKLM\SogenSeed
 
 ECHO Done. Guest registry written to "%REGDIR%". Use it with: analyzer -r "%REGDIR%"

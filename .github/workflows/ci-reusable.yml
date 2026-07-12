@@ -226,6 +226,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
+      - name: Install Steam Shim
+        shell: pwsh
+        run: ./src/tools/install-steam-shim.ps1 -SteamDir root/filesys/c/steam -Shim64 build/release/artifacts/steamclient64.dll -Shim32 build/release/artifacts/steamclient.dll
+
       - name: Upload Artifacts
         uses: pyTooling/upload-artifact@v7
         with:

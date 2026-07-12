@@ -72,8 +72,7 @@ namespace sogen::steam_host
             }
             else
             {
-                static const char empty = '\0';
-                return &empty; // unterminated: hand back a safe empty string
+                return ""; // unterminated: hand back a safe empty string
             }
             return s;
         }
