@@ -1,22 +1,9 @@
 #pragma once
 
-// Wire protocol for the Sogen Steam paravirtualization bridge.
-//
-// The guest game loads a drop-in steam_api64.dll shim which, instead of talking to a local Steam
-// client over Steam's (undocumented, shared-memory) IPC, forwards Steamworks interface calls to the
-// host through a virtual driver device (\\.\SogenSteam, i.e. \Device\SogenSteam) using
-// NtDeviceIoControlFile. The host endpoint relays them to a real steamclient64.dll (or a mock/Goldberg
-// backend for offline bring-up).
-//
-// The cut is at the C++ interface boundary -- the same seam Proton's lsteamclient uses. A method call
-// is identified by (interface_handle, method_index); its flat in-arguments travel in the input buffer
-// and its return value + out-buffers come back in the output buffer. Because guest and host share the
-// x86-64 Windows ABI, argument frames are layout-compatible; the only translation the host performs is
-// copying pointer/buffer payloads across the guest<->host memory boundary, driven by a per-method
-// descriptor table generated from steam_api.json (see tools/steam-bridge-generator).
-//
-// This header is the single source of truth for that boundary and is deliberately dependency-free so it
-// can be included unchanged by both the emulator device and the guest-side shim.
+// Wire protocol for the Steam bridge: the guest shim forwards Steamworks calls over \\.\SogenSteam
+// (NtDeviceIoControlFile) to the host, which relays them to the real steamclient64.dll. A call is
+// (interface_handle, method_index) with flat in-args in the input buffer and the return + out-buffers in
+// the output buffer. Dependency-free so both the emulator device and the guest shim include it unchanged.
 
 #include <array>
 #include <cstdint>
@@ -90,7 +77,7 @@ namespace sogen::steam_bridge
     struct invoke_header
     {
         interface_handle handle;
-        uint32_t method_index; // vtable slot / steam_api.json method ordinal
+        uint32_t method_index; // vtable slot
         uint32_t arg_bytes;    // length of the trailing in-argument blob
     };
 

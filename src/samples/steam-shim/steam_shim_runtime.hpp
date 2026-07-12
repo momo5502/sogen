@@ -1,45 +1,36 @@
 #pragma once
 
-// Guest-side runtime the generated Steam proxies build on. Pulls in the real SDK headers (so the proxy
-// classes derive from the true ISteam* interfaces and inherit their exact vtable layout) and provides
-// the small marshalling helper each generated override uses. The actual transport (bridge_invoke) is
-// implemented in steam_shim.cpp; this header is transport-agnostic so it can also be compiled in a
-// standalone signature/ABI check without the emulator.
+// Guest-side runtime the generated Steam proxies build on: the real SDK headers (so proxies inherit the
+// exact ISteam* vtables) plus the marshalling helper each override uses. Transport is in steam_shim.cpp.
 
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
 #include <vector>
 
-// Silence SDK deprecation pragmas that would trip /WX in a strict build of the generated proxies.
 #include "steam_api.h"
 #include "steam_gameserver.h"
 
 namespace sogen::steam_shim
 {
-    // Implemented by the shim TU: pack (handle, method, in-blob) into an invoke IOCTL and return the
-    // response (raw return value, plus an out-blob for string/out-param payloads).
+    // Packs (handle, method, in-blob) into an invoke IOCTL and returns the raw return plus an out-blob.
     void bridge_invoke(uint64_t handle, uint32_t method, const void* in, uint32_t in_len, void* out, uint32_t out_cap, uint32_t* out_len,
                        uint64_t* ret);
     void report_unsupported(const char* iface, const char* method);
 
-    // Maps an interface version string to the LATEST version of its family (defined by the latest-SDK
-    // generated proxies). Old-SDK proxies use it to request the modern object from the host while still
-    // handing the game the old vtable. Returns `requested` unchanged for an unknown family.
+    // The latest version of `requested`'s interface family. Old-SDK proxies request the modern host object
+    // while still handing the game the old vtable. Returns `requested` unchanged for an unknown family.
     const char* latest_version_for(const char* requested);
 
-    // Resolves a guest proxy for a sub-interface returned by another interface's method (e.g. the object
-    // ISteamClient::GetISteamUser hands back). Unlike a tag's local create_proxy this searches EVERY built
-    // version tag: the interface versions a game mixes need not all originate from one SDK snapshot, so the
-    // requested version may be owned by a different tag than the interface that returned it. In steam_shim.cpp.
+    // Resolves a guest proxy for a sub-interface handle across EVERY built tag: a game mixes interface
+    // versions from more than one SDK snapshot, so the version may be owned by a different tag.
     void* resolve_proxy(const char* version, uint64_t handle);
 
-    // Registers a game-implemented response object (with its interface `type` = RESPONSE_IFACE_ID) and
-    // returns an opaque token; reverse callbacks for that token are dispatched back to this object.
+    // Registers a game-implemented response object (interface `type` = RESPONSE_IFACE_ID); reverse
+    // callbacks for the returned token are dispatched back to it.
     uint64_t register_response_object(void* obj, int32_t type);
 
-    // True only for a complete type (one whose sizeof is valid). Lets a method that marshals a struct
-    // self-stub at compile time when that struct is only forward-declared under the build's macros.
+    // Lets a method that marshals a struct self-stub at compile time when the struct is forward-declared.
     template <typename T, typename = void>
     struct is_complete : std::false_type
     {
@@ -51,7 +42,7 @@ namespace sogen::steam_shim
     template <typename T>
     inline constexpr bool is_complete_v = is_complete<T>::value;
 
-    // Collects a call's in-arguments, performs the round-trip, and decodes the reply. One per call.
+    // Collects a call's in-arguments, does the round-trip, and decodes the reply.
     struct invoker
     {
         invoker(uint64_t handle, uint32_t method)
@@ -66,9 +57,8 @@ namespace sogen::steam_shim
             const auto* b = static_cast<const unsigned char*>(p);
             in_.insert(in_.end(), b, b + n);
         }
-        // A by-value scalar always occupies a fixed 8-byte little-endian slot on the wire, so the format
-        // is architecture-agnostic: a 32-bit guest and the 64-bit host agree even for size_t / pointer-
-        // width types. Each side copies only its own native width to/from the low bytes.
+        // Every by-value scalar takes a fixed 8-byte slot, so the wire format is arch-agnostic (a 32-bit
+        // guest and the 64-bit host agree); each side copies only its native width to/from the low bytes.
         void put_scalar(const void* p, size_t n)
         {
             unsigned char slot[8] = {0};
@@ -87,18 +77,18 @@ namespace sogen::steam_shim
             }
             put(s, std::strlen(s) + 1);
         }
-        // A game-implemented response object, sent as an opaque token + interface-type id so the host can
-        // substitute a proxy that routes calls back to this object (reverse-callback channel).
+        // Opaque token + interface-type id for a game response object; the host substitutes a proxy that
+        // routes calls back (reverse-callback channel).
         void put_callback_token(uint64_t token, int32_t type)
         {
             put(&token, sizeof(token));
             put(&type, sizeof(type));
         }
-        // In struct/ref: a reference is always present; a pointer carries a presence byte first.
         void put_in_ref(const void* p, size_t n)
         {
             put(p, n);
         }
+        // A pointer arg carries a presence byte first; a reference is always present.
         void put_in_ptr(const void* p, size_t n)
         {
             const unsigned char present = p ? 1 : 0;
@@ -109,8 +99,7 @@ namespace sogen::steam_shim
             }
         }
 
-        // Length-prefixed variable payload (in-array / in-buffer): a u32 length then the bytes, capped so
-        // a bogus size can't blow up the request.
+        // Length-prefixed variable payload (in-array / in-buffer), capped so a bogus size can't blow up the request.
         void put_var(const void* p, size_t n)
         {
             if (n > max_payload)
@@ -125,7 +114,6 @@ namespace sogen::steam_shim
             }
         }
 
-        // Read the next `n` bytes from the sequential out-blob into a caller out-parameter.
         void get_out(void* dst, size_t n)
         {
             if (dst && out_pos_ + n <= out_len_)
@@ -164,7 +152,7 @@ namespace sogen::steam_shim
             }
             return v;
         }
-        // A string return travels in the out-blob (NUL-terminated) after any out-params, read from the cursor.
+        // A string return follows any out-params in the out-blob, NUL-terminated.
         const char* ret_cstr()
         {
             static thread_local std::vector<char> buf;
@@ -178,8 +166,8 @@ namespace sogen::steam_shim
         }
 
       private:
-        static constexpr size_t max_payload = 16u << 20;            // 16 MiB cap per variable payload
-        static constexpr size_t initial_out_capacity = 256u * 1024; // room for array/buffer replies
+        static constexpr size_t max_payload = 16u << 20;
+        static constexpr size_t initial_out_capacity = 256u * 1024;
         uint64_t handle_;
         uint32_t method_;
         std::vector<unsigned char> in_{};
