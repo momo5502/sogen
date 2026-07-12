@@ -259,6 +259,10 @@ class Types:
         # forward-declared (e.g. SteamDatagramHostedAddress) stay out and their pointer params are stubbed.
         self.aggregates = {s["struct"] for s in spec.get("structs", []) if "struct" in s}
         self.aggregates |= {s["struct"] for s in spec.get("callback_structs", []) if "struct" in s}
+        # Structs that (recursively) contain a pointer member. Populated from the AST in build_interfaces.
+        # A struct marshalled by value/ref is byte-copied verbatim, so a pointer member would let the guest
+        # inject a raw host pointer -- the generator refuses to marshal such a struct (see build_interfaces).
+        self.pointer_aggregates: set[str] = set()
 
     # Types whose definition exists in the headers only behind a disabled #ifdef (niche optional
     # features), so a text scan sees a definition the compiler does not. Treated as incomplete.
@@ -274,6 +278,10 @@ class Types:
         if self.is_byvalue_scalar(t) or self.is_enum(t):
             return True
         return t in self.aggregates or self.resolve(t) in self.aggregates
+
+    def has_pointer_member(self, t: str) -> bool:
+        base = t.replace("const", "").replace("*", "").replace("&", "").strip()
+        return base in self.pointer_aggregates or self.resolve(base) in self.pointer_aggregates
 
     def resolve(self, t: str) -> str:
         t = t.strip()
@@ -457,6 +465,9 @@ BLOCKED_METHODS = {
     "ISteamRemoteStorage": {
         "UGCDownloadToLocation", "FileShare", "PublishWorkshopFile", "PublishVideo",
         "UpdatePublishedFileFile", "UpdatePublishedFilePreviewFile",
+        # Also memory-unsafe: takes RemoteStorageUpdatePublishedFileRequest_t by value, which has pointer
+        # members the generic marshaller would byte-copy verbatim (guest could inject a host pointer).
+        "UpdatePublishedFile",
     },
     # Host filesystem oracle / path disclosure / forced host disk+network work.
     "ISteamApps": {
@@ -470,6 +481,14 @@ BLOCKED_METHODS = {
         "RequestEncryptedAppTicket", "AdvertiseGame",
     },
     "ISteamGameServer": {"GetAuthSessionTicket"},
+    # Memory safety, NOT the network policy above: every one of these takes SteamNetworkingConfigValue_t,
+    # whose value union can hold a pointer -- the generic marshaller would byte-copy it from the guest
+    # verbatim, letting the guest inject a raw host pointer. Blocked until that struct's pointers are
+    # marshalled safely. The pointer-struct guard in build_method forces any newly-marshalled such method here.
+    "ISteamNetworkingSockets": {
+        "CreateListenSocketIP", "ConnectByIPAddress", "ConnectP2P", "ConnectToHostedDedicatedServer",
+        "CreateHostedDedicatedServerListenSocket", "CreateListenSocketP2P", "CreateListenSocketP2PFakeIP",
+    },
     # Host-account mutation / shell-open. ActivateGameOverlayToStore is intentionally NOT here (the DLC/store
     # button is a wanted feature and only opens the in-Steam overlay).
     "ISteamFriends": {
@@ -586,15 +605,37 @@ def _parse_tu(sdk_dir: str, bits: int):
                                    options=cx.TranslationUnit.PARSE_SKIP_FUNCTION_BODIES)
 
 
+def _record_has_pointer(decl, seen) -> bool:
+    # True if `decl` (a struct/class/union) contains a pointer member, recursively and through anonymous
+    # nested records and fixed arrays. Function-pointer members count (canonical kind is POINTER).
+    h = decl.hash
+    if h in seen:
+        return False
+    seen = seen | {h}
+    for f in decl.get_children():
+        if f.kind != cx.CursorKind.FIELD_DECL:
+            continue
+        ct = f.type.get_canonical()
+        while ct.kind == cx.TypeKind.CONSTANTARRAY:
+            ct = ct.element_type.get_canonical()
+        if ct.kind == cx.TypeKind.POINTER:
+            return True
+        if ct.kind == cx.TypeKind.RECORD and _record_has_pointer(ct.get_declaration(), seen):
+            return True
+    return False
+
+
 def _build_types(tu) -> Types:
     types = Types({})
-    enums, aggregates, typedefs = set(), set(), {}
+    enums, aggregates, typedefs, pointer_aggregates = set(), set(), {}, set()
 
     def walk(c):
         if c.kind == cx.CursorKind.ENUM_DECL and c.spelling:
             enums.add(c.spelling)
         elif c.kind in (cx.CursorKind.STRUCT_DECL, cx.CursorKind.CLASS_DECL) and c.spelling and c.is_definition():
             aggregates.add(c.spelling)
+            if _record_has_pointer(c, set()):
+                pointer_aggregates.add(c.spelling)
         elif c.kind == cx.CursorKind.TYPEDEF_DECL and c.spelling:
             typedefs[c.spelling] = c.underlying_typedef_type.spelling
         for ch in c.get_children():
@@ -602,6 +643,7 @@ def _build_types(tu) -> Types:
 
     walk(tu.cursor)
     types.enums, types.aggregates, types.typedefs = enums, aggregates, typedefs
+    types.pointer_aggregates = pointer_aggregates
     return types
 
 
@@ -653,6 +695,20 @@ def build_interfaces(sdk_dir: str, bits: int = 32) -> tuple[list[Interface], lis
             v = next((p.name for p in params if p.kind == "cstr"), "")
             if v:
                 rk, simple, iface_version = "iface_return", True, v
+        # SECURITY GUARD: a by-value/by-ref/by-const-ptr struct is byte-copied from the guest blob verbatim,
+        # so a pointer member would let the guest inject a raw host pointer for steamclient to dereference.
+        # No currently-marshalled Steam struct has one; refuse loudly if a future SDK ever introduces the case
+        # rather than silently emitting the vulnerability. Blocked methods never reach the real call, so skip.
+        classname = m.semantic_parent.spelling if m.semantic_parent else ""
+        if simple and not is_blocked(classname, m.spelling):
+            for p in params:
+                if p.kind in ("byval_struct", "in_ref", "in_ptr", "in_array") and types.has_pointer_member(p.type):
+                    raise SystemExit(
+                        f"SECURITY: {classname}::{m.spelling} would marshal struct '{p.type}' (param "
+                        f"'{p.name}') by value/reference, but it contains a pointer member. Byte-copying it "
+                        f"would let a guest inject a raw host pointer into steamclient. Add the method to "
+                        f"BLOCKED_METHODS, or teach the generator to marshal the struct's pointers safely, "
+                        f"before this can be emitted.")
         return Method(m.spelling, idx, m.result_type.spelling, rk, params, ", ".join(raw),
                       m.is_const_method(), simple, iface_version,
                       ret_opaque=(rk == "scalar" and types.is_opaque_handle(m.result_type.spelling)))
