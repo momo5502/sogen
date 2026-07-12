@@ -436,12 +436,16 @@ BLOCKED_INTERFACES = {
 }
 
 BLOCKED_METHODS = {
-    # Host filesystem: Steam Cloud storage lives in the host userdata dir, outside the sandbox; a crafted
-    # file name could also traverse it. UGCDownloadToLocation writes to an arbitrary guest-chosen host path.
+    # Steam Cloud file I/O (FileRead/FileWrite/streams/Delete/Forget) is an ISOLATED per-app virtual
+    # filesystem -- the guest only reaches its own app's cloud namespace, not arbitrary host files -- so it
+    # is intentionally NOT blocked (blocking it just broke legit cloud saves). Two things here are not
+    # isolated and stay blocked: UGCDownloadToLocation writes to an arbitrary guest-chosen HOST path, and
+    # FileShare/Publish* post a file PUBLICLY under the host's real account (account abuse, same bucket as
+    # the ISteamFriends social methods). The only residual risk on plain file I/O is Steam mishandling a
+    # path-traversal filename ("..\\.."), which is Steam's store to sandbox; validate the name here if ever
+    # in doubt rather than blocking the feature.
     "ISteamRemoteStorage": {
-        "FileWrite", "FileWriteAsync", "FileWriteStreamOpen", "FileWriteStreamWriteChunk",
-        "FileWriteStreamClose", "FileRead", "FileReadAsync", "UGCRead", "UGCDownloadToLocation",
-        "FileDelete", "FileForget", "FileShare", "PublishWorkshopFile", "PublishVideo",
+        "UGCDownloadToLocation", "FileShare", "PublishWorkshopFile", "PublishVideo",
         "UpdatePublishedFileFile", "UpdatePublishedFilePreviewFile",
     },
     # Host filesystem oracle / path disclosure / forced host disk+network work.

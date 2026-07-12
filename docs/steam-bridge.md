@@ -137,14 +137,17 @@ emits `blocked(...); return steam_host_unsupported;` (fail closed; the guest see
 method). See `BLOCKED_INTERFACES` / `BLOCKED_METHODS` in `generate.py`. The blocklist focuses on:
 
 - **Host filesystem** — `ISteamUGC` (host-path read → public upload), `ISteamScreenshots` (host-path
-  read), `ISteamHTMLSurface` (`file://`, JS, host clipboard), `ISteamRemoteStorage` file read/write/
-  delete/share/publish + `UGCDownloadToLocation` (host Steam-Cloud dir, outside the sandbox; a crafted
-  name could also traverse), `ISteamApps::{GetFileDetails,GetAppInstallDir,MarkContentCorrupt,InstallDLC,
-  UninstallDLC,Request*ProofOfPurchaseKey*}`, `ISteamInput::SetInputActionManifestFilePath`.
+  read), `ISteamHTMLSurface` (`file://`, JS, host clipboard), `ISteamRemoteStorage::UGCDownloadToLocation`
+  (writes an arbitrary host path), `ISteamApps::{GetFileDetails,GetAppInstallDir,MarkContentCorrupt,
+  InstallDLC,UninstallDLC,Request*ProofOfPurchaseKey*}`, `ISteamInput::SetInputActionManifestFilePath`.
+  Plain `ISteamRemoteStorage` file I/O (`FileRead`/`FileWrite`/streams/`Delete`) is **not** blocked — it
+  is Steam Cloud, an isolated per-app virtual filesystem the guest cannot escape to reach arbitrary host
+  files; blocking it only broke legitimate cloud saves.
 - **Credential minting / account mutation** — `ISteamUser` auth tickets
   (`GetAuthSessionTicket`/`GetAuthTicketForWebApi`/`RequestStoreAuthURL`/`*EncryptedAppTicket`/
-  `AdvertiseGame`), `ISteamGameServer::GetAuthSessionTicket`, and `ISteamFriends` overlay-web /
-  protocol-registration / persona-rename / social-send methods.
+  `AdvertiseGame`), `ISteamGameServer::GetAuthSessionTicket`, `ISteamFriends` overlay-web /
+  protocol-registration / persona-rename / social-send methods, and `ISteamRemoteStorage`
+  `FileShare`/`Publish*` (post a file publicly under the host account).
 
 Network reach (`ISteamHTTP`, the networking/sockets interfaces) is deliberately **not** blocked: the
 guest already has host network access through the emulated AFD socket device, so blocking it here buys
