@@ -1,6 +1,7 @@
-# The Steam host backend: loads the host steamclient64.dll and runs the generated marshalling thunks. It
-# runs inside the 64-bit emulator host, so it is only meaningful for a 64-bit build; the 32-bit build only
-# produces the guest shim. Built when SOGEN_STEAM_ENABLED (set in ../CMakeLists.txt after code generation).
+# The Steam host backend: loads the host Steam client (steamclient64.dll / .so / .dylib) and runs the
+# generated marshalling thunks. It runs inside the 64-bit emulator host, so it is only meaningful for a
+# 64-bit build; the 32-bit build only produces the guest shim. Built when SOGEN_STEAM_ENABLED (set in
+# ../cmake/steam-bridge.cmake after code generation).
 if(NOT SOGEN_STEAM_ENABLED OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   return()
 endif()
@@ -9,6 +10,7 @@ endif()
 # against the newest snapshot. It does not include any version's thunks -- those live in the per-tag TUs.
 add_library(steam-host-backend STATIC steam_host_backend.cpp steam_reverse.cpp)
 sogen_target_disable_warnings(steam-host-backend)  # SDK headers + generated code are not warning-clean
+target_link_libraries(steam-host-backend PRIVATE ${CMAKE_DL_LIBS})  # dlopen/dlsym on Linux/macOS
 target_include_directories(steam-host-backend PRIVATE
   "${SOGEN_STEAM_BASE_DIR}" "${SOGEN_STEAM_GEN_DIR}" "${CMAKE_CURRENT_LIST_DIR}")
 target_include_directories(steam-host-backend PUBLIC "${CMAKE_CURRENT_LIST_DIR}")  # the C ABI header

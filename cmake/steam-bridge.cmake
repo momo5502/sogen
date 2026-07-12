@@ -1,16 +1,23 @@
 # Steam paravirtualization bridge codegen. Parses Proton's per-version Steamworks SDK snapshots with
 # libclang at configure time and emits version-exact marshalling into ${SOGEN_STEAM_GEN_DIR}, setting
-# SOGEN_STEAM_ENABLED for the backend/shim targets. Windows only: the host half loads the real
-# steamclient64.dll via Win32. The Valve-licensed headers are fetched, never committed. proton_7.0 is the
-# last branch that still vendors the steamworks_sdk_* snapshot dirs (099u..153a).
+# SOGEN_STEAM_ENABLED for the backend/shim targets. The host backend loads the real Steam client
+# dynamically (steamclient64.dll / steamclient.so / steamclient.dylib), so it builds on the desktop hosts
+# a real Steam runs on (Windows, Linux, macOS) -- not the mobile/web targets. The Valve-licensed headers
+# are fetched, never committed. proton_7.0 is the last branch that vendors the steamworks_sdk_* dirs.
 
 option(SOGEN_ENABLE_STEAM "Build the Steam bridge (fetches Proton SDK snapshots; needs the libclang pip package)" ON)
 set(SOGEN_STEAMWORKS_PROTON_REPO "https://github.com/ValveSoftware/Proton.git"
     CACHE STRING "Repo carrying vendored steamworks_sdk_* header snapshots")
 set(SOGEN_STEAMWORKS_PROTON_TAG "proton_7.0" CACHE STRING "Ref of SOGEN_STEAMWORKS_PROTON_REPO to fetch")
 
+# Desktop hosts where a real Steam client exists (macOS = Darwin, excluding iOS).
+set(SOGEN_STEAM_HOST_PLATFORM FALSE)
+if(WIN32 OR LINUX OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  set(SOGEN_STEAM_HOST_PLATFORM TRUE)
+endif()
+
 set(SOGEN_STEAM_ENABLED FALSE)
-if(SOGEN_ENABLE_STEAM AND WIN32)
+if(SOGEN_ENABLE_STEAM AND SOGEN_STEAM_HOST_PLATFORM)
   find_package(Python3 COMPONENTS Interpreter)
   if(NOT Python3_Interpreter_FOUND)
     message(WARNING "SOGEN_ENABLE_STEAM: Python3 not found; Steam bridge disabled.")

@@ -1,11 +1,16 @@
-// Host backend: connects the emulator to the real host Steam client (steamclient64.dll) and runs the
-// generated marshalling thunks. Compiled in its own translation unit so it can include <windows.h> and
-// the Steamworks SDK headers without clashing with the emulator's hand-rolled Windows types.
+// Host backend: connects the emulator to the real host Steam client and runs the generated marshalling
+// thunks. Compiled in its own translation unit so it can include the platform + Steamworks SDK headers
+// without clashing with the emulator's hand-rolled Windows types. The host client is loaded dynamically
+// (steamclient64.dll on Windows, steamclient.so/.dylib on Linux/macOS), so the backend is cross-platform.
 
+#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -57,7 +62,57 @@ namespace
     std::unordered_map<uint64_t, entry> g_handles;
     uint64_t g_next_handle = 1;
 
-    constexpr uint32_t load_with_altered_search_path = 0x00000008;
+    // Platform layer: load the host's real Steam client library and resolve its C exports. The generated
+    // thunks call the interface methods directly, so the compiler emits each host's native C++ ABI.
+#ifdef _WIN32
+    using lib_handle = HMODULE;
+    lib_handle load_client(const std::string& path)
+    {
+        if (const auto slash = path.find_last_of("\\/"); slash != std::string::npos)
+        {
+            SetDllDirectoryA(path.substr(0, slash).c_str()); // let steamclient's own deps resolve
+        }
+        constexpr uint32_t load_with_altered_search_path = 0x00000008;
+        return LoadLibraryExA(path.c_str(), nullptr, load_with_altered_search_path);
+    }
+    void* client_symbol(lib_handle module, const char* name)
+    {
+        return reinterpret_cast<void*>(GetProcAddress(module, name));
+    }
+    void set_env(const char* name, const char* value)
+    {
+        const std::string kv = std::string(name) + "=" + value;
+        _putenv(kv.c_str()); // _putenv copies the string into the environment
+    }
+    std::string default_client_path()
+    {
+        return R"(C:\Program Files (x86)\Steam\steamclient64.dll)";
+    }
+#else
+    using lib_handle = void*;
+    lib_handle load_client(const std::string& path)
+    {
+        return dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL); // GLOBAL so steamclient's sibling libs resolve
+    }
+    void* client_symbol(lib_handle module, const char* name)
+    {
+        return dlsym(module, name);
+    }
+    void set_env(const char* name, const char* value)
+    {
+        ::setenv(name, value, 1);
+    }
+    std::string default_client_path()
+    {
+        const char* home = std::getenv("HOME");
+        const std::string base = home ? home : ".";
+#ifdef __APPLE__
+        return base + "/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steamclient.dylib";
+#else
+        return base + "/.steam/steam/linux64/steamclient.so";
+#endif
+    }
+#endif
 
     bool connect_locked()
     {
@@ -77,28 +132,22 @@ namespace
             // the host session lands in Spacewar (480), which can create/enter its own lobbies but fails to
             // join another app's lobbies with k_EChatRoomEnterResponseDoesntExist -- silently breaking real
             // multiplayer. Fall back so the SDK test harness still works, but say so loudly.
-            _putenv("SteamAppId=480");
+            set_env("SteamAppId", "480");
             std::fprintf(stderr, "[steam] SteamAppId not set; host session falls back to 480 (Spacewar). "
                                  "Set SteamAppId to the game's app id or real multiplayer lobbies will fail.\n");
         }
         std::fflush(stderr);
 
         const char* env = std::getenv("SOGEN_STEAMCLIENT");
-        const std::string dll = env ? env : R"(C:\Program Files (x86)\Steam\steamclient64.dll)";
-        const auto slash = dll.find_last_of("\\/");
-        if (slash != std::string::npos)
-        {
-            SetDllDirectoryA(dll.substr(0, slash).c_str()); // let steamclient's own deps resolve
-        }
-
-        HMODULE module = LoadLibraryExA(dll.c_str(), nullptr, load_with_altered_search_path);
+        const std::string dll = env ? env : default_client_path();
+        lib_handle module = load_client(dll);
         if (!module)
         {
             return false;
         }
 
         using create_interface_fn = void* (*)(const char*, int*);
-        auto create_interface = reinterpret_cast<create_interface_fn>(GetProcAddress(module, "CreateInterface"));
+        auto create_interface = reinterpret_cast<create_interface_fn>(client_symbol(module, "CreateInterface"));
         if (!create_interface)
         {
             return false;
@@ -123,10 +172,10 @@ namespace
         g_user = reinterpret_cast<int32_t (*)(void*, int32_t)>(vt[2])(g_client, g_pipe); // ConnectToGlobalUser
         g_get_generic = reinterpret_cast<void* (*)(void*, int32_t, int32_t, const char*)>(vt[12]);
 
-        g_bgetcallback = reinterpret_cast<bool (*)(int32_t, CallbackMsg_t*)>(GetProcAddress(module, "Steam_BGetCallback"));
-        g_freelastcallback = reinterpret_cast<void (*)(int32_t)>(GetProcAddress(module, "Steam_FreeLastCallback"));
+        g_bgetcallback = reinterpret_cast<bool (*)(int32_t, CallbackMsg_t*)>(client_symbol(module, "Steam_BGetCallback"));
+        g_freelastcallback = reinterpret_cast<void (*)(int32_t)>(client_symbol(module, "Steam_FreeLastCallback"));
         g_getapicallresult =
-            reinterpret_cast<bool (*)(int32_t, uint64_t, void*, int32_t, int32_t, bool*)>(GetProcAddress(module, "Steam_GetAPICallResult"));
+            reinterpret_cast<bool (*)(int32_t, uint64_t, void*, int32_t, int32_t, bool*)>(client_symbol(module, "Steam_GetAPICallResult"));
 
         g_connected = (g_pipe != 0 && g_user != 0 && g_get_generic != nullptr);
         return g_connected;
