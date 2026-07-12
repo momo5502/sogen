@@ -40,6 +40,7 @@ namespace sogen::whp
         constexpr uint64_t page_table_entry_address_mask = 0x000FFFFFFFFFF000ull;
         constexpr uint64_t guest_physical_memory_base = 0x0000000100000000ull;
         constexpr uint64_t internal_page_table_base = 0x0000007000000000ull;
+        constexpr uint64_t syscall_hook_virtual_address = 0xFFFF800000001000ull;
         constexpr uint64_t unmapped_guest_page = (std::numeric_limits<uint64_t>::max)();
 
         uint64_t align_down_to_page(const uint64_t value)
@@ -142,6 +143,7 @@ namespace sogen::whp
             uint32_t map_flags = 0;
             size_t page_execution_hook_count = 0;
             memory_permission permissions = memory_permission::none;
+            bool user_accessible = true;
             std::shared_ptr<uint8_t> owned_page{};
         };
 
@@ -1927,6 +1929,7 @@ namespace sogen::whp
             mutable std::shared_mutex partition_mutex_{};
 
             std::unordered_map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
+            std::unordered_map<uint64_t, std::shared_ptr<uint8_t>> internal_pages_{};
             std::vector<uint64_t> guest_pages_by_gpa_{};
             // Ordered free list of guest-physical page indices. Allocating the *lowest* free index (rather
             // than LIFO) hands a freed contiguous GPA block back in ascending order to the next mapping's
@@ -2067,9 +2070,25 @@ namespace sogen::whp
 
             void initialize_syscall_intercept_page()
             {
-                this->syscall_hook_page_ = this->allocate_internal_page(true);
-                auto* code = static_cast<uint8_t*>(this->mapped_pages_.at(this->syscall_hook_page_)->host_page);
+                auto backing = allocate_backing_memory(page_size);
+                auto* code = backing.get();
                 code[0] = 0xF4;
+
+                const auto page_gpa = this->next_internal_gpa_;
+                this->next_internal_gpa_ += page_size;
+
+                auto page = std::make_unique<mapped_page>();
+                page->owned_page = std::move(backing);
+                page->host_page = code;
+                page->guest_physical_address = page_gpa;
+                page->guest_page_base = syscall_hook_virtual_address;
+                page->permissions = memory_permission::read_exec;
+                page->user_accessible = false;
+
+                this->syscall_hook_page_ = syscall_hook_virtual_address;
+                this->mapped_pages_[this->syscall_hook_page_] = std::move(page);
+                this->remap_page(*this->mapped_pages_.at(this->syscall_hook_page_));
+                this->ensure_virtual_mapping(this->syscall_hook_page_);
             }
 
             // Hot path: reads only registers and the setup-frozen syscall hook, so it takes no lock.
@@ -2141,11 +2160,11 @@ namespace sogen::whp
 
             void initialize_long_mode_page_tables()
             {
-                this->pml4_gpa_ = this->allocate_internal_page(false, false);
+                this->pml4_gpa_ = this->allocate_internal_page();
             }
 
             // Assumes partition_mutex_ is held exclusively (or single-threaded construction).
-            uint64_t allocate_internal_page(const bool executable = false, const bool map_into_guest = true)
+            uint64_t allocate_internal_page()
             {
                 auto backing = allocate_backing_memory(page_size);
                 auto* raw_page = backing.get();
@@ -2153,20 +2172,11 @@ namespace sogen::whp
                 const auto page_gpa = this->next_internal_gpa_;
                 this->next_internal_gpa_ += page_size;
 
-                auto page = std::make_unique<mapped_page>();
-                page->owned_page = std::move(backing);
-                page->host_page = raw_page;
-                page->guest_physical_address = page_gpa;
-                page->permissions = executable ? memory_permission::all : memory_permission::read_write;
-
-                this->mapped_pages_[page_gpa] = std::move(page);
-                this->remap_page(*this->mapped_pages_[page_gpa]);
+                WHP_CHECK_HR(WHvMapGpaRange(this->partition_, raw_page, page_gpa, page_size,
+                                            static_cast<WHV_MAP_GPA_RANGE_FLAGS>(WHvMapGpaRangeFlagRead |
+                                                                                 WHvMapGpaRangeFlagWrite)));
+                this->internal_pages_[page_gpa] = std::move(backing);
                 this->page_table_views_[page_gpa] = reinterpret_cast<uint64_t*>(raw_page);
-
-                if (map_into_guest)
-                {
-                    this->ensure_virtual_mapping(page_gpa);
-                }
 
                 return page_gpa;
             }
@@ -2936,7 +2946,7 @@ namespace sogen::whp
 
                 if ((entry & page_table_entry_present) == 0)
                 {
-                    const auto child_gpa = this->allocate_internal_page(false, false);
+                    const auto child_gpa = this->allocate_internal_page();
                     entry = child_gpa | page_table_entry_present | page_table_entry_writable | page_table_entry_user;
                     return child_gpa;
                 }
@@ -2964,8 +2974,12 @@ namespace sogen::whp
                 const auto pt_gpa = this->ensure_child_table(pd_gpa, pd_index);
 
                 auto* const pt_entries = this->get_page_table_entries(pt_gpa);
-                pt_entries[pt_index] = mapped_page->second->guest_physical_address | page_table_entry_present | page_table_entry_writable |
-                                       page_table_entry_user;
+                auto entry = mapped_page->second->guest_physical_address | page_table_entry_present | page_table_entry_writable;
+                if (mapped_page->second->user_accessible)
+                {
+                    entry |= page_table_entry_user;
+                }
+                pt_entries[pt_index] = entry;
             }
 
             // A fault can be spurious under multiple vCPUs: the backend has the page backed
