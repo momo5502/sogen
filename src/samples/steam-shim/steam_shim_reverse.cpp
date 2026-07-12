@@ -57,10 +57,11 @@ namespace
             {
                 ++p;
             }
-            if (p < end)
+            if (p >= end)
             {
-                ++p;
+                return ""; // no terminator within the record
             }
+            ++p;
             return s;
         }
     };
