@@ -78,11 +78,11 @@ namespace sogen::steam_shim
         // game that refreshes repeatedly with the same object doesn't accumulate host proxies.
         if (const auto it = g_obj_tokens.find(obj); it != g_obj_tokens.end())
         {
-            g_responses[it->second] = {obj, type};
+            g_responses[it->second] = {.obj = obj, .type = type};
             return it->second;
         }
         const uint64_t token = g_resp_next++;
-        g_responses[token] = {obj, type};
+        g_responses[token] = {.obj = obj, .type = type};
         g_obj_tokens[obj] = token;
         return token;
     }
@@ -101,21 +101,27 @@ extern "C" void sogen_dispatch_reverse(uint64_t token, int32_t method, const voi
         }
         e = it->second;
     }
-    rd r{static_cast<const unsigned char*>(data), static_cast<const unsigned char*>(data) + bytes};
+    rd r{.p = static_cast<const unsigned char*>(data), .end = static_cast<const unsigned char*>(data) + bytes};
 
     switch (e.type)
     {
     case 0: // ISteamMatchmakingServerListResponse
     {
         auto* o = static_cast<ISteamMatchmakingServerListResponse*>(e.obj);
-        const auto h = reinterpret_cast<HServerListRequest>(r.get<uint64_t>());
+        auto* const h = reinterpret_cast<HServerListRequest>(r.get<uint64_t>());
         const int iServer = r.get<int32_t>();
         if (method == 0)
+        {
             o->ServerResponded(h, iServer);
+        }
         else if (method == 1)
+        {
             o->ServerFailedToRespond(h, iServer);
+        }
         else if (method == 2)
+        {
             o->RefreshComplete(h, static_cast<EMatchMakingServerResponse>(iServer));
+        }
         break;
     }
     case 1: // ISteamMatchmakingPingResponse
@@ -128,7 +134,9 @@ extern "C" void sogen_dispatch_reverse(uint64_t token, int32_t method, const voi
             o->ServerResponded(item);
         }
         else if (method == 1)
+        {
             o->ServerFailedToRespond();
+        }
         break;
     }
     case 2: // ISteamMatchmakingPlayersResponse
@@ -138,13 +146,17 @@ extern "C" void sogen_dispatch_reverse(uint64_t token, int32_t method, const voi
         {
             const char* name = r.cstr();
             const int score = r.get<int32_t>();
-            const float t = r.get<float>();
+            const auto t = r.get<float>();
             o->AddPlayerToList(name, score, t);
         }
         else if (method == 1)
+        {
             o->PlayersFailedToRespond();
+        }
         else if (method == 2)
+        {
             o->PlayersRefreshComplete();
+        }
         break;
     }
     case 3: // ISteamMatchmakingRulesResponse
@@ -157,9 +169,13 @@ extern "C" void sogen_dispatch_reverse(uint64_t token, int32_t method, const voi
             o->RulesResponded(rule, value);
         }
         else if (method == 1)
+        {
             o->RulesFailedToRespond();
+        }
         else if (method == 2)
+        {
             o->RulesRefreshComplete();
+        }
         break;
     }
     default:

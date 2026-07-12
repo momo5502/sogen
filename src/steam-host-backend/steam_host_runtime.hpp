@@ -8,6 +8,7 @@
 // read or write outside the buffers it is given.
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -20,6 +21,7 @@
 
 namespace sogen::steam_host
 {
+    // NOLINTNEXTLINE(cppcoreguidelines-use-enum-class): C-ABI status codes the generated thunks return as int.
     enum : int
     {
         steam_host_ok = 0,
@@ -53,13 +55,10 @@ namespace sogen::steam_host
         // guest's put_scalar). Arch-agnostic: only the low `n` bytes are taken.
         void get_scalar(void* dst, size_t n)
         {
-            unsigned char slot[8];
-            get(slot, sizeof(slot));
-            if (n > sizeof(slot))
-            {
-                n = sizeof(slot);
-            }
-            std::memcpy(dst, slot, n);
+            std::array<unsigned char, 8> slot{};
+            get(slot.data(), slot.size());
+            n = (std::min)(n, slot.size());
+            std::memcpy(dst, slot.data(), n);
         }
         const char* get_cstr()
         {
@@ -135,7 +134,7 @@ namespace sogen::steam_host
             ret = 0;
             if constexpr (sizeof(T) == 4)
             {
-                uint32_t b;
+                uint32_t b = 0;
                 std::memcpy(&b, &v, 4);
                 ret = b;
             }

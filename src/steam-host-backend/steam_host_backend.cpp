@@ -7,6 +7,8 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -55,7 +57,7 @@ namespace
     std::unordered_map<uint64_t, entry> g_handles;
     uint64_t g_next_handle = 1;
 
-    constexpr unsigned long load_with_altered_search_path = 0x00000008;
+    constexpr uint32_t load_with_altered_search_path = 0x00000008;
 
     bool connect_locked()
     {
@@ -154,7 +156,7 @@ namespace sogen::steam_host
             }
         }
         const uint64_t handle = g_next_handle++;
-        g_handles[handle] = {std::string(version), iface};
+        g_handles[handle] = {.version = std::string(version), .iface = iface};
         if (std::getenv("SOGEN_STEAM_TRACE"))
         {
             std::fprintf(stderr, "[steam-returned-iface] version=%s -> handle=%llu\n", version, static_cast<unsigned long long>(handle));
@@ -186,9 +188,9 @@ namespace sogen::steam_host
         // Ask for progressively newer versions of the family; the modern client vends one of these.
         for (int cand = base + 1; cand <= base + 40; ++cand)
         {
-            char buf[96];
-            std::snprintf(buf, sizeof(buf), "%s%0*d", prefix.c_str(), width, cand);
-            if (void* iface = g_get_generic(g_client, g_user, g_pipe, buf))
+            std::array<char, 96> buf{};
+            std::snprintf(buf.data(), buf.size(), "%s%0*d", prefix.c_str(), width, cand);
+            if (void* iface = g_get_generic(g_client, g_user, g_pipe, buf.data()))
             {
                 if (std::getenv("SOGEN_STEAM_TRACE"))
                 {
@@ -383,10 +385,7 @@ extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uin
     while (n_records < max_records && g_bgetcallback(use_pipe, &msg))
     {
         uint32_t n = (msg.m_cubParam > 0) ? static_cast<uint32_t>(msg.m_cubParam) : 0;
-        if (n > max_param)
-        {
-            n = max_param;
-        }
+        n = (std::min)(n, max_param);
         if (trace)
         {
             traced_ids += ' ';

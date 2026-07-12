@@ -14,6 +14,7 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -151,10 +152,7 @@ void sogen::steam_shim::bridge_invoke(const uint64_t handle, const uint32_t meth
     *ret = response.return_value;
 
     uint32_t n = response.out_bytes;
-    if (n > out_cap)
-    {
-        n = out_cap;
-    }
+    n = (std::min)(n, out_cap);
     if (out && n)
     {
         std::memcpy(out, output.data() + sizeof(sb::invoke_response), n);
@@ -229,18 +227,12 @@ namespace
         std::memcpy(&resp, g_cbq.blob.data(), sizeof(resp));
         g_cbq.off = sizeof(sb::run_callbacks_response);
         g_cbq.end = g_cbq.off + resp.blob_bytes;
-        if (g_cbq.end > returned)
-        {
-            g_cbq.end = returned;
-        }
+        g_cbq.end = (std::min)(g_cbq.end, returned);
 
         // Reverse-callback records follow the normal ones: replay each on the game's response object now.
         uint32_t roff = sizeof(sb::run_callbacks_response) + resp.blob_bytes;
         uint32_t rend = roff + resp.reverse_bytes;
-        if (rend > returned)
-        {
-            rend = returned;
-        }
+        rend = (std::min)(rend, returned);
         while (roff + 16 <= rend)
         {
             uint64_t token = 0;

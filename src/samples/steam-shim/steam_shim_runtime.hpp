@@ -3,6 +3,8 @@
 // Guest-side runtime the generated Steam proxies build on: the real SDK headers (so proxies inherit the
 // exact ISteam* vtables) plus the marshalling helper each override uses. Transport is in steam_shim.cpp.
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
@@ -61,13 +63,10 @@ namespace sogen::steam_shim
         // guest and the 64-bit host agree); each side copies only its native width to/from the low bytes.
         void put_scalar(const void* p, size_t n)
         {
-            unsigned char slot[8] = {0};
-            if (n > sizeof(slot))
-            {
-                n = sizeof(slot);
-            }
-            std::memcpy(slot, p, n);
-            put(slot, sizeof(slot));
+            std::array<unsigned char, 8> slot{};
+            n = (std::min)(n, slot.size());
+            std::memcpy(slot.data(), p, n);
+            put(slot.data(), slot.size());
         }
         void put_cstr(const char* s)
         {
@@ -102,11 +101,8 @@ namespace sogen::steam_shim
         // Length-prefixed variable payload (in-array / in-buffer), capped so a bogus size can't blow up the request.
         void put_var(const void* p, size_t n)
         {
-            if (n > max_payload)
-            {
-                n = max_payload;
-            }
-            const uint32_t len = static_cast<uint32_t>(n);
+            n = (std::min)(n, max_payload);
+            const auto len = static_cast<uint32_t>(n);
             put(&len, sizeof(len));
             if (p && len)
             {

@@ -55,7 +55,7 @@ namespace sogen::steam_host
         void enqueue(uint64_t token, int32_t method, const args& a)
         {
             std::lock_guard lock{g_mutex};
-            const uint32_t bytes = static_cast<uint32_t>(a.b.size());
+            const auto bytes = static_cast<uint32_t>(a.b.size());
             const size_t off = g_queue.size();
             g_queue.resize(off + 16 + bytes);
             std::memcpy(g_queue.data() + off, &token, 8);
