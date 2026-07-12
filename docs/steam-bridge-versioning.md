@@ -74,9 +74,12 @@ and clause 2.4 restricts reverse engineering. So:
 - Gate the fetch behind the Steam opt-in so default/public builds pull nothing from Valve.
 - Legacy versions are **frozen**, so an older Proton tag is a correct source for them; the current version
   comes from the official SDK.
-- The real question for making the bridge public is statutory **interoperability** rights (EU Software
+- The open question underpinning the bridge is statutory **interoperability** rights (EU Software
   Directive Art. 6, which a no-RE clause can't waive; US §1201(f)) applied to a *paravirtualization* bridge
-  that forwards to genuine Steam — a lawyer question, not a contract grant. Keep private until answered.
+  that forwards to genuine Steam. We consider this defensible interoperability — the bridge reimplements,
+  emulates, and circumvents nothing in Steam; it just lets a genuinely-licensed client be reached from the
+  sandbox — but the precise contract-vs-statute line is jurisdiction-dependent, so it's an open legal
+  question the project is tracking rather than a settled clearance.
 
 ## Remaining implementation
 
