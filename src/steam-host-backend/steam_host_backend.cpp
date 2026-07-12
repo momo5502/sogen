@@ -23,7 +23,8 @@
 #define SOGEN_STEAM_DECL_DISPATCH(tag)                                                                     \
     extern "C" int sogen_steam_dispatch_##tag(const char* version, void* iface, uint32_t method,           \
                                               const unsigned char* in, uint32_t in_len, unsigned char* out, \
-                                              uint32_t out_cap, uint32_t* out_len, uint64_t* ret);
+                                              uint32_t out_cap, uint32_t* out_len, uint64_t* ret);         \
+    extern "C" uint32_t sogen_steam_method_count_##tag(const char* version);
 SOGEN_STEAM_TAGS(SOGEN_STEAM_DECL_DISPATCH)
 #undef SOGEN_STEAM_DECL_DISPATCH
 
@@ -301,16 +302,24 @@ extern "C" int sogen_steam_backend_invoke(uint64_t handle, uint32_t method, cons
         std::fflush(stderr);
     }
 
-    // Each version tag's isolated TU exposes sogen_steam_dispatch_<tag>; try each until one owns the
-    // requested interface version (the rest return steam_host_unknown_interface).
-    int status = sh::steam_host_unknown_interface;
-#define SOGEN_STEAM_TRY_DISPATCH(tag)                                                                     \
-    if (status == sh::steam_host_unknown_interface)                                                       \
-    {                                                                                                    \
-        status = sogen_steam_dispatch_##tag(version, iface, method, inb, inlen, out, out_cap, out_len, ret); \
+    // Each version tag's isolated TU exposes sogen_steam_dispatch_<tag>. A version string is not unique across
+    // snapshots (Valve appended methods without bumping it), so pick the snapshot with the MOST methods -- the
+    // same rule the guest shim uses to build the proxy, so the method index we receive means the same thing here.
+    using dispatch_fn = int (*)(const char*, void*, uint32_t, const unsigned char*, uint32_t, unsigned char*,
+                                uint32_t, uint32_t*, uint64_t*);
+    dispatch_fn dispatch = nullptr;
+    uint32_t best = 0;
+#define SOGEN_STEAM_PICK_DISPATCH(tag)                                                                    \
+    if (const uint32_t methods = sogen_steam_method_count_##tag(version); methods > best)                 \
+    {                                                                                                     \
+        best = methods;                                                                                   \
+        dispatch = &sogen_steam_dispatch_##tag;                                                           \
     }
-    SOGEN_STEAM_TAGS(SOGEN_STEAM_TRY_DISPATCH)
-#undef SOGEN_STEAM_TRY_DISPATCH
+    SOGEN_STEAM_TAGS(SOGEN_STEAM_PICK_DISPATCH)
+#undef SOGEN_STEAM_PICK_DISPATCH
+
+    const int status = dispatch ? dispatch(version, iface, method, inb, inlen, out, out_cap, out_len, ret)
+                                : sh::steam_host_unknown_interface;
     if (std::getenv("SOGEN_STEAM_TRACE"))
     {
         std::fprintf(stderr, "[steam-invoke] version=%s method=%u -> status=%d ret=%llu\n", version, method,

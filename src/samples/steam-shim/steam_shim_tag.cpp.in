@@ -2,8 +2,16 @@
 // (identically-named ISteam* classes across snapshots can't share a TU), and exposes the tag's proxy
 // factory to the flat shim, which tries every tag (SOGEN_STEAM_TAGS).
 #include "steam_shim_proxies.generated.hxx"
+#include "steam_versions.generated.hxx"
 
 extern "C" void* sogen_make_proxy_@STEAM_TAG@(const char* version, uint64_t handle)
 {
     return sogen::steam_shim::@STEAM_TAG@::create_proxy(version, handle);
+}
+
+// How many vtable entries this snapshot's proxy for `version` has (0 if it does not vend it). The flat shim
+// picks the snapshot with the MOST methods -- see sogen_make_proxy.
+extern "C" uint32_t sogen_steam_method_count_@STEAM_TAG@(const char* version)
+{
+    return version ? sogen::steam_bridge::gen::@STEAM_TAG@::method_count(version) : 0;
 }

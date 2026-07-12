@@ -3,10 +3,18 @@
 // every tag's entry (SOGEN_STEAM_TAGS) until one owns the requested version.
 #include "steam_host_runtime.hpp"
 #include "steam_host_thunks.generated.hxx"
+#include "steam_versions.generated.hxx"
 
 #include <cstdint>
 #include <cstring>
 #include <vector>
+
+// How many vtable entries this snapshot's `version` interface has (0 if it does not vend it). The backend
+// picks the snapshot with the MOST methods, matching the guest shim's choice so method indices line up.
+extern "C" uint32_t sogen_steam_method_count_@STEAM_TAG@(const char* version)
+{
+    return version ? sogen::steam_bridge::gen::@STEAM_TAG@::method_count(version) : 0;
+}
 
 extern "C" int sogen_steam_dispatch_@STEAM_TAG@(const char* version, void* iface, uint32_t method,
                                                 const unsigned char* in, uint32_t in_len, unsigned char* out,

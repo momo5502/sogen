@@ -618,14 +618,30 @@ def build_interfaces(sdk_dir: str, bits: int = 32) -> tuple[list[Interface], lis
 
 # --- emit -------------------------------------------------------------------------------------------
 
-def emit_versions(interfaces: list[Interface]) -> str:
+def emit_versions(interfaces: list[Interface], tag: str) -> str:
     L = ["#pragma once", "", "// GENERATED -- interface class <-> version string + method count.", "",
-         "#include <cstdint>", "#include <string_view>", "", "namespace sogen::steam_bridge::gen", "{",
+         "#include <cstdint>", "#include <string_view>", "", f"namespace sogen::steam_bridge::gen::{tag}", "{",
          "    struct interface_version { std::string_view classname; std::string_view version; uint32_t method_count; };",
          "    inline constexpr interface_version interfaces[] = {"]
     for i in interfaces:
         L.append(f'        {{"{i.classname}", "{i.version}", {len(i.methods)}}},')
-    L += ["    };", "} // namespace", ""]
+    L += ["    };", "",
+          "    // Methods this snapshot's vtable has for `version`, or 0 if it does not vend it. Callers pick the",
+          "    // snapshot with the MOST methods (see sogen_make_proxy / the host dispatch): a version string is not",
+          "    // unique across SDK snapshots -- Valve appended methods without bumping it -- and the layouts are",
+          "    // strict prefixes, so the longest variant is a superset that satisfies every game.",
+          "    inline uint32_t method_count(std::string_view version)",
+          "    {",
+          "        for (const auto& entry : interfaces)",
+          "        {",
+          "            if (!entry.version.empty() && entry.version == version)",
+          "            {",
+          "                return entry.method_count;",
+          "            }",
+          "        }",
+          "        return 0;",
+          "    }",
+          "} // namespace", ""]
     return "\n".join(L)
 
 
@@ -920,7 +936,7 @@ def generate_tag(tag: str, sdk_dir: str, out_dir: str, bits: int) -> tuple[int, 
     tag_dir = os.path.join(out_dir, tag)
     os.makedirs(tag_dir, exist_ok=True)
     outputs = {
-        "steam_versions.generated.hxx": emit_versions(interfaces),
+        "steam_versions.generated.hxx": emit_versions(interfaces, tag),
         "steam_shim_proxies.generated.hxx": emit_guest(interfaces, tag),
         "steam_host_thunks.generated.hxx": emit_host(interfaces, tag),
     }

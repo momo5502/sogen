@@ -32,22 +32,37 @@ namespace sb = sogen::steam_bridge;
 // reverse-call onto a game object (defined in the reverse TU).
 #include "steam_tags.generated.hxx"
 
-#define SOGEN_STEAM_DECL_MAKE_PROXY(tag) extern "C" void* sogen_make_proxy_##tag(const char* version, uint64_t handle);
+#define SOGEN_STEAM_DECL_MAKE_PROXY(tag)                                    \
+    extern "C" void* sogen_make_proxy_##tag(const char* version, uint64_t handle); \
+    extern "C" uint32_t sogen_steam_method_count_##tag(const char* version);
 SOGEN_STEAM_TAGS(SOGEN_STEAM_DECL_MAKE_PROXY)
 #undef SOGEN_STEAM_DECL_MAKE_PROXY
 
 extern "C" void sogen_dispatch_reverse(uint64_t token, int32_t method, const void* data, uint32_t bytes);
 
+// An interface version string is NOT unique across SDK snapshots: Valve appended methods without bumping it
+// (SteamFriends005 is 22 methods in SDK 1.03, 23 from 1.04 where ActivateGameOverlayToStore was appended, and
+// 24 from 1.09). Taking the first tag that claims the version can hand the game a vtable SHORTER than the one
+// its steam_api was built against, so a call to a late slot runs off the end of the vtable and into whatever
+// follows it in .rdata (MW2 called ActivateGameOverlayToStore and landed in the next class's RTTI). The
+// layouts are strict prefixes, so the longest variant is a superset every game can use: pick the snapshot with
+// the most methods. The host applies the same rule, so method indices line up on both sides.
 static void* sogen_make_proxy(const char* version, uint64_t handle)
 {
-#define SOGEN_STEAM_TRY_MAKE_PROXY(tag)          \
-    if (void* p = sogen_make_proxy_##tag(version, handle)) \
-    {                                            \
-        return p;                                \
+    using make_proxy_fn = void* (*)(const char*, uint64_t);
+    make_proxy_fn make = nullptr;
+    uint32_t best = 0;
+
+#define SOGEN_STEAM_PICK_MAKE_PROXY(tag)                                \
+    if (const uint32_t methods = sogen_steam_method_count_##tag(version); methods > best) \
+    {                                                                   \
+        best = methods;                                                 \
+        make = &sogen_make_proxy_##tag;                                 \
     }
-    SOGEN_STEAM_TAGS(SOGEN_STEAM_TRY_MAKE_PROXY)
-#undef SOGEN_STEAM_TRY_MAKE_PROXY
-    return nullptr;
+    SOGEN_STEAM_TAGS(SOGEN_STEAM_PICK_MAKE_PROXY)
+#undef SOGEN_STEAM_PICK_MAKE_PROXY
+
+    return make ? make(version, handle) : nullptr;
 }
 
 // The generated proxies call these (declared in steam_shim_runtime.hpp); defined here without the SDK

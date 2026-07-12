@@ -62,6 +62,30 @@ Coverage is ~95% of methods (865/903). The remainder is the genuinely bespoke ta
 params (a host callback can't cross the boundary), type-tagged `void*` configs, and a few
 double-pointers — each needs per-method handling, not more generic machinery.
 
+### Interface versions are not unique across snapshots
+
+An interface version string does **not** identify a single vtable layout. Valve appended methods to an
+interface without bumping its version, so the same string means different things in different SDK
+snapshots. `SteamFriends005`, for example:
+
+| snapshot | methods |
+|----------|---------|
+| 1.02x, 1.03 | 22 |
+| 1.04–1.08 | 23 (`ActivateGameOverlayToStore` appended at index 22) |
+| 1.09 | 24 (`SetPlayedWith` appended at index 23) |
+
+So a tag lookup cannot just take the first snapshot that claims a version — that can hand the game a
+vtable *shorter* than the one its `steam_api` was built against, and a call to a late slot runs off the
+end of the vtable into whatever follows it in `.rdata`. (MW2 called `ActivateGameOverlayToStore` and
+landed on the next class's `vtable[-1]`, i.e. its RTTI Complete Object Locator, then executed RTTI data
+as code.)
+
+The additions are strict *appends*, so the longest variant is a superset that satisfies every game:
+**both sides pick the snapshot with the most methods for the requested version** (`sogen_make_proxy` in
+the shim, the dispatch in the backend). They must use the same rule, or a method index would mean
+different things on each side. Each tag exports `sogen_steam_method_count_<tag>` for this, backed by the
+per-tag `steam_versions.generated.hxx` table.
+
 ### Building the bridge
 
 Generated code is not committed. Building is gated behind the `SOGEN_ENABLE_STEAM` CMake option (ON by
