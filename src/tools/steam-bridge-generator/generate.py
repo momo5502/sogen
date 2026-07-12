@@ -305,6 +305,14 @@ class Types:
         # 8-byte scalar. Round-trips on a 64-bit guest (a 32-bit guest would truncate -- niche).
         return base in self.typedefs and self.resolve(base).replace(" ", "") == "void*"
 
+    def is_opaque_handle(self, t: str) -> bool:
+        # A typedef that resolves to void* (HServerListRequest, ...). Its value is really a host pointer, so
+        # a guest-supplied one must be validated against the handles the host actually issued.
+        if "*" in t or "&" in t:
+            return False
+        base = t.replace("const", "").strip()
+        return base in self.typedefs and self.resolve(base).replace(" ", "") == "void*"
+
     def is_floating(self, t: str) -> bool:
         return self.resolve(t.replace("const", "").strip()) in FLOATING
 
@@ -315,6 +323,7 @@ class Param:
     type: str   # for pointer/array kinds this is the element type; otherwise the full type
     kind: str   # byval | cstr | in_ref | in_ptr | out_single | in_array | out_array | out_string | complex
     count: str = ""  # array/string count expression (a param name or a C constant), for array/string kinds
+    opaque: bool = False  # byval that is really a raw void* handle -> host validates it was actually issued
 
 
 @dataclass
@@ -328,6 +337,7 @@ class Method:
     const: bool
     simple: bool
     iface_version: str = ""  # for ret_kind == "iface_return": the version-string param to proxy with
+    ret_opaque: bool = False  # scalar return that is really a raw void* handle -> register it as issued
 
 
 @dataclass
@@ -359,7 +369,7 @@ def classify_param(types: Types, ptype: str, pname: str, attrs: dict, param_name
     if t in ("const char *", "const char*"):
         return Param(pname, t, "cstr")
     if types.is_byvalue_scalar(t):
-        return Param(pname, t, "byval")
+        return Param(pname, t, "byval", opaque=types.is_opaque_handle(t))
     # A complete struct passed BY VALUE (not a pointer/ref): serialize its bytes, exactly like CSteamID but
     # for any struct. The compiler handles the by-value ABI (register or hidden-reference) on both sides.
     if "*" not in t and "&" not in t:
@@ -644,7 +654,8 @@ def build_interfaces(sdk_dir: str, bits: int = 32) -> tuple[list[Interface], lis
             if v:
                 rk, simple, iface_version = "iface_return", True, v
         return Method(m.spelling, idx, m.result_type.spelling, rk, params, ", ".join(raw),
-                      m.is_const_method(), simple, iface_version)
+                      m.is_const_method(), simple, iface_version,
+                      ret_opaque=(rk == "scalar" and types.is_opaque_handle(m.result_type.spelling)))
 
     interfaces, skipped, seen = [], [], set()
 
@@ -885,13 +896,26 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                 # Pass 2: build the call arguments (all input locals now exist; sizes capped).
                 for k, p in enumerate(m.params):
                     v = f"a{k}"
-                    if p.kind in ("byval", "cstr", "in_ref", "byval_struct"):
+                    if p.kind == "byval":
+                        if p.opaque:
+                            # SECURITY: a raw void* handle from the guest. Only accept values the host itself
+                            # issued (register_opaque_handle on the returning method); otherwise Steam would
+                            # dereference/free an attacker-chosen pointer. Null is always allowed.
+                            L.append(f"            if (!is_valid_opaque_handle(reinterpret_cast<uint64_t>({v}))) "
+                                     f"return steam_host_unsupported;")
+                        args.append(v)
+                    elif p.kind in ("cstr", "in_ref", "byval_struct"):
                         args.append(v)
                     elif p.kind == "callback_token":
+                        tid = RESPONSE_IFACE_ID.get(p.type, -1)
+                        # SECURITY: the proxy type is fixed by the method's parameter interface (a compile-time
+                        # constant), NOT the type in the guest blob. Handing Steam a proxy of a different shape
+                        # would make it virtual-dispatch through a vtable slot the proxy never implements -- an
+                        # out-of-bounds indirect call in the host. Reject a guest that lied about the type, then
+                        # build the authoritative one.
+                        L.append(f"            if ({v}_type != {tid}) return steam_host_unsupported;")
                         L.append(f"            auto* {v} = reinterpret_cast<{p.type}*>("
-                                 f"create_response_proxy({v}_type, {v}_tok));")
-                        # A guest-supplied type outside the known range yields a null proxy; never hand that to
-                        # Steam (it would store it and later virtual-dispatch through null -> host crash).
+                                 f"create_response_proxy({tid}, {v}_tok));")
                         L.append(f"            if (!{v}) return steam_host_unsupported;")
                         args.append(v)
                     elif p.kind == "null_ptr":
@@ -939,6 +963,8 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                     L.append(f"            const char* _s = {call};")
                 elif m.ret_kind == "scalar":
                     L.append(f"            auto _rv = {call}; uint64_t _r = 0; std::memcpy(&_r, &_rv, sizeof(_rv));")
+                    if m.ret_opaque:  # a void* handle the host just minted: remember it so the guest can pass it back
+                        L.append("            register_opaque_handle(_r);")
                 elif m.ret_kind == "iface_return":
                     L.append(f"            {m.ret} _iface = {call};")
                 elif m.ret_kind == "struct_return":

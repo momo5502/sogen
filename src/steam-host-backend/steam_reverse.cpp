@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "steam_api.h" // ISteamMatchmaking*Response, gameserveritem_t, HServerListRequest
@@ -21,6 +22,8 @@ namespace sogen::steam_host
         std::vector<unsigned char> g_queue;
         std::unordered_map<uint64_t, void*> g_proxies;       // token -> host proxy object (one per token)
         std::unordered_map<uint64_t, uint32_t> g_proxy_refs; // token -> count of Steam requests still using it
+        std::unordered_map<uint64_t, int32_t> g_proxy_types; // token -> response interface type it was created as
+        std::unordered_set<uint64_t> g_issued_handles;       // opaque void* handles the host actually returned
 
         // Serializes one reverse call's argument buffer (built by each proxy method).
         struct args
@@ -86,6 +89,7 @@ namespace sogen::steam_host
                 return false;
             }
             g_proxy_refs.erase(token);
+            g_proxy_types.erase(token);
             g_proxies.erase(it);
             return true;
         }
@@ -206,11 +210,22 @@ namespace sogen::steam_host
         };
     }
 
+    // `type` is authoritative -- the generated thunk passes the response interface the method actually takes
+    // (a compile-time constant), never a value from the guest. That is what prevents a guest from asking for,
+    // say, a Ping proxy where Steam expects a ServerList proxy and then virtual-dispatching through a vtable
+    // slot the proxy does not implement (an out-of-bounds indirect call in the host).
     void* create_response_proxy(int32_t type, uint64_t token)
     {
         std::lock_guard lock{g_mutex};
         if (const auto it = g_proxies.find(token); it != g_proxies.end())
         {
+            // A token may only be reused for the SAME interface type. Reusing it as a different type would
+            // hand Steam a proxy of the wrong shape -> reject rather than type-confuse the existing object.
+            const auto t = g_proxy_types.find(token);
+            if (t == g_proxy_types.end() || t->second != type)
+            {
+                return nullptr;
+            }
             ++g_proxy_refs[token]; // another concurrent request reuses this response object
             return it->second;
         }
@@ -246,7 +261,28 @@ namespace sogen::steam_host
         }
         g_proxies[token] = p;
         g_proxy_refs[token] = 1;
+        g_proxy_types[token] = type;
         return p;
+    }
+
+    void register_opaque_handle(uint64_t handle)
+    {
+        if (handle == 0)
+        {
+            return;
+        }
+        std::lock_guard lock{g_mutex};
+        g_issued_handles.insert(handle);
+    }
+
+    bool is_valid_opaque_handle(uint64_t handle)
+    {
+        if (handle == 0)
+        {
+            return true; // null is always safe; the real Steam method handles it
+        }
+        std::lock_guard lock{g_mutex};
+        return g_issued_handles.count(handle) != 0;
     }
 
     uint32_t drain_reverse_callbacks(std::vector<unsigned char>& out)
