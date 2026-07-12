@@ -80,11 +80,20 @@ end of the vtable into whatever follows it in `.rdata`. (MW2 called `ActivateGam
 landed on the next class's `vtable[-1]`, i.e. its RTTI Complete Object Locator, then executed RTTI data
 as code.)
 
-The additions are strict *appends*, so the longest variant is a superset that satisfies every game:
+The changes are only ever *appends*, so the longest variant is a superset that satisfies every game:
 **both sides pick the snapshot with the most methods for the requested version** (`sogen_make_proxy` in
 the shim, the dispatch in the backend). They must use the same rule, or a method index would mean
 different things on each side. Each tag exports `sogen_steam_method_count_<tag>` for this, backed by the
 per-tag `steam_versions.generated.hxx` table.
+
+That "append-only" property is load-bearing, so it was checked against all snapshots rather than
+assumed. 34 version strings are vended with differing layouts; in every one the shorter layouts are
+prefixes of the longest. No snapshot ever reorders or inserts a method under a fixed version string —
+the only same-index differences are deprecation *renames*, which keep the slot and signature
+(`SteamGameServer010` slot 12 `SetGameType`→`SetGameTags`; `SteamUser021` slots 3/4
+`InitiateGameConnection`→`..._DEPRECATED`; `SteamClient017` slots 31/32 `Set_SteamAPI_…`→`DEPRECATED_…`).
+If a future snapshot ever *did* reorder under a fixed version, picking the longest would silently
+mis-dispatch, so re-run that check when adding snapshots.
 
 ### Building the bridge
 
