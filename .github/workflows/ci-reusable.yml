@@ -140,18 +140,17 @@ jobs:
         with:
           submodules: recursive
 
-      # libclang lets the Steam-bridge generator run at configure time, so the guest steamclient shims are
-      # actually built (and their generated marshalling compiled) here rather than silently skipped.
-      - name: Install libclang (Steam bridge codegen)
-        run: python -m pip install --disable-pip-version-check libclang
-
       - name: Enable Developer Command Prompt (x86)
         uses: ilammy/msvc-dev-cmd@v1.13.0
         with:
           arch: x86
 
+      # libclang lets the Steam-bridge generator run at configure time, so the guest steamclient shims are
+      # actually built (and their generated marshalling compiled) here rather than silently skipped. Install
+      # it in the same step as the configure (and after the dev-cmd) so pip and CMake's find_package(Python3)
+      # resolve the same `python`.
       - name: Build 32-bit Vulkan and Steam Shims
-        run: cmake --preset=release && cmake --build --preset=release -t vulkan-shim steam-shim
+        run: python -m pip install --disable-pip-version-check libclang && cmake --preset=release && cmake --build --preset=release -t vulkan-shim steam-shim
 
       - name: Stash 32-bit Shims
         shell: pwsh
@@ -167,7 +166,7 @@ jobs:
           arch: x64
 
       - name: Build API Set Dumper and 64-bit Vulkan and Steam Shims
-        run: cmake --preset=release && cmake --build --preset=release -t dump-apiset vulkan-shim steam-shim
+        run: python -m pip install --disable-pip-version-check libclang && cmake --preset=release && cmake --build --preset=release -t dump-apiset vulkan-shim steam-shim
 
       - name: Stage Shims
         shell: pwsh
