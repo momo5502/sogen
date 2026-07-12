@@ -1890,7 +1890,8 @@ namespace sogen
 
         const auto dev = this->impl_->devices.find(device);
         const auto pool_it = this->impl_->command_pools.find(pool);
-        if (dev == this->impl_->devices.end() || pool_it == this->impl_->command_pools.end() || !dev->second.allocate_command_buffers)
+        if (dev == this->impl_->devices.end() || pool_it == this->impl_->command_pools.end() || pool_it->second.device_id != device ||
+            !dev->second.allocate_command_buffers)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1919,13 +1920,13 @@ namespace sogen
         const auto dev = this->impl_->devices.find(device);
         const auto pool_it = this->impl_->command_pools.find(pool);
         const auto cb = this->impl_->command_buffers.find(command_buffer);
-        if (cb == this->impl_->command_buffers.end() || cb->second.device_id != device)
+        if (dev == this->impl_->devices.end() || pool_it == this->impl_->command_pools.end() || pool_it->second.device_id != device ||
+            cb == this->impl_->command_buffers.end() || cb->second.device_id != device || cb->second.pool_id != pool)
         {
             return;
         }
 
-        if (dev != this->impl_->devices.end() && pool_it != this->impl_->command_pools.end() && cb->second.handle &&
-            dev->second.free_command_buffers)
+        if (cb->second.handle && dev->second.free_command_buffers)
         {
             dev->second.free_command_buffers(dev->second.handle, pool_it->second.handle, 1, &cb->second.handle);
         }
@@ -2710,8 +2711,7 @@ namespace sogen
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto buf = this->impl_->buffers.find(buffer);
-        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end() ||
-            buf->second.device_id != cb->second.device_id)
+        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end() || buf->second.device_id != cb->second.device_id)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -3040,8 +3040,7 @@ namespace sogen
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto img = this->impl_->images.find(image);
-        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end() ||
-            img->second.device_id != cb->second.device_id)
+        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end() || img->second.device_id != cb->second.device_id)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -3072,8 +3071,7 @@ namespace sogen
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto img = this->impl_->images.find(image);
-        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end() ||
-            img->second.device_id != cb->second.device_id)
+        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end() || img->second.device_id != cb->second.device_id)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -3129,8 +3127,7 @@ namespace sogen
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto img = this->impl_->images.find(image);
-        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end() ||
-            img->second.device_id != cb->second.device_id)
+        if (cb == this->impl_->command_buffers.end() || img == this->impl_->images.end() || img->second.device_id != cb->second.device_id)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -3219,8 +3216,7 @@ namespace sogen
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto buf = this->impl_->buffers.find(buffer);
-        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end() ||
-            buf->second.device_id != cb->second.device_id)
+        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end() || buf->second.device_id != cb->second.device_id)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -3754,8 +3750,7 @@ namespace sogen
 
         const auto dev_it = this->impl_->devices.find(sc.device_id);
         const auto img_it = this->impl_->images.find(source_image_id);
-        if (dev_it == this->impl_->devices.end() || img_it == this->impl_->images.end() ||
-            img_it->second.device_id != sc.device_id)
+        if (dev_it == this->impl_->devices.end() || img_it == this->impl_->images.end() || img_it->second.device_id != sc.device_id)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -4582,8 +4577,8 @@ namespace sogen
         out_count = 0;
         const auto dev = this->impl_->devices.find(device);
         const auto pool_it = this->impl_->descriptor_pools.find(pool);
-        if (dev == this->impl_->devices.end() || pool_it == this->impl_->descriptor_pools.end() ||
-            pool_it->second.device_id != device || !dev->second.allocate_descriptor_sets)
+        if (dev == this->impl_->devices.end() || pool_it == this->impl_->descriptor_pools.end() || pool_it->second.device_id != device ||
+            !dev->second.allocate_descriptor_sets)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -4754,9 +4749,8 @@ namespace sogen
         const auto vert = this->impl_->shader_modules.find(vertex_shader);
         const auto frag = this->impl_->shader_modules.find(fragment_shader);
         if (dev == this->impl_->devices.end() || layout == this->impl_->pipeline_layouts.end() ||
-            vert == this->impl_->shader_modules.end() || frag == this->impl_->shader_modules.end() ||
-            layout->second.device_id != device || vert->second.device_id != device || frag->second.device_id != device ||
-            !dev->second.create_graphics_pipelines)
+            vert == this->impl_->shader_modules.end() || frag == this->impl_->shader_modules.end() || layout->second.device_id != device ||
+            vert->second.device_id != device || frag->second.device_id != device || !dev->second.create_graphics_pipelines)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -4990,8 +4984,8 @@ namespace sogen
         const auto layout = this->impl_->pipeline_layouts.find(pipeline_layout);
         const auto shader = this->impl_->shader_modules.find(shader_module);
         if (dev == this->impl_->devices.end() || layout == this->impl_->pipeline_layouts.end() ||
-            shader == this->impl_->shader_modules.end() || layout->second.device_id != device ||
-            shader->second.device_id != device || !dev->second.create_compute_pipelines)
+            shader == this->impl_->shader_modules.end() || layout->second.device_id != device || shader->second.device_id != device ||
+            !dev->second.create_compute_pipelines)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -5108,8 +5102,7 @@ namespace sogen
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto buf = this->impl_->buffers.find(buffer);
-        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end() ||
-            buf->second.device_id != cb->second.device_id)
+        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end() || buf->second.device_id != cb->second.device_id)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -5231,8 +5224,7 @@ namespace sogen
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto buf = this->impl_->buffers.find(buffer);
-        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end() ||
-            buf->second.device_id != cb->second.device_id)
+        if (cb == this->impl_->command_buffers.end() || buf == this->impl_->buffers.end() || buf->second.device_id != cb->second.device_id)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
