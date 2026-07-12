@@ -31,14 +31,18 @@ extern "C" int sogen_steam_dispatch_@STEAM_TAG@(const char* version, void* iface
     {
         *ret = local_ret;
     }
-    const uint32_t n = reply.size() < out_cap ? static_cast<uint32_t>(reply.size()) : out_cap;
-    if (out && n)
-    {
-        std::memcpy(out, reply.data(), n);
-    }
+    const auto needed = static_cast<uint32_t>(reply.size());
     if (out_len)
     {
-        *out_len = n;
+        *out_len = needed; // always the reply's true length, so the caller learns it did not fit
+    }
+    if (needed > out_cap)
+    {
+        return sogen::steam_host::steam_host_output_too_small; // do not truncate: leave the reply undelivered
+    }
+    if (out && needed)
+    {
+        std::memcpy(out, reply.data(), needed);
     }
     return status;
 }

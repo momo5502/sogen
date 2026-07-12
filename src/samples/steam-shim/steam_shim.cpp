@@ -207,7 +207,7 @@ namespace
     bool drain_batch(int32_t pipe)
     {
         const sb::run_callbacks_request request{.pipe = static_cast<uint32_t>(pipe)};
-        g_cbq.blob.assign(sizeof(sb::run_callbacks_response) + 64u * 1024u, 0);
+        g_cbq.blob.assign(sizeof(sb::run_callbacks_response) + sb::max_callback_batch_bytes, 0);
         uint32_t returned = 0;
         if (!ioctl(sb::ioctl_run_callbacks, &request, sizeof(request), g_cbq.blob.data(), static_cast<uint32_t>(g_cbq.blob.size()),
                    returned) ||

@@ -100,6 +100,12 @@ namespace sogen::steam_bridge
         output_too_small = -4,
     };
 
+    // Size of one callback drain: the host fills a buffer this large and the guest allocates a matching
+    // output buffer, so a batch always fits in a single round-trip. When more callbacks are pending than
+    // fit, the host leaves the overflow queued (unfreed) and the guest's next run_callbacks drains it, so
+    // nothing is dropped. Both sides MUST agree on this value.
+    inline constexpr uint32_t max_callback_batch_bytes = 256u << 10; // 256 KiB
+
     struct run_callbacks_request
     {
         // Guest-visible pipe id; reserved for multi-pipe games. 0 for the single-pipe common case.

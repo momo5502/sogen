@@ -28,6 +28,7 @@ namespace sogen::steam_host
         steam_host_unsupported = -1,
         steam_host_unknown_method = -2,
         steam_host_unknown_interface = -3,
+        steam_host_output_too_small = -4, // reply larger than the caller's buffer; nothing was written
     };
 
     inline constexpr size_t max_payload = 16u << 20; // 16 MiB cap on any single variable payload

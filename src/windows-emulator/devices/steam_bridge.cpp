@@ -28,8 +28,11 @@ namespace sogen
             virtual ~steam_backend() = default;
             virtual sb::interface_handle create_interface(std::string_view version) = 0;
             virtual void release_interface(sb::interface_handle handle) = 0;
+            // `out_cap` is the caller's reply capacity (the guest-sized output buffer). The reply is bounded to
+            // it and never truncated silently: a reply that does not fit leaves `out` empty and returns
+            // output_too_small, so the guest sees a failed call rather than corrupted data.
             virtual int32_t invoke(sb::interface_handle handle, uint32_t method_index, std::span<const std::byte> args,
-                                   std::vector<std::byte>& out, uint64_t& ret) = 0;
+                                   std::vector<std::byte>& out, uint64_t& ret, uint32_t out_cap) = 0;
             // Drains pending host callbacks for `pipe`. `out` receives the normal-record blob (bytes in
             // `normal_bytes`, count `normal_count`) followed by the reverse-record blob (count `reverse_count`).
             virtual void run_callbacks(int32_t pipe, std::vector<std::byte>& out, uint32_t& normal_count, uint32_t& normal_bytes,
@@ -50,7 +53,8 @@ namespace sogen
             void release_interface(sb::interface_handle) override
             {
             }
-            int32_t invoke(sb::interface_handle, uint32_t, std::span<const std::byte>, std::vector<std::byte>&, uint64_t& ret) override
+            int32_t invoke(sb::interface_handle, uint32_t, std::span<const std::byte>, std::vector<std::byte>&, uint64_t& ret,
+                           uint32_t) override
             {
                 ret = 0;
                 return static_cast<int32_t>(sb::invoke_status::unknown_interface);
@@ -82,23 +86,32 @@ namespace sogen
                 sogen_steam_backend_release(handle);
             }
             int32_t invoke(const sb::interface_handle handle, const uint32_t method_index, std::span<const std::byte> args,
-                           std::vector<std::byte>& out, uint64_t& ret) override
+                           std::vector<std::byte>& out, uint64_t& ret, const uint32_t out_cap) override
             {
-                // Generous reply buffer; the backend truncates to this and reports the actual length.
-                thread_local std::vector<uint8_t> buffer(256u * 1024u);
+                // Size the reply buffer to the guest's own output capacity: the backend writes at most this
+                // much and reports the reply's true length, so nothing is ever truncated behind our back.
+                thread_local std::vector<uint8_t> buffer;
+                if (buffer.size() < out_cap)
+                {
+                    buffer.resize(out_cap);
+                }
                 uint32_t out_len = 0;
                 uint64_t r = 0;
                 const int status = sogen_steam_backend_invoke(handle, method_index, reinterpret_cast<const uint8_t*>(args.data()),
-                                                              static_cast<uint32_t>(args.size()), buffer.data(),
-                                                              static_cast<uint32_t>(buffer.size()), &out_len, &r);
-                out.assign(reinterpret_cast<const std::byte*>(buffer.data()), reinterpret_cast<const std::byte*>(buffer.data()) + out_len);
+                                                              static_cast<uint32_t>(args.size()), buffer.data(), out_cap, &out_len, &r);
                 ret = r;
+                if (out_len > out_cap)
+                {
+                    out.clear(); // reply exceeded the guest buffer; the backend wrote nothing (status == output_too_small)
+                    return status;
+                }
+                out.assign(reinterpret_cast<const std::byte*>(buffer.data()), reinterpret_cast<const std::byte*>(buffer.data()) + out_len);
                 return status;
             }
             void run_callbacks(int32_t pipe, std::vector<std::byte>& out, uint32_t& normal_count, uint32_t& normal_bytes,
                                uint32_t& reverse_count) override
             {
-                thread_local std::vector<uint8_t> buffer(256u * 1024u);
+                thread_local std::vector<uint8_t> buffer(sb::max_callback_batch_bytes);
                 uint32_t normal_len = 0, rev_len = 0;
                 sogen_steam_backend_run_callbacks(pipe, buffer.data(), static_cast<uint32_t>(buffer.size()), &normal_len, &normal_count,
                                                   &rev_len, &reverse_count);
@@ -273,7 +286,10 @@ namespace sogen
 
                 std::vector<std::byte> out{};
                 uint64_t ret = 0;
-                const int32_t status = this->backend(win_emu).invoke(header.handle, header.method_index, args, out, ret);
+                const uint32_t out_cap = (context.output_buffer && context.output_buffer_length >= sizeof(sb::invoke_response))
+                                             ? static_cast<uint32_t>(context.output_buffer_length - sizeof(sb::invoke_response))
+                                             : 0;
+                const int32_t status = this->backend(win_emu).invoke(header.handle, header.method_index, args, out, ret, out_cap);
                 if (status != 0)
                 {
                     win_emu.log.warn("[steam-bridge] invoke handle=%llu method=%u -> status %d\n",

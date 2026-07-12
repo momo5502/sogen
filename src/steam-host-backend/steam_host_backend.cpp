@@ -433,23 +433,27 @@ extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uin
     {
         uint32_t n = (msg.m_cubParam > 0) ? static_cast<uint32_t>(msg.m_cubParam) : 0;
         n = (std::min)(n, max_param);
+
+        // Steam_BGetCallback leaves the record queued until Steam_FreeLastCallback; if this one doesn't fit,
+        // stop without freeing it so it is redelivered on the next run_callbacks rather than lost.
+        if (!out || written + 8u + n > out_cap)
+        {
+            break;
+        }
         if (trace)
         {
             traced_ids += ' ';
             traced_ids += std::to_string(msg.m_iCallback);
         }
-        // Freed whether or not it fit the reply buffer, so the client's queue never stalls.
-        if (out && written + 8u + n <= out_cap)
+
+        std::memcpy(out + written, &msg.m_iCallback, 4);
+        std::memcpy(out + written + 4, &n, 4);
+        if (n && msg.m_pubParam)
         {
-            std::memcpy(out + written, &msg.m_iCallback, 4);
-            std::memcpy(out + written + 4, &n, 4);
-            if (n && msg.m_pubParam)
-            {
-                std::memcpy(out + written + 8, msg.m_pubParam, n);
-            }
-            written += 8u + n;
-            ++n_records;
+            std::memcpy(out + written + 8, msg.m_pubParam, n);
         }
+        written += 8u + n;
+        ++n_records;
         g_freelastcallback(use_pipe);
     }
 
