@@ -959,15 +959,15 @@ namespace sogen
             catch (const std::exception& e)
             {
                 c.win_emu.log.error("NtDeviceIoControlFile: device '%s' ioctl 0x%X threw: %s (in=%u out=%u)\n",
-                                    u16_to_u8(device->get_device_name()).c_str(), io_control_code, e.what(), input_buffer_length,
-                                    output_buffer_length);
+                                    u16_to_u8(device->get_device_name()).c_str(), static_cast<unsigned>(io_control_code), e.what(),
+                                    static_cast<unsigned>(input_buffer_length), static_cast<unsigned>(output_buffer_length));
                 throw;
             }
             catch (...)
             {
                 c.win_emu.log.error("NtDeviceIoControlFile: device '%s' ioctl 0x%X threw unknown exception (in=%u out=%u)\n",
-                                    u16_to_u8(device->get_device_name()).c_str(), io_control_code, input_buffer_length,
-                                    output_buffer_length);
+                                    u16_to_u8(device->get_device_name()).c_str(), static_cast<unsigned>(io_control_code),
+                                    static_cast<unsigned>(input_buffer_length), static_cast<unsigned>(output_buffer_length));
                 throw;
             }
         }
