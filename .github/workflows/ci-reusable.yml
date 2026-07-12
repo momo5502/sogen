@@ -156,8 +156,8 @@ jobs:
         with:
           arch: x86
 
-      - name: Build 32-bit Vulkan and Steam Shims
-        run: cmake --preset=release && cmake --build --preset=release -t vulkan-shim steam-shim
+      - name: Build 32-bit Root Tools
+        run: cmake --preset=release && cmake --build --preset=release -t emulation-root-tools
 
       - name: Stash 32-bit Shims
         shell: pwsh
@@ -172,8 +172,8 @@ jobs:
         with:
           arch: x64
 
-      - name: Build API Set Dumper and 64-bit Vulkan and Steam Shims
-        run: cmake --preset=release && cmake --build --preset=release -t dump-apiset vulkan-shim steam-shim
+      - name: Build 64-bit Root Tools
+        run: cmake --preset=release && cmake --build --preset=release -t emulation-root-tools
 
       - name: Stage Shims
         shell: pwsh
