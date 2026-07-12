@@ -256,8 +256,12 @@ namespace sogen
 
     struct USER_CLASS
     {
-        uint8_t unknown[0xFF];
+        uint8_t pad_000[0x30];
+        uint64_t lpszAnsiClassName;
+        uint8_t pad_038[0xC8];
     };
+    static_assert(offsetof(USER_CLASS, lpszAnsiClassName) == 0x30);
+    static_assert(sizeof(USER_CLASS) == 0x100);
 
     struct USER_WINDOW
     {

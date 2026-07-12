@@ -316,11 +316,26 @@ namespace sogen
             std::vector<file_entry> files{};
 
             const auto dir = file_sys.translate(win_path);
+            const auto make_file_entry = [](const std::filesystem::path& file_path, const std::filesystem::path& host_path,
+                                            const bool is_directory) {
+                file_entry entry{.file_path = file_path, .is_directory = is_directory};
+
+                struct compat_stat file_stat{};
+                if (compat_stat(host_path, &file_stat))
+                {
+                    entry.file_size = is_directory ? 0 : static_cast<uint64_t>(file_stat.st_size);
+                    entry.creation_time = convert_timespec_to_filetime(file_stat.st_ctimespec);
+                    entry.last_access_time = convert_timespec_to_filetime(file_stat.st_atimespec);
+                    entry.last_write_time = convert_timespec_to_filetime(file_stat.st_mtimespec);
+                }
+
+                return entry;
+            };
 
             if (file_mask.empty() || file_mask == u"*")
             {
-                files.emplace_back(file_entry{.file_path = ".", .is_directory = true});
-                files.emplace_back(file_entry{.file_path = "..", .is_directory = true});
+                files.emplace_back(make_file_entry(".", dir, true));
+                files.emplace_back(make_file_entry("..", dir.parent_path(), true));
             }
 
             std::error_code ec{};
@@ -331,11 +346,7 @@ namespace sogen
                     continue;
                 }
 
-                files.emplace_back(file_entry{
-                    .file_path = file.path().filename(),
-                    .file_size = file.is_directory() ? 0 : file.file_size(),
-                    .is_directory = file.is_directory(),
-                });
+                files.emplace_back(make_file_entry(file.path().filename(), file.path(), file.is_directory()));
             }
 
             file_sys.access_mapped_entries(win_path, [&](const std::pair<windows_path, std::filesystem::path>& entry) {
@@ -352,11 +363,7 @@ namespace sogen
                     return;
                 }
 
-                files.emplace_back(file_entry{
-                    .file_path = filename,
-                    .file_size = dir_entry.is_directory() ? 0 : dir_entry.file_size(),
-                    .is_directory = dir_entry.is_directory(),
-                });
+                files.emplace_back(make_file_entry(filename, entry.second, dir_entry.is_directory()));
             });
 
             return files;
@@ -371,7 +378,7 @@ namespace sogen
             if (!f->enumeration_state || query_flags & SL_RESTART_SCAN)
             {
                 const auto mask = file_mask ? read_unicode_string(c.emu, file_mask) : u"";
-                c.win_emu.callbacks.on_generic_access("Enumerating directory", f->name);
+                c.win_emu.callbacks.on_generic_access("Enumerating directory", f->name + mask);
 
                 f->enumeration_state.emplace(file_enumeration_state{});
                 f->enumeration_state->files = scan_directory(c.win_emu.file_sys, f->name, mask);
@@ -427,6 +434,12 @@ namespace sogen
                 T info{};
                 info.NextEntryOffset = 0;
                 info.FileIndex = static_cast<ULONG>(current_index);
+
+                info.CreationTime = current_file.creation_time;
+                info.LastAccessTime = current_file.last_access_time;
+                info.LastWriteTime = current_file.last_write_time;
+                info.ChangeTime = info.LastWriteTime;
+
                 info.FileAttributes = current_file.is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
                 info.FileNameLength = static_cast<ULONG>(file_name.size() * 2);
                 info.EndOfFile.QuadPart = current_file.file_size;

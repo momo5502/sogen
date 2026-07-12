@@ -257,8 +257,7 @@ namespace sogen
                 return nullptr;
             }
 
-            constexpr auto cls_size = static_cast<size_t>(page_align_up(sizeof(USER_CLASS)));
-            const auto cls_ptr = c.win_emu.memory.allocate_memory(cls_size, memory_permission::read);
+            const auto cls_ptr = process_context::allocate_user_class(c.win_emu.memory, normalized_name);
 
             EMU_WNDCLASSEX wnd_class{};
             wnd_class.cbSize = sizeof(wnd_class);
@@ -2450,8 +2449,7 @@ namespace sogen
             const auto class_name_str = read_unicode_string(c.emu, class_name);
             const auto index = c.proc.add_or_find_atom(class_name_str);
 
-            constexpr auto cls_size = static_cast<size_t>(page_align_up(sizeof(USER_CLASS)));
-            const auto cls_ptr = c.win_emu.memory.allocate_memory(cls_size, memory_permission::read);
+            const auto cls_ptr = process_context::allocate_user_class(c.win_emu.memory, class_name_str);
 
             const auto wnd_class = wnd_class_ex.read();
             const auto entry = process_context::class_entry{cls_ptr, wnd_class, class_menu_name.read()};
@@ -5784,6 +5782,16 @@ namespace sogen
         BOOL handle_NtUserDisableThreadIme()
         {
             return TRUE;
+        }
+
+        BOOL handle_NtUserGetPointerDevices()
+        {
+            return FALSE;
+        }
+
+        BOOL handle_NtUserHwndQueryRedirectionInfo()
+        {
+            return FALSE;
         }
     }
 

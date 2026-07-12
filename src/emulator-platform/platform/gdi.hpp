@@ -464,6 +464,14 @@ namespace sogen
         UINT32 Reason;
     };
 
+    struct EMU_D3DKMT_MIRACAST_DISPLAY_DEVICE_CAPS
+    {
+        BOOLEAN HdcpSupported;
+        ULONG DefaultControlPort;
+        BOOLEAN UsesIhvSolution;
+    };
+    static_assert(sizeof(EMU_D3DKMT_MIRACAST_DISPLAY_DEVICE_CAPS) == 0xC);
+
     struct EMU_D3DKMT_DESTROYALLOCATION
     {
         UINT32 hDevice;

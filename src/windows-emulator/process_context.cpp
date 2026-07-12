@@ -542,12 +542,15 @@ namespace sogen
         auto [wh, desktop_win] = this->windows.create(win_emu.memory);
         this->default_desktop_window_handle = wh;
         desktop_win.handle = wh.bits;
+        desktop_win.class_name = u"#32769";
         desktop_win.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
         desktop_win.width = 1920;
         desktop_win.height = 1080;
+        const auto desktop_class = allocate_user_class(win_emu.memory, desktop_win.class_name);
         desktop_win.guest.access([&](USER_WINDOW& window) {
             window.hWnd = wh.bits;
             window.ptrBase = desktop_win.guest.value();
+            window.pcls = desktop_class;
             window.dwStyle = desktop_win.style;
             window.rcWindow = {.left = 0, .top = 0, .right = desktop_win.width, .bottom = desktop_win.height};
             window.rcClient = window.rcWindow;
@@ -557,12 +560,59 @@ namespace sogen
             window.processId = process_context::process_id;
         });
 
+        const auto create_shell_window = [&](const std::u16string_view class_name, const std::u16string_view title, const int32_t x,
+                                             const int32_t y, const int32_t width, const int32_t height) {
+            auto [handle, shell_win] = this->windows.create(win_emu.memory);
+            shell_win.handle = handle.bits;
+            shell_win.parent_handle = this->default_desktop_window_handle.bits;
+            shell_win.class_name = class_name;
+            shell_win.name = title;
+            shell_win.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+            shell_win.x = x;
+            shell_win.y = y;
+            shell_win.width = width;
+            shell_win.height = height;
+            shell_win.host_surface_window = false;
+            const auto shell_class = allocate_user_class(win_emu.memory, class_name);
+            shell_win.guest.access([&](USER_WINDOW& window) {
+                window.hWnd = handle.bits;
+                window.ptrBase = shell_win.guest.value();
+                window.pcls = shell_class;
+                window.spwndParent = desktop_win.guest.value();
+                window.dwStyle = shell_win.style;
+                window.rcWindow = {.left = x, .top = y, .right = x + width, .bottom = y + height};
+                window.rcClient = window.rcWindow;
+                window.windowBand = 1; // ZBID_DESKTOP
+                window.dpiContext = USER_DEFAULT_DPI_CONTEXT;
+                window.processId = process_context::process_id;
+            });
+            return handle;
+        };
+
+        create_shell_window(u"Progman", u"Program Manager", 0, 0, desktop_win.width, desktop_win.height);
+        create_shell_window(u"Shell_TrayWnd", u"", 0, desktop_win.height - 40, desktop_win.width, 40);
+
         const auto user_display_info = this->user_handles.get_display_info();
         user_display_info.access([&](USER_DISPINFO& display_info) {
             display_info.dwMonitorCount = 1;
             display_info.pPrimaryMonitor = monitor_obj.value();
             display_info.rcScreen = {.left = 0, .top = 0, .right = 1920, .bottom = 1080};
         });
+    }
+
+    emulator_pointer process_context::allocate_user_class(memory_manager& memory, const std::u16string_view class_name)
+    {
+        const auto ansi_class_name = u16_to_cp1252(class_name);
+        const auto cls_size = static_cast<size_t>(page_align_up(sizeof(USER_CLASS) + ansi_class_name.size() + 1));
+        const auto cls_ptr = memory.allocate_memory(cls_size, memory_permission::read);
+        const auto ansi_class_name_ptr = cls_ptr + sizeof(USER_CLASS);
+
+        memory.write_memory(ansi_class_name_ptr, ansi_class_name.c_str(), ansi_class_name.size() + 1);
+
+        const emulator_object<USER_CLASS> cls{memory, cls_ptr};
+        cls.access([&](USER_CLASS& value) { value.lpszAnsiClassName = ansi_class_name_ptr; });
+
+        return cls_ptr;
     }
 
     void process_context::serialize(utils::buffer_serializer& buffer, const emulator_thread* active_thread) const

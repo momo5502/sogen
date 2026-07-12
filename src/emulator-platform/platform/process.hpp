@@ -764,6 +764,13 @@ namespace sogen
         ULONG CodeIntegrityOptions;
     } SYSTEM_CODEINTEGRITY_INFORMATION, *PSYSTEM_CODEINTEGRITY_INFORMATION;
 
+    typedef struct _SYSTEM_BOOT_ENVIRONMENT_INFORMATION
+    {
+        GUID BootIdentifier;
+        ULONG FirmwareType;
+        ULONGLONG BootFlags;
+    } SYSTEM_BOOT_ENVIRONMENT_INFORMATION, *PSYSTEM_BOOT_ENVIRONMENT_INFORMATION;
+
     typedef struct _SYSTEM_DEVICE_INFORMATION
     {
         ULONG NumberOfDisks;
