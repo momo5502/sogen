@@ -164,6 +164,14 @@ pub fn icicle_restore_registers(ptr: *mut c_void, data: *const c_void, size: usi
 }
 
 #[unsafe(no_mangle)]
+pub fn icicle_reset_volatile_state(ptr: *mut c_void) {
+    unsafe {
+        let emulator = &mut *(ptr as *mut IcicleEmulator);
+        emulator.reset_volatile_state();
+    }
+}
+
+#[unsafe(no_mangle)]
 pub fn icicle_create_snapshot(ptr: *mut c_void) -> u32 {
     unsafe {
         let emulator = &mut *(ptr as *mut IcicleEmulator);
