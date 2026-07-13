@@ -947,6 +947,7 @@ namespace sogen
         TokenPrimary = 1,
         TokenImpersonation
     } TOKEN_TYPE;
+
     typedef TOKEN_TYPE* PTOKEN_TYPE;
 
     typedef struct _TOKEN_ELEVATION
@@ -1096,6 +1097,7 @@ namespace sogen
         DWORD NodeNumber;
         BYTE Reserved[18];
         WORD GroupCount;
+
         union
         {
             EMU_GROUP_AFFINITY64 GroupMask;
@@ -1112,6 +1114,7 @@ namespace sogen
         PROCESSOR_CACHE_TYPE Type;
         BYTE Reserved[18];
         WORD GroupCount;
+
         union
         {
             EMU_GROUP_AFFINITY64 GroupMask;
@@ -1148,6 +1151,7 @@ namespace sogen
     {
         LOGICAL_PROCESSOR_RELATIONSHIP Relationship;
         DWORD Size;
+
         union
         {
             EMU_PROCESSOR_RELATIONSHIP64 Processor;
@@ -1171,16 +1175,19 @@ namespace sogen
     {
         Traits::ULONG_PTR ProcessorMask;
         LOGICAL_PROCESSOR_RELATIONSHIP Relationship;
+
         union
         {
             struct
             {
                 BYTE Flags;
             } ProcessorCore;
+
             struct
             {
                 DWORD NodeNumber;
             } NumaNode;
+
             EMU_CACHE_DESCRIPTOR Cache;
             ULONGLONG Reserved[2];
         } DUMMYUNIONNAME;
@@ -1307,5 +1314,6 @@ namespace sogen
         ULONG Reserved;
         uint64_t Callback;
     };
+
     // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 } // namespace sogen

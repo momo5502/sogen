@@ -390,6 +390,7 @@ namespace sogen
     {
         return "5.15.0-sogen\n";
     }
+
     // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 } // namespace sogen

@@ -30,23 +30,28 @@ namespace sogen::steam_host
         struct args
         {
             std::vector<unsigned char> b;
+
             void put(const void* p, size_t n)
             {
                 const auto* c = static_cast<const unsigned char*>(p);
                 b.insert(b.end(), c, c + n);
             }
+
             void u64(uint64_t v)
             {
                 put(&v, 8);
             }
+
             void i32(int32_t v)
             {
                 put(&v, 4);
             }
+
             void f32(float v)
             {
                 put(&v, 4);
             }
+
             void cstr(const char* s)
             {
                 if (!s)
@@ -98,6 +103,7 @@ namespace sogen::steam_host
         struct ServerListProxy : ISteamMatchmakingServerListResponse
         {
             uint64_t token;
+
             void ServerResponded(HServerListRequest hReq, int iServer) override
             {
                 args a;
@@ -105,6 +111,7 @@ namespace sogen::steam_host
                 a.i32(iServer);
                 enqueue(token, 0, a);
             }
+
             void ServerFailedToRespond(HServerListRequest hReq, int iServer) override
             {
                 args a;
@@ -112,6 +119,7 @@ namespace sogen::steam_host
                 a.i32(iServer);
                 enqueue(token, 1, a);
             }
+
             void RefreshComplete(HServerListRequest hReq, EMatchMakingServerResponse response) override
             {
                 args a;
@@ -128,6 +136,7 @@ namespace sogen::steam_host
         struct PingProxy : ISteamMatchmakingPingResponse
         {
             uint64_t token;
+
             void ServerResponded(gameserveritem_t& server) override
             {
                 args a;
@@ -138,6 +147,7 @@ namespace sogen::steam_host
                     delete this;
                 }
             }
+
             void ServerFailedToRespond() override
             {
                 args a;
@@ -152,6 +162,7 @@ namespace sogen::steam_host
         struct PlayersProxy : ISteamMatchmakingPlayersResponse
         {
             uint64_t token;
+
             void AddPlayerToList(const char* pchName, int nScore, float flTimePlayed) override
             {
                 args a;
@@ -160,6 +171,7 @@ namespace sogen::steam_host
                 a.f32(flTimePlayed);
                 enqueue(token, 0, a);
             }
+
             void PlayersFailedToRespond() override
             {
                 args a;
@@ -169,6 +181,7 @@ namespace sogen::steam_host
                     delete this;
                 }
             }
+
             void PlayersRefreshComplete() override
             {
                 args a;
@@ -183,6 +196,7 @@ namespace sogen::steam_host
         struct RulesProxy : ISteamMatchmakingRulesResponse
         {
             uint64_t token;
+
             void RulesResponded(const char* pchRule, const char* pchValue) override
             {
                 args a;
@@ -190,6 +204,7 @@ namespace sogen::steam_host
                 a.cstr(pchValue);
                 enqueue(token, 0, a);
             }
+
             void RulesFailedToRespond() override
             {
                 args a;
@@ -199,6 +214,7 @@ namespace sogen::steam_host
                     delete this;
                 }
             }
+
             void RulesRefreshComplete() override
             {
                 args a;

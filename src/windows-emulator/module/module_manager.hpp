@@ -107,6 +107,7 @@ namespace sogen
                                         bool is_static = false, bool allow_duplicate = false, uint64_t relocation_base = 0);
         mapped_module* map_memory_module(uint64_t base_address, uint64_t image_size, windows_path module_path, const logger& logger,
                                          bool is_static = false, bool allow_duplicate = false);
+
         mapped_module* find_by_address(const uint64_t address)
         {
             const auto entry = this->get_module(address);
@@ -146,6 +147,7 @@ namespace sogen
         void deserialize(utils::buffer_deserializer& buffer);
 
         bool unmap(uint64_t address);
+
         const module_map& modules() const
         {
             return modules_;
@@ -156,6 +158,7 @@ namespace sogen
         {
             return current_execution_mode_;
         }
+
         bool is_wow64_process() const
         {
             return current_execution_mode_ == execution_mode::wow64_32bit;

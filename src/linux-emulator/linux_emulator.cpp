@@ -21,6 +21,7 @@ namespace sogen
         constexpr uint16_t GDT_DATA64_SEL = 0x2B; // 64-bit data segment (ring 3)
 
 #pragma pack(push, 1)
+
         struct gdt_entry
         {
             uint16_t limit_low;
@@ -30,6 +31,7 @@ namespace sogen
             uint8_t granularity;
             uint8_t base_high;
         };
+
 #pragma pack(pop)
 
         static_assert(sizeof(gdt_entry) == GDT_ENTRY_SIZE);

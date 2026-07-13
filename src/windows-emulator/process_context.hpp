@@ -49,6 +49,7 @@ namespace sogen
     class windows_version_manager;
 
     using knowndlls_map = std::map<std::u16string, section>;
+
     struct file_lock_range
     {
         uint64_t offset{};
@@ -434,6 +435,7 @@ namespace sogen
         // Keyboard raw input registration (HID usage page 0x01, usage 0x06), mirroring the mouse fields above.
         bool raw_keyboard_registered{};
         hwnd raw_keyboard_target{};
+
         // One pending raw-input payload (mouse motion + buttons, or a keyboard make/break) keyed by the
         // HRAWINPUT token posted in WM_INPUT's lParam; consumed by NtUserGetRawInputData.
         struct raw_input_payload
@@ -448,6 +450,7 @@ namespace sogen
             uint32_t key_message{};       // corresponding WM_KEY* or WM_SYSKEY* message
             bool key_extended{};          // true when the key's scan code has an E0 prefix (lParam bit 24)
         };
+
         std::map<uint32_t, raw_input_payload> raw_inputs{};
         uint32_t next_raw_input_token{1};
 

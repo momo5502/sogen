@@ -368,6 +368,7 @@ namespace sogen
         std::unordered_map<uint64_t, instance_data> instances;
         std::unordered_map<uint64_t, physical_device_data> physical_devices;
         std::unordered_map<VkPhysicalDevice, uint64_t> physical_device_ids;
+
         struct queue_data
         {
             VkQueue handle{};
@@ -456,16 +457,19 @@ namespace sogen
             VkShaderModule handle{};
             uint64_t device_id{};
         };
+
         struct image_view_data
         {
             VkImageView handle{};
             uint64_t device_id{};
         };
+
         struct buffer_view_data
         {
             VkBufferView handle{};
             uint64_t device_id{};
         };
+
         struct query_pool_data
         {
             VkQueryPool handle{};
@@ -473,37 +477,44 @@ namespace sogen
             uint32_t query_type{};
             uint32_t pipeline_statistics{};
         };
+
         struct render_pass_data
         {
             VkRenderPass handle{};
             uint64_t device_id{};
             bool has_depth{};
         };
+
         struct framebuffer_data
         {
             VkFramebuffer handle{};
             uint64_t device_id{};
         };
+
         struct pipeline_layout_data
         {
             VkPipelineLayout handle{};
             uint64_t device_id{};
         };
+
         struct pipeline_data
         {
             VkPipeline handle{};
             uint64_t device_id{};
         };
+
         struct descriptor_set_layout_data
         {
             VkDescriptorSetLayout handle{};
             uint64_t device_id{};
         };
+
         struct descriptor_pool_data
         {
             VkDescriptorPool handle{};
             uint64_t device_id{};
         };
+
         struct bound_buffer_info
         {
             uint64_t buffer_id{};

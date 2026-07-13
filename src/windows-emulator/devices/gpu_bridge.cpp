@@ -249,6 +249,7 @@ namespace sogen
                 uint64_t device{};
                 void* host_ptr{};
             };
+
             std::unordered_map<uint64_t, direct_mapping> direct_mappings_{};
 
             // Before the host GPU reads guest-produced data, make the guest's writes to every directly-aliased
@@ -1781,6 +1782,7 @@ namespace sogen
                 this->vulkan_.destroy_image_view(request.device, request.object);
                 return STATUS_SUCCESS;
             }
+
             NTSTATUS handle_create_buffer_view(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::create_buffer_view_request request{};
@@ -1793,6 +1795,7 @@ namespace sogen
                     this->vulkan_.create_buffer_view(request.device, request.buffer, request.format, request.offset, request.range, view);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = view});
             }
+
             NTSTATUS handle_destroy_buffer_view(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::device_child_request request{};
@@ -1803,6 +1806,7 @@ namespace sogen
                 this->vulkan_.destroy_buffer_view(request.device, request.object);
                 return STATUS_SUCCESS;
             }
+
             NTSTATUS handle_create_query_pool(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::create_query_pool_request request{};
@@ -1815,6 +1819,7 @@ namespace sogen
                                                                        request.pipeline_statistics, pool);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = pool});
             }
+
             NTSTATUS handle_destroy_query_pool(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::device_child_request request{};
@@ -1825,6 +1830,7 @@ namespace sogen
                 this->vulkan_.destroy_query_pool(request.device, request.object);
                 return STATUS_SUCCESS;
             }
+
             NTSTATUS handle_reset_query_pool(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::reset_query_pool_request request{};
@@ -1836,6 +1842,7 @@ namespace sogen
                     this->vulkan_.reset_query_pool(request.device, request.query_pool, request.first_query, request.query_count);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
+
             NTSTATUS handle_get_query_pool_results(windows_emulator& win_emu, const io_device_context& context)
             {
                 using request_t = gpu_bridge::get_query_pool_results_request;

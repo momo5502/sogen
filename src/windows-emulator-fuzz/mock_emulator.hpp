@@ -29,13 +29,16 @@ namespace sogen::mock
         {
             return "mock";
         }
+
         bool supports_multiple_vcpus() const override
         {
             return false;
         }
+
         void serialize_state(utils::buffer_serializer&, bool) const override
         {
         }
+
         void deserialize_state(utils::buffer_deserializer&, bool) override
         {
         }
@@ -48,6 +51,7 @@ namespace sogen::mock
                 throw std::runtime_error("mock: read from unmapped guest memory");
             }
         }
+
         bool try_read_memory(uint64_t address, void* data, size_t size) const override
         {
             const region* r = nullptr;
@@ -59,6 +63,7 @@ namespace sogen::mock
             std::memcpy(data, r->data.data() + off, size);
             return true;
         }
+
         void write_memory(uint64_t address, const void* data, size_t size) override
         {
             if (!this->try_write_memory(address, data, size))
@@ -66,6 +71,7 @@ namespace sogen::mock
                 throw std::runtime_error("mock: write to unmapped guest memory");
             }
         }
+
         bool try_write_memory(uint64_t address, const void* data, size_t size) override
         {
             const region* r = nullptr;
@@ -84,13 +90,16 @@ namespace sogen::mock
         {
             return false;
         }
+
         void start(size_t = 0) override
         {
             throw std::runtime_error("mock: cannot execute code");
         }
+
         void stop() override
         {
         }
+
         size_t read_raw_register(int reg, void* value, size_t size) override
         {
             std::memset(value, 0, size);
@@ -101,27 +110,33 @@ namespace sogen::mock
             }
             return size;
         }
+
         size_t write_raw_register(int reg, const void* value, size_t size) override
         {
             const auto* bytes = static_cast<const std::byte*>(value);
             this->registers_[reg].assign(bytes, bytes + size);
             return size;
         }
+
         std::vector<std::byte> save_registers() const override
         {
             return {};
         }
+
         void restore_registers(const std::vector<std::byte>&) override
         {
         }
+
         bool has_violation() const override
         {
             return false;
         }
+
         bool supports_instruction_counting() const override
         {
             return false;
         }
+
         bool is_stop_thread_safe() const override
         {
             return true;
@@ -132,11 +147,13 @@ namespace sogen::mock
         {
             this->segment_bases_[static_cast<int>(reg)] = value;
         }
+
         pointer_type get_segment_base(register_type reg) override
         {
             const auto it = this->segment_bases_.find(static_cast<int>(reg));
             return it == this->segment_bases_.end() ? 0 : it->second;
         }
+
         void load_gdt(pointer_type, uint32_t) override
         {
         }
@@ -147,38 +164,47 @@ namespace sogen::mock
         {
             return nullptr;
         }
+
         emulator_hook* hook_memory_execution(uint64_t, memory_execution_hook_callback) override
         {
             return nullptr;
         }
+
         emulator_hook* hook_memory_range_execution(uint64_t, uint64_t, memory_execution_hook_callback) override
         {
             return nullptr;
         }
+
         emulator_hook* hook_memory_read(uint64_t, uint64_t, memory_access_hook_callback) override
         {
             return nullptr;
         }
+
         emulator_hook* hook_memory_write(uint64_t, uint64_t, memory_access_hook_callback) override
         {
             return nullptr;
         }
+
         emulator_hook* hook_instruction(int, instruction_hook_callback) override
         {
             return nullptr;
         }
+
         emulator_hook* hook_interrupt(interrupt_hook_callback) override
         {
             return nullptr;
         }
+
         emulator_hook* hook_memory_violation(memory_violation_hook_callback) override
         {
             return nullptr;
         }
+
         emulator_hook* hook_basic_block(basic_block_hook_callback) override
         {
             return nullptr;
         }
+
         void delete_hook(emulator_hook*) override
         {
         }
@@ -231,14 +257,17 @@ namespace sogen::mock
         {
             throw std::runtime_error("mock: mmio not supported");
         }
+
         void map_memory(uint64_t address, size_t size, memory_permission) override
         {
             this->regions_[address] = region{size, std::vector<std::byte>(size)};
         }
+
         void unmap_memory(uint64_t address, size_t) override
         {
             this->regions_.erase(address);
         }
+
         void apply_memory_protection(uint64_t, size_t, memory_permission) override
         {
         }

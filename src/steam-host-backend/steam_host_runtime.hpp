@@ -54,6 +54,7 @@ namespace sogen::steam_host
                 p = end;
             }
         }
+
         // Reads a by-value scalar from its fixed 8-byte wire slot into the host's native width (see the
         // guest's put_scalar). Arch-agnostic: only the low `n` bytes are taken.
         void get_scalar(void* dst, size_t n)
@@ -63,6 +64,7 @@ namespace sogen::steam_host
             n = (std::min)(n, slot.size());
             std::memcpy(dst, slot.data(), n);
         }
+
         const char* get_cstr()
         {
             const char* s = reinterpret_cast<const char*>(p);
@@ -81,6 +83,7 @@ namespace sogen::steam_host
             }
             return s;
         }
+
         std::vector<unsigned char> get_var()
         {
             uint32_t len = 0;
@@ -111,6 +114,7 @@ namespace sogen::steam_host
             const auto* b = static_cast<const unsigned char*>(q);
             out.insert(out.end(), b, b + n);
         }
+
         void put_cstr(const char* s)
         {
             if (!s)
@@ -123,15 +127,18 @@ namespace sogen::steam_host
             out.push_back(nul);
             ret = (n != 0) ? 1 : 0;
         }
+
         void put_ret(const void* q, size_t n)
         {
             ret = 0;
             std::memcpy(&ret, q, n <= sizeof(ret) ? n : sizeof(ret));
         }
+
         void put_ret_value(uint64_t v)
         {
             ret = v;
         }
+
         template <typename T>
         void put_ret_floating(T v)
         {
@@ -154,6 +161,7 @@ namespace sogen::steam_host
     {
         return n > max_payload ? max_payload : n;
     }
+
     template <typename T>
     size_t cap_count(size_t n)
     {
@@ -166,10 +174,12 @@ namespace sogen::steam_host
     struct is_complete : std::false_type
     {
     };
+
     template <typename T>
     struct is_complete<T, std::void_t<decltype(sizeof(T))>> : std::true_type
     {
     };
+
     template <typename T>
     inline constexpr bool is_complete_v = is_complete<T>::value;
 

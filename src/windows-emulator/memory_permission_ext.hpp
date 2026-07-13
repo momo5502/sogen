@@ -66,11 +66,13 @@ namespace sogen
               extended(memory_permission_ext::none)
         {
         }
+
         constexpr nt_memory_permission(memory_permission common)
             : common(common),
               extended(memory_permission_ext::none)
         {
         }
+
         constexpr nt_memory_permission(memory_permission common, memory_permission_ext ext)
             : common(common),
               extended(ext)
@@ -82,6 +84,7 @@ namespace sogen
         {
             return common;
         }
+
         operator memory_permission_ext() const
         {
             return extended;

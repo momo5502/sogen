@@ -68,6 +68,7 @@ namespace sogen
 
         virtual void set_event_sink(event_sink sink) = 0;
         virtual void pump_events() = 0;
+
         virtual void reset()
         {
         }
@@ -75,33 +76,42 @@ namespace sogen
         virtual void create_window(const ui_window_desc& /*desc*/)
         {
         }
+
         virtual void destroy_window(const hwnd /*window*/)
         {
         }
+
         virtual void set_window_rect(const hwnd /*window*/, const RECT& /*rect*/)
         {
         }
+
         virtual void set_window_visible(const hwnd /*window*/, const bool /*visible*/)
         {
         }
+
         virtual void set_window_enabled(const hwnd /*window*/, const bool /*enabled*/)
         {
         }
+
         virtual void set_window_title(const hwnd /*window*/, std::u16string_view /*title*/)
         {
         }
+
         virtual void invalidate(const hwnd /*window*/, const std::optional<RECT>& /*rect*/)
         {
         }
+
         virtual void present_surface(const hwnd /*window*/, const ui_surface_desc& /*surface*/)
         {
         }
+
         // Warp the host cursor so it tracks a guest SetCursorPos. Without this, the next host mouse-motion
         // event reports the (unchanged) host position and overwrites the recentered guest cursor, making
         // relative-mouse deltas (in-game look) jump. screen_x/y are emulated-desktop screen coordinates.
         virtual void set_cursor_position(const hwnd /*window*/, const int32_t /*screen_x*/, const int32_t /*screen_y*/)
         {
         }
+
         // Show or hide the host cursor. Games that capture the mouse hide it (ShowCursor(FALSE) /
         // SetCursor(NULL)) and recenter every frame; without honoring this the host cursor stays visible
         // and flickers as the guest warps it back to the center.
@@ -116,9 +126,11 @@ namespace sogen
         void set_event_sink(event_sink /*sink*/) override
         {
         }
+
         void pump_events() override
         {
         }
+
         void reset() override
         {
         }

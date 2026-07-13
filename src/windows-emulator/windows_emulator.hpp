@@ -192,6 +192,7 @@ namespace sogen
         {
             return *this->clock_;
         }
+
         network::dns_lookup& dns_lookup()
         {
             return *this->dns_lookup_;

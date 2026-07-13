@@ -28,6 +28,7 @@ namespace sogen
             char machine[65];
             char domainname[65];
         };
+
         // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
         static_assert(sizeof(linux_utsname) == 390);
@@ -635,6 +636,7 @@ namespace sogen
         // Linux struct sysinfo
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 #pragma pack(push, 1)
+
         struct linux_sysinfo
         {
             int64_t uptime;
@@ -653,6 +655,7 @@ namespace sogen
             uint32_t mem_unit;
             char padding[4]; // padding to 112 bytes
         };
+
 #pragma pack(pop)
         // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 

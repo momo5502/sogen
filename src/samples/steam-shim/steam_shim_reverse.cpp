@@ -16,6 +16,7 @@ namespace
         void* obj;
         int32_t type;
     };
+
     std::mutex g_resp_mutex;
     std::unordered_map<uint64_t, response_entry> g_responses;
     std::unordered_map<void*, uint64_t> g_obj_tokens; // dedup by object pointer -> one token per object
@@ -26,6 +27,7 @@ namespace
     {
         const unsigned char* p;
         const unsigned char* end;
+
         template <typename T>
         T get()
         {
@@ -37,6 +39,7 @@ namespace
             }
             return v;
         }
+
         void bytes(void* dst, size_t n)
         {
             if (p + n <= end)
@@ -49,6 +52,7 @@ namespace
                 std::memset(dst, 0, n);
             }
         }
+
         const char* cstr()
         {
             const char* s = reinterpret_cast<const char*>(p);

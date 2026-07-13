@@ -38,6 +38,7 @@ namespace sogen::py
             hook_state& operator=(const hook_state&) = delete;
 
             void remove();
+
             bool active() const
             {
                 return this->hook != nullptr || static_cast<bool>(this->remover);
@@ -55,6 +56,7 @@ namespace sogen::py
         {
             return this->shared_state && this->shared_state->active();
         }
+
         void remove() const;
     };
 

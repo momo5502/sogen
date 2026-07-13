@@ -18,6 +18,7 @@ namespace sogen
 
     class windows_emulator;
     struct process_context;
+
     namespace utils
     {
         class aligned_binary_writer;

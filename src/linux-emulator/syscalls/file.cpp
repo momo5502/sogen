@@ -514,6 +514,7 @@ namespace sogen
         }
 
 #pragma pack(push, 1)
+
         struct linux_dirent64_header
         {
             uint64_t d_ino;
@@ -521,6 +522,7 @@ namespace sogen
             uint16_t d_reclen;
             uint8_t d_type;
         };
+
 #pragma pack(pop)
 
         const char* translate_open_mode(const int flags, const bool file_existed)
@@ -2791,6 +2793,7 @@ namespace sogen
         // Linux struct statfs (120 bytes on x86-64)
         // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 #pragma pack(push, 1)
+
         struct linux_statfs
         {
             int64_t f_type;
@@ -2806,6 +2809,7 @@ namespace sogen
             int64_t f_flags;
             int64_t f_spare[4];
         };
+
 #pragma pack(pop)
         // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
@@ -2837,6 +2841,7 @@ namespace sogen
 
         // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 #pragma pack(push, 1)
+
         struct linux_statfs
         {
             int64_t f_type;
@@ -2852,6 +2857,7 @@ namespace sogen
             int64_t f_flags;
             int64_t f_spare[4];
         };
+
 #pragma pack(pop)
         // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
@@ -2905,6 +2911,7 @@ namespace sogen
         case TIOCGWINSZ: {
             const auto arg_addr = get_linux_syscall_argument(c.emu, 2);
 #pragma pack(push, 1)
+
             struct winsize
             {
                 uint16_t ws_row;
@@ -2912,6 +2919,7 @@ namespace sogen
                 uint16_t ws_xpixel;
                 uint16_t ws_ypixel;
             };
+
 #pragma pack(pop)
             winsize ws{};
             ws.ws_row = 25;

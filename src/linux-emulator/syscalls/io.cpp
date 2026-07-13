@@ -384,11 +384,13 @@ namespace sogen
     {
 
 #pragma pack(push, 1)
+
         struct linux_epoll_event
         {
             uint32_t events;
             uint64_t data;
         };
+
 #pragma pack(pop)
 
         static_assert(sizeof(linux_epoll_event) == 12);
@@ -526,12 +528,14 @@ namespace sogen
         (void)timeout;
 
 #pragma pack(push, 1)
+
         struct linux_pollfd
         {
             int32_t fd;
             int16_t events;
             int16_t revents;
         };
+
 #pragma pack(pop)
 
         static_assert(sizeof(linux_pollfd) == 8);
@@ -692,6 +696,7 @@ namespace sogen
         // We ignore the signal mask and delegate to select logic
         sys_select(c);
     }
+
     // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 } // namespace sogen

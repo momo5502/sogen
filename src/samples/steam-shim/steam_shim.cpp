@@ -195,6 +195,7 @@ namespace
         uint32_t end = 0;                   // valid extent
         std::vector<unsigned char> current; // keeps the payload alive until the next BGetCallback
     };
+
     thread_local callback_queue g_cbq;
 
     bool drain_batch(int32_t pipe)

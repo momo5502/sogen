@@ -6,6 +6,7 @@
 // Matches the kernel's struct stat for x86-64
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 #pragma pack(push, 1)
+
 namespace sogen
 {
 
@@ -30,6 +31,7 @@ namespace sogen
         uint64_t st_ctime_nsecs;
         int64_t reserved_[3];
     };
+
 #pragma pack(pop)
     // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 

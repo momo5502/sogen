@@ -92,11 +92,13 @@ namespace sogen
             pointer pwnd{};
             UINT msg{};
             wparam wParam{};
+
             union
             {
                 EMU_MINMAXINFO point5;
                 EMU_WINDOWPOS window_pos;
             } data{};
+
             pointer xParam{};
             pointer xpfnProc{};
         };
@@ -114,9 +116,11 @@ namespace sogen
             wparam wParam{};
             pointer xParam{};
             pointer xpfnProc{};
+
             union
             {
                 RECT rect;
+
                 struct
                 {
                     EMU_NCCALCSIZE_PARAMS params;
@@ -1761,6 +1765,7 @@ namespace sogen
                     uint32_t type;
                     std::array<uint32_t, 6> details;
                 };
+
                 static_assert(sizeof(raw_input_device_info) == 32);
 
                 constexpr uint32_t required_bytes = sizeof(raw_input_device_info);
@@ -3693,6 +3698,7 @@ namespace sogen
                 uint32_t width;
                 uint32_t height;
             };
+
             static constexpr std::array<display_mode, 8> modes = {{
                 {.width = 640, .height = 480},
                 {.width = 800, .height = 600},
@@ -5142,6 +5148,7 @@ namespace sogen
         {
             return TRUE;
         }
+
         BOOL handle_NtUserDestroyCaret()
         {
             return TRUE;

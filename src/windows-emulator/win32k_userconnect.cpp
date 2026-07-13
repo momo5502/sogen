@@ -96,6 +96,7 @@ namespace sogen
                 std::u16string_view text;
                 uint32_t id;
             };
+
             static constexpr std::array<mb_string, 11> entries = {{
                 {.text = u"OK", .id = 1},          // IDOK
                 {.text = u"Cancel", .id = 2},      // IDCANCEL

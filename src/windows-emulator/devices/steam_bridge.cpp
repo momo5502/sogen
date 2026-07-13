@@ -50,20 +50,24 @@ namespace sogen
             {
                 return sb::null_interface;
             }
+
             void release_interface(sb::interface_handle) override
             {
             }
+
             int32_t invoke(sb::interface_handle, uint32_t, std::span<const std::byte>, std::vector<std::byte>&, uint64_t& ret,
                            uint32_t) override
             {
                 ret = 0;
                 return static_cast<int32_t>(sb::invoke_status::unknown_interface);
             }
+
             void run_callbacks(int32_t, std::vector<std::byte>&, uint32_t& normal_count, uint32_t& normal_bytes,
                                uint32_t& reverse_count) override
             {
                 normal_count = normal_bytes = reverse_count = 0;
             }
+
             bool get_api_call_result(int32_t, uint64_t, int32_t, uint32_t, std::vector<std::byte>&, bool& io_failure) override
             {
                 io_failure = false;
@@ -81,10 +85,12 @@ namespace sogen
                 const std::string v{version};
                 return sogen_steam_backend_create_interface(v.c_str());
             }
+
             void release_interface(const sb::interface_handle handle) override
             {
                 sogen_steam_backend_release(handle);
             }
+
             int32_t invoke(const sb::interface_handle handle, const uint32_t method_index, std::span<const std::byte> args,
                            std::vector<std::byte>& out, uint64_t& ret, const uint32_t out_cap) override
             {
@@ -108,6 +114,7 @@ namespace sogen
                 out.assign(reinterpret_cast<const std::byte*>(buffer.data()), reinterpret_cast<const std::byte*>(buffer.data()) + out_len);
                 return status;
             }
+
             void run_callbacks(int32_t pipe, std::vector<std::byte>& out, uint32_t& normal_count, uint32_t& normal_bytes,
                                uint32_t& reverse_count) override
             {
@@ -119,6 +126,7 @@ namespace sogen
                 out.assign(reinterpret_cast<const std::byte*>(buffer.data()),
                            reinterpret_cast<const std::byte*>(buffer.data()) + normal_len + rev_len);
             }
+
             bool get_api_call_result(int32_t pipe, uint64_t call, int32_t callback_id, uint32_t data_bytes, std::vector<std::byte>& out,
                                      bool& io_failure) override
             {
@@ -183,6 +191,7 @@ namespace sogen
             void serialize_object(utils::buffer_serializer&) const override
             {
             }
+
             void deserialize_object(utils::buffer_deserializer&) override
             {
             }
