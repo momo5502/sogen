@@ -610,6 +610,11 @@ jobs:
           - Windows 2025
           - Windows 2022
           #- Windows 2019
+        exclude:
+          # The old root exists to prove the pre-Windows-11 guest DLL set still emulates.
+          # That is a guest-side property, so Release alone covers it.
+          - emulation-root: Windows 2022
+            configuration: Debug
         include:
           - configuration: Debug
             preset: debug
