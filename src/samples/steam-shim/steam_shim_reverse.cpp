@@ -107,8 +107,7 @@ extern "C" void sogen_dispatch_reverse(uint64_t token, int32_t method, const voi
 
     switch (static_cast<sogen::steam_bridge::response_type>(e.type))
     {
-    case sogen::steam_bridge::response_type::matchmaking_server_list:
-    {
+    case sogen::steam_bridge::response_type::matchmaking_server_list: {
         auto* o = static_cast<ISteamMatchmakingServerListResponse*>(e.obj);
         auto* const h = reinterpret_cast<HServerListRequest>(r.get<uint64_t>());
         const int iServer = r.get<int32_t>();
@@ -126,8 +125,7 @@ extern "C" void sogen_dispatch_reverse(uint64_t token, int32_t method, const voi
         }
         break;
     }
-    case sogen::steam_bridge::response_type::matchmaking_ping:
-    {
+    case sogen::steam_bridge::response_type::matchmaking_ping: {
         auto* o = static_cast<ISteamMatchmakingPingResponse*>(e.obj);
         if (method == 0)
         {
@@ -141,8 +139,7 @@ extern "C" void sogen_dispatch_reverse(uint64_t token, int32_t method, const voi
         }
         break;
     }
-    case sogen::steam_bridge::response_type::matchmaking_players:
-    {
+    case sogen::steam_bridge::response_type::matchmaking_players: {
         auto* o = static_cast<ISteamMatchmakingPlayersResponse*>(e.obj);
         if (method == 0)
         {
@@ -161,8 +158,7 @@ extern "C" void sogen_dispatch_reverse(uint64_t token, int32_t method, const voi
         }
         break;
     }
-    case sogen::steam_bridge::response_type::matchmaking_rules:
-    {
+    case sogen::steam_bridge::response_type::matchmaking_rules: {
         auto* o = static_cast<ISteamMatchmakingRulesResponse*>(e.obj);
         if (method == 0)
         {

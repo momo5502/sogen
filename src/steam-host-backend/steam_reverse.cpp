@@ -10,7 +10,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "steam_api.h" // ISteamMatchmaking*Response, gameserveritem_t, HServerListRequest
+#include "steam_api.h"               // ISteamMatchmaking*Response, gameserveritem_t, HServerListRequest
 #include "steam_bridge_protocol.hpp" // response_type: the shared reverse-callback interface ids
 #include "steam_reverse.hpp"
 

@@ -81,8 +81,7 @@ namespace
     {
         // Local static, not g_mutex: the create-interface path already holds g_mutex when it calls through
         // here, so a mutex would self-deadlock. The static's init is thread-safe and runs once.
-        static const HANDLE h =
-            CreateFileA(R"(\\.\SogenSteam)", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        static const HANDLE h = CreateFileA(R"(\\.\SogenSteam)", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
         return h;
     }
 
@@ -105,9 +104,8 @@ namespace
         static const bool ok = [] {
             uint32_t returned = 0;
             sb::version_response version{};
-            return ioctl(sb::ioctl_get_version, nullptr, 0, &version, sizeof(version), returned) &&
-                   returned >= sizeof(version) && version.magic == sb::protocol_magic &&
-                   version.version == sb::protocol_version;
+            return ioctl(sb::ioctl_get_version, nullptr, 0, &version, sizeof(version), returned) && returned >= sizeof(version) &&
+                   version.magic == sb::protocol_magic && version.version == sb::protocol_version;
         }();
         return ok;
     }
