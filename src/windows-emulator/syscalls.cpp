@@ -1172,6 +1172,40 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtAllocateUuids(const syscall_context& c, const emulator_object<ULARGE_INTEGER> time,
+                                        const emulator_object<ULONG> range, const emulator_object<ULONG> sequence,
+                                        const emulator_pointer seed)
+        {
+            const auto system_time = utils::convert_to_ksystem_time(c.win_emu.clock().system_now());
+            const uint64_t current_time = (static_cast<uint64_t>(static_cast<DWORD>(system_time.High1Time)) << 32) | system_time.LowPart;
+
+            if (c.proc.next_uuid_time == 0)
+            {
+                auto seed_value = current_time ^ c.win_emu.clock().timestamp_counter() ^ c.proc.ntdll_image_base;
+                for (auto& byte : c.proc.uuid_seed)
+                {
+                    seed_value ^= seed_value << 13;
+                    seed_value ^= seed_value >> 7;
+                    seed_value ^= seed_value << 17;
+                    byte = static_cast<uint8_t>(seed_value);
+                }
+
+                c.proc.uuid_seed[0] = static_cast<uint8_t>((c.proc.uuid_seed[0] | 0x02) & ~0x01);
+                c.proc.uuid_sequence = static_cast<uint32_t>(seed_value) & 0x3FFF;
+            }
+
+            constexpr ULONG uuid_range = 10000;
+            const uint64_t uuid_time = std::max(current_time, c.proc.next_uuid_time);
+            c.proc.next_uuid_time = uuid_time + uuid_range;
+
+            time.write(ULARGE_INTEGER{.QuadPart = uuid_time});
+            range.write(uuid_range);
+            sequence.write(c.proc.uuid_sequence);
+            c.emu.write_memory(seed, c.proc.uuid_seed.data(), c.proc.uuid_seed.size());
+
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtAllocateReserveObject(const syscall_context& c, const emulator_object<handle> memory_reserve_handle,
                                                 const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                                 const DWORD type)
@@ -1633,6 +1667,7 @@ namespace sogen
         add_handler(NtGdiDdDDICreateDCFromMemory);
         add_handler(NtGdiDdDDIDestroyDCFromMemory);
         add_handler(NtAllocateLocallyUniqueId);
+        add_handler(NtAllocateUuids);
         add_handler(NtUserAllowSetForegroundWindow);
         add_handler(NtGdiOpenDCW);
         add_handler(NtGdiDdDDIOpenAdapterFromLuid);
