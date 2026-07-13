@@ -11,6 +11,7 @@ endif()
 add_library(steam-host-backend STATIC steam_host_backend.cpp steam_reverse.cpp)
 sogen_target_disable_warnings(steam-host-backend)  # SDK headers + generated code are not warning-clean
 target_link_libraries(steam-host-backend PRIVATE ${CMAKE_DL_LIBS})  # dlopen/dlsym on Linux/macOS
+target_link_libraries(steam-host-backend PRIVATE steam-bridge-protocol)  # shared response_type ids
 target_include_directories(steam-host-backend PRIVATE
   "${SOGEN_STEAM_BASE_DIR}" "${SOGEN_STEAM_GEN_DIR}" "${CMAKE_CURRENT_LIST_DIR}")
 target_include_directories(steam-host-backend PUBLIC "${CMAKE_CURRENT_LIST_DIR}")  # the C ABI header
@@ -26,6 +27,7 @@ foreach(_entry ${SOGEN_STEAM_TAG_LIST})
                  "${CMAKE_CURRENT_BINARY_DIR}/steam_host_${_tag}.gen.cpp" @ONLY)
   add_library(steam-host-${_tag} OBJECT "${CMAKE_CURRENT_BINARY_DIR}/steam_host_${_tag}.gen.cpp")
   sogen_target_disable_warnings(steam-host-${_tag})
+  target_link_libraries(steam-host-${_tag} PRIVATE steam-bridge-protocol)  # shared response_type ids
   target_include_directories(steam-host-${_tag} PRIVATE
     "${_dir}" "${SOGEN_STEAM_GEN_DIR}/${_tag}" "${CMAKE_CURRENT_LIST_DIR}")
   target_sources(steam-host-backend PRIVATE $<TARGET_OBJECTS:steam-host-${_tag}>)

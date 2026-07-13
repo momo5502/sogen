@@ -9,7 +9,7 @@
 
 namespace sogen::steam_host
 {
-    // Creates (or reuses) a host proxy for response interface `type` (RESPONSE_IFACE_ID) bound to `token`.
+    // Creates (or reuses) a host proxy for response interface `type` (steam_bridge::response_type) bound to `token`.
     // Returned as the concrete ISteam...Response* (as void*). Called from the generated thunks.
     void* create_response_proxy(int32_t type, uint64_t token);
 

@@ -129,6 +129,17 @@ namespace sogen::steam_bridge
         uint32_t data_bytes; // length of the payload that immediately follows this header
     };
 
+    // Game-implemented response interfaces routed over the reverse-callback channel. This id rides in the
+    // callback-token wire slot and selects the host proxy shape and the guest replay shape; the host backend,
+    // the guest shim, and the bridge generator all key off it, so it is defined here once.
+    enum class response_type : int32_t
+    {
+        matchmaking_server_list = 0, // ISteamMatchmakingServerListResponse
+        matchmaking_ping = 1,        // ISteamMatchmakingPingResponse
+        matchmaking_players = 2,     // ISteamMatchmakingPlayersResponse
+        matchmaking_rules = 3,       // ISteamMatchmakingRulesResponse
+    };
+
     // A call the host made into a game response object, to be replayed on the guest object for `token`.
     struct reverse_record
     {

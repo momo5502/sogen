@@ -13,6 +13,8 @@
 #include "steam_api.h"
 #include "steam_gameserver.h"
 
+#include "steam_bridge_protocol.hpp" // response_type: shared reverse-callback interface ids
+
 namespace sogen::steam_shim
 {
     // Packs (handle, method, in-blob) into an invoke IOCTL and returns the raw return plus an out-blob.
@@ -28,7 +30,7 @@ namespace sogen::steam_shim
     // versions from more than one SDK snapshot, so the version may be owned by a different tag.
     void* resolve_proxy(const char* version, uint64_t handle);
 
-    // Registers a game-implemented response object (interface `type` = RESPONSE_IFACE_ID); reverse
+    // Registers a game-implemented response object (interface `type` = steam_bridge::response_type); reverse
     // callbacks for the returned token are dispatched back to it.
     uint64_t register_response_object(void* obj, int32_t type);
 

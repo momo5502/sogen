@@ -502,13 +502,23 @@ def is_blocked(classname: str, methodname: str) -> bool:
     return classname in BLOCKED_INTERFACES or methodname in BLOCKED_METHODS.get(classname, ())
 
 
-# Game-implemented response interfaces routed via the reverse-callback channel; id shared with the host.
+# Game-implemented response interfaces routed via the reverse-callback channel. The numeric id lives once in
+# steam_bridge_protocol.hpp (enum response_type); here we only map the interface to its enumerator so the
+# generated thunks reference that single source instead of re-encoding the numbers.
 RESPONSE_IFACE_ID = {
-    "ISteamMatchmakingServerListResponse": 0,
-    "ISteamMatchmakingPingResponse": 1,
-    "ISteamMatchmakingPlayersResponse": 2,
-    "ISteamMatchmakingRulesResponse": 3,
+    "ISteamMatchmakingServerListResponse": "matchmaking_server_list",
+    "ISteamMatchmakingPingResponse": "matchmaking_ping",
+    "ISteamMatchmakingPlayersResponse": "matchmaking_players",
+    "ISteamMatchmakingRulesResponse": "matchmaking_rules",
 }
+
+
+def response_type_id(iface: str) -> str:
+    """C++ expression for `iface`'s shared response-type id, or a literal -1 for a non-response interface
+    (the host then rejects it)."""
+    name = RESPONSE_IFACE_ID.get(iface)
+    return f"static_cast<int32_t>(sogen::steam_bridge::response_type::{name})" if name else "-1"
+
 
 INT_TYPES = {"int", "unsigned int", "uint32", "int32", "uint16", "int16", "unsigned short", "short",
              "uint8", "int8", "uint64", "int64", "size_t", "long", "unsigned long", "char", "unsigned char"}
@@ -815,7 +825,7 @@ def emit_guest(interfaces: list[Interface], tag: str) -> str:
                     elif p.kind == "in_buffer":
                         L.append(f"            inv.put_var({p.name}, {p.name} ? static_cast<size_t>({p.count}) : 0);")
                     elif p.kind == "callback_token":
-                        tid = RESPONSE_IFACE_ID.get(p.type, -1)
+                        tid = response_type_id(p.type)
                         L.append(f"            inv.put_callback_token(sogen::steam_shim::register_response_object("
                                  f"{p.name}, {tid}), {tid});")
                     # null_ptr: not marshalled; the host substitutes nullptr.
@@ -963,7 +973,7 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                     elif p.kind in ("cstr", "in_ref", "byval_struct"):
                         args.append(v)
                     elif p.kind == "callback_token":
-                        tid = RESPONSE_IFACE_ID.get(p.type, -1)
+                        tid = response_type_id(p.type)
                         # SECURITY: the proxy type is fixed by the method's parameter interface (a compile-time
                         # constant), NOT the type in the guest blob. Handing Steam a proxy of a different shape
                         # would make it virtual-dispatch through a vtable slot the proxy never implements -- an

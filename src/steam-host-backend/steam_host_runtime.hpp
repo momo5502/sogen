@@ -19,6 +19,8 @@
 #include "steam_api.h"
 #include "steam_gameserver.h"
 
+#include "steam_bridge_protocol.hpp" // response_type: shared reverse-callback interface ids used by the thunks
+
 namespace sogen::steam_host
 {
     // NOLINTNEXTLINE(cppcoreguidelines-use-enum-class): C-ABI status codes the generated thunks return as int.

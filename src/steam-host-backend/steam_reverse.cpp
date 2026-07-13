@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "steam_api.h" // ISteamMatchmaking*Response, gameserveritem_t, HServerListRequest
+#include "steam_bridge_protocol.hpp" // response_type: the shared reverse-callback interface ids
 #include "steam_reverse.hpp"
 
 namespace sogen::steam_host
@@ -230,27 +231,27 @@ namespace sogen::steam_host
             return it->second;
         }
         void* p = nullptr;
-        switch (type)
+        switch (static_cast<steam_bridge::response_type>(type))
         {
-        case 0: {
+        case steam_bridge::response_type::matchmaking_server_list: {
             auto* o = new ServerListProxy();
             o->token = token;
             p = o;
             break;
         }
-        case 1: {
+        case steam_bridge::response_type::matchmaking_ping: {
             auto* o = new PingProxy();
             o->token = token;
             p = o;
             break;
         }
-        case 2: {
+        case steam_bridge::response_type::matchmaking_players: {
             auto* o = new PlayersProxy();
             o->token = token;
             p = o;
             break;
         }
-        case 3: {
+        case steam_bridge::response_type::matchmaking_rules: {
             auto* o = new RulesProxy();
             o->token = token;
             p = o;

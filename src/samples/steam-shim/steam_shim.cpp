@@ -74,17 +74,16 @@ namespace sogen::steam_shim
 
 namespace
 {
-    HANDLE g_bridge = INVALID_HANDLE_VALUE;
     std::mutex g_mutex;
     std::unordered_map<std::string, void*> g_interfaces; // version -> proxy (Steam interfaces are singletons)
 
     HANDLE bridge()
     {
-        if (g_bridge == INVALID_HANDLE_VALUE)
-        {
-            g_bridge = CreateFileA(R"(\\.\SogenSteam)", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
-        }
-        return g_bridge;
+        // Local static, not g_mutex: the create-interface path already holds g_mutex when it calls through
+        // here, so a mutex would self-deadlock. The static's init is thread-safe and runs once.
+        static const HANDLE h =
+            CreateFileA(R"(\\.\SogenSteam)", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+        return h;
     }
 
     bool ioctl(const uint32_t code, const void* in, const uint32_t in_len, void* out, const uint32_t out_len, uint32_t& returned)
@@ -103,17 +102,13 @@ namespace
     // Confirms the bridge speaks our protocol; done once, lazily, before the first interface is created.
     bool handshake()
     {
-        static bool ok = false;
-        static bool done = false;
-        if (done)
-        {
-            return ok;
-        }
-        done = true;
-        uint32_t returned = 0;
-        sb::version_response version{};
-        ok = ioctl(sb::ioctl_get_version, nullptr, 0, &version, sizeof(version), returned) && returned >= sizeof(version) &&
-             version.magic == sb::protocol_magic && version.version == sb::protocol_version;
+        static const bool ok = [] {
+            uint32_t returned = 0;
+            sb::version_response version{};
+            return ioctl(sb::ioctl_get_version, nullptr, 0, &version, sizeof(version), returned) &&
+                   returned >= sizeof(version) && version.magic == sb::protocol_magic &&
+                   version.version == sb::protocol_version;
+        }();
         return ok;
     }
 }

@@ -42,6 +42,7 @@ foreach(_entry ${SOGEN_STEAM_TAG_LIST})
                  "${CMAKE_CURRENT_BINARY_DIR}/steam_shim_${_tag}.gen.cpp" @ONLY)
   add_library(steam-shim-${_tag} OBJECT EXCLUDE_FROM_ALL "${CMAKE_CURRENT_BINARY_DIR}/steam_shim_${_tag}.gen.cpp")
   sogen_target_disable_warnings(steam-shim-${_tag})
+  target_link_libraries(steam-shim-${_tag} PRIVATE steam-bridge-protocol)  # shared response_type ids
   target_include_directories(steam-shim-${_tag} PRIVATE
     "${_dir}" "${SOGEN_STEAM_GEN_DIR}/${_tag}" "${CMAKE_CURRENT_SOURCE_DIR}")
   target_sources(steam-shim PRIVATE $<TARGET_OBJECTS:steam-shim-${_tag}>)
