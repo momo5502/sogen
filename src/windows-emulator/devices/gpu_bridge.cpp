@@ -2251,6 +2251,10 @@ namespace sogen
             // Cap guest-declared descriptor-update payloads so a bogus IOCTL length can't force a huge allocation.
             static constexpr size_t max_descriptor_update_input_bytes = size_t{256} * 1024 * 1024;
 
+            // A record stream is copied into a host vector before parsing. Keep a forged IOCTL length from
+            // forcing a multi-gigabyte allocation in the analyzer process.
+            static constexpr size_t max_recorded_command_bytes = size_t{256} * 1024 * 1024;
+
             // Cap for property/capability readbacks staged from output_buffer_length: these responses are
             // small fixed-size structs, so a bogus output length can't force a huge allocation.
             static constexpr size_t max_readback_bytes = 64 * 1024;
@@ -3004,7 +3008,7 @@ namespace sogen
             // stream, amortising the per-command boundary crossing. See ioctl_record_commands.
             NTSTATUS handle_record_commands(windows_emulator& win_emu, const io_device_context& context)
             {
-                if (!context.input_buffer || context.input_buffer_length == 0)
+                if (!context.input_buffer || context.input_buffer_length == 0 || context.input_buffer_length > max_recorded_command_bytes)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }

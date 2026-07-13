@@ -210,7 +210,8 @@ namespace sogen
                 const auto offset_entry = read_file_object<offset_entry_t>(file, MAIN_ROOT_OFFSET + entry_offsets, i);
                 const auto subkey_block_offset = MAIN_ROOT_OFFSET + offset_entry.offset;
                 const auto subkey = read_file_object<key_block_t>(file, subkey_block_offset);
-                std::string subkey_name(subkey.name, std::min(subkey.len, static_cast<int16_t>(sizeof(subkey.name))));
+                const auto subkey_name_len = subkey.len < 0 ? size_t{0} : std::min(static_cast<size_t>(subkey.len), sizeof(subkey.name));
+                std::string subkey_name(subkey.name, subkey_name_len);
 
                 const auto [it, inserted] =
                     this->sub_keys_.emplace(std::move(subkey_name), hive_key{subkey.subkeys, subkey.value_count, subkey.offsets});
@@ -243,7 +244,8 @@ namespace sogen
             const auto offset = read_file_object<int>(file, MAIN_ROOT_OFFSET + this->value_offsets_ + 4, i);
             const auto value = read_file_object<value_block_t>(file, MAIN_ROOT_OFFSET + offset);
 
-            std::string value_name(value.name, std::min(value.name_len, static_cast<int16_t>(sizeof(value.name))));
+            const auto value_name_len = value.name_len < 0 ? size_t{0} : std::min(static_cast<size_t>(value.name_len), sizeof(value.name));
+            std::string value_name(value.name, value_name_len);
 
             raw_hive_value raw_value{};
             raw_value.parsed = false;

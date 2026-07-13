@@ -45,12 +45,24 @@ namespace sogen
 
             SpanElement* get_valid_pointer(const size_t element_index) const
             {
-                const auto start_offset = offset_ + (size * element_index);
-                const auto end_offset = start_offset + size;
-                if (end_offset > buffer_.size())
+                if (offset_ > buffer_.size())
                 {
                     throw std::runtime_error("Buffer accessor overflow");
                 }
+
+                const auto remaining = buffer_.size() - offset_;
+                if (element_index > remaining / size)
+                {
+                    throw std::runtime_error("Buffer accessor overflow");
+                }
+
+                const auto element_offset = size * element_index;
+                if (size > remaining - element_offset)
+                {
+                    throw std::runtime_error("Buffer accessor overflow");
+                }
+
+                const auto start_offset = offset_ + element_offset;
 
                 return buffer_.data() + start_offset;
             }
@@ -87,8 +99,7 @@ namespace sogen
 
             void validate(const size_t offset, const size_t size) const
             {
-                const auto end = offset + size;
-                if (end > buffer_.size())
+                if (offset > buffer_.size() || size > buffer_.size() - offset)
                 {
                     throw std::runtime_error("Buffer accessor overflow");
                 }

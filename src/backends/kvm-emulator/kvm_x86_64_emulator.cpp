@@ -67,6 +67,7 @@ namespace sogen::kvm
 
         constexpr uintptr_t cache_line_size = 64;
         constexpr uint64_t guest_physical_page_base = 0x0000000100000000ull;
+        constexpr uint64_t internal_virtual_memory_base = 0xFFFF800000000000ull;
 
         // clflushopt is unordered, so consecutive evictions pipeline instead of serializing like clflush does
         // on every line; for the bulk flushes the GPU bridge issues before each submit that is a meaningful
@@ -1554,23 +1555,38 @@ namespace sogen::kvm
                 auto page = std::make_unique<mapped_page>();
                 page->owned_page = std::move(backing);
                 page->host_page = raw_page;
-                page->permissions = executable ? memory_permission::all : memory_permission::read_write;
+                page->permissions = executable ? memory_permission::read_exec : memory_permission::read_write;
+                page->user_accessible = false;
                 page->physical_page = page_gpa;
 
-                this->mapped_pages_[page_gpa] = std::move(page);
-                if (!this->gpa_pages_.emplace(page_gpa, this->mapped_pages_[page_gpa].get()).second)
+                uint64_t result = page_gpa;
+                mapped_page* stored_page = nullptr;
+                if (map_into_guest)
+                {
+                    result = this->next_internal_virtual_address_;
+                    this->next_internal_virtual_address_ += page_size;
+                    stored_page = page.get();
+                    this->mapped_pages_[result] = std::move(page);
+                }
+                else
+                {
+                    stored_page = page.get();
+                    this->internal_pages_[page_gpa] = std::move(page);
+                    this->page_table_views_[page_gpa] = reinterpret_cast<uint64_t*>(raw_page);
+                }
+
+                if (!this->gpa_pages_.emplace(page_gpa, stored_page).second)
                 {
                     throw std::logic_error("Duplicate KVM guest physical page");
                 }
-                this->page_table_views_[page_gpa] = reinterpret_cast<uint64_t*>(raw_page);
 
                 if (map_into_guest)
                 {
-                    this->ensure_virtual_mapping(page_gpa, page_gpa);
+                    this->ensure_virtual_mapping(result, page_gpa, false);
                 }
 
                 this->rebuild_mappings();
-                return page_gpa;
+                return result;
             }
             uint64_t allocate_guest_physical_page()
             {
@@ -1596,14 +1612,14 @@ namespace sogen::kvm
 
                 return *page.physical_page;
             }
-            void ensure_virtual_mapping(uint64_t guest_address, uint64_t physical_page)
+            void ensure_virtual_mapping(uint64_t guest_address, uint64_t physical_page, bool user_accessible = true)
             {
                 detail::ensure_virtual_mapping(
                     this->page_table_views_, this->pml4_gpa_,
                     [this](const bool executable, const bool map_into_guest) {
                         return this->allocate_internal_page(executable, map_into_guest);
                     },
-                    guest_address, physical_page);
+                    guest_address, physical_page, user_accessible);
             }
             // Defer the (O(total mappings)) memslot reconciliation. A single high-level memory operation can
             // allocate several page-table pages, each of which would otherwise trigger its own full rebuild,
@@ -2461,6 +2477,7 @@ namespace sogen::kvm
             bool mappings_dirty_ = false;
             std::vector<int> free_slot_ids_{};
             std::map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
+            std::map<uint64_t, std::unique_ptr<mapped_page>> internal_pages_{};
             // GPA-sorted view of mapped_pages_ (guest physical address -> page), kept in sync so
             // synchronize_memslots can project in memslot order without re-sorting every flush.
             std::map<uint64_t, mapped_page*> gpa_pages_{};
@@ -2468,6 +2485,7 @@ namespace sogen::kvm
             uint64_t pml4_gpa_ = 0;
             uint64_t next_guest_physical_page_ = guest_physical_page_base;
             uint64_t next_internal_gpa_ = internal_page_table_base;
+            uint64_t next_internal_virtual_address_ = internal_virtual_memory_base;
             std::atomic_bool stop_requested_ = false;
             std::atomic_bool run_active_ = false;
             std::atomic<pthread_t> vcpu_thread_{};
