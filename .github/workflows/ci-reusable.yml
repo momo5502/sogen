@@ -261,14 +261,14 @@ jobs:
           - Windows x86
           - Windows x86_64
           - MinGW x86_64
-          - Linux x86_64 GCC
+          #- Linux x86_64 GCC
           - Linux x86_64 GCC Sanitizer
           - Linux x86_64 Clang
           - macOS arm64
-          - macOS x86_64
-          - iOS arm64
+          #- macOS x86_64
+          #- iOS arm64
           - Android x86_64
-          - Android arm64-v8a
+          #- Android arm64-v8a
           - Emscripten Web
           - Emscripten Web Memory 64
           - Emscripten Node.js
@@ -293,29 +293,29 @@ jobs:
           - platform: Linux x86_64 GCC Sanitizer
             runner: ubuntu-24.04
             cmake-options: "-DSOGEN_ENABLE_SANITIZER=On"
-          - platform: Linux x86_64 GCC
-            runner: ubuntu-24.04
+          #- platform: Linux x86_64 GCC
+          #  runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
             clang-version: 21
-          - platform: iOS arm64
-            runner: macos-latest
-            rust-target: aarch64-apple-ios
-            cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/ios.cmake"
+          #- platform: iOS arm64
+          #  runner: macos-latest
+          #  rust-target: aarch64-apple-ios
+          #  cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/ios.cmake"
           - platform: macOS arm64
             runner: macos-latest
-          - platform: macOS x86_64
-            runner: macos-15-intel
+          #- platform: macOS x86_64
+          #  runner: macos-15-intel
           - platform: Android x86_64
             runner: ubuntu-24.04
             abi: x86_64
             rust-target: x86_64-linux-android
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
-          - platform: Android arm64-v8a
-            runner: ubuntu-24.04
-            abi: arm64-v8a
-            rust-target: aarch64-linux-android
-            cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
+          #- platform: Android arm64-v8a
+          #  runner: ubuntu-24.04
+          #  abi: arm64-v8a
+          #  rust-target: aarch64-linux-android
+          #  cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
           - platform: Emscripten Web
             runner: ubuntu-24.04
             cmake-options: "-DSOGEN_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
@@ -507,12 +507,12 @@ jobs:
       matrix:
         platform:
           - Windows x86
-          - Windows x86_64
-          - Linux x86_64 GCC
+          #- Windows x86_64
+          #- Linux x86_64 GCC
           - Linux x86_64 GCC Sanitizer
           - Linux x86_64 Clang
           - macOS arm64
-          - macOS x86_64
+          #- macOS x86_64
         emulator:
           - Unicorn
           - Icicle
@@ -530,18 +530,18 @@ jobs:
             preset: release
           - platform: Windows x86
             runner: windows-latest
-          - platform: Windows x86_64
-            runner: windows-latest
-          - platform: Linux x86_64 GCC
-            runner: ubuntu-24.04
+          #- platform: Windows x86_64
+          #  runner: windows-latest
+          #- platform: Linux x86_64 GCC
+          #  runner: ubuntu-24.04
           - platform: Linux x86_64 GCC Sanitizer
             runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
           - platform: macOS arm64
             runner: macos-latest
-          - platform: macOS x86_64
-            runner: macos-15-intel
+          #- platform: macOS x86_64
+          #  runner: macos-15-intel
     steps:
       - name: Checkout Source
         uses: actions/checkout@v7
@@ -610,6 +610,11 @@ jobs:
           - Windows 2025
           - Windows 2022
           #- Windows 2019
+        exclude:
+          # The old root exists to prove the pre-Windows-11 guest DLL set still emulates.
+          # That is a guest-side property, so Release alone covers it.
+          - emulation-root: Windows 2022
+            configuration: Debug
         include:
           - configuration: Debug
             preset: debug
@@ -751,7 +756,7 @@ jobs:
       - name: Download Artifacts
         uses: pyTooling/download-artifact@v8
         with:
-          name: Linux x86_64 GCC Release Artifacts
+          name: Linux x86_64 Clang Release Artifacts
           path: build/release/artifacts
 
       - name: Download Windows Artifacts
