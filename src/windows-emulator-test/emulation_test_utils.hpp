@@ -134,7 +134,7 @@ namespace sogen::test
         }
 
         return windows_emulator{
-            create_x86_64_emulator(),
+            create_x86_64_emulator_from_environment(),
             settings,
             std::move(callbacks),
             std::move(interfaces),
@@ -169,7 +169,11 @@ namespace sogen::test
         }
 
         return windows_emulator{
-            create_x86_64_emulator(), get_sample_app_settings(config), settings, std::move(callbacks), std::move(interfaces),
+            create_x86_64_emulator_from_environment(),
+            get_sample_app_settings(config),
+            settings,
+            std::move(callbacks),
+            std::move(interfaces),
         };
     }
 
