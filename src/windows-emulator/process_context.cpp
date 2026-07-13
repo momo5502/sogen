@@ -967,6 +967,7 @@ namespace sogen
             }
 
             i->second.ref_count = 1;
+            this->gdi_window_surfaces.erase(static_cast<uint32_t>(i->second.handle));
             i = this->windows.erase(i).first;
         }
     }
