@@ -41,6 +41,7 @@ CALL :collect coloradapterclient.dll
 CALL :collect combase.dll
 CALL :collect comctl32.dll
 CALL :collect comdlg32.dll
+CALL :collect coremessaging.dll
 CALL :collect crypt32.dll
 CALL :collect cryptbase.dll
 CALL :collect cryptsp.dll
@@ -74,6 +75,7 @@ CALL :collect hal.dll
 CALL :collect hid.dll
 CALL :collect imm32.dll
 CALL :collect imagehlp.dll
+CALL :collect inputhost.dll
 CALL :collect iphlpapi.dll
 CALL :collect kdcom.dll
 CALL :collect kernel.appcore.dll
