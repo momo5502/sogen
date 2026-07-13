@@ -33,6 +33,7 @@ namespace sogen
         std::string content{};
         size_t offset{};
     };
+
     struct linux_socket_state
     {
         int domain{};
@@ -53,6 +54,7 @@ namespace sogen
         uint32_t peer_addr{};
 
         linux_socket_state() = default;
+
         ~linux_socket_state()
         {
 #if !defined(_WIN32)

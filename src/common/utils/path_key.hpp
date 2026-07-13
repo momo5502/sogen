@@ -12,6 +12,7 @@ namespace sogen
         {
           public:
             path_key() = default;
+
             path_key(const std::filesystem::path& p)
                 : path_(canonicalize_path(p))
             {

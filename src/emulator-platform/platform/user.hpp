@@ -58,6 +58,7 @@ namespace sogen
         uint8_t pad_1b58[0x286];
         uint64_t foregroundWindow;
     };
+
     static_assert(offsetof(USER_SERVERINFO, apfnClientA) == 0x188);
     static_assert(offsetof(USER_SERVERINFO, systemMetrics) == 0x768);
     static_assert(offsetof(USER_SERVERINFO, ahbrSystem) == 0x1258);
@@ -75,6 +76,7 @@ namespace sogen
         RECT rcScreen;
         uint8_t unknown[0xFF];
     };
+
     static_assert(offsetof(USER_DISPINFO, rcScreen) == 0x18);
 
     struct USER_HANDLEENTRY
@@ -86,6 +88,7 @@ namespace sogen
         uint8_t bFlags;
         uint16_t wUniq;
     };
+
     static_assert(offsetof(USER_HANDLEENTRY, unknown) == 0x10);
     static_assert(offsetof(USER_HANDLEENTRY, bType) == 0x18);
     static_assert(sizeof(USER_HANDLEENTRY) == 0x20);
@@ -95,6 +98,7 @@ namespace sogen
         DWORD maxMsgs;
         uint64_t abMsgs;
     };
+
     static_assert(offsetof(USER_WNDMSG, abMsgs) == 0x8);
     static_assert(sizeof(USER_WNDMSG) == 0x10);
 
@@ -110,6 +114,7 @@ namespace sogen
         USER_WNDMSG DefWindowMsgs;
         USER_WNDMSG DefWindowSpecMsgs;
     };
+
     static_assert(offsetof(USER_SHAREDINFO, pDispInfo) == 0x18);
     static_assert(offsetof(USER_SHAREDINFO, awmControl) == 0x98);
     static_assert(offsetof(USER_SHAREDINFO, DefWindowMsgs) == 0x218);
@@ -141,6 +146,7 @@ namespace sogen
         uint32_t ime_msg_bits;
         uint8_t reserved9[0x114];
     };
+
     static_assert(offsetof(WIN32K_USERCONNECT32, ahe_list) == 0x8);
     static_assert(offsetof(WIN32K_USERCONNECT32, he_entry_size) == 0x10);
     static_assert(offsetof(WIN32K_USERCONNECT32, disp_info_low) == 0x18);
@@ -157,6 +163,7 @@ namespace sogen
         uint32_t dwFlags;
         uint32_t hwndTarget;
     };
+
     static_assert(sizeof(RAWINPUTDEVICE32) == 0x0C);
 
     struct RAWINPUTHEADER32
@@ -166,6 +173,7 @@ namespace sogen
         uint32_t hDevice;
         uint32_t wParam;
     };
+
     static_assert(sizeof(RAWINPUTHEADER32) == 0x10);
 
     // The mouse body has no pointer fields, so its layout is identical for 32- and 64-bit guests.
@@ -179,6 +187,7 @@ namespace sogen
         int32_t lLastY;
         uint32_t ulExtraInformation;
     };
+
     static_assert(sizeof(RAWMOUSE32) == 0x18);
 
     struct RAWKEYBOARD32
@@ -190,6 +199,7 @@ namespace sogen
         uint32_t Message;
         uint32_t ExtraInformation;
     };
+
     static_assert(sizeof(RAWKEYBOARD32) == 0x10);
 
     enum USER_HANDLETYPE : uint8_t
@@ -226,6 +236,7 @@ namespace sogen
         uint8_t unknown1[0x14];
         RECT rcMonitor;
         RECT rcWork;
+
         union
         {
             struct
@@ -233,6 +244,7 @@ namespace sogen
                 uint16_t monitorDpi;
                 uint16_t nativeDpi;
             } b26;
+
             struct
             {
                 uint32_t unknown1;
@@ -243,6 +255,7 @@ namespace sogen
                 RECT rcMonitorDpiAware;
             } b20;
         };
+
         uint8_t unknown4[0xFF];
     };
 
@@ -260,6 +273,7 @@ namespace sogen
         uint64_t lpszAnsiClassName;
         uint8_t pad_038[0xC8];
     };
+
     static_assert(offsetof(USER_CLASS, lpszAnsiClassName) == 0x30);
     static_assert(sizeof(USER_CLASS) == 0x100);
 
@@ -309,6 +323,7 @@ namespace sogen
         uint32_t threadId;
         uint32_t processId;
     };
+
     static_assert(offsetof(USER_WINDOW, dpiContext) == 0x120);
     static_assert(offsetof(USER_WINDOW, threadId) == 0x148);
     static_assert(offsetof(USER_WINDOW, processId) == 0x14C);
@@ -323,6 +338,7 @@ namespace sogen
         uint32_t flags;
         uint32_t cItems;
     };
+
     static_assert(offsetof(USER_MENU, hMenu) == 0x0);
     static_assert(offsetof(USER_MENU, ptrBase) == 0x8);
     static_assert(offsetof(USER_MENU, rgItems) == 0x20);
@@ -351,6 +367,7 @@ namespace sogen
         uint64_t hbmpItem;
         uint8_t pad_68[8]{};
     };
+
     static_assert(offsetof(USER_MENU_ITEM, state) == 0x4);
     static_assert(offsetof(USER_MENU_ITEM, id) == 0x8);
     static_assert(offsetof(USER_MENU_ITEM, submenu) == 0x10);

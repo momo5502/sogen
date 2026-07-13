@@ -60,6 +60,7 @@ namespace sogen
         BYTE lfPitchAndFamily;
         char16_t lfFaceName[32];
     };
+
     static_assert(sizeof(EMU_LOGFONTW) == 0x5C);
 
     struct EMU_ENUMLOGFONTEXW
@@ -69,6 +70,7 @@ namespace sogen
         char16_t elfStyle[32];
         char16_t elfScript[32];
     };
+
     static_assert(sizeof(EMU_ENUMLOGFONTEXW) == 0x15C);
 
     struct EMU_NEWTEXTMETRICW
@@ -98,6 +100,7 @@ namespace sogen
         UINT ntmCellHeight;
         UINT ntmAvgWidth;
     };
+
     static_assert(sizeof(EMU_NEWTEXTMETRICW) == 0x4C);
 
     struct EMU_NEWTEXTMETRICEXW
@@ -106,6 +109,7 @@ namespace sogen
         DWORD fsUsb[4];
         DWORD fsCsb[2];
     };
+
     static_assert(sizeof(EMU_NEWTEXTMETRICEXW) == 0x64);
 
     struct FIXED
@@ -113,6 +117,7 @@ namespace sogen
         uint16_t fract;
         int16_t value;
     };
+
     static_assert(sizeof(FIXED) == 0x04);
 
     struct POINTFX
@@ -120,6 +125,7 @@ namespace sogen
         FIXED x;
         FIXED y;
     };
+
     static_assert(sizeof(POINTFX) == 0x08);
 
     struct EMU_TTPOLYGONHEADER
@@ -128,6 +134,7 @@ namespace sogen
         uint32_t dwType{};
         POINTFX pfxStart{};
     };
+
     static_assert(sizeof(EMU_TTPOLYGONHEADER) == 0x10);
 
     struct EMU_TTPOLYCURVE_HEADER
@@ -135,6 +142,7 @@ namespace sogen
         uint16_t wType{};
         uint16_t cpfx{};
     };
+
     static_assert(sizeof(EMU_TTPOLYCURVE_HEADER) == 0x04);
 
     struct EMU_BITMAPINFOHEADER
@@ -151,6 +159,7 @@ namespace sogen
         DWORD biClrUsed;
         DWORD biClrImportant;
     };
+
     static_assert(sizeof(EMU_BITMAPINFOHEADER) == 0x28);
 
     struct GDI_HANDLE_ENTRY64
@@ -188,6 +197,7 @@ namespace sogen
         UCHAR Flags;
         uint32_t UserPointer;
     };
+
     static_assert(sizeof(GDI_HANDLE_ENTRY32) == 0x10);
 
 #define GDI_MAX_HANDLE_COUNT 0xFFFF // 0x4000
@@ -199,6 +209,7 @@ namespace sogen
         uint64_t Objects[0x20];
         uint64_t Data[0x200]; // ?
     };
+
     static_assert(offsetof(GDI_SHARED_MEMORY64, Objects) == 0x1800B0);
 
     struct EMU_D3DKMT_ADAPTERINFO
@@ -227,6 +238,7 @@ namespace sogen
         UINT32 Padding;
         UINT64 pAdapters;
     };
+
     static_assert(sizeof(EMU_D3DKMT_ENUMADAPTERS3) == 0x18);
 
     struct EMU_D3DKMT_GET_PROPERTIES
@@ -416,6 +428,7 @@ namespace sogen
         UINT64 GpuVirtualAddress;
         UINT64 Reserved[6];
     };
+
     static_assert(sizeof(EMU_D3DDDI_OPENALLOCATIONINFO2) == 80);
 
     struct EMU_D3DKMT_OPENRESOURCE
@@ -449,6 +462,7 @@ namespace sogen
     {
         UINT32 hDevice;
         UINT32 StateType;
+
         union
         {
             UINT32 State;
@@ -470,6 +484,7 @@ namespace sogen
         ULONG DefaultControlPort;
         BOOLEAN UsesIhvSolution;
     };
+
     static_assert(sizeof(EMU_D3DKMT_MIRACAST_DISPLAY_DEVICE_CAPS) == 0xC);
 
     struct EMU_D3DKMT_DESTROYALLOCATION
@@ -491,6 +506,7 @@ namespace sogen
                 UINT32 Reserved : 29;
                 UINT32 SystemUseOnly : 1;
             };
+
             UINT32 Value;
         };
     };

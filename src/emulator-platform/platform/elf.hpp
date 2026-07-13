@@ -170,6 +170,7 @@ namespace sogen
         {
             return static_cast<uint8_t>((bind << 4) + (type & 0x0F));
         }
+
         // NOLINTEND(readability-redundant-inline-specifier)
 
         // ---- x86-64 Relocation types -------------------------------------------
@@ -206,6 +207,7 @@ namespace sogen
         {
             return (static_cast<uint64_t>(sym) << 32) | type;
         }
+
         // NOLINTEND(readability-redundant-inline-specifier)
 
         // ---- Auxiliary vector types (for initial stack) -------------------------
@@ -323,6 +325,7 @@ namespace sogen
         struct Elf64_Dyn
         {
             int64_t d_tag;
+
             union
             {
                 uint64_t d_val;

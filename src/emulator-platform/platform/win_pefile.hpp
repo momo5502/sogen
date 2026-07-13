@@ -293,11 +293,13 @@ namespace sogen
     typedef struct _IMAGE_SECTION_HEADER
     {
         std::uint8_t Name[IMAGE_SIZEOF_SHORT_NAME];
+
         union
         {
             std::uint32_t PhysicalAddress;
             std::uint32_t VirtualSize;
         } Misc;
+
         std::uint32_t VirtualAddress;
         std::uint32_t SizeOfRawData;
         std::uint32_t PointerToRawData;
@@ -398,6 +400,7 @@ namespace sogen
         {
             return IMAGE_ORDINAL32(ordinal);
         }
+
         static constexpr bool snap_by_ordinal(DWORD ordinal)
         {
             return IMAGE_SNAP_BY_ORDINAL32(ordinal);
@@ -414,6 +417,7 @@ namespace sogen
         {
             return IMAGE_ORDINAL64(ordinal);
         }
+
         static constexpr bool snap_by_ordinal(ULONGLONG ordinal)
         {
             return IMAGE_SNAP_BY_ORDINAL64(ordinal);

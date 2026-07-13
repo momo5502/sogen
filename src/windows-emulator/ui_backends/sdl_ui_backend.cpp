@@ -609,6 +609,7 @@ namespace sogen
                 ui_surface_format texture_format{ui_surface_format::bgra8};
                 bool has_surface{};
             };
+
             ~sdl_ui_backend() override
             {
                 this->reset();

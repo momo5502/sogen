@@ -159,6 +159,7 @@ namespace sogen
                 uint64_t font{};
                 FLONG text_align{};
                 POINTL viewport_org{};
+
                 union
                 {
                     std::array<WCHAR, 2> string;
@@ -3277,6 +3278,7 @@ namespace sogen
                     int32_t x{};
                     int32_t y{};
                 } current_point;
+
                 if (c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_pt_current_offset, &current_point, sizeof(current_point)))
                 {
                     dc_state->current_x = current_point.x;

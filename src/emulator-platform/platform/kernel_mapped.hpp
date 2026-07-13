@@ -684,9 +684,11 @@ namespace sogen
         BOOLEAN InheritedAddressSpace;
         BOOLEAN ReadImageFileExecOptions;
         BOOLEAN BeingDebugged;
+
         union
         {
             BOOLEAN BitField;
+
             struct
             {
                 BOOLEAN ImageUsesLargePages : 1;
@@ -714,6 +716,7 @@ namespace sogen
         union
         {
             ULONG CrossProcessFlags;
+
             struct
             {
                 ULONG ProcessInJob : 1;
@@ -727,11 +730,13 @@ namespace sogen
                 ULONG ReservedBits0 : 24;
             };
         };
+
         union
         {
             EMULATOR_CAST(std::uint32_t, PVOID32) KernelCallbackTable;
             EMULATOR_CAST(std::uint32_t, PVOID32) UserSharedInfoPtr;
         };
+
         ULONG SystemReserved;
         ULONG AtlThunkSListPtr32;
         EMULATOR_CAST(std::uint32_t, struct _API_SET_NAMESPACE*) ApiSetMap;
@@ -820,9 +825,11 @@ namespace sogen
         };
 
         EMULATOR_CAST(std::uint32_t, PVOID32) pImageHeaderHash;
+
         union
         {
             ULONG TracingFlags;
+
             struct
             {
                 ULONG HeapTracingEnabled : 1;
@@ -831,6 +838,7 @@ namespace sogen
                 ULONG SpareTracingBits : 29;
             };
         };
+
         ULONGLONG CsrServerReadOnlySharedMemoryBase;
         EMULATOR_CAST(std::uint32_t, struct _RTL_CRITICAL_SECTION32*) TppWorkerpListLock;
         LIST_ENTRY32 TppWorkerpList;
@@ -841,15 +849,18 @@ namespace sogen
         CHAR PlaceholderCompatibilityMode;
         ARRAY_CONTAINER<CHAR, 7> PlaceholderCompatibilityModeReserved;
         EMULATOR_CAST(std::uint32_t, struct _LEAP_SECOND_DATA*) LeapSecondData; // REDSTONE5
+
         union
         {
             ULONG LeapSecondFlags;
+
             struct
             {
                 ULONG SixtySecondEnabled : 1;
                 ULONG Reserved : 31;
             };
         };
+
         ULONG NtGlobalFlag2;
         ULONGLONG ExtendedFeatureDisableMask; // since WIN11
 
@@ -1229,6 +1240,7 @@ namespace sogen
         {
             EMULATOR_CAST(std::uint32_t, PROCESSOR_NUMBER) CurrentIdealProcessor;
             ULONG IdealProcessorValue;
+
             struct
             {
                 UCHAR ReservedPad0;
@@ -1265,9 +1277,11 @@ namespace sogen
             USHORT CrossTebFlags;
             USHORT SpareCrossTebBits : 16;
         };
+
         union
         {
             USHORT SameTebFlags;
+
             struct
             {
                 USHORT SafeThunkCall : 1;
@@ -1306,12 +1320,14 @@ namespace sogen
     static_assert(sizeof(TEB32) == 4120, "sizeof(TEB32) is incorrect");
 
 #pragma pack(push, 4)
+
     typedef struct _KSYSTEM_TIME
     {
         ULONG LowPart;
         LONG High1Time;
         LONG High2Time;
     } KSYSTEM_TIME, *PKSYSTEM_TIME;
+
 #pragma pack(pop)
 
     typedef enum _NT_PRODUCT_TYPE
@@ -1411,9 +1427,11 @@ namespace sogen
         std::uint64_t EnabledFeatures;
         std::uint64_t EnabledVolatileFeatures;
         ULONG Size;
+
         union
         {
             ULONG ControlFlags;
+
             struct
             {
                 ULONG OptimizedSave : 1;
@@ -1421,6 +1439,7 @@ namespace sogen
                 ULONG Reserved1 : 30;
             };
         };
+
         XSTATE_FEATURE Features[MAXIMUM_XSTATE_FEATURES];
         std::uint64_t EnabledSupervisorFeatures;
         std::uint64_t AlignedFeatures;
@@ -1653,9 +1672,11 @@ namespace sogen
     {
         EMULATOR_CAST(std::uint64_t, SIZE_T) Size; // Ignored as input, written with structure size on output
         PROCESS_BASIC_INFORMATION64 BasicInfo;
+
         union
         {
             ULONG Flags;
+
             struct
             {
                 ULONG IsProtectedProcess : 1;
@@ -1888,15 +1909,18 @@ namespace sogen
         ULONG64 SystemDllNativeRelocation;
         ULONG Wow64SharedInformation[16]; // use WOW64_SHARED_INFORMATION as index
         ULONG RngData;
+
         union
         {
             ULONG Flags;
+
             struct
             {
                 ULONG CfgOverride : 1; // since REDSTONE
                 ULONG Reserved : 31;
             };
         };
+
         ULONG64 MitigationOptions;
         ULONG64 CfgBitMap; // since WINBLUE
         ULONG64 CfgBitMapSize;
@@ -1912,15 +1936,18 @@ namespace sogen
         ULONG64 SystemDllNativeRelocation;
         ULONG64 Wow64SharedInformation[16]; // use WOW64_SHARED_INFORMATION as index
         ULONG RngData;
+
         union
         {
             ULONG Flags;
+
             struct
             {
                 ULONG CfgOverride : 1;
                 ULONG Reserved : 31;
             };
         };
+
         PS_MITIGATION_OPTIONS_MAP_V2 MitigationOptionsMap;
         ULONG64 CfgBitMap;
         ULONG64 CfgBitMapSize;
@@ -1937,15 +1964,18 @@ namespace sogen
         ULONG64 SystemDllNativeRelocation;
         ULONG64 Wow64SharedInformation[16]; // use WOW64_SHARED_INFORMATION_V5 as index
         ULONG RngData;
+
         union
         {
             ULONG Flags;
+
             struct
             {
                 ULONG CfgOverride : 1; // effectively since REDSTONE
                 ULONG Reserved : 31;
             };
         };
+
         PS_MITIGATION_OPTIONS_MAP_V3 MitigationOptionsMap;
         ULONG64 CfgBitMap; // effectively since WINBLUE
         ULONG64 CfgBitMapSize;

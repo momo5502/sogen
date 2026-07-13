@@ -199,6 +199,7 @@ namespace
         uint64_t offset{};
         uint64_t size{};
     };
+
     std::unordered_map<gb::object_id, mapped_range> g_mapped_ranges;
 
     // Memory objects the bridge aliased straight into the guest address space (no staging copy). These are
@@ -2794,6 +2795,7 @@ extern "C"
             uint8_t* body;
             uint32_t body_size;
         };
+
         std::vector<dest> dests;
         std::vector<gb::feature_chain_record> records;
 
@@ -2877,6 +2879,7 @@ extern "C"
             uint8_t* body;
             uint32_t body_size;
         };
+
         std::vector<dest> dests;
         std::vector<gb::feature_chain_record> records;
         for (auto* next = static_cast<VkBaseOutStructure*>(pProperties->pNext); next; next = next->pNext)

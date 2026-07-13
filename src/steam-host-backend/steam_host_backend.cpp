@@ -57,11 +57,13 @@ namespace
         std::string version;
         void* iface;
     };
+
     std::unordered_map<uint64_t, entry> g_handles;
     uint64_t g_next_handle = 1;
 
 #ifdef _WIN32
     using lib_handle = HMODULE;
+
     lib_handle load_client(const std::string& path)
     {
         if (const auto slash = path.find_last_of("\\/"); slash != std::string::npos)
@@ -71,33 +73,40 @@ namespace
         constexpr uint32_t load_with_altered_search_path = 0x00000008;
         return LoadLibraryExA(path.c_str(), nullptr, load_with_altered_search_path);
     }
+
     void* client_symbol(lib_handle module, const char* name)
     {
         return reinterpret_cast<void*>(GetProcAddress(module, name));
     }
+
     void set_env(const char* name, const char* value)
     {
         const std::string kv = std::string(name) + "=" + value;
         _putenv(kv.c_str()); // _putenv copies the string into the environment
     }
+
     std::string default_client_path()
     {
         return R"(C:\Program Files (x86)\Steam\steamclient64.dll)";
     }
 #else
     using lib_handle = void*;
+
     lib_handle load_client(const std::string& path)
     {
         return dlopen(path.c_str(), RTLD_NOW | RTLD_GLOBAL); // GLOBAL so steamclient's sibling libs resolve
     }
+
     void* client_symbol(lib_handle module, const char* name)
     {
         return dlsym(module, name);
     }
+
     void set_env(const char* name, const char* value)
     {
         ::setenv(name, value, 1);
     }
+
     std::string default_client_path()
     {
         const char* home = std::getenv("HOME");

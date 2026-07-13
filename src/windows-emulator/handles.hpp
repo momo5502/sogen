@@ -43,6 +43,7 @@ namespace sogen
 
 #pragma pack(push)
 #pragma pack(1)
+
     struct handle_value
     {
         uint64_t id : 23;
@@ -51,6 +52,7 @@ namespace sogen
         uint64_t is_pseudo : 1;
         uint64_t high_bits : 32;
     };
+
 #pragma pack(pop)
 
     static_assert(sizeof(handle_value) == 8);

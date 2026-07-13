@@ -23,6 +23,7 @@ namespace sogen
 
     void dispatch_exception(windows_emulator& win_emu, vcpu_context& vcpu, DWORD status,
                             const std::vector<EmulatorTraits<Emu64>::ULONG_PTR>& parameters);
+
     template <typename T>
         requires(std::is_integral_v<T> && !std::is_same_v<T, DWORD>)
     void dispatch_exception(windows_emulator& win_emu, vcpu_context& vcpu, const T status,

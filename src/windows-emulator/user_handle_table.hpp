@@ -571,14 +571,17 @@ namespace sogen
         {
             return this->store_.begin();
         }
+
         value_map::const_iterator begin() const
         {
             return this->store_.begin();
         }
+
         value_map::iterator end()
         {
             return this->store_.end();
         }
+
         value_map::const_iterator end() const
         {
             return this->store_.end();

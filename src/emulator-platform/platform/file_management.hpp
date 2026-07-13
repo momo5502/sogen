@@ -618,6 +618,7 @@ namespace sogen
 
 #ifndef OS_WINDOWS
     typedef BOOLEAN SECURITY_CONTEXT_TRACKING_MODE, *PSECURITY_CONTEXT_TRACKING_MODE;
+
     typedef struct _SECURITY_QUALITY_OF_SERVICE
     {
         DWORD Length;

@@ -625,6 +625,7 @@ namespace sogen
 
             return std::make_unique<utils::clock>();
         }
+
         std::unique_ptr<network::dns_lookup> get_dns_lookup(emulator_interfaces& interfaces)
         {
             if (interfaces.dns_lookup)

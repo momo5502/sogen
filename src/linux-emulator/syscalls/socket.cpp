@@ -61,6 +61,7 @@ namespace sogen
         // Linux sockaddr_in (16 bytes)
         // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 #pragma pack(push, 1)
+
         struct linux_sockaddr_in
         {
             uint16_t sin_family;
@@ -68,6 +69,7 @@ namespace sogen
             uint32_t sin_addr;
             uint8_t sin_zero[8];
         };
+
 #pragma pack(pop)
         // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 

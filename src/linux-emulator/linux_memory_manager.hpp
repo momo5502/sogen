@@ -112,6 +112,7 @@ namespace sogen
         uint64_t add_memory_protect_callback(memory_protect_callback callback);
         uint64_t add_memory_release_callback(memory_release_callback callback);
         void remove_memory_callback(uint64_t id);
+
         uint64_t get_mmap_base() const
         {
             return this->mmap_base_;

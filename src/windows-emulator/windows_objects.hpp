@@ -56,6 +56,7 @@ namespace sogen
         uint16_t key{};
         uint16_t command{};
     };
+
     static_assert(sizeof(accelerator_table_entry) == 6);
 
     template <typename GuestType>

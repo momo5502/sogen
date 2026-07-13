@@ -484,6 +484,7 @@ namespace sogen
         WORD dmSize;
         WORD dmDriverExtra;
         DWORD dmFields;
+
         union
         {
             struct
@@ -497,7 +498,9 @@ namespace sogen
                 int16_t dmDefaultSource;
                 int16_t dmPrintQuality;
             } s;
+
             POINT dmPosition;
+
             struct
             {
                 POINT dmPosition;
@@ -505,6 +508,7 @@ namespace sogen
                 DWORD dmDisplayFixedOutput;
             } s2;
         } u;
+
         int16_t dmColor;
         int16_t dmDuplex;
         int16_t dmYResolution;
@@ -515,11 +519,13 @@ namespace sogen
         DWORD dmBitsPerPel;
         DWORD dmPelsWidth;
         DWORD dmPelsHeight;
+
         union
         {
             DWORD dmDisplayFlags;
             DWORD dmNup;
         } u2;
+
         DWORD dmDisplayFrequency;
         DWORD dmICMMethod;
         DWORD dmICMIntent;
@@ -550,15 +556,18 @@ namespace sogen
     {
         LUID adapterId;
         UINT32 id;
+
         union
         {
             UINT32 modeInfoIdx;
+
             struct
             {
                 UINT32 cloneGroupId : 16;
                 UINT32 sourceModeInfoIdx : 16;
             } s;
         } u;
+
         UINT32 statusFlags;
     };
 
@@ -586,15 +595,18 @@ namespace sogen
     {
         LUID adapterId;
         UINT32 id;
+
         union
         {
             UINT32 modeInfoIdx;
+
             struct
             {
                 UINT32 desktopModeInfoIdx : 16;
                 UINT32 targetModeInfoIdx : 16;
             } s;
         } u;
+
         EMULATOR_CAST(uint32_t, DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY) outputTechnology;
         EMULATOR_CAST(uint32_t, DISPLAYCONFIG_ROTATION) rotation;
         EMULATOR_CAST(uint32_t, DISPLAYCONFIG_SCALING) scaling;
@@ -618,6 +630,7 @@ namespace sogen
         DISPLAYCONFIG_RATIONAL vSyncFreq;
         DISPLAYCONFIG_2DREGION activeSize;
         DISPLAYCONFIG_2DREGION totalSize;
+
         union
         {
             struct
@@ -626,8 +639,10 @@ namespace sogen
                 UINT32 vSyncFreqDivider : 6;
                 UINT32 reserved : 10;
             } AdditionalSignalInfo;
+
             UINT32 videoStandard;
         } u;
+
         uint32_t scanLineOrdering;
     };
 
@@ -649,6 +664,7 @@ namespace sogen
         uint32_t infoType;
         UINT32 id;
         LUID adapterId;
+
         union
         {
             EMU_DISPLAYCONFIG_TARGET_MODE targetMode;
@@ -717,6 +733,7 @@ namespace sogen
     struct EMU_DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO
     {
         EMU_DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+
         union
         {
             struct
@@ -727,8 +744,10 @@ namespace sogen
                 UINT32 advancedColorForceDisabled : 1; // Advanced color is force disabled due to system/OS policy
                 UINT32 reserved : 28;
             } s;
+
             UINT32 value;
         } u;
+
         EMULATOR_CAST(uint32_t, DISPLAYCONFIG_COLOR_ENCODING) colorEncoding;
         UINT32 bitsPerColorChannel;
     };

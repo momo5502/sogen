@@ -59,6 +59,7 @@ namespace sogen
             uint32_t max_extent_depth;
             uint64_t max_resource_size;
         };
+
         int32_t get_physical_device_image_format_properties(uint64_t physical_device, uint32_t format, uint32_t type, uint32_t tiling,
                                                             uint32_t usage, uint32_t flags, image_format_properties& out);
 
@@ -258,6 +259,7 @@ namespace sogen
         // Copies mip 0 / layer 0 of the image (tightly packed) into the buffer at offset 0.
         int32_t cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer, uint32_t width,
                                          uint32_t height, uint32_t aspect_mask);
+
         // Copies tightly-packed pixel data from the buffer (offset 0) into mip 0 / layer 0 of the image.
         // One VkBufferImageCopy region. DXVK sub-allocates uploads from a shared staging buffer, so
         // buffer_offset (and mip/layer/image_offset) are routinely non-zero and must be honoured.
@@ -280,6 +282,7 @@ namespace sogen
 
         int32_t cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout,
                                          const buffer_image_copy_region& region);
+
         // One VkImageCopy region of an image-to-image copy (vkCmdCopyImage[2]).
         struct image_copy_region
         {
@@ -301,6 +304,7 @@ namespace sogen
             uint32_t height;
             uint32_t depth;
         };
+
         struct image_blit_region
         {
             uint32_t src_aspect_mask;
@@ -325,6 +329,7 @@ namespace sogen
             int32_t dst_offset_z1;
             uint32_t filter;
         };
+
         int32_t cmd_copy_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
                                const image_copy_region& region);
         int32_t cmd_blit_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
@@ -432,12 +437,14 @@ namespace sogen
             uint32_t descriptor_count;
             uint32_t stage_flags;
         };
+
         // VkDescriptorPoolSize as plain integers.
         struct descriptor_pool_size
         {
             uint32_t descriptor_type;
             uint32_t descriptor_count;
         };
+
         // A single descriptor write (one descriptor). For buffer types buffer/offset/range apply; for
         // image types (combined image sampler) sampler/image_view/image_layout apply.
         struct descriptor_write
@@ -479,6 +486,7 @@ namespace sogen
             uint32_t stride;
             uint32_t input_rate;
         };
+
         struct vertex_attribute
         {
             uint32_t location;

@@ -16,6 +16,7 @@ namespace sogen::segment_utils
     };
 
 #pragma pack(push, 1)
+
     struct raw_segment_descriptor
     {
         uint16_t limit_low;
@@ -25,6 +26,7 @@ namespace sogen::segment_utils
         uint8_t limit_high_flags;
         uint8_t base_high;
     };
+
 #pragma pack(pop)
 
     struct descriptor

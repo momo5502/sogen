@@ -10,6 +10,7 @@ namespace sogen
 {
 
     using apiset_map = std::map<std::u16string, std::u16string>;
+
     namespace apiset
     {
         enum class location : uint8_t

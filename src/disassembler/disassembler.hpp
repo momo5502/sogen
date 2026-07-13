@@ -17,6 +17,7 @@ namespace sogen
     {
       public:
         instructions() = default;
+
         ~instructions()
         {
             this->release();
@@ -77,6 +78,7 @@ namespace sogen
         {
             return this->instructions_.begin();
         }
+
         auto end() const
         {
             return this->instructions_.end();

@@ -50,10 +50,12 @@ namespace sogen
         {
             return std::make_unique<dummy_device>();
         }
+
         std::unique_ptr<io_device> create_transport_stub_device(const device_creation_context&)
         {
             return std::make_unique<transport_stub_device>();
         }
+
         std::unique_ptr<io_device> create_named_pipe_device(const device_creation_context&)
         {
             return std::make_unique<named_pipe>();
