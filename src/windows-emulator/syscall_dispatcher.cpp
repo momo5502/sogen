@@ -122,7 +122,7 @@ namespace sogen
                               raw_syscall_id, address, e.what());
             win_emu.record_stop(stop_reason::syscall_exception, std::string(syscall_name) + ": " + e.what());
             emu.reg<uint64_t>(x86_register::rax, STATUS_UNSUCCESSFUL);
-            emu.stop();
+            win_emu.stop();
         }
         catch (...)
         {
@@ -130,7 +130,7 @@ namespace sogen
                               raw_syscall_id, address);
             win_emu.record_stop(stop_reason::syscall_exception, std::string(syscall_name) + ": <unknown exception>");
             emu.reg<uint64_t>(x86_register::rax, STATUS_UNSUCCESSFUL);
-            emu.stop();
+            win_emu.stop();
         }
     }
 
