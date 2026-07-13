@@ -793,6 +793,15 @@ impl IcicleEmulator {
         };
     }
 
+    // Deserializing reuses the live VM, so any execution state that a freshly built VM would not carry must be
+    // dropped here. save_registers/restore_registers only round-trip the register space; the instruction counter
+    // and the translated (and recompiled) code cache persist otherwise, so a restored run continues on state left
+    // over from the previous one instead of matching a fresh VM.
+    pub fn reset_volatile_state(&mut self) {
+        self.vm.cpu.icount = 0;
+        self.vm.code.flush_code();
+    }
+
     fn read_generic_register(&mut self, reg: registers::X86Register, buffer: &mut [u8]) -> usize {
         let reg_node = self.reg.get_node(reg);
 
