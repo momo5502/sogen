@@ -16,20 +16,19 @@ SET EMU_SYSDIR=%EMU_WINDIR%\system32
 SET EMU_SYSDIR_WOW64=%EMU_WINDIR%\syswow64
 SET EMU_CURSORDIR=%EMU_WINDIR%\cursors
 SET EMU_REGDIR=%EMU_ROOT%\registry
+SET EMU_STEAMDIR=%EMU_FILESYS%\c\steam
 
 MKDIR %EMU_SYSDIR%
 MKDIR %EMU_SYSDIR_WOW64%
 MKDIR %EMU_CURSORDIR%
 MKDIR %EMU_REGDIR%
+MKDIR %EMU_STEAMDIR%
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0create-profile-dirs.ps1" "%EMU_FILESYS%"
 
-REG SAVE HKLM\HARDWARE %EMU_REGDIR%\HARDWARE /Y
-REG SAVE HKLM\SAM %EMU_REGDIR%\SAM /Y
-REG SAVE HKLM\SECURITY %EMU_REGDIR%\SECURITY /Y
-REG SAVE HKLM\SOFTWARE %EMU_REGDIR%\SOFTWARE /Y
-REG SAVE HKLM\SYSTEM %EMU_REGDIR%\SYSTEM /Y
-COPY /B /Y C:\Users\Default\NTUSER.DAT "%EMU_REGDIR%\NTUSER.DAT"
+REM Capture this machine's registry hives and seed the Steam-bridge keys. Shared with grab-registry.bat
+REM (which writes SYSTEM/SECURITY/SOFTWARE/HARDWARE/SAM + NTUSER.DAT into the given dir) to avoid duplication.
+CALL "%~dp0grab-registry.bat" "%EMU_REGDIR%"
 
 CALL :collect advapi32.dll
 CALL :collect bcrypt.dll

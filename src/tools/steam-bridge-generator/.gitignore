@@ -1,0 +1,4 @@
+# Generator output. When run against the real Steamworks SDK this is Valve-derived.
+# Do not commit.
+generated/
+generated_real/

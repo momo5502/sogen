@@ -1,5 +1,10 @@
 add_subdirectory(common)
 add_subdirectory(gpu-bridge-protocol)
+add_subdirectory(steam-bridge-protocol)
+
+include("${PROJECT_SOURCE_DIR}/cmake/steam-bridge.cmake")
+
+add_subdirectory(steam-host-backend)
 add_subdirectory(vulkan-bridge-marshal)
 add_subdirectory(emulator-platform)
 add_subdirectory(disassembler)
@@ -46,5 +51,16 @@ if(_SOGEN_BUILD_STANDALONE_TARGETS)
   if(WIN32)
     sogen_add_subdirectory_and_get_targets("samples" SAMPLE_TARGETS)
     sogen_targets_set_folder("samples" ${SAMPLE_TARGETS})
+  endif()
+
+  # The tools baked into the emulation root, grouped so CI builds one target. Each is included only when it
+  # exists for the current arch/config (dump-apiset is 64-bit; steam-shim needs the Steam bridge enabled).
+  if(WIN32)
+    add_custom_target(emulation-root-tools)
+    foreach(_root_tool vulkan-shim steam-shim dump-apiset)
+      if(TARGET ${_root_tool})
+        add_dependencies(emulation-root-tools ${_root_tool})
+      endif()
+    endforeach()
   endif()
 endif()

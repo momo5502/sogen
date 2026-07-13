@@ -1,0 +1,48 @@
+// Configured per SDK version tag from steam_host_tag.cpp.in. Compiled against that tag's headers only, it
+// dispatches an invoke onto the genuine version-exact interface object the host fetched. The backend tries
+// every tag's entry (SOGEN_STEAM_TAGS) until one owns the requested version.
+#include "steam_host_runtime.hpp"
+#include "steam_host_thunks.generated.hxx"
+#include "steam_versions.generated.hxx"
+
+#include <cstdint>
+#include <cstring>
+#include <vector>
+
+// How many vtable entries this snapshot's `version` interface has (0 if it does not vend it). The backend
+// picks the snapshot with the MOST methods, matching the guest shim's choice so method indices line up.
+extern "C" uint32_t sogen_steam_method_count_@STEAM_TAG@(const char* version)
+{
+    return version ? sogen::steam_bridge::gen::@STEAM_TAG@::method_count(version) : 0;
+}
+
+extern "C" int sogen_steam_dispatch_@STEAM_TAG@(const char* version, void* iface, uint32_t method,
+                                                const unsigned char* in, uint32_t in_len, unsigned char* out,
+                                                uint32_t out_cap, uint32_t* out_len, uint64_t* ret)
+{
+    sogen::steam_host::steam_host_reader reader{in, in + in_len};
+    std::vector<unsigned char> reply;
+    uint64_t local_ret = 0;
+    sogen::steam_host::steam_host_writer writer{reply, local_ret};
+
+    const int status = sogen::steam_host::@STEAM_TAG@::dispatch(version, iface, method, reader, writer);
+
+    if (ret)
+    {
+        *ret = local_ret;
+    }
+    const auto needed = static_cast<uint32_t>(reply.size());
+    if (out_len)
+    {
+        *out_len = needed; // always the reply's true length, so the caller learns it did not fit
+    }
+    if (needed > out_cap)
+    {
+        return sogen::steam_host::steam_host_output_too_small; // do not truncate: leave the reply undelivered
+    }
+    if (out && needed)
+    {
+        std::memcpy(out, reply.data(), needed);
+    }
+    return status;
+}

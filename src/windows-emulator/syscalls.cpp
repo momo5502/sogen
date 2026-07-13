@@ -264,7 +264,9 @@ namespace sogen
                                                   emulator_object<uint32_t> return_length);
         NTSTATUS handle_NtSetInformationProcess(const syscall_context& c, handle process_handle, uint32_t info_class,
                                                 uint64_t process_information, uint32_t process_information_length);
-        NTSTATUS handle_NtOpenProcess();
+        NTSTATUS handle_NtOpenProcess(const syscall_context& c, emulator_object<handle> process_handle, ACCESS_MASK desired_access,
+                                      emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                      emulator_object<CLIENT_ID64> client_id);
         NTSTATUS handle_NtOpenProcessToken(const syscall_context&, handle process_handle, ACCESS_MASK /*desired_access*/,
                                            emulator_object<handle> token_handle);
         NTSTATUS handle_NtOpenProcessTokenEx(const syscall_context& c, handle process_handle, ACCESS_MASK desired_access,
@@ -950,7 +952,24 @@ namespace sogen
             context.output_buffer_length = output_buffer_length;
             context.vcpu = &c.vcpu;
 
-            return device->execute_ioctl(c.win_emu, context);
+            try
+            {
+                return device->execute_ioctl(c.win_emu, context);
+            }
+            catch (const std::exception& e)
+            {
+                c.win_emu.log.error("NtDeviceIoControlFile: device '%s' ioctl 0x%X threw: %s (in=%u out=%u)\n",
+                                    u16_to_u8(device->get_device_name()).c_str(), static_cast<unsigned>(io_control_code), e.what(),
+                                    static_cast<unsigned>(input_buffer_length), static_cast<unsigned>(output_buffer_length));
+                throw;
+            }
+            catch (...)
+            {
+                c.win_emu.log.error("NtDeviceIoControlFile: device '%s' ioctl 0x%X threw unknown exception (in=%u out=%u)\n",
+                                    u16_to_u8(device->get_device_name()).c_str(), static_cast<unsigned>(io_control_code),
+                                    static_cast<unsigned>(input_buffer_length), static_cast<unsigned>(output_buffer_length));
+                throw;
+            }
         }
 
         NTSTATUS handle_NtQueryWnfStateData()

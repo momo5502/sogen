@@ -1,0 +1,9 @@
+; Module-definition file for the guest Steam shim (steamclient64.dll / steamclient.dll replacement).
+;
+; Exports the steamclient entry points the game's own steam_api DLL resolves by name, undecorated on both
+; x86 and x64. Keep in sync with steam_shim.cpp.
+EXPORTS
+    CreateInterface
+    Steam_BGetCallback
+    Steam_FreeLastCallback
+    Steam_GetAPICallResult

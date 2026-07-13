@@ -1656,6 +1656,7 @@ namespace sogen
                 u"Nsi",
                 u"MountPointManager",
                 u"SogenGpu",
+                u"SogenSteam",
             };
 
             if (devices.contains(path))
