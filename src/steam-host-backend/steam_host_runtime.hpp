@@ -43,7 +43,7 @@ namespace sogen::steam_host
 
         void get(void* dst, size_t n)
         {
-            if (p + n <= end && p + n >= p)
+            if (p <= end && n <= static_cast<size_t>(end - p))
             {
                 std::memcpy(dst, p, n);
                 p += n;
