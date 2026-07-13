@@ -196,10 +196,12 @@ function(sogen_target_disable_warnings target)
   sogen_target_remove_compile_options(${target} /W3 -W3 /W4 -W4)
 
   if(MSVC)
-  set(compile_options
-    /W0
-    /D_CRT_SECURE_NO_WARNINGS=1
-  )
+    set(compile_options
+      /W0
+      /D_CRT_SECURE_NO_WARNINGS=1
+    )
+  else()
+    set(compile_options -w) # GCC/Clang: actually silence warnings for third-party / generated code
   endif()
 
   sogen_target_c_and_cxx_compile_options(${target} PRIVATE ${compile_options})
@@ -213,6 +215,17 @@ function(sogen_targets_disable_warnings)
   foreach(target ${ARGV})
     sogen_target_disable_warnings(${target})
   endforeach()
+endfunction()
+
+##########################################
+
+# MSVC extras for a generated-Steam-code target whose SDK headers the caller marks SYSTEM. C4743/C4744 are
+# MSVC's cross-TU -Wodr analogue (ISteam* types differ across snapshots) and fire at LTCG link.
+function(sogen_target_generated_code_warnings target)
+  if(MSVC)
+    target_compile_options(${target} PRIVATE /external:W0 /wd4743 /wd4744)
+    target_compile_definitions(${target} PRIVATE _CRT_SECURE_NO_WARNINGS=1)
+  endif()
 endfunction()
 
 ##########################################

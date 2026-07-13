@@ -26,9 +26,10 @@ foreach(_entry ${SOGEN_STEAM_TAG_LIST})
   configure_file("${CMAKE_CURRENT_LIST_DIR}/steam_host_tag.cpp.in"
                  "${CMAKE_CURRENT_BINARY_DIR}/steam_host_${_tag}.gen.cpp" @ONLY)
   add_library(steam-host-${_tag} OBJECT "${CMAKE_CURRENT_BINARY_DIR}/steam_host_${_tag}.gen.cpp")
-  sogen_target_disable_warnings(steam-host-${_tag})
   target_link_libraries(steam-host-${_tag} PRIVATE steam-bridge-protocol)  # shared response_type ids
+  target_include_directories(steam-host-${_tag} SYSTEM PRIVATE "${_dir}")  # SDK headers: not our warnings
   target_include_directories(steam-host-${_tag} PRIVATE
-    "${_dir}" "${SOGEN_STEAM_GEN_DIR}/${_tag}" "${CMAKE_CURRENT_LIST_DIR}")
+    "${SOGEN_STEAM_GEN_DIR}/${_tag}" "${CMAKE_CURRENT_LIST_DIR}")
+  sogen_target_generated_code_warnings(steam-host-${_tag})
   target_sources(steam-host-backend PRIVATE $<TARGET_OBJECTS:steam-host-${_tag}>)
 endforeach()

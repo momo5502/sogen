@@ -125,7 +125,7 @@ namespace sogen::steam_shim
             {
                 std::memcpy(dst, out_.data() + out_pos_, n);
             }
-            out_pos_ += n;
+            out_pos_ += static_cast<uint32_t>(n);
         }
 
         void call()

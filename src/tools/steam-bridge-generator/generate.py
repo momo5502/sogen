@@ -828,7 +828,8 @@ def emit_guest(interfaces: list[Interface], tag: str) -> str:
                         tid = response_type_id(p.type)
                         L.append(f"            inv.put_callback_token(sogen::steam_shim::register_response_object("
                                  f"{p.name}, {tid}), {tid});")
-                    # null_ptr: not marshalled; the host substitutes nullptr.
+                    elif p.kind == "null_ptr" and p.name:
+                        L.append(f"            (void){p.name}; // not marshalled; the host substitutes nullptr")
                 L.append("            inv.call();")
                 # Out-parameters come back in the out-blob, in parameter order (before any string return).
                 for p in m.params:
@@ -868,6 +869,9 @@ def emit_guest(interfaces: list[Interface], tag: str) -> str:
                         L.append("                return {};")
                     L.append("            }")
             else:
+                for p in m.params:
+                    if p.name:
+                        L.append(f"            (void){p.name};")
                 L.append(f'            sogen::steam_shim::report_unsupported("{i.classname}", "{m.name}");')
                 if m.ret_kind != "void":
                     L.append("            return {};")
