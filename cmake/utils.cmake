@@ -247,6 +247,10 @@ function(sogen_target_set_warnings_as_errors target)
 
   if(MSVC)
     set(compile_options /W4 /WX)
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    # A newer clang (notably the emscripten toolchain) fires -Wunused-template on legitimate uninstantiated
+    # fallback templates (e.g. a generic default overload); it is not a warning this project opts into.
+    list(APPEND compile_options -Wno-unused-template)
   endif()
 
   target_compile_options(${target} PRIVATE
