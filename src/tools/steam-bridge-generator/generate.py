@@ -673,11 +673,26 @@ def build_interfaces(sdk_dir: str, bits: int = 32) -> tuple[list[Interface], lis
     errors = sum(1 for d in tu.diagnostics if d.severity >= cx.Diagnostic.Error)
     types = _build_types(tu)
 
-    ver_strings = re.findall(r'_INTERFACE_VERSION\s+"([^"]+)"', "".join(
+    headers = "".join(
         open(os.path.join(sdk_dir, fn), encoding="utf-8", errors="replace").read()
-        for fn in sorted(os.listdir(sdk_dir)) if fn.startswith("isteam") and fn.endswith(".h")))
+        for fn in sorted(os.listdir(sdk_dir)) if fn.startswith("isteam") and fn.endswith(".h"))
+
+    ver_strings = re.findall(r'_INTERFACE_VERSION\s+"([^"]+)"', headers)
+
+    # The accessor macros state the class <-> version-macro pairing the SDK itself uses, which the name
+    # heuristic below cannot always recover: ISteamGameSearch's version is "SteamMatchGameSearch001", and
+    # ISteamInventory's is "STEAMINVENTORY_INTERFACE_V003". A class with no version cannot be proxied in
+    # the guest, so SteamAPI_Init fails the moment a game asks for one of them.
+    ver_macros = dict(re.findall(r'#\s*define\s+(\w*_INTERFACE_VERSION\w*)\s+"([^"]+)"', headers))
+    accessors = {
+        cls: ver_macros[macro]
+        for cls, macro in re.findall(r'STEAM_DEFINE_\w*INTERFACE_ACCESSOR\(\s*(\w+)\s*\*\s*,\s*\w+\s*,\s*(\w+)\s*\)', headers)
+        if macro in ver_macros
+    }
 
     def version_of(classname: str) -> str:
+        if classname in accessors:
+            return accessors[classname]
         target = family_key(classname[1:])  # drop leading 'I'
         return next((v for v in ver_strings if family_key(v) == target), "")
 
