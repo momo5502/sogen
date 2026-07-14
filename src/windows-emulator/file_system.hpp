@@ -75,6 +75,38 @@ namespace sogen
                 return mapping->second;
             }
 
+            // Directory (subtree) mappings: if a mapped directory is an ancestor of the
+            // requested path, resolve the remainder against the mapped host directory. The
+            // deepest matching mapping wins, so nested mounts behave intuitively.
+            {
+                const std::filesystem::path* best_dest = nullptr;
+                windows_path best_remainder{};
+                size_t best_depth = 0;
+
+                for (const auto& [src, dest] : this->mappings_)
+                {
+                    auto remainder = win_path.relative_to(src);
+                    if (remainder.has_value() && (best_dest == nullptr || src.depth() > best_depth))
+                    {
+                        best_dest = &dest;
+                        best_remainder = std::move(*remainder);
+                        best_depth = src.depth();
+                    }
+                }
+
+                if (best_dest != nullptr)
+                {
+                    const auto host_path = *best_dest / best_remainder.to_portable_path();
+                    // Prevent ".." in the guest path from escaping the mounted directory.
+                    if (is_subpath(best_dest->lexically_normal(), host_path.lexically_normal()))
+                    {
+                        return weakly_canonical(host_path);
+                    }
+
+                    return *best_dest;
+                }
+            }
+
 #ifdef OS_WINDOWS
             if (this->root_.empty())
             {
