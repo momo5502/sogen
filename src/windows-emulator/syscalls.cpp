@@ -205,6 +205,8 @@ namespace sogen
                                                    WAIT_TYPE wait_type, BOOLEAN alertable, emulator_object<LARGE_INTEGER> timeout);
         NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, handle h, BOOLEAN alertable,
                                               emulator_object<LARGE_INTEGER> timeout);
+        NTSTATUS handle_NtSignalAndWaitForSingleObject(const syscall_context& c, handle signal_handle, handle wait_handle,
+                                                       BOOLEAN alertable, emulator_object<LARGE_INTEGER> timeout);
         NTSTATUS handle_NtSetInformationObject();
         NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, handle /*h*/, SECURITY_INFORMATION /*security_information*/,
                                               emulator_pointer security_descriptor, ULONG length, emulator_object<ULONG> length_needed);
@@ -1362,6 +1364,7 @@ namespace sogen
         add_handler(NtCreateThreadEx);
         add_handler(NtQueryDebugFilterState);
         add_handler(NtWaitForSingleObject);
+        add_handler(NtSignalAndWaitForSingleObject);
         add_handler(NtTerminateThread);
         add_handler(NtDelayExecution);
         add_handler(NtWaitForAlertByThreadId);
