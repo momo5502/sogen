@@ -1873,6 +1873,7 @@ namespace sogen
                     this->vulkan_.get_query_pool_results(request.device, request.query_pool, request.first_query, request.query_count,
                                                          request.flags, data.data(), data.size(), request.stride, written);
 
+                written = std::min(written, data.size()); // defensive: never read past the staging buffer if the host over-reports
                 const response_t response{.vk_result = result, .data_size = static_cast<uint32_t>(written)};
                 emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response);
                 if (written > 0)

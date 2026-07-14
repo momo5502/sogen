@@ -705,10 +705,13 @@ def build_interfaces(sdk_dir: str, bits: int = 32) -> tuple[list[Interface], lis
             v = next((p.name for p in params if p.kind == "cstr"), "")
             if v:
                 rk, simple, iface_version = "iface_return", True, v
-        # SECURITY GUARD: a by-value/by-ref/by-const-ptr struct is byte-copied from the guest blob verbatim,
-        # so a pointer member would let the guest inject a raw host pointer for steamclient to dereference.
-        # No currently-marshalled Steam struct has one; refuse loudly if a future SDK ever introduces the case
-        # rather than silently emitting the vulnerability. Blocked methods never reach the real call, so skip.
+        # SECURITY: a struct with a pointer member is byte-copied verbatim by the generic marshaller.
+        # As an INPUT this lets the guest inject a raw host pointer for steamclient to dereference -- no method
+        # currently does that, so refuse loudly as a tripwire if a future SDK introduces one. As an OUTPUT or a
+        # by-value struct return it would disclose a real host pointer to the guest (ASLR defeat); several real
+        # methods take such an out-param (a non-const input pointer the classifier reads as an output), so
+        # self-stub them (keep the vtable slot, return unsupported) rather than fail the whole build. Blocked
+        # methods never reach the real call, so skip the checks.
         classname = m.semantic_parent.spelling if m.semantic_parent else ""
         if simple and not is_blocked(classname, m.spelling):
             for p in params:
@@ -719,6 +722,12 @@ def build_interfaces(sdk_dir: str, bits: int = 32) -> tuple[list[Interface], lis
                         f"would let a guest inject a raw host pointer into steamclient. Add the method to "
                         f"BLOCKED_METHODS, or teach the generator to marshal the struct's pointers safely, "
                         f"before this can be emitted.")
+            out_ptr_struct = any(p.kind in ("out_single", "out_array") and types.has_pointer_member(p.type)
+                                 for p in params)
+            ret_ptr_struct = rk in ("struct_return", "struct_ptr_return") and \
+                types.has_pointer_member(m.result_type.spelling.replace("*", "").strip())
+            if out_ptr_struct or ret_ptr_struct:
+                simple = False  # would disclose a host pointer -> emit an unsupported stub instead of marshalling it
         return Method(m.spelling, idx, m.result_type.spelling, rk, params, ", ".join(raw),
                       m.is_const_method(), simple, iface_version,
                       ret_opaque=(rk == "scalar" and types.is_opaque_handle(m.result_type.spelling)))
@@ -968,11 +977,13 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                     v = f"a{k}"
                     if p.kind == "byval":
                         if p.opaque:
-                            # SECURITY: a raw void* handle from the guest. Only accept values the host itself
-                            # issued (register_opaque_handle on the returning method); otherwise Steam would
-                            # dereference/free an attacker-chosen pointer. Null is always allowed.
-                            L.append(f"            if (!is_valid_opaque_handle(reinterpret_cast<uint64_t>({v}))) "
-                                     f"return steam_host_unsupported;")
+                            # SECURITY: the guest passes a dense opaque INDEX, never a real pointer. Translate it
+                            # back to the host handle it was issued for; a forged/never-issued index resolves to
+                            # 0 -> reject (null is always allowed). This is what keeps a guest from handing
+                            # steamclient an arbitrary pointer to dereference/free.
+                            L.append(f"            const uint64_t {v}_real = resolve_opaque_handle(reinterpret_cast<uint64_t>({v}));")
+                            L.append(f"            if (!{v}_real && reinterpret_cast<uint64_t>({v}) != 0) return steam_host_unsupported;")
+                            L.append(f"            {v} = reinterpret_cast<decltype({v})>({v}_real);")
                         args.append(v)
                     elif p.kind in ("cstr", "in_ref", "byval_struct"):
                         args.append(v)
@@ -1033,12 +1044,14 @@ def emit_host(interfaces: list[Interface], tag: str) -> str:
                     L.append(f"            const char* _s = {call};")
                 elif m.ret_kind == "scalar":
                     L.append(f"            auto _rv = {call}; uint64_t _r = 0; std::memcpy(&_r, &_rv, sizeof(_rv));")
-                    if m.ret_opaque:  # a void* handle the host just minted: remember it so the guest can pass it back
-                        L.append("            register_opaque_handle(_r);")
+                    if m.ret_opaque:  # a void* handle: hand the guest a dense index, never the real host pointer
+                        L.append("            _r = register_opaque_handle(_r);")
                 elif m.ret_kind == "iface_return":
                     L.append(f"            {m.ret} _iface = {call};")
                 elif m.ret_kind == "struct_return":
-                    L.append(f"            {m.ret} _sret = {call};")
+                    # Zero-init first so any trailing/interior padding in the returned struct starts zeroed
+                    # rather than leaking the host return slot to the guest (out_* buffers are zeroed the same way).
+                    L.append(f"            {m.ret} _sret{{}}; _sret = {call};")
                 elif m.ret_kind == "struct_ptr_return":
                     L.append(f"            {m.ret} _pret = {call};")
                 else:  # csteamid / floating

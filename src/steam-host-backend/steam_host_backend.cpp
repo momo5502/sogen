@@ -422,6 +422,10 @@ extern "C" int sogen_steam_backend_run_callbacks(int32_t pipe, uint8_t* out, uin
     // (k_iSteamUserCallbacks + 1 = 101) before starting its IWNet connection. Synthesize it once per pipe so
     // the guest sees it. Record layout = [int32 callback id][uint32 payload bytes = 0].
     static std::unordered_set<int32_t> announced_connected;
+    if (announced_connected.size() > 4096)
+    {
+        announced_connected.clear(); // bound growth if a guest cycles through distinct pipe ids; re-announcing is harmless
+    }
     if (out && announced_connected.insert(use_pipe).second && written + 8u <= out_cap)
     {
         const int32_t servers_connected_id = 101;

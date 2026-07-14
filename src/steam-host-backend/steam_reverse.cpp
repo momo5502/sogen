@@ -21,10 +21,12 @@ namespace sogen::steam_host
         std::mutex g_mutex;
         // Queued reverse calls: each record is uint64 token, int32 method, uint32 bytes, then the args.
         std::vector<unsigned char> g_queue;
-        std::unordered_map<uint64_t, void*> g_proxies;       // token -> host proxy object (one per token)
-        std::unordered_map<uint64_t, uint32_t> g_proxy_refs; // token -> count of Steam requests still using it
-        std::unordered_map<uint64_t, int32_t> g_proxy_types; // token -> response interface type it was created as
-        std::unordered_set<uint64_t> g_issued_handles;       // opaque void* handles the host actually returned
+        std::unordered_map<uint64_t, void*> g_proxies;            // token -> host proxy object (one per token)
+        std::unordered_map<uint64_t, uint32_t> g_proxy_refs;      // token -> count of Steam requests still using it
+        std::unordered_map<uint64_t, int32_t> g_proxy_types;      // token -> response interface type it was created as
+        std::unordered_map<uint64_t, uint64_t> g_handle_to_index; // real host handle (raw ptr) -> dense opaque index
+        std::unordered_map<uint64_t, uint64_t> g_index_to_handle; // dense opaque index -> real host handle
+        uint64_t g_next_opaque_index = 1;
 
         // Serializes one reverse call's argument buffer (built by each proxy method).
         struct args
@@ -107,7 +109,7 @@ namespace sogen::steam_host
             void ServerResponded(HServerListRequest hReq, int iServer) override
             {
                 args a;
-                a.u64(reinterpret_cast<uint64_t>(hReq));
+                a.u64(register_opaque_handle(reinterpret_cast<uint64_t>(hReq))); // send the opaque index, not the raw pointer
                 a.i32(iServer);
                 enqueue(token, 0, a);
             }
@@ -115,7 +117,7 @@ namespace sogen::steam_host
             void ServerFailedToRespond(HServerListRequest hReq, int iServer) override
             {
                 args a;
-                a.u64(reinterpret_cast<uint64_t>(hReq));
+                a.u64(register_opaque_handle(reinterpret_cast<uint64_t>(hReq)));
                 a.i32(iServer);
                 enqueue(token, 1, a);
             }
@@ -123,7 +125,7 @@ namespace sogen::steam_host
             void RefreshComplete(HServerListRequest hReq, EMatchMakingServerResponse response) override
             {
                 args a;
-                a.u64(reinterpret_cast<uint64_t>(hReq));
+                a.u64(register_opaque_handle(reinterpret_cast<uint64_t>(hReq)));
                 a.i32(static_cast<int32_t>(response));
                 enqueue(token, 2, a);
                 if (retire_proxy(token, this))
@@ -282,24 +284,36 @@ namespace sogen::steam_host
         return p;
     }
 
-    void register_opaque_handle(uint64_t handle)
+    uint64_t register_opaque_handle(uint64_t real_handle)
     {
-        if (handle == 0)
+        if (real_handle == 0)
         {
-            return;
+            return 0;
         }
         std::lock_guard lock{g_mutex};
-        g_issued_handles.insert(handle);
+        // Hand the guest a dense index, not the real steamclient pointer: the guest must never see a host
+        // pointer (that defeats host ASLR), and it can later only name a handle the host actually issued.
+        // Idempotent per real handle so a handle echoed back in a reverse callback keeps the same index.
+        if (const auto it = g_handle_to_index.find(real_handle); it != g_handle_to_index.end())
+        {
+            return it->second;
+        }
+        const uint64_t index = g_next_opaque_index++;
+        g_handle_to_index[real_handle] = index;
+        g_index_to_handle[index] = real_handle;
+        return index;
     }
 
-    bool is_valid_opaque_handle(uint64_t handle)
+    uint64_t resolve_opaque_handle(uint64_t opaque_index)
     {
-        if (handle == 0)
+        if (opaque_index == 0)
         {
-            return true; // null is always safe; the real Steam method handles it
+            return 0; // null is always safe; the real Steam method handles it
         }
         std::lock_guard lock{g_mutex};
-        return g_issued_handles.count(handle) != 0;
+        // A forged index the host never issued resolves to 0, so it can never become an arbitrary host pointer.
+        const auto it = g_index_to_handle.find(opaque_index);
+        return it == g_index_to_handle.end() ? 0 : it->second;
     }
 
     uint32_t drain_reverse_callbacks(std::vector<unsigned char>& out)
