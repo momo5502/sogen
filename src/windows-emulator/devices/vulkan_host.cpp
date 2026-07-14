@@ -647,6 +647,18 @@ namespace sogen
             return index;
         }
 
+        // Fills `props` from the device's physical device. Returns false if the query is unavailable.
+        bool query_memory_properties(const device_data& dev, VkPhysicalDeviceMemoryProperties& props)
+        {
+            const auto instance = this->instances.find(dev.instance_id);
+            if (instance == this->instances.end() || !instance->second.get_physical_device_memory_properties)
+            {
+                return false;
+            }
+            instance->second.get_physical_device_memory_properties(dev.physical_device, &props);
+            return true;
+        }
+
         template <typename Map, typename Pred>
         void erase_owned(Map& map, Pred pred)
         {
@@ -2589,6 +2601,15 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        VkPhysicalDeviceMemoryProperties mem_props{};
+        const bool have_props = this->impl_->query_memory_properties(dev->second, mem_props);
+        // The spec requires memoryTypeIndex < memoryTypeCount; drivers index their internal type/heap arrays
+        // with it unchecked, so an out-of-range guest value is an OOB read inside the host driver.
+        if (have_props && memory_type_index >= mem_props.memoryTypeCount)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
         // Round the allocation up to a whole number of guest pages. The map-direct path aliases the host
         // mapping straight into the guest, which can only be done at page granularity; rounding the actual
         // allocation up means the page-aligned alias never covers anything beyond this allocation, so the
@@ -2606,6 +2627,33 @@ namespace sogen
         if (result != VK_SUCCESS)
         {
             return result;
+        }
+
+        // Vulkan leaves VkDeviceMemory uninitialized. Host-visible memory is aliased/copied straight to the
+        // guest (map_memory / download_memory), so zero it here -- otherwise the guest can read stale host
+        // bytes from before it wrote anything (a host-process info leak).
+        const VkMemoryPropertyFlags type_flags = (have_props && info.memoryTypeIndex < mem_props.memoryTypeCount)
+                                                     ? mem_props.memoryTypes[info.memoryTypeIndex].propertyFlags
+                                                     : 0;
+        if ((type_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && dev->second.map_memory && dev->second.unmap_memory)
+        {
+            void* zeroed = nullptr;
+            if (dev->second.map_memory(dev->second.handle, memory, 0, VK_WHOLE_SIZE, 0, &zeroed) == VK_SUCCESS && zeroed)
+            {
+                std::memset(zeroed, 0, static_cast<size_t>(aligned_size));
+                // Non-coherent memory needs an explicit flush for the zero-fill to reach the device and later
+                // mappings; on coherent memory the write is already visible, so skip the extra call.
+                if (!(type_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) && dev->second.flush_mapped_memory_ranges)
+                {
+                    VkMappedMemoryRange range{};
+                    range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
+                    range.memory = memory;
+                    range.offset = 0;
+                    range.size = VK_WHOLE_SIZE;
+                    dev->second.flush_mapped_memory_ranges(dev->second.handle, 1, &range);
+                }
+                dev->second.unmap_memory(dev->second.handle, memory);
+            }
         }
 
         const uint64_t id = this->impl_->next_id++;
@@ -3483,6 +3531,14 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        // A real swapchain has only a handful of images; reject an absurd guest count before it drives the
+        // per-image allocation loop below (each iteration does create_image + allocate_memory). The bound is
+        // just a sanity ceiling well above any real use, not a hard Vulkan limit.
+        constexpr uint32_t max_swapchain_images = 128;
+        if (min_image_count > max_swapchain_images)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
         const uint32_t image_count = (min_image_count < 2) ? 2 : min_image_count;
         const auto vk_format = static_cast<VkFormat>(format);
 

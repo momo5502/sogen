@@ -20,6 +20,11 @@ namespace sogen
 
     namespace
     {
+        // Upper bound on a single invoke's argument blob and its reply, so a guest cannot drive a
+        // multi-gigabyte host allocation by declaring a huge (but validly-sized) IOCTL buffer. Comfortably
+        // above any real Steamworks call (the guest marshaller caps each variable payload at 16 MiB).
+        constexpr uint32_t max_bridge_payload_bytes = 64u << 20;
+
         // Abstracts whatever answers Steamworks calls, so the transport is independent of the responder.
         // SECURITY: `args` is guest-controlled and must be treated as hostile; every implementation bounds
         // its reads and caps its allocations.
@@ -281,8 +286,10 @@ namespace sogen
                 }
                 const auto header = emulator_object<sb::invoke_header>{win_emu.emu(), context.input_buffer}.read();
 
-                // Bound the argument blob strictly within the input buffer (subtraction avoids overflow).
-                if (header.arg_bytes > context.input_buffer_length - sizeof(sb::invoke_header))
+                // Bound the argument blob strictly within the input buffer (subtraction avoids overflow), and
+                // cap it so a huge input buffer can't force a multi-gigabyte host allocation below.
+                if (header.arg_bytes > context.input_buffer_length - sizeof(sb::invoke_header) ||
+                    header.arg_bytes > max_bridge_payload_bytes)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -295,9 +302,12 @@ namespace sogen
 
                 std::vector<std::byte> out{};
                 uint64_t ret = 0;
-                const uint32_t out_cap = (context.output_buffer && context.output_buffer_length >= sizeof(sb::invoke_response))
-                                             ? static_cast<uint32_t>(context.output_buffer_length - sizeof(sb::invoke_response))
-                                             : 0;
+                uint32_t out_cap = (context.output_buffer && context.output_buffer_length >= sizeof(sb::invoke_response))
+                                       ? static_cast<uint32_t>(context.output_buffer_length - sizeof(sb::invoke_response))
+                                       : 0;
+                // Cap the reply staging buffer the backend sizes from this; a guest-declared 4 GiB output
+                // buffer must not force a 4 GiB host allocation. Real replies are far smaller.
+                out_cap = std::min(out_cap, max_bridge_payload_bytes);
                 const int32_t status = this->backend(win_emu).invoke(header.handle, header.method_index, args, out, ret, out_cap);
                 if (status != 0)
                 {
@@ -343,6 +353,10 @@ namespace sogen
                 uint32_t normal_bytes = 0;
                 uint32_t reverse_count = 0;
                 this->backend(win_emu).run_callbacks(pipe, blob, normal_count, normal_bytes, reverse_count);
+                if (normal_bytes > blob.size())
+                {
+                    normal_bytes = static_cast<uint32_t>(blob.size()); // defensive: keep reverse_bytes from underflowing
+                }
                 if (reverse_count)
                 {
                     win_emu.log.info("[steam-bridge] %u reverse callback(s)\n", reverse_count);

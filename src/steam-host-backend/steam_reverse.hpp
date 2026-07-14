@@ -13,11 +13,12 @@ namespace sogen::steam_host
     // Returned as the concrete ISteam...Response* (as void*). Called from the generated thunks.
     void* create_response_proxy(int32_t type, uint64_t token);
 
-    // Opaque void* handles (e.g. HServerListRequest) that a Steam method returned to the guest. The guest
-    // may only pass back a handle the host actually issued -- otherwise it could hand steamclient an
-    // arbitrary pointer to dereference/free. Called from the generated thunks.
-    void register_opaque_handle(uint64_t handle);
-    bool is_valid_opaque_handle(uint64_t handle);
+    // Opaque void* handles (e.g. HServerListRequest) that a Steam method returned. The guest never sees the
+    // real steamclient pointer -- it gets a dense index instead (register_opaque_handle, on the returning
+    // thunk), and a guest-supplied index is translated back to the real handle (resolve_opaque_handle, on the
+    // consuming thunk), returning 0 for any index the host never issued. Called from the generated thunks.
+    uint64_t register_opaque_handle(uint64_t real_handle); // -> dense opaque index handed to the guest
+    uint64_t resolve_opaque_handle(uint64_t opaque_index); // -> real host handle, 0 if never issued
 
     // Appends queued reverse calls to `out` as reverse_record + payload; returns the record count and
     // clears the queue.

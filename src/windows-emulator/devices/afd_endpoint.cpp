@@ -844,8 +844,12 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                // Cap the staging buffer: a guest can declare a ~4 GiB WSABUF without backing it, so allocating
+                // its full length before any data arrives is an asymmetric memory-exhaustion vector. Stream
+                // recv has partial-read semantics, so the guest simply reads the rest on the next call.
+                constexpr size_t max_stream_transfer_bytes = 64u << 20;
                 std::vector<std::byte> host_buffer;
-                host_buffer.resize(wsabuf.len);
+                host_buffer.resize(std::min<size_t>(wsabuf.len, max_stream_transfer_bytes));
 
                 const auto bytes_received = this->s_->recv(host_buffer);
 
@@ -910,8 +914,11 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                // Cap as in receive; stream send has partial-write semantics, so a larger request is simply
+                // sent across multiple calls rather than staged in one oversized host allocation.
+                constexpr size_t max_stream_transfer_bytes = 64u << 20;
                 std::vector<std::byte> host_buffer;
-                host_buffer.resize(wsabuf.len);
+                host_buffer.resize(std::min<size_t>(wsabuf.len, max_stream_transfer_bytes));
 
                 emu.read_memory(wsabuf.buf, host_buffer.data(), host_buffer.size());
 
