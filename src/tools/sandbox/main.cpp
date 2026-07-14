@@ -20,6 +20,8 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace sogen::sandbox
@@ -57,7 +59,7 @@ namespace sogen::sandbox
             return wide_args;
         }
 
-        int run(const std::span<const std::string_view> args)
+        int run(const std::span<const std::string_view> args, std::unordered_map<windows_path, std::filesystem::path> path_mappings)
         {
             application_settings app_settings{
                 .application = std::u8string(args[0].begin(), args[0].end()),
@@ -82,6 +84,8 @@ namespace sogen::sandbox
             {
                 settings.emulation_root = root;
             }
+
+            settings.path_mappings = std::move(path_mappings);
 
             emulator_callbacks callbacks{};
             callbacks.on_stdout = [](const std::string_view data) {
@@ -127,6 +131,11 @@ namespace sogen::sandbox
             // On Windows this resolves the UTF-8 arguments from the wide command line.
             argv = app.ensure_utf8(argv);
 
+            // Map a guest Windows path to a host path (repeatable, two values each), mirroring
+            // the analyzer's -p option. Parsed before the first positional (the application).
+            std::vector<std::pair<std::string, std::string>> path_mappings{};
+            app.add_option("-p,--path", path_mappings, "Map a Windows path to a host path")->type_name("SRC DST")->allow_extra_args(false);
+
             // Stop parsing at the first positional (the application) and forward everything after it to the
             // emulated program.
             app.prefix_command();
@@ -142,8 +151,14 @@ namespace sogen::sandbox
                     return 1;
                 }
 
+                std::unordered_map<windows_path, std::filesystem::path> mappings{};
+                for (const auto& [source, target] : path_mappings)
+                {
+                    mappings[windows_path(source)] = std::filesystem::absolute(target);
+                }
+
                 const std::vector<std::string_view> views{application.begin(), application.end()};
-                return run(views);
+                return run(views, std::move(mappings));
             }
             catch (const std::exception& e)
             {

@@ -69,10 +69,16 @@ namespace sogen
                 throw std::runtime_error("Only absolute paths can be translated: " + win_path.string());
             }
 
-            const auto mapping = this->mappings_.find(win_path);
-            if (mapping != this->mappings_.end())
+            // Exact file mapping (fast path).
+            if (const auto mapping = this->mappings_.find(win_path); mapping != this->mappings_.end())
             {
                 return mapping->second;
+            }
+
+            // Directory mapping: a mapped ancestor directory mounts its whole subtree.
+            if (auto mapped = this->translate_directory_mapping(win_path))
+            {
+                return std::move(*mapped);
             }
 
 #ifdef OS_WINDOWS
@@ -82,20 +88,9 @@ namespace sogen
             }
 #endif
 
+            // Emulation-root translation, confined to the drive root.
             const std::array<char, 2> root_drive{win_path.get_drive().value_or('c'), 0};
-            auto root = this->root_ / root_drive.data();
-
-            auto path = this->root_ / win_path.to_portable_path();
-            // Confine the guest-controlled path to the drive root by resolving "." and ".."
-            // lexically, without following symlinks, so a crafted path cannot escape. Host-side
-            // symlinks placed inside the root may still point elsewhere (e.g. a mounted game
-            // directory); the OS resolves them when the file is opened.
-            if (is_subpath(root, path.lexically_normal()))
-            {
-                return weakly_canonical(path);
-            }
-
-            return root;
+            return confine(this->root_ / root_drive.data(), this->root_ / win_path.to_portable_path());
         }
 
         template <typename F>
@@ -117,6 +112,47 @@ namespace sogen
         }
 
       private:
+        // Resolve a host path built from a guest-controlled path, but keep it inside `base`: a ".." in the
+        // guest path that would escape `base` falls back to `base` itself. The check is purely lexical (it
+        // does not follow symlinks), so a crafted path cannot escape. Host-side symlinks placed inside `base`
+        // may still point elsewhere (e.g. a mounted game directory); the OS resolves those at open time.
+        static std::filesystem::path confine(const std::filesystem::path& base, const std::filesystem::path& candidate)
+        {
+            if (is_subpath(base.lexically_normal(), candidate.lexically_normal()))
+            {
+                return weakly_canonical(candidate);
+            }
+
+            return base;
+        }
+
+        // If a mapped directory is an ancestor of `win_path`, resolve the remaining path against the mapped
+        // host directory. The deepest matching mount wins, so nested mounts behave intuitively.
+        std::optional<std::filesystem::path> translate_directory_mapping(const windows_path& win_path) const
+        {
+            const std::filesystem::path* best_dest = nullptr;
+            windows_path best_remainder{};
+            size_t best_depth = 0;
+
+            for (const auto& [src, dest] : this->mappings_)
+            {
+                auto remainder = win_path.relative_to(src);
+                if (remainder.has_value() && (best_dest == nullptr || src.depth() > best_depth))
+                {
+                    best_dest = &dest;
+                    best_remainder = std::move(*remainder);
+                    best_depth = src.depth();
+                }
+            }
+
+            if (best_dest == nullptr)
+            {
+                return std::nullopt;
+            }
+
+            return confine(*best_dest, *best_dest / best_remainder.to_portable_path());
+        }
+
         std::filesystem::path root_{};
         std::unordered_map<windows_path, std::filesystem::path> mappings_{};
     };
