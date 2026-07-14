@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 #include <ranges>
@@ -34,6 +35,24 @@ namespace sogen
 {
     namespace
     {
+        // Extensions whose entry points the bridge does not marshal. They must never reach the guest: a guest
+        // that sees them enables them and then calls into nothing. DXVK, for instance, creates shared textures
+        // as soon as it sees VK_KHR_external_memory_win32 and crashes when the shim has no implementation.
+        // HANDLE-based interop cannot work across the bridge anyway - guest handles are emulator objects.
+        constexpr std::array unsupported_device_extensions{
+            std::string_view{"VK_KHR_external_memory_win32"},    //
+            std::string_view{"VK_KHR_external_semaphore_win32"}, //
+            std::string_view{"VK_KHR_external_fence_win32"},     //
+            std::string_view{"VK_KHR_win32_keyed_mutex"},        //
+            std::string_view{"VK_EXT_full_screen_exclusive"},    //
+        };
+
+        bool is_unsupported_device_extension(const VkExtensionProperties& extension)
+        {
+            const std::string_view name{static_cast<const char*>(extension.extensionName)};
+            return std::ranges::find(unsupported_device_extensions, name) != unsupported_device_extensions.end();
+        }
+
 #ifdef _WIN32
         using library_handle = HMODULE;
 
@@ -1339,9 +1358,14 @@ namespace sogen
             {
                 return result;
             }
+
+            extensions.resize(count);
         }
 
-        out_count = count;
+        const auto removed = std::ranges::remove_if(extensions, is_unsupported_device_extension);
+        extensions.erase(removed.begin(), removed.end());
+
+        out_count = static_cast<uint32_t>(extensions.size());
 
         const size_t copy_bytes = std::min(out_size, extensions.size() * sizeof(VkExtensionProperties));
         if (copy_bytes > 0)

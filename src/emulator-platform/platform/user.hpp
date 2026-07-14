@@ -379,6 +379,22 @@ namespace sogen
     static_assert(offsetof(USER_MENU_ITEM, hbmpItem) == 0x60);
     static_assert(sizeof(USER_MENU_ITEM) == 0x70);
 
+    enum USER_WINDOWCOMPOSITIONATTRIB : uint32_t
+    {
+        WCA_NCRENDERING_ENABLED = 1,
+        WCA_EXTENDED_FRAME_BOUNDS = 8,
+        WCA_CLOAKED = 18,
+    };
+
+    struct USER_WINDOWCOMPOSITIONATTRIBDATA
+    {
+        uint32_t Attrib;
+        uint64_t pvData;
+        uint64_t cbData;
+    };
+
+    static_assert(sizeof(USER_WINDOWCOMPOSITIONATTRIBDATA) == 0x18);
+
     struct USER_DESKTOPINFO
     {
         uint8_t unknown0[0x8];

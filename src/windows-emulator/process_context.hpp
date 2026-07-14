@@ -224,9 +224,52 @@ namespace sogen
                 }
             };
 
+            struct dxgk_buffer
+            {
+                uint64_t address{};
+                uint32_t size{};
+
+                void serialize(utils::buffer_serializer& buffer) const
+                {
+                    buffer.write(this->address);
+                    buffer.write(this->size);
+                }
+
+                void deserialize(utils::buffer_deserializer& buffer)
+                {
+                    buffer.read(this->address);
+                    buffer.read(this->size);
+                }
+            };
+
             uint32_t next_resource_handle{0x8000};
             uint32_t next_allocation_handle{0x9000};
             std::map<uint32_t, dxgk_allocation> allocations{};
+
+            dxgk_buffer command_buffer{};
+            dxgk_buffer allocation_list{};
+            dxgk_buffer patch_location_list{};
+
+            static void reserve_buffer(memory_manager& memory, dxgk_buffer& buffer, const uint32_t size)
+            {
+                if (buffer.address != 0 && buffer.size >= size)
+                {
+                    return;
+                }
+
+                if (buffer.address != 0)
+                {
+                    memory.release_memory(buffer.address, 0);
+                }
+
+                const auto aligned_size = static_cast<uint32_t>(page_align_up(size));
+
+                buffer.address = memory.allocate_memory(aligned_size, memory_permission::read_write);
+                buffer.size = aligned_size;
+
+                const std::vector<uint8_t> zeros(aligned_size, 0);
+                memory.write_memory(buffer.address, zeros.data(), zeros.size());
+            }
 
             uint32_t create_resource()
             {
@@ -311,6 +354,9 @@ namespace sogen
                 buffer.write(this->next_resource_handle);
                 buffer.write(this->next_allocation_handle);
                 buffer.write_map(this->allocations);
+                buffer.write(this->command_buffer);
+                buffer.write(this->allocation_list);
+                buffer.write(this->patch_location_list);
             }
 
             void deserialize(utils::buffer_deserializer& buffer)
@@ -318,6 +364,9 @@ namespace sogen
                 buffer.read(this->next_resource_handle);
                 buffer.read(this->next_allocation_handle);
                 buffer.read_map(this->allocations);
+                buffer.read(this->command_buffer);
+                buffer.read(this->allocation_list);
+                buffer.read(this->patch_location_list);
             }
         };
 

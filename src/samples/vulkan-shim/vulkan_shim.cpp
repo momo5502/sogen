@@ -4667,6 +4667,20 @@ extern "C"
 
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice, const char* pName);
 
+    // The bridge cannot hand a host memory export to the guest: a guest HANDLE is an emulator object with no
+    // meaning to the host driver. DXVK asks for the export unconditionally once a resource requests sharing,
+    // even after its own capability check failed, so answer with a clean failure instead of a null jump.
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
+    vkGetMemoryWin32HandleKHR(VkDevice /*device*/, const VkMemoryGetWin32HandleInfoKHR* /*pGetWin32HandleInfo*/, HANDLE* pHandle)
+    {
+        if (pHandle)
+        {
+            *pHandle = nullptr;
+        }
+
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+
     __declspec(dllexport) VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance, const char* pName)
     {
         if (!pName)
@@ -4966,6 +4980,7 @@ extern "C"
             {.name = "vkCmdSetDepthBiasEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetDepthBiasEnable)},
             {.name = "vkCmdSetPrimitiveRestartEnable", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetPrimitiveRestartEnable)},
             {.name = "vkCmdSetPrimitiveRestartEnableEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdSetPrimitiveRestartEnable)},
+            {.name = "vkGetMemoryWin32HandleKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetMemoryWin32HandleKHR)},
         };
 
         for (const auto& e : table)

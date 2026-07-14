@@ -494,6 +494,8 @@ namespace sogen
         uint32_t handle_NtUserGetKeyState(const syscall_context& c, int32_t virtual_key);
         uint32_t handle_NtUserGetAsyncKeyState(const syscall_context& c, int32_t virtual_key);
         BOOL handle_NtUserClipCursor(const syscall_context& c, emulator_pointer rect);
+        BOOL handle_NtUserGetWindowCompositionAttribute(const syscall_context& c, hwnd window,
+                                                        emulator_object<USER_WINDOWCOMPOSITIONATTRIBDATA> attribute_data);
         BOOL handle_NtUserSetCursorPos(const syscall_context& c, int32_t x, int32_t y);
         hcursor handle_NtUserSetCursor(const syscall_context& c, hcursor cursor);
         hcursor handle_NtUserGetCursor(const syscall_context& c);
@@ -804,6 +806,7 @@ namespace sogen
         NTSTATUS handle_NtGdiDdDDICreateDevice(const syscall_context& c, emulator_object<EMU_D3DKMT_CREATEDEVICE> device_desc);
         NTSTATUS handle_NtGdiDdDDIEscape(const syscall_context& c, emulator_object<EMU_D3DKMT_ESCAPE> escape_desc);
         NTSTATUS handle_NtGdiDdDDICreateContext(const syscall_context& c, emulator_object<EMU_D3DKMT_CREATECONTEXT> context_desc);
+        NTSTATUS handle_NtGdiDdDDIRender(const syscall_context& c, emulator_object<EMU_D3DKMT_RENDER> render_desc);
         NTSTATUS handle_NtGdiDdDDICreateAllocation(const syscall_context& c, emulator_object<EMU_D3DKMT_CREATEALLOCATION> allocation_desc);
         NTSTATUS handle_NtGdiDdDDIQueryResourceInfo(const syscall_context& c, emulator_object<EMU_D3DKMT_QUERYRESOURCEINFO> resource_info);
         NTSTATUS handle_NtGdiDdDDIOpenResource(const syscall_context& c, emulator_object<EMU_D3DKMT_OPENRESOURCE> open_resource);
@@ -1433,6 +1436,7 @@ namespace sogen
         add_handler(NtUserTransformPoint);
         add_handler(NtUserShowCursor);
         add_handler(NtUserClipCursor);
+        add_handler(NtUserGetWindowCompositionAttribute);
         add_handler(NtUserSetCursorPos);
         add_handler(NtUserGetKeyState);
         add_handler(NtUserGetAsyncKeyState);
@@ -1574,6 +1578,7 @@ namespace sogen
         add_handler(NtGdiDdDDICreateDevice);
         add_handler(NtGdiDdDDIEscape);
         add_handler(NtGdiDdDDICreateContext);
+        add_handler(NtGdiDdDDIRender);
         add_handler(NtGdiDdDDICreateAllocation);
         add_handler(NtGdiDdDDIQueryResourceInfo);
         add_handler(NtGdiDdDDIOpenResource);

@@ -2124,6 +2124,59 @@ namespace sogen
             return TRUE;
         }
 
+        // DwmGetWindowAttribute funnels into this. There is no DWM in the emulated session, so windows are never
+        // composed, never cloaked, and their extended frame equals the plain window rect.
+        BOOL handle_NtUserGetWindowCompositionAttribute(const syscall_context& c, const hwnd window,
+                                                        const emulator_object<USER_WINDOWCOMPOSITIONATTRIBDATA> attribute_data)
+        {
+            if (!attribute_data)
+            {
+                return FALSE;
+            }
+
+            const auto data = attribute_data.read();
+            if (data.pvData == 0 || data.cbData == 0)
+            {
+                return FALSE;
+            }
+
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            switch (data.Attrib)
+            {
+            case WCA_NCRENDERING_ENABLED:
+            case WCA_CLOAKED: {
+                if (data.cbData < sizeof(uint32_t))
+                {
+                    return FALSE;
+                }
+
+                constexpr uint32_t value = 0;
+                c.emu.write_memory(data.pvData, &value, sizeof(value));
+                return TRUE;
+            }
+
+            case WCA_EXTENDED_FRAME_BOUNDS: {
+                if (data.cbData < sizeof(RECT))
+                {
+                    return FALSE;
+                }
+
+                const auto rect = get_window_rect(*win);
+                c.emu.write_memory(data.pvData, &rect, sizeof(rect));
+                return TRUE;
+            }
+
+            default:
+                c.win_emu.log.warn("Unsupported window composition attribute: %u\n", data.Attrib);
+                return FALSE;
+            }
+        }
+
         // GetKeyState / GetAsyncKeyState report whether a virtual key (or mouse button) is currently down.
         // Games poll these for in-game input instead of consuming WM_KEYDOWN messages. GetKeyState reports the
         // high down bit; GetAsyncKeyState additionally returns the low pressed-since-last-query bit.
