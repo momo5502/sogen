@@ -77,6 +77,7 @@ namespace sogen
                 // stepped thread is in NtDelayExecution), causing IDA to
                 // receive a T05 for an unexpected tid → SIGTRAP error.
                 vcpu.switch_thread = false;
+                vcpu.thread().setup_if_necessary(vcpu.cpu, this->win_emu_->process);
                 vcpu.cpu.start(1);
             }
             catch (const std::exception& e)
