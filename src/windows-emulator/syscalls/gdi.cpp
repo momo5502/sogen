@@ -204,6 +204,12 @@ namespace sogen
             constexpr uint32_t k_dxgk_patch_location_list_entry_size = 24;
             constexpr uint32_t k_dxgk_allocation_list_count = 512;
             constexpr uint32_t k_dxgk_patch_location_list_count = 512;
+            // Upper bounds on the guest-requested submission-buffer sizes. The guest is untrusted, so cap the
+            // NewCommandBufferSize / New*ListSize fields before they size a host allocation -- otherwise a
+            // crafted D3DKMT_RENDER can force a multi-gigabyte host allocation, and count * entry_size can
+            // overflow uint32. With these caps the byte sizes stay well under 4 GiB.
+            constexpr uint32_t k_dxgk_max_command_buffer_size = 0x4000000; // 64 MiB
+            constexpr uint32_t k_dxgk_max_list_count = 0x10000;            // 64k entries (<= 1.5 MiB of list bytes)
             constexpr uint64_t k_dxgk_dedicated_video_memory_size = 4ull * 1024 * 1024 * 1024;
             constexpr uint64_t k_dxgk_shared_system_memory_size = 8ull * 1024 * 1024 * 1024;
             constexpr uint32_t k_dxgk_fake_vendor_id = 0x10DE;
@@ -4308,9 +4314,11 @@ namespace sogen
                     dxgk_warn(c, "NtGdiDdDDIRender: Unknown context 0x%X", render.hContext);
                 }
 
-                reserve_dxgk_submission_buffers(c, std::max(render.NewCommandBufferSize, k_dxgk_command_buffer_size),
-                                                std::max(render.NewAllocationListSize, k_dxgk_allocation_list_count),
-                                                std::max(render.NewPatchLocationListSize, k_dxgk_patch_location_list_count));
+                // Clamp the guest-controlled sizes: at least the defaults, but never above the caps above.
+                reserve_dxgk_submission_buffers(
+                    c, std::clamp(render.NewCommandBufferSize, k_dxgk_command_buffer_size, k_dxgk_max_command_buffer_size),
+                    std::clamp(render.NewAllocationListSize, k_dxgk_allocation_list_count, k_dxgk_max_list_count),
+                    std::clamp(render.NewPatchLocationListSize, k_dxgk_patch_location_list_count, k_dxgk_max_list_count));
 
                 const auto& dxgk = c.proc.dxgk;
 

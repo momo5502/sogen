@@ -47,10 +47,14 @@ namespace sogen
             std::string_view{"VK_EXT_full_screen_exclusive"},    //
         };
 
+        bool is_unsupported_extension_name(const std::string_view name)
+        {
+            return std::ranges::find(unsupported_device_extensions, name) != unsupported_device_extensions.end();
+        }
+
         bool is_unsupported_device_extension(const VkExtensionProperties& extension)
         {
-            const std::string_view name{static_cast<const char*>(extension.extensionName)};
-            return std::ranges::find(unsupported_device_extensions, name) != unsupported_device_extensions.end();
+            return is_unsupported_extension_name(std::string_view{static_cast<const char*>(extension.extensionName)});
         }
 
 #ifdef _WIN32
@@ -1604,7 +1608,9 @@ namespace sogen
         }
         const uint32_t primary_family = queue_infos.front().queueFamilyIndex;
 
-        // Rebuild the enabled-extension name list from the blob (count NUL-terminated strings).
+        // Rebuild the enabled-extension name list from the blob (count NUL-terminated strings). Strip the same
+        // extensions enumeration hides from the guest -- a guest is untrusted and may enable one we never
+        // advertised, and we cannot marshal them across the bridge.
         std::vector<const char*> extensions;
         extensions.reserve(extension_count);
         {
@@ -1617,7 +1623,10 @@ namespace sogen
                 {
                     break;
                 }
-                extensions.push_back(cursor);
+                if (!is_unsupported_extension_name(std::string_view{cursor}))
+                {
+                    extensions.push_back(cursor);
+                }
                 cursor = terminator + 1;
             }
         }
