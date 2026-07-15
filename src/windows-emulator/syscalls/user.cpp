@@ -2124,6 +2124,86 @@ namespace sogen
             return TRUE;
         }
 
+        // DwmGetWindowAttribute funnels into this. There is no DWM in the emulated session, so windows are never
+        // composed, never cloaked, and their extended frame equals the plain window rect.
+        BOOL handle_NtUserGetWindowCompositionAttribute(const syscall_context& c, const hwnd window,
+                                                        const emulator_object<USER_WINDOWCOMPOSITIONATTRIBDATA> attribute_data)
+        {
+            if (!attribute_data)
+            {
+                return FALSE;
+            }
+
+            // The struct carries pointer/size_t fields, so a 32-bit (WoW64) guest passes a 12-byte layout, not
+            // the native 24-byte one; read the matching width.
+            uint32_t attrib = 0;
+            uint64_t pv_data = 0;
+            uint64_t cb_data = 0;
+            if (c.proc.is_wow64_process)
+            {
+                struct wow64_composition_data
+                {
+                    uint32_t attrib;
+                    uint32_t pv_data;
+                    uint32_t cb_data;
+                };
+
+                static_assert(sizeof(wow64_composition_data) == 12);
+                const auto data = emulator_object<wow64_composition_data>{c.emu, attribute_data.value()}.read();
+                attrib = data.attrib;
+                pv_data = data.pv_data;
+                cb_data = data.cb_data;
+            }
+            else
+            {
+                const auto data = attribute_data.read();
+                attrib = data.Attrib;
+                pv_data = data.pvData;
+                cb_data = data.cbData;
+            }
+
+            if (pv_data == 0 || cb_data == 0)
+            {
+                return FALSE;
+            }
+
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            switch (attrib)
+            {
+            case WCA_NCRENDERING_ENABLED:
+            case WCA_CLOAKED: {
+                if (cb_data < sizeof(uint32_t))
+                {
+                    return FALSE;
+                }
+
+                constexpr uint32_t value = 0;
+                c.emu.write_memory(pv_data, &value, sizeof(value));
+                return TRUE;
+            }
+
+            case WCA_EXTENDED_FRAME_BOUNDS: {
+                if (cb_data < sizeof(RECT))
+                {
+                    return FALSE;
+                }
+
+                const auto rect = get_window_rect(*win);
+                c.emu.write_memory(pv_data, &rect, sizeof(rect));
+                return TRUE;
+            }
+
+            default:
+                c.win_emu.log.warn("Unsupported window composition attribute: %u\n", attrib);
+                return FALSE;
+            }
+        }
+
         // GetKeyState / GetAsyncKeyState report whether a virtual key (or mouse button) is currently down.
         // Games poll these for in-game input instead of consuming WM_KEYDOWN messages. GetKeyState reports the
         // high down bit; GetAsyncKeyState additionally returns the low pressed-since-last-query bit.

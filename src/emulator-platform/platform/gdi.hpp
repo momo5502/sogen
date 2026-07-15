@@ -382,6 +382,31 @@ namespace sogen
         UINT64 CommandBuffer;
     };
 
+    struct EMU_D3DKMT_RENDER
+    {
+        UINT32 hContext;
+        UINT32 CommandOffset;
+        UINT32 CommandLength;
+        UINT32 AllocationCount;
+        UINT32 PatchLocationCount;
+        UINT64 pNewCommandBuffer;
+        UINT32 NewCommandBufferSize;
+        UINT64 pNewAllocationList;
+        UINT32 NewAllocationListSize;
+        UINT64 pNewPatchLocationList;
+        UINT32 NewPatchLocationListSize;
+        UINT32 Flags;
+        UINT64 PresentHistoryToken;
+        UINT32 BroadcastContextCount;
+        UINT32 BroadcastContext[64];
+        UINT32 QueuedBufferCount;
+        UINT64 NewCommandBuffer;
+        UINT64 pPrivateDriverData;
+        UINT32 PrivateDriverDataSize;
+    };
+
+    static_assert(sizeof(EMU_D3DKMT_RENDER) == 368);
+
     struct EMU_D3DDDI_ALLOCATIONINFO
     {
         UINT32 hAllocation;

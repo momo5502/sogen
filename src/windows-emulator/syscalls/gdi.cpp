@@ -199,7 +199,17 @@ namespace sogen
             constexpr uint32_t k_dxgk_shared_primary_handle = 0x7000;
             constexpr LUID k_dxgk_adapter_luid = {0x1000, 0};
             constexpr uint32_t k_dxgk_adapter_source_count = 1;
-            constexpr size_t k_dxgk_command_buffer_size = 0x1000;
+            constexpr uint32_t k_dxgk_command_buffer_size = 0x1000;
+            constexpr uint32_t k_dxgk_allocation_list_entry_size = 8;
+            constexpr uint32_t k_dxgk_patch_location_list_entry_size = 24;
+            constexpr uint32_t k_dxgk_allocation_list_count = 512;
+            constexpr uint32_t k_dxgk_patch_location_list_count = 512;
+            // Upper bounds on the guest-requested submission-buffer sizes. The guest is untrusted, so cap the
+            // NewCommandBufferSize / New*ListSize fields before they size a host allocation -- otherwise a
+            // crafted D3DKMT_RENDER can force a multi-gigabyte host allocation, and count * entry_size can
+            // overflow uint32. With these caps the byte sizes stay well under 4 GiB.
+            constexpr uint32_t k_dxgk_max_command_buffer_size = 0x4000000; // 64 MiB
+            constexpr uint32_t k_dxgk_max_list_count = 0x10000;            // 64k entries (<= 1.5 MiB of list bytes)
             constexpr uint64_t k_dxgk_dedicated_video_memory_size = 4ull * 1024 * 1024 * 1024;
             constexpr uint64_t k_dxgk_shared_system_memory_size = 8ull * 1024 * 1024 * 1024;
             constexpr uint32_t k_dxgk_fake_vendor_id = 0x10DE;
@@ -4243,6 +4253,19 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        void reserve_dxgk_submission_buffers(const syscall_context& c, const uint32_t command_buffer_size,
+                                             const uint32_t allocation_list_count, const uint32_t patch_location_list_count)
+        {
+            auto& dxgk = c.proc.dxgk;
+            auto& memory = c.win_emu.memory;
+
+            using dxgk_state = process_context::dxgk_state;
+
+            dxgk_state::reserve_buffer(memory, dxgk.command_buffer, command_buffer_size);
+            dxgk_state::reserve_buffer(memory, dxgk.allocation_list, allocation_list_count * k_dxgk_allocation_list_entry_size);
+            dxgk_state::reserve_buffer(memory, dxgk.patch_location_list, patch_location_list_count * k_dxgk_patch_location_list_entry_size);
+        }
+
         NTSTATUS handle_NtGdiDdDDICreateContext(const syscall_context& c, const emulator_object<EMU_D3DKMT_CREATECONTEXT> context_desc)
         {
             if (!context_desc)
@@ -4258,21 +4281,58 @@ namespace sogen
 
                 create_context.hContext = k_dxgk_context_handle;
 
-                const auto cmd_buffer_size = k_dxgk_command_buffer_size;
-                const auto cmd_buffer_ptr = c.win_emu.memory.allocate_memory(cmd_buffer_size, memory_permission::read_write);
+                reserve_dxgk_submission_buffers(c, k_dxgk_command_buffer_size, k_dxgk_allocation_list_count,
+                                                k_dxgk_patch_location_list_count);
 
-                std::vector<uint8_t> zeros(cmd_buffer_size, 0);
-                c.win_emu.memory.write_memory(cmd_buffer_ptr, zeros.data(), cmd_buffer_size);
+                const auto& dxgk = c.proc.dxgk;
 
-                create_context.pCommandBuffer = cmd_buffer_ptr;
-                create_context.CommandBufferSize = cmd_buffer_size;
-                create_context.pAllocationList = 0;
-                create_context.AllocationListSize = 0;
-                create_context.pPatchLocationList = 0;
-                create_context.PatchLocationListSize = 0;
+                create_context.pCommandBuffer = dxgk.command_buffer.address;
+                create_context.CommandBuffer = dxgk.command_buffer.address;
+                create_context.CommandBufferSize = dxgk.command_buffer.size;
+                create_context.pAllocationList = dxgk.allocation_list.address;
+                create_context.AllocationListSize = dxgk.allocation_list.size / k_dxgk_allocation_list_entry_size;
+                create_context.pPatchLocationList = dxgk.patch_location_list.address;
+                create_context.PatchLocationListSize = dxgk.patch_location_list.size / k_dxgk_patch_location_list_entry_size;
 
                 dxgk_info(c, "NtGdiDdDDICreateContext: Created Context 0x%X on Device 0x%X (CmdBuf: 0x%llX)", create_context.hContext,
-                          create_context.hDevice, cmd_buffer_ptr);
+                          create_context.hDevice, dxgk.command_buffer.address);
+            });
+
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIRender(const syscall_context& c, const emulator_object<EMU_D3DKMT_RENDER> render_desc)
+        {
+            if (!render_desc)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            render_desc.access([&](EMU_D3DKMT_RENDER& render) {
+                if (render.hContext != k_dxgk_context_handle && render.hContext != k_dxgk_device_handle)
+                {
+                    dxgk_warn(c, "NtGdiDdDDIRender: Unknown context 0x%X", render.hContext);
+                }
+
+                // Clamp the guest-controlled sizes: at least the defaults, but never above the caps above.
+                reserve_dxgk_submission_buffers(
+                    c, std::clamp(render.NewCommandBufferSize, k_dxgk_command_buffer_size, k_dxgk_max_command_buffer_size),
+                    std::clamp(render.NewAllocationListSize, k_dxgk_allocation_list_count, k_dxgk_max_list_count),
+                    std::clamp(render.NewPatchLocationListSize, k_dxgk_patch_location_list_count, k_dxgk_max_list_count));
+
+                const auto& dxgk = c.proc.dxgk;
+
+                render.pNewCommandBuffer = dxgk.command_buffer.address;
+                render.NewCommandBuffer = dxgk.command_buffer.address;
+                render.NewCommandBufferSize = dxgk.command_buffer.size;
+                render.pNewAllocationList = dxgk.allocation_list.address;
+                render.NewAllocationListSize = dxgk.allocation_list.size / k_dxgk_allocation_list_entry_size;
+                render.pNewPatchLocationList = dxgk.patch_location_list.address;
+                render.NewPatchLocationListSize = dxgk.patch_location_list.size / k_dxgk_patch_location_list_entry_size;
+                render.QueuedBufferCount = 0;
+
+                dxgk_info(c, "NtGdiDdDDIRender: Context 0x%X CommandOffset=0x%X CommandLength=0x%X Allocations=%u Patches=%u",
+                          render.hContext, render.CommandOffset, render.CommandLength, render.AllocationCount, render.PatchLocationCount);
             });
 
             return STATUS_SUCCESS;

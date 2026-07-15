@@ -8,6 +8,11 @@ namespace sogen
 
     namespace syscalls
     {
+        NTSTATUS handle_NtSetEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
+        NTSTATUS handle_NtReleaseMutant(const syscall_context& c, handle mutant_handle, emulator_object<LONG> previous_count);
+        NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, handle semaphore_handle, ULONG release_count,
+                                           emulator_object<LONG> previous_count);
+
         NTSTATUS handle_NtClose(const syscall_context& c, const handle h)
         {
             const auto value = h.value;
@@ -750,6 +755,39 @@ namespace sogen
 
             c.win_emu.yield_thread(c.vcpu, alertable);
             return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtSignalAndWaitForSingleObject(const syscall_context& c, const handle signal_handle, const handle wait_handle,
+                                                       const BOOLEAN alertable, const emulator_object<LARGE_INTEGER> timeout)
+        {
+            const emulator_object<LONG> no_previous_state{c.emu.memory()};
+
+            NTSTATUS signal_status{};
+
+            switch (signal_handle.value.type)
+            {
+            case handle_types::event:
+                signal_status = handle_NtSetEvent(c, signal_handle.bits, no_previous_state);
+                break;
+
+            case handle_types::mutant:
+                signal_status = handle_NtReleaseMutant(c, signal_handle, no_previous_state);
+                break;
+
+            case handle_types::semaphore:
+                signal_status = handle_NtReleaseSemaphore(c, signal_handle, 1, no_previous_state);
+                break;
+
+            default:
+                return STATUS_OBJECT_TYPE_MISMATCH;
+            }
+
+            if (!NT_SUCCESS(signal_status))
+            {
+                return signal_status;
+            }
+
+            return handle_NtWaitForSingleObject(c, wait_handle, alertable, timeout);
         }
 
         NTSTATUS handle_NtSetInformationObject()

@@ -4,6 +4,7 @@
 #include "utils/io.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <iostream>
 #include <utils/finally.hpp>
 #include <utils/wildcard.hpp>
@@ -54,6 +55,45 @@ namespace sogen
                 }
 
                 return filename;
+            }
+
+            // The counterpart of windows_path::to_device_path. Sogen reports file names in volume-device form
+            // (NtQueryObject, NtQueryVirtualMemory, ...) and code that consumes them - ntmarta walking a
+            // directory's parents for an ACL check, for one - opens them again as-is. Rewrite the volume back
+            // into its drive letter so the path reaches the file system instead of the device registry. A bare
+            // volume with no path behind it is a real volume handle and stays a device.
+            std::u16string resolve_volume_device_path(std::u16string filename)
+            {
+                constexpr std::u16string_view volume_prefix = u"\\Device\\HarddiskVolume";
+                if (!filename.starts_with(volume_prefix))
+                {
+                    return filename;
+                }
+
+                const std::u16string_view remainder{filename};
+                const auto separator = remainder.find(u'\\', volume_prefix.size());
+                if (separator == std::u16string_view::npos)
+                {
+                    return filename;
+                }
+
+                const auto number = u16_to_u8(remainder.substr(volume_prefix.size(), separator - volume_prefix.size()));
+
+                int volume_index{};
+                const auto* number_start = number.data();
+                const auto* number_end = number_start + number.size();
+                const auto [parse_end, parse_error] = std::from_chars(number_start, number_end, volume_index);
+                if (parse_error != std::errc{} || parse_end != number_end || volume_index < 1 || volume_index > 26)
+                {
+                    return filename;
+                }
+
+                std::u16string path = u"\\??\\";
+                path.push_back(static_cast<char16_t>(u'a' + volume_index - 1));
+                path.push_back(u':');
+                path.append(remainder.substr(separator));
+
+                return path;
             }
 
             std::pair<utils::file_handle, NTSTATUS> open_file(const file_system& file_sys, const windows_path& path,
@@ -1713,7 +1753,7 @@ namespace sogen
             std::u16string filename_upper = filename;
             std::ranges::transform(filename_upper, filename_upper.begin(), ::towupper);
 
-            filename = resolve_system_root_path(c, std::move(filename));
+            filename = resolve_volume_device_path(resolve_system_root_path(c, std::move(filename)));
 
             // Handle console output device
             if (filename_upper == u"\\??\\CONOUT$" || filename_upper == u"\\DEVICE\\CONOUT$" || filename_upper == u"CONOUT$" ||
@@ -1968,7 +2008,7 @@ namespace sogen
                 filename = root->name + (has_separator ? u"" : u"\\") + filename;
             }
 
-            filename = resolve_system_root_path(c, std::move(filename));
+            filename = resolve_volume_device_path(resolve_system_root_path(c, std::move(filename)));
 
             c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
@@ -2034,7 +2074,7 @@ namespace sogen
                 filename = root->name + (has_separator ? u"" : u"\\") + filename;
             }
 
-            filename = resolve_system_root_path(c, std::move(filename));
+            filename = resolve_volume_device_path(resolve_system_root_path(c, std::move(filename)));
 
             c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
