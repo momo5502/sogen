@@ -26,6 +26,7 @@ namespace sogen
             this->is_wow64_process_ = is_wow64_process;
 
             used_indices_.resize(MAX_HANDLES, false);
+            next_free_index_ = 1;
 
             const auto server_info_size = static_cast<size_t>(page_align_up(sizeof(USER_SERVERINFO)));
             server_info_addr_ = this->allocate_memory(server_info_size, memory_permission::read);
@@ -157,6 +158,7 @@ namespace sogen
             buffer.write(wnd_message_bits_addr_);
             buffer.write(wnd_message_bits_addrs_);
             buffer.write_vector(used_indices_);
+            buffer.write(next_free_index_);
             buffer.write(is_wow64_process_);
         }
 
@@ -168,6 +170,7 @@ namespace sogen
             buffer.read(wnd_message_bits_addr_);
             buffer.read(wnd_message_bits_addrs_);
             buffer.read_vector(used_indices_);
+            buffer.read(next_free_index_);
             buffer.read(is_wow64_process_);
         }
 
@@ -267,13 +270,16 @@ namespace sogen
             return message;
         }
 
-        uint32_t find_free_index() const
+        uint32_t find_free_index()
         {
-            for (uint32_t i = 1; i < used_indices_.size(); ++i)
+            for (uint32_t attempts = 0; attempts < MAX_HANDLES - 1; ++attempts)
             {
-                if (!used_indices_.at(i))
+                const auto index = next_free_index_;
+                next_free_index_ = next_free_index_ + 1 < MAX_HANDLES ? next_free_index_ + 1 : 1;
+
+                if (!used_indices_.at(index))
                 {
-                    return i;
+                    return index;
                 }
             }
             throw std::runtime_error("No more user handles available");
@@ -309,6 +315,7 @@ namespace sogen
         uint64_t wnd_message_bits_addr_{};
         std::array<uint64_t, WND_MESSAGE_BITS_COUNT> wnd_message_bits_addrs_{};
         std::vector<bool> used_indices_{};
+        uint32_t next_free_index_{1};
         memory_manager* memory_{};
         bool is_wow64_process_{};
     };

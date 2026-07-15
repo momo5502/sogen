@@ -245,6 +245,7 @@ namespace sogen
         });
 
         this->ui_.destroy_window(frame.handle);
+        this->proc_.gdi_window_surfaces.erase(static_cast<uint32_t>(frame.handle));
         (void)this->proc_.windows.erase(frame.handle);
     }
 
