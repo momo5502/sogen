@@ -78,7 +78,7 @@ namespace sogen
     {
       public:
         static pe_detection_result detect_from_file(const std::filesystem::path& file);
-        static pe_detection_result detect_from_memory(uint64_t base_address, uint64_t image_size);
+        static pe_detection_result detect_from_memory(const memory_interface& memory, uint64_t base_address, uint64_t image_size);
         static execution_mode determine_execution_mode(winpe::pe_arch executable_arch);
     };
 

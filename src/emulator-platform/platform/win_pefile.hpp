@@ -8,7 +8,9 @@
 #include <system_error>
 #include <variant>
 #include <array>
+#include <limits>
 #include "common/utils/buffer_accessor.hpp"
+#include "../../emulator/memory_interface.hpp"
 
 #include "primitives.hpp"
 
@@ -610,22 +612,26 @@ namespace sogen
             return std::make_error_code(std::errc::executable_format_error);
         }
 
-        inline std::variant<pe_arch, std::error_code> get_pe_arch(uint64_t base_address, uint64_t image_size)
+        inline std::variant<pe_arch, std::error_code> get_pe_arch(const memory_interface& memory, uint64_t base_address,
+                                                                   uint64_t image_size)
         {
-            const auto* base = reinterpret_cast<const std::byte*>(reinterpret_cast<const void*>(static_cast<uintptr_t>(base_address)));
-            const uint64_t size = image_size;
+            auto read = [&](const uint64_t offset, void* destination, const size_t size) -> bool {
+                if (offset > image_size || static_cast<uint64_t>(size) > image_size - offset)
+                {
+                    return false;
+                }
+                if (offset > std::numeric_limits<uint64_t>::max() - base_address)
+                {
+                    return false;
+                }
 
-            auto read = [&](uint64_t off, void* dst, size_t n) -> bool {
-                if (off > size)
+                const auto address = base_address + offset;
+                if (size != 0 && static_cast<uint64_t>(size - 1) > std::numeric_limits<uint64_t>::max() - address)
                 {
                     return false;
                 }
-                if (n > size - off)
-                {
-                    return false;
-                }
-                memcpy(dst, base + off, n);
-                return true;
+
+                return memory.try_read_memory(address, destination, size);
             };
 
             PEDosHeader_t dos{};

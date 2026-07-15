@@ -156,9 +156,10 @@ namespace sogen
         return result;
     }
 
-    pe_detection_result pe_architecture_detector::detect_from_memory(uint64_t base_address, uint64_t image_size)
+    pe_detection_result pe_architecture_detector::detect_from_memory(const memory_interface& memory, uint64_t base_address,
+                                                                      uint64_t image_size)
     {
-        auto variant_result = winpe::get_pe_arch(base_address, image_size);
+        auto variant_result = winpe::get_pe_arch(memory, base_address, image_size);
 
         if (std::holds_alternative<std::error_code>(variant_result))
         {
@@ -555,7 +556,7 @@ namespace sogen
             }
         }
 
-        auto detection_result = pe_architecture_detector::detect_from_memory(base_address, image_size);
+        auto detection_result = pe_architecture_detector::detect_from_memory(*this->memory_, base_address, image_size);
 
         return map_module_core(
             detection_result,
