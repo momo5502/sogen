@@ -116,41 +116,35 @@ export function LandingPage() {
       title: "Real System DLLs",
       description:
         "Runs the actual ntdll, kernel32 and user32, not reimplemented stubs. Behavior matches real Windows, edge cases included.",
-      accent: "from-[#f76548] to-[#b00101]",
     },
     {
       icon: <Split className="h-6 w-6" />,
       title: "Hook & Rewrite",
       description:
         "Intercept and change memory, instructions, syscalls and API calls. Watch what a program does, or change how it behaves.",
-      accent: "from-[#ffcb00] to-[#da6000]",
     },
     {
       icon: <Save className="h-6 w-6" />,
       title: "Snapshot & Restore",
       description:
         "Save and restore full emulator state, or load a minidump. Jump back to any point instead of replaying from the start.",
-      accent: "from-[#aee703] to-[#647502]",
     },
     {
       icon: <Globe className="h-6 w-6" />,
       title: "Runs Everywhere",
       description: "Sogen runs on Windows, Linux, macOS, Android, and more.",
-      accent: "from-[#00c4e9] to-[#005ff6]",
     },
     {
       icon: <Boxes className="h-6 w-6" />,
       title: "Pluggable Backends",
       description:
         "Switch between Unicorn, icicle, Hyper-V and KVM backends. Pick the right trade-off between speed and accuracy.",
-      accent: "from-[#a974ff] to-[#5a13c4]",
     },
     {
       icon: <Repeat className="h-6 w-6" />,
       title: "Deterministic",
       description:
         "Every run is reproducible, down to the instruction. A bug that happens once happens every time.",
-      accent: "from-[#ff7eb3] to-[#b0185f]",
     },
   ];
 
@@ -247,10 +241,8 @@ export function LandingPage() {
                   className="bg-neutral-800/50 border-neutral-700 hover:border-neutral-600 hover:bg-neutral-800/80 cursor-default transition-all duration-150 group hover:shadow-2xl"
                 >
                   <CardHeader>
-                    <div
-                      className={`w-12 h-12 rounded-[0.625rem] bg-linear-to-br ${feature.accent} p-3 mb-4`}
-                    >
-                      <div className="text-neutral-900">{feature.icon}</div>
+                    <div className="w-12 h-12 rounded-[0.625rem] bg-neutral-900/80 border border-neutral-700/50 p-3 mb-4 flex items-center justify-center">
+                      <div className="text-[#5cb8f7]">{feature.icon}</div>
                     </div>
                     <CardTitle className="text-white text-xl font-semibold transition-colors">
                       {feature.title}
