@@ -1128,6 +1128,20 @@ def emit_tags(tags: list[str]) -> str:
     ])
 
 
+def write_if_changed(path: str, text: str) -> None:
+    """Write `text` to `path` only if it differs from the current contents. Codegen runs at CMake
+    configure time; rewriting an unchanged file would bump its mtime and force every TU that includes
+    it to recompile on the next build. Leaving identical files untouched keeps those builds incremental."""
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            if f.read() == text:
+                return
+    except OSError:
+        pass  # missing/unreadable -> (re)write it below
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+
+
 def generate_tag(tag: str, sdk_dir: str, out_dir: str, bits: int) -> tuple[int, int, int]:
     interfaces, skipped, errors = build_interfaces(sdk_dir, bits)
     tag_dir = os.path.join(out_dir, tag)
@@ -1138,8 +1152,7 @@ def generate_tag(tag: str, sdk_dir: str, out_dir: str, bits: int) -> tuple[int, 
         "steam_host_thunks.generated.hxx": emit_host(interfaces, tag),
     }
     for name, text in outputs.items():
-        with open(os.path.join(tag_dir, name), "w", encoding="utf-8", newline="\n") as f:
-            f.write(text)
+        write_if_changed(os.path.join(tag_dir, name), text)
     total = sum(len(i.methods) for i in interfaces)
     simple = sum(1 for i in interfaces for m in i.methods if m.simple)
     return total, simple, errors
@@ -1166,8 +1179,7 @@ def main() -> None:
         print(f"[{name}] parse-errors {errors}; methods {total}; marshalled {simple} "
               f"({100 * simple // max(total, 1)}%), stubbed {total - simple}")
 
-    with open(os.path.join(args.out_dir, "steam_tags.generated.hxx"), "w", encoding="utf-8", newline="\n") as f:
-        f.write(emit_tags(tags))
+    write_if_changed(os.path.join(args.out_dir, "steam_tags.generated.hxx"), emit_tags(tags))
 
 
 if __name__ == "__main__":
