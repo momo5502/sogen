@@ -13,6 +13,7 @@
 #include "analysis.hpp"
 #include "analysis_reporter.hpp"
 #include "jsonl_reporter.hpp"
+#include "stdout_file_reporter.hpp"
 #include "tenet_tracer.hpp"
 
 #include <utils/finally.hpp>
@@ -63,6 +64,7 @@ namespace sogen
             std::filesystem::path dump{};
             std::filesystem::path minidump_path{};
             std::filesystem::path report_path{};
+            std::filesystem::path stdout_path{};
             std::string report_format{"jsonl"};
             std::string whp_execution_hook_mode{"auto"};
             std::optional<backend_type> backend{};
@@ -601,6 +603,11 @@ namespace sogen
                 reporters.emplace_back(create_jsonl_reporter(options.report_path));
             }
 
+            if (!options.stdout_path.empty())
+            {
+                reporters.emplace_back(create_stdout_file_reporter(options.stdout_path));
+            }
+
             context.reporters.reserve(reporters.size());
             for (const auto& reporter : reporters)
             {
@@ -865,6 +872,7 @@ namespace sogen
             app.add_option("--minidump", options.minidump_path, "Load minidump from path");
             app.add_option("--report", options.report_path, "Write machine-readable analysis events to a file");
             app.add_option("--report-format", options.report_format, "Report format (supported: jsonl)")->capture_default_str();
+            app.add_option("--stdout", options.stdout_path, "Write guest console output to a file");
             app.add_option("--whp-exec-hook", options.whp_execution_hook_mode, "WHP memory execution hook mode")
                 ->capture_default_str()
                 ->check(CLI::IsMember({"auto", "int3"}));
