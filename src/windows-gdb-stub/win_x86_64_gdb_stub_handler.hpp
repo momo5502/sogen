@@ -68,7 +68,17 @@ namespace sogen
         {
             try
             {
-                this->win_emu_->start(1);
+                auto& vcpu = this->win_emu_->vcpu(0);
+
+                // Bypass the emulator scheduler: the GDB protocol already
+                // selected the target thread via switch_to_thread(). Going
+                // through windows_emulator::start() would let the scheduler
+                // redirect to a different "ready" thread (e.g. when the
+                // stepped thread is in NtDelayExecution), causing IDA to
+                // receive a T05 for an unexpected tid → SIGTRAP error.
+                vcpu.switch_thread = false;
+                vcpu.thread().setup_if_necessary(vcpu.cpu, this->win_emu_->process);
+                vcpu.cpu.start(1);
             }
             catch (const std::exception& e)
             {
