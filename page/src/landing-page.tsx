@@ -300,7 +300,7 @@ export function LandingPage() {
               </div>
 
               <div className="relative w-full max-w-2xl mx-auto xl:order-first">
-                <div className="absolute -inset-4 bg-linear-to-r from-yellow-500/10 to-cyan-500/10 rounded-2xl blur-md"></div>
+                <div className="absolute -inset-4 bg-linear-to-r from-neutral-500/10 to-neutral-400/10 rounded-2xl blur-md"></div>
                 <img
                   src="https://momo5502.com/sogen/browser.png"
                   alt="The Sogen playground running in a web browser"
@@ -374,7 +374,7 @@ export function LandingPage() {
               </div>
 
               <div className="relative w-full max-w-2xl mx-auto xl:order-first">
-                <div className="absolute -inset-4 bg-linear-to-r from-[#76b900]/10 to-cyan-500/10 rounded-2xl blur-md"></div>
+                <div className="absolute -inset-4 bg-linear-to-r from-neutral-500/10 to-neutral-400/10 rounded-2xl blur-md"></div>
                 <img
                   src="https://momo5502.com/sogen/game.png"
                   alt="A game running inside the Sogen emulator"
