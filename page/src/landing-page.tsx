@@ -113,35 +113,41 @@ export function LandingPage() {
   const features = [
     {
       icon: <Cpu className="h-6 w-6" />,
+      color: "#f4c04a",
       title: "Real System DLLs",
       description:
         "Runs the actual ntdll, kernel32 and user32, not reimplemented stubs. Behavior matches real Windows, edge cases included.",
     },
     {
       icon: <Split className="h-6 w-6" />,
+      color: "#cdd24a",
       title: "Hook & Rewrite",
       description:
         "Intercept and change memory, instructions, syscalls and API calls. Watch what a program does, or change how it behaves.",
     },
     {
       icon: <Save className="h-6 w-6" />,
+      color: "#9fd24a",
       title: "Snapshot & Restore",
       description:
         "Save and restore full emulator state, or load a minidump. Jump back to any point instead of replaying from the start.",
     },
     {
       icon: <Globe className="h-6 w-6" />,
+      color: "#5ecb9a",
       title: "Runs Everywhere",
       description: "Sogen runs on Windows, Linux, macOS, Android, and more.",
     },
     {
       icon: <Boxes className="h-6 w-6" />,
+      color: "#45c2cf",
       title: "Pluggable Backends",
       description:
         "Switch between Unicorn, icicle, Hyper-V and KVM backends. Pick the right trade-off between speed and accuracy.",
     },
     {
       icon: <Repeat className="h-6 w-6" />,
+      color: "#5cb8f7",
       title: "Deterministic",
       description:
         "Every run is reproducible, down to the instruction. A bug that happens once happens every time.",
@@ -242,7 +248,7 @@ export function LandingPage() {
                 >
                   <CardHeader>
                     <div className="w-12 h-12 rounded-[0.625rem] bg-neutral-900/80 border border-neutral-700/50 p-3 mb-4 flex items-center justify-center">
-                      <div className="text-[#5cb8f7]">{feature.icon}</div>
+                      <div style={{ color: feature.color }}>{feature.icon}</div>
                     </div>
                     <CardTitle className="text-white text-xl font-semibold transition-colors">
                       {feature.title}
