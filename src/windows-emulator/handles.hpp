@@ -46,7 +46,16 @@ namespace sogen
 
     struct handle_value
     {
-        uint64_t id : 23;
+        // The low 2 bits of a Windows HANDLE are reserved: the kernel ignores them and user-mode code
+        // is free to use them as tag bits, so real handles are always 4-aligned. Genuine Windows
+        // binaries rely on this - e.g. wow64.dll's generic NtClose thunk (whNtClose) does
+        // `and handle, ~1` before the 64-bit syscall. Keeping the id in the low bits (values like
+        // 0x800003) made that mask alias a *different* live handle (0x800002), silently closing the
+        // wrong object under the WoW64/FEX generic-dispatch path. Reserving the low 2 bits here keeps
+        // every handle 4-aligned so those masks are the no-ops they are on real Windows. type/
+        // is_system/is_pseudo/high_bits keep their exact bit positions (2 + 21 == 23); only id shifts.
+        uint64_t reserved : 2;
+        uint64_t id : 21;
         uint64_t type : 7;
         uint64_t is_system : 1;
         uint64_t is_pseudo : 1;

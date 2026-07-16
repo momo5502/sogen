@@ -6,6 +6,66 @@
 
 namespace sogen
 {
+    namespace
+    {
+        // Real ntdll's RtlpInitCodePageTables (called once, early, from LdrpInitializeNlsInfo) is
+        // supposed to always leave this internal global (real ntdll's own "GlobalRtlNlsState +
+        // 0x90"-offset field, consumed directly by RtlConsoleMultiByteToUnicodeN/
+        // RtlAnsiCharToUnicodeChar/RtlIsTextUnicode/etc. as a lead-byte-info table pointer) pointing
+        // at a valid table - either a real DBCS lead-byte table, or (for the common single-byte-
+        // codepage case, matching sogen's shipped 1252/437 codepages) ntdll's own static, empty
+        // NlsEmptyLeadByteInfoTable global. Confirmed via extensive idasql/Hex-Rays tracing this
+        // session: for a wow64-flagged process, this field is still exactly null by the time guest
+        // execution reaches its first syscalls, even though the sibling codepage-table fields
+        // (GlobalRtlNlsState/word_180172710) are correctly populated with the real 1252/437 codepage
+        // data at that same point - i.e. RtlpInitCodePageTables's own success path is reached but this
+        // one specific field ends up unset for wow64 specifically (root mechanism not pinned down
+        // despite deep tracing; a real hardware debugger or a re-armable write-trap would be needed to
+        // go further - both established elsewhere in this project as currently unavailable/blocked).
+        // Left null, any guest read of this table (`*(WORD*)(table + 2*byte)`, no null-check in most
+        // consumers) computes a near-null address and crashes - the long-investigated
+        // "Null-pointer call to 0x50"/(null)-substitution signature. Populating it here with a
+        // harmless, always-empty (all-zero) lead-byte table is semantically identical to what real
+        // ntdll provides for the single-byte-codepage case (its own NlsEmptyLeadByteInfoTable is
+        // exactly an empty/no-lead-bytes table), so this is a safe, real fix for this specific
+        // internal ntdll field regardless of the root mechanism.
+        constexpr uint64_t nls_lead_byte_info_table_offset = 0x172760;
+
+        void ensure_nls_lead_byte_info_table(windows_emulator& win_emu)
+        {
+            const auto* ntdll_mod = win_emu.mod_manager.ntdll;
+            if (ntdll_mod == nullptr)
+            {
+                return;
+            }
+
+            const auto field_address = ntdll_mod->image_base + nls_lead_byte_info_table_offset;
+
+            uint64_t current_value = 0;
+            if (!win_emu.emu().try_read_memory(field_address, &current_value, sizeof(current_value)) || current_value != 0)
+            {
+                return;
+            }
+
+            uint16_t global_rtl_nls_state = 0;
+            if (!win_emu.emu().try_read_memory(ntdll_mod->image_base + 0x1726d0, &global_rtl_nls_state, sizeof(global_rtl_nls_state)) ||
+                global_rtl_nls_state == 0xFDE9)
+            {
+                // Real ntdll's own codepage init hasn't run (or genuinely failed) yet - nothing to
+                // fix up yet; a legitimate call site further along in NLS init may still populate
+                // this field correctly on its own, so don't touch it prematurely.
+                return;
+            }
+
+            constexpr size_t lead_byte_table_size = 0x200; // 256 WORD entries, one per possible byte value
+            const auto aligned_size = static_cast<size_t>(page_align_up(lead_byte_table_size));
+            const auto table_address = win_emu.memory.allocate_memory(aligned_size, memory_permission::read);
+            const std::vector<std::byte> zeroed_table(lead_byte_table_size, std::byte{0});
+            win_emu.emu().write_memory(table_address, zeroed_table.data(), zeroed_table.size());
+            win_emu.emu().write_memory(field_address, &table_address, sizeof(table_address));
+        }
+
+    } // namespace
 
     static void serialize(utils::buffer_serializer& buffer, const syscall_handler_entry& obj)
     {
@@ -70,6 +130,8 @@ namespace sogen
     {
         auto& emu = vcpu.cpu;
         auto& context = win_emu.process;
+
+        ensure_nls_lead_byte_info_table(win_emu);
 
         const auto address = emu.read_instruction_pointer();
         const auto raw_syscall_id = emu.reg<uint32_t>(x86_register::eax);

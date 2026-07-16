@@ -716,6 +716,87 @@ namespace sogen
             return instruction_hook_continuation::run_instruction;
         }
 
+        void handle_event_pump(analysis_context& c)
+        {
+            if (c.click_dialog_buttons.empty())
+            {
+                return;
+            }
+
+            auto& proc = c.win_emu->process;
+
+            // Prune entries whose dialog window no longer exists -- an append-only set would
+            // otherwise let a later, genuinely different dialog silently reuse the destroyed
+            // dialog's now-recycled HWND and get skipped as "already clicked". Only pruning on
+            // destruction (not on the owning thread merely un-parking, which happens almost
+            // immediately after injection) keeps this dialog itself protected from re-injection
+            // spam for as long as it's still on screen.
+            std::erase_if(c.clicked_dialogs, [&](const uint64_t handle) { return proc.windows.get(static_cast<hwnd>(handle)) == nullptr; });
+
+            for (auto& win : proc.windows | std::views::values)
+            {
+                if (!win.is_dialog() || c.clicked_dialogs.contains(win.handle))
+                {
+                    continue;
+                }
+
+                const emulator_thread* owner = proc.find_thread_by_id(win.thread_id);
+                if (!owner || !(owner->await_msg.has_value() || owner->await_msg_mask.has_value()))
+                {
+                    continue;
+                }
+
+                // Click whichever of the requested control ids is actually present on this
+                // dialog, honoring the caller's priority order. Different dialogs in the same run
+                // carry different buttons (e.g. mw2's Yes/No prompts have IDYES=6 while its fatal
+                // Miles error box has only IDOK=1), so a single fixed id can't dismiss them all.
+                uint32_t target_id = 0;
+                hwnd child_handle = 0;
+                for (const auto wanted : c.click_dialog_buttons)
+                {
+                    for (auto& child : proc.windows | std::views::values)
+                    {
+                        if (child.parent_handle != win.handle)
+                        {
+                            continue;
+                        }
+
+                        uint32_t control_id = 0;
+                        child.guest.access([&](const USER_WINDOW& gw) { control_id = static_cast<uint32_t>(gw.wID); });
+                        if (control_id == wanted)
+                        {
+                            target_id = wanted;
+                            child_handle = child.handle;
+                            break;
+                        }
+                    }
+
+                    if (child_handle != 0)
+                    {
+                        break;
+                    }
+                }
+
+                if (child_handle == 0)
+                {
+                    // None of the requested buttons exist on this dialog; leave it untouched
+                    // rather than force an ignored WM_COMMAND (which would mark it dismissed and
+                    // starve a later, matching id).
+                    continue;
+                }
+
+                ui_event event{};
+                event.window = win.handle;
+                event.message = WM_COMMAND;
+                event.wParam = target_id & 0xFFFF; // BN_CLICKED=0 in high word
+                event.lParam = static_cast<uint32_t>(child_handle);
+
+                c.win_emu->handle_ui_event(event);
+                c.clicked_dialogs.insert(win.handle);
+                return;
+            }
+        }
+
         void handle_stdout(analysis_context& c, const std::string_view data)
         {
             c.emit_observation<stdout_chunk_event>([&](auto& event) { event.data = std::string(data); });
@@ -868,6 +949,7 @@ namespace sogen
         cb.on_thread_set_name = make_callback(c, handle_thread_set_name);
 
         cb.on_instruction = make_callback(c, handle_instruction);
+        cb.on_event_pump = make_callback(c, handle_event_pump);
         cb.on_debug_string.add(make_callback(c, handle_debug_string));
         cb.on_generic_access = make_callback(c, handle_generic_access);
         cb.on_generic_activity = make_callback(c, handle_generic_activity);

@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "module_mapping.hpp"
 #include <address_utils.hpp>
+#include <algorithm>
 
 #include <utils/io.hpp>
 #include <utils/buffer_accessor.hpp>
@@ -9,6 +10,10 @@
 
 #if defined(__clang__) || defined(__GNUC__)
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
+#endif
+
+#if defined(__clang__)
+#pragma GCC diagnostic ignored "-Wunused-template"
 #endif
 
 namespace sogen
@@ -55,23 +60,40 @@ namespace sogen
             const auto export_directory = buffer.as<IMAGE_EXPORT_DIRECTORY>(export_directory_entry.VirtualAddress).get();
 
             const auto names_count = export_directory.NumberOfNames;
-            // const auto function_count = export_directory.NumberOfFunctions;
+            const auto function_count = export_directory.NumberOfFunctions;
 
             const auto names = buffer.as<DWORD>(export_directory.AddressOfNames);
             const auto ordinals = buffer.as<WORD>(export_directory.AddressOfNameOrdinals);
             const auto functions = buffer.as<DWORD>(export_directory.AddressOfFunctions);
 
-            binary.exports.reserve(names_count);
+            binary.exports.reserve(function_count);
 
-            for (DWORD i = 0; i < names_count; i++)
+            // Walk every ordinal slot (AddressOfFunctions), not just the named ones
+            // (AddressOfNames/AddressOfNameOrdinals) - a DLL can export a function by ordinal only,
+            // with no name at all (common for internal/undocumented APIs, e.g. wow64cpu.dll's own
+            // low-level CPU-simulation entry points), and such an export must still be resolvable
+            // when something imports it by ordinal (see collect_imports's snap_by_ordinal path).
+            for (DWORD ordinal = 0; ordinal < function_count; ordinal++)
             {
-                const auto ordinal = ordinals.get(i);
+                const auto rva = functions.get(ordinal);
+                if (rva == 0)
+                {
+                    continue; // Empty slot in a sparse ordinal range - not a real export.
+                }
 
                 exported_symbol symbol{};
                 symbol.ordinal = export_directory.Base + ordinal;
-                symbol.rva = functions.get(ordinal);
+                symbol.rva = rva;
                 symbol.address = binary.image_base + symbol.rva;
-                symbol.name = buffer.as_string(names.get(i));
+
+                for (DWORD i = 0; i < names_count; i++)
+                {
+                    if (ordinals.get(i) == static_cast<WORD>(ordinal))
+                    {
+                        symbol.name = buffer.as_string(names.get(i));
+                        break;
+                    }
+                }
 
                 binary.exports.push_back(std::move(symbol));
             }
@@ -84,12 +106,14 @@ namespace sogen
 
         template <typename T>
             requires(std::is_integral_v<T>)
-        void apply_relocation(memory_manager& memory, const uint64_t address, const uint64_t delta)
+        void apply_relocation(const utils::safe_buffer_accessor<std::byte> block, const uint64_t offset, const uint64_t delta)
         {
+            auto* const pointer = block.get_pointer_for_range(static_cast<size_t>(offset), sizeof(T));
+
             T value{};
-            memory.read_memory(address, &value, sizeof(value));
+            std::memcpy(&value, pointer, sizeof(value));
             value += static_cast<T>(delta);
-            memory.write_memory(address, &value, sizeof(value));
+            std::memcpy(pointer, &value, sizeof(value));
         }
 
         template <typename T>
@@ -220,6 +244,97 @@ namespace sogen
             }
         }
 
+        // Applies one relocation block's fixups against a host-side mirror of the block's guest byte
+        // span, then commits the whole span with a single memory.write_memory call. A freshly-mapped
+        // module has not executed a single instruction yet at this point in the load sequence (this
+        // runs before protect_module_memory and before the module's entry point), so - unlike the
+        // general write_memory caller population, which can legitimately alias code (e.g. a syscall
+        // output buffer) - every one of these writes is provably invalidating a range that cannot yet
+        // hold a JIT translation. Reading, fixing up, and writing the whole block as one range still
+        // performs that (harmless-here) invalidation, but once per block instead of once per fixup,
+        // collapsing what can be thousands of individually-invalidating guest writes per module down
+        // to one per relocation block (typically ~one page's worth of fixups).
+        template <typename T>
+        void apply_relocation_block(memory_manager& memory, const uint64_t image_base, const IMAGE_BASE_RELOCATION& relocation,
+                                    const std::span<const uint16_t> entries, const uint64_t delta)
+        {
+            uint64_t min_offset = 0;
+            uint64_t max_end = 0;
+            bool has_fixup = false;
+
+            for (const auto entry : entries)
+            {
+                const int type = entry >> 12;
+                const auto offset = static_cast<uint16_t>(entry & 0xfff);
+                const auto total_offset = static_cast<uint64_t>(relocation.VirtualAddress) + offset;
+
+                size_t width = 0;
+                switch (type)
+                {
+                case IMAGE_REL_BASED_ABSOLUTE:
+                    continue;
+                case IMAGE_REL_BASED_HIGHLOW:
+                    width = sizeof(DWORD);
+                    break;
+                case IMAGE_REL_BASED_DIR64:
+                    width = sizeof(ULONGLONG);
+                    break;
+                default:
+                    throw std::runtime_error("Unknown relocation type: " + std::to_string(type));
+                }
+
+                if (!has_fixup)
+                {
+                    min_offset = total_offset;
+                    max_end = total_offset + width;
+                    has_fixup = true;
+                }
+                else
+                {
+                    min_offset = std::min(min_offset, total_offset);
+                    max_end = std::max(max_end, total_offset + width);
+                }
+            }
+
+            if (!has_fixup)
+            {
+                return;
+            }
+
+            const auto span_size = static_cast<size_t>(max_end - min_offset);
+            std::vector<std::byte> block_buffer(span_size);
+            memory.read_memory(image_base + min_offset, block_buffer.data(), span_size);
+
+            const utils::safe_buffer_accessor<std::byte> block{block_buffer};
+
+            for (const auto entry : entries)
+            {
+                const int type = entry >> 12;
+                const auto offset = static_cast<uint16_t>(entry & 0xfff);
+                const auto total_offset = static_cast<uint64_t>(relocation.VirtualAddress) + offset;
+                const auto local_offset = total_offset - min_offset;
+
+                switch (type)
+                {
+                case IMAGE_REL_BASED_ABSOLUTE:
+                    break;
+
+                case IMAGE_REL_BASED_HIGHLOW:
+                    apply_relocation<DWORD>(block, local_offset, delta);
+                    break;
+
+                case IMAGE_REL_BASED_DIR64:
+                    apply_relocation<ULONGLONG>(block, local_offset, delta);
+                    break;
+
+                default:
+                    throw std::runtime_error("Unknown relocation type: " + std::to_string(type));
+                }
+            }
+
+            memory.write_memory(image_base + min_offset, block_buffer.data(), span_size);
+        }
+
         template <typename T>
         void apply_relocations(const mapped_module& binary, memory_manager& memory, const PEOptionalHeader_t<T>& optional_header,
                                const uint64_t relocation_base)
@@ -239,47 +354,32 @@ namespace sogen
             auto relocation_offset = directory->VirtualAddress;
             const auto relocation_end = relocation_offset + directory->Size;
 
+            std::vector<uint16_t> entries{};
+
             while (relocation_offset < relocation_end)
             {
                 const auto relocation = read_mapped_object<IMAGE_BASE_RELOCATION>(memory, binary.image_base + relocation_offset);
 
-                if (relocation.VirtualAddress <= 0 || relocation.SizeOfBlock <= sizeof(IMAGE_BASE_RELOCATION))
+                if (relocation.VirtualAddress <= 0 || relocation.SizeOfBlock <= sizeof(IMAGE_BASE_RELOCATION) ||
+                    relocation.SizeOfBlock > relocation_end - relocation_offset)
                 {
                     break;
                 }
 
                 const auto data_size = relocation.SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION);
-                const auto entry_count = data_size / sizeof(uint16_t);
+                const auto entry_count = static_cast<size_t>(data_size / sizeof(uint16_t));
                 const auto entries_base = binary.image_base + relocation_offset + sizeof(IMAGE_BASE_RELOCATION);
 
                 relocation_offset += relocation.SizeOfBlock;
 
-                for (size_t i = 0; i < entry_count; ++i)
+                // Read every entry descriptor for this block in one guest read instead of one per entry.
+                entries.resize(entry_count);
+                if (entry_count > 0)
                 {
-                    const auto entry = read_mapped_object<uint16_t>(memory, entries_base + i * sizeof(uint16_t));
-
-                    const int type = entry >> 12;
-                    const auto offset = static_cast<uint16_t>(entry & 0xfff);
-                    const auto total_offset = relocation.VirtualAddress + offset;
-                    const auto target_address = binary.image_base + total_offset;
-
-                    switch (type)
-                    {
-                    case IMAGE_REL_BASED_ABSOLUTE:
-                        break;
-
-                    case IMAGE_REL_BASED_HIGHLOW:
-                        apply_relocation<DWORD>(memory, target_address, delta);
-                        break;
-
-                    case IMAGE_REL_BASED_DIR64:
-                        apply_relocation<ULONGLONG>(memory, target_address, delta);
-                        break;
-
-                    default:
-                        throw std::runtime_error("Unknown relocation type: " + std::to_string(type));
-                    }
+                    memory.read_memory(entries_base, entries.data(), entry_count * sizeof(uint16_t));
                 }
+
+                apply_relocation_block<T>(memory, binary.image_base, relocation, entries, delta);
             }
         }
 
@@ -488,27 +588,62 @@ namespace sogen
                 throw std::runtime_error("Memory range not allocatable");
             }
 
-            if (force_wow64cpu_32bit_va)
+            // 32-bit (WOW64) modules must stay below 4 GB; native modules use the 64-bit arena.
+            const bool needs_below_4gb = force_wow64cpu_32bit_va || is_32bit;
+            const uint64_t fallback_start = needs_below_4gb ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
+            // find_free_host_allocation_base's 2-arg overload has no ceiling at all (MAX_ALLOCATION_ADDRESS,
+            // effectively the top of the host-addressable range) - for a 32-bit module this can silently
+            // return an address above 4GB once the low arena fragments/fills (e.g. after enough
+            // load/unload churn forces repeated relocation), which then gets truncated to 32 bits by
+            // guest/WOW64 pointer marshaling and aliases onto whatever unrelated low allocation happens to
+            // sit at the truncated address - confirmed via CI as the root cause of a deterministic access
+            // violation inside ntdll during wow64-test-sample.exe's LoadLibraryA/FreeLibrary churn (a
+            // stable ntdll stack slot got silently overwritten). The heaven's-gate and native-wow64-stack
+            // call sites already learned this and pass an explicit below-4GB ceiling; this relocation
+            // fallback for 32-bit modules needed the same fix.
+            constexpr uint64_t below_4gb_ceiling = 0xFFFFFFFFULL;
+            const uint64_t highest_address = needs_below_4gb ? below_4gb_ceiling : MAX_ALLOCATION_ADDRESS;
+            const auto image_size = static_cast<size_t>(binary.size_of_image);
+
+            // The preferred base was taken, so relocate. find_free_host_allocation_base picks a base and
+            // confirms it is actually free at the host level, not merely per sogen's own bookkeeping. That
+            // matters on backends sharing the guest address space with the host process (FEX on Apple
+            // Silicon: guest VA == host VA), where a foreign host mapping (a lazily-loaded dylib, a thread
+            // stack, ASLR-placed anything) can occupy a VA sogen still believes is free. The old code picked
+            // once via find_free_allocation_base and retried the map exactly once, so a single such collision
+            // threw "Memory range not allocatable" outright. The loop below re-picks past a racer instead:
+            // a failed try_map_module_at_current_base has already recorded the intruding host range (via the
+            // fixed-address allocate_memory's windowed rescan), so the next pick steps past it. Bounded so a
+            // genuinely exhausted address space still terminates rather than spinning.
+            constexpr int max_host_relocation_retries = 8;
+            bool mapped = false;
+            // The free-pick retry loop only makes sense when the caller left the target address up to
+            // us (relocation_base == 0) - if the caller specified a real target (mapping a view of an
+            // already-loaded image at that image's own base, so the view's internal absolute pointers
+            // stay correct), picking a different free host address instead would silently relocate the
+            // view away from where the caller actually needs it.
+            if (relocation_base == 0)
             {
-                binary.image_base =
-                    memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image), DEFAULT_ALLOCATION_ADDRESS_32BIT);
-            }
-            else if (is_32bit)
-            {
-                // Use 32-bit allocation for WOW64 modules
-                binary.image_base =
-                    memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image), DEFAULT_ALLOCATION_ADDRESS_32BIT);
-            }
-            else
-            {
-                // Use 64-bit allocation for native modules
-                binary.image_base =
-                    memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image), DEFAULT_ALLOCATION_ADDRESS_64BIT);
+                for (int attempt = 0; attempt <= max_host_relocation_retries; ++attempt)
+                {
+                    binary.image_base = memory.find_free_host_allocation_base(image_size, fallback_start, highest_address);
+                    if (!binary.image_base)
+                    {
+                        break;
+                    }
+
+                    if (try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
+                                                       binary.image_base))
+                    {
+                        mapped = true;
+                        break;
+                    }
+                }
             }
 
-            if (!binary.image_base ||
-                !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
-                                                relocation_base ? relocation_base : binary.image_base))
+            if (!mapped && (!binary.image_base ||
+                            !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
+                                                            relocation_base ? relocation_base : binary.image_base)))
             {
                 throw std::runtime_error("Memory range not allocatable");
             }

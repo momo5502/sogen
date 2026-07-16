@@ -12,6 +12,7 @@ namespace sogen
       public:
         static constexpr uint32_t MAX_HANDLES = 0xFFFF;
         static constexpr size_t CLIENT_MESSAGE_BITS_SIZE = 0xC8;
+        static constexpr size_t IME_MESSAGE_BITS_SIZE = 0x400;
         static constexpr size_t WND_MESSAGE_BITS_COUNT = FNID_ARRAY_SIZE + 2;
         static constexpr size_t DEF_WINDOW_MSGS_INDEX = FNID_ARRAY_SIZE;
         static constexpr size_t DEF_WINDOW_SPEC_MSGS_INDEX = FNID_ARRAY_SIZE + 1;
@@ -77,6 +78,14 @@ namespace sogen
                 memory_->write_memory(wnd_message_bits_cursor, WND_MESSAGE_BITS.at(i).bits.data(), byte_size);
                 wnd_message_bits_cursor += align_up(byte_size, alignof(uint32_t));
             }
+
+            if (is_wow64_process_)
+            {
+                wow64_wndmsg_bitmap_addr_ =
+                    this->allocate_memory(static_cast<size_t>(page_align_up(CLIENT_MESSAGE_BITS_SIZE)), memory_permission::read);
+                wow64_ime_msg_bitmap_addr_ =
+                    this->allocate_memory(static_cast<size_t>(page_align_up(IME_MESSAGE_BITS_SIZE)), memory_permission::read);
+            }
         }
 
         emulator_object<USER_SERVERINFO> get_server_info() const
@@ -89,9 +98,26 @@ namespace sogen
             return {*memory_, handle_table_addr_};
         }
 
+        // Map an internal handle id to the aheList slot the guest computes from the HANDLE's low 16 bits.
+        // Handles are 4-aligned (id at bit 2), so the slot is id << 2; keep it within the table bounds.
+        static uint32_t handle_index_to_ahe_slot(uint32_t index)
+        {
+            return static_cast<uint32_t>(make_handle(index, handle_types::window, false).bits & 0xFFFFu);
+        }
+
         emulator_object<USER_DISPINFO> get_display_info() const
         {
             return {*memory_, display_info_addr_};
+        }
+
+        uint64_t get_wow64_wndmsg_bitmap() const
+        {
+            return wow64_wndmsg_bitmap_addr_;
+        }
+
+        uint64_t get_wow64_ime_msg_bitmap() const
+        {
+            return wow64_ime_msg_bitmap_addr_;
         }
 
         USER_WNDMSG get_awm_control_message(const size_t index) const
@@ -113,6 +139,13 @@ namespace sogen
         std::pair<handle, emulator_object<T>> allocate_object(handle_types::type type)
         {
             const auto index = find_free_index();
+            const auto object_handle = make_handle(index, type, false);
+
+            // user32's client-side handle validation (HMValidateHandle and friends) indexes the shared
+            // aheList by the HANDLE's low 16 bits, not by our internal handle id. Since handles are now
+            // 4-aligned (low 2 bits reserved for the NtClose ABI), the id lives at bit 2, so the aheList
+            // slot the guest reads is id << 2. Write the entry there so the client-side lookup resolves.
+            const auto ahe_slot = handle_index_to_ahe_slot(index);
 
             const auto alloc_size = static_cast<size_t>(page_align_up(sizeof(T)));
             const auto alloc_ptr = this->allocate_memory(alloc_size, memory_permission::read);
@@ -125,11 +158,11 @@ namespace sogen
                     entry.bType = get_native_type(type);
                     entry.wUniq = static_cast<uint16_t>(type << 7);
                 },
-                index);
+                ahe_slot);
 
             used_indices_.at(index) = true;
 
-            return {make_handle(index, type, false), alloc_obj};
+            return {object_handle, alloc_obj};
         }
 
         void free_index(uint32_t index)
@@ -147,7 +180,7 @@ namespace sogen
                     memory_->release_memory(entry.pHead, 0);
                     entry = {};
                 },
-                index);
+                handle_index_to_ahe_slot(index));
         }
 
         void serialize(utils::buffer_serializer& buffer) const
@@ -156,6 +189,8 @@ namespace sogen
             buffer.write(handle_table_addr_);
             buffer.write(display_info_addr_);
             buffer.write(wnd_message_bits_addr_);
+            buffer.write(wow64_wndmsg_bitmap_addr_);
+            buffer.write(wow64_ime_msg_bitmap_addr_);
             buffer.write(wnd_message_bits_addrs_);
             buffer.write_vector(used_indices_);
             buffer.write(next_free_index_);
@@ -168,6 +203,8 @@ namespace sogen
             buffer.read(handle_table_addr_);
             buffer.read(display_info_addr_);
             buffer.read(wnd_message_bits_addr_);
+            buffer.read(wow64_wndmsg_bitmap_addr_);
+            buffer.read(wow64_ime_msg_bitmap_addr_);
             buffer.read(wnd_message_bits_addrs_);
             buffer.read_vector(used_indices_);
             buffer.read(next_free_index_);
@@ -279,6 +316,12 @@ namespace sogen
 
                 if (!used_indices_.at(index))
                 {
+                    // The aheList slot is id << 2; skip ids whose slot would fall outside the table
+                    // (checked before the 16-bit mask so it can't wrap into a live slot).
+                    if ((static_cast<uint64_t>(index) << 2) >= MAX_HANDLES)
+                    {
+                        continue;
+                    }
                     return index;
                 }
             }
@@ -313,6 +356,8 @@ namespace sogen
         uint64_t handle_table_addr_{};
         uint64_t display_info_addr_{};
         uint64_t wnd_message_bits_addr_{};
+        uint64_t wow64_wndmsg_bitmap_addr_{};
+        uint64_t wow64_ime_msg_bitmap_addr_{};
         std::array<uint64_t, WND_MESSAGE_BITS_COUNT> wnd_message_bits_addrs_{};
         std::vector<bool> used_indices_{};
         uint32_t next_free_index_{1};

@@ -1,6 +1,9 @@
 #include "std_include.hpp"
 #include "windows_emulator.hpp"
 
+#include <algorithm>
+#include <vector>
+
 #include "cpu_context.hpp"
 
 #include <utils/io.hpp>
@@ -773,7 +776,7 @@ namespace sogen
 
         this->version.load_from_registry(this->registry, this->log);
 
-        this->mod_manager.map_main_modules(this->application_settings_.application, this->version, context, this->log);
+        this->mod_manager.map_main_modules(this->emu(), this->application_settings_.application, this->version, context, this->log);
         this->install_section_first_execution_hooks();
 
         const auto* executable = this->mod_manager.executable;
@@ -793,6 +796,25 @@ namespace sogen
                                                           this->mod_manager.executable->size_of_stack_reserve, 0, true);
 
         switch_to_thread(*this, this->vcpu(0), main_thread_id);
+
+        // The desktop window is created in setup() before any thread exists, so its owning thread id
+        // stays 0. Real Windows reports a valid thread for GetWindowThreadProcessId(GetDesktopWindow()),
+        // and code relies on it: DirectSound's SetCooperativeLevel stores
+        // GetWindowThreadProcessId(GetRootParentWindow(hwnd)) and IDirectSoundBuffer::Play rejects every
+        // call with DSERR_PRIOLEVELNEEDED ("Cooperative level must be set") when that id is 0. user32's
+        // client-side GetWindowThreadProcessId reads the owning thread from the shared USER handle
+        // table entry (USER_HANDLEENTRY::pOwner) and returns 0 immediately when it is null, only falling
+        // back to the NtUserQueryWindow syscall (which reads window::thread_id) otherwise. Populate both
+        // now that the main thread exists.
+        if (auto* desktop = context.windows.get(context.default_desktop_window_handle))
+        {
+            const auto desktop_thread_id = this->current_thread().id;
+            desktop->thread_id = desktop_thread_id;
+            desktop->guest.access([&](USER_WINDOW& window) { window.threadId = desktop_thread_id; });
+            const auto ahe_slot =
+                user_handle_table::handle_index_to_ahe_slot(static_cast<uint32_t>(context.default_desktop_window_handle.value.id));
+            context.user_handles.get_handle_table().access([&](USER_HANDLEENTRY& entry) { entry.pOwner = desktop_thread_id; }, ahe_slot);
+        }
     }
 
     void windows_emulator::yield_thread(vcpu_context& vcpu, const bool alertable)
@@ -836,6 +858,7 @@ namespace sogen
             {
                 // With workers, the thread calling start() pumps UI events instead.
                 this->ui_backend_->pump_events();
+                this->callbacks.on_event_pump();
             }
 
             if (this->use_relative_time_)
@@ -1190,6 +1213,7 @@ namespace sogen
             auto& vcpu = this->vcpu(cpu.index());
             const scoped_dispatch dispatch(*this, vcpu);
             auto& acting = vcpu.cpu;
+
             if (acting.reg<uint16_t>(x86_register::cs) == 0x33)
             {
                 // loading gs selector only works in 64-bit mode
@@ -1216,7 +1240,7 @@ namespace sogen
                 // return address so the missing function's call site can be identified.
                 if (address < 0x1000)
                 {
-                    const auto sp = acting.reg<uint32_t>(x86_register::esp);
+                    const auto sp = static_cast<uint32_t>(acting.reg<uint64_t>(x86_register::rsp));
                     uint32_t return_address = 0;
                     if (acting.try_read_memory(sp, &return_address, sizeof(return_address)))
                     {
@@ -1384,6 +1408,7 @@ namespace sogen
         {
             lock.unlock();
             this->ui_backend_->pump_events();
+            this->callbacks.on_event_pump();
             lock.lock();
 
             if (vcpu.switch_thread || !vcpu.thread().is_thread_ready(*this))
@@ -1774,6 +1799,15 @@ namespace sogen
         this->install_section_first_execution_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
+
+        // A windows_emulator constructed as a pure deserialize() target (create_empty_emulator) never
+        // ran map_main_modules, so the kernelbase.dll NLS-cache resolver was never registered - without
+        // this, any thread created after deserialize (in this object) would fall back to the
+        // non-heap-allocated NlsCache placeholder and hit the STATUS_HEAP_CORRUPTION class of bug this
+        // resolver exists to prevent. Idempotent, so this is also a harmless no-op when map_main_modules
+        // already registered it (the common case: deserializing into an already-running emulator).
+        this->mod_manager.ensure_kernelbase_nls_cache_hook(this->process);
+
         this->restore_ui_backend();
     }
 
@@ -1932,6 +1966,15 @@ namespace sogen
         this->install_section_first_execution_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
+
+        // A windows_emulator constructed as a pure deserialize() target (create_empty_emulator) never
+        // ran map_main_modules, so the kernelbase.dll NLS-cache resolver was never registered - without
+        // this, any thread created after deserialize (in this object) would fall back to the
+        // non-heap-allocated NlsCache placeholder and hit the STATUS_HEAP_CORRUPTION class of bug this
+        // resolver exists to prevent. Idempotent, so this is also a harmless no-op when map_main_modules
+        // already registered it (the common case: deserializing into an already-running emulator).
+        this->mod_manager.ensure_kernelbase_nls_cache_hook(this->process);
+
         this->restore_ui_backend();
     }
 

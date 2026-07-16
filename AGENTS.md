@@ -54,3 +54,20 @@ perfectly good change; a change that sprinkles comments over otherwise readable 
 
 - Run clang-format on changed files to ensure consistent formatting
 - Do not use shortcuts or workarounds. Always prefer clean and idiomatic solutions.
+
+## Working style for this WoW64/FEX effort
+
+- The goal is the full implementation working end-to-end with a real game (mw2/iw4sp, a 32-bit
+  WoW64 title) running correctly on the FEX/macOS-ARM64 backend - not just individual phases or
+  synthetic test binaries passing. Keep that as the actual finish line.
+- Do not pause to check in or ask whether to continue. Keep working through the task list (Phase
+  A/B/C/D, the wild-branch/AddBlockLink follow-ups, the GS-segment/TEB layout conflict, etc.) and
+  whatever new blockers are found along the way, until either a genuine question needs the user's
+  input (an ambiguous decision only they can make, not just "this needs more design work") or the
+  entire implementation actually works correctly with the game.
+- When a deep architectural conflict is found (e.g. the TEB64/TEB32 layout vs. per-context rebasing
+  conflict), make the best-reasoned engineering call yourself, document the reasoning and the
+  alternatives considered in the plan file, and keep moving - don't stop and wait for approval on
+  design choices that a senior engineer would just decide and proceed with.
+- Keep the plan file (`~/.claude/plans/swift-painting-avalanche.md`) updated as the durable record of
+  findings, fixes, and open threads - treat it as the source of truth to resume from, not just a log.

@@ -498,6 +498,58 @@ jobs:
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
           retention-days: 1
 
+  build-fex:
+    name: Build FEX Backend (Linux arm64)
+    runs-on: ubuntu-24.04-arm
+    env:
+      LLVM_VERSION: 21
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Clang
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 20
+          retry_wait_seconds: 60
+          command: |
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh ${{ env.LLVM_VERSION }}
+            sudo apt install -y clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }}
+            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ env.LLVM_VERSION }} 100
+            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ env.LLVM_VERSION }} 100
+            sudo update-alternatives --set cc /usr/bin/clang-${{ env.LLVM_VERSION }}
+            sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
+
+      - name: Install Build Dependencies
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              ninja-build python3 \
+              libasound2-dev libpulse-dev libjack-jackd2-dev libsndio-dev \
+              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+              libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+              libdrm-dev libgbm-dev libgl1-mesa-dev libegl-dev libgles-dev \
+              libdbus-1-dev libudev-dev \
+              libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
+
+      # Build only the FEX backend (and its FEXCore_Base dependency). FEX is added EXCLUDE_FROM_ALL,
+      # so this does not build FEX's loader/server tools.
+      - name: CMake Configure
+        run: cmake --preset=release
+
+      - name: Build FEX backend
+        run: cmake --build --preset=release --target fex-emulator
+
   test:
     name: Test
     runs-on: ${{ matrix.runner }}
@@ -811,6 +863,182 @@ jobs:
       - name: CMake Test
         run: cd build/release/artifacts && ./analyzer.exe -e root c:/test-sample.exe
         env:
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ inputs.verbose }}
+
+  smoke-test-fex:
+    name: Smoke Test FEX (macOS arm64)
+    runs-on: macos-latest
+    needs: [create-emulation-root, build]
+    steps:
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: macOS arm64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Windows Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 2025 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      # FEX shares the guest address space directly with the host process (unlike Unicorn/Icicle's own
+      # simulated address space), so its free-region search competes with whatever the host's own ASLR
+      # layout happens to leave available this run - a pre-existing, known-flaky class of failure
+      # ("Memory range not allocatable" mapping a module, or an unrelated exit-133 crash under
+      # AddressSanitizer-adjacent conditions) that a fresh process retry, with its own fresh ASLR
+      # layout, reliably works around. Not a substitute for the underlying address-space-exhaustion
+      # investigation, which is tracked separately.
+      - name: CMake Test
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 10
+          command: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer -e root c:/test-sample.exe
+        env:
+          EMULATOR_FEX: "1"
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ inputs.verbose }}
+
+  smoke-test-fex-gpu:
+    name: Smoke Test FEX GPU (macOS arm64)
+    runs-on: macos-latest
+    needs: [create-emulation-root, build]
+    steps:
+      # vulkan_host.cpp dlopen()s the real Vulkan loader / MoltenVK at RUNTIME (libvulkan.1.dylib,
+      # libMoltenVK.dylib, etc. - see its own doc comment) - this is a plain dynamic library lookup,
+      # not something CMake/the build step provides (Vulkan-Headers is vendored for build-time types
+      # only). Runner images don't ship it, so without this the guest's vkCreateInstance call fails
+      # outright with VK_ERROR_INITIALIZATION_FAILED (-3) - confirmed via an actual CI run's log,
+      # 5/5 retry attempts, before this fix.
+      - name: Install MoltenVK Runtime
+        run: brew install molten-vk vulkan-loader
+
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: macOS arm64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Windows Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+
+      # vulkan-shim-test.exe is a Windows PE guest; it can't be produced by the macOS build, so it's
+      # sourced from the MinGW x86_64 build's artifacts (src/samples/CMakeLists.txt builds it
+      # unconditionally for every platform, and the build job's Upload Artifacts step uploads
+      # everything under that platform's artifacts directory).
+      - name: Download GPU Test Guest
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: MinGW x86_64 Release Artifacts
+          path: build/release/artifacts/mingw
+
+      # The GPU runtime shim (DXVK + vulkan-1.dll) is already installed into this root by
+      # create-emulation-root's install-gpu-runtime.ps1 step; no per-job GPU setup is needed here.
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 2025 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Stage GPU Test Guest
+        run: cp build/release/artifacts/mingw/vulkan-shim-test.exe build/release/artifacts/root/filesys/c/
+
+      # Same known-flaky FEX address-space class as smoke-test-fex (see its comment above) - a fresh
+      # process retry with its own fresh ASLR layout reliably works around it. The shim-test's own
+      # exit code plus the "[shim-test] ok" completion marker (rather than exit code alone) guard
+      # against a benign, non-fatal teardown-time module-mapping message that can otherwise still
+      # leave exit=0.
+      #
+      # vulkan-shim-test.exe defaults to loading "vulkan-shim.dll" (a bare name, resolved via the
+      # guest's normal DLL search path) if no argument is given - but install-gpu-runtime.ps1
+      # installs the shim as the system vulkan-1.dll (system32/syswow64), the real name a Vulkan
+      # application/DXVK would look for, not the raw "vulkan-shim.dll" name. Pass it explicitly so
+      # this test exercises the actual installed runtime configuration rather than requiring a
+      # separately-staged, non-representative copy of the raw shim under a different name.
+      - name: Run GPU Paravirtualization Smoke Test
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 10
+          command: |
+            cd build/release/artifacts && chmod +x ./analyzer
+            ./analyzer -s -e root c:/vulkan-shim-test.exe vulkan-1.dll | tee gpu-smoke-test.log
+            grep -q '\[shim-test\] ok' gpu-smoke-test.log
+        env:
+          EMULATOR_FEX: "1"
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ inputs.verbose }}
+
+  smoke-test-fex-wow64:
+    name: Smoke Test FEX WoW64 (macOS arm64)
+    runs-on: macos-latest
+    needs: [create-emulation-root, build]
+    steps:
+      # wow64-test-sample.exe is a genuine 32-bit PE; it can't be produced by the macOS build, so
+      # it's sourced from the real MSVC "Windows x86" build's artifacts (src/CMakeLists.txt's
+      # `if(WIN32)` guard means src/samples/ is only built there or under MinGW, never natively on
+      # macOS/Linux).
+      - name: Download WoW64 Test Guest
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows x86 Release Artifacts
+          path: build/release/artifacts/win32
+
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: macOS arm64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 2025 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Stage WoW64 Test Guest
+        run: cp build/release/artifacts/win32/wow64-test-sample.exe build/release/artifacts/root/filesys/c/
+
+      # This is the one CI job that actually exercises WoW64 translation (a genuine 32-bit guest
+      # running under a 64-bit analyzer) - every other smoke test uses a bitness-matched
+      # analyzer+guest pair, with no WoW64 machinery involved at all. Same known-flaky FEX
+      # address-space class as smoke-test-fex (see its comment above) applies here too, plus a
+      # residual, much rarer WoW64-specific race (a large host VA reservation this process's own
+      # Cocoa/Metal GPU subsystem makes at dyld-load time can - unpredictably, based on ASLR -
+      # exhaust the address space sogen's WoW64 support needs below 4GB; see the plan file's
+      # 2026-07-12 entry for the full root cause). A fresh process retry, with its own fresh ASLR
+      # layout, reliably works around both. Checking for genuine completion (rather than exit code
+      # alone, which guards against a benign non-fatal teardown-time message that can otherwise
+      # still leave exit=0) is done via the sample's own status file, not its stdout - a WoW64
+      # 32-bit guest's buffered CRT stdio has been observed to never actually flush to a real
+      # WriteFile syscall (see wow64_test_sample.cpp's write_completion_marker), so a host-side
+      # stdout capture can't reliably observe it even when the test genuinely passes.
+      - name: Run WoW64 Smoke Test
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 10
+          command: |
+            cd build/release/artifacts && chmod +x ./analyzer
+            rm -f root/filesys/c/wow64_test_sample_status.txt
+            ./analyzer -e root c:/wow64-test-sample.exe | tee wow64-smoke-test.log
+            grep -q 'wow64-test-sample: ok' root/filesys/c/wow64_test_sample_status.txt
+        env:
+          EMULATOR_FEX: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
 
@@ -1208,6 +1436,9 @@ jobs:
         build-root-tools,
         smoke-test-whp,
         smoke-test-kvm,
+        smoke-test-fex,
+        smoke-test-fex-gpu,
+        smoke-test-fex-wow64,
         smoke-test-node,
         smoke-test-mingw,
         smoke-test-win32,
@@ -1215,6 +1446,7 @@ jobs:
         create-emulation-root,
         build,
         build-isolate,
+        build-fex,
         test,
         win-test,
         verify-formatting,

@@ -304,6 +304,26 @@ plus the surrounding calls needed to actually use them:
     (the `vkCreateDevice`/features paths are on their path too). Full DXVK rendering (swapchain +
     DXVK's large runtime device-function set) is still ahead; DXVK remains otherwise deprioritized.
 
+- **macOS / MoltenVK host bring-up (portability driver).** The host had only ever been run against
+  native ICDs (Linux) or SwiftShader; on an Apple-Silicon Mac the host `vulkan-1.dll`/`libvulkan.dylib`
+  resolves to the **MoltenVK** portability driver (Vulkan-over-Metal), which the Khronos loader refuses
+  to use unless the caller opts in. Two portability requirements were added to `vulkan_host` (both
+  runtime-detected, so they are no-ops on native loaders — Linux is unaffected):
+  - `create_instance` now enables `VK_KHR_portability_enumeration` and sets
+    `VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR` when the loader advertises that instance
+    extension; without it `vkCreateInstance` returns `VK_ERROR_INCOMPATIBLE_DRIVER` and no physical
+    device is ever enumerated.
+  - `create_device` now appends `VK_KHR_portability_subset` when the physical device advertises it
+    (Vulkan requires enabling it in that case); the guest never asks for it.
+  Verified end-to-end on macOS against a real GPU: the guest `vulkan-shim-test` enumerates the host
+  **Apple M5 Pro** through MoltenVK and its `fill+readback` (`0xDEADBEEF`) and `clear+readback`
+  (`0xFF0000FF`) checks both pass — the GPU produces the pixels and the guest reads them back exactly.
+  This ran under the Unicorn CPU backend (the bridge is CPU-backend-agnostic) with the direct-alias
+  `vkMapMemory` path actually taken (host allocations are page-rounded and MoltenVK returns
+  page-aligned mapped pointers, so the whole `VkDeviceMemory` aliases straight into guest VA). Run it
+  with the homebrew loader + MoltenVK ICD on the environment:
+  `DYLD_LIBRARY_PATH=/opt/homebrew/lib VK_ICD_FILENAMES=/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json`.
+
 ## Remoted Vulkan entry points so far
 
 Instance/device: `vkCreateInstance`, `vkDestroyInstance`, `vkEnumeratePhysicalDevices`,

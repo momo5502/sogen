@@ -61,6 +61,7 @@ namespace sogen
             bool pause_before_start{false};
 #endif
             std::optional<uint64_t> break_call{};
+            std::vector<uint32_t> click_dialog_buttons{};
             std::filesystem::path dump{};
             std::filesystem::path minidump_path{};
             std::filesystem::path report_path{};
@@ -580,6 +581,7 @@ namespace sogen
             analysis_context context{
                 .settings = &options,
                 .auto_break_before_call = options.break_call,
+                .click_dialog_buttons = options.click_dialog_buttons,
             };
 
             const auto concise_logging = options.concise_logging;
@@ -882,8 +884,8 @@ namespace sogen
                 ->capture_default_str();
 
             std::string backend_name{};
-            app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp or kvm (overrides env)")
-                ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm"}));
+            app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp, kvm or fex (overrides env)")
+                ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm", "fex"}));
 
             std::vector<std::string> tracked_modules{};
             app.add_option("-m,--module", tracked_modules, "Specify module(s) to track")->allow_extra_args(false);
@@ -896,6 +898,12 @@ namespace sogen
 
             std::vector<std::pair<std::string, std::string>> environment{};
             app.add_option("--env", environment, "Set an environment variable")->type_name("NAME VALUE")->allow_extra_args(false);
+
+            std::vector<std::string> click_dialog_button_args{};
+            app.add_option("--click-dialog-button", click_dialog_button_args,
+                           "Auto-dismiss modal dialogs by clicking whichever listed control is present "
+                           "(comma-separated, e.g. 6,1 = IDYES or IDOK)")
+                ->allow_extra_args(false);
 
             CLI11_PARSE(app, argc, argv);
 
@@ -915,12 +923,32 @@ namespace sogen
                 if (!backend_name.empty())
                 {
                     static const std::map<std::string, backend_type> backends{
-                        {"unicorn", backend_type::unicorn},
-                        {"icicle", backend_type::icicle},
-                        {"whp", backend_type::whp},
-                        {"kvm", backend_type::kvm},
+                        {"unicorn", backend_type::unicorn}, {"icicle", backend_type::icicle}, {"whp", backend_type::whp},
+                        {"kvm", backend_type::kvm},         {"fex", backend_type::fex},
                     };
                     options.backend = backends.at(backend_name);
+                }
+
+                for (const auto& arg : click_dialog_button_args)
+                {
+                    size_t pos = 0;
+                    while (pos <= arg.size())
+                    {
+                        const auto comma = arg.find(',', pos);
+                        const auto token = arg.substr(pos, comma - pos);
+                        const auto control_id = std::stoul(token);
+                        if (control_id > 0xFFFF)
+                        {
+                            throw std::runtime_error("Control id should be in range 0-65535");
+                        }
+
+                        options.click_dialog_buttons.push_back(static_cast<uint32_t>(control_id));
+                        if (comma == std::string::npos)
+                        {
+                            break;
+                        }
+                        pos = comma + 1;
+                    }
                 }
 
                 for (auto& module_name : tracked_modules)

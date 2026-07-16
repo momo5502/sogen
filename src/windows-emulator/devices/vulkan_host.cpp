@@ -95,7 +95,12 @@ namespace sogen
         }
 
 #if defined(__APPLE__)
-        constexpr std::array<const char*, 3> vulkan_loader_names{"libvulkan.1.dylib", "libvulkan.dylib", "libMoltenVK.dylib"};
+        // Bare names rely on the dynamic linker's default search path, which covers Intel
+        // Homebrew's /usr/local/lib but not Apple Silicon Homebrew's /opt/homebrew/lib unless
+        // DYLD_LIBRARY_PATH is set; the absolute paths below are a fallback for that case.
+        constexpr std::array<const char*, 5> vulkan_loader_names{"libvulkan.1.dylib", "libvulkan.dylib", "libMoltenVK.dylib",
+                                                                 "/opt/homebrew/lib/libvulkan.1.dylib",
+                                                                 "/opt/homebrew/lib/libMoltenVK.dylib"};
 #else
         constexpr std::array<const char*, 2> vulkan_loader_names{"libvulkan.so.1", "libvulkan.so"};
 #endif
@@ -1042,6 +1047,36 @@ namespace sogen
         create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         create_info.pApplicationInfo = &app_info;
 
+        // On portability drivers (MoltenVK on macOS) the loader refuses vkCreateInstance with
+        // VK_ERROR_INCOMPATIBLE_DRIVER unless the caller opts into portability enumeration: the
+        // VK_KHR_portability_enumeration extension must be enabled and the ENUMERATE_PORTABILITY flag set.
+        // Detect the extension at runtime so this stays a no-op on native (non-portability) loaders.
+        std::vector<const char*> instance_extensions;
+        if (const auto enumerate_instance_extensions = reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
+                this->impl_->get_instance_proc_addr(nullptr, "vkEnumerateInstanceExtensionProperties")))
+        {
+            uint32_t ext_count = 0;
+            enumerate_instance_extensions(nullptr, &ext_count, nullptr);
+            std::vector<VkExtensionProperties> available(ext_count);
+            if (ext_count > 0)
+            {
+                enumerate_instance_extensions(nullptr, &ext_count, available.data());
+            }
+            for (const auto& ext : available)
+            {
+                if (std::strcmp(ext.extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0)
+                {
+                    instance_extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+                    create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+                }
+            }
+        }
+        if (!instance_extensions.empty())
+        {
+            create_info.enabledExtensionCount = static_cast<uint32_t>(instance_extensions.size());
+            create_info.ppEnabledExtensionNames = instance_extensions.data();
+        }
+
         VkInstance instance{};
         const VkResult result = this->impl_->create_instance(&create_info, nullptr, &instance);
         if (result != VK_SUCCESS)
@@ -1381,6 +1416,28 @@ namespace sogen
         const auto removed = std::ranges::remove_if(extensions, is_unsupported_device_extension);
         extensions.erase(removed.begin(), removed.end());
 
+        // MoltenVK lacks the static VK_EXT_depth_clip_enable extension, but DXVK's D3D adapter filter
+        // requires it (D3D9-relevant: it emulates D3D near-plane clipping). Advertise it here so the
+        // adapter passes the filter; create_device strips it from the enabled-extension list (MoltenVK
+        // rejects unknown extensions) and masks the paired feature off, at which point DXVK reproduces the
+        // depth-clip semantics through its own depthClampEnable fallback.
+        bool has_depth_clip = false;
+        for (const auto& ext : extensions)
+        {
+            if (std::strcmp(ext.extensionName, VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME) == 0)
+            {
+                has_depth_clip = true;
+                break;
+            }
+        }
+        if (!has_depth_clip)
+        {
+            VkExtensionProperties synthetic{};
+            std::strncpy(synthetic.extensionName, VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME, sizeof(synthetic.extensionName) - 1);
+            synthetic.specVersion = VK_EXT_DEPTH_CLIP_ENABLE_SPEC_VERSION;
+            extensions.push_back(synthetic);
+        }
+
         out_count = static_cast<uint32_t>(extensions.size());
 
         const size_t copy_bytes = std::min(out_size, extensions.size() * sizeof(VkExtensionProperties));
@@ -1443,6 +1500,45 @@ namespace sogen
         }
 
         instance->second.get_physical_device_features2(pd->second.handle, &features2);
+
+        // MoltenVK/Apple GPUs lack a geometry-shader stage and shader cull-distance support, but D3D9
+        // uses neither. DXVK's adapter filter requires both in a single unified baseline shared across
+        // D3D8/9/10/11, so it rejects the only adapter for a pure-D3D9 title. Advertise them here so the
+        // adapter passes that filter; create_device masks the enabled feature set back down to what the
+        // device genuinely supports, so MoltenVK is never asked to enable a capability it cannot provide.
+        features2.features.geometryShader = VK_TRUE;
+        features2.features.shaderCullDistance = VK_TRUE;
+
+        // Same rationale for VK_EXT_depth_clip_enable (spoofed into enumerate_device_extension_properties):
+        // advertise depthClipEnable so DXVK's adapter filter accepts the device. create_device masks it back
+        // to the device's real (false) value, at which point DXVK reproduces the semantics via its
+        // depthClampEnable fallback. Only touched when the guest actually chained the feature struct.
+        //
+        // VK_EXT_robustness2 is present on MoltenVK, but its robustBufferAccess2/nullDescriptor features are
+        // not; DXVK marks both required. robustBufferAccess2 only tightens out-of-bounds semantics that the
+        // core robustBufferAccess feature (which MoltenVK does support and DXVK also enables) already makes
+        // defined, so spoofing it is safe. nullDescriptor is advertised so unbound-resource binding passes
+        // the filter; the bridge already resolves null bindings host-side (VK_NULL_HANDLE substitution at the
+        // descriptor-write and vertex-buffer-bind sites), which is where a dummy-resource fallback belongs if
+        // MoltenVK never gains real null-descriptor support. create_device masks both back to the device's
+        // real (false) value, so MoltenVK is never asked to enable a capability it lacks.
+        for (auto& buffer : chained)
+        {
+            switch (reinterpret_cast<const VkBaseOutStructure*>(buffer.data())->sType)
+            {
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT:
+                reinterpret_cast<VkPhysicalDeviceDepthClipEnableFeaturesEXT*>(buffer.data())->depthClipEnable = VK_TRUE;
+                break;
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT: {
+                auto* robustness2 = reinterpret_cast<VkPhysicalDeviceRobustness2FeaturesEXT*>(buffer.data());
+                robustness2->robustBufferAccess2 = VK_TRUE;
+                robustness2->nullDescriptor = VK_TRUE;
+                break;
+            }
+            default:
+                break;
+            }
+        }
 
         // Serialize one record + body per requested struct, in request order. The body is the guest's
         // pad-free VkBool32 run copied from after the (ABI-specific) header.
@@ -1643,6 +1739,48 @@ namespace sogen
             }
         }
 
+        // Vulkan requires VK_KHR_portability_subset to be enabled whenever the physical device advertises
+        // it (MoltenVK always does). The guest never asks for it, so add it here when present. No-op on
+        // native drivers that don't expose it.
+        if (instance->second.enumerate_device_extension_properties)
+        {
+            uint32_t dev_ext_count = 0;
+            instance->second.enumerate_device_extension_properties(pd->second.handle, nullptr, &dev_ext_count, nullptr);
+            std::vector<VkExtensionProperties> dev_exts(dev_ext_count);
+            if (dev_ext_count > 0)
+            {
+                instance->second.enumerate_device_extension_properties(pd->second.handle, nullptr, &dev_ext_count, dev_exts.data());
+            }
+            bool has_portability_subset = false;
+            for (const auto& ext : dev_exts)
+            {
+                if (std::strcmp(ext.extensionName, "VK_KHR_portability_subset") == 0)
+                {
+                    has_portability_subset = true;
+                    break;
+                }
+            }
+            bool already_requested = false;
+            for (const char* name : extensions)
+            {
+                if (std::strcmp(name, "VK_KHR_portability_subset") == 0)
+                {
+                    already_requested = true;
+                    break;
+                }
+            }
+            if (has_portability_subset && !already_requested)
+            {
+                extensions.push_back("VK_KHR_portability_subset");
+            }
+        }
+
+        // enumerate_device_extension_properties advertises VK_EXT_depth_clip_enable so DXVK's adapter filter
+        // accepts MoltenVK, but MoltenVK does not implement it and vkCreateDevice rejects an unknown enabled
+        // extension. Drop it here; the paired feature is masked off just below, so DXVK falls back to its
+        // depthClampEnable emulation of depth clip (correct for D3D9's clip semantics).
+        std::erase_if(extensions, [](const char* name) { return std::strcmp(name, VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME) == 0; });
+
         // Rebuild the pNext feature chain to enable (same record format as get_physical_device_features2);
         // the VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 record carries the base VkPhysicalDeviceFeatures.
         VkPhysicalDeviceFeatures2 features2{};
@@ -1690,6 +1828,50 @@ namespace sogen
                     }
                 }
                 cursor += record.body_size;
+            }
+        }
+
+        // get_physical_device_features2 advertises a few features MoltenVK does not actually support
+        // (see there) so DXVK's D3D9 adapter filter accepts the device. Requesting an unsupported feature
+        // fails vkCreateDevice, so mask the enabled feature set down to what the device really supports.
+        // DXVK only ever *uses* a feature it observed as supported, and D3D9 uses none of the spoofed
+        // ones, so this drops exactly the spurious requests and nothing real. Re-querying the same pNext
+        // chain lets this cover both the base features and every chained struct (e.g. depthClipEnable),
+        // and self-corrects any future spoof with no create-side edit.
+        if (has_features && instance->second.get_physical_device_features2)
+        {
+            VkPhysicalDeviceFeatures2 supported{};
+            supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            std::vector<std::vector<std::byte>> supported_chained;
+            supported_chained.reserve(chained.size());
+            auto* supported_tail = reinterpret_cast<VkBaseOutStructure*>(&supported);
+            for (const auto& buffer : chained)
+            {
+                auto& mirror = supported_chained.emplace_back(buffer.size(), std::byte{});
+                auto* base = reinterpret_cast<VkBaseOutStructure*>(mirror.data());
+                base->sType = reinterpret_cast<const VkBaseOutStructure*>(buffer.data())->sType;
+                base->pNext = nullptr;
+                supported_tail->pNext = base;
+                supported_tail = base;
+            }
+            instance->second.get_physical_device_features2(pd->second.handle, &supported);
+
+            auto* enabled = reinterpret_cast<VkBool32*>(&features2.features);
+            const auto* real = reinterpret_cast<const VkBool32*>(&supported.features);
+            for (size_t i = 0; i < sizeof(features2.features) / sizeof(VkBool32); ++i)
+            {
+                enabled[i] &= real[i];
+            }
+            for (size_t c = 0; c < chained.size(); ++c)
+            {
+                const size_t body_bytes = chained[c].size() - gpu_bridge::feature_chain_header_size;
+                auto* enabled_body = reinterpret_cast<VkBool32*>(chained[c].data() + gpu_bridge::feature_chain_header_size);
+                const auto* real_body =
+                    reinterpret_cast<const VkBool32*>(supported_chained[c].data() + gpu_bridge::feature_chain_header_size);
+                for (size_t i = 0; i < body_bytes / sizeof(VkBool32); ++i)
+                {
+                    enabled_body[i] &= real_body[i];
+                }
             }
         }
 

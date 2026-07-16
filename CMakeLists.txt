@@ -56,6 +56,29 @@ endif()
 
 ##########################################
 
+# FEX-Emu backend (x86/x86-64 -> AArch64). FEX only JITs to ARM64, so the backend is restricted to
+# ARM64 Linux/Android/Darwin hosts. It is enabled automatically on those hosts whenever FEXCore is
+# available. FEXCore is a large, ARM64-host-specific dependency that is not vendored, so we *probe*
+# for it and skip the backend (rather than hard-failing) when absent - otherwise every arm64 build
+# without FEX installed (e.g. the Android CI job) would break. Point -DSOGEN_FEX_ROOT=<path> at a
+# FEX checkout/install, or make FEXCore discoverable via find_package(FEXCore), to enable it.
+# FEX is vendored as a submodule (deps/FEX, pointed at a fork with Darwin portability patches - see
+# docs/fex-backend.md) and built in-tree. It requires Clang and only JITs to AArch64, and on Linux
+# its headers need a libstdc++ with std::atomic_ref (the Android NDK's libc++ lacks it), so Linux is
+# restricted to ARM64 + Clang, not Android/NDK. Apple Clang's libc++ has std::atomic_ref, so Darwin
+# has no equivalent NDK-style exclusion. Enabled automatically when those hold and the submodule is
+# checked out.
+if((CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64") AND (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/FEX/CMakeLists.txt"
+   AND ((CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID) OR CMAKE_SYSTEM_NAME STREQUAL "Darwin"))
+  set(SOGEN_ENABLE_FEX ON)
+  message(STATUS "FEX backend: enabled (ARM64 ${CMAKE_SYSTEM_NAME} + Clang, deps/FEX present)")
+else()
+  set(SOGEN_ENABLE_FEX OFF)
+endif()
+
+##########################################
+
 if(PROJECT_IS_TOP_LEVEL)
   set(SOGEN_IS_SUBPROJECT OFF)
 else()

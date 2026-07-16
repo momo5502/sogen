@@ -11,6 +11,10 @@
 #include <string>
 #include <string_view>
 
+#if defined(__clang__)
+#pragma GCC diagnostic ignored "-Wunused-template"
+#endif
+
 namespace sogen
 {
 

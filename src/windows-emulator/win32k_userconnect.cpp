@@ -242,14 +242,29 @@ namespace sogen
                 return status;
             }
 
+            uint32_t wndmsg_bitmap{};
+            status = narrow_wow64_address(process.user_handles.get_wow64_wndmsg_bitmap(), wndmsg_bitmap);
+            if (status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
+            uint32_t ime_msg_bitmap{};
+            status = narrow_wow64_address(process.user_handles.get_wow64_ime_msg_bitmap(), ime_msg_bitmap);
+            if (status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+
             connect.psi = psi;
             connect.ahe_list = ahe_list;
             connect.he_entry_size = sizeof(USER_HANDLEENTRY);
             connect.disp_info_low = disp_info;
             connect.monitor_info_low = monitor_info;
-            std::ranges::fill(connect.wndmsg_table, uint8_t{0xFF});
             connect.wndmsg_count = k_wow64_wndmsg_count;
+            connect.wndmsg_bits = wndmsg_bitmap;
             connect.ime_msg_count = k_wow64_ime_msg_count;
+            connect.ime_msg_bits = ime_msg_bitmap;
 
             return STATUS_SUCCESS;
         }

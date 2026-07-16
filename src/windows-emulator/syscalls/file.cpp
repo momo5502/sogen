@@ -16,7 +16,6 @@
 
 namespace sogen
 {
-
     namespace syscalls
     {
         namespace
@@ -1792,6 +1791,15 @@ namespace sogen
             const auto io_device_name = get_io_device_name(filename);
             if (io_device_name.has_value())
             {
+                // \Device\DeviceApi\Dev\Query is the Windows 10+ "DevQuery" PnP enumeration object. Sogen has no PnP
+                // device tree, so this class is legitimately absent, exactly as on a real machine with no such devices;
+                // report the ordinary not-found status the caller expects instead of letting it reach create_device's
+                // throwing "unknown device" fallback, which would fatally halt emulation.
+                if (*io_device_name == u"DeviceApi\\Dev\\Query")
+                {
+                    return STATUS_OBJECT_NAME_NOT_FOUND;
+                }
+
                 const io_device_creation_data data{
                     .buffer = ea_buffer,
                     .length = ea_length,

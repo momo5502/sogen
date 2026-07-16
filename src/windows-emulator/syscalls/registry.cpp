@@ -445,6 +445,35 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtCreateRegistryTransaction(const syscall_context&, const emulator_object<handle> transaction_handle,
+                                                    const ACCESS_MASK /*desired_access*/,
+                                                    const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                                    const ULONG /*create_options*/)
+        {
+            // sogen's registry is a plain in-memory/file-backed hive with no Kernel Transaction Manager
+            // (TxR) support. Report the API as unavailable, matching a system without transacted-registry
+            // support, so the guest's own error path runs instead of the generic unimplemented-syscall abort.
+            if (transaction_handle)
+            {
+                transaction_handle.write(NULL_HANDLE);
+            }
+
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        NTSTATUS handle_NtOpenRegistryTransaction(const syscall_context&, const emulator_object<handle> transaction_handle,
+                                                  const ACCESS_MASK /*desired_access*/,
+                                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/)
+        {
+            // See handle_NtCreateRegistryTransaction: no TxR support, report the API as unavailable.
+            if (transaction_handle)
+            {
+                transaction_handle.write(NULL_HANDLE);
+            }
+
+            return STATUS_NOT_SUPPORTED;
+        }
+
         NTSTATUS handle_NtSetInformationKey(const syscall_context& c, const handle key_handle,
                                             const KEY_SET_INFORMATION_CLASS key_information_class, const uint64_t key_information,
                                             const ULONG length)

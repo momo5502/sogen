@@ -47,6 +47,15 @@
             }
         },
         {
+            "name": "asan",
+            "inherits": [
+                "release"
+            ],
+            "cacheVariables": {
+                "SOGEN_ENABLE_SANITIZER": "ON"
+            }
+        },
+        {
             "name": "emscripten-base",
             "hidden": true,
             "inherits": [
@@ -101,6 +110,10 @@
         {
             "name": "tidy",
             "configurePreset": "tidy"
+        },
+        {
+            "name": "asan",
+            "configurePreset": "asan"
         },
         {
             "name": "emscripten32",

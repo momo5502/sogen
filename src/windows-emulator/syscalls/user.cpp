@@ -335,7 +335,13 @@ namespace sogen
                 return;
             }
 
-            c.proc.user_handles.get_handle_table().access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, index);
+            // user32's client-side dispatch (e.g. DispatchMessageWorker's same-thread ownership check)
+            // indexes the shared aheList by the HANDLE's low 16 bits, not by our internal handle id - see
+            // user_handle_table::handle_index_to_ahe_slot's doc comment. Writing pOwner at the raw index
+            // instead of that slot silently populates the wrong entry, leaving the real window's pOwner
+            // unset and making client-side same-thread dispatch fail its ownership check.
+            const auto ahe_slot = user_handle_table::handle_index_to_ahe_slot(index);
+            c.proc.user_handles.get_handle_table().access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, ahe_slot);
         }
 
         void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, bool erase);
@@ -1313,6 +1319,11 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtUserCitSetInfo()
+        {
+            return STATUS_SUCCESS;
+        }
+
         uint32_t handle_NtUserRegisterWindowMessage(const syscall_context& c,
                                                     const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> message_name)
         {
@@ -1344,6 +1355,14 @@ namespace sogen
             }
 
             return message;
+        }
+
+        // Modal message loops (dialogs, menus, scrollbars) call this to let installed WH_MSGFILTER/
+        // WH_SYSMSGFILTER hooks inspect the message. With no hook-chain infrastructure, and thus no
+        // filter hooks installed, the correct result is FALSE ("no hook handled it, keep processing").
+        BOOL handle_NtUserCallMsgFilter(const syscall_context& /*c*/, const emulator_pointer /*msg*/, const int32_t /*code*/)
+        {
+            return FALSE;
         }
 
         uint64_t handle_NtUserGetThreadState(const syscall_context& c, const ULONG routine)
@@ -4623,21 +4642,18 @@ namespace sogen
         }
 
         NTSTATUS handle_NtUserGetDisplayConfigBufferSizes(const syscall_context& c, const UINT32 /*flags*/,
-                                                          const emulator_object<UINT32> num_path_array_elements,
-                                                          const emulator_object<UINT32> num_mode_info_array_elements)
+                                                          const emulator_pointer counts_buffer)
         {
-            if (!num_path_array_elements || !num_mode_info_array_elements)
+            if (!counts_buffer)
             {
                 return STATUS_INVALID_PARAMETER;
             }
 
-            // Use non-throwing writes: a failed guest write (e.g. a caller passing a bogus output pointer)
-            // must surface as an error to the caller, not abort the whole emulator with an unhandled
-            // host-side memory exception.
-            const UINT32 path_count = 1;
-            const UINT32 mode_count = 2;
-            if (!c.win_emu.memory.try_write_memory(num_path_array_elements.value(), &path_count, sizeof(path_count)) ||
-                !c.win_emu.memory.try_write_memory(num_mode_info_array_elements.value(), &mode_count, sizeof(mode_count)))
+            // wow64win marshals the two output counts (pNumPathArrayElements / pNumModeInfoArrayElements)
+            // into a single packed buffer: [0] = path count, [1] = mode count. A zero mode count makes
+            // callers (e.g. coloradapterclient) build an empty mode vector and dereference NULL.
+            const std::array<UINT32, 2> counts{1, 2};
+            if (!c.win_emu.memory.try_write_memory(counts_buffer, counts.data(), sizeof(counts)))
             {
                 return STATUS_INVALID_PARAMETER;
             }
@@ -4645,58 +4661,34 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtUserQueryDisplayConfig(const syscall_context& c, const UINT32 /*flags*/,
-                                                 const emulator_object<UINT32> num_path_array_elements, const emulator_pointer path_array,
-                                                 const emulator_object<UINT32> current_topology_id, const emulator_pointer /*reserved*/)
+        NTSTATUS handle_NtUserQueryDisplayConfig(const syscall_context& c, const UINT32 /*flags*/, const emulator_pointer num_path_elements,
+                                                 const emulator_pointer /*path_modality_buffer*/,
+                                                 const emulator_pointer current_topology_id, const emulator_pointer /*reserved*/)
         {
-            if (!num_path_array_elements)
+            // The kernel-side NtUserQueryDisplayConfig ABI is NOT the public QueryDisplayConfig signature. user32's
+            // QueryDisplayConfig (verified by RE of syswow64\user32.dll + wow64win.dll) collapses its six public
+            // arguments into a five-argument syscall:
+            //   NtUserQueryDisplayConfig(flags, pNumPathArrayElements, pPathModalityBuffer, pCurrentTopologyId, 0)
+            // pPathModalityBuffer is a private, 200-bytes-per-path modality buffer that user32 allocates and, on
+            // return, unpacks into the caller's DISPLAYCONFIG_PATH_INFO / DISPLAYCONFIG_MODE_INFO arrays; the public
+            // pNumModeInfoArrayElements / pModeInfoArray pointers are handled entirely user-side and never reach the
+            // kernel. The previous handler assumed the public 6-pointer layout, so it wrote 128 bytes of mode data
+            // over the caller's 4-byte currentTopologyId stack slot (arg 4 here), smashing the return address and
+            // faulting on function return (observed as dcfg32.exe's 0x4016a7 crash).
+            //
+            // We do not synthesize entries in the opaque modality buffer, so we report zero active paths: user32
+            // then skips its unpacking pass, leaving the caller's path/mode arrays and mode count untouched (a legal
+            // "no display paths matched" result). The topology id is written to its true out-parameter location.
+            if (num_path_elements)
             {
-                return STATUS_INVALID_PARAMETER;
+                const UINT32 count = 0;
+                c.win_emu.memory.try_write_memory(num_path_elements, &count, sizeof(count));
             }
-
-            const auto num_paths = num_path_array_elements.read();
-
-            num_path_array_elements.write(1);
 
             if (current_topology_id)
             {
-                current_topology_id.write(0x1); // DISPLAYCONFIG_TOPOLOGY_INTERNAL
-            }
-
-            if (path_array && num_paths >= 1)
-            {
-                struct EMU_CCD_PATH_INFO
-                {
-                    UINT64 flags;
-                    UINT64 padding1;
-                    LUID adapterId;
-                    UINT32 sourceId;
-                    UINT32 targetId;
-                    EMU_DISPLAYCONFIG_VIDEO_SIGNAL_INFO targetSignalInfo;
-                    UINT32 outputTechnology;
-                    UINT8 padding2[40]; // NOLINT
-                    UINT32 sourceWidth;
-                    UINT32 sourceHeight;
-                    UINT8 padding3[84]; // NOLINT
-                } internal_path{};
-
-                internal_path.flags = 0x2000000000020003ULL;
-                internal_path.adapterId = {.LowPart = 0x1000, .HighPart = 0};
-                internal_path.sourceId = 0;
-                internal_path.targetId = 0;
-                internal_path.targetSignalInfo.pixelRate = 148500000;
-                internal_path.targetSignalInfo.hSyncFreq = {.Numerator = 67500, .Denominator = 1};
-                internal_path.targetSignalInfo.vSyncFreq = {.Numerator = 60, .Denominator = 1};
-                internal_path.targetSignalInfo.activeSize = {.cx = 1920, .cy = 1080};
-                internal_path.targetSignalInfo.totalSize = {.cx = 2200, .cy = 1125};
-                internal_path.targetSignalInfo.scanLineOrdering = 1; // PROGRESSIVE
-                internal_path.targetSignalInfo.u.videoStandard = 0;
-                internal_path.outputTechnology = 5; // HDMI
-                internal_path.padding2[17] = 1;
-                internal_path.sourceWidth = 1920;
-                internal_path.sourceHeight = 1080;
-
-                c.emu.write_memory(path_array, &internal_path, sizeof(internal_path));
+                const UINT32 topology = 0x1; // DISPLAYCONFIG_TOPOLOGY_INTERNAL
+                c.win_emu.memory.try_write_memory(current_topology_id, &topology, sizeof(topology));
             }
 
             return STATUS_SUCCESS;

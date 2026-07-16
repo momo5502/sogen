@@ -93,6 +93,7 @@ CALL :collect mscms.dll
 CALL :collect mscoree.dll
 CALL :collect msdmo.dll
 CALL :collect msvcp140.dll
+CALL :collect msvcp140_atomic_wait.dll
 CALL :collect msvcp140d.dll
 CALL :collect msvcp60.dll
 CALL :collect msvcp_win.dll
@@ -147,6 +148,7 @@ CALL :collect vcruntime140d.dll
 CALL :collect version.dll
 CALL :collect wer.dll
 CALL :collect win32u.dll
+CALL :collect windows.internal.graphics.display.displaycolormanagement.dll
 CALL :collect windows.storage.dll
 CALL :collect windowscodecs.dll
 CALL :collect winhttp.dll

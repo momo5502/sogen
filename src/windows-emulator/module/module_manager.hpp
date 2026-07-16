@@ -1,5 +1,6 @@
 #pragma once
 #include <emulator.hpp>
+#include <arch_emulator.hpp>
 
 #include "mapped_module.hpp"
 #include "../file_system.hpp"
@@ -95,8 +96,21 @@ namespace sogen
 
         module_manager(memory_manager& memory, file_system& file_sys, callbacks& cb);
 
-        void map_main_modules(const windows_path& executable_path, windows_version_manager& version, process_context& context,
-                              const logger& logger);
+        void map_main_modules(x86_64_emulator& emu, const windows_path& executable_path, windows_version_manager& version,
+                              process_context& context, const logger& logger);
+
+        // Registers the kernelbase.dll gNlsProcessLocalCache resolver (see the .cpp's own doc comment
+        // for the full rationale) if it hasn't been already, then unconditionally re-resolves
+        // context.kernelbase_nls_process_local_cache from the CURRENT module list (0 if kernelbase.dll
+        // isn't currently mapped). The registration is normally established by map_main_modules for a
+        // freshly-launched process, but a windows_emulator constructed purely as a deserialize() target
+        // (create_empty_emulator-style) never calls map_main_modules at all - so windows_emulator::
+        // deserialize()/restore_snapshot() call this directly to make sure the hook still exists. The
+        // re-resolve step also matters on an object where map_main_modules already ran once before: it
+        // is what prevents a reset back to a pre-kernelbase.dll-load snapshot (see
+        // SerializationTest.ResettingEmulatorWorks) from leaving a stale, no-longer-valid cache address
+        // behind from whatever ran on this object before the reset. Safe to call repeatedly.
+        void ensure_kernelbase_nls_cache_hook(process_context& context);
 
         std::optional<uint64_t> get_module_load_count_by_path(const windows_path& path);
         mapped_module* map_module(windows_path file, const logger& logger, bool is_static = false, bool allow_duplicate = false,
@@ -164,6 +178,22 @@ namespace sogen
             return current_execution_mode_ == execution_mode::wow64_32bit;
         }
 
+        // The actual guest addresses install_wow64_heaven_gate placed the trampoline code page and
+        // stack at. Usually wow64::heaven_gate::kCodeBase/kStackTop (the preferred fixed addresses),
+        // but can differ if that fixed spot was already claimed by a foreign host mapping on a backend
+        // sharing the guest address space with the host process (FEX on Apple Silicon) - see
+        // install_wow64_heaven_gate's doc comment. exception_dispatch.cpp reads these instead of the
+        // compile-time constants so it always targets wherever the gate actually ended up.
+        uint64_t wow64_heaven_gate_code_base() const
+        {
+            return wow64_heaven_gate_code_base_;
+        }
+
+        uint64_t wow64_heaven_gate_stack_top() const
+        {
+            return wow64_heaven_gate_stack_top_;
+        }
+
         // TODO: These should be properly encapsulated. A good mechanism for quick module access is needed.
         mapped_module* executable{};
         mapped_module* ntdll{};
@@ -190,6 +220,12 @@ namespace sogen
         mapping_strategy_factory strategy_factory_;
         execution_mode current_execution_mode_ = execution_mode::unknown;
 
+        // Set by install_wow64_heaven_gate to wherever it actually placed the gate; 0 until then (never
+        // read before that runs on a wow64 process). See the accessors' doc comment above.
+        uint64_t wow64_heaven_gate_code_base_{};
+        uint64_t wow64_heaven_gate_stack_top_{};
+        bool kernelbase_nls_cache_hook_registered_{false};
+
         mapped_module* map_module_core(const pe_detection_result& detection_result, const std::function<mapped_module()>& mapper,
                                        const logger& logger, bool is_static);
 
@@ -197,10 +233,11 @@ namespace sogen
 
         void load_native_64bit_modules(const windows_path& executable_path, const windows_path& ntdll_path, const windows_path& win32u_path,
                                        const logger& logger);
-        void load_wow64_modules(const windows_path& executable_path, const windows_path& ntdll_path, const windows_path& win32u_path,
-                                const windows_path& ntdll32_path, windows_version_manager& version, const logger& logger);
+        void load_wow64_modules(x86_64_emulator& emu, const windows_path& executable_path, const windows_path& ntdll_path,
+                                const windows_path& win32u_path, const windows_path& ntdll32_path, windows_version_manager& version,
+                                const logger& logger);
 
-        void install_wow64_heaven_gate(const logger& logger);
+        void install_wow64_heaven_gate(x86_64_emulator& emu, const logger& logger);
 
         module_map::iterator get_module(const uint64_t address)
         {

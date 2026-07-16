@@ -46,6 +46,7 @@ namespace sogen
         utils::callback_list<void(std::string_view message)> on_debug_string{};
         utils::callback_list<void(const mapped_module& mod, const mapped_section& section, uint64_t address)> on_section_first_execution{};
         opt_func<void(uint64_t address)> on_instruction{};
+        opt_func<void()> on_event_pump{};
         opt_func<void(io_device& device, std::u16string_view device_name, ULONG code)> on_ioctrl{};
         opt_func<void(uint32_t fail_code)> on_fast_fail{};
     };

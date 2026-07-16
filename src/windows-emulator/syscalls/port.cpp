@@ -132,14 +132,85 @@ namespace sogen
                                             connection_message, buffer_length, out_message_attributes, in_message_attributes, timeout);
         }
 
+        // Deliver reply handles (e.g. the shared render section in an audio Initialize reply) to the receiver
+        // via an ALPC HANDLE message attribute. The attribute buffer is an 8-byte {Allocated; Valid} header
+        // followed by the per-attribute structs laid out highest-bit-first for the attributes the caller
+        // allocated room for. We only emit a single HANDLE attribute (the common case for NDR system handles).
+        void write_reply_handle_attribute(const syscall_context& c, const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes,
+                                          const std::vector<alpc_reply_handle>& handles)
+        {
+            if (!attributes || handles.empty())
+            {
+                return;
+            }
+
+            auto header = attributes.read();
+            if (!(header.AllocatedAttributes & ALPC_MESSAGE_HANDLE_ATTRIBUTE))
+            {
+                return; // caller did not reserve space for a handle attribute
+            }
+
+            // ALPC attribute structs differ by bitness: a 32-bit (WoW64) consumer parses pointer/handle-sized
+            // fields as 4 bytes, so per-attribute strides and the HANDLE field offsets are smaller than the
+            // 64-bit layout. A 64-bit-shaped attribute makes the 32-bit rpcrt4 read the handle COUNT from the
+            // wrong offset (0/garbage), fail its import gate, and never import the delivered section handle.
+            const bool wow64 = c.proc.is_wow64_process;
+            const uint64_t security_stride = wow64 ? 0x0c : 0x20;
+            const uint64_t view_stride = wow64 ? 0x10 : 0x20;
+            const uint64_t context_stride = wow64 ? 0x14 : 0x20;
+
+            uint64_t offset = sizeof(ALPC_MESSAGE_ATTRIBUTES);
+            if (header.AllocatedAttributes & ALPC_MESSAGE_SECURITY_ATTRIBUTE)
+            {
+                offset += security_stride;
+            }
+            if (header.AllocatedAttributes & ALPC_MESSAGE_VIEW_ATTRIBUTE)
+            {
+                offset += view_stride;
+            }
+            if (header.AllocatedAttributes & ALPC_MESSAGE_CONTEXT_ATTRIBUTE)
+            {
+                offset += context_stride;
+            }
+
+            // On a real ALPC receive the KERNEL (not the caller) fills the whole handle attribute: a non-zero
+            // Flags value that marks the slot as carrying a duplicated handle, then the Handle/Count/Access.
+            // A live capture of the audio CreateRemoteStream reply showed Flags=0x001243fb, so we replicate it.
+            // The COUNT field (not the Handle) is what rpcrt4 reads to gate the import, then it fetches each
+            // handle via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation).
+            constexpr ULONG alpc_received_handle_flags = 0x001243fb & ~0x00040000u; // clear ALPC_HANDLEFLG_INDIRECT
+            const auto& h = handles.front();
+            const auto attr_base = attributes.value() + offset;
+            emulator_object<ULONG>{c.emu, attr_base + 0}.write(alpc_received_handle_flags);
+            if (wow64)
+            {
+                // 32-bit ALPC_HANDLE_ATTR: Flags+0, Handle+4, Count+8, DesiredAccess+0xc.
+                emulator_object<uint32_t>{c.emu, attr_base + 4}.write(static_cast<uint32_t>(h.handle));
+                emulator_object<ULONG>{c.emu, attr_base + 8}.write(static_cast<ULONG>(handles.size()));
+                emulator_object<ULONG>{c.emu, attr_base + 0x0c}.write(h.desired_access);
+            }
+            else
+            {
+                // 64-bit ALPC_HANDLE_ATTR: Flags+0, Handle+8, Count+0x10, DesiredAccess+0x14.
+                emulator_object<EmulatorTraits<Emu64>::HANDLE>{c.emu, attr_base + 8}.write(
+                    static_cast<EmulatorTraits<Emu64>::HANDLE>(h.handle));
+                emulator_object<ULONG>{c.emu, attr_base + 0x10}.write(static_cast<ULONG>(handles.size()));
+                emulator_object<ULONG>{c.emu, attr_base + 0x14}.write(h.desired_access);
+            }
+
+            // Report exactly the attributes the reply carries (CONTEXT|HANDLE), matching the real kernel, rather
+            // than OR-ing HANDLE onto whatever stale ValidAttributes the caller's buffer happened to contain.
+            header.ValidAttributes = (header.ValidAttributes & ALPC_MESSAGE_CONTEXT_ATTRIBUTE) | ALPC_MESSAGE_HANDLE_ATTRIBUTE;
+            attributes.write(header);
+        }
+
         NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const handle port_handle, const ULONG /*flags*/,
                                                   const emulator_object<PORT_MESSAGE64> send_message,
                                                   const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
                                                   /*send_message_attributes*/,
                                                   const emulator_object<PORT_MESSAGE64> receive_message,
                                                   const emulator_object<EmulatorTraits<Emu64>::SIZE_T> buffer_length,
-                                                  const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
-                                                  /*receive_message_attributes*/,
+                                                  const emulator_object<ALPC_MESSAGE_ATTRIBUTES> receive_message_attributes,
                                                   const emulator_object<LARGE_INTEGER> /*timeout*/)
         {
             auto* port = c.proc.ports.get(port_handle);
@@ -172,6 +243,16 @@ namespace sogen
                     c.emu.write_memory(receive_message.value() + result.message.header_size(), result.payload.data(),
                                        result.payload.size());
                 }
+
+                write_reply_handle_attribute(c, receive_message_attributes, result.handles);
+
+                // Stash the delivered handles so rpcrt4 can pull them back via
+                // NtAlpcQueryInformationMessage(AlpcMessageHandleInformation), which is how its system-handle
+                // unmarshal actually imports them (it does not read the handle attribute's Handle field).
+                if (!result.handles.empty())
+                {
+                    c.proc.pending_alpc_message_handles = result.handles;
+                }
             }
 
             if (receive_message && buffer_length)
@@ -185,6 +266,46 @@ namespace sogen
         NTSTATUS handle_NtAlpcQueryInformation()
         {
             return STATUS_NOT_SUPPORTED;
+        }
+
+        // rpcrt4's client-side system-handle unmarshal imports a handle delivered with an ALPC reply by
+        // calling NtAlpcQueryInformationMessage(AlpcMessageHandleInformation = 3, index). The output is an
+        // ALPC_MESSAGE_HANDLE_INFORMATION {ULONG Index; ULONG Reserved; ULONG Handle; ULONG ObjectType;
+        // ULONG GrantedAccess;} (0x14 bytes); rpcrt4 reads Handle@+8, ObjectType@+0xc, GrantedAccess@+0x10.
+        // We return the handle stashed by the matching NtAlpcSendWaitReceivePort reply.
+        NTSTATUS handle_NtAlpcQueryInformationMessage(const syscall_context& c, handle /*port_handle*/, uint64_t /*message*/,
+                                                      uint32_t message_info_class, uint64_t message_info, ULONG length,
+                                                      emulator_object<ULONG> return_length)
+        {
+            constexpr uint32_t alpc_message_handle_information = 3;
+            if (message_info_class != alpc_message_handle_information)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            constexpr uint32_t info_size = 0x14;
+            if (!message_info || length < info_size)
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            // The caller passes the requested handle index in the first dword of the buffer.
+            const auto index = c.emu.read_memory<uint32_t>(message_info);
+            const auto& handles = c.proc.pending_alpc_message_handles;
+            if (index >= handles.size())
+            {
+                return STATUS_NO_MORE_ENTRIES;
+            }
+
+            const auto& h = handles[index];
+            emulator_object<uint32_t>{c.emu, message_info + 0x00}.write(index);
+            emulator_object<uint32_t>{c.emu, message_info + 0x04}.write(0);
+            emulator_object<uint32_t>{c.emu, message_info + 0x08}.write(static_cast<uint32_t>(h.handle));
+            emulator_object<uint32_t>{c.emu, message_info + 0x0c}.write(h.object_type);
+            emulator_object<uint32_t>{c.emu, message_info + 0x10}.write(h.desired_access);
+
+            return_length.write_if_valid(info_size);
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtAlpcSetInformation()

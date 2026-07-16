@@ -378,7 +378,7 @@ namespace sogen
                     return 0;
                 }
 
-                if (base > std::numeric_limits<uint32_t>::max())
+                if (c.proc.is_wow64_process && base > std::numeric_limits<uint32_t>::max())
                 {
                     c.win_emu.memory.release_memory(base, 0);
                     return 0;
@@ -697,6 +697,50 @@ namespace sogen
                 }
 
                 surface.pixels[static_cast<size_t>(y) * surface.width + static_cast<size_t>(x)] = color;
+            }
+
+            // Decode a single pixel from a BI_RGB DIB scanline (any standard bit depth) into 0xFFRRGGBB BGRA.
+            // For palettised depths (<=8bpp) the caller supplies the DIB colour table; higher depths are direct.
+            uint32_t dib_pixel_to_bgra32(const uint8_t* row, const uint32_t x, const uint16_t bpp, const uint32_t* palette)
+            {
+                switch (bpp)
+                {
+                case 1: {
+                    const uint8_t index = (row[x / 8u] >> (7u - (x & 7u))) & 1u;
+                    if (palette)
+                    {
+                        return palette[index];
+                    }
+                    return index ? 0xFFFFFFFFu : 0xFF000000u;
+                }
+                case 4: {
+                    const uint8_t packed = row[x / 2u];
+                    const uint8_t index = (x & 1u) == 0u ? static_cast<uint8_t>(packed >> 4) : static_cast<uint8_t>(packed & 0x0Fu);
+                    return palette ? palette[index] : 0xFF000000u;
+                }
+                case 8:
+                    return palette ? palette[row[x]] : 0xFF000000u;
+                case 16: {
+                    uint16_t v = 0;
+                    std::memcpy(&v, row + static_cast<size_t>(x) * 2, sizeof(v));
+                    // BI_RGB 16bpp = RGB555: bits 14-10 = R, 9-5 = G, 4-0 = B
+                    const auto r = static_cast<uint8_t>(((v >> 10u) & 0x1Fu) * 255u / 31u);
+                    const auto g = static_cast<uint8_t>(((v >> 5u) & 0x1Fu) * 255u / 31u);
+                    const auto b = static_cast<uint8_t>((v & 0x1Fu) * 255u / 31u);
+                    return 0xFF000000u | (static_cast<uint32_t>(r) << 16) | (static_cast<uint32_t>(g) << 8) | b;
+                }
+                case 24: {
+                    const uint8_t* p = row + static_cast<size_t>(x) * 3;
+                    return 0xFF000000u | (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[1]) << 8) | p[0];
+                }
+                case 32: {
+                    uint32_t pixel = 0;
+                    std::memcpy(&pixel, row + static_cast<size_t>(x) * sizeof(uint32_t), sizeof(pixel));
+                    return pixel | 0xFF000000u;
+                }
+                default:
+                    return 0xFF000000u;
+                }
             }
 
             std::optional<uint32_t> get_surface_pixel(const gdi_bitmap_surface& surface, const int x, const int y)
@@ -2134,6 +2178,46 @@ namespace sogen
             return static_cast<int>(copied);
         }
 
+        // GetBitmapBits: copy a GDI bitmap's raw pixel bytes into the caller's buffer as a bottom-up 32bpp DIB.
+        // Emulator bitmaps are stored as 32bpp BGRA surfaces already, so this is a direct scanline copy.
+        LONG handle_NtGdiGetBitmapBits(const syscall_context& c, const handle bitmap, const LONG cb_buffer, const emulator_pointer bits)
+        {
+            if (bits == 0 || cb_buffer <= 0)
+            {
+                return 0;
+            }
+
+            const auto it = c.proc.gdi_bitmap_surfaces.find(static_cast<uint32_t>(bitmap.bits));
+            if (it == c.proc.gdi_bitmap_surfaces.end())
+            {
+                return 0;
+            }
+
+            const auto& surface = it->second;
+            if (surface.pixels.empty())
+            {
+                return 0;
+            }
+
+            const size_t stride = static_cast<size_t>(surface.width) * sizeof(uint32_t);
+            const size_t total = stride * surface.height;
+            const size_t to_copy = std::min(static_cast<size_t>(cb_buffer), total);
+
+            for (size_t row = 0; row < surface.height; ++row)
+            {
+                const size_t dst_offset = row * stride;
+                if (dst_offset >= to_copy)
+                {
+                    break;
+                }
+                const size_t src_row = surface.height - 1 - row; // bottom-up
+                const size_t row_bytes = std::min(stride, to_copy - dst_offset);
+                c.emu.write_memory(bits + dst_offset, surface.pixels.data() + src_row * surface.width, row_bytes);
+            }
+
+            return static_cast<LONG>(to_copy);
+        }
+
         int handle_NtGdiSetDIBitsToDeviceInternal(const syscall_context& c, const hdc dc, const int x_dest, const int y_dest,
                                                   const uint32_t width, const uint32_t height, const int x_src, const int y_src,
                                                   const uint32_t /*start_scan*/, const uint32_t scan_lines, const emulator_pointer bits,
@@ -2164,8 +2248,13 @@ namespace sogen
             c.emu.read_memory(info + 14, &bit_count, sizeof(bit_count));
             c.emu.read_memory(info + 16, &compression, sizeof(compression));
 
+            uint32_t bi_size = 0;
+            uint32_t clr_used = 0;
+            c.emu.read_memory(info + 0, &bi_size, sizeof(bi_size));
+            c.emu.read_memory(info + 32, &clr_used, sizeof(clr_used));
+
             constexpr uint32_t bi_rgb = 0;
-            if ((bit_count != 32 && bit_count != 24) || compression != bi_rgb || bi_width <= 0)
+            if (compression != bi_rgb || bi_width <= 0 || bi_height == 0)
             {
                 c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count,
                                    compression, bi_width);
@@ -2176,9 +2265,37 @@ namespace sogen
             const auto src_width = static_cast<uint32_t>(bi_width);
             const auto src_height = static_cast<uint32_t>(top_down ? -bi_height : bi_height);
             const auto stored_rows = std::min(scan_lines, src_height);
-            const size_t bytes_per_pixel = bit_count / 8;
             // DIB scanlines are DWORD-aligned, not tightly packed.
             const size_t stride = ((static_cast<size_t>(src_width) * bit_count + 31u) / 32u) * 4u;
+
+            std::vector<uint32_t> palette{};
+            if (bit_count <= 8)
+            {
+                const uint32_t max_colors = 1u << bit_count;
+                const uint32_t palette_entries = clr_used != 0 ? std::min(clr_used, max_colors) : max_colors;
+                const uint64_t palette_ptr = info + bi_size;
+
+                // Always size the palette to the full index range the pixel bit depth can address
+                // (max_colors), not just palette_entries - biClrUsed can legitimately be smaller than
+                // that (a sparse palette), but pixel data can still contain any index up to max_colors-1,
+                // and dib_pixel_to_bgra32 indexes this vector directly with no bounds check.
+                palette.resize(max_colors, 0xFF000000u);
+                for (uint32_t i = 0; i < palette_entries; ++i)
+                {
+                    struct
+                    {
+                        uint8_t blue;
+                        uint8_t green;
+                        uint8_t red;
+                        uint8_t reserved;
+                    } rgb{};
+
+                    c.emu.read_memory(palette_ptr + static_cast<uint64_t>(i) * sizeof(rgb), &rgb, sizeof(rgb));
+                    palette[i] = 0xFF000000u | (static_cast<uint32_t>(rgb.red) << 16) | (static_cast<uint32_t>(rgb.green) << 8) |
+                                 static_cast<uint32_t>(rgb.blue);
+                }
+            }
+            const uint32_t* palette_data = palette.empty() ? nullptr : palette.data();
 
             std::vector<uint8_t> data(stride * stored_rows);
             if (data.empty())
@@ -2214,11 +2331,8 @@ namespace sogen
                     {
                         break;
                     }
-                    const uint8_t* px = row + static_cast<size_t>(src_x) * bytes_per_pixel;
-                    const uint32_t pixel =
-                        static_cast<uint32_t>(px[0]) | (static_cast<uint32_t>(px[1]) << 8) | (static_cast<uint32_t>(px[2]) << 16);
                     set_surface_pixel(*surface, x_dest + origin_x + static_cast<int>(i), y_dest + origin_y + static_cast<int>(j),
-                                      pixel | 0xFF000000u);
+                                      dib_pixel_to_bgra32(row, src_x, bit_count, palette_data));
                 }
                 ++copied;
             }
@@ -4724,6 +4838,23 @@ namespace sogen
         }
 
         NTSTATUS handle_NtGdiDdDDIUnlock()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        // WDDM command-buffer submission. The paravirtualized GPU path used by real rendering (DXVK)
+        // runs over the separate \\.\SogenGpu ioctl bridge, not this D3DKMT kernel escape, so there is
+        // no command buffer to translate here. Accept the submission so the guest's render loop
+        // proceeds, matching the no-op behavior of the other DXGK stubs.
+        NTSTATUS handle_NtGdiDdDDISubmitCommand(const syscall_context& /*c*/, const emulator_pointer /*submit_command*/)
+        {
+            return STATUS_SUCCESS;
+        }
+
+        // WDDM present. Real on-screen presentation for paravirtualized rendering happens over the
+        // \\.\SogenGpu bridge, not this D3DKMT kernel path, so accept the present and let the guest's
+        // frame loop advance, matching the no-op behavior of the other DXGK stubs.
+        NTSTATUS handle_NtGdiDdDDIPresent(const syscall_context& /*c*/, const emulator_pointer /*present*/)
         {
             return STATUS_SUCCESS;
         }

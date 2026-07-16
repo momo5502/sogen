@@ -152,7 +152,9 @@ namespace sogen
     static_assert(offsetof(WIN32K_USERCONNECT32, disp_info_low) == 0x18);
     static_assert(offsetof(WIN32K_USERCONNECT32, monitor_info_low) == 0x30);
     static_assert(offsetof(WIN32K_USERCONNECT32, wndmsg_count) == 0x108);
+    static_assert(offsetof(WIN32K_USERCONNECT32, wndmsg_bits) == 0x110);
     static_assert(offsetof(WIN32K_USERCONNECT32, ime_msg_count) == 0x118);
+    static_assert(offsetof(WIN32K_USERCONNECT32, ime_msg_bits) == 0x120);
     static_assert(sizeof(WIN32K_USERCONNECT32) == 0x238);
 
     // WoW64 (32-bit) raw-input structures, as the guest's user32/win32u marshal them.
