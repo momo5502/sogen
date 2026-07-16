@@ -613,7 +613,7 @@ namespace sogen
         }
 
         inline std::variant<pe_arch, std::error_code> get_pe_arch(const memory_interface& memory, uint64_t base_address,
-                                                                   uint64_t image_size)
+                                                                  uint64_t image_size)
         {
             auto read = [&](const uint64_t offset, void* destination, const size_t size) -> bool {
                 if (offset > image_size || static_cast<uint64_t>(size) > image_size - offset)

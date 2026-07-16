@@ -157,7 +157,7 @@ namespace sogen
     }
 
     pe_detection_result pe_architecture_detector::detect_from_memory(const memory_interface& memory, uint64_t base_address,
-                                                                      uint64_t image_size)
+                                                                     uint64_t image_size)
     {
         auto variant_result = winpe::get_pe_arch(memory, base_address, image_size);
 

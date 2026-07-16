@@ -103,7 +103,7 @@ namespace sogen::test
         constexpr uint32_t nt_offset = 0x1800;
         constexpr uint64_t image_size = 0x2000;
 
-        for (const auto [magic, expected_arch] : {
+        for (const auto& [magic, expected_arch] : {
                  std::pair{static_cast<uint16_t>(PEOptionalHeader_t<uint32_t>::k_Magic), winpe::pe_arch::pe32},
                  std::pair{static_cast<uint16_t>(PEOptionalHeader_t<uint64_t>::k_Magic), winpe::pe_arch::pe64},
              })
