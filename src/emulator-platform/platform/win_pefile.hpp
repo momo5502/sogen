@@ -10,7 +10,7 @@
 #include <array>
 #include <limits>
 #include "common/utils/buffer_accessor.hpp"
-#include "../../emulator/memory_interface.hpp"
+#include <emulator/memory_interface.hpp>
 
 #include "primitives.hpp"
 
