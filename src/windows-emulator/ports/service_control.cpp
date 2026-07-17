@@ -22,10 +22,11 @@ namespace sogen
         // MS-SCMR table - observed on the wire: ROpenSCManagerW arrives as opnum 64 (its [in] is the
         // "ServicesActive" database string + access, with no input handle). Follow-on opnums are discovered the
         // same way; the classic numbers are kept as fallbacks.
-        constexpr uint32_t k_svcctl_close_handle = 0;           // RCloseServiceHandle ([in,out] handle)
-        constexpr uint32_t k_svcctl_open_service_w = 16;        // ROpenServiceW (SCM handle + name + access)
-        constexpr uint32_t k_svcctl_subscribe = 55;             // SubscribeServiceChangeNotifications (handle + mask)
-        constexpr uint32_t k_svcctl_open_sc_manager_w = 64;     // ROpenSCManagerW (database string + access)
+        constexpr uint32_t k_svcctl_close_handle = 0;       // RCloseServiceHandle ([in,out] handle)
+        constexpr uint32_t k_svcctl_query_status = 6;       // RQueryServiceStatus (service handle -> SERVICE_STATUS)
+        constexpr uint32_t k_svcctl_open_service_w = 16;    // ROpenServiceW (SCM handle + name + access)
+        constexpr uint32_t k_svcctl_subscribe = 55;         // SubscribeServiceChangeNotifications (handle + mask)
+        constexpr uint32_t k_svcctl_open_sc_manager_w = 64; // ROpenSCManagerW (database string + access)
 
         constexpr uint32_t k_error_success = 0;
         constexpr uint32_t k_error_access_denied = 5; // mmdevapi treats this from the subscribe as non-fatal
@@ -103,14 +104,27 @@ namespace sogen
                     }
                     return STATUS_SUCCESS;
 
+                case k_svcctl_query_status:
+                    // RQueryServiceStatus([in] service handle, [out] SERVICE_STATUS). The [out] struct is seven
+                    // inline DWORDs. mmdevapi queries the AudioSrv service state while bringing up a render
+                    // client; report it as a running shared-process service so the caller proceeds.
+                    writer.write<uint32_t>(0x20); // dwServiceType = SERVICE_WIN32_SHARE_PROCESS
+                    writer.write<uint32_t>(4);    // dwCurrentState = SERVICE_RUNNING
+                    writer.write<uint32_t>(0x5);  // dwControlsAccepted = STOP | SHUTDOWN
+                    writer.write<uint32_t>(0);    // dwWin32ExitCode
+                    writer.write<uint32_t>(0);    // dwServiceSpecificExitCode
+                    writer.write<uint32_t>(0);    // dwCheckPoint
+                    writer.write<uint32_t>(0);    // dwWaitHint
+                    write_return(writer, k_error_success);
+                    return STATUS_SUCCESS;
+
                 case k_svcctl_close_handle:
                     // [in, out] SC_RPC_HANDLE: the client expects the handle nulled out on a successful close.
                     write_context_handle(writer, k_null_handle_uuid);
                     write_return(writer, k_error_success);
                     return STATUS_SUCCESS;
 
-                default:
-                {
+                default: {
                     std::string hex;
                     const auto count = std::min<ULONG>(c.send_buffer_length, 64);
                     std::vector<uint8_t> bytes(count, 0);
@@ -124,8 +138,7 @@ namespace sogen
                         (void)snprintf(tmp, sizeof(tmp), "%02x ", b);
                         hex += tmp;
                     }
-                    win_emu.log.error("[svcctl] UNHANDLED opnum=%u send_len=%u in: %s\n", procedure_id,
-                                      c.send_buffer_length, hex.c_str());
+                    win_emu.log.error("[svcctl] UNHANDLED opnum=%u send_len=%u in: %s\n", procedure_id, c.send_buffer_length, hex.c_str());
                     return STATUS_NOT_SUPPORTED;
                 }
                 }
