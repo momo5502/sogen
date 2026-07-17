@@ -40,6 +40,12 @@ endif()
 
 ##########################################
 
+if(SOGEN_ENABLE_FUZZING)
+    add_compile_definitions(SOGEN_ENABLE_FUZZING)
+endif()
+
+##########################################
+
 set(SOGEN_ENABLE_RUST OFF)
 if(SOGEN_ENABLE_RUST_CODE AND NOT MINGW AND NOT CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   find_program(CARGO cargo)
@@ -118,12 +124,46 @@ if(LINUX OR APPLE)
   )
 
   if(NOT SOGEN_ENABLE_SANITIZER)
-    add_compile_definitions(
-      _FORTIFY_SOURCE=2
-    )
+    # Hardened toolchains (e.g. Gentoo hardened) predefine _FORTIFY_SOURCE via
+    # their spec files. Redefining it triggers a -Werror "redefined" failure, so
+    # only set it when the compiler hasn't already done so. This also lets users
+    # keep their own (often stronger) level.
+    include(CheckCXXSourceCompiles)
+    check_cxx_source_compiles([[
+#ifdef _FORTIFY_SOURCE
+#error _FORTIFY_SOURCE already defined
+#endif
+int main() { return 0; }
+]] SOGEN_FORTIFY_SOURCE_UNSET)
+
+    if(SOGEN_FORTIFY_SOURCE_UNSET)
+      add_compile_definitions(
+        _FORTIFY_SOURCE=2
+      )
+    endif()
   endif()
 
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie")
+
+  # Embed an rpath so binaries find their colocated shared libraries without
+  # requiring LD_LIBRARY_PATH / DYLD_LIBRARY_PATH. All sogen artifacts (the
+  # executables and the shared libs they depend on) share one output directory,
+  # so an $ORIGIN/@loader_path rpath lets every binary locate its libraries
+  # relative to itself. CMAKE_BUILD_RPATH adds it on top of the auto-computed
+  # build-tree rpath, which also covers transitive dependencies the linker only
+  # records as (non-transitive) DT_RUNPATH. It keeps working after the output
+  # directory is copied elsewhere.
+  set(CMAKE_BUILD_WITH_INSTALL_RPATH OFF)
+  set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
+  set(CMAKE_INSTALL_RPATH_USE_LINK_PATH ON)
+
+  if(APPLE)
+    set(CMAKE_BUILD_RPATH "@loader_path")
+    set(CMAKE_INSTALL_RPATH "@loader_path")
+  else()
+    set(CMAKE_BUILD_RPATH "$ORIGIN")
+    set(CMAKE_INSTALL_RPATH "$ORIGIN")
+  endif()
 endif()
 
 ##########################################
@@ -138,6 +178,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
   add_link_options(
     -fexceptions
     -sALLOW_MEMORY_GROWTH=1
+    -sGROWABLE_ARRAYBUFFERS=0
     $<$<CONFIG:Debug>:-sASSERTIONS>
     -sWASM_BIGINT
     #-sUSE_OFFSET_CONVERTER
@@ -241,6 +282,14 @@ endif()
 if(SOGEN_ENABLE_SANITIZER)
   sogen_add_c_and_cxx_compile_options(-fsanitize=address)
   add_link_options(-fsanitize=address)
+endif()
+
+# Instrument all code with libFuzzer edge coverage so the fuzzer sees the emulator's own handlers,
+# not just the harness. The fuzz executable adds -fsanitize=fuzzer at link time; pair with
+# SOGEN_ENABLE_SANITIZER=On for ASAN. libFuzzer is clang-only; on other toolchains only the
+# uninstrumented standalone replay driver is built (still useful for smoke/regression).
+if(SOGEN_ENABLE_FUZZING AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  sogen_add_c_and_cxx_compile_options(-fsanitize=fuzzer-no-link)
 endif()
 
 ##########################################

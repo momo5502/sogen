@@ -48,7 +48,7 @@ namespace sogen
             {
                 if (chr == u':' && this->folders_.empty() && !this->drive_.has_value() && folder.size() == 1)
                 {
-                    this->drive_ = static_cast<char>(folder[0]);
+                    this->drive_ = static_cast<char>(*folder.cbegin());
                     folder.clear();
                     continue;
                 }
@@ -226,6 +226,35 @@ namespace sogen
             }
 
             return {this->drive_, std::move(folders)};
+        }
+
+        // Number of path components (excluding the drive).
+        size_t depth() const
+        {
+            return this->folders_.size();
+        }
+
+        // If `base` equals this path or is one of its ancestor directories (same drive,
+        // case-insensitive since components are canonicalized to lower case), returns the
+        // portion of this path below `base` as a relative windows_path. Otherwise nullopt.
+        std::optional<windows_path> relative_to(const windows_path& base) const
+        {
+            if (this->drive_ != base.drive_ || base.folders_.size() > this->folders_.size())
+            {
+                return std::nullopt;
+            }
+
+            auto self_it = this->folders_.begin();
+            for (const auto& base_folder : base.folders_)
+            {
+                if (*self_it != base_folder)
+                {
+                    return std::nullopt;
+                }
+                ++self_it;
+            }
+
+            return windows_path{std::nullopt, std::list<std::u16string>(self_it, this->folders_.end())};
         }
 
         std::u16string leaf() const

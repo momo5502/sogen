@@ -4,6 +4,7 @@ cmake_minimum_required(VERSION 3.26.4)
 
 option(SOGEN_ENABLE_AVX2 "Enable AVX2 support" ON)
 option(SOGEN_ENABLE_SANITIZER "Enable sanitizer" OFF)
+option(SOGEN_ENABLE_FUZZING "Build the host-side handler fuzzers (libFuzzer); instruments all code with coverage. Pair with SOGEN_ENABLE_SANITIZER=On. Requires clang." OFF)
 option(SOGEN_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(SOGEN_ENABLE_LTO "Enable interprocedural optimization (LTO/IPO)" ON)
 option(SOGEN_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
@@ -97,6 +98,18 @@ include(cmake/compiler-env.cmake)
 sogen_set_new_artifact_directory()
 
 ##########################################
+
+# The Steam bridge generator (in src/) runs under the interpreter find_package(Python3) resolves, and it
+# needs the libclang module. Resolve the active interpreter on PATH -- the one `python -m pip install
+# libclang` targets -- instead of the highest version CMake can discover (LOCATION) and prefer PATH over
+# registered installs (REGISTRY LAST), so the pip target and the generator are the same Python. Must be set
+# before any subdirectory: a dependency below resolves Python3 first and would otherwise cache it.
+if(NOT DEFINED Python3_FIND_STRATEGY)
+  set(Python3_FIND_STRATEGY LOCATION)
+endif()
+if(WIN32 AND NOT DEFINED Python3_FIND_REGISTRY)
+  set(Python3_FIND_REGISTRY LAST)
+endif()
 
 sogen_add_subdirectory_and_get_targets("deps" EXTERNAL_TARGETS)
 sogen_add_subdirectory_and_get_targets("src" OWN_TARGETS)

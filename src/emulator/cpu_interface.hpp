@@ -12,6 +12,9 @@ namespace sogen
     {
         virtual ~cpu_interface() = default;
 
+        // Identity of this virtual CPU within its machine, in [0, vcpu_count).
+        virtual size_t index() const = 0;
+
         struct descriptor_table_register
         {
             uint64_t base{};
@@ -33,6 +36,11 @@ namespace sogen
         virtual bool has_violation() const = 0;
 
         virtual bool supports_instruction_counting() const = 0;
+
+        // Whether stop() may be safely called from a different thread while the CPU is executing.
+        // Hypervisor-backed backends can cancel execution from any thread; the JIT/interpreter
+        // backends cannot, so they must be preempted cooperatively from the CPU thread instead.
+        virtual bool is_stop_thread_safe() const = 0;
     };
 
 } // namespace sogen

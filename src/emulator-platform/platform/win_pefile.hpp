@@ -8,6 +8,7 @@
 #include <system_error>
 #include <variant>
 #include <array>
+#include <limits>
 #include "common/utils/buffer_accessor.hpp"
 
 #include "primitives.hpp"
@@ -62,6 +63,7 @@
 #define IMAGE_REL_BASED_HIGH3ADJ              11
 
 #define IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE 0x0040
+#define IMAGE_DLLCHARACTERISTICS_NX_COMPAT    0x0100
 #define IMAGE_FILE_DLL                        0x2000
 
 #ifndef OS_WINDOWS
@@ -292,11 +294,13 @@ namespace sogen
     typedef struct _IMAGE_SECTION_HEADER
     {
         std::uint8_t Name[IMAGE_SIZEOF_SHORT_NAME];
+
         union
         {
             std::uint32_t PhysicalAddress;
             std::uint32_t VirtualSize;
         } Misc;
+
         std::uint32_t VirtualAddress;
         std::uint32_t SizeOfRawData;
         std::uint32_t PointerToRawData;
@@ -397,6 +401,7 @@ namespace sogen
         {
             return IMAGE_ORDINAL32(ordinal);
         }
+
         static constexpr bool snap_by_ordinal(DWORD ordinal)
         {
             return IMAGE_SNAP_BY_ORDINAL32(ordinal);
@@ -413,6 +418,7 @@ namespace sogen
         {
             return IMAGE_ORDINAL64(ordinal);
         }
+
         static constexpr bool snap_by_ordinal(ULONGLONG ordinal)
         {
             return IMAGE_SNAP_BY_ORDINAL64(ordinal);
@@ -422,7 +428,7 @@ namespace sogen
     template <typename Traits>
     struct SECTION_BASIC_INFORMATION
     {
-        typename Traits::PVOID BaseAddress;
+        Traits::PVOID BaseAddress;
         ULONG Attributes;
         LARGE_INTEGER Size;
     };
@@ -430,10 +436,10 @@ namespace sogen
     template <typename Traits>
     struct SECTION_IMAGE_INFORMATION
     {
-        typename Traits::PVOID TransferAddress;
+        Traits::PVOID TransferAddress;
         ULONG ZeroBits;
-        typename Traits::SIZE_T MaximumStackSize;
-        typename Traits::SIZE_T CommittedStackSize;
+        Traits::SIZE_T MaximumStackSize;
+        Traits::SIZE_T CommittedStackSize;
         ULONG SubSystemType;
 
         union
@@ -605,22 +611,26 @@ namespace sogen
             return std::make_error_code(std::errc::executable_format_error);
         }
 
-        inline std::variant<pe_arch, std::error_code> get_pe_arch(uint64_t base_address, uint64_t image_size)
+        template <typename MemoryReader>
+        inline std::variant<pe_arch, std::error_code> get_pe_arch(MemoryReader&& read_memory, uint64_t base_address, uint64_t image_size)
         {
-            const auto* base = reinterpret_cast<const std::byte*>(reinterpret_cast<const void*>(static_cast<uintptr_t>(base_address)));
-            const uint64_t size = image_size;
+            auto read = [&](const uint64_t offset, void* destination, const size_t size) -> bool {
+                if (offset > image_size || static_cast<uint64_t>(size) > image_size - offset)
+                {
+                    return false;
+                }
+                if (offset > std::numeric_limits<uint64_t>::max() - base_address)
+                {
+                    return false;
+                }
 
-            auto read = [&](uint64_t off, void* dst, size_t n) -> bool {
-                if (off > size)
+                const auto address = base_address + offset;
+                if (size != 0 && static_cast<uint64_t>(size - 1) > std::numeric_limits<uint64_t>::max() - address)
                 {
                     return false;
                 }
-                if (n > size - off)
-                {
-                    return false;
-                }
-                memcpy(dst, base + off, n);
-                return true;
+
+                return read_memory(address, destination, size);
             };
 
             PEDosHeader_t dos{};

@@ -37,15 +37,18 @@ namespace sogen
         ULONG Version;
         ULONG Items;
         ULONG TotalSize;
+
         union
         {
             ULONG Flags;
+
             struct
             {
                 ULONG AddAppContainerSid : 1;
                 ULONG Reserved : 31;
             };
         };
+
         // OBJECT_BOUNDARY_ENTRY Entries[1];
     };
 

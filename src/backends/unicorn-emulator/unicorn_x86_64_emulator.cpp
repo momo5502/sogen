@@ -23,6 +23,7 @@ namespace sogen::unicorn
 
         constexpr auto IA32_FS_BASE_MSR = 0xC0000100;
         constexpr auto IA32_GS_BASE_MSR = 0xC0000101;
+        constexpr uint64_t syscall_instruction_size = 2;
 
         struct msr_value
         {
@@ -431,8 +432,8 @@ namespace sogen::unicorn
 
                 if (inst_type == x86_hookable_instructions::invalid)
                 {
-                    function_wrapper<int, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) {
-                        return (c(0) == instruction_hook_continuation::skip_instruction) ? 1 : 0;
+                    function_wrapper<int, uc_engine*> wrapper([c = std::move(callback), this](uc_engine*) {
+                        return (c(*this, 0) == instruction_hook_continuation::skip_instruction) ? 1 : 0;
                     });
 
                     uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INSN_INVALID, wrapper.get_function(), wrapper.get_user_data(), 0,
@@ -441,7 +442,13 @@ namespace sogen::unicorn
                 }
                 else if (inst_type == x86_hookable_instructions::syscall)
                 {
-                    function_wrapper<void, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) { (void)c(0); });
+                    function_wrapper<void, uc_engine*> wrapper([c = std::move(callback), this](uc_engine*) {
+                        const auto continuation = c(*this, 0);
+                        if (continuation == instruction_hook_continuation::finalized_instruction_pointer)
+                        {
+                            this->reg(x86_register::rip, this->read_instruction_pointer() - syscall_instruction_size);
+                        }
+                    });
 
                     const auto uc_instruction = map_hookable_instruction(inst_type);
                     uce(uc_hook_add(*this, hook.make_reference(), UC_HOOK_INSN, wrapper.get_function(), wrapper.get_user_data(), 0,
@@ -451,8 +458,8 @@ namespace sogen::unicorn
                 }
                 else
                 {
-                    function_wrapper<int, uc_engine*> wrapper([c = std::move(callback)](uc_engine*) {
-                        return (c(0) == instruction_hook_continuation::skip_instruction) ? 1 : 0;
+                    function_wrapper<int, uc_engine*> wrapper([c = std::move(callback), this](uc_engine*) {
+                        return (c(*this, 0) == instruction_hook_continuation::skip_instruction) ? 1 : 0;
                     });
 
                     const auto uc_instruction = map_hookable_instruction(inst_type);
@@ -472,12 +479,12 @@ namespace sogen::unicorn
             emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
             {
                 function_wrapper<void, uc_engine*, uint64_t, size_t> wrapper(
-                    [c = std::move(callback)](uc_engine*, const uint64_t address, const size_t size) {
+                    [c = std::move(callback), this](uc_engine*, const uint64_t address, const size_t size) {
                         basic_block block{};
                         block.address = address;
                         block.size = size;
 
-                        c(block);
+                        c(*this, block);
                     });
 
                 unicorn_hook hook{*this};
@@ -496,7 +503,7 @@ namespace sogen::unicorn
             emulator_hook* hook_interrupt(interrupt_hook_callback callback) override
             {
                 function_wrapper<void, uc_engine*, int> wrapper(
-                    [c = std::move(callback)](uc_engine*, const int interrupt_type) { c(interrupt_type); });
+                    [c = std::move(callback), this](uc_engine*, const int interrupt_type) { c(*this, interrupt_type); });
 
                 unicorn_hook hook{*this};
                 auto container = std::make_unique<hook_container>();
@@ -522,7 +529,7 @@ namespace sogen::unicorn
                         const auto operation = map_memory_operation(type);
                         const auto violation = map_memory_violation_type(type);
 
-                        const auto result = c(address, static_cast<uint64_t>(size), operation, violation);
+                        const auto result = c(*this, address, static_cast<uint64_t>(size), operation, violation);
                         const auto restart = result == memory_violation_continuation::restart;
                         const auto resume = result == memory_violation_continuation::resume || restart;
 
@@ -567,8 +574,16 @@ namespace sogen::unicorn
             emulator_hook* hook_memory_range_execution(const uint64_t address, const uint64_t size,
                                                        memory_execution_hook_callback callback) override
             {
-                auto exec_wrapper = [c = std::move(callback)](uc_engine*, const uint64_t address, const uint32_t /*size*/) {
-                    c(address); //
+                auto exec_wrapper = [c = std::move(callback), this](uc_engine*, const uint64_t address, const uint32_t /*size*/) {
+                    const auto old_ip = this->read_instruction_pointer();
+                    c(*this, address);
+
+                    const auto new_ip = this->read_instruction_pointer();
+                    if (new_ip != old_ip)
+                    {
+                        this->violation_ip_ = new_ip;
+                        uce(uc_emu_stop(*this));
+                    }
                 };
 
                 function_wrapper<void, uc_engine*, uint64_t, uint32_t> wrapper(std::move(exec_wrapper));
@@ -595,12 +610,12 @@ namespace sogen::unicorn
 
             emulator_hook* hook_memory_read(const uint64_t address, const uint64_t size, memory_access_hook_callback callback) override
             {
-                auto read_wrapper = [c = std::move(callback)](uc_engine*, const uc_mem_type type, const uint64_t address, const int length,
-                                                              const uint64_t value) {
+                auto read_wrapper = [c = std::move(callback), this](uc_engine*, const uc_mem_type type, const uint64_t address,
+                                                                    const int length, const uint64_t value) {
                     const auto operation = map_memory_operation(type);
                     if (operation == memory_operation::read && length > 0)
                     {
-                        c(address, &value, std::min(static_cast<size_t>(length), sizeof(value)));
+                        c(*this, address, &value, std::min(static_cast<size_t>(length), sizeof(value)));
                     }
                 };
 
@@ -618,12 +633,12 @@ namespace sogen::unicorn
 
             emulator_hook* hook_memory_write(const uint64_t address, const uint64_t size, memory_access_hook_callback callback) override
             {
-                auto write_wrapper = [c = std::move(callback)](uc_engine*, const uc_mem_type type, const uint64_t addr, const int length,
-                                                               const uint64_t value) {
+                auto write_wrapper = [c = std::move(callback), this](uc_engine*, const uc_mem_type type, const uint64_t addr,
+                                                                     const int length, const uint64_t value) {
                     const auto operation = map_memory_operation(type);
                     if (operation == memory_operation::write && length > 0)
                     {
-                        c(addr, &value, std::min(static_cast<size_t>(length), sizeof(value)));
+                        c(*this, addr, &value, std::min(static_cast<size_t>(length), sizeof(value)));
                     }
                 };
 
@@ -714,6 +729,16 @@ namespace sogen::unicorn
             bool supports_instruction_counting() const override
             {
                 return true;
+            }
+
+            bool is_stop_thread_safe() const override
+            {
+                return false;
+            }
+
+            bool supports_multiple_vcpus() const override
+            {
+                return false;
             }
 
             std::string get_name() const override

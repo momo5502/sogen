@@ -286,7 +286,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (info_class == MemoryRegionInformation)
+            if (info_class == MemoryRegionInformation || info_class == MemoryRegionInformationEx)
             {
                 if (return_length)
                 {
@@ -311,9 +311,18 @@ namespace sogen
 
                     image_info.AllocationBase = region_info.allocation_base;
                     image_info.AllocationProtect = map_emulator_to_nt_protection(region_info.initial_permissions);
-                    // image_info.PartitionId = 0;
+                    image_info.RegionType = memory_region_policy::to_memory_region_information_type(region_info.kind);
                     image_info.RegionSize = static_cast<int64_t>(region_info.allocation_length);
-                    image_info.Reserved = 0x10;
+
+                    const auto& reserved_regions = c.win_emu.memory.get_reserved_regions();
+                    const auto allocation = reserved_regions.find(region_info.allocation_base);
+                    if (allocation != reserved_regions.end())
+                    {
+                        for (const auto& committed : allocation->second.committed_regions | std::views::values)
+                        {
+                            image_info.CommitSize += static_cast<int64_t>(committed.length);
+                        }
+                    }
                 });
 
                 return STATUS_SUCCESS;
@@ -363,8 +372,11 @@ namespace sogen
                 return STATUS_INVALID_ADDRESS;
             }
 
-            const auto current_protection = map_emulator_to_nt_protection(old_protection_value);
-            old_protection.write(current_protection);
+            if (old_protection)
+            {
+                const auto current_protection = map_emulator_to_nt_protection(old_protection_value);
+                old_protection.write(current_protection);
+            }
 
             return STATUS_SUCCESS;
         }
@@ -518,7 +530,7 @@ namespace sogen
                                                 const uint32_t page_protection)
         {
             return handle_NtAllocateVirtualMemoryEx(c, process_handle, base_address, bytes_to_allocate, allocation_type, page_protection,
-                                                    emulator_object<MEM_EXTENDED_PARAMETER64>{c.emu}, 0);
+                                                    emulator_object<MEM_EXTENDED_PARAMETER64>{c.emu.memory()}, 0);
         }
 
         NTSTATUS handle_NtFreeVirtualMemory(const syscall_context& c, const handle process_handle,
@@ -696,20 +708,47 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
-            std::vector<uint8_t> memory(number_of_bytes_to_write, 0);
-
-            if (!c.emu.try_read_memory(buffer, memory.data(), number_of_bytes_to_write))
+            if (number_of_bytes_to_write == 0)
             {
-                return STATUS_INVALID_ADDRESS;
+                return STATUS_SUCCESS;
             }
 
-            if (!c.emu.try_write_memory(base_address, memory.data(), number_of_bytes_to_write))
+            constexpr size_t page_size = 0x1000;
+            const auto bytes_until_page_boundary = [](const uint64_t address) {
+                const auto offset = address % page_size;
+                return static_cast<size_t>(offset == 0 ? page_size : page_size - offset);
+            };
+
+            std::vector<uint8_t> memory(page_size, 0);
+            size_t bytes_written = 0;
+            while (bytes_written < number_of_bytes_to_write)
             {
-                return STATUS_INVALID_ADDRESS;
+                const auto current_buffer = static_cast<uint64_t>(buffer) + bytes_written;
+                const auto current_base = static_cast<uint64_t>(base_address) + bytes_written;
+                const auto bytes_remaining = static_cast<size_t>(number_of_bytes_to_write) - bytes_written;
+                const auto chunk_size =
+                    std::min({bytes_remaining, bytes_until_page_boundary(current_buffer), bytes_until_page_boundary(current_base)});
+
+                if (!c.emu.try_read_memory(current_buffer, memory.data(), chunk_size))
+                {
+                    break;
+                }
+
+                if (!c.emu.try_write_memory(current_base, memory.data(), chunk_size))
+                {
+                    break;
+                }
+
+                bytes_written += chunk_size;
             }
 
-            number_of_bytes_write.try_write(number_of_bytes_to_write);
-            return STATUS_SUCCESS;
+            number_of_bytes_write.try_write(static_cast<ULONG>(bytes_written));
+            if (bytes_written == number_of_bytes_to_write)
+            {
+                return STATUS_SUCCESS;
+            }
+
+            return bytes_written == 0 ? STATUS_INVALID_ADDRESS : STATUS_PARTIAL_COPY;
         }
 
         NTSTATUS handle_NtSetInformationVirtualMemory()

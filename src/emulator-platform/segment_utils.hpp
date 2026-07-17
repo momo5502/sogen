@@ -1,9 +1,9 @@
-#pragma once
+﻿#pragma once
 
 #include <optional>
 #include <cstdint>
 
-#include "emulator.hpp"
+#include "arch_emulator.hpp"
 #include "x86_register.hpp"
 
 namespace sogen::segment_utils
@@ -16,6 +16,7 @@ namespace sogen::segment_utils
     };
 
 #pragma pack(push, 1)
+
     struct raw_segment_descriptor
     {
         uint16_t limit_low;
@@ -25,6 +26,7 @@ namespace sogen::segment_utils
         uint8_t limit_high_flags;
         uint8_t base_high;
     };
+
 #pragma pack(pop)
 
     struct descriptor
@@ -38,7 +40,7 @@ namespace sogen::segment_utils
         bool default_op_size{};
     };
 
-    inline std::optional<cpu_interface::descriptor_table_register> read_descriptor_table(emulator& cpu, const x86_register reg)
+    inline std::optional<cpu_interface::descriptor_table_register> read_descriptor_table(x86_64_cpu& cpu, const x86_register reg)
     {
         cpu_interface::descriptor_table_register table{};
         if (!cpu.read_descriptor_table(static_cast<int>(reg), table))
@@ -49,10 +51,10 @@ namespace sogen::segment_utils
         return table;
     }
 
-    inline std::optional<uint16_t> read_selector(emulator& cpu, const x86_register reg)
+    inline std::optional<uint16_t> read_selector(x86_64_cpu& cpu, const x86_register reg)
     {
         uint16_t selector{};
-        const auto bytes_read = cpu.read_raw_register(static_cast<int>(reg), &selector, sizeof(selector));
+        const auto bytes_read = cpu.read_register(reg, &selector, sizeof(selector));
         if (bytes_read < sizeof(selector))
         {
             return std::nullopt;
@@ -61,7 +63,7 @@ namespace sogen::segment_utils
         return selector;
     }
 
-    inline std::optional<descriptor> read_descriptor(emulator& cpu, const cpu_interface::descriptor_table_register& table,
+    inline std::optional<descriptor> read_descriptor(x86_64_cpu& cpu, const cpu_interface::descriptor_table_register& table,
                                                      const uint16_t selector)
     {
         const auto index = selector >> 3;
@@ -115,7 +117,7 @@ namespace sogen::segment_utils
         return desc;
     }
 
-    inline std::optional<cpu_interface::descriptor_table_register> resolve_table(emulator& cpu, const uint16_t selector)
+    inline std::optional<cpu_interface::descriptor_table_register> resolve_table(x86_64_cpu& cpu, const uint16_t selector)
     {
         auto gdt = read_descriptor_table(cpu, x86_register::gdtr);
         if (!gdt)
@@ -147,7 +149,7 @@ namespace sogen::segment_utils
         return ldt;
     }
 
-    inline std::optional<segment_bitness> get_segment_bitness(emulator& cpu, const uint16_t selector)
+    inline std::optional<segment_bitness> get_segment_bitness(x86_64_cpu& cpu, const uint16_t selector)
     {
         if ((selector & ~0x3u) == 0)
         {

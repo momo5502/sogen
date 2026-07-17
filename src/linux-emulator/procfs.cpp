@@ -80,17 +80,12 @@ namespace sogen
     {
         if (path == "/proc/self/exe")
         {
-            return emu.mod_manager.get_executable_path().string();
+            return emu.process.executable_path;
         }
 
         if (path == "/proc/self/cwd")
         {
-            // Return emulation root or "/"
-            if (!emu.emulation_root.empty())
-            {
-                return emu.emulation_root.string();
-            }
-            return "/";
+            return linux_file_system::normalize_guest_path_string(emu.process.current_working_directory);
         }
 
         // /proc/self/fd/N
@@ -106,6 +101,10 @@ namespace sogen
                 auto it = fds.find(fd_num);
                 if (it != fds.end())
                 {
+                    if (!it->second.guest_path.empty())
+                    {
+                        return linux_file_system::normalize_guest_path_string(it->second.guest_path);
+                    }
                     if (!it->second.host_path.empty())
                     {
                         return it->second.host_path;
@@ -129,30 +128,6 @@ namespace sogen
         }
 
         return std::nullopt;
-    }
-
-    FILE* procfs::open_procfs_file(const linux_emulator& emu, const std::string_view path)
-    {
-        auto content = procfs::generate_content(emu, path);
-        if (!content)
-        {
-            return nullptr;
-        }
-
-        FILE* fp = tmpfile();
-        if (!fp)
-        {
-            return nullptr;
-        }
-
-        if (!content->empty())
-        {
-            fwrite(content->data(), 1, content->size(), fp);
-        }
-
-        // Seek back to beginning so reads start from the top
-        fseek(fp, 0, SEEK_SET);
-        return fp;
     }
 
     bool procfs::stat_procfs(const linux_emulator& emu, const std::string_view path, linux_stat& st)
@@ -370,19 +345,31 @@ namespace sogen
 
     std::string procfs::generate_auxv(const linux_emulator& emu)
     {
-        // /proc/self/auxv: raw binary auxiliary vector
-        // For now, return an empty auxv (just AT_NULL terminator)
-        // A real implementation would read the auxv from the initial stack.
-        (void)emu;
-        uint64_t null_entry[2] = {0, 0};
-        return {reinterpret_cast<const char*>(null_entry), sizeof(null_entry)};
+        std::string result;
+        result.reserve(emu.process.auxv.size() * sizeof(uint64_t) * 2);
+
+        const auto append_u64 = [&result](const uint64_t value) { result.append(reinterpret_cast<const char*>(&value), sizeof(value)); };
+
+        for (const auto& entry : emu.process.auxv)
+        {
+            append_u64(entry.type);
+            append_u64(entry.value);
+        }
+
+        if (emu.process.auxv.empty() || emu.process.auxv.back().type != elf::AT_NULL)
+        {
+            append_u64(elf::AT_NULL);
+            append_u64(0);
+        }
+
+        return result;
     }
 
     std::string procfs::generate_proc_stat(const linux_emulator& emu)
     {
         // /proc/self/stat: single line of process statistics
         // Format: pid (comm) state ppid pgrp session tty_nr tpgid flags ...
-        const auto& exe_path = emu.mod_manager.get_executable_path();
+        const auto exe_path = std::filesystem::path{emu.process.executable_path};
         auto comm = exe_path.filename().string();
 
         char buf[512];
@@ -403,6 +390,7 @@ namespace sogen
     {
         return "5.15.0-sogen\n";
     }
+
     // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 } // namespace sogen

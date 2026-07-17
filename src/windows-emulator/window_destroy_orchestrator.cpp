@@ -9,6 +9,7 @@ namespace sogen
         : state_(state),
           emu_(c.emu),
           proc_(c.proc),
+          thread_(c.thread()),
           ui_(c.win_emu.ui())
     {
     }
@@ -24,7 +25,7 @@ namespace sogen
         {
             auto& frame = this->state_.frames.back();
             auto* win = this->proc_.windows.get(frame.handle);
-            if (!win || win->thread_id != this->proc_.active_thread->id)
+            if (!win || win->thread_id != this->thread_.id)
             {
                 this->pop_frame_allocation(frame);
                 this->state_.frames.pop_back();
@@ -160,8 +161,8 @@ namespace sogen
                 {.message = WM_KILLFOCUS, .wParam = 0, .lParam = 0},
                 {.message = WM_ACTIVATE, .wParam = 0, .lParam = 0},
                 {.message = WM_NCACTIVATE, .wParam = FALSE, .lParam = 0},
-                {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = frame.window_pos_alloc.address},
-                {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = frame.window_pos_alloc.address},
+                {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = frame.window_pos_alloc.address()},
+                {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = frame.window_pos_alloc.address()},
                 {.message = WM_UAHDESTROYWINDOW, .wParam = 0, .lParam = 0},
             };
         }
@@ -184,9 +185,9 @@ namespace sogen
 
     void window_destroy_orchestrator::pop_frame_allocation(window_destroy_frame& frame) const
     {
-        if (frame.window_pos_alloc.address != 0)
+        if (frame.window_pos_alloc)
         {
-            this->emu_.pop_stack(std::move(frame.window_pos_alloc));
+            this->emu_.pop_stack(frame.window_pos_alloc);
         }
     }
 
@@ -244,6 +245,7 @@ namespace sogen
         });
 
         this->ui_.destroy_window(frame.handle);
+        this->proc_.gdi_window_surfaces.erase(static_cast<uint32_t>(frame.handle));
         (void)this->proc_.windows.erase(frame.handle);
     }
 

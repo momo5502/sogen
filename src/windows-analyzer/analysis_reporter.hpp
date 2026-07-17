@@ -22,6 +22,7 @@ namespace sogen
       public:
         virtual ~analysis_reporter() = default;
         virtual void report(const analysis_event& event) = 0;
+
         virtual void flush()
         {
         }

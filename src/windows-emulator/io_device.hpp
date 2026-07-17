@@ -1,6 +1,8 @@
 #pragma once
 
+#include <map>
 #include <memory>
+#include <string_view>
 #include <arch_emulator.hpp>
 #include <serialization.hpp>
 
@@ -12,6 +14,8 @@ namespace sogen
 
     class windows_emulator;
     struct process_context;
+    struct vcpu_context;
+    class emulator_thread;
 
     struct io_device_context
     {
@@ -25,7 +29,14 @@ namespace sogen
         emulator_pointer output_buffer{};
         ULONG output_buffer_length{};
 
-        io_device_context(x86_64_emulator& emu)
+        // The vCPU whose thread issued this I/O request. Set on syscall-originated ioctls;
+        // null (and not serialized) for deserialized delayed ioctls re-executed from the
+        // scheduler's device pump, which must not depend on an issuing thread.
+        vcpu_context* vcpu{};
+
+        emulator_thread& thread() const;
+
+        io_device_context(memory_interface& emu)
             : io_status_block(emu)
         {
         }
@@ -126,7 +137,24 @@ namespace sogen
     };
 
     bool needs_32_bit_devices(const windows_emulator& win_emu);
-    std::unique_ptr<io_device> create_device(std::u16string_view device, bool is_32_bit);
+
+    // Everything a device factory needs to construct its device. Only the WoW64 flag for now; grows as
+    // more construction-time context is required, without touching every factory signature again.
+    struct device_creation_context
+    {
+        bool is_32_bit{};
+    };
+
+    using device_factory = std::unique_ptr<io_device> (*)(const device_creation_context& context);
+
+    std::unique_ptr<io_device> create_device(std::u16string_view device, const device_creation_context& context);
+
+    // Single source of truth for the emulator's IO devices: NT device name -> factory. Several names may
+    // map to the same factory (e.g. the transport stub serves Tcp/Tcp6/Udp/RawIp). create_device() looks a
+    // name up here, and consumers that need every device type (e.g. the handler fuzzer) enumerate it and
+    // dedupe by factory, so a newly added device is visible everywhere without a second list to update.
+    // Ordered so the fuzzer's enumeration is deterministic across runs.
+    const std::map<std::u16string_view, device_factory>& get_device_registry();
 
     class io_device_container : public io_device
     {
@@ -175,7 +203,8 @@ namespace sogen
 
         void setup()
         {
-            this->device_ = create_device(this->device_name_, this->is_32_bit_);
+            const device_creation_context context{.is_32_bit = this->is_32_bit_};
+            this->device_ = create_device(this->device_name_, context);
         }
 
         void assert_validity() const

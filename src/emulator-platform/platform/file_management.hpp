@@ -343,17 +343,17 @@ namespace sogen
         union
         {
             NTSTATUS Status;
-            typename Traits::PVOID Pointer;
+            Traits::PVOID Pointer;
         };
 
-        typename Traits::ULONG_PTR Information;
+        Traits::ULONG_PTR Information;
     };
 
     template <typename Traits>
     struct FILE_IO_COMPLETION_INFORMATION
     {
-        typename Traits::PVOID KeyContext;
-        typename Traits::PVOID ApcContext;
+        Traits::PVOID KeyContext;
+        Traits::PVOID ApcContext;
         IO_STATUS_BLOCK<Traits> IoStatusBlock;
     };
 
@@ -361,11 +361,11 @@ namespace sogen
     struct OBJECT_ATTRIBUTES
     {
         ULONG Length;
-        typename Traits::HANDLE RootDirectory;
-        EMULATOR_CAST(typename Traits::PVOID, UNICODE_STRING*) ObjectName;
+        Traits::HANDLE RootDirectory;
+        EMULATOR_CAST(Traits::PVOID, UNICODE_STRING*) ObjectName;
         ULONG Attributes;
-        typename Traits::PVOID SecurityDescriptor;       // PSECURITY_DESCRIPTOR;
-        typename Traits::PVOID SecurityQualityOfService; // PSECURITY_QUALITY_OF_SERVICE
+        Traits::PVOID SecurityDescriptor;       // PSECURITY_DESCRIPTOR;
+        Traits::PVOID SecurityQualityOfService; // PSECURITY_QUALITY_OF_SERVICE
     };
 
     typedef struct _FILE_FS_SIZE_INFORMATION
@@ -526,6 +526,25 @@ namespace sogen
         char16_t FileName[1];
     } FILE_BOTH_DIR_INFORMATION, *PFILE_BOTH_DIR_INFORMATION;
 
+    typedef struct _FILE_ID_BOTH_DIR_INFORMATION
+    {
+        ULONG NextEntryOffset;
+        ULONG FileIndex;
+        LARGE_INTEGER CreationTime;
+        LARGE_INTEGER LastAccessTime;
+        LARGE_INTEGER LastWriteTime;
+        LARGE_INTEGER ChangeTime;
+        LARGE_INTEGER EndOfFile;
+        LARGE_INTEGER AllocationSize;
+        ULONG FileAttributes;
+        ULONG FileNameLength;
+        ULONG EaSize;
+        char ShortNameLength;
+        char16_t ShortName[12];
+        LARGE_INTEGER FileId;
+        char16_t FileName[1];
+    } FILE_ID_BOTH_DIR_INFORMATION, *PFILE_ID_BOTH_DIR_INFORMATION;
+
     typedef struct _FILE_RENAME_INFORMATION
     {
         BOOLEAN ReplaceIfExists;
@@ -599,6 +618,7 @@ namespace sogen
 
 #ifndef OS_WINDOWS
     typedef BOOLEAN SECURITY_CONTEXT_TRACKING_MODE, *PSECURITY_CONTEXT_TRACKING_MODE;
+
     typedef struct _SECURITY_QUALITY_OF_SERVICE
     {
         DWORD Length;

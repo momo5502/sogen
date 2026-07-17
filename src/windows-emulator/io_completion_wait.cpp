@@ -126,7 +126,8 @@ namespace sogen
             }
         }
 
-        bool retain_handle_reference(process_context& process, const handle source_handle, handle& retained_handle)
+        bool retain_handle_reference(process_context& process, const emulator_thread* active_thread, const handle source_handle,
+                                     handle& retained_handle)
         {
             if (source_handle.bits == 0)
             {
@@ -134,7 +135,7 @@ namespace sogen
                 return true;
             }
 
-            const auto resolved_source_handle = process.resolve_object_pseudo_handle(source_handle);
+            const auto resolved_source_handle = process.resolve_object_pseudo_handle(source_handle, active_thread);
 
             if (resolved_source_handle.value.is_pseudo)
             {

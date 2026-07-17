@@ -127,10 +127,49 @@ namespace sogen
         return stats;
     }
 
+    memory_permission memory_manager::get_effective_permissions(const nt_memory_permission permissions) const
+    {
+        if (permissions.is_guarded())
+        {
+            return memory_permission::none;
+        }
+
+        auto effective = permissions.common;
+        if (!this->dep_enabled_ && effective != memory_permission::none)
+        {
+            effective |= memory_permission::exec;
+        }
+
+        return effective;
+    }
+
+    void memory_manager::set_dep_enabled(const bool enabled)
+    {
+        if (this->dep_enabled_ == enabled)
+        {
+            return;
+        }
+
+        this->dep_enabled_ = enabled;
+        for (const auto& reserved : this->reserved_regions_ | std::views::values)
+        {
+            if (reserved.kind == memory_region_kind::mmio)
+            {
+                continue;
+            }
+
+            for (const auto& [address, region] : reserved.committed_regions)
+            {
+                this->apply_memory_protection(address, region.length, this->get_effective_permissions(region.permissions));
+            }
+        }
+    }
+
     void memory_manager::serialize_memory_state(utils::buffer_serializer& buffer, const bool is_snapshot) const
     {
         buffer.write_atomic(this->layout_version_);
         buffer.write(this->default_allocation_address_);
+        buffer.write(this->dep_enabled_);
         buffer.write_map(this->reserved_regions_);
 
         if (is_snapshot)
@@ -167,6 +206,7 @@ namespace sogen
 
         buffer.read_atomic(this->layout_version_);
         buffer.read(this->default_allocation_address_);
+        buffer.read(this->dep_enabled_);
         buffer.read_map(this->reserved_regions_);
 
         if (is_snapshot)
@@ -193,8 +233,7 @@ namespace sogen
 
                 buffer.read(data.data(), region.second.length);
 
-                const auto effective_permission =
-                    region.second.permissions.is_guarded() ? memory_permission::none : region.second.permissions.common;
+                const auto effective_permission = this->get_effective_permissions(region.second.permissions);
                 this->map_memory(region.first, region.second.length, effective_permission);
                 this->write_memory(region.first, data.data(), region.second.length);
             }
@@ -223,7 +262,7 @@ namespace sogen
         auto& committed_regions = entry->second.committed_regions;
         split_regions(committed_regions, {address, end});
 
-        const auto effective_permission = permissions.is_guarded() ? memory_permission::none : permissions.common;
+        const auto effective_permission = this->get_effective_permissions(permissions);
 
         for (auto& sub_region : committed_regions)
         {
@@ -292,7 +331,7 @@ namespace sogen
             return false;
         }
 
-        this->map_host_memory(address, size, host_pointer, permissions.is_guarded() ? memory_permission::none : permissions.common);
+        this->map_host_memory(address, size, host_pointer, this->get_effective_permissions(permissions));
 
         const auto entry = this->reserved_regions_
                                .try_emplace(address,
@@ -331,7 +370,7 @@ namespace sogen
 
         if (!reserve_only)
         {
-            this->map_memory(address, size, permissions.is_guarded() ? memory_permission::none : permissions.common);
+            this->map_memory(address, size, this->get_effective_permissions(permissions));
             entry->second.committed_regions[address] = committed_region{
                 .length = size,
                 .permissions = permissions,
@@ -388,7 +427,7 @@ namespace sogen
         uint64_t last_region_start{};
         const committed_region* last_region{nullptr};
 
-        const auto effective_permission = permissions.is_guarded() ? memory_permission::none : permissions.common;
+        const auto effective_permission = this->get_effective_permissions(permissions);
 
         for (auto& sub_region : committed_regions)
         {
@@ -945,6 +984,16 @@ namespace sogen
     void memory_manager::map_host_memory(const uint64_t address, const size_t size, void* host_pointer, const memory_permission permissions)
     {
         this->memory_->map_host_memory(address, size, host_pointer, permissions);
+    }
+
+    bool memory_manager::host_memory_aliasing_is_coherent() const
+    {
+        return this->memory_->host_memory_aliasing_is_coherent();
+    }
+
+    void memory_manager::flush_host_memory_cache(const void* host_pointer, const size_t size)
+    {
+        this->memory_->flush_host_memory_cache(host_pointer, size);
     }
 
     void memory_manager::unmap_memory(const uint64_t address, const size_t size)

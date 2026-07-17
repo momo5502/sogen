@@ -28,6 +28,7 @@ namespace sogen
         sogen::hwnd hwnd{};
         uint64_t timer_id{};
         uint64_t timer_proc{};
+        bool is_system{};
         std::optional<std::chrono::steady_clock::time_point> due_time{};
         std::chrono::steady_clock::duration interval{};
 
@@ -37,6 +38,7 @@ namespace sogen
             buffer.write(this->hwnd);
             buffer.write(this->timer_id);
             buffer.write(this->timer_proc);
+            buffer.write(this->is_system);
             buffer.write_optional(this->due_time);
             buffer.write(this->interval);
         }
@@ -47,6 +49,7 @@ namespace sogen
             buffer.read(this->hwnd);
             buffer.read(this->timer_id);
             buffer.read(this->timer_proc);
+            buffer.read(this->is_system);
             buffer.read_optional(this->due_time);
             buffer.read(this->interval);
         }
@@ -184,6 +187,7 @@ namespace sogen
         NtUserDestroyWindow,
         NtUserShowWindow,
         NtUserMessageCall,
+        NtUserUpdateWindow,
         NtUserEnumDisplayMonitors,
     };
 
@@ -226,8 +230,8 @@ namespace sogen
 
         ~callback_frame();
 
-        void save_registers(x86_64_emulator& emu);
-        void restore_registers(x86_64_emulator& emu) const;
+        void save_registers(x86_64_cpu& emu);
+        void restore_registers(x86_64_cpu& emu) const;
 
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);
@@ -282,6 +286,7 @@ namespace sogen
         uint64_t start_address{};
         uint64_t argument{};
         uint64_t executed_instructions{0};
+        uint64_t executed_blocks{0};
         bool setup_done{false};
 
         uint32_t id{};
@@ -357,7 +362,8 @@ namespace sogen
 
         user_timer* find_user_timer(hwnd hwnd, uint64_t timer_id);
         user_timer& create_user_timer(process_context& process, hwnd hwnd, uint64_t timer_id, uint64_t timer_proc,
-                                      std::chrono::milliseconds interval, std::chrono::steady_clock::time_point now);
+                                      std::chrono::milliseconds interval, std::chrono::steady_clock::time_point now,
+                                      bool is_system = false);
         bool delete_user_timer(hwnd hwnd, uint64_t timer_id);
         bool synthesize_due_user_timer(windows_emulator& win_emu, hwnd hwnd_filter = 0, UINT filter_min = 0, UINT filter_max = 0);
 
@@ -370,18 +376,18 @@ namespace sogen
 
         bool is_thread_ready(windows_emulator& win_emu);
 
-        void save(x86_64_emulator& emu)
+        void save(x86_64_cpu& emu)
         {
             this->last_registers = emu.save_registers();
         }
 
-        void restore(x86_64_emulator& emu) const
+        void restore(x86_64_cpu& emu) const
         {
             emu.restore_registers(this->last_registers);
             this->refresh_execution_context(emu);
         }
 
-        void setup_if_necessary(x86_64_emulator& emu, const process_context& context)
+        void setup_if_necessary(x86_64_cpu& emu, const process_context& context)
         {
             if (!this->setup_done)
             {
@@ -410,6 +416,7 @@ namespace sogen
             buffer.write(this->start_address);
             buffer.write(this->argument);
             buffer.write(this->executed_instructions);
+            buffer.write(this->executed_blocks);
             buffer.write(this->setup_done);
             buffer.write(this->id);
             buffer.write(this->current_ip);
@@ -478,6 +485,7 @@ namespace sogen
             buffer.read(this->start_address);
             buffer.read(this->argument);
             buffer.read(this->executed_instructions);
+            buffer.read(this->executed_blocks);
             buffer.read(this->setup_done);
             buffer.read(this->id);
             buffer.read(this->current_ip);
@@ -545,8 +553,8 @@ namespace sogen
       private:
         bool can_coalesce_message(const msg& msg) const;
 
-        void setup_registers(x86_64_emulator& emu, const process_context& context) const;
-        void refresh_execution_context(x86_64_emulator& emu) const;
+        void setup_registers(x86_64_cpu& emu, const process_context& context) const;
+        void refresh_execution_context(x86_64_cpu& emu) const;
 
         void release()
         {

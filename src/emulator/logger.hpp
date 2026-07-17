@@ -1,0 +1,77 @@
+#pragma once
+#include "generic_logger.hpp"
+
+#include <utils/function.hpp>
+#include <utils/win.hpp>
+
+#include <mutex>
+#include <string_view>
+#include <utility>
+
+namespace sogen
+{
+
+    class logger : public generic_logger
+    {
+      public:
+        // Sink receives every formatted log line before it is written to stdout.
+        // The color argument doubles as a level tag: red = error (force-printed),
+        // yellow = warn, cyan = info, green = success, gray = log, pink = force-
+        // print from external code (e.g. gdb bindings). Sinks run even when
+        // output is disabled, so they observe all log activity.
+        using sink = utils::optional_function<void(color c, std::string_view message)>;
+
+#ifdef _WIN32
+        logger();
+        ~logger() override;
+#endif
+        void print(color c, std::string_view message) override;
+        void print(color c, const char* message, ...) override FORMAT_ATTRIBUTE(3, 4);
+        void force_print(color c, const char* message, ...) FORMAT_ATTRIBUTE(3, 4);
+        void info(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+        void warn(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+        void error(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+        void success(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+        void log(const char* message, ...) const FORMAT_ATTRIBUTE(2, 3);
+
+        void disable_output(const bool value)
+        {
+            this->disable_output_ = value;
+        }
+
+        bool is_output_disabled() const
+        {
+            return this->disable_output_;
+        }
+
+        // Fully mute terminal output, including force-printed errors that disable_output() lets through.
+        // Sinks still observe everything. Intended for headless consumers (e.g. fuzzing).
+        void set_silent(const bool value)
+        {
+            this->silent_ = value;
+        }
+
+        bool is_silent() const
+        {
+            return this->silent_;
+        }
+
+        // Install a sink callback. Passing an empty std::function clears it.
+        // Single-sink: installing replaces any previously installed sink.
+        void set_sink(sink s)
+        {
+            this->sink_ = std::move(s);
+        }
+
+      private:
+#ifdef _WIN32
+        UINT old_cp{};
+#endif
+        bool disable_output_{false};
+        bool silent_{false};
+        sink sink_{};
+        mutable std::mutex print_mutex_{};
+        void print_message(color c, std::string_view message, bool force = false) const;
+    };
+
+} // namespace sogen

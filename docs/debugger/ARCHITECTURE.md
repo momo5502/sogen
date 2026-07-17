@@ -6,7 +6,7 @@ document is the contract the later phases build against.
 ## Goal
 
 A first-class, in-browser debugger that operates against the **real** emulator
-execution engine (Unicorn/WHP/icicle via `windows_emulator`), not a
+execution engine (Unicorn/WHP/icicle/KVM via `windows_emulator`), not a
 frontend-only mock. IDA/x64dbg/Ghidra-style UX: disassembly, registers, stack,
 memory, breakpoints, threads, call stack, modules, CFG, and a Python console.
 
@@ -46,7 +46,7 @@ memory, breakpoints, threads, call stack, modules, CFG, and a Python console.
 - **`debug_session` (core, `src/debugger/debug_session.hpp`)** — the first-class
   subsystem. Owns breakpoint registry, step engine, and introspection. Wraps a
   `windows_emulator&`. Backend-agnostic: only uses `emu()` interfaces that all
-  emulator backends implement, so Unicorn/WHP/icicle behave identically.
+  emulator backends implement, so Unicorn/WHP/icicle/KVM behave identically.
 - **Generic command protocol** — instead of a bespoke FlatBuffers table per
   feature, one extensible pair:
   - `DebugCommandRequest { id:uint32; kind:uint32; payload:[ubyte] }`

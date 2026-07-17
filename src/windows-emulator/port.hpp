@@ -18,6 +18,7 @@ namespace sogen
 
     class windows_emulator;
     struct process_context;
+
     namespace utils
     {
         class aligned_binary_writer;
@@ -156,7 +157,7 @@ namespace sogen
         emulator_object<PORT_MESSAGE64> receive_message;
         EmulatorTraits<Emu64>::SIZE_T receive_buffer_length{};
 
-        lpc_message_context(x86_64_emulator& emu)
+        lpc_message_context(memory_interface& emu)
             : send_message(emu),
               receive_message(emu)
         {

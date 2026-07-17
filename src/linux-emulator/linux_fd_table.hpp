@@ -3,6 +3,8 @@
 #include "std_include.hpp"
 
 #include <cstdio>
+#include <memory>
+#include <serialization.hpp>
 #include <utility>
 
 #if defined(_WIN32)
@@ -17,20 +19,69 @@ namespace sogen
     enum class fd_type
     {
         file,
+        memory_file,
         pipe_read,
         pipe_write,
         socket,
         eventfd,
         directory,
+        epoll,
+    };
+
+    struct linux_memory_fd
+    {
+        std::string content{};
+        size_t offset{};
+    };
+
+    struct linux_socket_state
+    {
+        int domain{};
+        int type{};
+        int protocol{};
+        bool listening{};
+        bool connected{};
+        int so_reuseaddr{};
+        int so_keepalive{};
+        int so_reuseport{};
+        int so_sndbuf{65536};
+        int so_rcvbuf{65536};
+        int so_error{};
+        int host_socket{-1};
+        uint16_t bound_port{};
+        uint32_t bound_addr{};
+        uint16_t peer_port{};
+        uint32_t peer_addr{};
+
+        linux_socket_state() = default;
+
+        ~linux_socket_state()
+        {
+#if !defined(_WIN32)
+            if (this->host_socket >= 0)
+            {
+                ::close(this->host_socket);
+                this->host_socket = -1;
+            }
+#endif
+        }
+
+        linux_socket_state(const linux_socket_state&) = delete;
+        linux_socket_state& operator=(const linux_socket_state&) = delete;
     };
 
     struct linux_fd
     {
         fd_type type{fd_type::file};
         std::string host_path{};
+        std::string guest_path{};
         FILE* handle{};
+        std::shared_ptr<linux_memory_fd> memory_file{};
         int flags{};
         bool close_on_exec{};
+        bool read_only_mapping{};
+
+        std::shared_ptr<linux_socket_state> socket_state{};
 
         ~linux_fd() = default;
         linux_fd() = default;
@@ -41,9 +92,13 @@ namespace sogen
         linux_fd(linux_fd&& other) noexcept
             : type(other.type),
               host_path(std::move(other.host_path)),
+              guest_path(std::move(other.guest_path)),
               handle(std::exchange(other.handle, nullptr)),
+              memory_file(std::move(other.memory_file)),
               flags(other.flags),
-              close_on_exec(other.close_on_exec)
+              close_on_exec(other.close_on_exec),
+              read_only_mapping(other.read_only_mapping),
+              socket_state(std::move(other.socket_state))
         {
         }
 
@@ -53,9 +108,13 @@ namespace sogen
             {
                 type = other.type;
                 host_path = std::move(other.host_path);
+                guest_path = std::move(other.guest_path);
                 handle = std::exchange(other.handle, nullptr);
+                memory_file = std::move(other.memory_file);
                 flags = other.flags;
                 close_on_exec = other.close_on_exec;
+                read_only_mapping = other.read_only_mapping;
+                socket_state = std::move(other.socket_state);
             }
             return *this;
         }
@@ -193,6 +252,9 @@ namespace sogen
             return this->fds_;
         }
 
+        void serialize(utils::buffer_serializer& buffer) const;
+        void deserialize(utils::buffer_deserializer& buffer);
+
       private:
         std::map<int, linux_fd> fds_{};
 
@@ -267,10 +329,14 @@ namespace sogen
             linux_fd new_entry{};
             new_entry.type = existing.type;
             new_entry.host_path = existing.host_path;
+            new_entry.guest_path = existing.guest_path;
             new_entry.flags = existing.flags;
             new_entry.close_on_exec = false; // dup clears close-on-exec
+            new_entry.read_only_mapping = existing.read_only_mapping;
 
             new_entry.handle = duplicate_handle(existing.handle, get_stream_mode(existing));
+            new_entry.memory_file = existing.memory_file;
+            new_entry.socket_state = existing.socket_state;
             if (existing.handle && !new_entry.handle)
             {
                 return std::nullopt;

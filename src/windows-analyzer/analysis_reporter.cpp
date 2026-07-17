@@ -267,12 +267,6 @@ namespace sogen
                 write_fields(object, event);
             }
 
-            template <typename Event>
-            static std::string_view event_name(const Event&)
-            {
-                return "unknown";
-            }
-
 #define EVENT_NAME(TYPE, NAME)                      \
     static std::string_view event_name(const TYPE&) \
     {                                               \

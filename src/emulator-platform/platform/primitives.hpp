@@ -3,7 +3,7 @@
 #include <cstdint>
 #include "compiler.hpp"
 
-// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-use-enum-class)
+// NOLINTBEGIN(modernize-use-using,cppcoreguidelines-use-enum-class,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
 #ifdef OS_WINDOWS
 
@@ -67,6 +67,14 @@ namespace sogen
         LONG right;
         LONG bottom;
     } RECT;
+
+    typedef struct _GUID
+    {
+        uint32_t Data1;
+        uint16_t Data2;
+        uint16_t Data3;
+        uint8_t Data4[8];
+    } GUID;
 #endif
 
 using WORD = std::uint16_t;
@@ -90,7 +98,7 @@ static_assert(sizeof(ULONG) == 4);
 static_assert(sizeof(int) == 4);
 static_assert(sizeof(BOOLEAN) == 1);
 
-// NOLINTEND(modernize-use-using,cppcoreguidelines-use-enum-class)
+// NOLINTEND(modernize-use-using,cppcoreguidelines-use-enum-class,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 #ifndef OS_WINDOWS
 } // namespace sogen
 #endif

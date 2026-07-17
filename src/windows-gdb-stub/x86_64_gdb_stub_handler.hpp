@@ -300,7 +300,7 @@ namespace sogen
 
             for (size_t i = 0; i < size; ++i)
             {
-                auto* hook = this->emu_->hook_memory_execution(addr + i, [this](const uint64_t) {
+                auto* hook = this->emu_->hook_memory_execution(addr + i, [this](cpu_interface&, const uint64_t) {
                     this->on_interrupt(); //
                 });
 
@@ -312,7 +312,7 @@ namespace sogen
 
         std::vector<emulator_hook*> create_read_hook(const uint64_t addr, const size_t size)
         {
-            auto* hook = this->emu_->hook_memory_read(addr, size, [this](const uint64_t, const void*, const size_t) {
+            auto* hook = this->emu_->hook_memory_read(addr, size, [this](cpu_interface&, const uint64_t, const void*, const size_t) {
                 this->on_interrupt(); //
             });
 
@@ -321,7 +321,7 @@ namespace sogen
 
         std::vector<emulator_hook*> create_write_hook(const uint64_t addr, const size_t size)
         {
-            auto* hook = this->emu_->hook_memory_write(addr, size, [this](const uint64_t, const void*, const size_t) {
+            auto* hook = this->emu_->hook_memory_write(addr, size, [this](cpu_interface&, const uint64_t, const void*, const size_t) {
                 this->on_interrupt(); //
             });
 

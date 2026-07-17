@@ -2,9 +2,12 @@
 
 #include "std_include.hpp"
 
+#include <functional>
 #include <map>
 #include <atomic>
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 #include <memory_permission.hpp>
 #include <memory_region.hpp>
@@ -29,6 +32,27 @@ namespace sogen
     constexpr uint64_t LINUX_MAX_MMAP_ADDRESS = 0x0000ffffffffffffULL;
     constexpr uint64_t LINUX_MAX_MMAP_END_EXCL = LINUX_MAX_MMAP_ADDRESS + 1ULL;
     constexpr uint64_t LINUX_DEFAULT_MMAP_BASE = 0x7f0000000000ULL;
+
+    enum class memory_region_kind : uint8_t;
+
+    struct linux_memory_region_info : basic_memory_region<memory_permission>
+    {
+        uint64_t allocation_base{};
+        size_t allocation_length{};
+        bool is_reserved{};
+        bool is_committed{};
+        memory_permission initial_permissions{};
+        memory_region_kind kind{};
+
+        linux_memory_region_info();
+    };
+
+    struct linux_memory_stats
+    {
+        uint64_t region_count{};
+        uint64_t mapped_bytes{};
+        uint64_t executable_bytes{};
+    };
 
     class linux_memory_manager : public memory_interface
     {
@@ -76,6 +100,19 @@ namespace sogen
             return this->mapped_regions_;
         }
 
+        std::vector<linux_memory_region_info> get_mapped_region_infos() const;
+        std::optional<linux_memory_region_info> get_region_info(uint64_t address) const;
+        linux_memory_stats compute_memory_stats() const;
+
+        using memory_allocate_callback = std::function<void(uint64_t address, size_t size, memory_permission permissions, bool committed)>;
+        using memory_protect_callback = std::function<void(uint64_t address, size_t size, memory_permission permissions)>;
+        using memory_release_callback = std::function<void(uint64_t address, size_t size)>;
+
+        uint64_t add_memory_allocate_callback(memory_allocate_callback callback);
+        uint64_t add_memory_protect_callback(memory_protect_callback callback);
+        uint64_t add_memory_release_callback(memory_release_callback callback);
+        void remove_memory_callback(uint64_t id);
+
         uint64_t get_mmap_base() const
         {
             return this->mmap_base_;
@@ -93,6 +130,14 @@ namespace sogen
         memory_interface* memory_{};
         mapped_region_map mapped_regions_{};
         uint64_t mmap_base_{LINUX_DEFAULT_MMAP_BASE};
+        uint64_t next_memory_callback_id_{1};
+        std::vector<std::pair<uint64_t, memory_allocate_callback>> memory_allocate_callbacks_{};
+        std::vector<std::pair<uint64_t, memory_protect_callback>> memory_protect_callbacks_{};
+        std::vector<std::pair<uint64_t, memory_release_callback>> memory_release_callbacks_{};
+
+        void notify_memory_allocate(uint64_t address, size_t size, memory_permission permissions, bool committed);
+        void notify_memory_protect(uint64_t address, size_t size, memory_permission permissions);
+        void notify_memory_release(uint64_t address, size_t size);
 
         void map_memory(uint64_t address, size_t size, memory_permission permissions) override;
         void unmap_memory(uint64_t address, size_t size) override;

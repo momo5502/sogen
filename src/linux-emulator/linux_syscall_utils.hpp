@@ -2,6 +2,7 @@
 
 #include "std_include.hpp"
 #include "linux_emulator_utils.hpp"
+#include "hook_interface.hpp"
 #include "linux_process_context.hpp"
 
 namespace sogen
@@ -14,6 +15,12 @@ namespace sogen
         linux_emulator& emu_ref;
         x86_64_emulator& emu;
         linux_process_context& proc;
+        mutable instruction_hook_continuation continuation{instruction_hook_continuation::skip_instruction};
+
+        void mark_instruction_pointer_finalized() const
+        {
+            this->continuation = instruction_hook_continuation::finalized_instruction_pointer;
+        }
     };
 
     using linux_syscall_handler = void (*)(const linux_syscall_context&);

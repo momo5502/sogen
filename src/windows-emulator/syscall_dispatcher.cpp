@@ -66,9 +66,9 @@ namespace sogen
         }
     }
 
-    void syscall_dispatcher::dispatch(windows_emulator& win_emu)
+    void syscall_dispatcher::dispatch(windows_emulator& win_emu, vcpu_context& vcpu)
     {
-        auto& emu = win_emu.emu();
+        auto& emu = vcpu.cpu;
         auto& context = win_emu.process;
 
         const auto address = emu.read_instruction_pointer();
@@ -81,6 +81,7 @@ namespace sogen
         const syscall_context c{
             .win_emu = win_emu,
             .emu = emu,
+            .vcpu = vcpu,
             .proc = context,
             .write_status = true,
         };
@@ -121,7 +122,7 @@ namespace sogen
                               raw_syscall_id, address, e.what());
             win_emu.record_stop(stop_reason::syscall_exception, std::string(syscall_name) + ": " + e.what());
             emu.reg<uint64_t>(x86_register::rax, STATUS_UNSUCCESSFUL);
-            emu.stop();
+            win_emu.stop();
         }
         catch (...)
         {
@@ -129,13 +130,15 @@ namespace sogen
                               raw_syscall_id, address);
             win_emu.record_stop(stop_reason::syscall_exception, std::string(syscall_name) + ": <unknown exception>");
             emu.reg<uint64_t>(x86_register::rax, STATUS_UNSUCCESSFUL);
-            emu.stop();
+            win_emu.stop();
         }
     }
 
     void syscall_dispatcher::dispatch_callback(windows_emulator& win_emu, std::string& syscall_name)
     {
-        auto& emu = win_emu.emu();
+        // active_cpu(), not emu(): this runs under the syscall's scoped_dispatch, and with more than one
+        // vCPU the instrumentation-callback redirect must rewrite the acting vCPU's RIP/r10, not vCPU 0's.
+        auto& emu = win_emu.active_cpu();
         auto& context = win_emu.process;
 
         if (context.instrumentation_callback != 0 && syscall_name != "NtContinue")
@@ -151,13 +154,14 @@ namespace sogen
         }
     }
 
-    dispatch_result syscall_dispatcher::dispatch_completion(windows_emulator& win_emu, callback_id callback_id,
+    dispatch_result syscall_dispatcher::dispatch_completion(windows_emulator& win_emu, vcpu_context& vcpu, callback_id callback_id,
                                                             completion_state* completion_state, uint64_t callback_result)
     {
-        auto& emu = win_emu.emu();
+        auto& emu = vcpu.cpu;
 
         const syscall_context c{.win_emu = win_emu,
                                 .emu = emu,
+                                .vcpu = vcpu,
                                 .proc = win_emu.process,
                                 .write_status = true,
                                 .is_callback_completion = true,

@@ -63,34 +63,38 @@ namespace sogen
         static_assert(sizeof(win_sockaddr_in6::sin6_flowinfo) == sizeof(sockaddr_in6::sin6_flowinfo));
         static_assert(sizeof(win_sockaddr_in6::sin6_scope_id) == sizeof(sockaddr_in6::sin6_scope_id));
 
-        const std::map<int, int> address_family_map{
-            {0, AF_UNSPEC}, //
-            {2, AF_INET},   //
-            {23, AF_INET6}, //
+        struct socket_mapping
+        {
+            int win_value;
+            int host_value;
         };
 
-        const std::map<int, int> socket_type_map{
-            {0, 0},           //
-            {1, SOCK_STREAM}, //
-            {2, SOCK_DGRAM},  //
-            {3, SOCK_RAW},    //
-            {4, SOCK_RDM},    //
+        constexpr std::array address_family_map{
+            socket_mapping{.win_value = 0, .host_value = AF_UNSPEC},
+            socket_mapping{.win_value = 2, .host_value = AF_INET},
+            socket_mapping{.win_value = 23, .host_value = AF_INET6},
         };
 
-        const std::map<int, int> socket_protocol_map{
-            {0, 0},             //
-            {6, IPPROTO_TCP},   //
-            {17, IPPROTO_UDP},  //
-            {255, IPPROTO_RAW}, //
+        constexpr std::array socket_type_map{
+            socket_mapping{.win_value = 0, .host_value = 0},          socket_mapping{.win_value = 1, .host_value = SOCK_STREAM},
+            socket_mapping{.win_value = 2, .host_value = SOCK_DGRAM}, socket_mapping{.win_value = 3, .host_value = SOCK_RAW},
+            socket_mapping{.win_value = 4, .host_value = SOCK_RDM},
+        };
+
+        constexpr std::array socket_protocol_map{
+            socket_mapping{.win_value = 0, .host_value = 0},
+            socket_mapping{.win_value = 6, .host_value = IPPROTO_TCP},
+            socket_mapping{.win_value = 17, .host_value = IPPROTO_UDP},
+            socket_mapping{.win_value = 255, .host_value = IPPROTO_RAW},
         };
 
         int16_t translate_host_to_win_address_family(const int host_af)
         {
             for (const auto& entry : address_family_map)
             {
-                if (entry.second == host_af)
+                if (entry.host_value == host_af)
                 {
-                    return static_cast<int16_t>(entry.first);
+                    return static_cast<int16_t>(entry.win_value);
                 }
             }
 
@@ -99,10 +103,12 @@ namespace sogen
 
         int translate_win_to_host_address_family(const int win_af)
         {
-            const auto entry = address_family_map.find(win_af);
-            if (entry != address_family_map.end())
+            for (const auto& entry : address_family_map)
             {
-                return entry->second;
+                if (entry.win_value == win_af)
+                {
+                    return entry.host_value;
+                }
             }
 
             throw std::runtime_error("Unknown address family: " + std::to_string(win_af));
@@ -110,10 +116,12 @@ namespace sogen
 
         int translate_win_to_host_type(const int win_type)
         {
-            const auto entry = socket_type_map.find(win_type);
-            if (entry != socket_type_map.end())
+            for (const auto& entry : socket_type_map)
             {
-                return entry->second;
+                if (entry.win_value == win_type)
+                {
+                    return entry.host_value;
+                }
             }
 
             throw std::runtime_error("Unknown socket type: " + std::to_string(win_type));
@@ -121,10 +129,12 @@ namespace sogen
 
         int translate_win_to_host_protocol(const int win_protocol)
         {
-            const auto entry = socket_protocol_map.find(win_protocol);
-            if (entry != socket_protocol_map.end())
+            for (const auto& entry : socket_protocol_map)
             {
-                return entry->second;
+                if (entry.win_value == win_protocol)
+                {
+                    return entry.host_value;
+                }
             }
 
             throw std::runtime_error("Unknown socket protocol: " + std::to_string(win_protocol));
@@ -625,7 +635,8 @@ namespace sogen
 
                 auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
 
-                constexpr auto address_offset = 24;
+                // AFD_CONNECT_INFO::RemoteAddress follows BOOLEAN + two ULONG_PTR (pointer-aligned): 24 on x64, 12 on WoW64.
+                constexpr auto address_offset = 3 * sizeof(typename Traits::ULONG_PTR);
 
                 if (data.size() < address_offset)
                 {
@@ -833,8 +844,12 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                // Cap the staging buffer: a guest can declare a ~4 GiB WSABUF without backing it, so allocating
+                // its full length before any data arrives is an asymmetric memory-exhaustion vector. Stream
+                // recv has partial-read semantics, so the guest simply reads the rest on the next call.
+                constexpr size_t max_stream_transfer_bytes = 64u << 20;
                 std::vector<std::byte> host_buffer;
-                host_buffer.resize(wsabuf.len);
+                host_buffer.resize(std::min<size_t>(wsabuf.len, max_stream_transfer_bytes));
 
                 const auto bytes_received = this->s_->recv(host_buffer);
 
@@ -899,8 +914,11 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                // Cap as in receive; stream send has partial-write semantics, so a larger request is simply
+                // sent across multiple calls rather than staged in one oversized host allocation.
+                constexpr size_t max_stream_transfer_bytes = 64u << 20;
                 std::vector<std::byte> host_buffer;
-                host_buffer.resize(wsabuf.len);
+                host_buffer.resize(std::min<size_t>(wsabuf.len, max_stream_transfer_bytes));
 
                 emu.read_memory(wsabuf.buf, host_buffer.data(), host_buffer.size());
 
@@ -964,15 +982,20 @@ namespace sogen
                                          const std::span<const afd_endpoint* const> endpoints,
                                          const std::span<const AFD_POLL_HANDLE_INFO<Traits>> handles)
             {
+                const auto entry_count = std::min(endpoints.size(), handles.size());
+
                 std::vector<network::poll_entry> poll_data{};
-                poll_data.resize(endpoints.size());
+                poll_data.resize(entry_count);
 
-                for (size_t i = 0; i < endpoints.size() && i < handles.size(); ++i)
+                auto endpoint_it = endpoints.begin();
+                auto handle_it = handles.begin();
+
+                for (auto& pfd : poll_data)
                 {
-                    auto& pfd = poll_data.at(i);
-                    const auto& handle = handles[i];
+                    const auto* endpoint = *endpoint_it++;
+                    const auto& handle = *handle_it++;
 
-                    pfd.s = endpoints[i]->s_.get();
+                    pfd.s = endpoint->s_.get();
                     pfd.events = map_afd_request_events_to_socket(handle.PollEvents);
                     pfd.revents = pfd.events;
                 }
@@ -988,21 +1011,21 @@ namespace sogen
 
                 size_t current_index = 0;
 
-                for (size_t i = 0; i < endpoints.size(); ++i)
+                for (size_t source_index = 0; source_index < poll_data.size(); ++source_index)
                 {
-                    const auto& pfd = poll_data.at(i);
+                    const auto& pfd = poll_data.at(source_index);
+                    const auto* endpoint = endpoints.subspan(source_index, 1).front();
+                    const auto& handle = handles.subspan(source_index, 1).front();
+
                     if (pfd.revents == 0)
                     {
                         continue;
                     }
 
-                    const auto& handle = handles[i];
-                    const auto& endpoint = endpoints[i];
-
                     const bool is_connecting =
                         endpoint->delayed_ioctl_ && _AFD_REQUEST(endpoint->delayed_ioctl_->io_control_code) == AFD_CONNECT;
 
-                    auto entry = handle_info_obj.read(i);
+                    auto entry = handle_info_obj.read(source_index);
                     entry.PollEvents =
                         map_socket_response_events_to_afd(pfd.revents, handle.PollEvents, pfd.s->is_listening(), is_connecting);
                     entry.Status = STATUS_SUCCESS;
@@ -1152,6 +1175,14 @@ namespace sogen
 
                 const auto send_info = emu.read_memory<AFD_SEND_DATAGRAM_INFO<Traits>>(c.input_buffer);
                 const auto buffer = emu.read_memory<EMU_WSABUF<Traits>>(send_info.BufferArray);
+
+                // RemoteAddressLength is a signed LONG; a negative or oversized value would turn into a
+                // huge read below. A sockaddr is at most sizeof(win_sockaddr_in6).
+                if (send_info.TdiConnInfo.RemoteAddressLength < 0 ||
+                    static_cast<size_t>(send_info.TdiConnInfo.RemoteAddressLength) > sizeof(win_sockaddr_in6))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
 
                 auto address_buffer =
                     emu.read_memory(send_info.TdiConnInfo.RemoteAddress, static_cast<size_t>(send_info.TdiConnInfo.RemoteAddressLength));
@@ -1317,9 +1348,9 @@ namespace sogen
         };
     }
 
-    std::unique_ptr<io_device> create_afd_endpoint(const bool is_32_bit)
+    std::unique_ptr<io_device> create_afd_endpoint(const device_creation_context& context)
     {
-        if (is_32_bit)
+        if (context.is_32_bit)
         {
             return std::make_unique<afd_endpoint<EmulatorTraits<Emu32>>>();
         }
@@ -1327,9 +1358,9 @@ namespace sogen
         return std::make_unique<afd_endpoint<EmulatorTraits<Emu64>>>();
     }
 
-    std::unique_ptr<io_device> create_afd_async_connect_hlp(const bool is_32_bit)
+    std::unique_ptr<io_device> create_afd_async_connect_hlp(const device_creation_context& context)
     {
-        if (is_32_bit)
+        if (context.is_32_bit)
         {
             return std::make_unique<afd_async_connect_hlp<EmulatorTraits<Emu32>>>();
         }

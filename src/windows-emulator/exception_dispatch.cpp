@@ -94,7 +94,7 @@ namespace sogen
             uint64_t ss;
         };
 
-        void dispatch_exception_pointers(x86_64_emulator& emu, const uint64_t dispatcher,
+        void dispatch_exception_pointers(x86_64_cpu& emu, const uint64_t dispatcher,
                                          const EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers)
         {
             constexpr auto mach_frame_size = 0x40;
@@ -199,14 +199,14 @@ namespace sogen
             return result;
         }
 
-        void sync_wow64_cpu_reserved_context(windows_emulator& win_emu, const CONTEXT64& ctx)
+        void sync_wow64_cpu_reserved_context(windows_emulator& win_emu, x86_64_cpu& emu, emulator_thread& thread, const CONTEXT64& ctx)
         {
             if (!win_emu.process.is_wow64_process)
             {
                 return;
             }
 
-            const auto bitness = segment_utils::get_segment_bitness(win_emu.emu(), ctx.SegCs);
+            const auto bitness = segment_utils::get_segment_bitness(emu, ctx.SegCs);
             if (!bitness || *bitness != segment_utils::segment_bitness::bit32)
             {
                 return;
@@ -214,7 +214,7 @@ namespace sogen
 
             // Wow64PassExceptionToGuest rebuilds the 32-bit context from WOW64_CPURESERVED
             // (TEB64 TLS slot 1), not from the native exception ContextRecord below.
-            win_emu.current_thread().wow64_cpu_reserved->access([&](WOW64_CPURESERVED& cpu) {
+            thread.wow64_cpu_reserved->access([&](WOW64_CPURESERVED& cpu) {
                 cpu.Flags |= WOW64_CPURESERVED_FLAG_RESET_STATE;
                 cpu.Context = make_wow64_context(ctx);
             });
@@ -244,14 +244,25 @@ namespace sogen
         return false;
     }
 
-    void dispatch_exception(windows_emulator& win_emu, const DWORD status, const std::vector<EmulatorTraits<Emu64>::ULONG_PTR>& parameters)
+    void dispatch_exception(windows_emulator& win_emu, vcpu_context& vcpu, const DWORD status,
+                            const std::vector<EmulatorTraits<Emu64>::ULONG_PTR>& parameters)
     {
+        auto& thread = vcpu.thread();
+
+        win_emu.record_exception_trace({
+            .status = static_cast<uint32_t>(status),
+            .tid = thread.id,
+            .vcpu = static_cast<uint32_t>(vcpu.cpu.index()),
+            .rip = vcpu.cpu.read_instruction_pointer(),
+            .info = parameters.size() > 1 ? static_cast<uint64_t>(parameters[1]) : 0,
+        });
+
         CONTEXT64 ctx{};
         ctx.ContextFlags = CONTEXT64_ALL;
-        cpu_context::save(win_emu.emu(), ctx);
+        cpu_context::save(vcpu.cpu, ctx);
         ctx.Rip = win_emu.uses_instruction_precision() //
-                      ? win_emu.current_thread().current_ip
-                      : win_emu.emu().read_instruction_pointer();
+                      ? thread.current_ip
+                      : vcpu.cpu.read_instruction_pointer();
 
         exception_record record{};
         memset(&record, 0, sizeof(record));
@@ -283,50 +294,51 @@ namespace sogen
 
         record.ExceptionAddress = ctx.Rip;
 
-        sync_wow64_cpu_reserved_context(win_emu, ctx);
+        sync_wow64_cpu_reserved_context(win_emu, vcpu.cpu, thread, ctx);
 
         EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers{};
         pointers.ContextRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&ctx);
         pointers.ExceptionRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&record);
-        dispatch_exception_pointers(win_emu.emu(), win_emu.process.ki_user_exception_dispatcher, pointers);
+        dispatch_exception_pointers(vcpu.cpu, win_emu.process.ki_user_exception_dispatcher, pointers);
     }
 
-    void dispatch_access_violation(windows_emulator& win_emu, const uint64_t address, const memory_operation operation)
+    void dispatch_access_violation(windows_emulator& win_emu, vcpu_context& vcpu, const uint64_t address, const memory_operation operation)
     {
-        dispatch_exception(win_emu, STATUS_ACCESS_VIOLATION,
+        dispatch_exception(win_emu, vcpu, STATUS_ACCESS_VIOLATION,
                            {
                                map_violation_operation_to_parameter(operation),
                                address,
                            });
     }
 
-    void dispatch_guard_page_violation(windows_emulator& win_emu, const uint64_t address, const memory_operation operation)
+    void dispatch_guard_page_violation(windows_emulator& win_emu, vcpu_context& vcpu, const uint64_t address,
+                                       const memory_operation operation)
     {
-        dispatch_exception(win_emu, STATUS_GUARD_PAGE_VIOLATION,
+        dispatch_exception(win_emu, vcpu, STATUS_GUARD_PAGE_VIOLATION,
                            {
                                map_violation_operation_to_parameter(operation),
                                address,
                            });
     }
 
-    void dispatch_illegal_instruction_violation(windows_emulator& win_emu)
+    void dispatch_illegal_instruction_violation(windows_emulator& win_emu, vcpu_context& vcpu)
     {
-        dispatch_exception(win_emu, STATUS_ILLEGAL_INSTRUCTION, {});
+        dispatch_exception(win_emu, vcpu, STATUS_ILLEGAL_INSTRUCTION, {});
     }
 
-    void dispatch_integer_division_by_zero(windows_emulator& win_emu)
+    void dispatch_integer_division_by_zero(windows_emulator& win_emu, vcpu_context& vcpu)
     {
-        dispatch_exception(win_emu, STATUS_INTEGER_DIVIDE_BY_ZERO, {});
+        dispatch_exception(win_emu, vcpu, STATUS_INTEGER_DIVIDE_BY_ZERO, {});
     }
 
-    void dispatch_single_step(windows_emulator& win_emu)
+    void dispatch_single_step(windows_emulator& win_emu, vcpu_context& vcpu)
     {
-        dispatch_exception(win_emu, STATUS_SINGLE_STEP, {});
+        dispatch_exception(win_emu, vcpu, STATUS_SINGLE_STEP, {});
     }
 
-    void dispatch_breakpoint(windows_emulator& win_emu)
+    void dispatch_breakpoint(windows_emulator& win_emu, vcpu_context& vcpu)
     {
-        dispatch_exception(win_emu, STATUS_BREAKPOINT, {});
+        dispatch_exception(win_emu, vcpu, STATUS_BREAKPOINT, {});
     }
 
 } // namespace sogen

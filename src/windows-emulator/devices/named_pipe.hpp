@@ -33,9 +33,11 @@ namespace sogen
         void create(windows_emulator&, const io_device_creation_data&) override
         {
         }
+
         void work(windows_emulator&) override
         {
         }
+
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
         {
             if (c.io_control_code == FSCTL_PIPE_PEEK)
@@ -50,6 +52,7 @@ namespace sogen
         void serialize_object(utils::buffer_serializer&) const override
         {
         }
+
         void deserialize_object(utils::buffer_deserializer&) override
         {
         }

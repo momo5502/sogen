@@ -3,11 +3,27 @@
 
 #include "../windows_emulator.hpp"
 
+#include <utils/string.hpp>
+
 namespace sogen
 {
 
     namespace
     {
+        // Partial layout of the KsecDD ioctl 0x390400 request, covering the two fields the handler
+        // consumes: the operation selector and the requested algorithm name.
+        struct ksec_algorithm_request
+        {
+            std::array<uint8_t, 6> reserved0;
+            uint16_t operation;
+            std::array<uint8_t, 0x28> reserved1;
+            std::array<char16_t, 8> algorithm_name;
+        };
+
+        static_assert(offsetof(ksec_algorithm_request, operation) == 6);
+        static_assert(offsetof(ksec_algorithm_request, algorithm_name) == 0x30);
+        static_assert(sizeof(ksec_algorithm_request) == 0x40);
+
         struct security_support_provider : stateless_device
         {
             // RNG Microsoft Primitive Provider
@@ -48,37 +64,46 @@ namespace sogen
                     return STATUS_NOT_SUPPORTED;
                 }
 
-                const auto operation = win_emu.emu().read_memory<USHORT>(c.input_buffer + 6);
-
-                if (operation == 2)
+                // The input buffer and its length are guest-controlled; require the full request layout
+                // before reading any field out of it.
+                if (!c.input_buffer || c.input_buffer_length < sizeof(ksec_algorithm_request))
                 {
-                    std::array<char16_t, 8> alg_name_buffer{};
-                    win_emu.emu().read_memory(c.input_buffer + 0x30, alg_name_buffer.data(), sizeof(alg_name_buffer));
+                    return STATUS_INVALID_PARAMETER;
+                }
 
-                    const std::u16string algorithm_name(alg_name_buffer.data());
+                const auto request = win_emu.emu().read_memory<ksec_algorithm_request>(c.input_buffer);
+
+                if (request.operation == 2)
+                {
+                    // algorithm_name is guest-controlled and may not be NUL-terminated; the util bounds the
+                    // view to the fixed array so we never scan past it looking for a terminator.
+                    const auto algorithm_name = utils::string::to_string_view<char16_t>(request.algorithm_name);
+
+                    // The response is a fixed-size record; never write past the guest-declared output buffer.
+                    const auto write_response = [&](const auto& output_data) -> NTSTATUS {
+                        if (!c.output_buffer || c.output_buffer_length < sizeof(output_data))
+                        {
+                            return STATUS_BUFFER_TOO_SMALL;
+                        }
+
+                        win_emu.emu().write_memory(c.output_buffer, output_data);
+
+                        if (c.io_status_block)
+                        {
+                            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                            block.Information = sizeof(output_data);
+                            c.io_status_block.write(block);
+                        }
+
+                        return STATUS_SUCCESS;
+                    };
 
                     if (algorithm_name == u"SHA256")
                     {
-                        win_emu.emu().write_memory(c.output_buffer, sha256_output_data);
-
-                        if (c.io_status_block)
-                        {
-                            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                            block.Information = sizeof(sha256_output_data);
-                            c.io_status_block.write(block);
-                        }
+                        return write_response(sha256_output_data);
                     }
-                    else
-                    {
-                        win_emu.emu().write_memory(c.output_buffer, rng_output_data);
 
-                        if (c.io_status_block)
-                        {
-                            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                            block.Information = sizeof(rng_output_data);
-                            c.io_status_block.write(block);
-                        }
-                    }
+                    return write_response(rng_output_data);
                 }
 
                 return STATUS_SUCCESS;
@@ -86,7 +111,7 @@ namespace sogen
         };
     }
 
-    std::unique_ptr<io_device> create_security_support_provider()
+    std::unique_ptr<io_device> create_security_support_provider(const device_creation_context&)
     {
         return std::make_unique<security_support_provider>();
     }

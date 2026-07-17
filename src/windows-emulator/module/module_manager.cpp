@@ -2,7 +2,7 @@
 #include "module_manager.hpp"
 #include "module_mapping.hpp"
 #include "platform/win_pefile.hpp"
-#include "windows-emulator/logger.hpp"
+#include <logger.hpp>
 #include "../wow64_heaven_gate.hpp"
 #include "../version/windows_version_manager.hpp"
 #include "../process_context.hpp"
@@ -96,6 +96,7 @@ namespace sogen
             buffer.write(mod.entry_point);
 
             buffer.write(mod.machine);
+            buffer.write(mod.dll_characteristics);
             buffer.write(mod.size_of_stack_reserve);
             buffer.write(mod.size_of_stack_commit);
             buffer.write(mod.size_of_heap_reserve);
@@ -121,6 +122,7 @@ namespace sogen
             buffer.read(mod.entry_point);
 
             buffer.read(mod.machine);
+            buffer.read(mod.dll_characteristics);
             buffer.read(mod.size_of_stack_reserve);
             buffer.read(mod.size_of_stack_commit);
             buffer.read(mod.size_of_heap_reserve);
@@ -154,9 +156,12 @@ namespace sogen
         return result;
     }
 
-    pe_detection_result pe_architecture_detector::detect_from_memory(uint64_t base_address, uint64_t image_size)
+    pe_detection_result pe_architecture_detector::detect_from_memory(const memory_interface& memory, uint64_t base_address,
+                                                                     uint64_t image_size)
     {
-        auto variant_result = winpe::get_pe_arch(base_address, image_size);
+        auto variant_result = winpe::get_pe_arch([&](const uint64_t address, void* destination,
+                                                     const size_t size) { return memory.try_read_memory(address, destination, size); },
+                                                 base_address, image_size);
 
         if (std::holds_alternative<std::error_code>(variant_result))
         {
@@ -186,9 +191,10 @@ namespace sogen
     }
 
     // PE32 Mapping Strategy Implementation
-    mapped_module pe32_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path)
+    mapped_module pe32_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
+                                                       const uint64_t relocation_base)
     {
-        return map_module_from_file<std::uint32_t>(memory, std::move(file), std::move(module_path));
+        return map_module_from_file<std::uint32_t>(memory, std::move(file), std::move(module_path), relocation_base);
     }
 
     mapped_module pe32_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -198,9 +204,10 @@ namespace sogen
     }
 
     // PE64 Mapping Strategy Implementation
-    mapped_module pe64_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path)
+    mapped_module pe64_mapping_strategy::map_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
+                                                       const uint64_t relocation_base)
     {
-        return map_module_from_file<std::uint64_t>(memory, std::move(file), std::move(module_path));
+        return map_module_from_file<std::uint64_t>(memory, std::move(file), std::move(module_path), relocation_base);
     }
 
     mapped_module pe64_mapping_strategy::map_from_memory(memory_manager& memory, uint64_t base_address, uint64_t image_size,
@@ -287,6 +294,9 @@ namespace sogen
                                                    const windows_path& win32u_path, const logger& logger)
     {
         this->executable = this->map_module_or_throw(executable_path, logger, true);
+        this->memory_->set_dep_enabled(this->executable->machine != static_cast<uint16_t>(PEMachineType::I386) ||
+                                       (this->executable->dll_characteristics & IMAGE_DLLCHARACTERISTICS_NX_COMPAT) != 0);
+
         this->ntdll = this->map_module_or_throw(ntdll_path, logger, true);
         this->win32u = this->map_module_or_throw(win32u_path, logger, true);
     }
@@ -482,16 +492,17 @@ namespace sogen
         return {};
     }
 
-    mapped_module* module_manager::map_module(windows_path file, const logger& logger, const bool is_static, bool allow_duplicate)
+    mapped_module* module_manager::map_module(windows_path file, const logger& logger, const bool is_static, bool allow_duplicate,
+                                              const uint64_t relocation_base)
     {
         auto local_file = this->file_sys_->translate(file);
 
         if (local_file.filename() == "win32u.dll")
         {
-            return this->map_local_module(local_file, std::move(file), logger, is_static, false);
+            return this->map_local_module(local_file, std::move(file), logger, is_static, false, relocation_base);
         }
 
-        return this->map_local_module(local_file, std::move(file), logger, is_static, allow_duplicate);
+        return this->map_local_module(local_file, std::move(file), logger, is_static, allow_duplicate, relocation_base);
     }
 
     mapped_module* module_manager::map_module_or_throw(const windows_path& file, const logger& logger, const bool is_static,
@@ -507,7 +518,7 @@ namespace sogen
     }
 
     mapped_module* module_manager::map_local_module(const std::filesystem::path& file, windows_path module_path, const logger& logger,
-                                                    const bool is_static, bool allow_duplicate)
+                                                    const bool is_static, bool allow_duplicate, const uint64_t relocation_base)
     {
         auto local_file = weakly_canonical(absolute(file));
 
@@ -528,7 +539,7 @@ namespace sogen
             detection_result,
             [&]() {
                 auto& strategy = strategy_factory_.get_strategy(detection_result.architecture);
-                return strategy.map_from_file(*this->memory_, std::move(local_file), std::move(module_path));
+                return strategy.map_from_file(*this->memory_, std::move(local_file), std::move(module_path), relocation_base);
             },
             logger, is_static);
     }
@@ -547,7 +558,7 @@ namespace sogen
             }
         }
 
-        auto detection_result = pe_architecture_detector::detect_from_memory(base_address, image_size);
+        auto detection_result = pe_architecture_detector::detect_from_memory(*this->memory_, base_address, image_size);
 
         return map_module_core(
             detection_result,

@@ -91,6 +91,12 @@ namespace sogen
         // Reserves the range and aliases it onto caller-owned host memory (e.g. a host Vulkan mapping) so the
         // guest accesses it coherently. The region is treated like MMIO: not serialized, host_pointer not owned.
         bool allocate_host_memory(uint64_t address, size_t size, void* host_pointer, nt_memory_permission permissions);
+
+        // Backend coherency hooks for host-aliased memory (see memory_interface). Device emulation such as
+        // the GPU bridge uses these to make guest writes visible to the host GPU on backends (e.g. KVM) that
+        // alias host memory into the guest non-coherently.
+        bool host_memory_aliasing_is_coherent() const override;
+        void flush_host_memory_cache(const void* host_pointer, size_t size) override;
         bool allocate_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool reserve_only = false,
                              memory_region_kind kind = memory_region_kind::private_allocation);
 
@@ -144,11 +150,19 @@ namespace sogen
 
         memory_stats compute_memory_stats() const;
 
+        void set_dep_enabled(bool enabled);
+
+        bool is_dep_enabled() const
+        {
+            return this->dep_enabled_;
+        }
+
       private:
         memory_interface* memory_{};
         reserved_region_map reserved_regions_{};
         std::atomic<std::uint64_t> layout_version_{0};
         std::uint64_t default_allocation_address_{0x100000000ULL};
+        bool dep_enabled_{true};
 
         void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) final;
         void map_memory(uint64_t address, size_t size, memory_permission permissions) final;
@@ -158,6 +172,7 @@ namespace sogen
 
         void update_layout_version();
         bool commit_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool allow_image_section);
+        memory_permission get_effective_permissions(nt_memory_permission permissions) const;
     };
 
     namespace memory_region_policy
@@ -186,6 +201,26 @@ namespace sogen
                 return MEM_MAPPED;
             default:
                 return MEM_PRIVATE;
+            }
+        }
+
+        constexpr uint32_t to_memory_region_information_type(const memory_region_kind kind)
+        {
+            switch (kind)
+            {
+            case memory_region_kind::private_allocation:
+                return 1 << 0;
+            case memory_region_kind::file_section_view:
+                return 1 << 1;
+            case memory_region_kind::section_image:
+                return 1 << 2;
+            case memory_region_kind::pagefile_section_view:
+                return 1 << 3;
+            case memory_region_kind::mmio:
+                return 1 << 4;
+            case memory_region_kind::free:
+            default:
+                return 0;
             }
         }
 

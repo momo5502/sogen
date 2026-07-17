@@ -9,6 +9,7 @@
 #include <utils/file_handle.hpp>
 #include <platform/synchronisation.hpp>
 #include <platform/win_pefile.hpp>
+#include <platform/window.hpp>
 
 namespace sogen
 {
@@ -49,6 +50,15 @@ namespace sogen
         }
     };
 
+    struct accelerator_table_entry
+    {
+        uint8_t flags{};
+        uint16_t key{};
+        uint16_t command{};
+    };
+
+    static_assert(sizeof(accelerator_table_entry) == 6);
+
     template <typename GuestType>
     struct user_object : ref_counted_object
     {
@@ -71,11 +81,62 @@ namespace sogen
         }
     };
 
+    struct accelerator_table : user_object<USER_ACCELERATOR_TABLE>
+    {
+        std::vector<accelerator_table_entry> entries{};
+
+        accelerator_table(memory_interface& memory)
+            : user_object(memory)
+        {
+        }
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            user_object::serialize_object(buffer);
+            buffer.write_vector(this->entries);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            user_object::deserialize_object(buffer);
+            buffer.read_vector(this->entries);
+        }
+    };
+
     // WC_DIALOG = MAKEINTATOM(0x8002); user32 creates dialogs and message boxes with this fixed
     // system atom, which the kernel reports as the class name "#32770". The atom value is constant
     // across Windows builds (unlike the builtin control-class atoms, which vary per build and are
     // resolved through SERVERINFO.atomSysClass), so matching this canonical name is portable.
     inline constexpr std::u16string_view builtin_dialog_class_name = u"#32770";
+
+    inline std::u16string_view normalize_builtin_window_class_name(const std::u16string_view class_name)
+    {
+        if (class_name == u"#1" || class_name == u"BUTTON" || class_name == u"Button")
+        {
+            return u"Button";
+        }
+        if (class_name == u"#2" || class_name == u"EDIT" || class_name == u"Edit")
+        {
+            return u"Edit";
+        }
+        if (class_name == u"#3" || class_name == u"STATIC" || class_name == u"Static")
+        {
+            return u"Static";
+        }
+        if (class_name == u"#4" || class_name == u"LISTBOX" || class_name == u"ListBox")
+        {
+            return u"ListBox";
+        }
+        if (class_name == u"#5" || class_name == u"SCROLLBAR" || class_name == u"ScrollBar")
+        {
+            return u"ScrollBar";
+        }
+        if (class_name == u"#6" || class_name == u"COMBOBOX" || class_name == u"ComboBox")
+        {
+            return u"ComboBox";
+        }
+        return class_name;
+    }
 
     struct window : user_object<USER_WINDOW>
     {
@@ -109,6 +170,27 @@ namespace sogen
         bool is_dialog() const
         {
             return this->class_name == builtin_dialog_class_name;
+        }
+
+        // The guest sizes its window via AdjustWindowRect, which inflates the client rect it wants to render
+        // into by the non-client frame. user32 always adds a 1px border for framed windows (SM_CXBORDER/
+        // SM_CYBORDER are hardcoded to 1) and our system metrics for the sizing frame and caption are zero, so
+        // the only inset is that 1px border. Mirror it so the client size we report (GetClientRect, the Vulkan
+        // surface extent, the presented surface) matches what the guest actually renders -- otherwise the
+        // layer (DXVK) renders its whole frame onto a 1px-larger surface and the upscaled image softens.
+        int32_t nonclient_border() const
+        {
+            return (this->style & (WS_BORDER | WS_DLGFRAME | WS_THICKFRAME)) != 0 ? 1 : 0;
+        }
+
+        int32_t client_width() const
+        {
+            return std::max(0, this->width - 2 * this->nonclient_border());
+        }
+
+        int32_t client_height() const
+        {
+            return std::max(0, this->height - 2 * this->nonclient_border());
         }
 
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -251,7 +333,7 @@ namespace sogen
             auto next_text = this->text_storage;
             for (size_t i = 0; i < this->items.size(); ++i)
             {
-                const auto& item = this->items[i];
+                const auto& item = this->items.at(i);
                 const auto text_ptr = !item.text.empty() ? next_text : 0;
                 const auto guest_item = make_guest_item(item, text_ptr);
                 write_guest_item_text(memory, item, text_ptr);
@@ -279,7 +361,7 @@ namespace sogen
                 return;
             }
 
-            const auto& item = this->items[index];
+            const auto& item = this->items.at(index);
             const auto text_ptr = this->get_guest_text_ptr(index);
             const auto guest_item = make_guest_item(item, text_ptr);
             write_guest_item_text(memory, item, text_ptr);
@@ -368,13 +450,14 @@ namespace sogen
             auto text_ptr = this->text_storage;
             for (size_t i = 0; i < index; ++i)
             {
-                if (!this->items[i].text.empty())
+                const auto& item = this->items.at(i);
+                if (!item.text.empty())
                 {
-                    text_ptr += (this->items[i].text.size() + 1) * sizeof(char16_t);
+                    text_ptr += (item.text.size() + 1) * sizeof(char16_t);
                 }
             }
 
-            return this->items[index].text.empty() ? 0 : text_ptr;
+            return this->items.at(index).text.empty() ? 0 : text_ptr;
         }
 
         size_t text_storage_size() const
@@ -493,12 +576,18 @@ namespace sogen
         std::filesystem::path file_path{};
         uint64_t file_size{};
         bool is_directory{};
+        LARGE_INTEGER creation_time{};
+        LARGE_INTEGER last_access_time{};
+        LARGE_INTEGER last_write_time{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->file_path);
             buffer.write(this->file_size);
             buffer.write(this->is_directory);
+            buffer.write(this->creation_time);
+            buffer.write(this->last_access_time);
+            buffer.write(this->last_write_time);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -506,6 +595,9 @@ namespace sogen
             buffer.read(this->file_path);
             buffer.read(this->file_size);
             buffer.read(this->is_directory);
+            buffer.read(this->creation_time);
+            buffer.read(this->last_access_time);
+            buffer.read(this->last_write_time);
         }
     };
 

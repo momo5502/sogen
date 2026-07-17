@@ -36,7 +36,7 @@ namespace sogen
         return emu.emu().hook_memory_read(
             object.value(), static_cast<size_t>(object.size()),
             [i = std::move(info), object, &emu, verbose, modules, state = std::move(shared_state),
-             on_access = std::forward<Callback>(on_access)](const uint64_t address, const void*, const size_t size) {
+             on_access = std::forward<Callback>(on_access)](cpu_interface&, const uint64_t address, const void*, const size_t size) {
                 const auto rip = emu.emu().read_instruction_pointer();
                 const auto* mod = emu.mod_manager.find_by_address(rip);
                 const auto is_main_access = !mod || (mod == emu.mod_manager.executable || modules.contains(mod->name));

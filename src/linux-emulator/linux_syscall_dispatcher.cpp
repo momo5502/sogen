@@ -34,6 +34,8 @@ namespace sogen
     void sys_fcntl(const linux_syscall_context& c);
     void sys_ioctl(const linux_syscall_context& c);
     void sys_getcwd(const linux_syscall_context& c);
+    void sys_chdir(const linux_syscall_context& c);
+    void sys_fchdir(const linux_syscall_context& c);
     void sys_readlink(const linux_syscall_context& c);
     void sys_readlinkat(const linux_syscall_context& c);
     void sys_getdents64(const linux_syscall_context& c);
@@ -166,188 +168,204 @@ namespace sogen
     void sys_select(const linux_syscall_context& c);
     void sys_pselect6(const linux_syscall_context& c);
 
-    void linux_syscall_dispatcher::dispatch(linux_emulator& emu_ref)
+    instruction_hook_continuation linux_syscall_dispatcher::dispatch(linux_emulator& emu_ref) const
     {
         auto& e = emu_ref.emu();
         const auto syscall_id = e.reg(x86_register::rax);
+        const auto* entry = this->get_entry(syscall_id);
+        const auto syscall_name = (entry != nullptr && !entry->name.empty()) ? std::string_view{entry->name.data(), entry->name.size()}
+                                                                             : std::string_view{"<unknown>"};
 
-        if (syscall_id >= this->handlers_.size())
+        if (emu_ref.on_syscall)
+        {
+            const auto res = emu_ref.on_syscall(syscall_id, syscall_name);
+            if (res == instruction_hook_continuation::skip_instruction ||
+                res == instruction_hook_continuation::finalized_instruction_pointer)
+            {
+                return res;
+            }
+        }
+
+        if (entry == nullptr)
         {
             emu_ref.log.warn("Unimplemented syscall: %" PRIu64 "\n", syscall_id);
             e.reg(x86_register::rax, static_cast<uint64_t>(-LINUX_ENOSYS));
-            return;
+            return instruction_hook_continuation::skip_instruction;
         }
 
-        const auto& entry = this->handlers_[static_cast<size_t>(syscall_id)];
-        if (!entry.handler)
+        if (!entry->handler)
         {
-            emu_ref.log.warn("Unimplemented syscall: %" PRIu64 " (%s)\n", syscall_id, entry.name.empty() ? "unknown" : entry.name.c_str());
+            emu_ref.log.warn("Unimplemented syscall: %" PRIu64 " (%s)\n", syscall_id,
+                             entry->name.empty() ? "unknown" : entry->name.c_str());
             e.reg(x86_register::rax, static_cast<uint64_t>(-LINUX_ENOSYS));
-            return;
+            return instruction_hook_continuation::skip_instruction;
         }
 
         linux_syscall_context ctx{.emu_ref = emu_ref, .emu = e, .proc = emu_ref.process};
-        entry.handler(ctx);
+        entry->handler(ctx);
+        return ctx.continuation;
     }
 
     void linux_syscall_dispatcher::add_handlers()
     {
         // File syscalls (Tier 1)
-        this->handlers_[LINUX_SYS_read] = {.handler = sys_read, .name = "read"};
-        this->handlers_[LINUX_SYS_write] = {.handler = sys_write, .name = "write"};
-        this->handlers_[LINUX_SYS_open] = {.handler = sys_open, .name = "open"};
-        this->handlers_[LINUX_SYS_close] = {.handler = sys_close, .name = "close"};
-        this->handlers_[LINUX_SYS_fstat] = {.handler = sys_fstat, .name = "fstat"};
-        this->handlers_[LINUX_SYS_lseek] = {.handler = sys_lseek, .name = "lseek"};
-        this->handlers_[LINUX_SYS_access] = {.handler = sys_access, .name = "access"};
-        this->handlers_[LINUX_SYS_openat] = {.handler = sys_openat, .name = "openat"};
-        this->handlers_[LINUX_SYS_fsync] = {.handler = sys_fsync, .name = "fsync"};
-        this->handlers_[LINUX_SYS_fdatasync] = {.handler = sys_fdatasync, .name = "fdatasync"};
+        this->register_handler(LINUX_SYS_read, sys_read, "read");
+        this->register_handler(LINUX_SYS_write, sys_write, "write");
+        this->register_handler(LINUX_SYS_open, sys_open, "open");
+        this->register_handler(LINUX_SYS_close, sys_close, "close");
+        this->register_handler(LINUX_SYS_fstat, sys_fstat, "fstat");
+        this->register_handler(LINUX_SYS_lseek, sys_lseek, "lseek");
+        this->register_handler(LINUX_SYS_access, sys_access, "access");
+        this->register_handler(LINUX_SYS_openat, sys_openat, "openat");
+        this->register_handler(LINUX_SYS_fsync, sys_fsync, "fsync");
+        this->register_handler(LINUX_SYS_fdatasync, sys_fdatasync, "fdatasync");
 
         // File syscalls (Tier 2)
-        this->handlers_[LINUX_SYS_stat] = {.handler = sys_stat, .name = "stat"};
-        this->handlers_[LINUX_SYS_lstat] = {.handler = sys_lstat, .name = "lstat"};
-        this->handlers_[LINUX_SYS_pread64] = {.handler = sys_pread64, .name = "pread64"};
-        this->handlers_[LINUX_SYS_writev] = {.handler = sys_writev, .name = "writev"};
-        this->handlers_[LINUX_SYS_dup] = {.handler = sys_dup, .name = "dup"};
-        this->handlers_[LINUX_SYS_dup2] = {.handler = sys_dup2, .name = "dup2"};
-        this->handlers_[LINUX_SYS_dup3] = {.handler = sys_dup3, .name = "dup3"};
-        this->handlers_[LINUX_SYS_fcntl] = {.handler = sys_fcntl, .name = "fcntl"};
-        this->handlers_[LINUX_SYS_ioctl] = {.handler = sys_ioctl, .name = "ioctl"};
-        this->handlers_[LINUX_SYS_getcwd] = {.handler = sys_getcwd, .name = "getcwd"};
-        this->handlers_[LINUX_SYS_readlink] = {.handler = sys_readlink, .name = "readlink"};
-        this->handlers_[LINUX_SYS_readlinkat] = {.handler = sys_readlinkat, .name = "readlinkat"};
-        this->handlers_[LINUX_SYS_getdents64] = {.handler = sys_getdents64, .name = "getdents64"};
-        this->handlers_[LINUX_SYS_newfstatat] = {.handler = sys_newfstatat, .name = "newfstatat"};
+        this->register_handler(LINUX_SYS_stat, sys_stat, "stat");
+        this->register_handler(LINUX_SYS_lstat, sys_lstat, "lstat");
+        this->register_handler(LINUX_SYS_pread64, sys_pread64, "pread64");
+        this->register_handler(LINUX_SYS_writev, sys_writev, "writev");
+        this->register_handler(LINUX_SYS_dup, sys_dup, "dup");
+        this->register_handler(LINUX_SYS_dup2, sys_dup2, "dup2");
+        this->register_handler(LINUX_SYS_dup3, sys_dup3, "dup3");
+        this->register_handler(LINUX_SYS_fcntl, sys_fcntl, "fcntl");
+        this->register_handler(LINUX_SYS_ioctl, sys_ioctl, "ioctl");
+        this->register_handler(LINUX_SYS_getcwd, sys_getcwd, "getcwd");
+        this->register_handler(LINUX_SYS_chdir, sys_chdir, "chdir");
+        this->register_handler(LINUX_SYS_fchdir, sys_fchdir, "fchdir");
+        this->register_handler(LINUX_SYS_readlink, sys_readlink, "readlink");
+        this->register_handler(LINUX_SYS_readlinkat, sys_readlinkat, "readlinkat");
+        this->register_handler(LINUX_SYS_getdents64, sys_getdents64, "getdents64");
+        this->register_handler(LINUX_SYS_newfstatat, sys_newfstatat, "newfstatat");
 
         // Memory syscalls
-        this->handlers_[LINUX_SYS_mmap] = {.handler = sys_mmap, .name = "mmap"};
-        this->handlers_[LINUX_SYS_mprotect] = {.handler = sys_mprotect, .name = "mprotect"};
-        this->handlers_[LINUX_SYS_munmap] = {.handler = sys_munmap, .name = "munmap"};
-        this->handlers_[LINUX_SYS_brk] = {.handler = sys_brk, .name = "brk"};
+        this->register_handler(LINUX_SYS_mmap, sys_mmap, "mmap");
+        this->register_handler(LINUX_SYS_mprotect, sys_mprotect, "mprotect");
+        this->register_handler(LINUX_SYS_munmap, sys_munmap, "munmap");
+        this->register_handler(LINUX_SYS_brk, sys_brk, "brk");
 
         // Process syscalls
-        this->handlers_[LINUX_SYS_exit] = {.handler = sys_exit, .name = "exit"};
-        this->handlers_[LINUX_SYS_exit_group] = {.handler = sys_exit_group, .name = "exit_group"};
-        this->handlers_[LINUX_SYS_uname] = {.handler = sys_uname, .name = "uname"};
-        this->handlers_[LINUX_SYS_arch_prctl] = {.handler = sys_arch_prctl, .name = "arch_prctl"};
-        this->handlers_[LINUX_SYS_prlimit64] = {.handler = sys_prlimit64, .name = "prlimit64"};
-        this->handlers_[LINUX_SYS_rseq] = {.handler = sys_rseq, .name = "rseq"};
-        this->handlers_[LINUX_SYS_getpid] = {.handler = sys_getpid, .name = "getpid"};
-        this->handlers_[LINUX_SYS_getppid] = {.handler = sys_getppid, .name = "getppid"};
-        this->handlers_[LINUX_SYS_getuid] = {.handler = sys_getuid, .name = "getuid"};
-        this->handlers_[LINUX_SYS_getgid] = {.handler = sys_getgid, .name = "getgid"};
-        this->handlers_[LINUX_SYS_geteuid] = {.handler = sys_geteuid, .name = "geteuid"};
-        this->handlers_[LINUX_SYS_getegid] = {.handler = sys_getegid, .name = "getegid"};
-        this->handlers_[LINUX_SYS_gettid] = {.handler = sys_gettid, .name = "gettid"};
-        this->handlers_[LINUX_SYS_set_tid_address] = {.handler = sys_set_tid_address, .name = "set_tid_address"};
-        this->handlers_[LINUX_SYS_set_robust_list] = {.handler = sys_set_robust_list, .name = "set_robust_list"};
-        this->handlers_[LINUX_SYS_getrandom] = {.handler = sys_getrandom, .name = "getrandom"};
-        this->handlers_[LINUX_SYS_rt_sigaction] = {.handler = sys_rt_sigaction, .name = "rt_sigaction"};
-        this->handlers_[LINUX_SYS_rt_sigprocmask] = {.handler = sys_rt_sigprocmask, .name = "rt_sigprocmask"};
-        this->handlers_[LINUX_SYS_sigaltstack] = {.handler = sys_sigaltstack, .name = "sigaltstack"};
+        this->register_handler(LINUX_SYS_exit, sys_exit, "exit");
+        this->register_handler(LINUX_SYS_exit_group, sys_exit_group, "exit_group");
+        this->register_handler(LINUX_SYS_uname, sys_uname, "uname");
+        this->register_handler(LINUX_SYS_arch_prctl, sys_arch_prctl, "arch_prctl");
+        this->register_handler(LINUX_SYS_prlimit64, sys_prlimit64, "prlimit64");
+        this->register_handler(LINUX_SYS_rseq, sys_rseq, "rseq");
+        this->register_handler(LINUX_SYS_getpid, sys_getpid, "getpid");
+        this->register_handler(LINUX_SYS_getppid, sys_getppid, "getppid");
+        this->register_handler(LINUX_SYS_getuid, sys_getuid, "getuid");
+        this->register_handler(LINUX_SYS_getgid, sys_getgid, "getgid");
+        this->register_handler(LINUX_SYS_geteuid, sys_geteuid, "geteuid");
+        this->register_handler(LINUX_SYS_getegid, sys_getegid, "getegid");
+        this->register_handler(LINUX_SYS_gettid, sys_gettid, "gettid");
+        this->register_handler(LINUX_SYS_set_tid_address, sys_set_tid_address, "set_tid_address");
+        this->register_handler(LINUX_SYS_set_robust_list, sys_set_robust_list, "set_robust_list");
+        this->register_handler(LINUX_SYS_getrandom, sys_getrandom, "getrandom");
+        this->register_handler(LINUX_SYS_rt_sigaction, sys_rt_sigaction, "rt_sigaction");
+        this->register_handler(LINUX_SYS_rt_sigprocmask, sys_rt_sigprocmask, "rt_sigprocmask");
+        this->register_handler(LINUX_SYS_sigaltstack, sys_sigaltstack, "sigaltstack");
 
         // Memory syscalls (Tier 2)
-        this->handlers_[LINUX_SYS_mremap] = {.handler = sys_mremap, .name = "mremap"};
-        this->handlers_[LINUX_SYS_madvise] = {.handler = sys_madvise, .name = "madvise"};
+        this->register_handler(LINUX_SYS_mremap, sys_mremap, "mremap");
+        this->register_handler(LINUX_SYS_madvise, sys_madvise, "madvise");
 
         // Process syscalls (Tier 2)
-        this->handlers_[LINUX_SYS_sched_yield] = {.handler = sys_sched_yield, .name = "sched_yield"};
-        this->handlers_[LINUX_SYS_sched_getaffinity] = {.handler = sys_sched_getaffinity, .name = "sched_getaffinity"};
-        this->handlers_[LINUX_SYS_sched_getscheduler] = {.handler = sys_sched_getscheduler, .name = "sched_getscheduler"};
-        this->handlers_[LINUX_SYS_sched_getparam] = {.handler = sys_sched_getparam, .name = "sched_getparam"};
-        this->handlers_[LINUX_SYS_getpriority] = {.handler = sys_getpriority, .name = "getpriority"};
-        this->handlers_[LINUX_SYS_clock_getres] = {.handler = sys_clock_getres, .name = "clock_getres"};
+        this->register_handler(LINUX_SYS_sched_yield, sys_sched_yield, "sched_yield");
+        this->register_handler(LINUX_SYS_sched_getaffinity, sys_sched_getaffinity, "sched_getaffinity");
+        this->register_handler(LINUX_SYS_sched_getscheduler, sys_sched_getscheduler, "sched_getscheduler");
+        this->register_handler(LINUX_SYS_sched_getparam, sys_sched_getparam, "sched_getparam");
+        this->register_handler(LINUX_SYS_getpriority, sys_getpriority, "getpriority");
+        this->register_handler(LINUX_SYS_clock_getres, sys_clock_getres, "clock_getres");
 
         // Time syscalls
-        this->handlers_[LINUX_SYS_clock_gettime] = {.handler = sys_clock_gettime, .name = "clock_gettime"};
-        this->handlers_[LINUX_SYS_gettimeofday] = {.handler = sys_gettimeofday, .name = "gettimeofday"};
-        this->handlers_[LINUX_SYS_time] = {.handler = sys_time, .name = "time"};
-        this->handlers_[LINUX_SYS_nanosleep] = {.handler = sys_nanosleep, .name = "nanosleep"};
-        this->handlers_[LINUX_SYS_clock_nanosleep] = {.handler = sys_clock_nanosleep, .name = "clock_nanosleep"};
+        this->register_handler(LINUX_SYS_clock_gettime, sys_clock_gettime, "clock_gettime");
+        this->register_handler(LINUX_SYS_gettimeofday, sys_gettimeofday, "gettimeofday");
+        this->register_handler(LINUX_SYS_time, sys_time, "time");
+        this->register_handler(LINUX_SYS_nanosleep, sys_nanosleep, "nanosleep");
+        this->register_handler(LINUX_SYS_clock_nanosleep, sys_clock_nanosleep, "clock_nanosleep");
 
         // I/O syscalls (Tier 2)
-        this->handlers_[LINUX_SYS_pipe] = {.handler = sys_pipe, .name = "pipe"};
-        this->handlers_[LINUX_SYS_pipe2] = {.handler = sys_pipe2, .name = "pipe2"};
-        this->handlers_[LINUX_SYS_eventfd] = {.handler = sys_eventfd, .name = "eventfd"};
-        this->handlers_[LINUX_SYS_eventfd2] = {.handler = sys_eventfd2, .name = "eventfd2"};
+        this->register_handler(LINUX_SYS_pipe, sys_pipe, "pipe");
+        this->register_handler(LINUX_SYS_pipe2, sys_pipe2, "pipe2");
+        this->register_handler(LINUX_SYS_eventfd, sys_eventfd, "eventfd");
+        this->register_handler(LINUX_SYS_eventfd2, sys_eventfd2, "eventfd2");
 
         // Threading syscalls (Tier 2)
-        this->handlers_[LINUX_SYS_clone] = {.handler = sys_clone, .name = "clone"};
-        this->handlers_[LINUX_SYS_futex] = {.handler = sys_futex, .name = "futex"};
+        this->register_handler(LINUX_SYS_clone, sys_clone, "clone");
+        this->register_handler(LINUX_SYS_futex, sys_futex, "futex");
 
         // File syscalls (Tier 3)
-        this->handlers_[LINUX_SYS_rename] = {.handler = sys_rename, .name = "rename"};
-        this->handlers_[LINUX_SYS_renameat2] = {.handler = sys_renameat2, .name = "renameat2"};
-        this->handlers_[LINUX_SYS_unlink] = {.handler = sys_unlink, .name = "unlink"};
-        this->handlers_[LINUX_SYS_unlinkat] = {.handler = sys_unlinkat, .name = "unlinkat"};
-        this->handlers_[LINUX_SYS_mkdir] = {.handler = sys_mkdir, .name = "mkdir"};
-        this->handlers_[LINUX_SYS_mkdirat] = {.handler = sys_mkdirat, .name = "mkdirat"};
-        this->handlers_[LINUX_SYS_rmdir] = {.handler = sys_rmdir, .name = "rmdir"};
-        this->handlers_[LINUX_SYS_symlink] = {.handler = sys_symlink, .name = "symlink"};
-        this->handlers_[LINUX_SYS_symlinkat] = {.handler = sys_symlinkat, .name = "symlinkat"};
-        this->handlers_[LINUX_SYS_chmod] = {.handler = sys_chmod, .name = "chmod"};
-        this->handlers_[LINUX_SYS_fchmod] = {.handler = sys_fchmod, .name = "fchmod"};
-        this->handlers_[LINUX_SYS_fchmodat] = {.handler = sys_fchmodat, .name = "fchmodat"};
-        this->handlers_[LINUX_SYS_chown] = {.handler = sys_chown, .name = "chown"};
-        this->handlers_[LINUX_SYS_fchown] = {.handler = sys_fchown, .name = "fchown"};
-        this->handlers_[LINUX_SYS_fchownat] = {.handler = sys_fchownat, .name = "fchownat"};
-        this->handlers_[LINUX_SYS_truncate] = {.handler = sys_truncate, .name = "truncate"};
-        this->handlers_[LINUX_SYS_ftruncate] = {.handler = sys_ftruncate, .name = "ftruncate"};
-        this->handlers_[LINUX_SYS_pwrite64] = {.handler = sys_pwrite64, .name = "pwrite64"};
-        this->handlers_[LINUX_SYS_readv] = {.handler = sys_readv, .name = "readv"};
-        this->handlers_[LINUX_SYS_faccessat] = {.handler = sys_faccessat, .name = "faccessat"};
-        this->handlers_[LINUX_SYS_statfs] = {.handler = sys_statfs, .name = "statfs"};
-        this->handlers_[LINUX_SYS_fstatfs] = {.handler = sys_fstatfs, .name = "fstatfs"};
+        this->register_handler(LINUX_SYS_rename, sys_rename, "rename");
+        this->register_handler(LINUX_SYS_renameat2, sys_renameat2, "renameat2");
+        this->register_handler(LINUX_SYS_unlink, sys_unlink, "unlink");
+        this->register_handler(LINUX_SYS_unlinkat, sys_unlinkat, "unlinkat");
+        this->register_handler(LINUX_SYS_mkdir, sys_mkdir, "mkdir");
+        this->register_handler(LINUX_SYS_mkdirat, sys_mkdirat, "mkdirat");
+        this->register_handler(LINUX_SYS_rmdir, sys_rmdir, "rmdir");
+        this->register_handler(LINUX_SYS_symlink, sys_symlink, "symlink");
+        this->register_handler(LINUX_SYS_symlinkat, sys_symlinkat, "symlinkat");
+        this->register_handler(LINUX_SYS_chmod, sys_chmod, "chmod");
+        this->register_handler(LINUX_SYS_fchmod, sys_fchmod, "fchmod");
+        this->register_handler(LINUX_SYS_fchmodat, sys_fchmodat, "fchmodat");
+        this->register_handler(LINUX_SYS_chown, sys_chown, "chown");
+        this->register_handler(LINUX_SYS_fchown, sys_fchown, "fchown");
+        this->register_handler(LINUX_SYS_fchownat, sys_fchownat, "fchownat");
+        this->register_handler(LINUX_SYS_truncate, sys_truncate, "truncate");
+        this->register_handler(LINUX_SYS_ftruncate, sys_ftruncate, "ftruncate");
+        this->register_handler(LINUX_SYS_pwrite64, sys_pwrite64, "pwrite64");
+        this->register_handler(LINUX_SYS_readv, sys_readv, "readv");
+        this->register_handler(LINUX_SYS_faccessat, sys_faccessat, "faccessat");
+        this->register_handler(LINUX_SYS_statfs, sys_statfs, "statfs");
+        this->register_handler(LINUX_SYS_fstatfs, sys_fstatfs, "fstatfs");
 
         // Signal/process syscalls (Tier 3)
-        this->handlers_[LINUX_SYS_rt_sigreturn] = {.handler = sys_rt_sigreturn, .name = "rt_sigreturn"};
-        this->handlers_[LINUX_SYS_kill] = {.handler = sys_kill, .name = "kill"};
-        this->handlers_[LINUX_SYS_tgkill] = {.handler = sys_tgkill, .name = "tgkill"};
-        this->handlers_[LINUX_SYS_wait4] = {.handler = sys_wait4, .name = "wait4"};
-        this->handlers_[LINUX_SYS_execve] = {.handler = sys_execve, .name = "execve"};
-        this->handlers_[LINUX_SYS_prctl] = {.handler = sys_prctl, .name = "prctl"};
-        this->handlers_[LINUX_SYS_getrlimit] = {.handler = sys_getrlimit, .name = "getrlimit"};
-        this->handlers_[LINUX_SYS_getrusage] = {.handler = sys_getrusage, .name = "getrusage"};
-        this->handlers_[LINUX_SYS_sysinfo] = {.handler = sys_sysinfo, .name = "sysinfo"};
-        this->handlers_[LINUX_SYS_umask] = {.handler = sys_umask, .name = "umask"};
-        this->handlers_[LINUX_SYS_getpgrp] = {.handler = sys_getpgrp, .name = "getpgrp"};
-        this->handlers_[LINUX_SYS_getpgid] = {.handler = sys_getpgid, .name = "getpgid"};
-        this->handlers_[LINUX_SYS_setpgid] = {.handler = sys_setpgid, .name = "setpgid"};
-        this->handlers_[LINUX_SYS_getsid] = {.handler = sys_getsid, .name = "getsid"};
-        this->handlers_[LINUX_SYS_setsid] = {.handler = sys_setsid, .name = "setsid"};
+        this->register_handler(LINUX_SYS_rt_sigreturn, sys_rt_sigreturn, "rt_sigreturn");
+        this->register_handler(LINUX_SYS_kill, sys_kill, "kill");
+        this->register_handler(LINUX_SYS_tgkill, sys_tgkill, "tgkill");
+        this->register_handler(LINUX_SYS_wait4, sys_wait4, "wait4");
+        this->register_handler(LINUX_SYS_execve, sys_execve, "execve");
+        this->register_handler(LINUX_SYS_prctl, sys_prctl, "prctl");
+        this->register_handler(LINUX_SYS_getrlimit, sys_getrlimit, "getrlimit");
+        this->register_handler(LINUX_SYS_getrusage, sys_getrusage, "getrusage");
+        this->register_handler(LINUX_SYS_sysinfo, sys_sysinfo, "sysinfo");
+        this->register_handler(LINUX_SYS_umask, sys_umask, "umask");
+        this->register_handler(LINUX_SYS_getpgrp, sys_getpgrp, "getpgrp");
+        this->register_handler(LINUX_SYS_getpgid, sys_getpgid, "getpgid");
+        this->register_handler(LINUX_SYS_setpgid, sys_setpgid, "setpgid");
+        this->register_handler(LINUX_SYS_getsid, sys_getsid, "getsid");
+        this->register_handler(LINUX_SYS_setsid, sys_setsid, "setsid");
 
         // Socket syscalls (Tier 3)
-        this->handlers_[LINUX_SYS_socket] = {.handler = sys_socket, .name = "socket"};
-        this->handlers_[LINUX_SYS_connect] = {.handler = sys_connect, .name = "connect"};
-        this->handlers_[LINUX_SYS_accept] = {.handler = sys_accept, .name = "accept"};
-        this->handlers_[LINUX_SYS_accept4] = {.handler = sys_accept4, .name = "accept4"};
-        this->handlers_[LINUX_SYS_sendto] = {.handler = sys_sendto, .name = "sendto"};
-        this->handlers_[LINUX_SYS_recvfrom] = {.handler = sys_recvfrom, .name = "recvfrom"};
-        this->handlers_[LINUX_SYS_sendmsg] = {.handler = sys_sendmsg, .name = "sendmsg"};
-        this->handlers_[LINUX_SYS_recvmsg] = {.handler = sys_recvmsg, .name = "recvmsg"};
-        this->handlers_[LINUX_SYS_shutdown] = {.handler = sys_shutdown, .name = "shutdown"};
-        this->handlers_[LINUX_SYS_bind] = {.handler = sys_bind, .name = "bind"};
-        this->handlers_[LINUX_SYS_listen] = {.handler = sys_listen, .name = "listen"};
-        this->handlers_[LINUX_SYS_setsockopt] = {.handler = sys_setsockopt, .name = "setsockopt"};
-        this->handlers_[LINUX_SYS_getsockopt] = {.handler = sys_getsockopt, .name = "getsockopt"};
-        this->handlers_[LINUX_SYS_socketpair] = {.handler = sys_socketpair, .name = "socketpair"};
-        this->handlers_[LINUX_SYS_getsockname] = {.handler = sys_getsockname, .name = "getsockname"};
-        this->handlers_[LINUX_SYS_getpeername] = {.handler = sys_getpeername, .name = "getpeername"};
+        this->register_handler(LINUX_SYS_socket, sys_socket, "socket");
+        this->register_handler(LINUX_SYS_connect, sys_connect, "connect");
+        this->register_handler(LINUX_SYS_accept, sys_accept, "accept");
+        this->register_handler(LINUX_SYS_accept4, sys_accept4, "accept4");
+        this->register_handler(LINUX_SYS_sendto, sys_sendto, "sendto");
+        this->register_handler(LINUX_SYS_recvfrom, sys_recvfrom, "recvfrom");
+        this->register_handler(LINUX_SYS_sendmsg, sys_sendmsg, "sendmsg");
+        this->register_handler(LINUX_SYS_recvmsg, sys_recvmsg, "recvmsg");
+        this->register_handler(LINUX_SYS_shutdown, sys_shutdown, "shutdown");
+        this->register_handler(LINUX_SYS_bind, sys_bind, "bind");
+        this->register_handler(LINUX_SYS_listen, sys_listen, "listen");
+        this->register_handler(LINUX_SYS_setsockopt, sys_setsockopt, "setsockopt");
+        this->register_handler(LINUX_SYS_getsockopt, sys_getsockopt, "getsockopt");
+        this->register_handler(LINUX_SYS_socketpair, sys_socketpair, "socketpair");
+        this->register_handler(LINUX_SYS_getsockname, sys_getsockname, "getsockname");
+        this->register_handler(LINUX_SYS_getpeername, sys_getpeername, "getpeername");
 
         // I/O multiplexing syscalls (Tier 3)
-        this->handlers_[LINUX_SYS_epoll_create1] = {.handler = sys_epoll_create1, .name = "epoll_create1"};
-        this->handlers_[LINUX_SYS_epoll_ctl] = {.handler = sys_epoll_ctl, .name = "epoll_ctl"};
-        this->handlers_[LINUX_SYS_epoll_wait] = {.handler = sys_epoll_wait, .name = "epoll_wait"};
-        this->handlers_[LINUX_SYS_epoll_pwait] = {.handler = sys_epoll_pwait, .name = "epoll_pwait"};
-        this->handlers_[LINUX_SYS_poll] = {.handler = sys_poll, .name = "poll"};
-        this->handlers_[LINUX_SYS_ppoll] = {.handler = sys_ppoll, .name = "ppoll"};
-        this->handlers_[LINUX_SYS_select] = {.handler = sys_select, .name = "select"};
-        this->handlers_[LINUX_SYS_pselect6] = {.handler = sys_pselect6, .name = "pselect6"};
+        this->register_handler(LINUX_SYS_epoll_create1, sys_epoll_create1, "epoll_create1");
+        this->register_handler(LINUX_SYS_epoll_ctl, sys_epoll_ctl, "epoll_ctl");
+        this->register_handler(LINUX_SYS_epoll_wait, sys_epoll_wait, "epoll_wait");
+        this->register_handler(LINUX_SYS_epoll_pwait, sys_epoll_pwait, "epoll_pwait");
+        this->register_handler(LINUX_SYS_poll, sys_poll, "poll");
+        this->register_handler(LINUX_SYS_ppoll, sys_ppoll, "ppoll");
+        this->register_handler(LINUX_SYS_select, sys_select, "select");
+        this->register_handler(LINUX_SYS_pselect6, sys_pselect6, "pselect6");
 
         // Named but unimplemented syscalls (for better logging)
-        this->handlers_[LINUX_SYS_fork].name = "fork";
-        this->handlers_[LINUX_SYS_vfork].name = "vfork";
+        this->register_handler(LINUX_SYS_fork, nullptr, "fork");
+        this->register_handler(LINUX_SYS_vfork, nullptr, "vfork");
     }
 
 } // namespace sogen

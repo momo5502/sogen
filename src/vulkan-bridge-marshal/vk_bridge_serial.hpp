@@ -81,6 +81,11 @@ namespace sogen::gpu_bridge::marshal
             return true;
         }
 
+        size_t remaining() const
+        {
+            return static_cast<size_t>(this->end_ - this->cur_);
+        }
+
       private:
         const std::byte* cur_;
         const std::byte* end_;
@@ -106,6 +111,10 @@ namespace sogen::gpu_bridge::marshal
         template <typename T>
         T* allocate_array(size_t count)
         {
+            if (count > SIZE_MAX / sizeof(T))
+            {
+                return nullptr;
+            }
             return static_cast<T*>(this->allocate(count * sizeof(T)));
         }
 
@@ -138,8 +147,12 @@ namespace sogen::gpu_bridge::marshal
         {
             return nullptr;
         }
+        if (length > r.remaining())
+        {
+            return nullptr;
+        }
         char* str = a.allocate_array<char>(static_cast<size_t>(length) + 1);
-        if (!r.bytes(str, length))
+        if (!str || !r.bytes(str, length))
         {
             return nullptr;
         }
@@ -161,11 +174,25 @@ namespace sogen::gpu_bridge::marshal
         {
             return nullptr;
         }
+
+        // each element carries at least a one byte "present" flag on the wire, so a count larger
+        // than the bytes remaining cannot be legitimate, and may be attacker supplied
+        if (count > r.remaining())
+        {
+            return nullptr;
+        }
+
         char** strings = a.allocate_array<char*>(count);
+        if (!strings)
+        {
+            return nullptr;
+        }
+
         for (uint32_t i = 0; i < count; ++i)
         {
             strings[i] = const_cast<char*>(decode_string(r, a));
         }
+
         return strings;
     }
 
