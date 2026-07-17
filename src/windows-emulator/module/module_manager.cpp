@@ -44,10 +44,10 @@ namespace sogen
         //   65 48 8B 04 25 30 00 00 00   mov rax, gs:[0x30]      (TEB self-pointer)
         //   48 8B 98 A0 17 00 00         mov rbx, [rax+0x17A0]    (TEB.NlsCache)
         //   48 8D 05 xx xx xx xx         lea rax, [rip+disp32]    (&gNlsProcessLocalCache)
-        // Confirmed via idasql against both the Windows 2022 and 2025 CI-baked kernelbase.dll builds:
-        // this exact 19-byte prefix is byte-identical across both (the TEB access is an ABI-level,
-        // fixed-offset structure read that the compiler always emits the same way), and only the
-        // trailing RIP-relative displacement - the actual per-build variable - differs. This is what
+        // This exact 19-byte prefix is byte-identical across the Windows 2022 and 2025 kernelbase.dll
+        // builds (the TEB access is an ABI-level, fixed-offset structure read that the compiler always
+        // emits the same way), and only the trailing RIP-relative displacement - the actual per-build
+        // variable - differs. This is what
         // makes the scan build-independent, unlike a hardcoded RVA (see address_is_in_writable_section's
         // doc comment above for why a stale RVA is dangerous, not just wrong).
         std::optional<uint64_t> scan_kernelbase_nls_cache_reference(const memory_manager& memory, const mapped_module& kernelbase)
@@ -149,9 +149,9 @@ namespace sogen
 
         // wow64cpu.dll's real RunSimulatedCode entry has no export, so its caller previously used a
         // single hand-decoded RVA relative to TurboDispatchJumpAddressStart. That fixed offset drifts
-        // across wow64cpu.dll builds - confirmed via idasql against a genuine Windows Server 2025
-        // system DLL (the one CI's create-emulation-root job bakes): the hardcoded RVA landed 0x11
-        // (17) bytes before the real prologue, inside the tail (a bare `retn`) of the unrelated,
+        // across wow64cpu.dll builds: on a genuine Windows Server 2025 system DLL (the one CI's
+        // create-emulation-root job bakes), the hardcoded RVA landed 0x11 (17) bytes before the real
+        // prologue, inside the tail (a bare `retn`) of the unrelated,
         // preceding function. The registered gate crossing (built from that RVA up to
         // TurboDispatchJumpAddressStart) then accidentally swallowed that ret too, and FEXCore's JIT
         // refused to execute it (a genuine NoExec fault) every time real control flow legitimately
@@ -1019,8 +1019,8 @@ namespace sogen
                 // un-JIT-able (0xEA is undefined in 64-bit long mode). See perform_gate_crossing's
                 // decode of it (gate_crossing_kind::far_jmp_bitness_switch).
                 //
-                // Confirmed empirically (not by hand like the RVAs above): the probe faults at
-                // image_base+0x6d41. This is NOT the same as (mapped base)+0x7000 - image_base here
+                // Unlike the RVAs above, the probe faults at image_base+0x6d41. This is NOT the same
+                // as (mapped base)+0x7000 - image_base here
                 // (dispatch_start - turbo_dispatch_start_rva) sits a fixed 0x2bf bytes above wow64cpu.dll's
                 // real mapped base, so RVAs measured directly against the PE mapping (as first done
                 // for this one) land 0x2bf too high once added to image_base instead. The other three
@@ -1033,7 +1033,7 @@ namespace sogen
                 // first tried here) would cover the landing address too: execution would re-enter this
                 // same "non-executable" gate immediately after the crossing, decode the identical bytes,
                 // and cross again forever - an infinite loop rather than the crash this gate exists to
-                // fix. Confirmed via a hung CI run before narrowing this to the true instruction length.
+                // fix.
                 constexpr uint64_t cpu_mode_probe_size = 0x7;
                 emu_ptr->register_gate_crossing(image_base + cpu_mode_probe_rva, cpu_mode_probe_size,
                                                 x86_64_emulator::gate_crossing_kind::far_jmp_bitness_switch);

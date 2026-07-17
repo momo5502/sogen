@@ -3860,14 +3860,8 @@ namespace sogen::fex
             {
                 const auto fault_addr = reinterpret_cast<uint64_t>(info->si_addr);
 
-                // ROOT CAUSE FIX (confirmed via extensive bisection - a stack canary in
-                // windows_emulator::start() caught precise corruption of the main thread's own
-                // native stack, correlated exactly with request_thread_stop()'s mprotect() call and
-                // with a real fault actually occurring on InterruptFaultPage, but NOT with which of
-                // the two paths below (redirect vs skip) ends up handling it - which pointed at this
-                // check running too late): this used to live further down, reached only via
-                // SEGV_ACCERR/SEGV_MAPERR falling through the BUS_ADRALN-CodeBuffer check below. But
-                // just like that CodeBuffer race (see the BUS_ADRALN branch's own comment), Darwin can
+                // This check must run first, before any signal/si_code-specific branch below: just
+                // like the CodeBuffer race (see the BUS_ADRALN branch's own comment), Darwin can
                 // report this exact same PROT_NONE violation as BUS_ADRALN instead of the expected
                 // SEGV_ACCERR/SEGV_MAPERR. Since InterruptFaultPage's address is never inside the
                 // CodeBuffer, a misclassified BUS_ADRALN fault here used to fall past that check

@@ -82,10 +82,9 @@ namespace sogen
             // (defaults to MAX_ALLOCATION_END_EXCL - 1), so once the low ~4GB arena is tight enough (a
             // WoW64 process maps ntdll32/kernel32/syswow64 modules, the GS segment, native/32-bit stacks,
             // etc. before this runs), it can silently pick a base above 4GB - the subsequent uint32_t
-            // truncation then produces a garbage guest pointer. Confirmed via CI as the root cause of a
-            // deterministic access violation inside real ntdll's ApiSet-namespace binary search during
-            // wow64-test-sample.exe's LoadLibraryA("advapi32.dll") (a stable, real-ntdll comparison
-            // register held a wild, truncation-shaped table offset). Cap explicitly for the wow64 case,
+            // truncation then produces a garbage guest pointer, causing an access violation inside real
+            // ntdll's ApiSet-namespace binary search on any lookup against that base. Cap explicitly
+            // for the wow64 case,
             // mirroring the same fix already applied to the module-relocation fallback
             // (module_mapping.cpp) and the heaven's-gate/native-wow64-stack allocations.
             constexpr uint64_t below_4gb_ceiling = 0xFFFFFFFFULL;
@@ -107,10 +106,7 @@ namespace sogen
         // directly (Result = table[Wch];), no further indirection. sogen never populated these
         // (PEB64.UnicodeCaseTableData itself was allocated - see process_context::setup - but the
         // NLSTABLEINFO struct it points to was left all-zero), so any real ntdll code doing a
-        // case-conversion table lookup reads through a null table base - root-caused via a
-        // "Null-pointer call to 0x50" crash whose base(rax)=0/index(rcx)=0x28=ASCII '(' matched
-        // exactly a lookup into a null UpperCaseTable for the first character of the literal
-        // string "(null)" ntdll substitutes for a missing %s argument. This is a plain ASCII-only
+        // case-conversion table lookup reads through a null table base and crashes. This is a plain ASCII-only
         // case mapping (identity elsewhere) - not a byte-accurate Unicode case-folding table, but
         // real Windows behavior for the common case and infinitely better than a null dereference.
         std::vector<uint16_t> make_ascii_case_table(const bool uppercase)

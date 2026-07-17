@@ -12,10 +12,6 @@
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
 #endif
 
-#if defined(__clang__)
-#pragma GCC diagnostic ignored "-Wunused-template"
-#endif
-
 namespace sogen
 {
 
@@ -254,7 +250,6 @@ namespace sogen
         // performs that (harmless-here) invalidation, but once per block instead of once per fixup,
         // collapsing what can be thousands of individually-invalidating guest writes per module down
         // to one per relocation block (typically ~one page's worth of fixups).
-        template <typename T>
         void apply_relocation_block(memory_manager& memory, const uint64_t image_base, const IMAGE_BASE_RELOCATION& relocation,
                                     const std::span<const uint16_t> entries, const uint64_t delta)
         {
@@ -379,7 +374,7 @@ namespace sogen
                     memory.read_memory(entries_base, entries.data(), entry_count * sizeof(uint16_t));
                 }
 
-                apply_relocation_block<T>(memory, binary.image_base, relocation, entries, delta);
+                apply_relocation_block(memory, binary.image_base, relocation, entries, delta);
             }
         }
 

@@ -57,11 +57,7 @@ endif()
 ##########################################
 
 # FEX-Emu backend (x86/x86-64 -> AArch64). FEX only JITs to ARM64, so the backend is restricted to
-# ARM64 Linux/Android/Darwin hosts. It is enabled automatically on those hosts whenever FEXCore is
-# available. FEXCore is a large, ARM64-host-specific dependency that is not vendored, so we *probe*
-# for it and skip the backend (rather than hard-failing) when absent - otherwise every arm64 build
-# without FEX installed (e.g. the Android CI job) would break. Point -DSOGEN_FEX_ROOT=<path> at a
-# FEX checkout/install, or make FEXCore discoverable via find_package(FEXCore), to enable it.
+# ARM64 Linux/Android/Darwin hosts.
 # FEX is vendored as a submodule (deps/FEX, pointed at a fork with Darwin portability patches - see
 # docs/fex-backend.md) and built in-tree. It requires Clang and only JITs to AArch64, and on Linux
 # its headers need a libstdc++ with std::atomic_ref (the Android NDK's libc++ lacks it), so Linux is

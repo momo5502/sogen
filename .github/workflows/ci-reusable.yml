@@ -542,8 +542,8 @@ jobs:
               libdbus-1-dev libudev-dev \
               libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
 
-      # Build only the FEX backend (and its FEXCore_Base dependency). FEX is added EXCLUDE_FROM_ALL,
-      # so this does not build FEX's loader/server tools.
+      # Build only the FEX backend; FEXCore itself is built via an ExternalProject restricted to its
+      # FEXCore_shared target (see deps/CMakeLists.txt), so this does not build FEX's loader/server tools.
       - name: CMake Configure
         run: cmake --preset=release
 
