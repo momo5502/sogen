@@ -2870,9 +2870,7 @@ namespace sogen::fex
         }
 
         // Lazily builds context32_, the second, 32-bit (CONFIG_IS64BIT_MODE=0) FEXCore::Context a
-        // wow64 process needs once execution actually reaches the heaven's gate (Phase B/C - not
-        // wired up yet as of this writing: thread32_ is never created, so context32_ currently sits
-        // idle, never executed). Called from notify_process_bitness() once a wow64 process is known,
+        // wow64 process needs. Called from notify_process_bitness() once a wow64 process is known,
         // well before create_thread() seeds context_'s thread - safe to build now since it touches no
         // state create_thread()/context_ depend on. FEXCore::Config is a process-global registry read
         // once per FEXCore::Context::Context at CreateNewContext() time (confirmed: context_ above
@@ -2916,13 +2914,15 @@ namespace sogen::fex
             FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "1");
         }
 
-        // Lazily creates thread32_, the InternalThreadState that actually executes 32-bit guest code
-        // on context32_. Called once, on the first 64->32 gate crossing (not wired up yet - see the
-        // WoW64 plan's Phase B notes on where the real crossing point still needs to be located).
-        // The initial CPUState this seeds is irrelevant: the crossing handler that calls this
-        // immediately overwrites every GPR/XMM/x87/EFLAGS/RIP/RSP with the marshaled state from
-        // whichever context is crossing down, so an all-zero NewThreadState (CreateThread's own
-        // default) is fine here.
+        // Creates thread32_, the InternalThreadState that actually executes 32-bit guest code on
+        // context32_. Called once, from create_thread() (ordinary call context) for a wow64 process
+        // - deliberately not left lazy for the first 64->32 gate crossing to create, since that
+        // crossing is only ever reached from inside handle_fault_signal (a signal handler), where
+        // this function's real heap allocation would be unsafe. The initial CPUState this seeds is
+        // irrelevant: the first gate-crossing handler to actually use thread32_ immediately
+        // overwrites every GPR/XMM/x87/EFLAGS/RIP/RSP with the marshaled state from whichever
+        // context is crossing down, so an all-zero NewThreadState (CreateThread's own default) is
+        // fine here.
         void create_thread32()
         {
             this->thread32_ = this->context32_->CreateThread(0, 0, nullptr);
@@ -3040,9 +3040,18 @@ namespace sogen::fex
             const uint32_t eflags = read32(0x44);
             const uint32_t esp = read32(0x48);
 
+            // thread32_ is built eagerly in create_thread() (ordinary call context), never lazily
+            // from here - this runs inside handle_fault_signal's synthetic-#PF path, where
+            // create_thread32()'s real heap allocation (CreateThread, SignalDelegator
+            // construction, InitCore()) would be unsafe. Null here means create_thread() genuinely
+            // never ran for this (wow64) process, which should be unreachable - a process can't
+            // execute far enough to reach the heaven's gate before start()/create_thread() has run.
+            // Fail the crossing rather than allocate from the signal handler if that invariant is
+            // ever wrong; the caller already has a safe fallback for a failed crossing (dispatches
+            // an ordinary memory violation instead of resuming into half-marshaled state).
             if (this->thread32_ == nullptr)
             {
-                this->create_thread32();
+                return false;
             }
             auto& dst = this->thread32_->CurrentFrame->State;
 
@@ -3303,9 +3312,13 @@ namespace sogen::fex
             }
             else
             {
+                // thread32_ is built eagerly in create_thread() (ordinary call context) - see its
+                // doc comment for why lazily creating it from here (inside handle_fault_signal's
+                // call chain) would be unsafe. Null here should be unreachable; fail the crossing
+                // rather than allocate from the signal handler if that invariant is ever wrong.
                 if (this->thread32_ == nullptr)
                 {
-                    this->create_thread32();
+                    return false;
                 }
                 dst_context = this->context32_.get();
                 dst_thread = this->thread32_;
@@ -4275,6 +4288,19 @@ namespace sogen::fex
             g_original_exit_function_link = this->thread_->CurrentFrame->Pointers.ExitFunctionLink;
             this->thread_->CurrentFrame->Pointers.ExitFunctionLink = reinterpret_cast<uint64_t>(&exit_function_link_jit_write_wrapper);
 #endif
+
+            // Build thread32_ here too, in this ordinary call context, rather than leaving it to be
+            // lazily created on the process's first gate crossing - that crossing is only ever
+            // reached from inside handle_fault_signal (a signal handler), and create_thread32()
+            // does real heap allocation (FEXCore::Context::CreateThread, SignalDelegator
+            // construction, InitCore()). By the time create_thread() runs (called from start(),
+            // never from a signal handler), is_wow64_process_ and gdt_base_ are both already set
+            // (notify_process_bitness() and load_gdt() both run before start()), so there's nothing
+            // create_thread32() needs that isn't ready yet.
+            if (this->is_wow64_process_ && this->thread32_ == nullptr)
+            {
+                this->create_thread32();
+            }
         }
 
         // FEXCore's call-ret shadow stack (callret_sp, see CoreState.h) has no notion of "logical
