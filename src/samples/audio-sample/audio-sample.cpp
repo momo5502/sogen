@@ -6,7 +6,9 @@
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace
 {
@@ -18,11 +20,11 @@ namespace
     }
 }
 
-#define STEP(expr, what)            \
-    if (!report(what, (expr)))      \
-    {                               \
-        std::puts("AUDIO FAILED");  \
-        return 1;                   \
+#define STEP(expr, what)           \
+    if (!report(what, (expr)))     \
+    {                              \
+        std::puts("AUDIO FAILED"); \
+        return 1;                  \
     }
 
 int main()
@@ -56,10 +58,35 @@ int main()
 
     BYTE* data = nullptr;
     STEP(render->GetBuffer(buffer_frames, &data), "GetBuffer");
-    STEP(render->ReleaseBuffer(buffer_frames, AUDCLNT_BUFFERFLAGS_SILENT), "ReleaseBuffer");
+
+    const auto is_float = format->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
+                          (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
+                           reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(format)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
+    const double frequency = 440.0;
+    const double step = 2.0 * 3.14159265358979323846 * frequency / format->nSamplesPerSec;
+    for (UINT32 frame = 0; frame < buffer_frames; ++frame)
+    {
+        const double sample = 0.25 * std::sin(step * frame);
+        for (unsigned channel = 0; channel < format->nChannels; ++channel)
+        {
+            BYTE* slot = data + (static_cast<size_t>(frame) * format->nBlockAlign) + (channel * (format->wBitsPerSample / 8));
+            if (is_float)
+            {
+                const float value = static_cast<float>(sample);
+                std::memcpy(slot, &value, sizeof(value));
+            }
+            else
+            {
+                const int16_t value = static_cast<int16_t>(sample * 32767.0);
+                std::memcpy(slot, &value, sizeof(value));
+            }
+        }
+    }
+
+    STEP(render->ReleaseBuffer(buffer_frames, 0), "ReleaseBuffer");
 
     STEP(client->Start(), "Start");
-    Sleep(100);
+    Sleep(1000);
     STEP(client->Stop(), "Stop");
 
     std::puts("AUDIO OK");

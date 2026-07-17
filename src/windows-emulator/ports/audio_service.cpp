@@ -28,8 +28,8 @@ namespace sogen
         constexpr uint32_t k_audio_opnum_open_stream = 4;           // {D574D111} (Initialize prep)
         constexpr uint32_t k_audio_opnum_create_stream = 7;         // {D574D111} CreateRemoteStream
         constexpr uint32_t k_audio_opnum_destroy_stream = 13;       // {D574D111} AudioServerDestroyStream
-        constexpr uint32_t k_audio_opnum_post_create_a = 8;         // {D574D111} post-CreateRemoteStream (returns S_OK)
-        constexpr uint32_t k_audio_opnum_post_create_b = 9;         // {D574D111} post-CreateRemoteStream (returns S_OK)
+        constexpr uint32_t k_audio_opnum_start_stream = 8;          // {D574D111} StartStream (IAudioClient::Start)
+        constexpr uint32_t k_audio_opnum_stop_stream = 9;           // {D574D111} StopStream (IAudioClient::Stop)
 
         constexpr NTSTATUS k_hr_ok = 0;
 
@@ -132,8 +132,8 @@ namespace sogen
                 const auto& iface = this->bound_interface();
                 if (getenv("EMULATOR_LOG_RPC"))
                 {
-                    win_emu.log.error("[audiosrv] call iface=%02x%02x%02x%02x opnum=%u send=%u\n", iface[0], iface[1], iface[2],
-                                      iface[3], procedure_id, c.send_buffer_length);
+                    win_emu.log.error("[audiosrv] call iface=%02x%02x%02x%02x opnum=%u send=%u\n", iface[0], iface[1], iface[2], iface[3],
+                                      procedure_id, c.send_buffer_length);
                 }
 
                 if (iface == k_iface_audio_client)
@@ -147,14 +147,19 @@ namespace sogen
                     case k_audio_opnum_get_device_period:
                         return handle_get_device_period(writer);
                     case k_audio_opnum_destroy_stream:
+                        win_emu.audio().stop();
                         return handle_post_create(writer);
                     case k_audio_opnum_open_stream:
                         return handle_open_stream(writer);
                     case k_audio_opnum_create_stream:
                         return handle_create_stream(win_emu, writer, reply_handles);
+                    case k_audio_opnum_start_stream:
+                        start_playback(win_emu);
+                        return handle_post_create(writer);
+                    case k_audio_opnum_stop_stream:
+                        win_emu.audio().stop();
+                        return handle_post_create(writer);
                     case 5:
-                    case k_audio_opnum_post_create_a:
-                    case k_audio_opnum_post_create_b:
                         return handle_post_create(writer);
                     default:
                         return log_unhandled(win_emu, "AudioClient", procedure_id, c);
@@ -171,12 +176,46 @@ namespace sogen
             }
 
           private:
-            static NTSTATUS log_unhandled(windows_emulator& win_emu, const char* iface, const uint32_t opnum,
-                                          const lpc_request_context& c)
+            emulator_pointer render_backing_{};
+            uint64_t render_size_{};
+
+            // The guest maps the render section and writes interleaved PCM into the sample area that follows the
+            // DCPE control header. The header records the sample-area offset at +0x168 and its byte length at
+            // +0x16C; both were confirmed against a live-host capture (tools/alpc_capture.py) and the shared
+            // header we hand back in handle_create_stream.
+            static constexpr uint32_t k_render_data_offset = 0x400;
+            static constexpr uint32_t k_render_data_size = 0x56220; // 44100 frames * 8 bytes; == nAvgBytesPerSec
+
+            // Playback drains the shared buffer to the host audio device when the client starts the stream. The
+            // format mirrors handle_get_mix_format (shared-mode mix format).
+            static constexpr audio_format k_stream_format{44100, 2, 32, true};
+
+            // On IAudioClient::Start, hand the sample area the client has filled to the host device. This submits
+            // the whole shared buffer once: enough for a client that fills the buffer then starts (the WASAPI
+            // walk in src/samples/audio-sample), but not yet for a client that streams packet-by-packet while
+            // running -- that needs the read cursor written back into the DCPE header so the client keeps
+            // producing, which is not reverse-engineered yet.
+            void start_playback(windows_emulator& win_emu)
             {
-                win_emu.log.error("[audiosrv] UNHANDLED %s opnum=%u send_len=%u recv_len=%u req: %s\n", iface, opnum,
-                                  c.send_buffer_length, c.recv_buffer_length,
-                                  dump_hex(win_emu, c.send_buffer, c.send_buffer_length).c_str());
+                if (!this->render_backing_ || this->render_size_ < k_render_data_offset + k_render_data_size)
+                {
+                    return;
+                }
+
+                if (!win_emu.audio().start(k_stream_format))
+                {
+                    return;
+                }
+
+                std::vector<uint8_t> samples(k_render_data_size, 0);
+                win_emu.emu().read_memory(this->render_backing_ + k_render_data_offset, samples.data(), samples.size());
+                win_emu.audio().submit(samples.data(), samples.size());
+            }
+
+            static NTSTATUS log_unhandled(windows_emulator& win_emu, const char* iface, const uint32_t opnum, const lpc_request_context& c)
+            {
+                win_emu.log.error("[audiosrv] UNHANDLED %s opnum=%u send_len=%u recv_len=%u req: %s\n", iface, opnum, c.send_buffer_length,
+                                  c.recv_buffer_length, dump_hex(win_emu, c.send_buffer, c.send_buffer_length).c_str());
                 return STATUS_NOT_SUPPORTED;
             }
 
@@ -198,22 +237,22 @@ namespace sogen
                 const auto put16 = [&](const size_t off, const uint16_t v) { std::memcpy(&fmt[off], &v, sizeof(v)); };
                 const auto put32 = [&](const size_t off, const uint32_t v) { std::memcpy(&fmt[off], &v, sizeof(v)); };
 
-                put16(0, 0xFFFE);                       // wFormatTag = WAVE_FORMAT_EXTENSIBLE
-                put16(2, channels);                     // nChannels
-                put32(4, sample_rate);                  // nSamplesPerSec
-                put32(8, sample_rate * block_align);    // nAvgBytesPerSec
-                put16(12, block_align);                 // nBlockAlign
-                put16(14, bits);                        // wBitsPerSample
-                put16(16, cb_size);                     // cbSize
-                put16(18, bits);                        // wValidBitsPerSample
-                put32(20, 0x3);                         // dwChannelMask = FRONT_LEFT | FRONT_RIGHT
+                put16(0, 0xFFFE);                    // wFormatTag = WAVE_FORMAT_EXTENSIBLE
+                put16(2, channels);                  // nChannels
+                put32(4, sample_rate);               // nSamplesPerSec
+                put32(8, sample_rate * block_align); // nAvgBytesPerSec
+                put16(12, block_align);              // nBlockAlign
+                put16(14, bits);                     // wBitsPerSample
+                put16(16, cb_size);                  // cbSize
+                put16(18, bits);                     // wValidBitsPerSample
+                put32(20, 0x3);                      // dwChannelMask = FRONT_LEFT | FRONT_RIGHT
                 // SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT {00000003-0000-0010-8000-00AA00389B71}
-                static constexpr std::array<uint8_t, 16> ksdataformat_subtype_ieee_float = {
-                    0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71};
+                static constexpr std::array<uint8_t, 16> ksdataformat_subtype_ieee_float = {0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+                                                                                            0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71};
                 std::memcpy(&fmt[24], ksdataformat_subtype_ieee_float.data(), ksdataformat_subtype_ieee_float.size());
 
-                writer.write_ndr_pointer(true);          // unique pointer referent
-                writer.write_pointer_sized(cb_size);     // conformance: length of the conformant tail
+                writer.write_ndr_pointer(true);      // unique pointer referent
+                writer.write_pointer_sized(cb_size); // conformance: length of the conformant tail
                 writer.write(fmt.data(), fmt.size(), 1);
 
                 writer.align_to(sizeof(uint32_t));
@@ -230,7 +269,7 @@ namespace sogen
             {
                 writer.write_ndr_pointer(false); // [out] closest-match format: null (format accepted as-is)
                 writer.align_to(sizeof(uint32_t));
-                writer.write(k_hr_ok);           // return S_OK
+                writer.write(k_hr_ok); // return S_OK
                 return STATUS_SUCCESS;
             }
 
@@ -240,9 +279,9 @@ namespace sogen
             static NTSTATUS handle_get_device_period(utils::aligned_binary_writer& writer)
             {
                 constexpr int64_t default_period = 100000; // 10 ms
-                constexpr int64_t minimum_period = 30000;   // 3 ms
-                writer.write_ndr_pointer(true);             // defaultPeriod referent
-                writer.write_ndr_pointer(true);             // minimumPeriod referent
+                constexpr int64_t minimum_period = 30000;  // 3 ms
+                writer.write_ndr_pointer(true);            // defaultPeriod referent
+                writer.write_ndr_pointer(true);            // minimumPeriod referent
                 writer.write<int64_t>(default_period);
                 writer.write<int64_t>(minimum_period);
                 writer.align_to(sizeof(uint32_t));
@@ -259,7 +298,7 @@ namespace sogen
             {
                 writer.write_ndr_pointer(false); // [out] string: null
 
-                writer.write<uint32_t>(0);                                              // context handle: attributes
+                writer.write<uint32_t>(0);                                                   // context handle: attributes
                 writer.write(k_stream_context_uuid.data(), k_stream_context_uuid.size(), 1); // context handle: uuid
 
                 writer.align_to(sizeof(uint32_t));
@@ -269,12 +308,12 @@ namespace sogen
 
             // {D574D111} opnum 7: CreateRemoteStream. The [out] SYSTEM_AUDIO_STREAM wire is only 120 bytes (the
             // 1232-byte form seen in memory is bloated by host pointers): a session GUID, nAvgBytesPerSec, an
-            // opaque server cookie (the client just hands it back in opnums 8/9, which we ignore), and a few
+            // opaque server cookie (the client just hands it back in StartStream/StopStream, which we ignore), and a few
             // counts. The shared render buffer is NOT in the payload — it rides in as an ALPC HANDLE message
             // attribute. We back it with a pagefile section the guest can map and attach its handle. The wire
             // below was captured from a live Windows audio service (tools/alpc_capture.py).
-            static NTSTATUS handle_create_stream(windows_emulator& win_emu, utils::aligned_binary_writer& writer,
-                                                 std::vector<alpc_reply_handle>& reply_handles)
+            NTSTATUS handle_create_stream(windows_emulator& win_emu, utils::aligned_binary_writer& writer,
+                                          std::vector<alpc_reply_handle>& reply_handles)
             {
                 // The shared render buffer the client maps: 0x57000 bytes (one second of 44100 Hz / 2ch /
                 // 32-bit float, page-aligned), prefixed by a WASAPI shared-buffer control header that audioses
@@ -290,53 +329,42 @@ namespace sogen
 
                 static constexpr std::array<uint8_t, 0x1c0> render_control_header = {
                     0x01, 0x00, 0x00, 0x00, 0x20, 0x66, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, // version, buffer size
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x44, 0x43, 0x50, 0x45, // "DCPE"
-                    0xdc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0xdc, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x96, 0x98, 0x00,
+                    0x00, 0x00, 0x00, 0x00, // period 0x989680
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0x80, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00,
+                    0x20, 0x66, 0x05, 0x00, 0x20, 0x66, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x02, 0x00,
+                    0x44, 0xac, 0x00, 0x00, 0x20, 0x62, 0x05, 0x00, // WAVEFORMATEXTENSIBLE
+                    0x08, 0x00, 0x20, 0x00, 0x16, 0x00, 0x20, 0x00, 0x03, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+                    0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x80, 0x96, 0x98, 0x00, 0x00, 0x00, 0x00, 0x00, // period 0x989680
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
-                    0x80, 0x01, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x20, 0x66, 0x05, 0x00,
-                    0x20, 0x66, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0xfe, 0xff, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00, 0x20, 0x62, 0x05, 0x00, // WAVEFORMATEXTENSIBLE
-                    0x08, 0x00, 0x20, 0x00, 0x16, 0x00, 0x20, 0x00, 0x03, 0x00, 0x00, 0x00,
-                    0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa,
-                    0x00, 0x38, 0x9b, 0x71, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00,
                 };
 
-                const auto backing = win_emu.memory.allocate_memory(static_cast<size_t>(render_section_size),
-                                                                    memory_permission::read_write, false, 0,
-                                                                    memory_region_kind::pagefile_section_view);
+                const auto backing = win_emu.memory.allocate_memory(static_cast<size_t>(render_section_size), memory_permission::read_write,
+                                                                    false, 0, memory_region_kind::pagefile_section_view);
                 if (backing)
                 {
                     win_emu.emu().write_memory(backing, render_control_header.data(), render_control_header.size());
                     render_section.backing_address = backing;
                 }
+
+                this->render_backing_ = backing;
+                this->render_size_ = render_section_size;
 
                 const auto section_handle = win_emu.process.sections.store(std::move(render_section));
 
@@ -364,19 +392,18 @@ namespace sogen
                     0x91, 0x37, 0x22, 0x77, 0x20, 0x62, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, // nAvgBytesPerSec=0x56220
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0xd2, 0x14, 0x55, // +0x20: server cookie
                     0xd2, 0x01, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // +0x28: 0x18
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, // +0x50: 1
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, // +0x50: 1
                     0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // +0x54 union sel=1, +0x58 handle idx=1
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 };
                 writer.write(system_audio_stream.data(), system_audio_stream.size(), 1);
                 return STATUS_SUCCESS;
             }
 
-            // {D574D111} opnums 8 and 9: the post-CreateRemoteStream finalize calls. Each returns just an
-            // S_OK HRESULT (the captured replies are 8 zero bytes of NDR).
+            // {D574D111} StartStream/StopStream/disconnect/destroy all reply with just an S_OK HRESULT (the
+            // captured replies are 8 zero bytes of NDR).
             static NTSTATUS handle_post_create(utils::aligned_binary_writer& writer)
             {
                 writer.write<uint32_t>(0);

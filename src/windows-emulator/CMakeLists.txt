@@ -12,6 +12,7 @@ endif()
 
 if(NOT TARGET SDL3::SDL3)
   list(REMOVE_ITEM SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/ui_backends/sdl_ui_backend.cpp")
+  list(REMOVE_ITEM SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/audio_backends/sdl_audio_backend.cpp")
   if(NOT EMSCRIPTEN)
     message(FATAL_ERROR "The SDL3 submodule (deps/SDL) is required for the host UI backend on this platform")
   endif()
