@@ -404,7 +404,7 @@ namespace sogen
         // module (including this process's own executable) was mapped - see its doc comment.
         setup_gdt(emu, win_emu.memory);
 
-        this->kusd.setup(version, fake_env);
+        this->kusd.setup(version, fake_env, this->is_wow64_process);
 
         this->base_allocator = create_allocator(win_emu.memory, PEB_SEGMENT_SIZE, this->is_wow64_process);
         auto& allocator = this->base_allocator;

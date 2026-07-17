@@ -16,7 +16,8 @@ namespace sogen
 
     namespace
     {
-        void setup_kusd(KUSER_SHARED_DATA64& kusd, const windows_version_manager& version, const fake_environment_config& fake_env)
+        void setup_kusd(KUSER_SHARED_DATA64& kusd, const windows_version_manager& version, const fake_environment_config& fake_env,
+                        const bool is_wow64_process)
         {
             memset(reinterpret_cast<void*>(&kusd), 0, sizeof(kusd));
 
@@ -88,9 +89,19 @@ namespace sogen
             // return" NtRaiseException retry loop keep re-raising forever, each iteration leaking a
             // few bytes of 32-bit stack until it walks into and corrupts the adjacent PEB. Only claim
             // legacy x87/SSE support (bits 0-1), which don't intersect the mask and match what sogen
-            // actually implements.
-            kusd.XState.EnabledFeatures = 0x0000000000000003;
-            kusd.XState.EnabledVolatileFeatures = 0x0000000000000000;
+            // actually implements. This escalation path is WOW64-only (Wow64NtRaiseException), so
+            // only narrow the advertised features for a wow64 process - a native 64-bit process never
+            // takes it and gets the full set sogen otherwise advertises.
+            if (is_wow64_process)
+            {
+                kusd.XState.EnabledFeatures = 0x0000000000000003;
+                kusd.XState.EnabledVolatileFeatures = 0x0000000000000000;
+            }
+            else
+            {
+                kusd.XState.EnabledFeatures = 0x000000000000001f;
+                kusd.XState.EnabledVolatileFeatures = 0x000000000000000f;
+            }
             kusd.XState.Size = 0x000003c0;
             kusd.QpcData.QpcData = 0x0083;
             kusd.QpcData.QpcBypassEnabled = 0x83;
@@ -152,9 +163,9 @@ namespace sogen
     {
     }
 
-    void kusd_mmio::setup(const windows_version_manager& version, const fake_environment_config& fake_env)
+    void kusd_mmio::setup(const windows_version_manager& version, const fake_environment_config& fake_env, const bool is_wow64_process)
     {
-        setup_kusd(this->kusd_, version, fake_env);
+        setup_kusd(this->kusd_, version, fake_env, is_wow64_process);
         this->register_mmio();
     }
 
