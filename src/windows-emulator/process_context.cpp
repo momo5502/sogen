@@ -182,6 +182,48 @@ namespace sogen
             return table.value();
         }
 
+        // CPTABLEINFO32/NLSTABLEINFO32 (kernel_mapped.hpp) are the real 32-bit-pointer-shaped
+        // layout real 32-bit ntdll parses under WoW64 - a distinct struct from CPTABLEINFO/
+        // NLSTABLEINFO, not just the same layout with narrower fields, since CPTABLEINFO32's
+        // pointer fields sit at different byte offsets than CPTABLEINFO's once the preceding
+        // 8-byte fields shrink to 4. Filling a CPTABLEINFO (64-bit-shaped) struct and only
+        // truncating the top-level pointer to the guest leaves the struct's own internal fields
+        // 8 bytes wide, which real 32-bit ntdll would misparse.
+        void fill_identity_codepage_table32(emulator_allocator& allocator, CPTABLEINFO32& t)
+        {
+            std::vector<uint16_t> wide_char_table(0x100);
+            std::vector<uint16_t> multi_byte_table(0x100);
+            for (uint32_t i = 0; i < 0x100; ++i)
+            {
+                wide_char_table[i] = static_cast<uint16_t>(i);
+                multi_byte_table[i] = static_cast<uint16_t>(i);
+            }
+
+            const auto wide_char_table_addr = allocator.reserve(wide_char_table.size() * sizeof(uint16_t), alignof(uint16_t));
+            const auto multi_byte_table_addr = allocator.reserve(multi_byte_table.size() * sizeof(uint16_t), alignof(uint16_t));
+            allocator.get_memory().write_memory(wide_char_table_addr, wide_char_table.data(), wide_char_table.size() * sizeof(uint16_t));
+            allocator.get_memory().write_memory(multi_byte_table_addr, multi_byte_table.data(), multi_byte_table.size() * sizeof(uint16_t));
+
+            t.CodePage = 1252;
+            t.MaximumCharacterSize = 1;
+            t.DefaultChar = '?';
+            t.UniDefaultChar = u'?';
+            t.TransDefaultChar = '?';
+            t.TransUniDefaultChar = u'?';
+            t.DBCSCodePage = 0;
+            t.MultiByteTable = static_cast<uint32_t>(multi_byte_table_addr);
+            t.WideCharTable = static_cast<uint32_t>(wide_char_table_addr);
+            t.DBCSRanges = 0;
+            t.DBCSOffsets = 0;
+        }
+
+        uint32_t make_identity_codepage_table32(emulator_allocator& allocator)
+        {
+            const auto table = allocator.reserve<CPTABLEINFO32>();
+            table.access([&](CPTABLEINFO32& t) { fill_identity_codepage_table32(allocator, t); });
+            return static_cast<uint32_t>(table.value());
+        }
+
         void setup_gdt(x86_64_emulator& emu, memory_manager& memory)
         {
             const auto vcpu_count = emu.vcpu_count();
@@ -588,8 +630,8 @@ namespace sogen
 
                 // Initialize NLS tables for 32-bit processes
                 // These need to be in 32-bit addressable space
-                p32.AnsiCodePageData = static_cast<uint32_t>(make_identity_codepage_table(allocator));
-                p32.OemCodePageData = static_cast<uint32_t>(make_identity_codepage_table(allocator));
+                p32.AnsiCodePageData = make_identity_codepage_table32(allocator);
+                p32.OemCodePageData = make_identity_codepage_table32(allocator);
 
                 const auto upper_table32 = make_ascii_case_table(true);
                 const auto lower_table32 = make_ascii_case_table(false);
@@ -598,12 +640,12 @@ namespace sogen
                 allocator.get_memory().write_memory(upper_table32_addr, upper_table32.data(), upper_table32.size() * sizeof(uint16_t));
                 allocator.get_memory().write_memory(lower_table32_addr, lower_table32.data(), lower_table32.size() * sizeof(uint16_t));
 
-                const auto case_table32 = allocator.reserve<NLSTABLEINFO>();
-                case_table32.access([&](NLSTABLEINFO& t) {
-                    fill_identity_codepage_table(allocator, t.OemTableInfo);
-                    fill_identity_codepage_table(allocator, t.AnsiTableInfo);
-                    t.UpperCaseTable = upper_table32_addr;
-                    t.LowerCaseTable = lower_table32_addr;
+                const auto case_table32 = allocator.reserve<NLSTABLEINFO32>();
+                case_table32.access([&](NLSTABLEINFO32& t) {
+                    fill_identity_codepage_table32(allocator, t.OemTableInfo);
+                    fill_identity_codepage_table32(allocator, t.AnsiTableInfo);
+                    t.UpperCaseTable = static_cast<uint32_t>(upper_table32_addr);
+                    t.LowerCaseTable = static_cast<uint32_t>(lower_table32_addr);
                 });
                 p32.UnicodeCaseTableData = static_cast<uint32_t>(case_table32.value());
             });
