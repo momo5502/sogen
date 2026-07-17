@@ -33,6 +33,11 @@ namespace sogen
 
         void ensure_nls_lead_byte_info_table(windows_emulator& win_emu)
         {
+            if (!win_emu.process.is_wow64_process)
+            {
+                return;
+            }
+
             const auto* ntdll_mod = win_emu.mod_manager.ntdll;
             if (ntdll_mod == nullptr)
             {
