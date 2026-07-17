@@ -8,6 +8,7 @@
 #include <system_error>
 #include <variant>
 #include <array>
+#include <functional>
 #include "common/utils/buffer_accessor.hpp"
 
 #include "primitives.hpp"
@@ -610,9 +611,9 @@ namespace sogen
             return std::make_error_code(std::errc::executable_format_error);
         }
 
-        inline std::variant<pe_arch, std::error_code> get_pe_arch(uint64_t base_address, uint64_t image_size)
+        inline std::variant<pe_arch, std::error_code> get_pe_arch(uint64_t image_size,
+                                                                  const std::function<bool(uint64_t offset, void* dst, size_t n)>& reader)
         {
-            const auto* base = reinterpret_cast<const std::byte*>(reinterpret_cast<const void*>(static_cast<uintptr_t>(base_address)));
             const uint64_t size = image_size;
 
             auto read = [&](uint64_t off, void* dst, size_t n) -> bool {
@@ -624,8 +625,7 @@ namespace sogen
                 {
                     return false;
                 }
-                memcpy(dst, base + off, n);
-                return true;
+                return reader(off, dst, n);
             };
 
             PEDosHeader_t dos{};
