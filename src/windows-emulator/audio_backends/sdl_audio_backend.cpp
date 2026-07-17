@@ -1,0 +1,110 @@
+#include "../std_include.hpp"
+#include <platform/audio_backend.hpp>
+
+#include <optional>
+
+#include <SDL3/SDL.h>
+
+namespace sogen
+{
+    namespace
+    {
+        std::optional<SDL_AudioFormat> to_sdl_format(const audio_format& format)
+        {
+            if (format.is_float)
+            {
+                return format.bits_per_sample == 32 ? std::optional{SDL_AUDIO_F32} : std::nullopt;
+            }
+
+            switch (format.bits_per_sample)
+            {
+            case 8:
+                return SDL_AUDIO_U8;
+            case 16:
+                return SDL_AUDIO_S16;
+            case 32:
+                return SDL_AUDIO_S32;
+            default:
+                return std::nullopt;
+            }
+        }
+
+        class sdl_audio_backend final : public audio_backend
+        {
+          public:
+            ~sdl_audio_backend() override
+            {
+                this->stop();
+                if (this->initialized_)
+                {
+                    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+                }
+            }
+
+            bool start(const audio_format& format) override
+            {
+                if (this->stream_ && this->format_ == format)
+                {
+                    return true;
+                }
+
+                this->stop();
+
+                const auto sdl_format = to_sdl_format(format);
+                if (!sdl_format || format.channels == 0 || format.sample_rate == 0)
+                {
+                    return false;
+                }
+
+                if (!this->initialized_)
+                {
+                    this->initialized_ = SDL_InitSubSystem(SDL_INIT_AUDIO);
+                    if (!this->initialized_)
+                    {
+                        return false;
+                    }
+                }
+
+                const SDL_AudioSpec spec{*sdl_format, static_cast<int>(format.channels), static_cast<int>(format.sample_rate)};
+                this->stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+                if (!this->stream_)
+                {
+                    return false;
+                }
+
+                this->format_ = format;
+                SDL_ResumeAudioStreamDevice(this->stream_);
+                return true;
+            }
+
+            void submit(const void* data, const size_t size) override
+            {
+                if (this->stream_ && data && size)
+                {
+                    SDL_PutAudioStreamData(this->stream_, data, static_cast<int>(size));
+                }
+            }
+
+            void stop() override
+            {
+                if (this->stream_)
+                {
+                    SDL_DestroyAudioStream(this->stream_);
+                    this->stream_ = nullptr;
+                    this->format_ = {};
+                }
+            }
+
+          private:
+            bool initialized_{false};
+            SDL_AudioStream* stream_{nullptr};
+            audio_format format_{};
+        };
+    }
+
+    std::unique_ptr<audio_backend> create_sdl_audio_backend()
+    {
+        return std::make_unique<sdl_audio_backend>();
+    }
+
+} // namespace sogen

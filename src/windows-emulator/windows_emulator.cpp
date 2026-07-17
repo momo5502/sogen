@@ -660,6 +660,16 @@ namespace sogen
             return create_default_ui_backend();
         }
 
+        std::unique_ptr<audio_backend> get_audio_backend(emulator_interfaces& interfaces)
+        {
+            if (interfaces.audio)
+            {
+                return std::move(interfaces.audio);
+            }
+
+            return create_default_audio_backend();
+        }
+
         // The guest must see at least as many logical processors as there are vCPUs, otherwise a
         // thread running on a higher-indexed vCPU would report a processor number the guest
         // considers out of range. The configured fake value still wins when it is larger (e.g. the
@@ -687,6 +697,7 @@ namespace sogen
           dns_lookup_(get_dns_lookup(interfaces)),
           socket_factory_(get_socket_factory(interfaces)),
           ui_backend_(get_ui_backend(interfaces)),
+          audio_backend_(get_audio_backend(interfaces)),
           emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
           fake_env(effective_fake_env(settings, static_cast<uint32_t>(this->emu_->vcpu_count()))),
           callbacks(std::move(callbacks)),
@@ -1780,6 +1791,7 @@ namespace sogen
     void windows_emulator::restore_ui_backend()
     {
         this->ui().reset();
+        this->audio().stop();
 
         std::vector<const window*> pending{};
         pending.reserve(this->process.windows.size());
