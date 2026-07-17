@@ -305,7 +305,7 @@ namespace sogen
                 snprintf(buf.data(), buf.size(), "%02x ", static_cast<unsigned char>(b));
                 hex += buf.data();
             }
-            printf("[audiosrv-resp] opnum=0 reply (%zu bytes): %s\n", payload.size(), hex.c_str());
+            win_emu.log.error("[audiosrv-resp] opnum=0 reply (%zu bytes): %s\n", payload.size(), hex.c_str());
         }
 
         lpc_request_result result{status, std::move(payload)};
