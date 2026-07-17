@@ -21,6 +21,7 @@ namespace sogen
         constexpr std::array<uint8_t, 16> k_iface_audio_client = {0x11, 0xd1, 0x74, 0xd5, 0x26, 0x61, 0xd7, 0x49,
                                                                   0x9b, 0x86, 0x4d, 0xe6, 0xb6, 0x50, 0xd4, 0xfc};
 
+        constexpr uint32_t k_audio_opnum_mmdev_get_blob = 0;        // {923F85B3} [out] serialized blob, no [in]
         constexpr uint32_t k_audio_opnum_get_default_endpoint = 25; // {923F85B3}
         constexpr uint32_t k_audio_opnum_get_mix_format = 0;        // {D574D111}
         constexpr uint32_t k_audio_opnum_is_format_supported = 1;   // {D574D111} AudioServerIsFormatSupported
@@ -168,6 +169,8 @@ namespace sogen
 
                 switch (procedure_id)
                 {
+                case k_audio_opnum_mmdev_get_blob:
+                    return handle_mmdev_get_blob(writer);
                 case k_audio_opnum_get_default_endpoint:
                     return handle_get_default_endpoint(win_emu, c, writer);
                 default:
@@ -408,6 +411,19 @@ namespace sogen
             {
                 writer.write<uint32_t>(0);
                 writer.write(k_hr_ok); // return HRESULT
+                return STATUS_SUCCESS;
+            }
+
+            // {923F85B3} opnum 0: HRESULT Proc0([out] byte** ppBlob) - no [in] params. mmdevapi's proxy calls
+            // it early (MW3 retries it) and expects a unique pointer to a conformant byte blob (a serialized
+            // property/state store; a live host returned ~584 bytes). We have no faithful blob to hand back, so
+            // report an empty result: a null unique pointer + S_OK. This replaces the RPC_X error the caller got
+            // from an unhandled opnum with a well-formed "nothing here" reply.
+            static NTSTATUS handle_mmdev_get_blob(utils::aligned_binary_writer& writer)
+            {
+                writer.write_ndr_pointer(false); // [out] blob: null unique pointer
+                writer.align_to(sizeof(uint32_t));
+                writer.write(k_hr_ok);
                 return STATUS_SUCCESS;
             }
 
