@@ -4,6 +4,7 @@
 #include "utils/io.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <iostream>
 #include <utils/finally.hpp>
 #include <utils/wildcard.hpp>
@@ -20,6 +21,81 @@ namespace sogen
     {
         namespace
         {
+            bool has_valid_filename_characters(const std::u16string_view path)
+            {
+                constexpr std::u16string_view invalid_characters = u"\"<>|*?";
+                return path.find_first_of(invalid_characters) == std::u16string_view::npos;
+            }
+
+            std::u16string resolve_system_root_path(const syscall_context& c, std::u16string filename)
+            {
+                auto filename_upper = filename;
+                std::ranges::transform(filename_upper, filename_upper.begin(), ::towupper);
+
+                constexpr std::u16string_view system_root_prefix = u"\\SYSTEMROOT";
+                if (filename_upper != system_root_prefix &&
+                    !(filename_upper.size() > system_root_prefix.size() && filename_upper.starts_with(system_root_prefix) &&
+                      windows_path_detail::is_slash(filename_upper[system_root_prefix.size()])))
+                {
+                    return filename;
+                }
+
+                const auto system_root =
+                    c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return std::u16string{kusd.NtSystemRoot.arr}; });
+                const auto suffix = std::u16string_view{filename}.substr(system_root_prefix.size());
+                filename = system_root;
+
+                if (!suffix.empty() && windows_path_detail::is_slash(filename.back()) && windows_path_detail::is_slash(suffix.front()))
+                {
+                    filename.append(suffix.substr(1));
+                }
+                else
+                {
+                    filename.append(suffix);
+                }
+
+                return filename;
+            }
+
+            // The counterpart of windows_path::to_device_path. Sogen reports file names in volume-device form
+            // (NtQueryObject, NtQueryVirtualMemory, ...) and code that consumes them - ntmarta walking a
+            // directory's parents for an ACL check, for one - opens them again as-is. Rewrite the volume back
+            // into its drive letter so the path reaches the file system instead of the device registry. A bare
+            // volume with no path behind it is a real volume handle and stays a device.
+            std::u16string resolve_volume_device_path(std::u16string filename)
+            {
+                constexpr std::u16string_view volume_prefix = u"\\Device\\HarddiskVolume";
+                if (!filename.starts_with(volume_prefix))
+                {
+                    return filename;
+                }
+
+                const std::u16string_view remainder{filename};
+                const auto separator = remainder.find(u'\\', volume_prefix.size());
+                if (separator == std::u16string_view::npos)
+                {
+                    return filename;
+                }
+
+                const auto number = u16_to_u8(remainder.substr(volume_prefix.size(), separator - volume_prefix.size()));
+
+                int volume_index{};
+                const auto* number_start = number.data();
+                const auto* number_end = number_start + number.size();
+                const auto [parse_end, parse_error] = std::from_chars(number_start, number_end, volume_index);
+                if (parse_error != std::errc{} || parse_end != number_end || volume_index < 1 || volume_index > 26)
+                {
+                    return filename;
+                }
+
+                std::u16string path = u"\\??\\";
+                path.push_back(static_cast<char16_t>(u'a' + volume_index - 1));
+                path.push_back(u':');
+                path.append(remainder.substr(separator));
+
+                return path;
+            }
+
             std::pair<utils::file_handle, NTSTATUS> open_file(const file_system& file_sys, const windows_path& path,
                                                               const std::u16string& mode)
             {
@@ -93,7 +169,7 @@ namespace sogen
                 c.win_emu.log.warn("--> File rename requested: %s --> %s\n", u16_to_u8(f->name).c_str(), u16_to_u8(new_name).c_str());
 
                 std::error_code ec{};
-                bool file_exists = std::filesystem::exists(new_name, ec);
+                bool file_exists = std::filesystem::exists(c.win_emu.file_sys.translate(new_name), ec);
 
                 if (ec)
                 {
@@ -280,11 +356,26 @@ namespace sogen
             std::vector<file_entry> files{};
 
             const auto dir = file_sys.translate(win_path);
+            const auto make_file_entry = [](const std::filesystem::path& file_path, const std::filesystem::path& host_path,
+                                            const bool is_directory) {
+                file_entry entry{.file_path = file_path, .is_directory = is_directory};
+
+                struct compat_stat file_stat{};
+                if (compat_stat(host_path, &file_stat))
+                {
+                    entry.file_size = is_directory ? 0 : static_cast<uint64_t>(file_stat.st_size);
+                    entry.creation_time = convert_timespec_to_filetime(file_stat.st_ctimespec);
+                    entry.last_access_time = convert_timespec_to_filetime(file_stat.st_atimespec);
+                    entry.last_write_time = convert_timespec_to_filetime(file_stat.st_mtimespec);
+                }
+
+                return entry;
+            };
 
             if (file_mask.empty() || file_mask == u"*")
             {
-                files.emplace_back(file_entry{.file_path = ".", .is_directory = true});
-                files.emplace_back(file_entry{.file_path = "..", .is_directory = true});
+                files.emplace_back(make_file_entry(".", dir, true));
+                files.emplace_back(make_file_entry("..", dir.parent_path(), true));
             }
 
             std::error_code ec{};
@@ -295,11 +386,7 @@ namespace sogen
                     continue;
                 }
 
-                files.emplace_back(file_entry{
-                    .file_path = file.path().filename(),
-                    .file_size = file.is_directory() ? 0 : file.file_size(),
-                    .is_directory = file.is_directory(),
-                });
+                files.emplace_back(make_file_entry(file.path().filename(), file.path(), file.is_directory()));
             }
 
             file_sys.access_mapped_entries(win_path, [&](const std::pair<windows_path, std::filesystem::path>& entry) {
@@ -316,11 +403,7 @@ namespace sogen
                     return;
                 }
 
-                files.emplace_back(file_entry{
-                    .file_path = filename,
-                    .file_size = dir_entry.is_directory() ? 0 : dir_entry.file_size(),
-                    .is_directory = dir_entry.is_directory(),
-                });
+                files.emplace_back(make_file_entry(filename, entry.second, dir_entry.is_directory()));
             });
 
             return files;
@@ -335,7 +418,7 @@ namespace sogen
             if (!f->enumeration_state || query_flags & SL_RESTART_SCAN)
             {
                 const auto mask = file_mask ? read_unicode_string(c.emu, file_mask) : u"";
-                c.win_emu.callbacks.on_generic_access("Enumerating directory", f->name);
+                c.win_emu.callbacks.on_generic_access("Enumerating directory", f->name + mask);
 
                 f->enumeration_state.emplace(file_enumeration_state{});
                 f->enumeration_state->files = scan_directory(c.win_emu.file_sys, f->name, mask);
@@ -344,7 +427,7 @@ namespace sogen
             auto& enum_state = *f->enumeration_state;
 
             uint64_t current_offset{0};
-            emulator_object<T> object{c.emu};
+            emulator_object<T> object{c.emu.memory()};
 
             size_t current_index = enum_state.current_index;
 
@@ -391,6 +474,12 @@ namespace sogen
                 T info{};
                 info.NextEntryOffset = 0;
                 info.FileIndex = static_cast<ULONG>(current_index);
+
+                info.CreationTime = current_file.creation_time;
+                info.LastAccessTime = current_file.last_access_time;
+                info.LastWriteTime = current_file.last_write_time;
+                info.ChangeTime = info.LastWriteTime;
+
                 info.FileAttributes = current_file.is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
                 info.FileNameLength = static_cast<ULONG>(file_name.size() * 2);
                 info.EndOfFile.QuadPart = current_file.file_size;
@@ -448,6 +537,12 @@ namespace sogen
                                                                           file_name, f);
             }
 
+            if (info_class == FileIdBothDirectoryInformation)
+            {
+                return handle_file_enumeration<FILE_ID_BOTH_DIR_INFORMATION>(c, io_status_block, file_information, length, query_flags,
+                                                                             file_name, f);
+            }
+
             c.win_emu.log.error("Unsupported query directory file info class: %X\n", info_class);
             c.emu.stop();
 
@@ -491,7 +586,12 @@ namespace sogen
                 return STATUS_ACCESS_VIOLATION;
             }
 
-            const auto _ = utils::finally([&] { io_status_block.write(block.value()); });
+            const auto _ = utils::finally([&] {
+                if (io_status_block)
+                {
+                    (void)io_status_block.try_write(block.value());
+                }
+            });
 
             const auto ret = [&](const NTSTATUS status, size_t size = 0) {
                 block->Status = status;
@@ -987,7 +1087,7 @@ namespace sogen
             const auto _ = utils::finally([&] {
                 if (io_status_block)
                 {
-                    io_status_block.write(block);
+                    (void)io_status_block.try_write(block);
                 }
             });
 
@@ -1047,7 +1147,7 @@ namespace sogen
             return ret(STATUS_NOT_SUPPORTED);
         }
 
-        void commit_file_data(const std::string_view data, emulator& emu,
+        void commit_file_data(const std::string_view data, memory_interface& emu,
                               const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const uint64_t buffer)
         {
             if (io_status_block)
@@ -1076,7 +1176,7 @@ namespace sogen
 
         std::optional<uint64_t> get_lock_range_end(const LARGE_INTEGER& byte_offset, const LARGE_INTEGER& length)
         {
-            if (byte_offset.QuadPart < 0 || length.QuadPart <= 0)
+            if (byte_offset.QuadPart < 0 || length.QuadPart == 0)
             {
                 return std::nullopt;
             }
@@ -1128,7 +1228,7 @@ namespace sogen
                     c.emu.write_memory(io_status_block.value() + sizeof(status32), &information32, sizeof(information32));
                 }
 
-                c.win_emu.current_thread().pending_apcs.push_back({
+                c.thread().pending_apcs.push_back({
                     .flags = 0,
                     .apc_routine = apc_routine,
                     .apc_argument1 = apc_context,
@@ -1596,6 +1696,7 @@ namespace sogen
                 u"Nsi",
                 u"MountPointManager",
                 u"SogenGpu",
+                u"SogenSteam",
             };
 
             if (devices.contains(path))
@@ -1651,6 +1752,8 @@ namespace sogen
             // Convert to uppercase for case-insensitive comparison
             std::u16string filename_upper = filename;
             std::ranges::transform(filename_upper, filename_upper.begin(), ::towupper);
+
+            filename = resolve_volume_device_path(resolve_system_root_path(c, std::move(filename)));
 
             // Handle console output device
             if (filename_upper == u"\\??\\CONOUT$" || filename_upper == u"\\DEVICE\\CONOUT$" || filename_upper == u"CONOUT$" ||
@@ -1905,9 +2008,22 @@ namespace sogen
                 filename = root->name + (has_separator ? u"" : u"\\") + filename;
             }
 
+            filename = resolve_volume_device_path(resolve_system_root_path(c, std::move(filename)));
+
             c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
-            const auto local_filename = c.win_emu.file_sys.translate(filename);
+            const windows_path filepath(filename);
+            if (!has_valid_filename_characters(filepath.u16string()))
+            {
+                return STATUS_OBJECT_NAME_INVALID;
+            }
+
+            if (filepath.is_relative())
+            {
+                return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
+
+            const auto local_filename = c.win_emu.file_sys.translate(filepath);
 
             struct compat_stat file_stat{};
             if (!compat_stat(local_filename, &file_stat))
@@ -1958,9 +2074,16 @@ namespace sogen
                 filename = root->name + (has_separator ? u"" : u"\\") + filename;
             }
 
+            filename = resolve_volume_device_path(resolve_system_root_path(c, std::move(filename)));
+
             c.win_emu.callbacks.on_generic_access("Querying file attributes", filename);
 
-            windows_path filepath(filename);
+            const windows_path filepath(filename);
+            if (!has_valid_filename_characters(filepath.u16string()))
+            {
+                return STATUS_OBJECT_NAME_INVALID;
+            }
+
             if (filepath.is_relative())
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -1990,8 +2113,8 @@ namespace sogen
                                    const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const ULONG share_access,
                                    const ULONG open_options)
         {
-            return handle_NtCreateFile(c, file_handle, desired_access, object_attributes, io_status_block, {c.emu}, 0, share_access,
-                                       FILE_OPEN, open_options, 0, 0);
+            return handle_NtCreateFile(c, file_handle, desired_access, object_attributes, io_status_block, {c.emu.memory()}, 0,
+                                       share_access, FILE_OPEN, open_options, 0, 0);
         }
 
         NTSTATUS handle_NtOpenDirectoryObject(const syscall_context& c, const emulator_object<handle> directory_handle,
@@ -2113,7 +2236,7 @@ namespace sogen
             const auto attributes = object_attributes.read();
             const auto filename = read_unicode_string(c.emu, attributes.ObjectName);
 
-            if (!filename.starts_with(u"\\Device\\NamedPipe"))
+            if (!is_named_pipe_path(filename))
             {
                 return STATUS_NOT_SUPPORTED;
             }
@@ -2187,6 +2310,7 @@ namespace sogen
             context.input_buffer_length = input_buffer_length;
             context.output_buffer = output_buffer;
             context.output_buffer_length = output_buffer_length;
+            context.vcpu = &c.vcpu;
 
             return device->execute_ioctl(c.win_emu, context);
         }

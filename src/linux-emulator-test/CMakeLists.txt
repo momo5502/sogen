@@ -24,7 +24,7 @@ target_compile_definitions(linux-emulator-test PRIVATE
 )
 
 add_test(NAME linux-emulator-test
-         COMMAND ${CMAKE_COMMAND} -E env "LD_LIBRARY_PATH=." -- "${PYTHON3_EXE}" "${PROJECT_SOURCE_DIR}/deps/gtest-parallel/gtest_parallel.py" ./linux-emulator-test
+         COMMAND "${PYTHON3_EXE}" "${PROJECT_SOURCE_DIR}/deps/gtest-parallel/gtest_parallel.py" ./linux-emulator-test
          WORKING_DIRECTORY "$<TARGET_FILE_DIR:linux-emulator-test>")
 
 sogen_targets_set_folder("tests" linux-emulator-test)

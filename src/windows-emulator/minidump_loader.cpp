@@ -466,15 +466,16 @@ namespace sogen
 
                 win_emu.log.info("Setting up KUSER_SHARED_DATA from dump system info\n");
 
-                auto& kusd = win_emu.process.kusd.get();
-                kusd.NtMajorVersion = sys_info->major_version;
-                kusd.NtMinorVersion = sys_info->minor_version;
-                kusd.NtBuildNumber = sys_info->build_number;
-                kusd.NativeProcessorArchitecture = sys_info->processor_architecture;
-                kusd.ActiveProcessorCount = sys_info->number_of_processors;
-                kusd.UnparkedProcessorCount = sys_info->number_of_processors;
-                kusd.NtProductType = static_cast<NT_PRODUCT_TYPE>(sys_info->product_type);
-                kusd.ProductTypeIsValid = 1;
+                win_emu.process.kusd.access([&](KUSER_SHARED_DATA64& kusd) {
+                    kusd.NtMajorVersion = sys_info->major_version;
+                    kusd.NtMinorVersion = sys_info->minor_version;
+                    kusd.NtBuildNumber = sys_info->build_number;
+                    kusd.NativeProcessorArchitecture = sys_info->processor_architecture;
+                    kusd.ActiveProcessorCount = sys_info->number_of_processors;
+                    kusd.UnparkedProcessorCount = sys_info->number_of_processors;
+                    kusd.NtProductType = static_cast<NT_PRODUCT_TYPE>(sys_info->product_type);
+                    kusd.ProductTypeIsValid = 1;
+                });
 
                 win_emu.log.info("KUSD updated: Windows %u.%u.%u, %u processors, product type %u\n", sys_info->major_version,
                                  sys_info->minor_version, sys_info->build_number, sys_info->number_of_processors, sys_info->product_type);
@@ -556,7 +557,7 @@ namespace sogen
                 if (success_count > 0)
                 {
                     auto& first_thread = win_emu.process.threads.begin()->second;
-                    win_emu.process.active_thread = &first_thread;
+                    win_emu.vcpu(0).active_thread = &first_thread;
                 }
 
                 win_emu.log.info("Thread reconstruction: %zu/%zu threads created, %zu with context\n", success_count, threads.size(),

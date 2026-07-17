@@ -5,6 +5,8 @@
 #include "elf_mapping.hpp"
 
 #include <utils/io.hpp>
+#include <serialization.hpp>
+#include <utils/function.hpp>
 
 namespace sogen
 {
@@ -23,6 +25,7 @@ namespace sogen
         linux_mapped_module* interpreter{};
 
         std::string interpreter_path{};
+        utils::callback_list<void(linux_mapped_module&)> on_module_load{};
 
         // IRELATIVE relocations collected during ELF loading, to be resolved by running
         // each resolver function in the emulator before starting execution.
@@ -30,6 +33,8 @@ namespace sogen
 
         void map_main_modules(const std::filesystem::path& executable_path);
         linux_mapped_module* map_module(const std::filesystem::path& path, uint64_t forced_base = 0, bool apply_relocations = false);
+        linux_mapped_module* record_runtime_module_mapping(const std::filesystem::path& path, uint64_t mapped_address,
+                                                           uint64_t file_offset);
 
         // Load all DT_NEEDED dependencies of already-loaded modules recursively.
         // Uses DT_RPATH, DT_RUNPATH, configured library paths, and emulation root standard directories.
@@ -47,6 +52,11 @@ namespace sogen
         linux_mapped_module* find_by_address(uint64_t address);
         linux_mapped_module* find_by_name(std::string_view name);
 
+        std::map<uint64_t, linux_mapped_module>& get_modules()
+        {
+            return this->modules_;
+        }
+
         const std::map<uint64_t, linux_mapped_module>& get_modules() const
         {
             return this->modules_;
@@ -62,6 +72,9 @@ namespace sogen
             static const std::filesystem::path empty{};
             return empty;
         }
+
+        void serialize(utils::buffer_serializer& buffer) const;
+        void deserialize(utils::buffer_deserializer& buffer);
 
       private:
         linux_memory_manager* memory_{};

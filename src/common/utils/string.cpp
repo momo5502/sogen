@@ -8,7 +8,7 @@ namespace sogen
 
     namespace utils::string
     {
-        // NOLINTNEXTLINE(cert-dcl50-cpp)
+        // NOLINTNEXTLINE(cert-dcl50-cpp, modernize-avoid-variadic-functions)
         const char* va(const char* format, ...)
         {
             constexpr auto buffer_count = 4;

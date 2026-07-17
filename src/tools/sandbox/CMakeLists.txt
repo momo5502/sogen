@@ -1,12 +1,17 @@
-if(NOT WIN OR MINGW OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+# Windows uses the WHP backend, Linux x64 uses the KVM backend. Both are 64-bit only.
+if((NOT WIN AND NOT LINUX) OR MINGW OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   return()
 endif()
 
 file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
   *.cpp
   *.hpp
-  *.rc
 )
+
+if(WIN)
+  file(GLOB_RECURSE RC_FILES CONFIGURE_DEPENDS *.rc)
+  list(APPEND SRC_FILES ${RC_FILES})
+endif()
 
 list(SORT SRC_FILES)
 
@@ -16,9 +21,14 @@ sogen_assign_source_group(${SRC_FILES})
 
 target_link_libraries(sandbox PRIVATE
   windows-emulator
-  whp-emulator
   emulator-common
-  shell32
+  cli11
 )
+
+if(WIN)
+  target_link_libraries(sandbox PRIVATE whp-emulator shell32)
+else()
+  target_link_libraries(sandbox PRIVATE kvm-emulator)
+endif()
 
 sogen_strip_target(sandbox)

@@ -62,6 +62,14 @@ namespace sogen
 
         bool read_file_data_safe(std::ifstream& file, const uint64_t offset, void* buffer, const size_t size)
         {
+            // The parser maps fixed-size structs (key/value/subkey-list blocks) onto variable-size hive
+            // cells, so a full-size read of a cell near the end of the hive legitimately runs past EOF --
+            // uncompacted hives leave trailing slack that absorbs it, but a compacted hive (e.g. produced
+            // by REG SAVE, which drops that slack) does not. Read whatever is available and zero-fill the
+            // remainder; callers only consume the real cell fields, and an offset wholly past EOF yields a
+            // zeroed block that parses as empty rather than crashing.
+            std::memset(buffer, 0, size);
+
             if (file.bad())
             {
                 return false;
@@ -69,21 +77,30 @@ namespace sogen
 
             file.clear();
 
+            file.seekg(0, std::ios::end);
             if (!file.good())
             {
                 return false;
             }
+
+            const auto file_size = static_cast<uint64_t>(file.tellg());
+            if (offset >= file_size)
+            {
+                return true; // wholly past EOF: leave the buffer zero-filled
+            }
+
+            const auto available = static_cast<size_t>(file_size - offset);
+            const auto to_read = size < available ? size : available;
 
             file.seekg(static_cast<std::streamoff>(offset));
-
             if (!file.good())
             {
                 return false;
             }
 
-            file.read(static_cast<char*>(buffer), static_cast<std::streamsize>(size));
+            file.read(static_cast<char*>(buffer), static_cast<std::streamsize>(to_read));
 
-            return file.good();
+            return !file.bad();
         }
 
         void read_file_data(std::ifstream& file, const uint64_t offset, void* buffer, const size_t size)
@@ -193,7 +210,8 @@ namespace sogen
                 const auto offset_entry = read_file_object<offset_entry_t>(file, MAIN_ROOT_OFFSET + entry_offsets, i);
                 const auto subkey_block_offset = MAIN_ROOT_OFFSET + offset_entry.offset;
                 const auto subkey = read_file_object<key_block_t>(file, subkey_block_offset);
-                std::string subkey_name(subkey.name, std::min(subkey.len, static_cast<int16_t>(sizeof(subkey.name))));
+                const auto subkey_name_len = subkey.len < 0 ? size_t{0} : std::min(static_cast<size_t>(subkey.len), sizeof(subkey.name));
+                std::string subkey_name(subkey.name, subkey_name_len);
 
                 const auto [it, inserted] =
                     this->sub_keys_.emplace(std::move(subkey_name), hive_key{subkey.subkeys, subkey.value_count, subkey.offsets});
@@ -226,7 +244,8 @@ namespace sogen
             const auto offset = read_file_object<int>(file, MAIN_ROOT_OFFSET + this->value_offsets_ + 4, i);
             const auto value = read_file_object<value_block_t>(file, MAIN_ROOT_OFFSET + offset);
 
-            std::string value_name(value.name, std::min(value.name_len, static_cast<int16_t>(sizeof(value.name))));
+            const auto value_name_len = value.name_len < 0 ? size_t{0} : std::min(static_cast<size_t>(value.name_len), sizeof(value.name));
+            std::string value_name(value.name, value_name_len);
 
             raw_hive_value raw_value{};
             raw_value.parsed = false;

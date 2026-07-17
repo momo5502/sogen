@@ -99,8 +99,7 @@ namespace sogen
                 return;
             }
 
-            std::vector<uint8_t> zeroes(static_cast<size_t>(buffer.size), 0);
-            win_emu.emu().write_memory(buffer.address, zeroes.data(), zeroes.size());
+            win_emu.emu().set_memory(buffer.address, 0, buffer.size);
         }
 
         void write_adapter_key(windows_emulator& win_emu, const nsi_buffer buffer)
@@ -236,7 +235,7 @@ namespace sogen
         };
     }
 
-    std::unique_ptr<io_device> create_network_store_interface()
+    std::unique_ptr<io_device> create_network_store_interface(const device_creation_context&)
     {
         return std::make_unique<network_store_interface_device>();
     }

@@ -349,6 +349,23 @@ namespace
             return false;
         }
 
+        constexpr DWORD negative_length_low = 0xFFFFFFFFUL;
+        constexpr DWORD negative_length_high = 0xFFFFFFFFUL;
+
+        OVERLAPPED negative_lock{};
+        if (!LockFileEx(first, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, negative_length_low, negative_length_high,
+                        &negative_lock))
+        {
+            puts("Failed to acquire negative-length file lock");
+            return false;
+        }
+
+        if (!UnlockFileEx(first, 0, negative_length_low, negative_length_high, &negative_lock))
+        {
+            puts("Failed to unlock negative-length file lock");
+            return false;
+        }
+
         return true;
     }
 
@@ -1588,9 +1605,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_threads, "Threads")
     RUN_TEST(test_threads_winapi, "Threads WinAPI")
     RUN_TEST(test_env, "Environment")
-#ifdef _WIN64
     RUN_TEST(test_lookup_account_sid, "LSA")
-#endif
     RUN_TEST(test_exceptions, "Exceptions")
 #ifndef __MINGW64__
     RUN_TEST(test_native_exceptions, "Native Exceptions")

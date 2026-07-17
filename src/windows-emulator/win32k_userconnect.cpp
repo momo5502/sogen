@@ -96,6 +96,7 @@ namespace sogen
                 std::u16string_view text;
                 uint32_t id;
             };
+
             static constexpr std::array<mb_string, 11> entries = {{
                 {.text = u"OK", .id = 1},          // IDOK
                 {.text = u"Cancel", .id = 2},      // IDCANCEL
@@ -148,7 +149,6 @@ namespace sogen
                 return false;
             }
 
-            // Seed after the pfn copy: the worker-array fill above zeroes part of the MBStrings region.
             seed_messagebox_button_strings(memory, process.user_handles.get_server_info().value());
 
             refresh_dispatch_client_message(process);

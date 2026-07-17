@@ -1,9 +1,10 @@
-#pragma once
+﻿#pragma once
 
 #include <array>
 #include <capstone/capstone.h>
 #include <optional>
 #include <span>
+#include <stdexcept>
 
 #include "arch_emulator.hpp"
 #include "segment_utils.hpp"
@@ -16,6 +17,7 @@ namespace sogen
     {
       public:
         instructions() = default;
+
         ~instructions()
         {
             this->release();
@@ -64,13 +66,19 @@ namespace sogen
 
         const cs_insn& operator[](const size_t index) const
         {
-            return this->instructions_[index];
+            if (index >= this->instructions_.size())
+            {
+                throw std::out_of_range("Instruction index out of range");
+            }
+
+            return this->instructions_.subspan(index, 1).front();
         }
 
         auto begin() const
         {
             return this->instructions_.begin();
         }
+
         auto end() const
         {
             return this->instructions_.end();
@@ -102,10 +110,10 @@ namespace sogen
 
         using segment_bitness = segment_utils::segment_bitness;
 
-        instructions disassemble(emulator& cpu, uint16_t cs_selector, std::span<const uint8_t> data, size_t count,
+        instructions disassemble(x86_64_cpu& cpu, uint16_t cs_selector, std::span<const uint8_t> data, size_t count,
                                  uint64_t address = 0) const;
-        static std::optional<segment_bitness> get_segment_bitness(emulator& cpu, uint16_t cs_selector);
-        csh resolve_handle(emulator& cpu, uint16_t cs_selector) const;
+        static std::optional<segment_bitness> get_segment_bitness(x86_64_cpu& cpu, uint16_t cs_selector);
+        csh resolve_handle(x86_64_cpu& cpu, uint16_t cs_selector) const;
 
         csh get_handle_64() const
         {
@@ -130,7 +138,7 @@ namespace sogen
         void release();
     };
 
-    inline bool read_x86_register_value(x86_64_emulator& cpu, x86_reg reg, uint64_t& value)
+    inline bool read_x86_register_value(x86_64_cpu& cpu, x86_reg reg, uint64_t& value)
     {
         switch (reg)
         {
@@ -187,7 +195,7 @@ namespace sogen
         }
     }
 
-    inline bool resolve_jump_target(x86_64_emulator& cpu, uint64_t& target)
+    inline bool resolve_jump_target(x86_64_cpu& cpu, uint64_t& target)
     {
         disassembler d{};
         const auto cs_selector = cpu.reg<uint16_t>(x86_register::cs);

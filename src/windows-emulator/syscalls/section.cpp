@@ -35,6 +35,67 @@ namespace sogen
 
             static_assert(sizeof(ini_file_mapping64) == 0x20);
 
+            template <typename Pointer>
+            bool loader_list_contains_image(const syscall_context& c, const uint64_t ldr_address, const uint64_t image_base)
+            {
+                if (!ldr_address)
+                {
+                    return false;
+                }
+
+                using ldr_data = std::conditional_t<sizeof(Pointer) == sizeof(uint32_t), PEB_LDR_DATA32, PEB_LDR_DATA64>;
+                constexpr auto dll_base_offset = sizeof(Pointer) == sizeof(uint32_t) ? 0x18 : 0x30;
+                const auto list_head = ldr_address + offsetof(ldr_data, InLoadOrderModuleList);
+                Pointer current{};
+                if (!c.win_emu.memory.try_read_memory(list_head, &current, sizeof(current)))
+                {
+                    return false;
+                }
+
+                for (size_t i = 0; i < 1024 && current != list_head; ++i)
+                {
+                    if (!current)
+                    {
+                        return false;
+                    }
+
+                    Pointer dll_base{};
+                    if (!c.win_emu.memory.try_read_memory(static_cast<uint64_t>(current) + dll_base_offset, &dll_base, sizeof(dll_base)))
+                    {
+                        return false;
+                    }
+
+                    if (dll_base == image_base)
+                    {
+                        return true;
+                    }
+
+                    if (!c.win_emu.memory.try_read_memory(current, &current, sizeof(current)))
+                    {
+                        return false;
+                    }
+                }
+
+                return false;
+            }
+
+            bool loader_list_contains_image(const syscall_context& c, const mapped_module& module)
+            {
+                if (module.machine == IMAGE_FILE_MACHINE_I386 && c.proc.peb32)
+                {
+                    const auto ldr = c.proc.peb32->read().Ldr;
+                    return loader_list_contains_image<uint32_t>(c, ldr, module.image_base);
+                }
+
+                if (module.machine != IMAGE_FILE_MACHINE_AMD64)
+                {
+                    return false;
+                }
+
+                const auto ldr = c.proc.peb64.read().Ldr;
+                return loader_list_contains_image<uint64_t>(c, ldr, module.image_base);
+            }
+
             NTSTATUS initialize_shared_section_base_static_server_data_mapping(const syscall_context& c,
                                                                                const uint64_t shared_section_address,
                                                                                const uint64_t shared_section_size, uint64_t& obj_address)
@@ -232,7 +293,7 @@ namespace sogen
 
             if (!is_knowndll && attributes.RootDirectory != BASE_NAMED_OBJECTS_DIRECTORY)
             {
-                c.win_emu.log.error("Unsupported section\n");
+                c.win_emu.log.error("Unsupported section: %s\n", u16_to_u8(filename_sv).c_str());
                 c.emu.stop();
                 return STATUS_NOT_SUPPORTED;
             }
@@ -295,7 +356,8 @@ namespace sogen
                 const auto shared_section_size = c.proc.shared_section_size;
                 const auto address = c.proc.shared_section_address;
 
-                const std::u16string_view windows_dir = c.proc.kusd.get().NtSystemRoot.arr;
+                const auto windows_dir =
+                    c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return std::u16string{kusd.NtSystemRoot.arr}; });
 
                 uint64_t obj_address{};
                 if (const auto status =
@@ -340,7 +402,20 @@ namespace sogen
 
             if (section_entry->is_image())
             {
-                const auto* binary = c.win_emu.mod_manager.map_module(section_entry->file_name, c.win_emu.log, false, true);
+                const auto file_path =
+                    std::filesystem::weakly_canonical(std::filesystem::absolute(c.win_emu.file_sys.translate(section_entry->file_name)));
+                uint64_t relocation_base{};
+                for (const auto& loaded_module : c.win_emu.mod_manager.modules() | std::views::values)
+                {
+                    if (loaded_module.path == file_path && loader_list_contains_image(c, loaded_module))
+                    {
+                        relocation_base = loaded_module.image_base;
+                        break;
+                    }
+                }
+
+                const auto* binary =
+                    c.win_emu.mod_manager.map_module(section_entry->file_name, c.win_emu.log, false, true, relocation_base);
                 if (!binary)
                 {
                     return STATUS_FILE_INVALID;
@@ -420,6 +495,13 @@ namespace sogen
             // File-backed section: map a fresh copy of the file contents.
             std::vector<std::byte> file_data{};
             if (!utils::io::read_file(c.win_emu.file_sys.translate(section_entry->file_name), &file_data))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            // The guest fully controls the mapping offset. Reject anything past the file so the
+            // subtraction below cannot underflow into a huge copy that reads past file_data.
+            if (static_cast<uint64_t>(offset) > file_data.size())
             {
                 return STATUS_INVALID_PARAMETER;
             }

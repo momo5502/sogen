@@ -39,6 +39,7 @@ namespace sogen
         {
             return info_.system_root;
         }
+
         void set_system_root(const windows_path& value)
         {
             info_.system_root = value;
@@ -48,6 +49,7 @@ namespace sogen
         {
             return info_.major_version;
         }
+
         void set_major_version(uint32_t value)
         {
             info_.major_version = value;
@@ -57,6 +59,7 @@ namespace sogen
         {
             return info_.minor_version;
         }
+
         void set_minor_version(uint32_t value)
         {
             info_.minor_version = value;
@@ -66,6 +69,7 @@ namespace sogen
         {
             return info_.windows_build_number;
         }
+
         void set_windows_build_number(uint32_t value)
         {
             info_.windows_build_number = value;
@@ -75,6 +79,7 @@ namespace sogen
         {
             return info_.windows_update_build_revision;
         }
+
         void set_windows_update_build_revision(uint32_t value)
         {
             info_.windows_update_build_revision = value;

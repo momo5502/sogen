@@ -1,0 +1,161 @@
+name: Fuzz
+
+# Host-side fuzzing of the emulator's IO device handlers (libFuzzer + ASAN). This fuzzes the
+# emulator ITSELF with untrusted guest input; it is not the guest-application fuzzer in src/fuzzer.
+# Runs nightly for an hour and can be dispatched manually. Not attached to PRs.
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+      timezone: "Europe/Berlin"
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: "Total fuzzing time in seconds"
+        required: false
+        default: "600"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Fuzz IO device handlers
+    runs-on: ubuntu-24.04
+    env:
+      CLANG_VERSION: 21
+      DURATION: ${{ github.event.inputs.duration_seconds || '3600' }}
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Clang
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh ${CLANG_VERSION}
+            sudo apt install -y clang-${CLANG_VERSION} lld-${CLANG_VERSION}
+            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${CLANG_VERSION} 100
+            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${CLANG_VERSION} 100
+            sudo update-alternatives --set cc /usr/bin/clang-${CLANG_VERSION}
+            sudo update-alternatives --set c++ /usr/bin/clang++-${CLANG_VERSION}
+
+      - name: Install UI Dependencies
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              libasound2-dev libpulse-dev libjack-jackd2-dev libsndio-dev \
+              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+              libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+              libdrm-dev libgbm-dev libgl1-mesa-dev libegl-dev libgles-dev \
+              libdbus-1-dev libudev-dev \
+              libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
+
+      # libclang lets the Steam-bridge generator run at configure time, so the \\.\SogenSteam device and its
+      # host backend are compiled into the fuzzer instead of being silently skipped. The root CMakeLists
+      # resolves the PATH interpreter, so this and pip agree.
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install libclang (Steam bridge codegen)
+        run: python -m pip install --disable-pip-version-check libclang
+
+      - name: Configure
+        run: |
+          cmake -S . -B build/fuzz -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-${CLANG_VERSION} \
+            -DCMAKE_CXX_COMPILER=clang++-${CLANG_VERSION} \
+            -DSOGEN_ENABLE_FUZZING=ON \
+            -DSOGEN_ENABLE_SANITIZER=On \
+            -DSOGEN_ENABLE_RUST_CODE=Off \
+            -DSOGEN_ENABLE_LTO=Off \
+            -DSOGEN_USE_SYSTEM_SDL3=Off
+
+      - name: Build fuzzer
+        run: cmake --build build/fuzz --target windows-emulator-fuzz
+
+      # Accumulate coverage across nightly runs: restore the newest existing corpus, and save the grown
+      # one under a run-specific key at the end. Restore/save are split (not the combined cache action) so
+      # the save still runs when the fuzzer finds a crash and fails the job (see "Save corpus" below).
+      - name: Restore corpus
+        uses: actions/cache/restore@v6
+        with:
+          path: corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
+
+      - name: Fuzz
+        env:
+          ASAN_OPTIONS: detect_odr_violation=0:abort_on_error=1
+        run: |
+          mkdir -p corpus artifacts
+          set +e
+          # -jobs/-workers=$(nproc): one long-lived fuzzer per core, all sharing the corpus dir. Unlike
+          # -fork (which respawns a short-lived child per micro-job and re-pays our expensive emulator
+          # construction + a full corpus replay every time), each worker builds the emulator once and then
+          # fuzzes continuously, so throughput stays high as the retained corpus grows. An OOM/timeout/crash
+          # in a worker aborts that worker and writes a reproducer to artifacts/ (detected below).
+          ./build/fuzz/artifacts/windows-emulator-fuzz \
+            corpus \
+            -jobs=$(nproc) \
+            -workers=$(nproc) \
+            -max_total_time=${DURATION} \
+            -use_value_profile=1 \
+            -print_final_stats=1 \
+            -artifact_prefix=artifacts/ \
+            2>&1 | tee fuzz.log
+          # In -jobs mode each worker logs to fuzz-<n>.log; fold them into fuzz.log for the artifact.
+          cat fuzz-*.log >> fuzz.log 2>/dev/null || true
+          # The launcher's exit code is unreliable, so detect a finding by the reproducer files libFuzzer
+          # writes to artifacts/ (crash-*/oom-*/timeout-*/leak-*). Any match is a failure.
+          if find artifacts -type f \( -name 'crash-*' -o -name 'oom-*' -o -name 'timeout-*' -o -name 'leak-*' \) | grep -q .; then
+            echo "fuzz_status=1" >> "$GITHUB_ENV"
+          else
+            echo "fuzz_status=0" >> "$GITHUB_ENV"
+          fi
+          exit 0
+
+      # Persist the grown corpus even when the fuzzer found a crash (the job fails below).
+      - name: Save corpus
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: corpus
+          key: fuzz-corpus-${{ github.run_id }}
+
+      - name: Upload crash artifacts
+        if: ${{ env.fuzz_status != '0' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crash
+          path: |
+            artifacts/
+            fuzz.log
+            fuzz-*.log
+          retention-days: 30
+
+      - name: Fail on crash
+        if: ${{ env.fuzz_status != '0' }}
+        run: |
+          echo "::error::Fuzzer found a crash (see the fuzz-crash artifact for the reproducer)."
+          exit 1

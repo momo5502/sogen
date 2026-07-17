@@ -1,7 +1,7 @@
 #include "../std_include.hpp"
 #include "windows_version_manager.hpp"
 #include "../registry/registry_manager.hpp"
-#include "../logger.hpp"
+#include <logger.hpp>
 #include <platform/kernel_mapped.hpp>
 
 namespace sogen

@@ -17,7 +17,7 @@ if(SOGEN_DISABLE_NANOBIND_LEAK_WARNINGS)
   target_compile_definitions(sogen PRIVATE SOGEN_DISABLE_NANOBIND_LEAK_WARNINGS=1)
 endif()
 
-target_link_libraries(sogen PRIVATE windows-emulator disassembler backend-selection)
+target_link_libraries(sogen PRIVATE windows-emulator linux-emulator disassembler backend-selection)
 
 target_compile_features(sogen PRIVATE cxx_std_20)
 if(MSVC)

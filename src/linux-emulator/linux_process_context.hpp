@@ -11,9 +11,37 @@
 namespace sogen
 {
 
+    struct linux_auxv_entry
+    {
+        uint64_t type{};
+        uint64_t value{};
+    };
+
+    struct linux_cached_dir_entry
+    {
+        uint64_t ino{};
+        uint8_t d_type{};
+        std::string name{};
+    };
+
+    struct linux_epoll_entry
+    {
+        int fd{};
+        uint32_t events{};
+        uint64_t data{};
+    };
+
+    struct linux_epoll_instance
+    {
+        std::vector<linux_epoll_entry> entries{};
+    };
+
     struct linux_process_context
     {
         linux_fd_table fds{};
+        std::map<int, std::vector<linux_cached_dir_entry>> directory_entries{};
+        std::map<int, size_t> directory_offsets{};
+        std::map<int, std::shared_ptr<linux_epoll_instance>> epoll_instances{};
 
         uint64_t brk_base{};
         uint64_t brk_current{};
@@ -31,11 +59,15 @@ namespace sogen
 
         std::optional<int> exit_status{};
 
+        std::string current_working_directory{"/"};
+        std::string executable_path{};
+
         uint32_t next_tid{1};
 
         // Stored for procfs emulation
         std::vector<std::string> argv{};
         std::vector<std::string> envp{};
+        std::vector<linux_auxv_entry> auxv{};
 
         uint32_t create_thread(uint64_t stack_base, uint64_t stack_size, uint64_t entry_point, uint64_t fs_base = 0)
         {
@@ -54,8 +86,11 @@ namespace sogen
         }
 
         void setup(x86_64_emulator& emu, linux_memory_manager& memory, const linux_mapped_module& exe,
-                   const std::vector<std::string>& argv_values, const std::vector<std::string>& envp_values, uint64_t interpreter_base = 0,
-                   uint64_t initial_rip = 0, uint64_t vdso_base = 0);
+                   const std::vector<std::string>& argv_values, const std::vector<std::string>& envp_values,
+                   std::string process_executable_path, uint64_t interpreter_base = 0, uint64_t initial_rip = 0, uint64_t vdso_base = 0);
+
+        void serialize(utils::buffer_serializer& buffer) const;
+        void deserialize(utils::buffer_deserializer& buffer);
     };
 
 } // namespace sogen

@@ -4,6 +4,7 @@
 #include <share.h>
 #endif
 
+#include <array>
 #include <string>
 #include <filesystem>
 #include <type_traits>
@@ -19,7 +20,7 @@ namespace sogen
     {
         USHORT Length;
         USHORT MaximumLength;
-        EMULATOR_CAST(typename Traits::PVOID, char16_t*) Buffer;
+        EMULATOR_CAST(Traits::PVOID, char16_t*) Buffer;
     };
 
     template <typename string_type>
@@ -27,7 +28,7 @@ namespace sogen
                  std::is_same_v<string_type, std::wstring>)
     constexpr string_type convert_from_u8(const std::string_view view)
     {
-        using char_type = typename string_type::value_type;
+        using char_type = string_type::value_type;
         constexpr auto char_size = sizeof(char_type);
 
         string_type result_str;
@@ -266,12 +267,78 @@ namespace sogen
         return convert_from_u8<std::wstring>(view);
     }
 
+    // Maps a Windows-1252 (CP-1252) byte in the 0x80-0x9F range to its Unicode code point.
+    // Bytes 0x00-0x7F and 0xA0-0xFF map identically to U+0000-U+007F and U+00A0-U+00FF.
+    // The five unassigned slots (0x81, 0x8D, 0x8F, 0x90, 0x9D) pass through as their raw byte value.
+    constexpr char16_t cp1252_high_to_u16(const uint8_t ch)
+    {
+        constexpr std::array<char16_t, 0x20> table = {
+            0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, // 0x80-0x87
+            0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F, // 0x88-0x8F
+            0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 0x90-0x97
+            0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178, // 0x98-0x9F
+        };
+        return table.at(static_cast<size_t>(ch - 0x80));
+    }
+
+    // Decodes a Windows-1252 (ANSI default codepage) byte string to UTF-16. Unlike u8_to_u16,
+    // this is what the *A window/text APIs expect: a lone high byte such as 0xA9 ('©') is a valid
+    // CP-1252 character, not an invalid UTF-8 lead byte.
+    constexpr std::u16string cp1252_to_u16(const std::string_view view)
+    {
+        std::u16string result;
+        result.reserve(view.size());
+
+        for (const char raw : view)
+        {
+            const auto ch = static_cast<uint8_t>(raw);
+            result.push_back(ch < 0x80 || ch >= 0xA0 ? static_cast<char16_t>(ch) : cp1252_high_to_u16(ch));
+        }
+
+        return result;
+    }
+
+    // Inverse of cp1252_to_u16: encodes one UTF-16 code unit to a Windows-1252 byte. Code points with
+    // no CP-1252 representation (including surrogate halves) map to the default char '?', matching
+    // WideCharToMultiByte. The 0x80-0x9F block is reverse-looked-up against cp1252_high_to_u16 so the
+    // two directions share a single source of truth.
+    constexpr char u16_to_cp1252_char(const char16_t ch)
+    {
+        if (ch <= 0x7F || (ch >= 0xA0 && ch <= 0xFF))
+        {
+            return static_cast<char>(static_cast<uint8_t>(ch));
+        }
+
+        for (uint8_t i = 0; i < 0x20; ++i)
+        {
+            if (cp1252_high_to_u16(static_cast<uint8_t>(0x80 + i)) == ch)
+            {
+                return static_cast<char>(static_cast<uint8_t>(0x80 + i));
+            }
+        }
+
+        return '?';
+    }
+
+    constexpr std::string u16_to_cp1252(const std::u16string_view view)
+    {
+        std::string result;
+        result.reserve(view.size());
+
+        for (const char16_t ch : view)
+        {
+            result.push_back(u16_to_cp1252_char(ch));
+        }
+
+        return result;
+    }
+
     template <typename string_view_type>
         requires(std::is_same_v<string_view_type, std::u16string_view> || std::is_same_v<string_view_type, std::u32string_view> ||
                  std::is_same_v<string_view_type, std::wstring_view>)
     constexpr std::string convert_to_u8(const string_view_type view)
     {
-        using char_type = typename string_view_type::value_type;
+        using char_type = string_view_type::value_type;
         using uchar_type = std::make_unsigned_t<char_type>;
         constexpr auto char_size = sizeof(char_type);
         constexpr auto upper_codepoint = char_size == 2 ? 0xFFFF : 0x10FFFF;

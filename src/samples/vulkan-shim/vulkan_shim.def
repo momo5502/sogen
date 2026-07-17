@@ -25,6 +25,7 @@ EXPORTS
     vkCmdBindVertexBuffers2
     vkCmdBlitImage2
     vkCmdBlitImage2KHR
+    vkCmdClearAttachments
     vkCmdClearColorImage
     vkCmdClearDepthStencilImage
     vkCmdBeginQuery

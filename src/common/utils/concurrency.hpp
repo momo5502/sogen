@@ -43,6 +43,7 @@ namespace sogen
             {
                 return object_;
             }
+
             const T& get_raw() const
             {
                 return object_;

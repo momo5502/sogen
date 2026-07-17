@@ -42,31 +42,42 @@ namespace sogen
     {
         DWORD dwSRVIFlags;
         uint64_t cHandleEntries;
-        uint8_t unknown1[0x178];
+        uint8_t pad_10[0x178];
         uint64_t apfnClientA[FNID_ARRAY_SIZE];
         uint64_t apfnClientW[FNID_ARRAY_SIZE];
         uint64_t apfnClientWorker[FNID_ARRAY_SIZE];
-        uint8_t unknown2[0xE90];
+        uint8_t pad_3c8[0x3A0];
+        int32_t systemMetrics[0x61];
+        uint8_t pad_8ec[0x96C];
         uint64_t ahbrSystem[USER_SERVERINFO_BRUSH_SLOT_COUNT];
-        uint8_t unknown3a[0x34];
+        uint8_t pad_1358[0x34];
         int32_t defaultFontHeightScale;
         int32_t defaultFontWidthScale;
-        uint8_t unknown3b[0x7C2];
+        uint8_t pad_1394[0x7C2];
         uint16_t systemDpi;
+        uint8_t pad_1b58[0x286];
+        uint64_t foregroundWindow;
     };
+
     static_assert(offsetof(USER_SERVERINFO, apfnClientA) == 0x188);
+    static_assert(offsetof(USER_SERVERINFO, systemMetrics) == 0x768);
     static_assert(offsetof(USER_SERVERINFO, ahbrSystem) == 0x1258);
     static_assert(offsetof(USER_SERVERINFO, defaultFontHeightScale) == 0x138C);
     static_assert(offsetof(USER_SERVERINFO, defaultFontWidthScale) == 0x1390);
     static_assert(offsetof(USER_SERVERINFO, systemDpi) == 0x1B56);
-    static_assert(sizeof(USER_SERVERINFO) == 0x1B58);
+    static_assert(offsetof(USER_SERVERINFO, foregroundWindow) == 0x1DE0);
+    static_assert(sizeof(USER_SERVERINFO) == 0x1de8);
 
     struct USER_DISPINFO
     {
         DWORD dwMonitorCount;
         EMULATOR_CAST(uint64_t, USER_MONITOR*) pPrimaryMonitor;
+        uint8_t pad_10[0x8];
+        RECT rcScreen;
         uint8_t unknown[0xFF];
     };
+
+    static_assert(offsetof(USER_DISPINFO, rcScreen) == 0x18);
 
     struct USER_HANDLEENTRY
     {
@@ -77,6 +88,7 @@ namespace sogen
         uint8_t bFlags;
         uint16_t wUniq;
     };
+
     static_assert(offsetof(USER_HANDLEENTRY, unknown) == 0x10);
     static_assert(offsetof(USER_HANDLEENTRY, bType) == 0x18);
     static_assert(sizeof(USER_HANDLEENTRY) == 0x20);
@@ -86,6 +98,7 @@ namespace sogen
         DWORD maxMsgs;
         uint64_t abMsgs;
     };
+
     static_assert(offsetof(USER_WNDMSG, abMsgs) == 0x8);
     static_assert(sizeof(USER_WNDMSG) == 0x10);
 
@@ -101,6 +114,7 @@ namespace sogen
         USER_WNDMSG DefWindowMsgs;
         USER_WNDMSG DefWindowSpecMsgs;
     };
+
     static_assert(offsetof(USER_SHAREDINFO, pDispInfo) == 0x18);
     static_assert(offsetof(USER_SHAREDINFO, awmControl) == 0x98);
     static_assert(offsetof(USER_SHAREDINFO, DefWindowMsgs) == 0x218);
@@ -132,6 +146,7 @@ namespace sogen
         uint32_t ime_msg_bits;
         uint8_t reserved9[0x114];
     };
+
     static_assert(offsetof(WIN32K_USERCONNECT32, ahe_list) == 0x8);
     static_assert(offsetof(WIN32K_USERCONNECT32, he_entry_size) == 0x10);
     static_assert(offsetof(WIN32K_USERCONNECT32, disp_info_low) == 0x18);
@@ -148,6 +163,7 @@ namespace sogen
         uint32_t dwFlags;
         uint32_t hwndTarget;
     };
+
     static_assert(sizeof(RAWINPUTDEVICE32) == 0x0C);
 
     struct RAWINPUTHEADER32
@@ -157,6 +173,7 @@ namespace sogen
         uint32_t hDevice;
         uint32_t wParam;
     };
+
     static_assert(sizeof(RAWINPUTHEADER32) == 0x10);
 
     // The mouse body has no pointer fields, so its layout is identical for 32- and 64-bit guests.
@@ -170,6 +187,7 @@ namespace sogen
         int32_t lLastY;
         uint32_t ulExtraInformation;
     };
+
     static_assert(sizeof(RAWMOUSE32) == 0x18);
 
     struct RAWKEYBOARD32
@@ -181,6 +199,7 @@ namespace sogen
         uint32_t Message;
         uint32_t ExtraInformation;
     };
+
     static_assert(sizeof(RAWKEYBOARD32) == 0x10);
 
     enum USER_HANDLETYPE : uint8_t
@@ -217,6 +236,7 @@ namespace sogen
         uint8_t unknown1[0x14];
         RECT rcMonitor;
         RECT rcWork;
+
         union
         {
             struct
@@ -224,6 +244,7 @@ namespace sogen
                 uint16_t monitorDpi;
                 uint16_t nativeDpi;
             } b26;
+
             struct
             {
                 uint32_t unknown1;
@@ -234,6 +255,7 @@ namespace sogen
                 RECT rcMonitorDpiAware;
             } b20;
         };
+
         uint8_t unknown4[0xFF];
     };
 
@@ -247,8 +269,13 @@ namespace sogen
 
     struct USER_CLASS
     {
-        uint8_t unknown[0xFF];
+        uint8_t pad_000[0x30];
+        uint64_t lpszAnsiClassName;
+        uint8_t pad_038[0xC8];
     };
+
+    static_assert(offsetof(USER_CLASS, lpszAnsiClassName) == 0x30);
+    static_assert(sizeof(USER_CLASS) == 0x100);
 
     struct USER_WINDOW
     {
@@ -272,7 +299,8 @@ namespace sogen
         RECT rcClient;
         uint64_t lpfnWndProc;
         uint64_t pcls;
-        uint8_t pad_088[16];
+        uint64_t hrgnUpdate;
+        uint8_t pad_090[8];
         uint64_t spmenu;
         uint8_t pad_0A0[24];
         uint32_t dwTextLengthBytes;
@@ -295,6 +323,7 @@ namespace sogen
         uint32_t threadId;
         uint32_t processId;
     };
+
     static_assert(offsetof(USER_WINDOW, dpiContext) == 0x120);
     static_assert(offsetof(USER_WINDOW, threadId) == 0x148);
     static_assert(offsetof(USER_WINDOW, processId) == 0x14C);
@@ -309,11 +338,17 @@ namespace sogen
         uint32_t flags;
         uint32_t cItems;
     };
+
     static_assert(offsetof(USER_MENU, hMenu) == 0x0);
     static_assert(offsetof(USER_MENU, ptrBase) == 0x8);
     static_assert(offsetof(USER_MENU, rgItems) == 0x20);
     static_assert(offsetof(USER_MENU, flags) == 0x28);
     static_assert(offsetof(USER_MENU, cItems) == 0x2C);
+
+    struct USER_ACCELERATOR_TABLE
+    {
+        uint8_t padding[0xFF]{};
+    };
 
     struct USER_MENU_ITEM
     {
@@ -332,6 +367,7 @@ namespace sogen
         uint64_t hbmpItem;
         uint8_t pad_68[8]{};
     };
+
     static_assert(offsetof(USER_MENU_ITEM, state) == 0x4);
     static_assert(offsetof(USER_MENU_ITEM, id) == 0x8);
     static_assert(offsetof(USER_MENU_ITEM, submenu) == 0x10);
@@ -342,6 +378,22 @@ namespace sogen
     static_assert(offsetof(USER_MENU_ITEM, data) == 0x38);
     static_assert(offsetof(USER_MENU_ITEM, hbmpItem) == 0x60);
     static_assert(sizeof(USER_MENU_ITEM) == 0x70);
+
+    enum USER_WINDOWCOMPOSITIONATTRIB : uint32_t
+    {
+        WCA_NCRENDERING_ENABLED = 1,
+        WCA_EXTENDED_FRAME_BOUNDS = 8,
+        WCA_CLOAKED = 18,
+    };
+
+    struct USER_WINDOWCOMPOSITIONATTRIBDATA
+    {
+        uint32_t Attrib;
+        uint64_t pvData;
+        uint64_t cbData;
+    };
+
+    static_assert(sizeof(USER_WINDOWCOMPOSITIONATTRIBDATA) == 0x18);
 
     struct USER_DESKTOPINFO
     {

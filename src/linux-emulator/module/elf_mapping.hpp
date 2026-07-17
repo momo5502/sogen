@@ -82,6 +82,11 @@ namespace sogen
         uint64_t resolver_addr; // Resolver function to call (returns the target address in RAX)
     };
 
+    // Parse ELF metadata for a module that was mapped by another component
+    // (for example the Linux runtime loader via mmap). This does not write to
+    // emulated memory; image_base is the runtime base address of the module.
+    linux_mapped_module read_elf_module_metadata(std::span<const std::byte> data, const std::filesystem::path& path, uint64_t image_base);
+
     // Map a statically-linked ELF binary from file data into emulated memory
     linux_mapped_module map_elf_from_data(linux_memory_manager& memory, std::span<const std::byte> data, const std::filesystem::path& path,
                                           uint64_t forced_base = 0);

@@ -18,6 +18,7 @@ Built in C++ and powered by the CPU backend of your choice:
 - [Unicorn Engine](https://github.com/unicorn-engine/unicorn)
 - [icicle-emu](https://github.com/icicle-emu/icicle-emu)
 - [Hyper-V (WHP)](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/hypervisor-platform)
+- [KVM](https://www.kernel.org/doc/html/latest/virt/kvm/api.html)
 
 Try it out: <a href="https://sogen.dev">sogen.dev</a>
 
@@ -45,7 +46,8 @@ The debugger runs at the emulator level, outside the process, so it stays invisi
 ## Run Games in a Sandbox
 
 Native GUI apps run, with working windows, dialogs and controls.  
-GPU paravirtualization enables 3D acceleration on your real GPU, while the Hyper-V backend runs the code natively on your CPU. Fast enough for games.
+GPU paravirtualization enables 3D acceleration on your real GPU, while the Hyper-V backend runs the code natively on your CPU. Fast enough for games.  
+Direct3D 8/9/10/11 titles run through [DXVK](https://github.com/doitsujin/dxvk), which translates Direct3D to Vulkan on top of the GPU bridge.
 
 <img src="https://momo5502.com/sogen/game.png" width="650" alt="A game running inside the Sogen emulator" />
 &nbsp;  
@@ -105,7 +107,7 @@ git clone --recurse-submodules https://github.com/momo5502/sogen.git
 cmake --preset=vs2022
 ```
 
-3\. Build the solution that was generated at `build/vs2022/emulator.sln`
+3\. Build the solution that was generated at `build/vs2022/sogen.sln`
 
 4\. Create a registry dump by running the [grab-registry.bat](https://github.com/momo5502/sogen/blob/main/src/tools/grab-registry.bat) as administrator and place it in the artifacts folder next to the `analyzer.exe`
 

@@ -2,6 +2,8 @@
 #include <cstdlib>
 #include <cinttypes>
 #include <string>
+#include <optional>
+#include <string_view>
 #include <vector>
 #include <filesystem>
 
@@ -10,6 +12,8 @@
 #include <gdb_stub.hpp>
 #include <network/address.hpp>
 #include <backend_selection.hpp>
+
+#include <CLI/CLI.hpp>
 
 #if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
 #include <linux_event_handler.hpp>
@@ -31,90 +35,38 @@ namespace sogen
             bool pause_before_start{false};
         };
 
-        void print_usage(const char* program)
-        {
-            fprintf(stderr, "Usage: %s [options] <executable> [args...]\n", program);
-            fprintf(stderr, "\nOptions:\n");
-            fprintf(stderr, "  --root <path>    Set emulation root directory\n");
-            fprintf(stderr, "  --verbose        Enable verbose logging\n");
-            fprintf(stderr, "  --gdb, -d        Wait for GDB connection on 127.0.0.1:28960\n");
-            fprintf(stderr, "  --break-start     Pause before executing the first instruction\n");
-            fprintf(stderr, "  --help           Show this help message\n");
-        }
-
-        // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-        cli_options parse_args(const int argc, char** argv)
-        {
-            cli_options opts{};
-
-            // Default environment
-            opts.envp.emplace_back("PATH=/usr/bin:/bin");
-            opts.envp.emplace_back("HOME=/root");
-            opts.envp.emplace_back("TERM=xterm");
-
-            int i = 1;
-            while (i < argc)
-            {
-                const std::string arg = argv[i];
-
-                if (arg == "--root" && i + 1 < argc)
-                {
-                    opts.emulation_root = argv[++i];
-                }
-                else if (arg == "--verbose")
-                {
-                    opts.verbose = true;
-                }
-                else if (arg == "--gdb" || arg == "-d")
-                {
-                    opts.use_gdb = true;
-                }
-                else if (arg == "--help" || arg == "-h")
-                {
-                    print_usage(argv[0]);
-                    exit(0);
-                }
-                else if (arg == "--break-start")
-                {
-                    opts.pause_before_start = true;
-                }
-                else if (arg[0] == '-')
-                {
-                    fprintf(stderr, "Unknown option: %s\n", arg.c_str());
-                    print_usage(argv[0]);
-                    exit(1);
-                }
-                else
-                {
-                    // First non-option argument is the executable
-                    opts.executable = arg;
-                    opts.argv.push_back(arg);
-
-                    // Remaining arguments are passed to the emulated program
-                    for (int j = i + 1; j < argc; ++j)
-                    {
-                        opts.argv.emplace_back(argv[j]);
-                    }
-                    break;
-                }
-
-                ++i;
-            }
-
-            return opts;
-        }
     }
 
-    int run_main(const int argc, char** argv)
+    int run_main(int argc, char** argv)
     {
-        auto opts = parse_args(argc, argv);
+        CLI::App app{"Sogen Linux Analyzer"};
 
-        if (opts.executable.empty())
+        // On Windows this resolves the UTF-8 arguments from the wide command line; elsewhere it is a no-op.
+        argv = app.ensure_utf8(argv);
+
+        // Stop parsing at the first positional (the executable) and forward everything after it to the emulated program.
+        app.prefix_command();
+
+        cli_options opts{};
+        opts.envp = {"PATH=/usr/bin:/bin", "HOME=/root", "TERM=xterm"};
+
+        app.add_option("--root", opts.emulation_root, "Set emulation root directory");
+        app.add_flag("--verbose", opts.verbose, "Enable verbose logging");
+        app.add_flag("-d,--gdb", opts.use_gdb, "Wait for GDB connection on 127.0.0.1:28960");
+        app.add_flag("--break-start", opts.pause_before_start, "Pause before executing the first instruction");
+
+        CLI11_PARSE(app, argc, argv);
+
+        const auto application = app.remaining();
+        if (application.empty())
         {
             fprintf(stderr, "Error: No executable specified\n");
-            print_usage(argv[0]);
+            fputs(app.help().c_str(), stderr);
             return 1;
         }
+
+        opts.executable = application.front();
+        opts.argv.assign(application.begin(), application.end());
 
         if (!std::filesystem::exists(opts.executable))
         {
@@ -144,11 +96,11 @@ namespace sogen
 
             if (opts.use_gdb)
             {
-                const auto* address = "127.0.0.1:28960";
-                printf("Waiting for GDB connection on %s...\n", address);
+                const auto address = network::address{"127.0.0.1:28960", AF_INET};
+                printf("Waiting for GDB connection on %s...\n", address.to_string().c_str());
 
                 linux_x64_gdb_stub_handler handler{linux_emu};
-                gdb_stub::run_gdb_stub(network::address{address, AF_INET}, handler);
+                gdb_stub::run_gdb_stub(address, handler);
             }
             else
             {

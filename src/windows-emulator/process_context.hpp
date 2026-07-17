@@ -23,17 +23,25 @@ namespace sogen
 
     struct fake_environment_config;
 
-#define PEB_SEGMENT_SIZE        (20 << 20) // 20 MB
-#define GS_SEGMENT_SIZE         (1 << 20)  // 1 MB
+#define PEB_SEGMENT_SIZE (20 << 20) // 20 MB
+#define GS_SEGMENT_SIZE  (1 << 20)  // 1 MB
 
-#define STACK_SIZE              0x40000ULL // 256KB
+#define STACK_SIZE       0x40000ULL // 256KB
 
-#define GDT_ADDR                0x35000
-#define GDT_LIMIT               0x1000
-#define GDT_ENTRY_SIZE          0x8
+#define GDT_ADDR         0x35000
+#define GDT_LIMIT        0x1000
+#define GDT_ENTRY_SIZE   0x8
+
+    // Each vCPU gets its own GDT page. Most descriptors are identical, but the WOW64 FS descriptor
+    // (selector 0x53) holds a per-thread 32-bit TEB base that the guest reloads on every 64<->32
+    // transition, so a shared GDT would let a WOW64 thread on one vCPU read another vCPU's TEB base.
+    constexpr uint64_t gdt_base_for_vcpu(const size_t vcpu_index) noexcept
+    {
+        return GDT_ADDR + vcpu_index * GDT_LIMIT;
+    }
 
 // TODO: Get rid of that
-#define WOW64_NATIVE_STACK_SIZE 0x8000
+#define WOW64_NATIVE_STACK_SIZE 0x40000ULL
 #define WOW64_32BIT_STACK_SIZE  (1 << 20)
 
     struct emulator_settings;
@@ -41,6 +49,7 @@ namespace sogen
     class windows_version_manager;
 
     using knowndlls_map = std::map<std::u16string, section>;
+
     struct file_lock_range
     {
         uint64_t offset{};
@@ -89,11 +98,22 @@ namespace sogen
         uint32_t height{};
         std::vector<uint32_t> pixels{};
 
+        emulator_pointer guest_bits{};
+        uint32_t guest_stride{};
+        uint32_t guest_bpp{32};
+        bool guest_top_down{};
+        bool guest_owns_memory{};
+
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->width);
             buffer.write(this->height);
             buffer.write_vector(this->pixels);
+            buffer.write(this->guest_bits);
+            buffer.write(this->guest_stride);
+            buffer.write(this->guest_bpp);
+            buffer.write(this->guest_top_down);
+            buffer.write(this->guest_owns_memory);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -101,6 +121,11 @@ namespace sogen
             buffer.read(this->width);
             buffer.read(this->height);
             buffer.read_vector(this->pixels);
+            buffer.read(this->guest_bits);
+            buffer.read(this->guest_stride);
+            buffer.read(this->guest_bpp);
+            buffer.read(this->guest_top_down);
+            buffer.read(this->guest_owns_memory);
         }
     };
 
@@ -199,9 +224,52 @@ namespace sogen
                 }
             };
 
+            struct dxgk_buffer
+            {
+                uint64_t address{};
+                uint32_t size{};
+
+                void serialize(utils::buffer_serializer& buffer) const
+                {
+                    buffer.write(this->address);
+                    buffer.write(this->size);
+                }
+
+                void deserialize(utils::buffer_deserializer& buffer)
+                {
+                    buffer.read(this->address);
+                    buffer.read(this->size);
+                }
+            };
+
             uint32_t next_resource_handle{0x8000};
             uint32_t next_allocation_handle{0x9000};
             std::map<uint32_t, dxgk_allocation> allocations{};
+
+            dxgk_buffer command_buffer{};
+            dxgk_buffer allocation_list{};
+            dxgk_buffer patch_location_list{};
+
+            static void reserve_buffer(memory_manager& memory, dxgk_buffer& buffer, const uint32_t size)
+            {
+                if (buffer.address != 0 && buffer.size >= size)
+                {
+                    return;
+                }
+
+                if (buffer.address != 0)
+                {
+                    memory.release_memory(buffer.address, 0);
+                }
+
+                const auto aligned_size = static_cast<uint32_t>(page_align_up(size));
+
+                buffer.address = memory.allocate_memory(aligned_size, memory_permission::read_write);
+                buffer.size = aligned_size;
+
+                const std::vector<uint8_t> zeros(aligned_size, 0);
+                memory.write_memory(buffer.address, zeros.data(), zeros.size());
+            }
 
             uint32_t create_resource()
             {
@@ -286,6 +354,9 @@ namespace sogen
                 buffer.write(this->next_resource_handle);
                 buffer.write(this->next_allocation_handle);
                 buffer.write_map(this->allocations);
+                buffer.write(this->command_buffer);
+                buffer.write(this->allocation_list);
+                buffer.write(this->patch_location_list);
             }
 
             void deserialize(utils::buffer_deserializer& buffer)
@@ -293,6 +364,9 @@ namespace sogen
                 buffer.read(this->next_resource_handle);
                 buffer.read(this->next_allocation_handle);
                 buffer.read_map(this->allocations);
+                buffer.read(this->command_buffer);
+                buffer.read(this->allocation_list);
+                buffer.read(this->patch_location_list);
             }
         };
 
@@ -306,10 +380,10 @@ namespace sogen
         {
         }
 
-        void setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, file_system& file_system,
-                   windows_version_manager& version, const fake_environment_config& fake_env, const application_settings& app_settings,
-                   const mapped_module& executable, const mapped_module& ntdll, const apiset::container& apiset_container,
-                   const mapped_module* ntdll32 = nullptr);
+        void setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
+                   const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32 = nullptr);
+
+        static emulator_pointer allocate_user_class(memory_manager& memory, std::u16string_view class_name);
 
         handle create_thread(memory_manager& memory, uint64_t start_address, uint64_t argument, uint64_t stack_size, uint32_t create_flags,
                              bool initial_thread = false);
@@ -329,16 +403,16 @@ namespace sogen
         void add_knowndll_section(const std::u16string& name, const section& section, bool is_32bit);
         bool has_knowndll_section(const std::u16string& name, bool is_32bit) const;
 
-        void serialize(utils::buffer_serializer& buffer) const;
-        void deserialize(utils::buffer_deserializer& buffer);
+        void serialize(utils::buffer_serializer& buffer, const emulator_thread* active_thread) const;
+        void deserialize(utils::buffer_deserializer& buffer, emulator_thread*& active_thread);
 
         generic_handle_store* get_handle_store(handle handle);
         emulator_thread* find_thread_by_id(uint32_t thread_id);
         const emulator_thread* find_thread_by_id(uint32_t thread_id) const;
         bool is_current_process_handle(handle handle) const;
-        bool is_current_thread_handle(handle handle) const;
+        bool is_current_thread_handle(handle handle, const emulator_thread* active_thread) const;
         bool is_object_pseudo_handle(handle handle) const;
-        handle resolve_object_pseudo_handle(handle handle) const;
+        handle resolve_object_pseudo_handle(handle handle, const emulator_thread* active_thread) const;
 
         size_t get_live_thread_count() const;
 
@@ -389,9 +463,17 @@ namespace sogen
         int32_t cursor_y{};
         hcursor current_cursor{};
         int32_t cursor_show_count{};
+        // Whether the current cursor has a visible shape. SetCursor(NULL) clears it to hide the pointer
+        // without touching the show count (some games hide the cursor that way). Defaults to true since a
+        // window without an explicit SetCursor still shows its class cursor. The host pointer is shown only
+        // when cursor_show_count >= 0 and this is set.
+        bool cursor_shape_visible{true};
         // Per-virtual-key pressed state (0x80 = down), updated from key/mouse-button events and reported by
         // GetKeyState; games poll this for in-game input (movement, etc.) rather than window messages.
         std::array<uint8_t, 256> key_state{};
+        // Per-virtual-key transition state for GetAsyncKeyState's low bit. A value of 1 means the key or
+        // mouse button was pressed since the last GetAsyncKeyState query for that virtual key.
+        std::array<uint8_t, 256> async_key_state{};
 
         // Raw mouse input registration (NtUserRegisterRawInputDevices). When registered, mouse motion
         // synthesizes relative-mouse RAWINPUT delivered as WM_INPUT, so in-game mouse-look works.
@@ -402,18 +484,22 @@ namespace sogen
         // Keyboard raw input registration (HID usage page 0x01, usage 0x06), mirroring the mouse fields above.
         bool raw_keyboard_registered{};
         hwnd raw_keyboard_target{};
+
         // One pending raw-input payload (mouse motion + buttons, or a keyboard make/break) keyed by the
         // HRAWINPUT token posted in WM_INPUT's lParam; consumed by NtUserGetRawInputData.
         struct raw_input_payload
         {
-            bool keyboard{};          // false = mouse, true = keyboard
-            int32_t dx{};             // mouse relative motion
-            int32_t dy{};             //
-            uint16_t mouse_buttons{}; // RI_MOUSE_* button transition flags
-            uint16_t vkey{};          // keyboard virtual key
-            uint16_t scan_code{};     // keyboard scan code
-            uint16_t key_release{};   // 0 = key down (RI_KEY_MAKE), 1 = key up (RI_KEY_BREAK)
+            bool keyboard{};              // false = mouse, true = keyboard
+            int32_t dx{};                 // mouse relative motion
+            int32_t dy{};                 //
+            uint16_t mouse_buttons{};     // RI_MOUSE_* button transition flags
+            uint16_t mouse_button_data{}; // wheel delta for RI_MOUSE_WHEEL/RI_MOUSE_HWHEEL
+            uint16_t vkey{};              // keyboard virtual key
+            uint16_t scan_code{};         // keyboard scan code
+            uint32_t key_message{};       // corresponding WM_KEY* or WM_SYSKEY* message
+            bool key_extended{};          // true when the key's scan code has an E0 prefix (lParam bit 24)
         };
+
         std::map<uint32_t, raw_input_payload> raw_inputs{};
         uint32_t next_raw_input_token{1};
 
@@ -430,6 +516,7 @@ namespace sogen
         utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
         handle_store<handle_types::section, section> sections{};
         handle_store<handle_types::device, io_device_container> devices{};
+        handle console_handle{};
         handle_store<handle_types::semaphore, semaphore> semaphores{};
         handle_store<handle_types::io_completion, io_completion> io_completions{};
         handle_store<handle_types::wait_completion_packet, wait_completion_packet> wait_completion_packets{};
@@ -442,6 +529,7 @@ namespace sogen
         user_handle_store<handle_types::window, window> windows{user_handles};
         user_handle_store<handle_types::type::menu, menu> menus{user_handles};
         handle_store<handle_types::timer, timer> timers{};
+        user_handle_store<handle_types::accelerator_table, accelerator_table> accelerator_tables{user_handles};
         handle_store<handle_types::registry, registry_key, 2> registry_keys{};
         std::map<uint32_t, handle> thread_handles_by_id{};
         std::map<uint16_t, atom_entry> atoms{};
@@ -459,7 +547,6 @@ namespace sogen
         static constexpr uint32_t process_id = 4;
         uint32_t spawned_thread_count{0};
         handle_store<handle_types::thread, emulator_thread> threads{};
-        emulator_thread* active_thread{nullptr};
 
         // Handles delivered with the most recent ALPC reply message (NtAlpcSendWaitReceivePort). rpcrt4's
         // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)

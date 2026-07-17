@@ -1,4 +1,8 @@
 #pragma once
+#include <array>
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <vector>
 #include <functional>
 #include <stdexcept>
@@ -32,9 +36,6 @@ namespace sogen
         virtual void map_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
         virtual void unmap_memory(uint64_t address, size_t size) = 0;
 
-        // Maps caller-owned host memory directly into the guest address space so the guest sees it
-        // coherently (no staging copy). The backend must not take ownership of host_pointer. Backends that
-        // cannot alias host memory (e.g. icicle) keep the default and throw.
         virtual void map_host_memory(uint64_t /*address*/, size_t /*size*/, void* /*host_pointer*/, memory_permission /*permissions*/)
         {
             throw std::runtime_error("Host memory mapping is not supported by this backend");
@@ -43,6 +44,15 @@ namespace sogen
         virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
 
       public:
+        virtual bool host_memory_aliasing_is_coherent() const
+        {
+            return true;
+        }
+
+        virtual void flush_host_memory_cache(const void* /*host_pointer*/, size_t /*size*/)
+        {
+        }
+
         template <typename T>
         T read_memory(const uint64_t address) const
         {
@@ -108,6 +118,22 @@ namespace sogen
                 this->write_memory(p_dst, elem);
                 p_src += increment;
                 p_dst += increment;
+            }
+        }
+
+        // Fill a guest range with a byte value (memset). Writes in bounded chunks so a large size never
+        // materializes a matching host allocation.
+        void set_memory(uint64_t address, uint8_t value, uint64_t size)
+        {
+            std::array<std::byte, 0x1000> buffer{};
+            buffer.fill(static_cast<std::byte>(value));
+
+            while (size > 0)
+            {
+                const auto count = static_cast<size_t>(std::min<uint64_t>(buffer.size(), size));
+                this->write_memory(address, buffer.data(), count);
+                address += count;
+                size -= count;
             }
         }
     };

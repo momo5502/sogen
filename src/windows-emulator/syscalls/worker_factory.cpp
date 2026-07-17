@@ -188,7 +188,8 @@ namespace sogen
             factory.name = name;
 
             handle retained_io_completion_handle{};
-            if (!io_completion_wait::retain_handle_reference(c.proc, io_completion_handle, retained_io_completion_handle))
+            if (!io_completion_wait::retain_handle_reference(c.proc, c.vcpu.active_thread, io_completion_handle,
+                                                             retained_io_completion_handle))
             {
                 return STATUS_INVALID_HANDLE;
             }
@@ -454,7 +455,7 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            auto& t = c.win_emu.current_thread();
+            auto& t = c.thread();
             t.await_objects = {};
             t.await_any = false;
             t.await_time = {};
@@ -484,7 +485,7 @@ namespace sogen
                 }
             }
 
-            c.win_emu.yield_thread(false);
+            c.win_emu.yield_thread(c.vcpu, false);
             return STATUS_SUCCESS;
         }
     }

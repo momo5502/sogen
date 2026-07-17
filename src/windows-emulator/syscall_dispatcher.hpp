@@ -173,7 +173,25 @@ namespace sogen
         }
     };
 
+    struct window_update_state : completion_state
+    {
+        // Window handles still to be painted (WM_PAINT), back() is dispatched next.
+        std::vector<uint64_t> pending{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write_vector(this->pending);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read_vector(this->pending);
+        }
+    };
+
     class windows_emulator;
+    struct vcpu_context;
 
     class syscall_dispatcher
     {
@@ -182,10 +200,10 @@ namespace sogen
         syscall_dispatcher(const exported_symbols& ntdll_exports, std::span<const std::byte> ntdll_data,
                            const exported_symbols& win32u_exports, std::span<const std::byte> win32u_data);
 
-        void dispatch(windows_emulator& win_emu);
+        void dispatch(windows_emulator& win_emu, vcpu_context& vcpu);
         static void dispatch_callback(windows_emulator& win_emu, std::string& syscall_name);
-        dispatch_result dispatch_completion(windows_emulator& win_emu, callback_id callback_id, completion_state* completion_state,
-                                            uint64_t callback_result);
+        dispatch_result dispatch_completion(windows_emulator& win_emu, vcpu_context& vcpu, callback_id callback_id,
+                                            completion_state* completion_state, uint64_t callback_result);
 
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);

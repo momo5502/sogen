@@ -42,7 +42,7 @@ namespace sogen
                 return nullptr;
             }
 
-            return &sub_keys_by_index_[index];
+            return &sub_keys_by_index_.at(index);
         }
 
         hive_key* get_sub_key(std::ifstream& file, const std::string_view name)

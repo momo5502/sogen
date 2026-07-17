@@ -26,6 +26,7 @@ namespace sogen
     constexpr auto FILEIO_O_EXCL = 0x800u;
 
 #pragma pack(push, 1)
+
     struct gdb_stat
     {
         uint32_t st_dev;

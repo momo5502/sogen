@@ -1,6 +1,7 @@
 #include <nanobind/nanobind.h>
 
 #include "sogen_internal.hpp"
+#include <windows_emulator.hpp>
 
 namespace sogen::py
 {
@@ -10,6 +11,7 @@ namespace sogen::py
             .value("unicorn", backend_type::unicorn)
             .value("icicle", backend_type::icicle)
             .value("whp", backend_type::whp)
+            .value("kvm", backend_type::kvm)
             .export_values();
 
         nb::enum_<memory_permission>(m, "MemoryPermission")
@@ -18,8 +20,12 @@ namespace sogen::py
             .value("write", memory_permission::write)
             .value("exec", memory_permission::exec)
             .value("read_write", memory_permission::read_write)
+            .value("read_exec", memory_permission::read_exec)
+            .value("write_exec", memory_permission::write_exec)
             .value("all", memory_permission::all)
             .export_values();
+
+        nb::setattr(m, "MemoryOperation", m.attr("MemoryPermission"));
 
         nb::enum_<memory_region_kind>(m, "MemoryRegionKind")
             .value("free", memory_region_kind::free)
@@ -117,6 +123,7 @@ namespace sogen::py
         nb::enum_<instruction_hook_continuation>(m, "HookContinuation")
             .value("run", instruction_hook_continuation::run_instruction)
             .value("skip", instruction_hook_continuation::skip_instruction)
+            .value("finalize_rip", instruction_hook_continuation::finalized_instruction_pointer)
             .export_values();
 
         nb::enum_<memory_violation_continuation>(m, "MemoryViolationContinuation")

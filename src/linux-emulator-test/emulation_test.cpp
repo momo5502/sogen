@@ -89,8 +89,8 @@ namespace sogen
         TEST(LinuxMuslStaticTest, ProcfsEmulation)
         {
             const auto root = get_linux_test_root();
-            auto result =
-                run_linux_binary(root / "musl-tests" / "test_procfs", {(root / "musl-tests" / "test_procfs").string(), "arg1", "arg2"});
+            auto result = run_linux_binary(root / "musl-tests" / "test_procfs",
+                                           {(root / "musl-tests" / "test_procfs").generic_string(), "arg1", "arg2"});
 
             ASSERT_TRUE(result.exit_status.has_value());
             ASSERT_EQ(*result.exit_status, 0);
@@ -114,8 +114,8 @@ namespace sogen
         TEST(LinuxDynamicLinkTest, HelloDynamic)
         {
             const auto root = get_linux_test_root();
-            auto result =
-                run_linux_binary(root / "dyn-tests" / "hello_dyn", {(root / "dyn-tests" / "hello_dyn").string()}, {}, root / "dynroot");
+            auto result = run_linux_binary(root / "dyn-tests" / "hello_dyn", {(root / "dyn-tests" / "hello_dyn").generic_string()}, {},
+                                           root / "dynroot");
 
             ASSERT_TRUE(result.exit_status.has_value());
             ASSERT_EQ(*result.exit_status, 0);
@@ -125,8 +125,8 @@ namespace sogen
         TEST(LinuxDynamicLinkTest, HelloPIE)
         {
             const auto root = get_linux_test_root();
-            auto result =
-                run_linux_binary(root / "dyn-tests" / "hello_pie", {(root / "dyn-tests" / "hello_pie").string()}, {}, root / "dynroot");
+            auto result = run_linux_binary(root / "dyn-tests" / "hello_pie", {(root / "dyn-tests" / "hello_pie").generic_string()}, {},
+                                           root / "dynroot");
 
             ASSERT_TRUE(result.exit_status.has_value());
             ASSERT_EQ(*result.exit_status, 0);
@@ -136,8 +136,8 @@ namespace sogen
         TEST(LinuxDynamicLinkTest, DynamicFeatures)
         {
             const auto root = get_linux_test_root();
-            auto result = run_linux_binary(root / "dyn-tests" / "test_dyn_features", {(root / "dyn-tests" / "test_dyn_features").string()},
-                                           {}, root / "dynroot");
+            auto result = run_linux_binary(root / "dyn-tests" / "test_dyn_features",
+                                           {(root / "dyn-tests" / "test_dyn_features").generic_string()}, {}, root / "dynroot");
 
             ASSERT_TRUE(result.exit_status.has_value());
             ASSERT_EQ(*result.exit_status, 0);
@@ -153,7 +153,7 @@ namespace sogen
             // Use hello_musl which executes 10K+ instructions, so we can stop mid-execution
             auto emu_backend = create_x86_64_emulator();
             const auto binary = root / "musl-tests" / "hello_musl";
-            linux_emulator linux_emu(std::move(emu_backend), {}, binary, {binary.string()}, default_envp());
+            linux_emulator linux_emu(std::move(emu_backend), {}, binary, {binary.generic_string()}, default_envp());
             linux_emu.log.disable_output(true);
 
             linux_emu.start(count);

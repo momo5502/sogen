@@ -3,6 +3,7 @@
 #include "std_include.hpp"
 
 #include <arch_emulator.hpp>
+#include <serialization.hpp>
 #include <cstring>
 
 // Forward declarations
@@ -86,6 +87,7 @@ namespace sogen
 // Linux x86-64 sigcontext (from arch/x86/include/uapi/asm/sigcontext.h)
 // This matches the kernel struct sigcontext layout exactly
 #pragma pack(push, 1)
+
     struct linux_sigcontext
     {
         uint64_t r8;
@@ -117,12 +119,14 @@ namespace sogen
         uint64_t fpstate_ptr; // pointer to fpstate (or 0)
         uint64_t reserved1[8];
     };
+
 #pragma pack(pop)
 
     static_assert(sizeof(linux_sigcontext) == 256);
 
 // Linux x86-64 siginfo_t (128 bytes)
 #pragma pack(push, 1)
+
     struct linux_siginfo_t
     {
         int32_t si_signo;
@@ -133,12 +137,14 @@ namespace sogen
         uint64_t fault_address; // _sigfault.si_addr
         uint8_t _pad[128 - 24]; // pad to 128 bytes total
     };
+
 #pragma pack(pop)
 
     static_assert(sizeof(linux_siginfo_t) == 128);
 
 // Linux x86-64 stack_t
 #pragma pack(push, 1)
+
     struct linux_stack_t
     {
         uint64_t ss_sp;
@@ -146,12 +152,14 @@ namespace sogen
         int32_t _pad;
         uint64_t ss_size;
     };
+
 #pragma pack(pop)
 
     static_assert(sizeof(linux_stack_t) == 24);
 
 // Linux x86-64 ucontext_t
 #pragma pack(push, 1)
+
     struct linux_ucontext_t
     {
         uint64_t uc_flags;
@@ -161,17 +169,21 @@ namespace sogen
         uint64_t uc_sigmask;           // signal mask (64-bit)
         uint8_t _pad_sigmask[128 - 8]; // __unused[] in kernel -- sigset_t is 128 bytes
     };
+
 #pragma pack(pop)
 
 // rt_sigframe -- what the kernel pushes on the user stack before entering a signal handler
 #pragma pack(push, 1)
+
     struct linux_rt_sigframe
     {
         uint64_t pretcode;    // return address: points to sigreturn trampoline
         linux_siginfo_t info; // 128 bytes
         linux_ucontext_t uc;  // ucontext
     };
+
 #pragma pack(pop)
+
     // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
     // Signal dispatch engine
@@ -197,6 +209,9 @@ namespace sogen
 
         // Restore context from a signal frame on the stack (called by sys_rt_sigreturn).
         static void sigreturn(linux_emulator& emu);
+
+        void serialize(utils::buffer_serializer& buffer) const;
+        void deserialize(utils::buffer_deserializer& buffer);
     };
 
 } // namespace sogen

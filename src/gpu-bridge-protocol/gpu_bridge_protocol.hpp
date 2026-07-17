@@ -1121,6 +1121,7 @@ namespace sogen::gpu_bridge
         uint32_t depth;
         uint32_t reserved;
     };
+
     static_assert(sizeof(cmd_copy_image_request) == 104, "wire layout drift");
 
     struct cmd_blit_image_request
@@ -1153,6 +1154,7 @@ namespace sogen::gpu_bridge
         uint32_t filter; // VkFilter
         uint32_t reserved;
     };
+
     static_assert(sizeof(cmd_blit_image_request) == 120, "wire layout drift");
 
     // Updates a buffer region inline from data that trails this header in the wire stream (vkCmdUpdateBuffer).

@@ -1,11 +1,16 @@
 #include <windows_emulator.hpp>
+#ifdef _WIN32
 #include <whp_x86_64_emulator.hpp>
+#include <utils/win.hpp>
+#else
+#include <kvm_x86_64_emulator.hpp>
+#endif
 
 #include <utils/interupt_handler.hpp>
-#include <utils/win.hpp>
 
-#include <shellapi.h>
+#include <CLI/CLI.hpp>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -14,6 +19,9 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace sogen::sandbox
@@ -22,6 +30,7 @@ namespace sogen::sandbox
     {
         std::filesystem::path get_current_binary_dir()
         {
+#ifdef _WIN32
             std::array<wchar_t, MAX_PATH> buffer{};
 
             const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
@@ -31,6 +40,9 @@ namespace sogen::sandbox
             }
 
             return std::filesystem::path(buffer.data()).parent_path();
+#else
+            return "./";
+#endif
         }
 
         std::vector<std::u16string> parse_arguments(const std::span<const std::string_view> args)
@@ -47,21 +59,33 @@ namespace sogen::sandbox
             return wide_args;
         }
 
-        void print_help()
-        {
-            printf("Usage: sandbox <application> [args...]\n");
-        }
-
-        int run(const std::span<const std::string_view> args)
+        int run(const std::span<const std::string_view> args, std::unordered_map<windows_path, std::filesystem::path> path_mappings)
         {
             application_settings app_settings{
                 .application = std::u8string(args[0].begin(), args[0].end()),
                 .arguments = parse_arguments(args),
             };
 
+#ifdef _WIN32
+            // One vCPU per host core; WHP supports at most 64 per partition. EMULATOR_VCPU_COUNT overrides.
+            auto vcpu_count = std::clamp(std::thread::hardware_concurrency(), 1u, 64u);
+            if (const char* env = std::getenv("EMULATOR_VCPU_COUNT"); env != nullptr && env[0] != '\0')
+            {
+                vcpu_count = std::clamp(static_cast<uint32_t>(std::strtoul(env, nullptr, 10)), 1u, 64u);
+            }
+#endif
+
             emulator_settings settings{
                 .registry_directory = get_current_binary_dir() / "registry",
             };
+
+            // TODO: expose this as a proper command-line option; for now it is taken from the environment.
+            if (const char* root = std::getenv("EMULATOR_ROOT"); root != nullptr && root[0] != '\0')
+            {
+                settings.emulation_root = root;
+            }
+
+            settings.path_mappings = std::move(path_mappings);
 
             emulator_callbacks callbacks{};
             callbacks.on_stdout = [](const std::string_view data) {
@@ -69,7 +93,13 @@ namespace sogen::sandbox
                 fflush(stdout);
             };
 
-            windows_emulator win_emu{whp::create_x86_64_emulator(), std::move(app_settings), settings, std::move(callbacks)};
+#ifdef _WIN32
+            auto emulator = whp::create_x86_64_emulator(vcpu_count);
+#else
+            auto emulator = kvm::create_x86_64_emulator();
+#endif
+
+            windows_emulator win_emu{std::move(emulator), std::move(app_settings), settings, std::move(callbacks)};
             win_emu.log.disable_output(true);
 
             std::atomic_uint32_t signals_received{0};
@@ -94,30 +124,41 @@ namespace sogen::sandbox
             return static_cast<int>(*exit_status);
         }
 
-        int run_main(const int argc, wchar_t** wargv)
+        int run_main(int argc, char** argv)
         {
+            CLI::App app{"Sogen Sandbox"};
+
+            // On Windows this resolves the UTF-8 arguments from the wide command line.
+            argv = app.ensure_utf8(argv);
+
+            // Map a guest Windows path to a host path (repeatable, two values each), mirroring
+            // the analyzer's -p option. Parsed before the first positional (the application).
+            std::vector<std::pair<std::string, std::string>> path_mappings{};
+            app.add_option("-p,--path", path_mappings, "Map a Windows path to a host path")->type_name("SRC DST")->allow_extra_args(false);
+
+            // Stop parsing at the first positional (the application) and forward everything after it to the
+            // emulated program.
+            app.prefix_command();
+
+            CLI11_PARSE(app, argc, argv);
+
             try
             {
-                std::vector<std::string> args{};
-                for (int i = 1; i < argc; ++i)
+                const auto application = app.remaining();
+                if (application.empty())
                 {
-                    args.emplace_back(w_to_u8(wargv[i]));
-                }
-
-                std::vector<std::string_view> views{};
-                views.reserve(args.size());
-                for (const auto& str : args)
-                {
-                    views.push_back(str);
-                }
-
-                if (args.empty())
-                {
-                    print_help();
+                    puts(app.help().c_str());
                     return 1;
                 }
 
-                return run(views);
+                std::unordered_map<windows_path, std::filesystem::path> mappings{};
+                for (const auto& [source, target] : path_mappings)
+                {
+                    mappings[windows_path(source)] = std::filesystem::absolute(target);
+                }
+
+                const std::vector<std::string_view> views{application.begin(), application.end()};
+                return run(views, std::move(mappings));
             }
             catch (const std::exception& e)
             {
@@ -130,31 +171,10 @@ namespace sogen::sandbox
 
             return 1;
         }
-
-        int run_current_command_line()
-        {
-            int argc = 0;
-            auto** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-            if (!argv)
-            {
-                return 1;
-            }
-
-            const auto result = run_main(argc, argv);
-            LocalFree(argv);
-            return result;
-        }
     }
 }
 
-int wmain(const int argc, wchar_t** argv)
+int main(int argc, char** argv)
 {
-    (void)argc;
-    (void)argv;
-    return sogen::sandbox::run_current_command_line();
-}
-
-int WINAPI WinMain(HINSTANCE, HINSTANCE, PSTR, int)
-{
-    return sogen::sandbox::run_current_command_line();
+    return sogen::sandbox::run_main(argc, argv);
 }

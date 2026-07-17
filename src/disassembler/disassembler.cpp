@@ -1,4 +1,4 @@
-#include "disassembler.hpp"
+﻿#include "disassembler.hpp"
 
 #include <utils/finally.hpp>
 
@@ -78,7 +78,7 @@ namespace sogen
         }
     }
 
-    instructions disassembler::disassemble(emulator& cpu, const uint16_t cs_selector, const std::span<const uint8_t> data,
+    instructions disassembler::disassemble(x86_64_cpu& cpu, const uint16_t cs_selector, const std::span<const uint8_t> data,
                                            const size_t count, const uint64_t address) const
     {
         const csh handle_to_use = this->resolve_handle(cpu, cs_selector);
@@ -88,12 +88,12 @@ namespace sogen
         return instructions{std::span(insts, inst_count)};
     }
 
-    std::optional<disassembler::segment_bitness> disassembler::get_segment_bitness(emulator& cpu, const uint16_t cs_selector)
+    std::optional<disassembler::segment_bitness> disassembler::get_segment_bitness(x86_64_cpu& cpu, const uint16_t cs_selector)
     {
         return segment_utils::get_segment_bitness(cpu, cs_selector);
     }
 
-    csh disassembler::resolve_handle(emulator& cpu, const uint16_t cs_selector) const
+    csh disassembler::resolve_handle(x86_64_cpu& cpu, const uint16_t cs_selector) const
     {
         const auto mode = disassembler::get_segment_bitness(cpu, cs_selector);
         if (!mode)

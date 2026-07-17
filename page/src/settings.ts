@@ -81,16 +81,16 @@ export function translateSettings(settings: Settings): TranslatedSettings {
   } else {
     switch (settings.logging) {
       case "verbose":
-        switches.push("-v");
+        switches.push("--verbose");
         break;
       case "silent":
-        switches.push("-s");
+        switches.push("--silent");
         break;
       case "concise":
-        switches.push("-c");
+        switches.push("--concise");
         break;
       case "very-concise":
-        switches.push("-vc");
+        switches.push("--very-concise");
         break;
 
       default:
@@ -98,28 +98,28 @@ export function translateSettings(settings: Settings): TranslatedSettings {
     }
 
     if (settings.bufferStdout) {
-      switches.push("-b");
+      switches.push("--buffer");
     }
 
     if (settings.execAccess) {
-      switches.push("-x");
+      switches.push("--exec");
     }
 
     if (settings.foreignAccess) {
-      switches.push("-f");
+      switches.push("--foreign");
     }
 
     if (settings.instructionSummary) {
-      switches.push("-is");
+      switches.push("--inst-summary");
     }
 
     settings.ignoredFunctions.forEach((f) => {
-      switches.push("-i");
+      switches.push("--ignore");
       switches.push(f);
     });
 
     settings.interestingModules.forEach((m) => {
-      switches.push("-m");
+      switches.push("--module");
       switches.push(m);
     });
   }

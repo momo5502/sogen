@@ -87,46 +87,41 @@ namespace sogen
 
         void setup_gdt(x86_64_emulator& emu, memory_manager& memory)
         {
-            // Allocate GDT with read-write permissions for segment descriptor setup
-            memory.allocate_memory(GDT_ADDR, static_cast<size_t>(page_align_up(GDT_LIMIT)), memory_permission::read_write);
-            emu.load_gdt(GDT_ADDR, GDT_LIMIT);
+            const auto vcpu_count = emu.vcpu_count();
 
-            // Index 1 (selector 0x08) - 64-bit kernel code segment (Ring 0)
-            // P=1, DPL=0, S=1, Type=0xA (Code, Execute/Read), L=1 (Long mode)
-            emu.write_memory<uint64_t>(GDT_ADDR + (1 * sizeof(uint64_t)), 0x00AF9B000000FFFF);
+            // One GDT page per vCPU (see gdt_base_for_vcpu): the WOW64 FS descriptor holds a per-thread
+            // TEB base, so a shared GDT cannot serve WOW64 threads on different vCPUs at the same time.
+            memory.allocate_memory(GDT_ADDR, static_cast<size_t>(page_align_up(vcpu_count * GDT_LIMIT)), memory_permission::read_write);
 
-            // Index 2 (selector 0x10) - 64-bit kernel data segment (Ring 0)
-            // P=1, DPL=0, S=1, Type=0x2 (Data, Read/Write), L=1 (64-bit)
-            emu.write_memory<uint64_t>(GDT_ADDR + (2 * sizeof(uint64_t)), 0x00CF93000000FFFF);
+            for (size_t i = 0; i < vcpu_count; ++i)
+            {
+                const auto gdt_base = gdt_base_for_vcpu(i);
 
-            // Index 3 (selector 0x18) - 32-bit compatibility mode segment (Ring 0)
-            // P=1, DPL=0, S=1, Type=0xA (Code, Execute/Read), DB=1, G=1
-            emu.write_memory<uint64_t>(GDT_ADDR + (3 * sizeof(uint64_t)), 0x00CF9B000000FFFF);
+                // Index 1 (0x08) - 64-bit kernel code (Ring 0): P=1, DPL=0, S=1, Type=0xA, L=1
+                emu.write_memory<uint64_t>(gdt_base + (1 * sizeof(uint64_t)), 0x00AF9B000000FFFF);
+                // Index 2 (0x10) - 64-bit kernel data (Ring 0): P=1, DPL=0, S=1, Type=0x2, L=1
+                emu.write_memory<uint64_t>(gdt_base + (2 * sizeof(uint64_t)), 0x00CF93000000FFFF);
+                // Index 3 (0x18) - 32-bit compatibility code (Ring 0): P=1, DPL=0, S=1, Type=0xA, DB=1, G=1
+                emu.write_memory<uint64_t>(gdt_base + (3 * sizeof(uint64_t)), 0x00CF9B000000FFFF);
+                // Index 4 (0x23) - 32-bit WOW64 code (Ring 3): P=1, DPL=3, S=1, Type=0xA, DB=1, G=1
+                emu.write_memory<uint64_t>(gdt_base + (4 * sizeof(uint64_t)), 0x00CFFB000000FFFF);
+                // Index 5 (0x2B) - user data (Ring 3): P=1, DPL=3, S=1, Type=0x2, G=1
+                emu.write_memory<uint64_t>(gdt_base + (5 * sizeof(uint64_t)), 0x00CFF3000000FFFF);
+                // Index 6 (0x33) - 64-bit user code (Ring 3): P=1, DPL=3, S=1, Type=0xA, L=1
+                emu.write_memory<uint64_t>(gdt_base + (6 * sizeof(uint64_t)), 0x00AFFB000000FFFF);
+                // Index 10 (0x53) - WOW64 FS/TEB (Ring 3, byte granularity). The base is filled in
+                // per-thread by emulator_thread::refresh_execution_context.
+                emu.write_memory<uint64_t>(gdt_base + (10 * sizeof(uint64_t)), 0x0040F3000000FFFF);
 
-            // Index 4 (selector 0x23) - 32-bit code segment for WOW64 (Ring 3)
-            // Real Windows: Code RE Ac 3 Bg Pg P Nl 00000cfb
-            // P=1, DPL=3, S=1, Type=0xA (Code, Execute/Read), DB=1, G=1
-            emu.write_memory<uint64_t>(GDT_ADDR + (4 * sizeof(uint64_t)), 0x00CFFB000000FFFF);
+                emu.get_cpu(i).load_gdt(gdt_base, GDT_LIMIT);
+            }
 
-            // Index 5 (selector 0x2B) - Data segment for user mode (Ring 3)
-            // Real Windows: Data RW Ac 3 Bg Pg P Nl 00000cf3
-            // P=1, DPL=3, S=1, Type=0x2 (Data, Read/Write), G=1
-            emu.write_memory<uint64_t>(GDT_ADDR + (5 * sizeof(uint64_t)), 0x00CFF3000000FFFF);
+            // Initial selectors for the primary thread on the primary vCPU (per-thread bases applied later).
             emu.reg<uint16_t>(x86_register::ss, 0x2B);
             emu.reg<uint16_t>(x86_register::ds, 0x2B);
             emu.reg<uint16_t>(x86_register::es, 0x2B);
-            emu.reg<uint16_t>(x86_register::gs, 0x2B); // Initial GS value, will be overridden with proper base later
-
-            // Index 6 (selector 0x33) - 64-bit code segment (Ring 3)
-            // P=1, DPL=3, S=1, Type=0xA (Code, Execute/Read), L=1 (Long mode)
-            emu.write_memory<uint64_t>(GDT_ADDR + (6 * sizeof(uint64_t)), 0x00AFFB000000FFFF);
+            emu.reg<uint16_t>(x86_register::gs, 0x2B);
             emu.reg<uint16_t>(x86_register::cs, 0x33);
-
-            // Index 10 (selector 0x53) - FS segment for WOW64 TEB access
-            // Real Windows: Data RW Ac 3 Bg By P Nl 000004f3 (base=0x002c1000, limit=0xfff)
-            // Initially set with base=0, will be updated during thread creation
-            // P=1, DPL=3, S=1, Type=0x3 (Data, Read/Write, Accessed), G=0 (byte granularity), DB=1
-            emu.write_memory<uint64_t>(GDT_ADDR + (10 * sizeof(uint64_t)), 0x0040F3000000FFFF);
             emu.reg<uint16_t>(x86_register::fs, 0x53);
         }
 
@@ -254,18 +249,23 @@ namespace sogen
         }
     }
 
-    void process_context::setup(x86_64_emulator& emu, memory_manager& memory, registry_manager& registry, file_system& file_system,
-                                windows_version_manager& version, const fake_environment_config& fake_env,
-                                const application_settings& app_settings, const mapped_module& executable, const mapped_module& ntdll,
-                                const apiset::container& apiset_container, const mapped_module* ntdll32)
+    void process_context::setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
+                                const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32)
     {
-        this->sid = get_sid(registry);
+        auto& emu = win_emu.emu();
+        const auto& version = win_emu.version;
+        const auto& fake_env = win_emu.fake_env;
 
-        setup_gdt(emu, memory);
+        io_device_container console{u"Console", win_emu, {}};
+        this->console_handle = this->devices.store(std::move(console));
+
+        this->sid = get_sid(win_emu.registry);
+
+        setup_gdt(emu, win_emu.memory);
 
         this->kusd.setup(version, fake_env);
 
-        this->base_allocator = create_allocator(memory, PEB_SEGMENT_SIZE, this->is_wow64_process);
+        this->base_allocator = create_allocator(win_emu.memory, PEB_SEGMENT_SIZE, this->is_wow64_process);
         auto& allocator = this->base_allocator;
 
         this->peb64 = allocator.reserve_page_aligned<PEB64>();
@@ -304,7 +304,7 @@ namespace sogen
 
             proc_params.Environment = allocator.copy_string(u"=::=::\\");
 
-            const auto env_map = get_environment_variables(registry, version, app_settings);
+            const auto env_map = get_environment_variables(win_emu.registry, version, app_settings);
             for (const auto& [name, value] : env_map)
             {
                 std::u16string entry;
@@ -360,6 +360,7 @@ namespace sogen
             p.NumberOfProcessors = fake_env.number_of_processors;
             p.ImageSubsystemMajorVersion = 6;
 
+            // TODO: p.SessionId = 1;
             p.OSPlatformId = 2;
             p.OSMajorVersion = version.get_major_version();
             p.OSMinorVersion = version.get_minor_version();
@@ -452,6 +453,7 @@ namespace sogen
                 p32.NumberOfProcessors = fake_env.number_of_processors;
                 p32.ImageSubsystemMajorVersion = 6;
 
+                // TODO: p32.SessionId = 1;
                 p32.OSPlatformId = 2;
                 p32.OSMajorVersion = version.get_major_version();
                 p32.OSMinorVersion = version.get_minor_version();
@@ -472,8 +474,8 @@ namespace sogen
 
         this->apiset = apiset::get_namespace_table(reinterpret_cast<const API_SET_NAMESPACE*>(apiset_container.data.data()));
         const auto& system_root = version.get_system_root();
-        this->build_knowndlls_section_table<uint64_t>(registry, file_system, apiset, system_root, false);
-        this->build_knowndlls_section_table<uint32_t>(registry, file_system, apiset, system_root, true);
+        this->build_knowndlls_section_table<uint64_t>(win_emu.registry, win_emu.file_sys, apiset, system_root, false);
+        this->build_knowndlls_section_table<uint32_t>(win_emu.registry, win_emu.file_sys, apiset, system_root, true);
 
         this->ntdll_image_base = ntdll.image_base;
         this->ldr_initialize_thunk = ntdll.find_export("LdrInitializeThunk");
@@ -537,15 +539,18 @@ namespace sogen
             }
         });
 
-        auto [wh, desktop_win] = this->windows.create(memory);
+        auto [wh, desktop_win] = this->windows.create(win_emu.memory);
         this->default_desktop_window_handle = wh;
         desktop_win.handle = wh.bits;
+        desktop_win.class_name = u"#32769";
         desktop_win.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
         desktop_win.width = 1920;
         desktop_win.height = 1080;
+        const auto desktop_class = allocate_user_class(win_emu.memory, desktop_win.class_name);
         desktop_win.guest.access([&](USER_WINDOW& window) {
             window.hWnd = wh.bits;
             window.ptrBase = desktop_win.guest.value();
+            window.pcls = desktop_class;
             window.dwStyle = desktop_win.style;
             window.rcWindow = {.left = 0, .top = 0, .right = desktop_win.width, .bottom = desktop_win.height};
             window.rcClient = window.rcWindow;
@@ -555,14 +560,62 @@ namespace sogen
             window.processId = process_context::process_id;
         });
 
+        const auto create_shell_window = [&](const std::u16string_view class_name, const std::u16string_view title, const int32_t x,
+                                             const int32_t y, const int32_t width, const int32_t height) {
+            auto [handle, shell_win] = this->windows.create(win_emu.memory);
+            shell_win.handle = handle.bits;
+            shell_win.parent_handle = this->default_desktop_window_handle.bits;
+            shell_win.class_name = class_name;
+            shell_win.name = title;
+            shell_win.style = WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+            shell_win.x = x;
+            shell_win.y = y;
+            shell_win.width = width;
+            shell_win.height = height;
+            shell_win.host_surface_window = false;
+            const auto shell_class = allocate_user_class(win_emu.memory, class_name);
+            shell_win.guest.access([&](USER_WINDOW& window) {
+                window.hWnd = handle.bits;
+                window.ptrBase = shell_win.guest.value();
+                window.pcls = shell_class;
+                window.spwndParent = desktop_win.guest.value();
+                window.dwStyle = shell_win.style;
+                window.rcWindow = {.left = x, .top = y, .right = x + width, .bottom = y + height};
+                window.rcClient = window.rcWindow;
+                window.windowBand = 1; // ZBID_DESKTOP
+                window.dpiContext = USER_DEFAULT_DPI_CONTEXT;
+                window.processId = process_context::process_id;
+            });
+            return handle;
+        };
+
+        create_shell_window(u"Progman", u"Program Manager", 0, 0, desktop_win.width, desktop_win.height);
+        create_shell_window(u"Shell_TrayWnd", u"", 0, desktop_win.height - 40, desktop_win.width, 40);
+
         const auto user_display_info = this->user_handles.get_display_info();
         user_display_info.access([&](USER_DISPINFO& display_info) {
             display_info.dwMonitorCount = 1;
             display_info.pPrimaryMonitor = monitor_obj.value();
+            display_info.rcScreen = {.left = 0, .top = 0, .right = 1920, .bottom = 1080};
         });
     }
 
-    void process_context::serialize(utils::buffer_serializer& buffer) const
+    emulator_pointer process_context::allocate_user_class(memory_manager& memory, const std::u16string_view class_name)
+    {
+        const auto ansi_class_name = u16_to_cp1252(class_name);
+        const auto cls_size = static_cast<size_t>(page_align_up(sizeof(USER_CLASS) + ansi_class_name.size() + 1));
+        const auto cls_ptr = memory.allocate_memory(cls_size, memory_permission::read);
+        const auto ansi_class_name_ptr = cls_ptr + sizeof(USER_CLASS);
+
+        memory.write_memory(ansi_class_name_ptr, ansi_class_name.c_str(), ansi_class_name.size() + 1);
+
+        const emulator_object<USER_CLASS> cls{memory, cls_ptr};
+        cls.access([&](USER_CLASS& value) { value.lpszAnsiClassName = ansi_class_name_ptr; });
+
+        return cls_ptr;
+    }
+
+    void process_context::serialize(utils::buffer_serializer& buffer, const emulator_thread* active_thread) const
     {
         buffer.write_vector(this->sid);
         buffer.write(this->shared_section_address);
@@ -601,7 +654,9 @@ namespace sogen
         buffer.write(this->cursor_y);
         buffer.write(this->current_cursor);
         buffer.write(this->cursor_show_count);
+        buffer.write(this->cursor_shape_visible);
         buffer.write(this->key_state);
+        buffer.write(this->async_key_state);
         buffer.write(this->raw_mouse_registered);
         buffer.write(this->raw_mouse_target);
         buffer.write(this->raw_keyboard_registered);
@@ -617,6 +672,7 @@ namespace sogen
         buffer.write_map(this->file_locks);
         buffer.write(this->sections);
         buffer.write(this->devices);
+        buffer.write(this->console_handle);
         buffer.write(this->semaphores);
         buffer.write(this->io_completions);
         buffer.write(this->wait_completion_packets);
@@ -627,6 +683,7 @@ namespace sogen
         buffer.write(this->desktops);
         buffer.write(this->windows);
         buffer.write(this->timers);
+        buffer.write(this->accelerator_tables);
         buffer.write(this->registry_keys);
         buffer.write(this->private_namespaces);
         buffer.write_map(this->atoms);
@@ -646,10 +703,10 @@ namespace sogen
         buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
 
-        buffer.write(this->threads.find_handle(this->active_thread).bits);
+        buffer.write(this->threads.find_handle(active_thread).bits);
     }
 
-    void process_context::deserialize(utils::buffer_deserializer& buffer)
+    void process_context::deserialize(utils::buffer_deserializer& buffer, emulator_thread*& active_thread)
     {
         buffer.read_vector(this->sid);
         buffer.read(this->shared_section_address);
@@ -688,7 +745,9 @@ namespace sogen
         buffer.read(this->cursor_y);
         buffer.read(this->current_cursor);
         buffer.read(this->cursor_show_count);
+        buffer.read(this->cursor_shape_visible);
         buffer.read(this->key_state);
+        buffer.read(this->async_key_state);
         buffer.read(this->raw_mouse_registered);
         buffer.read(this->raw_mouse_target);
         buffer.read(this->raw_keyboard_registered);
@@ -704,6 +763,7 @@ namespace sogen
         buffer.read_map(this->file_locks);
         buffer.read(this->sections);
         buffer.read(this->devices);
+        buffer.read(this->console_handle);
         buffer.read(this->semaphores);
         buffer.read(this->io_completions);
         buffer.read(this->wait_completion_packets);
@@ -714,6 +774,7 @@ namespace sogen
         buffer.read(this->desktops);
         buffer.read(this->windows);
         buffer.read(this->timers);
+        buffer.read(this->accelerator_tables);
         buffer.read(this->registry_keys);
         buffer.read(this->private_namespaces);
         buffer.read_map(this->atoms);
@@ -744,7 +805,7 @@ namespace sogen
             this->thread_handles_by_id[thread.id] = this->threads.make_handle(index);
         }
 
-        this->active_thread = this->threads.get(buffer.read<uint64_t>());
+        active_thread = this->threads.get(buffer.read<uint64_t>());
     }
 
     generic_handle_store* process_context::get_handle_store(const handle handle)
@@ -836,10 +897,10 @@ namespace sogen
         return handle == CURRENT_PROCESS || handle == GUEST_PROCESS_HANDLE;
     }
 
-    bool process_context::is_current_thread_handle(const handle handle) const
+    bool process_context::is_current_thread_handle(const handle handle, const emulator_thread* active_thread) const
     {
-        return handle == CURRENT_THREAD || (handle.value.type == handle_types::thread && this->active_thread &&
-                                            this->threads.find_handle(this->active_thread) == handle);
+        return handle == CURRENT_THREAD ||
+               (handle.value.type == handle_types::thread && active_thread && this->threads.find_handle(active_thread) == handle);
     }
 
     // NOLINTNEXTLINE(cert-dcl50-cpp,readability-convert-member-functions-to-static)
@@ -848,7 +909,7 @@ namespace sogen
         return handle == CURRENT_PROCESS || handle == CURRENT_THREAD;
     }
 
-    handle process_context::resolve_object_pseudo_handle(const handle handle) const
+    handle process_context::resolve_object_pseudo_handle(const handle handle, const emulator_thread* active_thread) const
     {
         if (handle == CURRENT_PROCESS)
         {
@@ -857,7 +918,12 @@ namespace sogen
 
         if (handle == CURRENT_THREAD)
         {
-            return this->threads.find_handle(this->active_thread);
+            return this->threads.find_handle(active_thread);
+        }
+
+        if (handle == CONSOLE_HANDLE)
+        {
+            return this->console_handle;
         }
 
         return handle;
@@ -915,6 +981,7 @@ namespace sogen
             }
 
             i->second.ref_count = 1;
+            this->gdi_window_surfaces.erase(static_cast<uint32_t>(i->second.handle));
             i = this->windows.erase(i).first;
         }
     }

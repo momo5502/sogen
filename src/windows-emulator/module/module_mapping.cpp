@@ -43,68 +43,6 @@ namespace sogen
         }
 
         template <typename T>
-        void collect_imports(mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
-                             const PEOptionalHeader_t<T>& optional_header)
-        {
-            const auto& import_directory_entry = optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-            if (import_directory_entry.VirtualAddress == 0 || import_directory_entry.Size == 0)
-            {
-                return;
-            }
-
-            const auto import_descriptors = buffer.as<IMAGE_IMPORT_DESCRIPTOR>(import_directory_entry.VirtualAddress);
-
-            for (size_t i = 0;; ++i)
-            {
-                const auto descriptor = import_descriptors.get(i);
-                if (!descriptor.Name)
-                {
-                    break;
-                }
-
-                // Use architecture-specific thunk data type
-                using thunk_traits = thunk_data_traits<T>;
-                using thunk_type = typename thunk_traits::type;
-
-                const auto module_index = binary.imported_modules.size();
-                binary.imported_modules.push_back(buffer.as_string(descriptor.Name));
-
-                auto original_thunk_data = buffer.as<thunk_type>(descriptor.FirstThunk);
-                if (descriptor.OriginalFirstThunk)
-                {
-                    original_thunk_data = buffer.as<thunk_type>(descriptor.OriginalFirstThunk);
-                }
-
-                for (size_t j = 0;; ++j)
-                {
-                    const auto original_thunk = original_thunk_data.get(j);
-                    if (!original_thunk.u1.AddressOfData)
-                    {
-                        break;
-                    }
-
-                    static_assert(sizeof(thunk_type) == sizeof(T));
-                    const auto thunk_rva = descriptor.FirstThunk + sizeof(thunk_type) * j;
-                    const auto thunk_address = thunk_rva + binary.image_base;
-
-                    auto& sym = binary.imports[thunk_address];
-                    sym.module_index = module_index;
-
-                    // Use architecture-specific ordinal checking
-                    if (thunk_traits::snap_by_ordinal(original_thunk.u1.Ordinal))
-                    {
-                        sym.name = "#" + std::to_string(thunk_traits::ordinal_mask(original_thunk.u1.Ordinal));
-                    }
-                    else
-                    {
-                        sym.name =
-                            buffer.as_string(static_cast<size_t>(original_thunk.u1.AddressOfData + offsetof(IMAGE_IMPORT_BY_NAME, Name)));
-                    }
-                }
-            }
-        }
-
-        template <typename T>
         void collect_exports(mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
                              const PEOptionalHeader_t<T>& optional_header)
         {
@@ -141,79 +79,6 @@ namespace sogen
             for (const auto& symbol : binary.exports)
             {
                 binary.address_names.try_emplace(symbol.address, symbol.name);
-            }
-        }
-
-        template <typename T>
-            requires(std::is_integral_v<T>)
-        void apply_relocation(const utils::safe_buffer_accessor<std::byte> buffer, const uint64_t offset, const uint64_t delta)
-        {
-            const auto obj = buffer.as<T>(static_cast<size_t>(offset));
-            const auto value = obj.get();
-            const auto new_value = value + static_cast<T>(delta);
-            obj.set(new_value);
-        }
-
-        template <typename T>
-        void apply_relocations(const mapped_module& binary, const utils::safe_buffer_accessor<std::byte> buffer,
-                               const PEOptionalHeader_t<T>& optional_header)
-        {
-            const auto delta = binary.image_base - optional_header.ImageBase;
-            if (delta == 0)
-            {
-                return;
-            }
-
-            const auto* directory = &optional_header.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
-            if (directory->Size == 0)
-            {
-                return;
-            }
-
-            auto relocation_offset = directory->VirtualAddress;
-            const auto relocation_end = relocation_offset + directory->Size;
-
-            while (relocation_offset < relocation_end)
-            {
-                const auto relocation = buffer.as<IMAGE_BASE_RELOCATION>(relocation_offset).get();
-
-                if (relocation.VirtualAddress <= 0 || relocation.SizeOfBlock <= sizeof(IMAGE_BASE_RELOCATION))
-                {
-                    break;
-                }
-
-                const auto data_size = relocation.SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION);
-                const auto entry_count = data_size / sizeof(uint16_t);
-
-                const auto entries = buffer.as<uint16_t>(relocation_offset + sizeof(IMAGE_BASE_RELOCATION));
-
-                relocation_offset += relocation.SizeOfBlock;
-
-                for (size_t i = 0; i < entry_count; ++i)
-                {
-                    const auto entry = entries.get(i);
-
-                    const int type = entry >> 12;
-                    const auto offset = static_cast<uint16_t>(entry & 0xfff);
-                    const auto total_offset = relocation.VirtualAddress + offset;
-
-                    switch (type)
-                    {
-                    case IMAGE_REL_BASED_ABSOLUTE:
-                        break;
-
-                    case IMAGE_REL_BASED_HIGHLOW:
-                        apply_relocation<DWORD>(buffer, total_offset, delta);
-                        break;
-
-                    case IMAGE_REL_BASED_DIR64:
-                        apply_relocation<ULONGLONG>(buffer, total_offset, delta);
-                        break;
-
-                    default:
-                        throw std::runtime_error("Unknown relocation type: " + std::to_string(type));
-                    }
-                }
             }
         }
 
@@ -356,9 +221,10 @@ namespace sogen
         }
 
         template <typename T>
-        void apply_relocations(const mapped_module& binary, memory_manager& memory, const PEOptionalHeader_t<T>& optional_header)
+        void apply_relocations(const mapped_module& binary, memory_manager& memory, const PEOptionalHeader_t<T>& optional_header,
+                               const uint64_t relocation_base)
         {
-            const auto delta = binary.image_base - optional_header.ImageBase;
+            const auto delta = relocation_base - optional_header.ImageBase;
             if (delta == 0)
             {
                 return;
@@ -502,7 +368,8 @@ namespace sogen
         template <typename T>
         bool try_map_module_at_current_base(memory_manager& memory, mapped_module& binary,
                                             const utils::safe_buffer_accessor<const std::byte> buffer, const PENTHeaders_t<T>& nt_headers,
-                                            const uint64_t nt_headers_offset, const PEOptionalHeader_t<T>& optional_header)
+                                            const uint64_t nt_headers_offset, const PEOptionalHeader_t<T>& optional_header,
+                                            const uint64_t relocation_base)
         {
             binary.sections.clear();
             binary.exports.clear();
@@ -535,12 +402,12 @@ namespace sogen
                     return false;
                 }
 
-                const auto image_base = static_cast<T>(binary.image_base);
+                const auto image_base = static_cast<T>(relocation_base);
                 const auto image_base_address = binary.image_base + nt_headers_offset + offsetof(PENTHeaders_t<T>, OptionalHeader) +
                                                 offsetof(PEOptionalHeader_t<T>, ImageBase);
                 memory.write_memory(image_base_address, &image_base, sizeof(image_base));
 
-                apply_relocations(binary, memory, optional_header);
+                apply_relocations(binary, memory, optional_header, relocation_base);
                 collect_exports(binary, memory, optional_header);
                 collect_imports(binary, memory, optional_header);
 
@@ -568,7 +435,7 @@ namespace sogen
 
     template <typename T>
     mapped_module map_module_from_data(memory_manager& memory, const std::span<const std::byte> data, std::filesystem::path file,
-                                       windows_path module_path)
+                                       windows_path module_path, const uint64_t relocation_base)
     {
         mapped_module binary{};
         binary.path = std::move(file);
@@ -602,6 +469,7 @@ namespace sogen
 
         // Store PE header fields
         binary.machine = static_cast<uint16_t>(nt_headers.FileHeader.Machine);
+        binary.dll_characteristics = optional_header.DllCharacteristics;
         binary.size_of_stack_reserve = optional_header.SizeOfStackReserve;
         binary.size_of_stack_commit = optional_header.SizeOfStackCommit;
         binary.size_of_heap_reserve = optional_header.SizeOfHeapReserve;
@@ -612,9 +480,10 @@ namespace sogen
         const auto has_dynamic_base = optional_header.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
         const auto is_relocatable = is_dll || has_dynamic_base;
 
-        if (!try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header))
+        if (!binary.image_base || !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
+                                                                  relocation_base ? relocation_base : binary.image_base))
         {
-            if (!is_relocatable)
+            if (!is_relocatable && relocation_base == 0)
             {
                 throw std::runtime_error("Memory range not allocatable");
             }
@@ -638,7 +507,8 @@ namespace sogen
             }
 
             if (!binary.image_base ||
-                !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header))
+                !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
+                                                relocation_base ? relocation_base : binary.image_base))
             {
                 throw std::runtime_error("Memory range not allocatable");
             }
@@ -650,7 +520,8 @@ namespace sogen
     }
 
     template <typename T>
-    mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path)
+    mapped_module map_module_from_file(memory_manager& memory, std::filesystem::path file, windows_path module_path,
+                                       const uint64_t relocation_base)
     {
         const auto data = utils::io::read_file(file);
         if (data.empty())
@@ -658,7 +529,7 @@ namespace sogen
             throw std::runtime_error("Bad file data: " + file.string());
         }
 
-        return map_module_from_data<T>(memory, data, std::move(file), std::move(module_path));
+        return map_module_from_data<T>(memory, data, std::move(file), std::move(module_path), relocation_base);
     }
 
     template <typename T>
@@ -686,6 +557,7 @@ namespace sogen
 
             // Store PE header fields
             binary.machine = static_cast<uint16_t>(nt_headers.FileHeader.Machine);
+            binary.dll_characteristics = optional_header.DllCharacteristics;
             binary.size_of_stack_reserve = optional_header.SizeOfStackReserve;
             binary.size_of_stack_commit = optional_header.SizeOfStackCommit;
             binary.size_of_heap_reserve = optional_header.SizeOfHeapReserve;
@@ -761,13 +633,15 @@ namespace sogen
     }
 
     template mapped_module map_module_from_data<std::uint32_t>(memory_manager& memory, const std::span<const std::byte> data,
-                                                               std::filesystem::path file, windows_path module_path);
+                                                               std::filesystem::path file, windows_path module_path,
+                                                               uint64_t relocation_base);
     template mapped_module map_module_from_data<std::uint64_t>(memory_manager& memory, const std::span<const std::byte> data,
-                                                               std::filesystem::path file, windows_path module_path);
-    template mapped_module map_module_from_file<std::uint32_t>(memory_manager& memory, std::filesystem::path file,
-                                                               windows_path module_path);
-    template mapped_module map_module_from_file<std::uint64_t>(memory_manager& memory, std::filesystem::path file,
-                                                               windows_path module_path);
+                                                               std::filesystem::path file, windows_path module_path,
+                                                               uint64_t relocation_base);
+    template mapped_module map_module_from_file<std::uint32_t>(memory_manager& memory, std::filesystem::path file, windows_path module_path,
+                                                               uint64_t relocation_base);
+    template mapped_module map_module_from_file<std::uint64_t>(memory_manager& memory, std::filesystem::path file, windows_path module_path,
+                                                               uint64_t relocation_base);
 
     template mapped_module map_module_from_memory<std::uint32_t>(memory_manager& memory, uint64_t base_address, uint64_t image_size,
                                                                  windows_path module_path);

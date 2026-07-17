@@ -1,5 +1,7 @@
 #include "../std_include.hpp"
 #include "mount_point_manager.hpp"
+#include <charconv>
+#include <cstring>
 
 #include "../windows_emulator.hpp"
 #include "mountmgr.hpp"
@@ -9,6 +11,11 @@ namespace sogen
 
     namespace
     {
+        struct mountdev_target_name_header
+        {
+            USHORT device_name_length;
+        };
+
         std::pair<ULONG, USHORT> write_data(std::vector<uint8_t>& buffer, const std::span<const uint8_t> data)
         {
             const auto offset = buffer.size();
@@ -34,11 +41,19 @@ namespace sogen
 
         std::u16string make_volume(const uint64_t low = 0, const uint64_t high = 0)
         {
-            auto str = utils::string::to_hex_string(low) + utils::string::to_hex_string(high);
-            str.insert(str.begin() + 20, '-');
-            str.insert(str.begin() + 16, '-');
-            str.insert(str.begin() + 12, '-');
-            str.insert(str.begin() + 8, '-');
+            const auto raw = utils::string::to_hex_string(low) + utils::string::to_hex_string(high);
+            const std::string_view raw_view{raw};
+            std::string str{};
+            str.reserve(36);
+            str.append(raw_view.substr(0, 8));
+            str.push_back('-');
+            str.append(raw_view.substr(8, 4));
+            str.push_back('-');
+            str.append(raw_view.substr(12, 4));
+            str.push_back('-');
+            str.append(raw_view.substr(16, 4));
+            str.push_back('-');
+            str.append(raw_view.substr(20, 12));
 
             const std::string volume = utils::string::va("\\??\\Volume{%s}", str.c_str());
             return u8_to_u16(volume);
@@ -118,16 +133,33 @@ namespace sogen
 
             static NTSTATUS get_drive_letter(windows_emulator& win_emu, const io_device_context& c)
             {
-                if (c.input_buffer_length < 2)
+                if (c.input_buffer_length < sizeof(mountdev_target_name_header))
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                // input_buffer_length is guest-controlled (up to 4 GiB). A device name is tiny, so
+                // cap the buffer we read to avoid a huge host allocation.
+                if (c.input_buffer_length > 0x1000)
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
 
                 const auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
+                mountdev_target_name_header target_name{};
+                std::memcpy(&target_name, data.data(), sizeof(target_name));
 
-                const std::u16string_view file(reinterpret_cast<const char16_t*>(data.data()), (data.size() / 2) - 1);
+                constexpr auto name_offset = sizeof(mountdev_target_name_header);
+                const auto name_length = static_cast<size_t>(target_name.device_name_length);
+                if (name_length == 0 || name_length % sizeof(char16_t) != 0 || data.size() - name_offset < name_length)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
 
-                constexpr std::u16string_view volume_prefix = u".\\Device\\HarddiskVolume";
+                const std::u16string_view file(reinterpret_cast<const char16_t*>(data.data() + name_offset),
+                                               name_length / sizeof(char16_t));
+
+                constexpr std::u16string_view volume_prefix = u"\\Device\\HarddiskVolume";
                 if (!file.starts_with(volume_prefix))
                 {
                     return STATUS_NOT_SUPPORTED;
@@ -135,7 +167,16 @@ namespace sogen
 
                 const auto drive_number = file.substr(volume_prefix.size());
                 const auto drive_number_u8 = u16_to_u8(drive_number);
-                const auto drive_letter = static_cast<char>('A' + atoi(drive_number_u8.c_str()) - 1);
+                int drive_index{};
+                const auto* number_start = drive_number_u8.data();
+                const auto* number_end = number_start + drive_number_u8.size();
+                const auto [parse_end, parse_error] = std::from_chars(number_start, number_end, drive_index);
+                if (parse_error != std::errc{} || parse_end != number_end || drive_index < 1 || drive_index > 26)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                const auto drive_letter = static_cast<char>('A' + drive_index - 1);
 
                 std::string response{};
                 response.push_back(drive_letter);
@@ -189,7 +230,7 @@ namespace sogen
         };
     }
 
-    std::unique_ptr<io_device> create_mount_point_manager()
+    std::unique_ptr<io_device> create_mount_point_manager(const device_creation_context&)
     {
         return std::make_unique<mount_point_manager>();
     }

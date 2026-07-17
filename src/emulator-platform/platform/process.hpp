@@ -701,17 +701,17 @@ namespace sogen
     {
         DWORD ExceptionCode;
         DWORD ExceptionFlags;
-        EMULATOR_CAST(typename Traits::PVOID, struct EMU_EXCEPTION_RECORD*) ExceptionRecord;
-        typename Traits::PVOID ExceptionAddress;
+        EMULATOR_CAST(Traits::PVOID, struct EMU_EXCEPTION_RECORD*) ExceptionRecord;
+        Traits::PVOID ExceptionAddress;
         DWORD NumberParameters;
-        typename Traits::ULONG_PTR ExceptionInformation[15];
+        Traits::ULONG_PTR ExceptionInformation[15];
     };
 
     template <typename Traits>
     struct EMU_EXCEPTION_POINTERS
     {
-        EMULATOR_CAST(typename Traits::PVOID, EMU_EXCEPTION_RECORD*) ExceptionRecord;
-        EMULATOR_CAST(typename Traits::PVOID, CONTEXT64* or CONTEXT32*) ContextRecord;
+        EMULATOR_CAST(Traits::PVOID, EMU_EXCEPTION_RECORD*) ExceptionRecord;
+        EMULATOR_CAST(Traits::PVOID, CONTEXT64* or CONTEXT32*) ContextRecord;
     };
 
 #define MAXIMUM_NODE_COUNT64 0x40
@@ -757,6 +757,19 @@ namespace sogen
         EMULATOR_CAST(EmulatorTraits<Emu64>::PVOID, KAFFINITY) ActiveProcessorsAffinityMask;
         char NumberOfProcessors;
     } SYSTEM_BASIC_INFORMATION64, *PSYSTEM_BASIC_INFORMATION64;
+
+    typedef struct _SYSTEM_CODEINTEGRITY_INFORMATION
+    {
+        ULONG Length;
+        ULONG CodeIntegrityOptions;
+    } SYSTEM_CODEINTEGRITY_INFORMATION, *PSYSTEM_CODEINTEGRITY_INFORMATION;
+
+    typedef struct _SYSTEM_BOOT_ENVIRONMENT_INFORMATION
+    {
+        GUID BootIdentifier;
+        ULONG FirmwareType;
+        ULONGLONG BootFlags;
+    } SYSTEM_BOOT_ENVIRONMENT_INFORMATION, *PSYSTEM_BOOT_ENVIRONMENT_INFORMATION;
 
     typedef struct _SYSTEM_DEVICE_INFORMATION
     {
@@ -934,6 +947,7 @@ namespace sogen
         TokenPrimary = 1,
         TokenImpersonation
     } TOKEN_TYPE;
+
     typedef TOKEN_TYPE* PTOKEN_TYPE;
 
     typedef struct _TOKEN_ELEVATION
@@ -1042,8 +1056,8 @@ namespace sogen
     template <typename Traits>
     struct CLIENT_ID
     {
-        typename Traits::HANDLE UniqueProcess;
-        typename Traits::HANDLE UniqueThread;
+        Traits::HANDLE UniqueProcess;
+        Traits::HANDLE UniqueThread;
     };
 
     using CLIENT_ID32 = CLIENT_ID<EmulatorTraits<Emu32>>;
@@ -1052,7 +1066,7 @@ namespace sogen
     template <typename Traits>
     struct EMU_RTL_SRWLOCK
     {
-        typename Traits::PVOID Ptr;
+        Traits::PVOID Ptr;
     };
 
 #ifndef OS_WINDOWS
@@ -1083,6 +1097,7 @@ namespace sogen
         DWORD NodeNumber;
         BYTE Reserved[18];
         WORD GroupCount;
+
         union
         {
             EMU_GROUP_AFFINITY64 GroupMask;
@@ -1099,6 +1114,7 @@ namespace sogen
         PROCESSOR_CACHE_TYPE Type;
         BYTE Reserved[18];
         WORD GroupCount;
+
         union
         {
             EMU_GROUP_AFFINITY64 GroupMask;
@@ -1135,6 +1151,7 @@ namespace sogen
     {
         LOGICAL_PROCESSOR_RELATIONSHIP Relationship;
         DWORD Size;
+
         union
         {
             EMU_PROCESSOR_RELATIONSHIP64 Processor;
@@ -1156,18 +1173,21 @@ namespace sogen
     template <typename Traits>
     struct EMU_SYSTEM_LOGICAL_PROCESSOR_INFORMATION
     {
-        typename Traits::ULONG_PTR ProcessorMask;
+        Traits::ULONG_PTR ProcessorMask;
         LOGICAL_PROCESSOR_RELATIONSHIP Relationship;
+
         union
         {
             struct
             {
                 BYTE Flags;
             } ProcessorCore;
+
             struct
             {
                 DWORD NodeNumber;
             } NumaNode;
+
             EMU_CACHE_DESCRIPTOR Cache;
             ULONGLONG Reserved[2];
         } DUMMYUNIONNAME;
@@ -1176,9 +1196,9 @@ namespace sogen
     template <typename Traits>
     struct RTL_PROCESS_MODULE_INFORMATION
     {
-        typename Traits::HANDLE Section;
-        typename Traits::PVOID MappedBase;
-        typename Traits::PVOID ImageBase;
+        Traits::HANDLE Section;
+        Traits::PVOID MappedBase;
+        Traits::PVOID ImageBase;
         ULONG ImageSize;
         ULONG Flags;
         USHORT LoadOrderIndex;
@@ -1202,7 +1222,7 @@ namespace sogen
         RTL_PROCESS_MODULE_INFORMATION<Traits> BaseInfo;
         ULONG ImageChecksum;
         ULONG TimeDateStamp;
-        typename Traits::PVOID DefaultBase;
+        Traits::PVOID DefaultBase;
     };
 
     template <typename Traits>
@@ -1212,13 +1232,31 @@ namespace sogen
         LARGE_INTEGER UserTime;
         LARGE_INTEGER CreateTime;
         ULONG WaitTime;
-        typename Traits::PVOID StartAddress;
+        Traits::PVOID StartAddress;
         CLIENT_ID<Traits> ClientId;
         LONG Priority;
         LONG BasePriority;
         ULONG ContextSwitches;
         ULONG ThreadState;
         ULONG WaitReason;
+    };
+
+    template <typename Traits>
+    struct SYSTEM_MEMORY_USAGE
+    {
+        typename Traits::PVOID Name;
+        USHORT Valid;
+        USHORT Standby;
+        USHORT Modified;
+        USHORT PageTables;
+    };
+
+    template <typename Traits>
+    struct SYSTEM_MEMORY_USAGE_INFORMATION
+    {
+        ULONG Reserved;
+        typename Traits::PVOID EndOfData;
+        SYSTEM_MEMORY_USAGE<Traits> MemoryUsage[1];
     };
 
     template <typename Traits>
@@ -1235,23 +1273,23 @@ namespace sogen
         LARGE_INTEGER KernelTime;
         UNICODE_STRING<Traits> ImageName;
         LONG BasePriority;
-        typename Traits::HANDLE UniqueProcessId;
-        typename Traits::HANDLE InheritedFromUniqueProcessId;
+        Traits::HANDLE UniqueProcessId;
+        Traits::HANDLE InheritedFromUniqueProcessId;
         ULONG HandleCount;
         ULONG SessionId;
-        typename Traits::ULONG_PTR UniqueProcessKey;
-        typename Traits::SIZE_T PeakVirtualSize;
-        typename Traits::SIZE_T VirtualSize;
+        Traits::ULONG_PTR UniqueProcessKey;
+        Traits::SIZE_T PeakVirtualSize;
+        Traits::SIZE_T VirtualSize;
         ULONG PageFaultCount;
-        typename Traits::SIZE_T PeakWorkingSetSize;
-        typename Traits::SIZE_T WorkingSetSize;
-        typename Traits::SIZE_T QuotaPeakPagedPoolUsage;
-        typename Traits::SIZE_T QuotaPagedPoolUsage;
-        typename Traits::SIZE_T QuotaPeakNonPagedPoolUsage;
-        typename Traits::SIZE_T QuotaNonPagedPoolUsage;
-        typename Traits::SIZE_T PagefileUsage;
-        typename Traits::SIZE_T PeakPagefileUsage;
-        typename Traits::SIZE_T PrivatePageCount;
+        Traits::SIZE_T PeakWorkingSetSize;
+        Traits::SIZE_T WorkingSetSize;
+        Traits::SIZE_T QuotaPeakPagedPoolUsage;
+        Traits::SIZE_T QuotaPagedPoolUsage;
+        Traits::SIZE_T QuotaPeakNonPagedPoolUsage;
+        Traits::SIZE_T QuotaNonPagedPoolUsage;
+        Traits::SIZE_T PagefileUsage;
+        Traits::SIZE_T PeakPagefileUsage;
+        Traits::SIZE_T PrivatePageCount;
         LARGE_INTEGER ReadOperationCount;
         LARGE_INTEGER WriteOperationCount;
         LARGE_INTEGER OtherOperationCount;
@@ -1276,5 +1314,6 @@ namespace sogen
         ULONG Reserved;
         uint64_t Callback;
     };
+
     // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 } // namespace sogen

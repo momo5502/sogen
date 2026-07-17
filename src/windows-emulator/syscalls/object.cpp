@@ -8,6 +8,11 @@ namespace sogen
 
     namespace syscalls
     {
+        NTSTATUS handle_NtSetEvent(const syscall_context& c, uint64_t handle, emulator_object<LONG> previous_state);
+        NTSTATUS handle_NtReleaseMutant(const syscall_context& c, handle mutant_handle, emulator_object<LONG> previous_count);
+        NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, handle semaphore_handle, ULONG release_count,
+                                           emulator_object<LONG> previous_count);
+
         NTSTATUS handle_NtClose(const syscall_context& c, const handle h)
         {
             const auto value = h.value;
@@ -95,7 +100,7 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
-            const auto resolved_source_handle = c.proc.resolve_object_pseudo_handle(source_handle);
+            const auto resolved_source_handle = c.proc.resolve_object_pseudo_handle(source_handle, c.vcpu.active_thread);
 
             if (resolved_source_handle.value.is_pseudo)
             {
@@ -172,7 +177,7 @@ namespace sogen
                                       const OBJECT_INFORMATION_CLASS object_information_class, const emulator_pointer object_information,
                                       const ULONG object_information_length, const emulator_object<ULONG> return_length)
         {
-            const auto effective_handle = c.proc.resolve_object_pseudo_handle(handle);
+            const auto effective_handle = c.proc.resolve_object_pseudo_handle(handle, c.vcpu.active_thread);
 
             if (object_information_class == ObjectNameInformation)
             {
@@ -471,7 +476,7 @@ namespace sogen
         // same recovery the wait32 path does. WoW64 and some callers hand us handles without type bits.
         handle resolve_wait_handle(const syscall_context& c, const handle h)
         {
-            const auto resolved = c.proc.resolve_object_pseudo_handle(h);
+            const auto resolved = c.proc.resolve_object_pseudo_handle(h, c.vcpu.active_thread);
             if (resolved.value.type != handle_types::reserved || resolved.value.is_pseudo)
             {
                 return resolved;
@@ -494,7 +499,8 @@ namespace sogen
             switch (h.value.type)
             {
             case handle_types::process:
-                return h == GUEST_PROCESS_HANDLE ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+                // The synthetic Steam process never signals, so a liveness wait times out ("alive").
+                return (h == GUEST_PROCESS_HANDLE || h == STEAM_PROCESS_HANDLE) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
 
             case handle_types::file:
                 if (h.value.is_pseudo)
@@ -549,8 +555,8 @@ namespace sogen
 
         NTSTATUS handle_NtCompareObjects(const syscall_context& c, const handle first, const handle second)
         {
-            const auto first_resolved = c.proc.resolve_object_pseudo_handle(first);
-            const auto second_resolved = c.proc.resolve_object_pseudo_handle(second);
+            const auto first_resolved = c.proc.resolve_object_pseudo_handle(first, c.vcpu.active_thread);
+            const auto second_resolved = c.proc.resolve_object_pseudo_handle(second, c.vcpu.active_thread);
             return (first_resolved == second_resolved) ? STATUS_SUCCESS : STATUS_NOT_SAME_OBJECT;
         }
 
@@ -567,7 +573,7 @@ namespace sogen
             }
 
             const bool wait_all = (flags & mwmo_waitall) != 0;
-            auto& t = c.win_emu.current_thread();
+            auto& t = c.thread();
             t.await_objects = {};
             t.await_any = false;
             t.await_msg_mask = {};
@@ -604,7 +610,7 @@ namespace sogen
                 t.await_time = c.win_emu.clock().steady_now() + std::chrono::milliseconds{timeout};
             }
 
-            c.win_emu.yield_thread(false);
+            c.win_emu.yield_thread(c.vcpu, false);
             return {};
         }
 
@@ -624,7 +630,7 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            auto& t = c.win_emu.current_thread();
+            auto& t = c.thread();
             t.await_objects = {};
             t.await_any = false;
 
@@ -663,7 +669,7 @@ namespace sogen
                 t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
             }
 
-            c.win_emu.yield_thread(alertable);
+            c.win_emu.yield_thread(c.vcpu, alertable);
             return STATUS_SUCCESS;
         }
 
@@ -683,7 +689,7 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            auto& t = c.win_emu.current_thread();
+            auto& t = c.thread();
             t.await_objects = {};
             t.await_any = false;
 
@@ -724,7 +730,7 @@ namespace sogen
                 t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
             }
 
-            c.win_emu.yield_thread(alertable);
+            c.win_emu.yield_thread(c.vcpu, alertable);
             return STATUS_SUCCESS;
         }
 
@@ -738,7 +744,7 @@ namespace sogen
                 return validation_status;
             }
 
-            auto& t = c.win_emu.current_thread();
+            auto& t = c.thread();
             t.await_objects = {resolved_handle};
             t.await_any = false;
 
@@ -747,8 +753,41 @@ namespace sogen
                 t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
             }
 
-            c.win_emu.yield_thread(alertable);
+            c.win_emu.yield_thread(c.vcpu, alertable);
             return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtSignalAndWaitForSingleObject(const syscall_context& c, const handle signal_handle, const handle wait_handle,
+                                                       const BOOLEAN alertable, const emulator_object<LARGE_INTEGER> timeout)
+        {
+            const emulator_object<LONG> no_previous_state{c.emu.memory()};
+
+            NTSTATUS signal_status{};
+
+            switch (signal_handle.value.type)
+            {
+            case handle_types::event:
+                signal_status = handle_NtSetEvent(c, signal_handle.bits, no_previous_state);
+                break;
+
+            case handle_types::mutant:
+                signal_status = handle_NtReleaseMutant(c, signal_handle, no_previous_state);
+                break;
+
+            case handle_types::semaphore:
+                signal_status = handle_NtReleaseSemaphore(c, signal_handle, 1, no_previous_state);
+                break;
+
+            default:
+                return STATUS_OBJECT_TYPE_MISMATCH;
+            }
+
+            if (!NT_SUCCESS(signal_status))
+            {
+                return signal_status;
+            }
+
+            return handle_NtWaitForSingleObject(c, wait_handle, alertable, timeout);
         }
 
         NTSTATUS handle_NtSetInformationObject()
