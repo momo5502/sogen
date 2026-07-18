@@ -52,20 +52,6 @@ namespace sogen
             return false;
         }
 
-        // Whether this backend maintains separate, independently-active 32-bit and 64-bit CPU
-        // engine contexts for a WoW64 thread ("dual-engine"/gate-crossing backends), as opposed to
-        // a single unified CPU state that's already bitness-aware. Only a dual-engine backend can
-        // have its 64-bit engine "transiently active" mid gate-crossing while wow64.dll's real
-        // CONTEXT32->CONTEXT64 marshaling code runs - the scenario syscalls/thread.cpp's WoW64
-        // NtContinue reverse-gate exists to handle. On a single-engine backend there's no such
-        // transient state to correct: the normal cpu_context::restore path already resumes a WoW64
-        // thread correctly, and taking the reverse-gate path anyway hijacks an ordinary NtContinue
-        // call, corrupting the resume. Defaults to false (matches every backend except FEX).
-        virtual bool has_separate_bitness_engines() const
-        {
-            return false;
-        }
-
         // Whether stop() may be safely called from a different thread while the CPU is executing.
         // Hypervisor-backed backends can cancel execution from any thread; the JIT/interpreter
         // backends cannot, so they must be preempted cooperatively from the CPU thread instead.
