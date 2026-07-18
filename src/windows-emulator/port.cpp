@@ -41,6 +41,19 @@ namespace sogen
             }
         };
 
+        // Minimal RPC stub: completes the LRPC bind and answers every call with an S_OK return and no [out]
+        // data. Enough for fire-and-forget power/notification registrations (e.g. \RPC Control\umpo) that the
+        // audio stack performs during stream setup and only checks for success.
+        struct stub_rpc_port : rpc_port
+        {
+            NTSTATUS handle_rpc(windows_emulator& /*win_emu*/, uint32_t /*procedure_id*/, const lpc_request_context& /*c*/,
+                                utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>& /*reply_handles*/) override
+            {
+                writer.write<uint32_t>(0); // return HRESULT S_OK
+                return STATUS_SUCCESS;
+            }
+        };
+
     }
 
     std::unique_ptr<port> create_port(const std::u16string_view port)
@@ -60,8 +73,7 @@ namespace sogen
             return create_lsa_policy_lookup_port();
         }
 
-        if (port == u"\\RPC Control\\Audiosrv" || port == u"\\RPC Control\\AudioClientRpc" ||
-            port == u"\\RPC Control\\AudioSrvServiceRpc")
+        if (port == u"\\RPC Control\\Audiosrv" || port == u"\\RPC Control\\AudioClientRpc" || port == u"\\RPC Control\\AudioSrvServiceRpc")
         {
             return create_audio_service_port();
         }
@@ -82,6 +94,13 @@ namespace sogen
             // service through svcctl while creating a render audio client, so the open/close calls must return
             // a real context handle; other interfaces on this port fall back to a zero-payload success.
             return create_service_control_port();
+        }
+
+        if (port == u"\\RPC Control\\umpo")
+        {
+            // User-Mode Power Orchestrator. The audio stack registers a power request here while starting a
+            // stream; without a responder the render worker retries and then stalls.
+            return std::make_unique<stub_rpc_port>();
         }
 
         return std::make_unique<dummy_port>(std::u16string(port));
