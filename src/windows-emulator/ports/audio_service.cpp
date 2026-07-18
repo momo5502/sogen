@@ -324,7 +324,9 @@ namespace sogen
             //   returns HRESULT
             static NTSTATUS handle_open_stream(utils::aligned_binary_writer& writer)
             {
-                writer.write_ndr_pointer(false); // [out] string: null
+                writer.write_ndr_pointer(true); // [out, string] p6: stream identifier
+                writer.write_ndr_u16string(u"SogenAudioStream", true);
+                writer.align_to(sizeof(uint32_t));
 
                 writer.write<uint32_t>(0);                                                   // context handle: attributes
                 writer.write(k_stream_context_uuid.data(), k_stream_context_uuid.size(), 1); // context handle: uuid
@@ -497,26 +499,27 @@ namespace sogen
 
             // {D574D111} opnum 6: AudioServerGetAudioSession([in] stream ctx, [out] session ctx). Right after
             // CreateRemoteStream the DirectSound client (unlike the WASAPI one) fetches the audio-session handle;
-            // an unimplemented reply here aborts Initialize (DestroyStream + E_FAIL). The [out] is an NDR context
-            // handle (4-byte attributes + 16-byte UUID) followed by reserved space the wire pads to 0x40 bytes,
-            // then the HRESULT; captured from a live audio service.
+            // an unimplemented reply here aborts Initialize (DestroyStream + E_FAIL). Per the decompiled IDL
+            // (docs/audio-capture/audioclient_rpc_idl.txt) the only [out] is the session context handle (a 4-byte
+            // attributes field + 16-byte UUID); the NDR64 return HRESULT follows immediately. No reserved tail.
             static NTSTATUS handle_get_audio_session(utils::aligned_binary_writer& writer)
             {
                 writer.write<uint32_t>(0); // context handle attributes
                 writer.write(k_session_context_uuid.data(), k_session_context_uuid.size(), 1);
-                writer.pad(0x2c);
+                writer.align_to(sizeof(uint32_t));
                 writer.write(k_hr_ok); // return HRESULT
                 return STATUS_SUCCESS;
             }
 
-            // {D574D111} opnum 27: AudioSessionGetState([in, out] session ctx, [out] short state). The session
-            // handle is marshalled back, the state defaults to 0, and the wire pads the reserved tail to 0x50
-            // bytes before the HRESULT; captured from a live audio service.
+            // {D574D111} opnum 27: AudioSessionGetState([in, out] session ctx, [out] short* state). Per the IDL
+            // the [in,out] session context handle is marshalled back (4-byte attributes + 16-byte UUID) followed
+            // by the [out] short state, then the NDR64 return HRESULT. Report AudioSessionStateInactive (0).
             static NTSTATUS handle_get_session_state(utils::aligned_binary_writer& writer)
             {
                 writer.write<uint32_t>(0); // context handle attributes
                 writer.write(k_session_context_uuid.data(), k_session_context_uuid.size(), 1);
-                writer.pad(0x4c);
+                writer.write<uint16_t>(0); // [out] AudioSessionState = AudioSessionStateInactive
+                writer.align_to(sizeof(uint32_t));
                 writer.write(k_hr_ok); // return HRESULT
                 return STATUS_SUCCESS;
             }
