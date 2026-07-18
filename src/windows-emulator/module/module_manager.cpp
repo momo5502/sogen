@@ -465,10 +465,8 @@ namespace sogen
 
         // Must happen before any module gets mapped below: a JIT-based backend (FEXCore) needs to
         // know the bitness before compiling its first block (see notify_process_bitness's doc
-        // comment), and a 32-bit process's own image/ntdll32 map into the low 4GB - a range some
-        // backends must steer real host allocations away from for a 64-bit process, but must NOT for
-        // a 32-bit one (see reserve_host_memory_ranges's doc comment) - so the reservation has to be
-        // recomputed now that the bitness is known, before either module is mapped.
+        // comment), and a backend's host-range reservations can depend on it, so they are
+        // recomputed now that the bitness is known.
         emu.notify_process_bitness(context.is_wow64_process);
         this->memory_->reset_host_memory_ranges();
 
