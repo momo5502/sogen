@@ -133,6 +133,163 @@ namespace sogen
             return hex;
         }
 
+        // Layout of the WASAPI shared-buffer control header the guest maps. The client writes interleaved PCM
+        // into the sample area at k_render_data_offset (past the DCPE control header) and advances the write
+        // cursor (bytes queued) at +0x18; the audio engine (this emulator) advances the play cursor (bytes
+        // consumed) at +0x20. CCrossProcessBaseClientEndpoint::GetCurrentPadding reports (write - play) /
+        // block_align frames, so a streaming client blocks until the engine drains the buffer by advancing the
+        // play cursor. Offsets confirmed against a live capture and audioses!GetCurrentPadding.
+        constexpr uint32_t k_render_data_offset = 0x400;
+        constexpr uint32_t k_write_cursor_offset = 0x18;
+        constexpr uint32_t k_play_cursor_offset = 0x20;
+
+        // The shared-mode mix format reported by handle_get_mix_format: 44.1 kHz, 2 channels, 32-bit float.
+        constexpr uint32_t k_sample_rate = 44100;
+        constexpr uint32_t k_block_align = 8; // channels * bytes-per-sample
+        constexpr uint64_t k_hns_per_second = 10000000;
+        constexpr uint64_t k_default_buffer_duration = k_hns_per_second; // 1 s
+        constexpr audio_format k_stream_format{k_sample_rate, 2, 32, true};
+
+        // Emulates the audio endpoint's hardware DMA. The render section handed to the guest is backed by a
+        // host-owned buffer aliased into the guest address space (allocate_host_memory), so the guest and this
+        // object share the exact same memory. A host thread drains that buffer at the device rate: it forwards
+        // newly committed PCM to the host sink and advances the play cursor so the guest's render loop sees the
+        // buffer emptying and keeps producing. Because the buffer is plain host memory, the thread touches it
+        // directly -- no memory-access hooks (which the WHP backend does not honor) and no calls into the CPU
+        // backend from a foreign thread (which is not thread-safe).
+        class render_stream
+        {
+          public:
+            render_stream(windows_emulator& win_emu, const uint32_t buffer_bytes, const uint64_t section_size,
+                          const uint8_t* control_header, const size_t control_header_size)
+                : win_emu_(win_emu),
+                  buffer_bytes_(buffer_bytes),
+                  section_size_(section_size),
+                  host_storage_(static_cast<size_t>(section_size) + k_audio_page_size)
+            {
+                this->host_ptr_ = reinterpret_cast<uint8_t*>(
+                    (reinterpret_cast<uintptr_t>(this->host_storage_.data()) + (k_audio_page_size - 1)) & ~(k_audio_page_size - 1));
+                std::memcpy(this->host_ptr_, control_header, control_header_size);
+
+                this->guest_address_ = win_emu.memory.find_free_allocation_base(static_cast<size_t>(section_size));
+                if (this->guest_address_ == 0 ||
+                    !win_emu.memory.allocate_host_memory(this->guest_address_, static_cast<size_t>(section_size), this->host_ptr_,
+                                                         memory_permission::read_write))
+                {
+                    this->guest_address_ = 0;
+                    return;
+                }
+
+                this->thread_ = std::thread(&render_stream::run, this);
+            }
+
+            ~render_stream()
+            {
+                this->stop_ = true;
+                if (this->thread_.joinable())
+                {
+                    this->thread_.join();
+                }
+
+                if (this->guest_address_)
+                {
+                    this->win_emu_.audio().stop();
+                    this->win_emu_.memory.release_memory(this->guest_address_, static_cast<size_t>(this->section_size_));
+                }
+            }
+
+            render_stream(const render_stream&) = delete;
+            render_stream& operator=(const render_stream&) = delete;
+            render_stream(render_stream&&) = delete;
+            render_stream& operator=(render_stream&&) = delete;
+
+            uint64_t guest_address() const
+            {
+                return this->guest_address_;
+            }
+
+          private:
+            static constexpr size_t k_audio_page_size = 0x1000;
+
+            uint64_t read_cursor(const uint32_t offset) const
+            {
+                uint64_t value = 0;
+                std::memcpy(&value, this->host_ptr_ + offset, sizeof(value));
+                return value;
+            }
+
+            void write_play_cursor(const uint64_t value)
+            {
+                std::memcpy(this->host_ptr_ + k_play_cursor_offset, &value, sizeof(value));
+            }
+
+            void run()
+            {
+                uint64_t submitted = 0;
+                bool tried_start = false;
+                bool has_device = false;
+                std::chrono::steady_clock::time_point anchor{};
+
+                while (!this->stop_)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+                    const auto write = this->read_cursor(k_write_cursor_offset);
+                    if (write == 0)
+                    {
+                        continue;
+                    }
+
+                    if (!tried_start)
+                    {
+                        has_device = this->win_emu_.audio().start(k_stream_format);
+                        tried_start = true;
+                        anchor = std::chrono::steady_clock::now();
+                    }
+
+                    if (has_device)
+                    {
+                        for (uint64_t pos = submitted; pos < write;)
+                        {
+                            const uint64_t ring_offset = pos % this->buffer_bytes_;
+                            const uint64_t chunk = std::min<uint64_t>(write - pos, this->buffer_bytes_ - ring_offset);
+                            this->win_emu_.audio().submit(this->host_ptr_ + k_render_data_offset + ring_offset,
+                                                          static_cast<size_t>(chunk));
+                            pos += chunk;
+                        }
+
+                        // Advance the play cursor at the real device rate so the guest sees genuine backpressure:
+                        // it can run ahead by at most one buffer, then blocks until playback catches up. Capped at
+                        // the write cursor -- the endpoint can never play past what the guest produced.
+                        const auto elapsed_ns =
+                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - anchor).count();
+                        const auto played =
+                            static_cast<uint64_t>(k_sample_rate) * k_block_align * static_cast<uint64_t>(elapsed_ns) / k_ns_per_second;
+                        this->write_play_cursor(std::min(played, write));
+                    }
+                    else
+                    {
+                        // No host audio device (e.g. headless / CI): keep the play cursor level with the write
+                        // cursor so the guest's render loop never blocks waiting for a buffer that nothing drains.
+                        this->write_play_cursor(write);
+                    }
+
+                    submitted = write;
+                }
+            }
+
+            static constexpr uint64_t k_ns_per_second = 1'000'000'000ULL;
+
+            windows_emulator& win_emu_;
+            uint32_t buffer_bytes_{};
+            uint64_t section_size_{};
+            uint64_t guest_address_{0};
+            std::vector<uint8_t> host_storage_;
+            uint8_t* host_ptr_{nullptr};
+            std::atomic<bool> stop_{false};
+            std::thread thread_;
+        };
+
         struct audio_service_port : rpc_port
         {
             NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c,
@@ -156,7 +313,7 @@ namespace sogen
                     case k_audio_opnum_get_device_period:
                         return handle_get_device_period(writer);
                     case k_audio_opnum_destroy_stream:
-                        win_emu.audio().stop();
+                        this->render_stream_.reset();
                         return handle_post_create(writer);
                     case k_audio_opnum_open_stream:
                         return handle_open_stream(writer);
@@ -167,10 +324,8 @@ namespace sogen
                     case k_audio_opnum_create_stream:
                         return handle_create_stream(win_emu, c, writer, reply_handles);
                     case k_audio_opnum_start_stream:
-                        start_playback(win_emu);
                         return handle_post_create(writer);
                     case k_audio_opnum_stop_stream:
-                        win_emu.audio().stop();
                         return handle_post_create(writer);
                     case 5:
                         return handle_post_create(writer);
@@ -191,54 +346,7 @@ namespace sogen
             }
 
           private:
-            emulator_pointer render_backing_{};
-            uint64_t render_size_{};
-            uint32_t render_data_size_{};
-
-            // The guest maps the render section and writes interleaved PCM into the sample area that begins at
-            // k_render_data_offset (past the DCPE control header). The header records the sample-area offset and
-            // its byte length; both were confirmed against a live-host capture (tools/alpc_capture.py) and the
-            // shared header we hand back in handle_create_stream.
-            static constexpr uint32_t k_render_data_offset = 0x400;
-
-            // Play/write cursors in the shared control header. The client advances the write cursor
-            // (bytes it has queued) at +0x18; the audio engine (this emulator) advances the play cursor
-            // (bytes it has consumed) at +0x20. CCrossProcessBaseClientEndpoint::GetCurrentPadding reports
-            // (write - play) / block_align frames, so a streaming client (DirectSound) blocks until the
-            // engine drains the buffer by advancing the play cursor. Offsets confirmed against a live capture
-            // and audioses!GetCurrentPadding.
-            static constexpr uint32_t k_write_cursor_offset = 0x18;
-            static constexpr uint32_t k_play_cursor_offset = 0x20;
-
-            // The shared-mode mix format we report from handle_get_mix_format: 44.1 kHz, 2 channels, 32-bit float.
-            static constexpr uint32_t k_sample_rate = 44100;
-            static constexpr uint32_t k_block_align = 8; // channels * bytes-per-sample
-            static constexpr uint64_t k_hns_per_second = 10000000;
-            static constexpr uint64_t k_default_buffer_duration = k_hns_per_second; // 1 s
-            static constexpr audio_format k_stream_format{k_sample_rate, 2, 32, true};
-
-            // On IAudioClient::Start, hand the sample area the client has filled to the host device. This submits
-            // the whole shared buffer once: enough for a client that fills the buffer then starts (the WASAPI
-            // walk in src/samples/audio-sample), but not yet for a client that streams packet-by-packet while
-            // running -- that needs the read cursor written back into the DCPE header so the client keeps
-            // producing, which is not reverse-engineered yet.
-            void start_playback(windows_emulator& win_emu)
-            {
-                if (!this->render_backing_ || this->render_data_size_ == 0 ||
-                    this->render_size_ < k_render_data_offset + this->render_data_size_)
-                {
-                    return;
-                }
-
-                if (!win_emu.audio().start(k_stream_format))
-                {
-                    return;
-                }
-
-                std::vector<uint8_t> samples(this->render_data_size_, 0);
-                win_emu.emu().read_memory(this->render_backing_ + k_render_data_offset, samples.data(), samples.size());
-                win_emu.audio().submit(samples.data(), samples.size());
-            }
+            std::unique_ptr<render_stream> render_stream_{};
 
             static NTSTATUS log_unhandled(windows_emulator& win_emu, const char* iface, const uint32_t opnum, const lpc_request_context& c)
             {
@@ -411,45 +519,18 @@ namespace sogen
                 patch32(0x174, buffer_extent);
                 std::memcpy(&render_control_header[0x154], &duration_hns, sizeof(duration_hns));
 
-                const auto backing = win_emu.memory.allocate_memory(static_cast<size_t>(render_section_size), memory_permission::read_write,
-                                                                    false, 0, memory_region_kind::pagefile_section_view);
-                if (backing)
+                // Back the render section with a host-owned buffer aliased into the guest and drained by a host
+                // thread (see render_stream). The guest maps this same memory as the shared audio buffer, so the
+                // drain thread reads the committed PCM and advances the play cursor without any CPU-backend hooks.
+                this->render_stream_ = std::make_unique<render_stream>(win_emu, buffer_bytes, render_section_size,
+                                                                      render_control_header.data(), render_control_header.size());
+                const auto backing = this->render_stream_->guest_address();
+                if (backing == 0)
                 {
-                    win_emu.emu().write_memory(backing, render_control_header.data(), render_control_header.size());
-                    render_section.backing_address = backing;
+                    this->render_stream_.reset();
+                    return STATUS_NO_MEMORY;
                 }
-
-                this->render_backing_ = backing;
-                this->render_size_ = render_section_size;
-                this->render_data_size_ = buffer_bytes;
-
-                // Drive the play cursor. The DirectSound render worker fills the buffer, then blocks in its
-                // render loop until the engine consumes it (GetCurrentPadding drops below the buffer size). No
-                // real audio device backs the guest, so advance the play cursor on the guest's own clock: when
-                // the guest reads the play cursor, set it to the number of bytes that would have been consumed
-                // since playback anchored, capped at the write cursor. This makes a streaming client see the
-                // buffer draining in real time and keep producing, instead of deadlocking on a buffer that never
-                // empties.
-                if (backing)
-                {
-                    const auto anchor = std::make_shared<std::optional<std::chrono::steady_clock::time_point>>();
-                    win_emu.emu().hook_memory_read(
-                        backing + k_play_cursor_offset, sizeof(uint64_t),
-                        [&win_emu, base = backing, anchor](cpu_interface&, uint64_t, const void*, size_t) {
-                            const auto now = win_emu.clock().steady_now();
-                            if (!anchor->has_value())
-                            {
-                                *anchor = now;
-                            }
-                            const auto elapsed =
-                                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - **anchor).count());
-                            const auto consumed = static_cast<uint64_t>(k_sample_rate) * k_block_align * elapsed / 1'000'000'000ULL;
-                            uint64_t write_cursor = 0;
-                            win_emu.emu().try_read_memory(base + k_write_cursor_offset, &write_cursor, sizeof(write_cursor));
-                            const auto play_cursor = std::min(consumed, write_cursor);
-                            win_emu.emu().write_memory(base + k_play_cursor_offset, &play_cursor, sizeof(play_cursor));
-                        });
-                }
+                render_section.backing_address = backing;
 
                 const auto section_handle = win_emu.process.sections.store(std::move(render_section));
 
