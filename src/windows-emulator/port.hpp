@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -207,6 +208,30 @@ namespace sogen
         }
     };
 
+    // A kernel handle to hand to the receiver of an LRPC reply via an ALPC HANDLE message attribute. NDR
+    // [system_handle] members (e.g. the shared render section in SYSTEM_AUDIO_STREAM) are transferred this
+    // way: the wire carries a handle index, the real handle rides in the message attributes.
+    struct alpc_reply_handle
+    {
+        uint64_t handle{};
+        uint32_t object_type{};
+        uint32_t desired_access{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(handle);
+            buffer.write(object_type);
+            buffer.write(desired_access);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(handle);
+            buffer.read(object_type);
+            buffer.read(desired_access);
+        }
+    };
+
     struct lpc_request_result
     {
         struct reply_in_place_t
@@ -217,6 +242,7 @@ namespace sogen
 
         NTSTATUS status{};
         std::optional<std::vector<uint8_t>> payload{};
+        std::vector<alpc_reply_handle> handles{};
 
         lpc_request_result() = default;
 
@@ -243,6 +269,7 @@ namespace sogen
         NTSTATUS status{};
         lpc_port_message message{};
         std::vector<uint8_t> payload{};
+        std::vector<alpc_reply_handle> handles{};
 
         [[nodiscard]] ULONG total_length() const
         {
@@ -259,6 +286,7 @@ namespace sogen
             buffer.write(status);
             buffer.write(message);
             buffer.write_vector(payload);
+            buffer.write_vector(handles);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -266,6 +294,7 @@ namespace sogen
             buffer.read(status);
             buffer.read(message);
             buffer.read_vector(payload);
+            buffer.read_vector(handles);
         }
     };
 
@@ -318,10 +347,20 @@ namespace sogen
         lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) override;
 
         virtual NTSTATUS handle_rpc(windows_emulator& win_emu, uint32_t procedure_id, const lpc_request_context& c,
-                                    utils::aligned_binary_writer& writer) = 0;
+                                    utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>& reply_handles) = 0;
+
+        // The interface UUID the client bound to (captured from the LRPC bind). A single ALPC port can host
+        // several RPC interfaces whose opnums overlap, so handlers dispatch by (interface, opnum).
+        const std::array<uint8_t, 16>& bound_interface() const
+        {
+            return bound_interface_;
+        }
+
+      protected:
+        std::array<uint8_t, 16> bound_interface_{};
 
       private:
-        static lpc_request_result handle_handshake(windows_emulator& win_emu, const lpc_request_context& c);
+        lpc_request_result handle_handshake(windows_emulator& win_emu, const lpc_request_context& c);
         lpc_request_result handle_rpc_call(windows_emulator& win_emu, const lpc_request_context& c);
     };
 

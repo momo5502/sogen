@@ -15,6 +15,12 @@ namespace sogen
     using mmio_read_callback = std::function<void(uint64_t addr, void* data, size_t size)>;
     using mmio_write_callback = std::function<void(uint64_t addr, const void* data, size_t size)>;
 
+    struct host_reserved_range
+    {
+        uint64_t address;
+        size_t size;
+    };
+
     class memory_manager;
     class linux_memory_manager;
 
@@ -50,6 +56,39 @@ namespace sogen
         }
 
         virtual void flush_host_memory_cache(const void* /*host_pointer*/, size_t /*size*/)
+        {
+        }
+
+        // Ranges of the *host* process's own address space the guest address space must avoid, for
+        // backends that share one address space with the guest (guest VA == host VA) rather than
+        // sandboxing/translating it independently - e.g. the analyzer's own loaded image, dyld, and
+        // shared libraries. Queried once, early, before any guest memory is allocated, so the memory
+        // manager can pre-reserve these ranges. Backends with a fully independent guest address space
+        // (the default) have nothing to report. This is a best-effort snapshot taken at that one point
+        // in time - host allocations that happen afterwards are not covered.
+        virtual std::vector<host_reserved_range> reserved_host_ranges() const
+        {
+            return {};
+        }
+
+        // Windowed form of reserved_host_ranges(), for callers that only need to know whether ONE
+        // specific range has been claimed by a foreign host mapping (e.g. a fixed-address allocation
+        // checking its exact target), rather than re-enumerating the whole address space. Returns
+        // only the reserved sub-ranges intersecting [address, address + size). Default: fall back to
+        // the full query, so backends that don't specialize keep identical behavior.
+        virtual std::vector<host_reserved_range> reserved_host_ranges_in(uint64_t /*address*/, size_t /*size*/) const
+        {
+            return this->reserved_host_ranges();
+        }
+
+        // Called by the memory manager whenever it claims a guest address range - both when reserved
+        // (MEM_RESERVE, not yet backed by any real mapping) and when committed - so backends sharing
+        // the host address space with the guest (see reserved_host_ranges) can claim the same range at
+        // the host OS level immediately. Without this, a reserved-but-uncommitted range is invisible to
+        // the host allocator, so nothing stops an unconstrained host allocation (e.g. a JIT code buffer)
+        // from landing there before the guest range is actually committed. No-op for backends with an
+        // independent guest address space (the default).
+        virtual void reserve_guest_address_range(uint64_t /*address*/, size_t /*size*/)
         {
         }
 

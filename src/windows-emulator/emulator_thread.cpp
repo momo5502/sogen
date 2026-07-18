@@ -11,6 +11,40 @@ namespace sogen
 
     namespace
     {
+        // TEB64/TEB32's NlsCache field is a pointer real ntdll (LdrpInitializeProcess) allocates and
+        // populates with per-thread cached NLS/locale data; sogen has never populated it, leaving it
+        // null. Most guest code apparently never dereferences it (or the existing IsImpersonating
+        // hack below routes around it), but real ntdll's Unicode case-mapping helpers (e.g. reached
+        // from RtlUpcaseUnicodeChar-adjacent code during a wow64 process's startup) read a field at
+        // a fixed offset within it unconditionally, crashing on a null NlsCache.
+        //
+        // The correct value - and the one used whenever available (see process_context::
+        // kernelbase_nls_process_local_cache) - is the guest address of kernelbase.dll's real
+        // gNlsProcessLocalCache global, exactly matching what a freshly-created real Windows thread's
+        // TEB.NlsCache points at before it ever does its own locale/NLS API work. This is load-bearing,
+        // not just a null-deref fix: kernelbase.dll's BaseNlsThreadCleanup (called on DLL_THREAD_DETACH)
+        // frees whatever TEB.NlsCache points at via RtlFreeHeap UNLESS it still equals
+        // &gNlsProcessLocalCache exactly - so any other non-null placeholder gets passed to RtlFreeHeap
+        // on every thread's exit, corrupting the heap (it was never a real heap allocation).
+        //
+        // This zeroed placeholder is kept only as a defensive fallback for the (should-never-happen)
+        // case kernelbase.dll isn't mapped yet: a zeroed cache reads as "nothing cached yet", avoiding
+        // the null-deref, but callers must never let a thread using it reach BaseNlsThreadCleanup.
+        struct nls_cache_placeholder
+        {
+            std::array<std::byte, 0x100> reserved{};
+        };
+
+        uint64_t resolve_nls_cache(emulator_allocator& gs_segment, const process_context& context)
+        {
+            if (context.kernelbase_nls_process_local_cache != 0)
+            {
+                return context.kernelbase_nls_process_local_cache;
+            }
+
+            return gs_segment.reserve<nls_cache_placeholder>().value();
+        }
+
         enum class wait_state
         {
             not_signaled,
@@ -396,12 +430,16 @@ namespace sogen
             };
 
             this->teb64 = this->gs_segment->reserve<TEB64>();
+            const auto nls_cache_addr = resolve_nls_cache(*this->gs_segment, context);
 
             this->teb64->access([&](TEB64& teb_obj) {
                 // Skips GetCurrentNlsCache
                 // This hack can be removed once this is fixed:
                 // https://github.com/momo5502/emulator/issues/128
                 reinterpret_cast<uint8_t*>(&teb_obj)[0x179C] = 1;
+
+                // See nls_cache_placeholder's doc comment.
+                teb_obj.NlsCache = nls_cache_addr;
 
                 teb_obj.ClientId.UniqueProcess = process_context::process_id;
                 teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
@@ -459,10 +497,32 @@ namespace sogen
 
         // Reserve and initialize 64-bit TEB first
         this->teb64 = this->gs_segment->reserve<TEB64>();
+        const auto nls_cache_addr = resolve_nls_cache(*this->gs_segment, context);
 
-        // Allocate memory for native stack + WOW64_CPURESERVED structure
-        this->stack_base = memory.allocate_memory(WOW64_NATIVE_STACK_SIZE, memory_permission::read_write);
-        if (this->stack_base == 0)
+        // This is the *native* 64-bit stack - setup_registers()'s "Native 64-bit process setup"
+        // unconditionally uses this->stack_base/stack_size to set up RSP for the real 64-bit
+        // RtlUserThreadStart every wow64 thread genuinely starts executing. It must live in the low
+        // 4GB (WOW64_NATIVE_STACK_BASE_HINT): real WoW64 keeps the native stack 32-bit-addressable so
+        // wow64win.dll's win32k callback thunks can truncate the stack pointer to build the 32-bit
+        // window-proc call frame. Search from a base above the 32-bit module/heap region so it does
+        // not land at a structurally-wrong low address the way the raw 0x10000 default did.
+        //
+        // Explicitly bounded below 4GB, unlike the plain hint-based allocate_memory(size, ...)
+        // overload (which searches upward from the hint with no ceiling at all - risking a pick above
+        // 4GB, silently violating the low-4GB requirement above, if the region right above the hint is
+        // ever exhausted). Deliberately does NOT fall back to searching below the hint on failure: that
+        // range is exactly the "32-bit module/heap region" the hint exists to avoid (confirmed by a
+        // real regression - a low-floor fallback landed the stack in that region and caused genuine
+        // guest-visible memory corruption, worse than the clean failure below). If the hint-and-above
+        // range is ever exhausted (e.g. a large foreign host reservation - see
+        // install_wow64_heaven_gate's doc comment for the same root cause - starting at or below the
+        // hint), failing loudly here is the correct, safe outcome.
+        constexpr uint64_t wow64_native_stack_below_4gb_ceiling = 0xFFFFFFFFULL;
+
+        this->stack_base = memory.find_free_host_allocation_base(WOW64_NATIVE_STACK_SIZE, WOW64_NATIVE_STACK_BASE_HINT,
+                                                                 wow64_native_stack_below_4gb_ceiling);
+
+        if (!this->stack_base || !memory.allocate_memory(this->stack_base, WOW64_NATIVE_STACK_SIZE, memory_permission::read_write))
         {
             throw std::runtime_error("Failed to allocate native stack + WOW64_CPURESERVED memory region");
             return;
@@ -476,6 +536,9 @@ namespace sogen
             // This hack can be removed once this is fixed:
             // https://github.com/momo5502/emulator/issues/128
             reinterpret_cast<uint8_t*>(&teb_obj)[0x179C] = 1;
+
+            // See nls_cache_placeholder's doc comment.
+            teb_obj.NlsCache = nls_cache_addr;
 
             teb_obj.ClientId.UniqueProcess = process_context::process_id;
             teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
@@ -576,6 +639,42 @@ namespace sogen
 
             // Note: CurrentLocale and other fields will be initialized by WOW64 runtime
         });
+
+        // Real ntdll allocates a per-thread activation-context stack during thread init and stores it
+        // in TEB->ActivationContextStackPointer. sogen never populated it, leaving it null. Once real
+        // 32-bit loader code runs (LdrpLoadForwardedDll -> RtlActivateActivationContextUnsafeFast), it
+        // dereferences ActivationContextStackPointer (writing ->ActiveFrame) for any module that has a
+        // non-null activation context, crashing on the null pointer. Provide a minimal, valid, empty
+        // stack (ActiveFrame=0, FrameListCache as an empty circular list, cookie sequence starting at 1
+        // like real ntdll) so those Rtl(De)ActivateActivationContextUnsafeFast paths operate on a real
+        // structure. WoW64-only (native threads return above), so the native path is unaffected.
+        //
+        // Flags=2 (not 0) is load-bearing, not cosmetic: real ntdll's own lazy-init path
+        // (RtlpInitializeThreadActivationContextStack, called on first use of a thread's activation
+        // context stack) stores this exact struct embedded directly in the TEB - not a separate heap
+        // block - and sets this Flags bit specifically so RtlFreeActivationContextStack (invoked via
+        // RtlFreeThreadActivationContextStack on ExitThread, confirmed via disassembly of the actual
+        // ntdll shipped in this project's emulation root) skips its `RtlFreeHeap(ProcessHeap, 0, a1)`
+        // call: `if ((a1->Flags & 2) == 0) RtlFreeHeap(...)`. This project's stack similarly isn't a
+        // real heap allocation (it lives in the gs_segment), so Flags=0 made every WOW64 thread's exit
+        // free a pointer that was never allocated via RtlAllocateHeap, corrupting the heap - the
+        // STATUS_HEAP_CORRUPTION seen in the "Threads" smoke test only after several worker threads
+        // had actually exited (ExitThread, not process teardown, which skips this cleanup entirely).
+        {
+            const auto act_ctx_stack = this->gs_segment->reserve<ACTIVATION_CONTEXT_STACK32>();
+            const auto frame_list_cache_addr =
+                static_cast<uint32_t>(act_ctx_stack.value() + offsetof(ACTIVATION_CONTEXT_STACK32, FrameListCache));
+            act_ctx_stack.access([&](ACTIVATION_CONTEXT_STACK32& stack) {
+                stack.ActiveFrame = 0;
+                stack.FrameListCache.Flink = frame_list_cache_addr;
+                stack.FrameListCache.Blink = frame_list_cache_addr;
+                stack.Flags = 2;
+                stack.NextCookieSequenceNumber = 1;
+                stack.StackId = 0;
+            });
+            this->teb32->access(
+                [&](TEB32& teb32_obj) { teb32_obj.ActivationContextStackPointer = static_cast<uint32_t>(act_ctx_stack.value()); });
+        }
 
         this->teb64->access([&](TEB64& teb_obj) {
             // teb64.ExceptionList initially points to teb32
@@ -1210,6 +1309,15 @@ namespace sogen
         // Native 64-bit process setup
         setup_stack(emu, context, this->stack_base, static_cast<size_t>(this->stack_size));
         emu.set_segment_base(x86_register::gs, this->gs_segment->get_base());
+
+        // Seed the shared FPU control state with the x86 power-on/reset defaults (all exceptions masked,
+        // round-to-nearest). Some emulator backends initialise these registers to 0, which leaves every
+        // floating-point exception - including the near-ubiquitous inexact/precision (PM) condition -
+        // UNMASKED. Guest code (e.g. the CRT's pow/_except1 path) reads the live control word via fnstcw
+        // and raises STATUS_FLOAT_INEXACT_RESULT (C000008F) when it finds inexact unmasked, which is a
+        // crash that never occurs on real Windows where the default control word masks it.
+        emu.reg<uint16_t>(x86_register::fpcw, 0x037F);
+        emu.reg<uint32_t>(x86_register::mxcsr, 0x1F80);
 
         CONTEXT64 ctx{};
         ctx.ContextFlags = CONTEXT64_ALL;

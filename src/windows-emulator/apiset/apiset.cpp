@@ -147,30 +147,28 @@ namespace sogen
                 ns_entry.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
                                                               ns_entry.NameOffset, ns_entry.NameLength);
 
-                if (!ns_entry.ValueCount)
+                if (ns_entry.ValueCount)
                 {
-                    continue;
-                }
+                    const auto values_obj = allocator.reserve<API_SET_VALUE_ENTRY>(ns_entry.ValueCount);
+                    const auto* orig_values = offset_pointer<API_SET_VALUE_ENTRY>(&orig_api_set_map, ns_entry.ValueOffset);
 
-                const auto values_obj = allocator.reserve<API_SET_VALUE_ENTRY>(ns_entry.ValueCount);
-                const auto* orig_values = offset_pointer<API_SET_VALUE_ENTRY>(&orig_api_set_map, ns_entry.ValueOffset);
+                    ns_entry.ValueOffset = static_cast<ULONG>(values_obj.value() - api_set_map_obj.value());
 
-                ns_entry.ValueOffset = static_cast<ULONG>(values_obj.value() - api_set_map_obj.value());
-
-                for (ULONG j = 0; j < ns_entry.ValueCount; ++j)
-                {
-                    auto value = orig_values[j];
-
-                    value.ValueOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
-                                                                value.ValueOffset, value.ValueLength);
-
-                    if (value.NameLength)
+                    for (ULONG j = 0; j < ns_entry.ValueCount; ++j)
                     {
-                        value.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
-                                                                   value.NameOffset, value.NameLength);
-                    }
+                        auto value = orig_values[j];
 
-                    values_obj.write(value, j);
+                        value.ValueOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
+                                                                    value.ValueOffset, value.ValueLength);
+
+                        if (value.NameLength)
+                        {
+                            value.NameOffset = copy_string_as_relative(emu, allocator, api_set_map_obj.value(), &orig_api_set_map,
+                                                                       value.NameOffset, value.NameLength);
+                        }
+
+                        values_obj.write(value, j);
+                    }
                 }
 
                 ns_entries_obj.write(ns_entry, i);

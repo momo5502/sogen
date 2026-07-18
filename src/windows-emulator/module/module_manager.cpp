@@ -9,6 +9,7 @@
 
 #include <serialization_helper.hpp>
 #include <cinttypes>
+#include <cstring>
 #include <vector>
 
 namespace sogen
@@ -16,6 +17,88 @@ namespace sogen
 
     namespace
     {
+        bool address_is_in_writable_section(const mapped_module& mod, const uint64_t address)
+        {
+            for (const auto& section : mod.sections)
+            {
+                const auto& region = section.region;
+                if (address >= region.start && address - region.start < region.length)
+                {
+                    return (region.permissions & memory_permission::write) != memory_permission::none;
+                }
+            }
+
+            return false;
+        }
+
+        // Locates kernelbase.dll's private (non-exported) gNlsProcessLocalCache global by scanning the
+        // module's own code for the fixed TEB.NlsCache access sequence inside BaseNlsThreadCleanup:
+        //   65 48 8B 04 25 30 00 00 00   mov rax, gs:[0x30]      (TEB self-pointer)
+        //   48 8B 98 A0 17 00 00         mov rbx, [rax+0x17A0]    (TEB.NlsCache)
+        //   48 8D 05 xx xx xx xx         lea rax, [rip+disp32]    (&gNlsProcessLocalCache)
+        // This exact 19-byte prefix is byte-identical across the Windows 2022 and 2025 kernelbase.dll
+        // builds (the TEB access is an ABI-level, fixed-offset structure read that the compiler always
+        // emits the same way), and only the trailing RIP-relative displacement - the actual per-build
+        // variable - differs. This is what makes the scan build-independent, unlike a hardcoded RVA.
+        std::optional<uint64_t> scan_kernelbase_nls_cache_reference(const memory_manager& memory, const mapped_module& kernelbase)
+        {
+            static constexpr std::array<uint8_t, 19> pattern{
+                0x65, 0x48, 0x8B, 0x04, 0x25, 0x30, 0x00, 0x00, 0x00, // mov rax, gs:[0x30]
+                0x48, 0x8B, 0x98, 0xA0, 0x17, 0x00, 0x00,             // mov rbx, [rax+0x17A0]
+                0x48, 0x8D, 0x05,                                     // lea rax, [rip+disp32]
+            };
+
+            for (const auto& section : kernelbase.sections)
+            {
+                const auto& region = section.region;
+                if (!is_executable(region.permissions) || region.length < pattern.size() + sizeof(int32_t))
+                {
+                    continue;
+                }
+
+                std::vector<uint8_t> data(region.length);
+                if (!memory.try_read_memory(region.start, data.data(), data.size()))
+                {
+                    continue;
+                }
+
+                const auto search_end = data.size() - pattern.size() - sizeof(int32_t);
+                for (size_t i = 0; i <= search_end; ++i)
+                {
+                    if (std::memcmp(data.data() + i, pattern.data(), pattern.size()) != 0)
+                    {
+                        continue;
+                    }
+
+                    int32_t displacement{};
+                    std::memcpy(&displacement, data.data() + i + pattern.size(), sizeof(displacement));
+
+                    const auto instruction_end = region.start + i + pattern.size() + sizeof(displacement);
+                    return static_cast<uint64_t>(static_cast<int64_t>(instruction_end) + displacement);
+                }
+            }
+
+            return std::nullopt;
+        }
+
+        // Returns 0 (unresolved) if neither the build-independent code scan above nor the hardcoded-RVA
+        // fallback land on writable data for THIS specific build - see address_is_in_writable_section's
+        // doc comment. The scan is the primary path; the hardcoded RVA (derived once via static analysis
+        // of the original macOS dev-build kernelbase.dll) is kept only as a last-resort fallback for the
+        // case where BaseNlsThreadCleanup's code shape changes enough that the scan no longer matches.
+        uint64_t resolve_kernelbase_nls_cache_address(const memory_manager& memory, const mapped_module& kernelbase)
+        {
+            if (const auto scanned = scan_kernelbase_nls_cache_reference(memory, kernelbase);
+                scanned.has_value() && address_is_in_writable_section(kernelbase, *scanned))
+            {
+                return *scanned;
+            }
+
+            constexpr uint64_t kernelbase_gnls_process_local_cache_rva = 0x326c00;
+            const auto address = kernelbase.image_base + kernelbase_gnls_process_local_cache_rva;
+            return address_is_in_writable_section(kernelbase, address) ? address : 0;
+        }
+
         uint64_t get_system_dll_init_block_size(const windows_version_manager& version)
         {
             if (version.is_build_after_or_equal(WINDOWS_VERSION::WINDOWS_11_24H2))
@@ -453,8 +536,67 @@ namespace sogen
         }
     }
 
-    void module_manager::map_main_modules(const windows_path& executable_path, windows_version_manager& version, process_context& context,
-                                          const logger& logger)
+    void module_manager::ensure_kernelbase_nls_cache_hook(process_context& context)
+    {
+        if (!this->kernelbase_nls_cache_hook_registered_)
+        {
+            this->kernelbase_nls_cache_hook_registered_ = true;
+
+            // Resolve kernelbase.dll's private (non-exported) gNlsProcessLocalCache global as soon as
+            // it's mapped, for emulator_thread.cpp's TEB64.NlsCache setup - real Windows points every
+            // thread's TEB.NlsCache at this shared, process-wide fallback structure until that thread
+            // does its own locale/NLS API work, and kernelbase.dll's BaseNlsThreadCleanup
+            // (DLL_THREAD_DETACH) relies on pointer equality with it to know whether to RtlFreeHeap the
+            // TEB's NlsCache value.
+            //
+            // kernelbase.dll is never a parameter to process_context::setup() - unlike ntdll/win32u, it
+            // is not mapped eagerly here; it loads later via the guest loader's own import resolution
+            // (see load_native_64bit_modules/load_wow64_modules, which only map exe+ntdll+win32u
+            // upfront) - so this must be resolved on_module_load, not at setup() time (a prior attempt
+            // to resolve it there found kernelbase.dll never mapped yet and always fell back to the
+            // placeholder, below, for every thread). By the time this fires, the only thread that
+            // exists is the initial one, which is fine: it never reaches BaseNlsThreadCleanup via
+            // DLL_THREAD_DETACH (that only fires for a thread exiting while others remain live - the
+            // process's own final exit instead goes through DLL_PROCESS_DETACH, a separate code path
+            // that never touches NlsCache at all) - every thread the guest's own code spawns afterwards
+            // (i.e. any real DLL_THREAD_DETACH candidate) is created well after this callback has
+            // already run, since kernelbase.dll loads during the loader's own import resolution,
+            // strictly before the app's own code can call CreateThread. Its RVA is specific to the
+            // exact kernelbase.dll build it was originally identified against (via static analysis) -
+            // resolve_kernelbase_nls_cache_address validates it still lands on writable data before
+            // trusting it, since that drifts across Windows builds. Registered only once per
+            // module_manager instance - safe, since the callback captures `context` by reference and
+            // every caller of this function passes the SAME process_context the module_manager was
+            // constructed for.
+            this->callbacks_->on_module_load.add([this, &context](mapped_module& mod) {
+                if (mod.name != "kernelbase.dll")
+                {
+                    return;
+                }
+
+                context.kernelbase_nls_process_local_cache = resolve_kernelbase_nls_cache_address(*this->memory_, mod);
+            });
+        }
+
+        // Unlike the registration above, this must run every time this function is called, not just
+        // once: a windows_emulator's deserialize()/restore_snapshot() calls this AFTER resetting both
+        // mod_manager's module list and process_context back to a snapshot's state, but
+        // kernelbase_nls_process_local_cache is deliberately not part of process_context's own
+        // serialized state (it is host-side bookkeeping meant to be re-derived, not guest state) - so
+        // without this, a reset to a snapshot taken BEFORE kernelbase.dll loaded would leave
+        // context.kernelbase_nls_process_local_cache holding a stale, no-longer-valid guest address
+        // left over from whatever ran on this object before the reset, instead of correctly falling
+        // back to 0 (which resolve_nls_cache, emulator_thread.cpp, treats as "not resolved yet, use the
+        // placeholder"). Resolve from the CURRENT module list every time: if kernelbase.dll is mapped
+        // right now, point at its cache global; if it isn't (e.g. right after a reset to a
+        // pre-kernelbase.dll-load snapshot), reset to 0 so a thread created before the on_module_load
+        // callback above fires again gets the placeholder instead of a stale/invalid address.
+        const auto* kernelbase = this->find_by_name("kernelbase.dll");
+        context.kernelbase_nls_process_local_cache = kernelbase ? resolve_kernelbase_nls_cache_address(*this->memory_, *kernelbase) : 0;
+    }
+
+    void module_manager::map_main_modules(x86_64_emulator& emu, const windows_path& executable_path, windows_version_manager& version,
+                                          process_context& context, const logger& logger)
     {
         const auto& system_root = version.get_system_root();
         const auto system32_path = system_root / "System32";
@@ -462,6 +604,17 @@ namespace sogen
 
         current_execution_mode_ = detect_execution_mode(executable_path, logger);
         context.is_wow64_process = (current_execution_mode_ == execution_mode::wow64_32bit);
+
+        // Must happen before any module gets mapped below: a JIT-based backend (FEXCore) needs to
+        // know the bitness before compiling its first block (see notify_process_bitness's doc
+        // comment), and a 32-bit process's own image/ntdll32 map into the low 4GB - a range some
+        // backends must steer real host allocations away from for a 64-bit process, but must NOT for
+        // a 32-bit one (see reserve_host_memory_ranges's doc comment) - so the reservation has to be
+        // recomputed now that the bitness is known, before either module is mapped.
+        emu.notify_process_bitness(context.is_wow64_process);
+        this->memory_->reset_host_memory_ranges();
+
+        this->ensure_kernelbase_nls_cache_hook(context);
 
         switch (current_execution_mode_)
         {

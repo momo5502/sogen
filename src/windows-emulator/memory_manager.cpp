@@ -298,7 +298,7 @@ namespace sogen
 
     bool memory_manager::allocate_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb)
     {
-        if (this->overlaps_reserved_region(address, size))
+        if (this->overlaps_reserved_region(address, size, true))
         {
             return false;
         }
@@ -351,8 +351,91 @@ namespace sogen
         return true;
     }
 
+    void memory_manager::reserve_host_memory_ranges()
+    {
+        // Cheap, hot-path-safe: only ever adds newly-discovered ranges, never releases existing
+        // ones - safe to call frequently (e.g. before every dynamic allocation, so a backend's later
+        // host-side claims like JIT code buffers are seen too - see the size-only allocate_memory
+        // overload). Existing host_reserved entries are left completely alone, so this can't shrink
+        // or momentarily drop a reservation - unlike reset_host_memory_ranges below, which does need
+        // to release first and is reserved for the rare case that actually requires it.
+        for (const auto& range : this->memory_->reserved_host_ranges())
+        {
+            // Best effort: if a range is already reserved (e.g. overlapping entries from the
+            // backend's own enumeration, or one already tracked from an earlier call), there is
+            // nothing more to do - it is already unavailable to future allocations either way.
+            // Tagged host_reserved (not private_allocation) so allocate_mmio can still claim
+            // addresses in here - see its doc comment. Uses allocate_memory_raw (not the public
+            // allocate_memory(address, ...), which itself calls this function first) to avoid
+            // infinite recursion.
+            if (this->allocate_memory_raw(range.address, range.size, nt_memory_permission{}, true, memory_region_kind::host_reserved))
+            {
+                this->host_reserved_addresses_.push_back(range.address);
+            }
+        }
+    }
+
+    void memory_manager::reserve_host_memory_ranges_in(const uint64_t address, const size_t size)
+    {
+        for (const auto& range : this->memory_->reserved_host_ranges_in(address, size))
+        {
+            if (this->allocate_memory_raw(range.address, range.size, nt_memory_permission{}, true, memory_region_kind::host_reserved))
+            {
+                this->host_reserved_addresses_.push_back(range.address);
+            }
+        }
+    }
+
+    bool memory_manager::host_window_is_free(const uint64_t address, const size_t size) const
+    {
+        return this->memory_->reserved_host_ranges_in(address, size).empty();
+    }
+
+    void memory_manager::reset_host_memory_ranges()
+    {
+        // Unlike reserve_host_memory_ranges (safe to call frequently, only ever adds), this releases
+        // every previously-tracked host_reserved range first - needed specifically when the
+        // backend's answer can genuinely change (e.g. a JIT backend learning a process's bitness -
+        // see module_manager::map_main_modules), not for routine re-scanning. Calling this from a hot
+        // path would double the syscall count of every dynamic allocation for no benefit, widening
+        // the race window against anything else in the process that maps host memory concurrently -
+        // confirmed to actually happen (a spurious ENOMEM on a normal 64-bit process's own default
+        // allocation base) - so this must stay a rare, explicit, one-time call.
+        for (const auto addr : this->host_reserved_addresses_)
+        {
+            this->release_memory(addr, 0);
+        }
+        this->host_reserved_addresses_.clear();
+
+        this->reserve_host_memory_ranges();
+    }
+
     bool memory_manager::allocate_memory(const uint64_t address, const size_t size, const nt_memory_permission permissions,
                                          const bool reserve_only, const memory_region_kind kind)
+    {
+        // Unlike the size-only overload (which always rescans via reserve_host_memory_ranges before
+        // picking an address - see its call above), this fixed-address overload used to check only
+        // overlaps_reserved_region, i.e. sogen's own bookkeeping as of the last rescan. For a backend
+        // sharing the guest address space with the host process (FEX on Apple), a host framework can
+        // claim a guest-owned VA *after* that last rescan (e.g. AppKit/SkyLight lazily vm_allocate'ing
+        // a window-tag shared page into a gap freed by an earlier guest DLL unload) - invisible here
+        // until refreshed. This path is exactly what module preferred-base loads
+        // (try_map_module_at_current_base) go through on every DLL map/remap, so a stale view here
+        // silently let a guest module's fixed-address mmap clobber that foreign host page. Rescanning
+        // first makes such a collision show up as an ordinary overlaps_reserved_region hit, which
+        // already routes relocatable modules through the existing find_free_allocation_base fallback.
+        // Only [address, size) - the sole window this specific allocation could ever clobber - needs
+        // rescanning; everything sogen already holds (incl. the arena/__PAGEZERO gap, reserved once
+        // and never released) is already accounted for by overlaps_reserved_region without help here,
+        // and a full-address-space rescan on every fixed-address call gets more expensive the longer
+        // the host process's own memory map grows over a session, for no additional safety.
+        this->reserve_host_memory_ranges_in(address, size);
+
+        return this->allocate_memory_raw(address, size, permissions, reserve_only, kind);
+    }
+
+    bool memory_manager::allocate_memory_raw(const uint64_t address, const size_t size, const nt_memory_permission permissions,
+                                             const bool reserve_only, const memory_region_kind kind)
     {
         if (this->overlaps_reserved_region(address, size))
         {
@@ -646,16 +729,122 @@ namespace sogen
         this->reserved_regions_.clear();
     }
 
+    namespace
+    {
+        // Backstop for allocate_memory's pick/confirm loop below. Every non-settling iteration does a
+        // full reserve_host_memory_ranges() rescan, which records at least one more foreign range into
+        // reserved_regions_, so find_free_allocation_base is guaranteed to make progress; this cap only
+        // guards against pathological churn and returns the same 0 the old unconditional-rescan path
+        // returned when a pick couldn't be honored.
+        constexpr int max_host_reserved_retries = 8;
+    }
+
     uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions, const bool reserve_only,
                                              uint64_t start, const memory_region_kind kind)
     {
-        const auto allocation_base = this->find_free_allocation_base(size, start);
-        if (!allocate_memory(allocation_base, size, permissions, reserve_only, kind))
+        // Backends sharing the guest address space with this process (e.g. FEX) can allocate their own
+        // host-side memory (JIT code buffers, thread stacks, a framework's lazy vm_allocate, a GCD
+        // worker stack) at any point during execution, so find_free_allocation_base - which picks
+        // purely from sogen's own in-memory bookkeeping - can hand back an address a foreign host
+        // mapping has quietly claimed since the last scan. reserve_guest_address_range below then
+        // mmap(MAP_FIXED)'s over the pick, silently destroying that foreign mapping (the "wild"-
+        // corruption shape this backend has been bitten by before). The old guard was an unconditional
+        // full reserve_host_memory_ranges() rescan on every call - correct, but O(host VM regions) real
+        // Mach IPC syscalls, growing without bound over a session (a measured hot-path cost).
+        //
+        // Instead: pick from sogen's current view, then confirm just the picked window is still free at
+        // the host level with a bounded windowed query (host_window_is_free - usually a single
+        // mach_vm_region call, and correct even for a foreign mapping straddling the window's lower
+        // edge, since mach_vm_region reports the region *containing* the probe, not only those above
+        // it). Only on an actual collision - rare, since it needs a foreign claim landing exactly in the
+        // freshly-picked gap - pay for a full rescan to record every current foreign range and re-pick
+        // past them. This never widens the pre-existing race between the confirm and the MAP_FIXED
+        // below (nothing makes that atomic without a non-clobbering host reservation); it strictly
+        // narrows it, since the confirm now sits immediately before the claim rather than behind a
+        // full-address-space scan.
+        //
+        // Deliberately host_window_is_free (a pure probe), not reserve_host_memory_ranges_in: the
+        // latter records a *clamped* window slice into reserved_regions_, which would then block the
+        // full rescan below from recording an intruder's full extent and make re-picking crawl across
+        // it in size-sized steps instead of skipping it in one go.
+        const uint64_t allocation_base = this->find_free_host_allocation_base(size, start);
+        if (!allocation_base)
+        {
+            return 0;
+        }
+
+        // Claim the range at the host OS level immediately, even though it may only be reserve-only
+        // (not yet backed by map_memory) - see reserve_guest_address_range's doc comment. Safe now that
+        // the window above was confirmed free; done only for this freshly-picked address sogen doesn't
+        // already know about.
+        this->memory_->reserve_guest_address_range(allocation_base, size);
+
+        // Uses allocate_memory_raw (not the public allocate_memory(address, ...), which itself rescans
+        // via reserve_host_memory_ranges) - a rescan here would immediately re-discover the
+        // reserve_guest_address_range call just above as a "foreign" host allocation (it is a real
+        // host mmap, made before reserved_regions_ knows about it) and mark allocation_base
+        // host_reserved, making the allocate_memory_raw call right below self-conflict and fail. The
+        // confirm above already covers this window.
+        if (!this->allocate_memory_raw(allocation_base, size, permissions, reserve_only, kind))
         {
             return 0;
         }
 
         return allocation_base;
+    }
+
+    uint64_t memory_manager::find_free_host_allocation_base(const size_t size, const uint64_t start)
+    {
+        // Pick from sogen's current bookkeeping, then confirm just the picked window is still free at the
+        // host level (host_window_is_free - a pure probe, no clamped slice recorded). Only on an actual
+        // collision - a foreign host mapping having landed in the freshly-picked gap since the last scan -
+        // rescan and re-pick. Bounded by max_host_reserved_retries: each non-settling iteration records at
+        // least one more foreign range overlapping the just-rejected pick, so find_free_allocation_base
+        // cannot return it again and is guaranteed to make progress. Returns 0 (as the old
+        // unconditional-rescan path did) when a pick could not be confirmed.
+        //
+        // The rescan is BOTH the full reserve_host_memory_ranges() AND the windowed
+        // reserve_host_memory_ranges_in(pick, size), because the two cover cases the other misses:
+        //   * The full scan records every currently-visible foreign range at once, so a pick landing at the
+        //     low edge of a large contiguous host-occupied region jumps clear past the whole region in one
+        //     step. The windowed record alone would only retire its own pick-sized slice, unable to escape a
+        //     region wider than max_host_reserved_retries picks (real regression: a relocated 64-bit module -
+        //     user32.dll - failed to place at all when only the windowed slice was recorded).
+        //   * The full scan can have a structural blind spot the windowed host_window_is_free probe does not.
+        //     On the FEX/Apple backend the wow64 rebase host window [0x400000000, 0x500000000) is omitted
+        //     from the full reserved_host_ranges() scan (it is guest address space, not a foreign occupant)
+        //     yet is correctly reported occupied by the windowed reserved_host_ranges_in() for a native,
+        //     non-rebased pick that lands on it. A native 4GB+ auto-placement whose lowest free bookkeeping
+        //     hole is that window would otherwise have host_window_is_free reject the same pick every
+        //     iteration while a full rescan recorded nothing new, spinning to exhaustion. The windowed record
+        //     retires exactly the window host_window_is_free just flagged, closing that gap.
+        return this->find_free_host_allocation_base(size, start, MAX_ALLOCATION_END_EXCL - 1);
+    }
+
+    uint64_t memory_manager::find_free_host_allocation_base(const size_t size, const uint64_t start, const uint64_t highest_address)
+    {
+        for (int attempt = 0;; ++attempt)
+        {
+            const uint64_t allocation_base =
+                this->find_free_allocation_base(size, start, ALLOCATION_GRANULARITY, MIN_ALLOCATION_ADDRESS, highest_address);
+            if (!allocation_base)
+            {
+                return 0;
+            }
+
+            if (this->host_window_is_free(allocation_base, size))
+            {
+                return allocation_base;
+            }
+
+            if (attempt >= max_host_reserved_retries)
+            {
+                return 0;
+            }
+
+            this->reserve_host_memory_ranges();
+            this->reserve_host_memory_ranges_in(allocation_base, size);
+        }
     }
 
     uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint64_t start) const
@@ -902,11 +1091,36 @@ namespace sogen
         return entry;
     }
 
-    bool memory_manager::overlaps_reserved_region(const uint64_t address, const size_t size) const
+    bool memory_manager::overlaps_reserved_region(const uint64_t address, const size_t size, const bool ignore_host_reserved) const
     {
-        for (const auto& region : this->reserved_regions_)
+        // reserved_regions_ maintains a pairwise-non-overlapping invariant (every insertion path
+        // checks this same function first), so a query range can only ever overlap the region
+        // starting immediately before `address` and the regions starting within [address,
+        // address + size) - an O(n) scan of every entry is unnecessary. This matters in practice:
+        // reserve_host_memory_ranges() calls this once per host-reported range on every fixed-address
+        // module map, so an O(n) scan here made repeated remaps of the same module (e.g. COM
+        // registration DLL load/unload churn) cost O(n) work per remap as both the host VM map and
+        // reserved_regions_ grow over a session.
+        auto it = this->reserved_regions_.upper_bound(address);
+
+        if (it != this->reserved_regions_.begin())
         {
-            if (regions_with_length_intersect(address, size, region.first, region.second.length))
+            const auto& prev = *std::prev(it);
+            if (!(ignore_host_reserved && prev.second.kind == memory_region_kind::host_reserved) &&
+                regions_with_length_intersect(address, size, prev.first, prev.second.length))
+            {
+                return true;
+            }
+        }
+
+        for (; it != this->reserved_regions_.end() && it->first < address + size; ++it)
+        {
+            if (ignore_host_reserved && it->second.kind == memory_region_kind::host_reserved)
+            {
+                continue;
+            }
+
+            if (regions_with_length_intersect(address, size, it->first, it->second.length))
             {
                 return true;
             }

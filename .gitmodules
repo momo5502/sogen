@@ -54,3 +54,7 @@
 	path = deps/CLI11
 	url = https://github.com/CLIUtils/CLI11.git
 	shallow = true
+[submodule "deps/FEX"]
+	path = deps/FEX
+	url = https://github.com/JackTYM/FEX.git
+	shallow = true

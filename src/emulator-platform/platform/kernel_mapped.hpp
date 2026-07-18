@@ -485,6 +485,30 @@ namespace sogen
         EMULATOR_CAST(uint64_t, USHORT*) LowerCaseTable;
     } NLSTABLEINFO, *PNLSTABLEINFO;
 
+    typedef struct _CPTABLEINFO32
+    {
+        USHORT CodePage;
+        USHORT MaximumCharacterSize;
+        USHORT DefaultChar;
+        USHORT UniDefaultChar;
+        USHORT TransDefaultChar;
+        USHORT TransUniDefaultChar;
+        USHORT DBCSCodePage;
+        UCHAR LeadByte[MAXIMUM_LEADBYTES];
+        EMULATOR_CAST(uint32_t, USHORT*) MultiByteTable;
+        EMULATOR_CAST(uint32_t, void*) WideCharTable;
+        EMULATOR_CAST(uint32_t, USHORT*) DBCSRanges;
+        EMULATOR_CAST(uint32_t, USHORT*) DBCSOffsets;
+    } CPTABLEINFO32, *PCPTABLEINFO32;
+
+    typedef struct _NLSTABLEINFO32
+    {
+        CPTABLEINFO32 OemTableInfo;
+        CPTABLEINFO32 AnsiTableInfo;
+        EMULATOR_CAST(uint32_t, USHORT*) UpperCaseTable;
+        EMULATOR_CAST(uint32_t, USHORT*) LowerCaseTable;
+    } NLSTABLEINFO32, *PNLSTABLEINFO32;
+
     typedef struct _CURDIR32
     {
         UNICODE_STRING<EmulatorTraits<Emu32>> DosPath;
