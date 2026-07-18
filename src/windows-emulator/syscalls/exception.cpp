@@ -38,25 +38,24 @@ namespace sogen
 
             c.proc.exit_status = error_status;
             c.win_emu.callbacks.on_exception();
-            c.win_emu.stop();
+            c.emu.stop();
 
             return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtRaiseException(const syscall_context& c,
-                                         const emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> exception_record,
+                                         const emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> /*exception_record*/,
                                          const emulator_object<CONTEXT64> /*thread_context*/, const BOOLEAN handle_exception)
         {
             if (handle_exception)
             {
                 c.win_emu.log.error("Unhandled exceptions not supported yet!\n");
-                c.win_emu.stop();
+                c.emu.stop();
                 return STATUS_NOT_SUPPORTED;
             }
 
-            c.proc.exit_status = exception_record.read().ExceptionCode;
             c.win_emu.callbacks.on_exception();
-            c.win_emu.stop();
+            c.emu.stop();
 
             return STATUS_SUCCESS;
         }

@@ -808,16 +808,14 @@ namespace sogen
         //   * The full scan records every currently-visible foreign range at once, so a pick landing at the
         //     low edge of a large contiguous host-occupied region jumps clear past the whole region in one
         //     step. The windowed record alone would only retire its own pick-sized slice, unable to escape a
-        //     region wider than max_host_reserved_retries picks (real regression: a relocated 64-bit module -
-        //     user32.dll - failed to place at all when only the windowed slice was recorded).
-        //   * The full scan can have a structural blind spot the windowed host_window_is_free probe does not.
-        //     On the FEX/Apple backend the wow64 rebase host window [0x400000000, 0x500000000) is omitted
-        //     from the full reserved_host_ranges() scan (it is guest address space, not a foreign occupant)
-        //     yet is correctly reported occupied by the windowed reserved_host_ranges_in() for a native,
-        //     non-rebased pick that lands on it. A native 4GB+ auto-placement whose lowest free bookkeeping
-        //     hole is that window would otherwise have host_window_is_free reject the same pick every
-        //     iteration while a full rescan recorded nothing new, spinning to exhaustion. The windowed record
-        //     retires exactly the window host_window_is_free just flagged, closing that gap.
+        //     region wider than max_host_reserved_retries picks.
+        //   * The full scan can have a structural blind spot the windowed host_window_is_free probe does not:
+        //     a backend may omit ranges it considers guest-owned rather than foreign from the full
+        //     reserved_host_ranges() scan while its windowed reserved_host_ranges_in() still reports them
+        //     occupied. An auto-placement whose lowest free bookkeeping hole is such a range would otherwise
+        //     have host_window_is_free reject the same pick every iteration while a full rescan recorded
+        //     nothing new, spinning to exhaustion. The windowed record retires exactly the window
+        //     host_window_is_free just flagged, closing that gap.
         return this->find_free_host_allocation_base(size, start, MAX_ALLOCATION_END_EXCL - 1);
     }
 

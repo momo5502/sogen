@@ -218,7 +218,7 @@ namespace sogen
         struct dns_resolver : rpc_port
         {
             NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c,
-                                utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>& /*reply_handles*/) override
+                                utils::aligned_binary_writer& writer) override
             {
                 if (procedure_id == 4)
                 {

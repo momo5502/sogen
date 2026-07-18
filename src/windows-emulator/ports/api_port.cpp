@@ -78,20 +78,14 @@ namespace sogen
                 return destination_status;
             }
 
-            // user32's UserClientDllInitialize raw-copies this 0x238-byte reply verbatim into its
-            // global _gSharedInfo, so the reply must be in the SHAREDINFO layout the client reads
-            // (awmControl at 0x98, DefWindowMsgs at 0x218, DefWindowSpecMsgs at 0x228). The WoW64
-            // client uses the same 8-byte-slotted layout as the 64-bit one; all handle-table
-            // allocations for a WoW64 process live below 4GB, so the narrowed low dwords are valid.
-            USER_SHAREDINFO shared{};
-            win32k_userconnect::populate_user_shared_info(shared, win_emu.process);
-
-            try
+            WIN32K_USERCONNECT32 connect{};
+            const auto connect_status = win32k_userconnect::build_wow64_userconnect(win_emu.process, connect);
+            if (connect_status != STATUS_SUCCESS)
             {
-                const emulator_object<USER_SHAREDINFO> shared_obj{win_emu.memory, destination};
-                shared_obj.write(shared);
+                return connect_status;
             }
-            catch (...)
+
+            if (!win32k_userconnect::try_write_wow64_userconnect(win_emu.memory, destination, connect))
             {
                 return STATUS_INVALID_PARAMETER;
             }

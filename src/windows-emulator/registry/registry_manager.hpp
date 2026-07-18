@@ -172,8 +172,6 @@ namespace sogen
         utils::path_key normalize_path(utils::path_key path) const;
         static utils::path_key get_full_key_path(const registry_key& key);
         void add_path_mapping(const utils::path_key& key, const utils::path_key& value);
-        void alias_remote_audio_endpoints(const std::filesystem::path& machine);
-        void alias_remote_audio_folder(const std::filesystem::path& audio);
 
         hive_map::iterator find_hive(const utils::path_key& key);
 

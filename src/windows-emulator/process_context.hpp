@@ -53,15 +53,8 @@ namespace sogen
     }
 
 // TODO: Get rid of that
-#define WOW64_NATIVE_STACK_SIZE      0x40000ULL
-#define WOW64_32BIT_STACK_SIZE       (1 << 20)
-
-// A WoW64 thread's *native* 64-bit stack must live in the low 4GB: wow64win.dll's win32k
-// callback-marshaling thunks (e.g. fnINLPCREATESTRUCT for WM_NCCREATE) build the 32-bit call
-// frame on the native stack and truncate the 64-bit stack pointer to 32 bits before handing it
-// to the 32-bit window proc. Search from a base above the 32-bit module/heap region to avoid the
-// low-address collisions that made a raw 0x10000-default allocation land structurally wrong.
-#define WOW64_NATIVE_STACK_BASE_HINT 0x70000000ULL
+#define WOW64_NATIVE_STACK_SIZE 0x40000ULL
+#define WOW64_32BIT_STACK_SIZE  (1 << 20)
 
     struct emulator_settings;
     struct application_settings;
@@ -456,13 +449,6 @@ namespace sogen
         kusd_mmio kusd;
 
         uint64_t ntdll_image_base{};
-        // Guest address of kernelbase.dll's private gNlsProcessLocalCache global, resolved once
-        // kernelbase.dll is mapped (see setup()). Real Windows points every thread's TEB.NlsCache at
-        // this shared, process-wide fallback structure until that thread does its own locale/NLS API
-        // work; BaseNlsThreadCleanup (kernelbase.dll, DLL_THREAD_DETACH) skips freeing TEB.NlsCache
-        // whenever it still points here. 0 if kernelbase.dll wasn't found (emulator_thread falls back
-        // to a zeroed placeholder in that case - see nls_cache_placeholder's doc comment).
-        uint64_t kernelbase_nls_process_local_cache{};
         uint64_t ldr_initialize_thunk{};
         uint64_t rtl_user_thread_start{};
         uint64_t ki_user_apc_dispatcher{};
@@ -479,7 +465,7 @@ namespace sogen
         // Persistent per-top-level-window paint surface; child controls composite into it at their offset.
         std::map<uint32_t, gdi_bitmap_surface> gdi_window_surfaces{};
         dxgk_state dxgk{};
-        std::vector<handle> etw_notification_events{};
+        std::optional<handle> etw_notification_event{};
         hwnd mouse_capture_window{};
         // The window that currently holds keyboard focus / is the foreground window, and the last known
         // cursor position in screen coordinates. Games poll these via GetForegroundWindow/GetActiveWindow
@@ -533,7 +519,6 @@ namespace sogen
         std::optional<emulator_object<PEB32>> peb32;
         std::optional<emulator_object<RTL_USER_PROCESS_PARAMETERS32>> process_params32;
         std::optional<uint64_t> rtl_user_thread_start32{};
-        std::optional<uint64_t> wow64_syscall_reentry_addr{};
 
         user_handle_table user_handles;
         handle default_monitor_handle{};
@@ -574,11 +559,6 @@ namespace sogen
         static constexpr uint32_t process_id = 4;
         uint32_t spawned_thread_count{0};
         handle_store<handle_types::thread, emulator_thread> threads{};
-
-        // Handles delivered with the most recent ALPC reply message (NtAlpcSendWaitReceivePort). rpcrt4's
-        // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)
-        // rather than reading the handle attribute directly. Transient (valid only until the next reply).
-        std::vector<alpc_reply_handle> pending_alpc_message_handles{};
 
         // Extended parameters from last NtMapViewOfSectionEx call
         // These can be used by other syscalls like NtAllocateVirtualMemoryEx
