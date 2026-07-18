@@ -40,11 +40,25 @@ nanobind_add_stub(
 )
 
 if(SKBUILD)
-  install(TARGETS sogen LIBRARY DESTINATION "${SKBUILD_PLATLIB_DIR}" RUNTIME DESTINATION "${SKBUILD_PLATLIB_DIR}")
-  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/sogen.pyi" "${CMAKE_CURRENT_BINARY_DIR}/py.typed" DESTINATION "${SKBUILD_PLATLIB_DIR}")
+  set(SOGEN_PYTHON_INSTALL_DESTINATION "${SKBUILD_PLATLIB_DIR}")
 else()
-  install(TARGETS sogen LIBRARY DESTINATION . RUNTIME DESTINATION .)
-  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/sogen.pyi" "${CMAKE_CURRENT_BINARY_DIR}/py.typed" DESTINATION .)
+  set(SOGEN_PYTHON_INSTALL_DESTINATION ".")
+endif()
+
+install(TARGETS sogen LIBRARY DESTINATION "${SOGEN_PYTHON_INSTALL_DESTINATION}" RUNTIME DESTINATION "${SOGEN_PYTHON_INSTALL_DESTINATION}")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/sogen.pyi" "${CMAKE_CURRENT_BINARY_DIR}/py.typed" DESTINATION "${SOGEN_PYTHON_INSTALL_DESTINATION}")
+
+# fexcore (see deps/CMakeLists.txt) is built by an ExternalProject and never becomes a normal
+# install()-able CMake target of its own; sogen only ever links it in as fex-emulator's transitive
+# private dependency. The wheel/package only ships whatever gets install()ed here, so without this,
+# `pip install`ing the wheel produces a package missing libFEXCore entirely - it's present in the
+# build tree (copied alongside sogen for the in-tree/test case) but never travels into the package.
+if(SOGEN_ENABLE_FEX)
+  get_target_property(_fexcore_lib_path fexcore IMPORTED_LOCATION)
+  get_filename_component(_fexcore_lib_name "${_fexcore_lib_path}" NAME)
+  install(FILES "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/${_fexcore_lib_name}" DESTINATION "${SOGEN_PYTHON_INSTALL_DESTINATION}")
+  unset(_fexcore_lib_path)
+  unset(_fexcore_lib_name)
 endif()
 
 sogen_targets_set_folder("bindings" sogen sogen_stub)

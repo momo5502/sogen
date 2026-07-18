@@ -94,8 +94,8 @@ namespace sogen
             uint64_t ss;
         };
 
-        void dispatch_exception_pointers(x86_64_cpu& emu, const uint64_t dispatcher, const uint64_t heaven_gate_code_base,
-                                         const uint64_t heaven_gate_stack_top, const EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers)
+        void dispatch_exception_pointers(x86_64_cpu& emu, const uint64_t dispatcher,
+                                         const EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers)
         {
             constexpr auto mach_frame_size = 0x40;
             constexpr auto context_record_size = 0x4F0;
@@ -154,8 +154,8 @@ namespace sogen
             emu.reg(x86_register::rbx, new_sp);
             emu.reg(x86_register::rcx, static_cast<uint64_t>(wow64::heaven_gate::kUserCodeSelector));
             emu.reg(x86_register::rdx, static_cast<uint64_t>(wow64::heaven_gate::kUserStackSelector));
-            emu.reg(x86_register::rsp, heaven_gate_stack_top);
-            emu.reg(x86_register::rip, heaven_gate_code_base);
+            emu.reg(x86_register::rsp, wow64::heaven_gate::kStackTop);
+            emu.reg(x86_register::rip, wow64::heaven_gate::kCodeBase);
         }
 
         WOW64_CONTEXT make_wow64_context(const CONTEXT64& ctx)
@@ -290,25 +290,6 @@ namespace sogen
             is_debug_exception = dispatch_debug_exception(win_emu, ctx, record);
         }
 
-        // ContextRecord->Eip must reach the guest's first-chance handler UNADJUSTED (the int3's own
-        // address), matching the general real-hardware/NT contract documented on
-        // reports_breakpoint_rip_past_instruction() above and on every other backend (KVM/WHP/
-        // Unicorn already report the unadjusted address; only FEX needed the -1 correction just
-        // above). A previous version of this code added a wow64-32-bit-only +1 pre-advance here,
-        // reasoning that ContextRecord->Eip arrives "already one past" the int3 for wow64 - this
-        // directly contradicted the general contract two paragraphs up and was disproven live: with
-        // it in place, test-sample.exe's own test_unhandled_exception() (its top-level filter does
-        // `ContextRecord->Eip += 1` itself, exactly the self-adjustment the general contract expects
-        // callers to make) ends up double-advanced by 2 bytes total, landing execution mid-instruction
-        // one byte into whatever follows the int3 - confirmed via a live GDB-stub session (breakpoints
-        // on RtlDispatchException/RtlpExecuteHandlerForException/__except_handler4 in the real syswow64
-        // ntdll.dll) that this is exactly what produces the observed STATUS_NONCONTINUABLE_EXCEPTION
-        // (0xc0000025) infinite recursion: the corrupted resume raises a new exception whose handler
-        // (ntdll's own __except_handler4) returns ExceptionContinueExecution for it, which
-        // RtlDispatchException correctly refuses (since EXCEPTION_NONCONTINUABLE is set) by raising a
-        // fresh STATUS_NONCONTINUABLE_EXCEPTION - recursing until the stack is exhausted. Excludes the
-        // dispatch_debug_exception (int 2dh) case above, which already advances ctx.Rip past its own,
-        // differently-sized instruction.
         if (!is_debug_exception)
         {
             record.NumberParameters = static_cast<DWORD>(parameters.size());
@@ -331,10 +312,7 @@ namespace sogen
         EMU_EXCEPTION_POINTERS<EmulatorTraits<Emu64>> pointers{};
         pointers.ContextRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&ctx);
         pointers.ExceptionRecord = reinterpret_cast<EmulatorTraits<Emu64>::PVOID>(&record);
-
-        dispatch_exception_pointers(vcpu.cpu, win_emu.process.ki_user_exception_dispatcher,
-                                    win_emu.mod_manager.wow64_heaven_gate_code_base(), win_emu.mod_manager.wow64_heaven_gate_stack_top(),
-                                    pointers);
+        dispatch_exception_pointers(vcpu.cpu, win_emu.process.ki_user_exception_dispatcher, pointers);
     }
 
     void dispatch_access_violation(windows_emulator& win_emu, vcpu_context& vcpu, const uint64_t address, const memory_operation operation)

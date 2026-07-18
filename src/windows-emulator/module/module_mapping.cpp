@@ -56,40 +56,23 @@ namespace sogen
             const auto export_directory = buffer.as<IMAGE_EXPORT_DIRECTORY>(export_directory_entry.VirtualAddress).get();
 
             const auto names_count = export_directory.NumberOfNames;
-            const auto function_count = export_directory.NumberOfFunctions;
+            // const auto function_count = export_directory.NumberOfFunctions;
 
             const auto names = buffer.as<DWORD>(export_directory.AddressOfNames);
             const auto ordinals = buffer.as<WORD>(export_directory.AddressOfNameOrdinals);
             const auto functions = buffer.as<DWORD>(export_directory.AddressOfFunctions);
 
-            binary.exports.reserve(function_count);
+            binary.exports.reserve(names_count);
 
-            // Walk every ordinal slot (AddressOfFunctions), not just the named ones
-            // (AddressOfNames/AddressOfNameOrdinals) - a DLL can export a function by ordinal only,
-            // with no name at all (common for internal/undocumented APIs, e.g. wow64cpu.dll's own
-            // low-level CPU-simulation entry points), and such an export must still be resolvable
-            // when something imports it by ordinal (see collect_imports's snap_by_ordinal path).
-            for (DWORD ordinal = 0; ordinal < function_count; ordinal++)
+            for (DWORD i = 0; i < names_count; i++)
             {
-                const auto rva = functions.get(ordinal);
-                if (rva == 0)
-                {
-                    continue; // Empty slot in a sparse ordinal range - not a real export.
-                }
+                const auto ordinal = ordinals.get(i);
 
                 exported_symbol symbol{};
                 symbol.ordinal = export_directory.Base + ordinal;
-                symbol.rva = rva;
+                symbol.rva = functions.get(ordinal);
                 symbol.address = binary.image_base + symbol.rva;
-
-                for (DWORD i = 0; i < names_count; i++)
-                {
-                    if (ordinals.get(i) == static_cast<WORD>(ordinal))
-                    {
-                        symbol.name = buffer.as_string(names.get(i));
-                        break;
-                    }
-                }
+                symbol.name = buffer.as_string(names.get(i));
 
                 binary.exports.push_back(std::move(symbol));
             }
@@ -583,19 +566,12 @@ namespace sogen
                 throw std::runtime_error("Memory range not allocatable");
             }
 
-            // 32-bit (WOW64) modules must stay below 4 GB; native modules use the 64-bit arena.
+            // 32-bit (WOW64) modules must stay below 4 GB; native modules use the 64-bit arena. An
+            // unbounded search can pick a base above 4GB for a 32-bit module once the low arena fills,
+            // and guest/WOW64 pointer marshaling then truncates it to 32 bits, aliasing it onto
+            // whatever unrelated low allocation sits at the truncated address - so cap explicitly.
             const bool needs_below_4gb = force_wow64cpu_32bit_va || is_32bit;
             const uint64_t fallback_start = needs_below_4gb ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
-            // find_free_host_allocation_base's 2-arg overload has no ceiling at all (MAX_ALLOCATION_ADDRESS,
-            // effectively the top of the host-addressable range) - for a 32-bit module this can silently
-            // return an address above 4GB once the low arena fragments/fills (e.g. after enough
-            // load/unload churn forces repeated relocation), which then gets truncated to 32 bits by
-            // guest/WOW64 pointer marshaling and aliases onto whatever unrelated low allocation happens to
-            // sit at the truncated address - confirmed via CI as the root cause of a deterministic access
-            // violation inside ntdll during wow64-test-sample.exe's LoadLibraryA/FreeLibrary churn (a
-            // stable ntdll stack slot got silently overwritten). The heaven's-gate and native-wow64-stack
-            // call sites already learned this and pass an explicit below-4GB ceiling; this relocation
-            // fallback for 32-bit modules needed the same fix.
             constexpr uint64_t below_4gb_ceiling = 0xFFFFFFFFULL;
             const uint64_t highest_address = needs_below_4gb ? below_4gb_ceiling : MAX_ALLOCATION_ADDRESS;
             const auto image_size = static_cast<size_t>(binary.size_of_image);
@@ -604,12 +580,12 @@ namespace sogen
             // confirms it is actually free at the host level, not merely per sogen's own bookkeeping. That
             // matters on backends sharing the guest address space with the host process (FEX on Apple
             // Silicon: guest VA == host VA), where a foreign host mapping (a lazily-loaded dylib, a thread
-            // stack, ASLR-placed anything) can occupy a VA sogen still believes is free. The old code picked
-            // once via find_free_allocation_base and retried the map exactly once, so a single such collision
-            // threw "Memory range not allocatable" outright. The loop below re-picks past a racer instead:
-            // a failed try_map_module_at_current_base has already recorded the intruding host range (via the
-            // fixed-address allocate_memory's windowed rescan), so the next pick steps past it. Bounded so a
-            // genuinely exhausted address space still terminates rather than spinning.
+            // stack, ASLR-placed anything) can occupy a VA sogen still believes is free - a single pick
+            // would then fail the map outright even though other addresses are available. The loop below
+            // re-picks past such a collision instead: a failed try_map_module_at_current_base has already
+            // recorded the intruding host range (via the fixed-address allocate_memory's windowed rescan),
+            // so the next pick steps past it. Bounded so a genuinely exhausted address space still
+            // terminates rather than spinning.
             constexpr int max_host_relocation_retries = 8;
             bool mapped = false;
             // The free-pick retry loop only makes sense when the caller left the target address up to

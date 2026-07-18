@@ -503,12 +503,9 @@ namespace sogen
                 // reserve_host_memory_ranges_in(pick, size) - see find_free_host_allocation_base for the full
                 // rationale. In short: the full scan retires every currently-visible foreign range at once so
                 // a pick at the low edge of a large host-occupied region jumps clear of the whole region,
-                // while the windowed record catches a structural blind spot the full scan has but the
-                // windowed host_window_is_free probe does not - the FEX/Apple wow64 rebase host window
-                // [0x400000000, 0x500000000), omitted from the full reserved_host_ranges() scan yet reported
-                // occupied by the windowed reserved_host_ranges_in() for a native pick landing on it. Without
-                // the windowed record a native 4GB+ reservation whose lowest free hole is that window spins to
-                // exhaustion (real busybox-w32 wow64 init: C0000145 in ~6/8 runs).
+                // while the windowed record covers ranges the full scan deliberately omits but the windowed
+                // host_window_is_free probe still reports occupied - without it, a pick landing on such a
+                // range is never recorded as reserved and the loop re-picks the same base until exhaustion.
                 for (int attempt = 0;; ++attempt)
                 {
                     potential_base = c.win_emu.memory.find_free_allocation_base(
