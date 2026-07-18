@@ -201,6 +201,15 @@ namespace sogen
             // shared header we hand back in handle_create_stream.
             static constexpr uint32_t k_render_data_offset = 0x400;
 
+            // Play/write cursors in the shared control header. The client advances the write cursor
+            // (bytes it has queued) at +0x18; the audio engine (this emulator) advances the play cursor
+            // (bytes it has consumed) at +0x20. CCrossProcessBaseClientEndpoint::GetCurrentPadding reports
+            // (write - play) / block_align frames, so a streaming client (DirectSound) blocks until the
+            // engine drains the buffer by advancing the play cursor. Offsets confirmed against a live capture
+            // and audioses!GetCurrentPadding.
+            static constexpr uint32_t k_write_cursor_offset = 0x18;
+            static constexpr uint32_t k_play_cursor_offset = 0x20;
+
             // The shared-mode mix format we report from handle_get_mix_format: 44.1 kHz, 2 channels, 32-bit float.
             static constexpr uint32_t k_sample_rate = 44100;
             static constexpr uint32_t k_block_align = 8; // channels * bytes-per-sample
@@ -411,6 +420,34 @@ namespace sogen
                 this->render_backing_ = backing;
                 this->render_size_ = render_section_size;
                 this->render_data_size_ = buffer_bytes;
+
+                // Drive the play cursor. The DirectSound render worker fills the buffer, then blocks in its
+                // render loop until the engine consumes it (GetCurrentPadding drops below the buffer size). No
+                // real audio device backs the guest, so advance the play cursor on the guest's own clock: when
+                // the guest reads the play cursor, set it to the number of bytes that would have been consumed
+                // since playback anchored, capped at the write cursor. This makes a streaming client see the
+                // buffer draining in real time and keep producing, instead of deadlocking on a buffer that never
+                // empties.
+                if (backing)
+                {
+                    const auto anchor = std::make_shared<std::optional<std::chrono::steady_clock::time_point>>();
+                    win_emu.emu().hook_memory_read(
+                        backing + k_play_cursor_offset, sizeof(uint64_t),
+                        [&win_emu, base = backing, anchor](cpu_interface&, uint64_t, const void*, size_t) {
+                            const auto now = win_emu.clock().steady_now();
+                            if (!anchor->has_value())
+                            {
+                                *anchor = now;
+                            }
+                            const auto elapsed =
+                                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - **anchor).count());
+                            const auto consumed = static_cast<uint64_t>(k_sample_rate) * k_block_align * elapsed / 1'000'000'000ULL;
+                            uint64_t write_cursor = 0;
+                            win_emu.emu().try_read_memory(base + k_write_cursor_offset, &write_cursor, sizeof(write_cursor));
+                            const auto play_cursor = std::min(consumed, write_cursor);
+                            win_emu.emu().write_memory(base + k_play_cursor_offset, &play_cursor, sizeof(play_cursor));
+                        });
+                }
 
                 const auto section_handle = win_emu.process.sections.store(std::move(render_section));
 
