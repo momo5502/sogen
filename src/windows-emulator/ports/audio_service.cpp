@@ -153,7 +153,7 @@ namespace sogen
                     case k_audio_opnum_open_stream:
                         return handle_open_stream(writer);
                     case k_audio_opnum_create_stream:
-                        return handle_create_stream(win_emu, writer, reply_handles);
+                        return handle_create_stream(win_emu, c, writer, reply_handles);
                     case k_audio_opnum_start_stream:
                         start_playback(win_emu);
                         return handle_post_create(writer);
@@ -181,17 +181,20 @@ namespace sogen
           private:
             emulator_pointer render_backing_{};
             uint64_t render_size_{};
+            uint32_t render_data_size_{};
 
-            // The guest maps the render section and writes interleaved PCM into the sample area that follows the
-            // DCPE control header. The header records the sample-area offset at +0x168 and its byte length at
-            // +0x16C; both were confirmed against a live-host capture (tools/alpc_capture.py) and the shared
-            // header we hand back in handle_create_stream.
+            // The guest maps the render section and writes interleaved PCM into the sample area that begins at
+            // k_render_data_offset (past the DCPE control header). The header records the sample-area offset and
+            // its byte length; both were confirmed against a live-host capture (tools/alpc_capture.py) and the
+            // shared header we hand back in handle_create_stream.
             static constexpr uint32_t k_render_data_offset = 0x400;
-            static constexpr uint32_t k_render_data_size = 0x56220; // 44100 frames * 8 bytes; == nAvgBytesPerSec
 
-            // Playback drains the shared buffer to the host audio device when the client starts the stream. The
-            // format mirrors handle_get_mix_format (shared-mode mix format).
-            static constexpr audio_format k_stream_format{44100, 2, 32, true};
+            // The shared-mode mix format we report from handle_get_mix_format: 44.1 kHz, 2 channels, 32-bit float.
+            static constexpr uint32_t k_sample_rate = 44100;
+            static constexpr uint32_t k_block_align = 8; // channels * bytes-per-sample
+            static constexpr uint64_t k_hns_per_second = 10000000;
+            static constexpr uint64_t k_default_buffer_duration = k_hns_per_second; // 1 s
+            static constexpr audio_format k_stream_format{k_sample_rate, 2, 32, true};
 
             // On IAudioClient::Start, hand the sample area the client has filled to the host device. This submits
             // the whole shared buffer once: enough for a client that fills the buffer then starts (the WASAPI
@@ -200,7 +203,8 @@ namespace sogen
             // producing, which is not reverse-engineered yet.
             void start_playback(windows_emulator& win_emu)
             {
-                if (!this->render_backing_ || this->render_size_ < k_render_data_offset + k_render_data_size)
+                if (!this->render_backing_ || this->render_data_size_ == 0 ||
+                    this->render_size_ < k_render_data_offset + this->render_data_size_)
                 {
                     return;
                 }
@@ -210,7 +214,7 @@ namespace sogen
                     return;
                 }
 
-                std::vector<uint8_t> samples(k_render_data_size, 0);
+                std::vector<uint8_t> samples(this->render_data_size_, 0);
                 win_emu.emu().read_memory(this->render_backing_ + k_render_data_offset, samples.data(), samples.size());
                 win_emu.audio().submit(samples.data(), samples.size());
             }
@@ -315,22 +319,40 @@ namespace sogen
             // counts. The shared render buffer is NOT in the payload — it rides in as an ALPC HANDLE message
             // attribute. We back it with a pagefile section the guest can map and attach its handle. The wire
             // below was captured from a live Windows audio service (tools/alpc_capture.py).
-            NTSTATUS handle_create_stream(windows_emulator& win_emu, utils::aligned_binary_writer& writer,
+            NTSTATUS handle_create_stream(windows_emulator& win_emu, const lpc_request_context& c, utils::aligned_binary_writer& writer,
                                           std::vector<alpc_reply_handle>& reply_handles)
             {
-                // The shared render buffer the client maps: 0x57000 bytes (one second of 44100 Hz / 2ch /
-                // 32-bit float, page-aligned), prefixed by a WASAPI shared-buffer control header that audioses
-                // validates during Initialize. The header (buffer size, "DCPE" magic, period 0x989680, and the
-                // WAVEFORMATEXTENSIBLE) was captured from a live audio service (tools/alpc_capture.py); the rest
-                // of the buffer stays silent. We pre-allocate the section backing and write the header so the
-                // client's mapping reads it.
-                constexpr uint64_t render_section_size = 0x57000;
+                // The client negotiates the render-buffer duration; the reply must describe a buffer of exactly
+                // that size. The op7 [in] carries the requested duration (100-ns units) as a hyper right after the
+                // 20-byte context handle + the 4-byte share-mode enum, i.e. at request offset 24. A fixed
+                // one-second reply is accepted by a client that asked for one second (the audio-sample), but
+                // audioses rejects it (DestroyStream) for a client that asked for a shorter buffer -- which is
+                // what DirectSound/Miles negotiate. Size the buffer, the section, and every buffer-size field in
+                // the control header + reply from the requested duration instead.
+                uint64_t duration_hns = k_default_buffer_duration;
+                if (c.send_buffer && c.send_buffer_length >= 32)
+                {
+                    const auto requested = win_emu.emu().read_memory<uint64_t>(c.send_buffer + 24);
+                    if (requested != 0)
+                    {
+                        duration_hns = requested;
+                    }
+                }
+
+                const uint64_t buffer_frames = (k_sample_rate * duration_hns + k_hns_per_second - 1) / k_hns_per_second;
+                const uint32_t buffer_bytes = static_cast<uint32_t>(buffer_frames * k_block_align);
+                const uint32_t buffer_extent = k_render_data_offset + buffer_bytes; // control header + sample area
+                const uint64_t render_section_size = (buffer_extent + 0xFFF) & ~uint64_t{0xFFF};
+
                 section render_section{};
                 render_section.maximum_size = render_section_size;
                 render_section.section_page_protection = PAGE_READWRITE;
                 render_section.allocation_attributes = SEC_COMMIT;
 
-                static constexpr std::array<uint8_t, 0x1c0> render_control_header = {
+                // The WASAPI shared-buffer control header audioses validates during Initialize. Captured from a
+                // live audio service (tools/alpc_capture.py) for a 1-second buffer; the buffer-size fields (+0x04,
+                // +0x170, +0x174) and the buffer duration (+0x154) are patched below to match this stream.
+                std::array<uint8_t, 0x1c0> render_control_header = {
                     0x01, 0x00, 0x00, 0x00, 0x20, 0x66, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, // version, buffer size
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -358,6 +380,14 @@ namespace sogen
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 };
 
+                const auto patch32 = [&](const size_t offset, const uint32_t value) {
+                    std::memcpy(&render_control_header[offset], &value, sizeof(value));
+                };
+                patch32(0x04, buffer_extent);
+                patch32(0x170, buffer_extent);
+                patch32(0x174, buffer_extent);
+                std::memcpy(&render_control_header[0x154], &duration_hns, sizeof(duration_hns));
+
                 const auto backing = win_emu.memory.allocate_memory(static_cast<size_t>(render_section_size), memory_permission::read_write,
                                                                     false, 0, memory_region_kind::pagefile_section_view);
                 if (backing)
@@ -368,6 +398,7 @@ namespace sogen
 
                 this->render_backing_ = backing;
                 this->render_size_ = render_section_size;
+                this->render_data_size_ = buffer_bytes;
 
                 const auto section_handle = win_emu.process.sections.store(std::move(render_section));
 
@@ -390,9 +421,9 @@ namespace sogen
                 // 1-based index (0 = null); Ndr64UnionUnmarshall reads the selectors. The earlier hand-typed
                 // copy had these three values shifted 4 bytes early, which misaligned the union/handle parse
                 // and tripped RPC_X_BYTE_COUNT_TOO_SMALL.
-                static constexpr std::array<uint8_t, 120> system_audio_stream = {
+                std::array<uint8_t, 120> system_audio_stream = {
                     0x40, 0x37, 0x77, 0xcd, 0x87, 0xb1, 0x74, 0x49, 0xa1, 0xd5, 0xe0, 0xff, // session GUID
-                    0x91, 0x37, 0x22, 0x77, 0x20, 0x62, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, // nAvgBytesPerSec=0x56220
+                    0x91, 0x37, 0x22, 0x77, 0x20, 0x62, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, // +0x10: render-buffer byte size
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0xd2, 0x14, 0x55, // +0x20: server cookie
                     0xd2, 0x01, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // +0x28: 0x18
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -401,6 +432,7 @@ namespace sogen
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                 };
+                std::memcpy(&system_audio_stream[0x10], &buffer_bytes, sizeof(buffer_bytes));
                 writer.write(system_audio_stream.data(), system_audio_stream.size(), 1);
                 return STATUS_SUCCESS;
             }
