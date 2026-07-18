@@ -27,7 +27,9 @@ namespace sogen
         constexpr uint32_t k_audio_opnum_is_format_supported = 1;   // {D574D111} AudioServerIsFormatSupported
         constexpr uint32_t k_audio_opnum_get_device_period = 2;     // {D574D111} AudioServerGetDevicePeriod
         constexpr uint32_t k_audio_opnum_open_stream = 4;           // {D574D111} (Initialize prep)
+        constexpr uint32_t k_audio_opnum_get_audio_session = 6;     // {D574D111} AudioServerGetAudioSession
         constexpr uint32_t k_audio_opnum_create_stream = 7;         // {D574D111} CreateRemoteStream
+        constexpr uint32_t k_audio_opnum_get_session_state = 27;    // {D574D111} AudioSessionGetState
         constexpr uint32_t k_audio_opnum_destroy_stream = 13;       // {D574D111} AudioServerDestroyStream
         constexpr uint32_t k_audio_opnum_start_stream = 8;          // {D574D111} StartStream (IAudioClient::Start)
         constexpr uint32_t k_audio_opnum_stop_stream = 9;           // {D574D111} StopStream (IAudioClient::Stop)
@@ -38,6 +40,12 @@ namespace sogen
         // client stores this and passes it back as the binding for the follow-on stream RPCs.
         constexpr std::array<uint8_t, 16> k_stream_context_uuid = {0x53, 0x6f, 0x67, 0x65, 0x6e, 0x41, 0x75, 0x64,
                                                                    0x69, 0x6f, 0x53, 0x74, 0x72, 0x6d, 0x00, 0x01};
+
+        // The audio-session context handle handed back by AudioServerGetAudioSession (opnum 6) and round-tripped
+        // by the AudioSession* opnums (e.g. AudioSessionGetState, opnum 27). Opaque to the client, which only
+        // binds follow-on session RPCs to it.
+        constexpr std::array<uint8_t, 16> k_session_context_uuid = {0x53, 0x6f, 0x67, 0x65, 0x6e, 0x41, 0x75, 0x64,
+                                                                    0x69, 0x6f, 0x53, 0x65, 0x73, 0x73, 0x00, 0x01};
 
         // The audio endpoint database lives in the registry under
         // HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\{Render,Capture}. Each endpoint is a
@@ -152,6 +160,10 @@ namespace sogen
                         return handle_post_create(writer);
                     case k_audio_opnum_open_stream:
                         return handle_open_stream(writer);
+                    case k_audio_opnum_get_audio_session:
+                        return handle_get_audio_session(writer);
+                    case k_audio_opnum_get_session_state:
+                        return handle_get_session_state(writer);
                     case k_audio_opnum_create_stream:
                         return handle_create_stream(win_emu, c, writer, reply_handles);
                     case k_audio_opnum_start_stream:
@@ -442,6 +454,32 @@ namespace sogen
             static NTSTATUS handle_post_create(utils::aligned_binary_writer& writer)
             {
                 writer.write<uint32_t>(0);
+                writer.write(k_hr_ok); // return HRESULT
+                return STATUS_SUCCESS;
+            }
+
+            // {D574D111} opnum 6: AudioServerGetAudioSession([in] stream ctx, [out] session ctx). Right after
+            // CreateRemoteStream the DirectSound client (unlike the WASAPI one) fetches the audio-session handle;
+            // an unimplemented reply here aborts Initialize (DestroyStream + E_FAIL). The [out] is an NDR context
+            // handle (4-byte attributes + 16-byte UUID) followed by reserved space the wire pads to 0x40 bytes,
+            // then the HRESULT; captured from a live audio service.
+            static NTSTATUS handle_get_audio_session(utils::aligned_binary_writer& writer)
+            {
+                writer.write<uint32_t>(0); // context handle attributes
+                writer.write(k_session_context_uuid.data(), k_session_context_uuid.size(), 1);
+                writer.pad(0x2c);
+                writer.write(k_hr_ok); // return HRESULT
+                return STATUS_SUCCESS;
+            }
+
+            // {D574D111} opnum 27: AudioSessionGetState([in, out] session ctx, [out] short state). The session
+            // handle is marshalled back, the state defaults to 0, and the wire pads the reserved tail to 0x50
+            // bytes before the HRESULT; captured from a live audio service.
+            static NTSTATUS handle_get_session_state(utils::aligned_binary_writer& writer)
+            {
+                writer.write<uint32_t>(0); // context handle attributes
+                writer.write(k_session_context_uuid.data(), k_session_context_uuid.size(), 1);
+                writer.pad(0x4c);
                 writer.write(k_hr_ok); // return HRESULT
                 return STATUS_SUCCESS;
             }
