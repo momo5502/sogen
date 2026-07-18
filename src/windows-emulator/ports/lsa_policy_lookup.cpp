@@ -142,7 +142,7 @@ namespace sogen
              * https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-lsad/1b5471ef-4c33-4a91-b079-dfcbb82f05cc
              */
             NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c,
-                                utils::aligned_binary_writer& writer) override
+                                utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>& /*reply_handles*/) override
             {
                 switch (procedure_id)
                 {

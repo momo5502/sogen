@@ -1,5 +1,6 @@
 #pragma once
 #include <emulator.hpp>
+#include <arch_emulator.hpp>
 
 #include "mapped_module.hpp"
 #include "../file_system.hpp"
@@ -95,8 +96,24 @@ namespace sogen
 
         module_manager(memory_manager& memory, file_system& file_sys, callbacks& cb);
 
-        void map_main_modules(const windows_path& executable_path, windows_version_manager& version, process_context& context,
-                              const logger& logger);
+        void map_main_modules(x86_64_emulator& emu, const windows_path& executable_path, windows_version_manager& version,
+                              process_context& context, const logger& logger);
+
+        // The actual guest addresses install_wow64_heaven_gate placed the trampoline code page and
+        // its stack at (0 until a WoW64 process actually installs one - see
+        // install_wow64_heaven_gate's doc comment). exception_dispatch.cpp reads these instead of the
+        // fixed compile-time constants so it dispatches through wherever the gate actually landed.
+        uint64_t wow64_heaven_gate_code_base() const
+        {
+            return wow64_heaven_gate_code_base_;
+        }
+
+        uint64_t wow64_heaven_gate_stack_top() const
+        {
+            return wow64_heaven_gate_stack_top_;
+        }
+
+        void ensure_kernelbase_nls_cache_hook(process_context& context);
 
         std::optional<uint64_t> get_module_load_count_by_path(const windows_path& path);
         mapped_module* map_module(windows_path file, const logger& logger, bool is_static = false, bool allow_duplicate = false,
@@ -183,6 +200,12 @@ namespace sogen
         memory_manager* memory_{};
         file_system* file_sys_{};
         callbacks* callbacks_{};
+
+        // Set by install_wow64_heaven_gate to wherever it actually placed the gate; 0 until then (never
+        // set at all for a native, non-WoW64 process).
+        uint64_t wow64_heaven_gate_code_base_{};
+        uint64_t wow64_heaven_gate_stack_top_{};
+        bool kernelbase_nls_cache_hook_registered_{false};
 
         module_map modules_{};
         mutable module_map::iterator last_module_cache_{modules_.end()};

@@ -882,8 +882,8 @@ namespace sogen
                 ->capture_default_str();
 
             std::string backend_name{};
-            app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp or kvm (overrides env)")
-                ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm"}));
+            app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp, kvm or fex (overrides env)")
+                ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm", "fex"}));
 
             std::vector<std::string> tracked_modules{};
             app.add_option("-m,--module", tracked_modules, "Specify module(s) to track")->allow_extra_args(false);
@@ -915,10 +915,8 @@ namespace sogen
                 if (!backend_name.empty())
                 {
                     static const std::map<std::string, backend_type> backends{
-                        {"unicorn", backend_type::unicorn},
-                        {"icicle", backend_type::icicle},
-                        {"whp", backend_type::whp},
-                        {"kvm", backend_type::kvm},
+                        {"unicorn", backend_type::unicorn}, {"icicle", backend_type::icicle}, {"whp", backend_type::whp},
+                        {"kvm", backend_type::kvm},         {"fex", backend_type::fex},
                     };
                     options.backend = backends.at(backend_name);
                 }

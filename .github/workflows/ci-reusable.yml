@@ -498,6 +498,58 @@ jobs:
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
           retention-days: 1
 
+  build-fex:
+    name: Build FEX Backend (Linux arm64)
+    runs-on: ubuntu-24.04-arm
+    env:
+      LLVM_VERSION: 21
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install Clang
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 20
+          retry_wait_seconds: 60
+          command: |
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            sudo ./llvm.sh ${{ env.LLVM_VERSION }}
+            sudo apt install -y clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }}
+            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ env.LLVM_VERSION }} 100
+            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ env.LLVM_VERSION }} 100
+            sudo update-alternatives --set cc /usr/bin/clang-${{ env.LLVM_VERSION }}
+            sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
+
+      - name: Install Build Dependencies
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              ninja-build python3 \
+              libasound2-dev libpulse-dev libjack-jackd2-dev libsndio-dev \
+              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
+              libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
+              libdrm-dev libgbm-dev libgl1-mesa-dev libegl-dev libgles-dev \
+              libdbus-1-dev libudev-dev \
+              libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
+
+      # Build only the FEX backend; FEXCore itself is built via an ExternalProject restricted to its
+      # FEXCore_shared target (see deps/CMakeLists.txt), so this does not build FEX's loader/server tools.
+      - name: CMake Configure
+        run: cmake --preset=release
+
+      - name: Build FEX backend
+        run: cmake --build --preset=release --target fex-emulator
+
   test:
     name: Test
     runs-on: ${{ matrix.runner }}
@@ -811,6 +863,50 @@ jobs:
       - name: CMake Test
         run: cd build/release/artifacts && ./analyzer.exe -e root c:/test-sample.exe
         env:
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ inputs.verbose }}
+
+  smoke-test-fex:
+    name: Smoke Test FEX (macOS arm64)
+    runs-on: macos-latest
+    needs: [create-emulation-root, build]
+    steps:
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: macOS arm64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Windows Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 2025 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      # FEX shares the guest address space directly with the host process (unlike Unicorn/Icicle's own
+      # simulated address space), so its free-region search competes with whatever the host's own ASLR
+      # layout happens to leave available this run - a pre-existing, known-flaky class of failure
+      # ("Memory range not allocatable" mapping a module, or an unrelated exit-133 crash under
+      # AddressSanitizer-adjacent conditions) that a fresh process retry, with its own fresh ASLR
+      # layout, reliably works around. Not a substitute for the underlying address-space-exhaustion
+      # investigation, which is tracked separately.
+      - name: CMake Test
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 10
+          command: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer -e root c:/test-sample.exe
+        env:
+          EMULATOR_FEX: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
 
@@ -1208,6 +1304,7 @@ jobs:
         build-root-tools,
         smoke-test-whp,
         smoke-test-kvm,
+        smoke-test-fex,
         smoke-test-node,
         smoke-test-mingw,
         smoke-test-win32,
@@ -1215,6 +1312,7 @@ jobs:
         create-emulation-root,
         build,
         build-isolate,
+        build-fex,
         test,
         win-test,
         verify-formatting,

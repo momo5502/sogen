@@ -773,7 +773,7 @@ namespace sogen
 
         this->version.load_from_registry(this->registry, this->log);
 
-        this->mod_manager.map_main_modules(this->application_settings_.application, this->version, context, this->log);
+        this->mod_manager.map_main_modules(this->emu(), this->application_settings_.application, this->version, context, this->log);
         this->install_section_first_execution_hooks();
 
         const auto* executable = this->mod_manager.executable;

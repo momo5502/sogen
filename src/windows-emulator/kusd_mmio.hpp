@@ -50,7 +50,7 @@ namespace sogen
 
         static uint64_t address();
 
-        void setup(const windows_version_manager& version, const fake_environment_config& fake_env);
+        void setup(const windows_version_manager& version, const fake_environment_config& fake_env, bool is_wow64_process);
 
       private:
         memory_manager* memory_{};

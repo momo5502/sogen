@@ -16,7 +16,8 @@ namespace sogen
 
     namespace
     {
-        void setup_kusd(KUSER_SHARED_DATA64& kusd, const windows_version_manager& version, const fake_environment_config& fake_env)
+        void setup_kusd(KUSER_SHARED_DATA64& kusd, const windows_version_manager& version, const fake_environment_config& fake_env,
+                        const bool is_wow64_process)
         {
             memset(reinterpret_cast<void*>(&kusd), 0, sizeof(kusd));
 
@@ -73,8 +74,34 @@ namespace sogen
             kusd.ActiveGroupCount = 0x01;
             kusd.TimeZoneBiasEffectiveStart.QuadPart = 0x01db276e654cb2ff;
             kusd.TimeZoneBiasEffectiveEnd.QuadPart = 0x01db280b8c3b2800;
-            kusd.XState.EnabledFeatures = 0x000000000000001f;
-            kusd.XState.EnabledVolatileFeatures = 0x000000000000000f;
+            // Real ntdll's RtlWow64GetCpuAreaInfo (reached from wow64.dll's Wow64NtRaiseException ->
+            // CpuSetContext -> RtlWow64GetCurrentCpuArea, the user-mode WOW64 exception-escalation
+            // path) tests XState.EnabledFeatures against a fixed mask (0x40000000000009FC, covering
+            // AVX/MPX/AVX-512/CET-class feature bits) to decide whether the WOW64 CPU area needs an
+            // extended (XSTATE) context region on top of the plain legacy x86 CONTEXT. sogen's own
+            // WOW64 gate-crossing machinery (fex_x86_64_emulator.cpp's enter_wow64_64bit_from_
+            // wow64svc_thunk/enter_wow64_32bit_from_run_simulated_code) only ever populates the
+            // plain legacy CONTEXT fields of that CPU area, never an extended region - claiming any
+            // of those masked bits here makes real ntdll's RtlCopyContext (reached only via this
+            // rare exception-escalation path, not the ordinary syscall-return path every other WOW64
+            // syscall uses) detect a genuine size mismatch and fail with STATUS_BUFFER_OVERFLOW.
+            // wow64.dll silently swallows that failure and lets ntdll's real "this should never
+            // return" NtRaiseException retry loop keep re-raising forever, each iteration leaking a
+            // few bytes of 32-bit stack until it walks into and corrupts the adjacent PEB. Only claim
+            // legacy x87/SSE support (bits 0-1), which don't intersect the mask and match what sogen
+            // actually implements. This escalation path is WOW64-only (Wow64NtRaiseException), so
+            // only narrow the advertised features for a wow64 process - a native 64-bit process never
+            // takes it and gets the full set sogen otherwise advertises.
+            if (is_wow64_process)
+            {
+                kusd.XState.EnabledFeatures = 0x0000000000000003;
+                kusd.XState.EnabledVolatileFeatures = 0x0000000000000000;
+            }
+            else
+            {
+                kusd.XState.EnabledFeatures = 0x000000000000001f;
+                kusd.XState.EnabledVolatileFeatures = 0x000000000000000f;
+            }
             kusd.XState.Size = 0x000003c0;
             kusd.QpcData.QpcData = 0x0083;
             kusd.QpcData.QpcBypassEnabled = 0x83;
@@ -136,9 +163,9 @@ namespace sogen
     {
     }
 
-    void kusd_mmio::setup(const windows_version_manager& version, const fake_environment_config& fake_env)
+    void kusd_mmio::setup(const windows_version_manager& version, const fake_environment_config& fake_env, const bool is_wow64_process)
     {
-        setup_kusd(this->kusd_, version, fake_env);
+        setup_kusd(this->kusd_, version, fake_env, is_wow64_process);
         this->register_mmio();
     }
 
