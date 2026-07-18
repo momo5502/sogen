@@ -2003,6 +2003,26 @@ namespace sogen
             return handle_value;
         }
 
+        int32_t handle_NtGdiGetBitmapBits(const syscall_context& c, const handle bitmap, const int32_t count, const emulator_pointer bits)
+        {
+            if (bits == 0 || count <= 0)
+            {
+                return 0;
+            }
+
+            const auto it = c.proc.gdi_bitmap_surfaces.find(static_cast<uint32_t>(bitmap.bits));
+            if (it == c.proc.gdi_bitmap_surfaces.end())
+            {
+                return 0;
+            }
+
+            auto& surface = it->second;
+            sync_surface_from_guest_dib(c, surface);
+            const auto byte_count = std::min(static_cast<size_t>(count), surface.pixels.size() * sizeof(uint32_t));
+            c.emu.write_memory(bits, surface.pixels.data(), byte_count);
+            return static_cast<int32_t>(byte_count);
+        }
+
         uint64_t handle_NtGdiCreateDIBSection(const syscall_context& c, const hdc /*dc*/, const uint64_t /*section_app*/,
                                               const uint32_t /*offset*/, const emulator_pointer info, const uint32_t /*usage*/,
                                               const uint32_t header_size, const uint32_t /*flags*/, const uint64_t /*color_space*/,
