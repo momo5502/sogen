@@ -104,13 +104,12 @@ namespace sogen::fex
         // re-enables write-protect *before* control returns to our still-writing outer call, faulting
         // on the self-modifying store with a real (not synthetic) protection violation.
         //
-        // Tried and abandoned: interposing pthread_jit_write_protect_np itself (via the __interpose
-        // section) to make it reentrant. Both escape hatches for reaching the *real* implementation
-        // from inside the interposer - dlsym(RTLD_NEXT, ...) and dlopen(RTLD_NOLOAD)+dlsym-by-handle -
-        // resolved back to the interposed replacement itself (confirmed via a stack-overflow crash
-        // both times), meaning dyld's __interpose rewrite here isn't scoped to "other images calling
-        // in" the way DYLD_INTERPOSE is normally described; there's no reliable way to bypass it once
-        // installed for this exact symbol name process-wide.
+        // Interposing pthread_jit_write_protect_np itself (via the __interpose section) to make it
+        // reentrant is not viable: both escape hatches for reaching the *real* implementation from
+        // inside the interposer - dlsym(RTLD_NEXT, ...) and dlopen(RTLD_NOLOAD)+dlsym-by-handle -
+        // resolve back to the interposed replacement itself, because dyld's __interpose rewrite here
+        // isn't scoped to "other images calling in" the way DYLD_INTERPOSE is normally described;
+        // there's no reliable way to bypass it once installed for this exact symbol name process-wide.
         //
         // Instead: react to the fault itself. The *executing* code at the moment of the crash
         // (ExitFunctionLink, a plain libFEXCore.dylib function) is not MAP_JIT memory - only the
@@ -122,15 +121,14 @@ namespace sogen::fex
         // retry the same faulting instruction rather than treating it as unhandled. Bounded per fault
         // address so a genuinely different bug can't spin forever.
         //
-        // This tracking used to be a std::unordered_map<uint64_t, int>, but operator[] can insert a
-        // node or trigger a rehash - both call into the heap allocator - and this code runs inside a
-        // real hardware signal handler that can interrupt program execution at an arbitrary point,
+        // A std::unordered_map<uint64_t, int> is not viable here: operator[] can insert a node or
+        // trigger a rehash - both call into the heap allocator - and this code runs inside a real
+        // hardware signal handler that can interrupt program execution at an arbitrary point,
         // including mid-malloc()/free() of a totally unrelated allocation. Calling a non-async-
-        // signal-safe function from a signal handler in that situation is undefined behavior, and was
-        // confirmed to be the actual cause of a rare, ASLR-timing-dependent heap corruption bug (the
-        // allocator's internal free-list/lock can be left mid-update if re-entered). Replaced with a
-        // small fixed-size, non-allocating array, linear-scanned: genuinely async-signal-safe, and
-        // sufficient because guest execution is single-threaded/cooperative (this handler resolves
+        // signal-safe function from a signal handler in that situation is undefined behavior and can
+        // corrupt the allocator's internal free-list/lock if re-entered. A small fixed-size,
+        // non-allocating array, linear-scanned, is genuinely async-signal-safe, and sufficient because
+        // guest execution is single-threaded/cooperative (this handler resolves
         // one fault to completion before the interrupted code can trigger another), so realistically
         // only one address is ever mid-retry at a time; a healthy call site resolves in <= 1 retry and
         // never spins, so eviction (once all slots are in use) can never take budget away from an
@@ -162,11 +160,10 @@ namespace sogen::fex
 
         // Returns the retry counter for fault_addr, resetting it first if the address hasn't
         // faulted within jit_write_protect_retry_reset_window_ns - otherwise a slot that legitimately
-        // resolves this race many times over a long run would eventually exhaust its retry budget
-        // (it was previously only ever incremented, never reset) and start being treated as
-        // unresolvable, turning an occasional benign race into an eventual hard crash. Async-signal-
-        // safe: fixed-array scan, no allocation; clock_gettime(CLOCK_MONOTONIC) is vDSO-backed and
-        // safe to call from a signal handler.
+        // resolves this race many times over a long run would eventually exhaust its retry budget and
+        // start being treated as unresolvable, turning an occasional benign race into an eventual hard
+        // crash. Async-signal-safe: fixed-array scan, no allocation; clock_gettime(CLOCK_MONOTONIC) is
+        // vDSO-backed and safe to call from a signal handler.
         int& jit_write_protect_retry_count_for(const uint64_t fault_addr)
         {
             const uint64_t now_ns = monotonic_now_ns();
@@ -358,13 +355,13 @@ namespace sogen::fex
         // only MMIO consumer is read-only). Same fixed-Rm, no-addressing-mode shape as LDAR/LDAPR.
         //
         // Deliberately does NOT also decode plain STR/STUR (unlike decode_arm64_load, which does
-        // cover the equivalent plain-load forms): a broadened version covering those was tried for
-        // handle_general_memory_violation's Category-3 "false fault" case and caused a real,
-        // reproducible hang (confirmed via bisection - isolated to this table specifically, not
-        // decode_arm64_load's equivalent broadening, which the KUSD/MMIO path already exercises
-        // safely) whose exact root cause wasn't pinned down before time ran out on the investigation.
-        // Category-3 false-fault emulation is therefore currently limited to loads and STLR-family
-        // stores; a plain-store false fault falls through to a crash instead of being emulated.
+        // cover the equivalent plain-load forms): broadening this table to cover them for
+        // handle_general_memory_violation's Category-3 "false fault" case causes a real,
+        // reproducible hang isolated to this table specifically (decode_arm64_load's equivalent
+        // plain-load coverage is safe - the KUSD/MMIO path already exercises it) with a root cause
+        // that is not yet understood, so this table must stay narrow. Category-3 false-fault
+        // emulation is therefore currently limited to loads and STLR-family stores; a plain-store
+        // false fault falls through to a crash instead of being emulated.
         //
         // This has a real, understood downstream consequence beyond just that crash, tracked
         // separately: handle_general_memory_violation also uses this same decoder to classify a
@@ -2541,7 +2538,7 @@ namespace sogen::fex
         // real stop - but without touching stop_requested_), which then dispatches the hook in normal
         // context and resumes guest execution by simply re-entering ExecuteThread: it always starts
         // fresh from CurrentFrame->State.rip, which is exactly what AbsoluteLoopTopAddressFillSRA
-        // already re-derived SRA from, so this is behaviorally identical to the old in-handler resume.
+        // already re-derived SRA from, so this is behaviorally identical to resuming in-handler.
         enum class pending_fault_kind
         {
             none,
@@ -2605,7 +2602,7 @@ namespace sogen::fex
         // callers interrupting arbitrary, uncontrolled points in live guest-translated JIT code (a
         // real hardware fault directly on translated code, see handle_general_memory_violation) must
         // pass false, since SRA is still live only in host registers there and skipping the spill
-        // left stale/inconsistent state for the next ExecuteThread entry to read.
+        // leaves stale/inconsistent state for the next ExecuteThread entry to read.
         void defer_hook_dispatch(ucontext_t* uctx, const pending_fault_dispatch& dispatch, bool sra_already_spilled)
         {
             this->pending_fault_dispatch_ = dispatch;
@@ -2747,7 +2744,7 @@ namespace sogen::fex
                 // like the CodeBuffer race (see the BUS_ADRALN branch's own comment), Darwin can
                 // report this exact same PROT_NONE violation as BUS_ADRALN instead of the expected
                 // SEGV_ACCERR/SEGV_MAPERR. Since InterruptFaultPage's address is never inside the
-                // CodeBuffer, a misclassified BUS_ADRALN fault here used to fall past that check
+                // CodeBuffer, a misclassified BUS_ADRALN fault here would fall past that check
                 // straight into handle_general_memory_violation, which unconditionally treats
                 // fault_addr as a *guest* address (page_shadow_apple_ lookup) and
                 // dispatches a synthetic guest memory-violation exception with that bogus "guest
@@ -2778,24 +2775,21 @@ namespace sogen::fex
 
                     if (is_dispatch_code && !is_strb_epilogue_write)
                     {
-                        // ROOT CAUSE FIX (Wall A / the long-standing intermittent import-snap NoExec).
-                        // This cooperative stop is being taken at a genuine JIT block-entry / loop
-                        // back-edge interrupt check (EmitSuspendInterruptCheck, JIT.cpp), triggered by
-                        // the quantum-timer thread's async mprotect of InterruptFaultPage. At such a
-                        // point the LIVE guest state is in host registers (SRA) and CPUState.rip holds
-                        // whatever was last written to it - which is frequently STALE: a completed
+                        // This cooperative stop is taken at a genuine JIT block-entry / loop back-edge
+                        // interrupt check (EmitSuspendInterruptCheck, JIT.cpp), triggered by the
+                        // quantum-timer thread's async mprotect of InterruptFaultPage. At such a point
+                        // the live guest state is in host registers (SRA) and CPUState.rip holds
+                        // whatever was last written to it, which is frequently stale: a completed
                         // syscall leaves rip at its fallthrough (HandleSyscall sets rip = syscall+2),
                         // and execution then runs on through directly-linked blocks / callret RET
-                        // fast-paths that never rewrite CPUState.rip. The previous redirect jumped
-                        // straight to the NON-spill ThreadStopHandlerAddress, so on resume ExecuteThread
-                        // re-entered from that stale rip with stale gregs - re-executing an already-
-                        // retired instruction. Observed failure: an NtProtectVirtualMemory stub `retn`
-                        // re-run after a later, shallower RtlpImageDirectoryEntryToDataEx push had
-                        // already reused/overwritten its return slot, so the re-run popped garbage ->
-                        // wild branch -> "NoExec instruction in entry block". Fix: reconstruct the real
-                        // guest rip from the faulting host PC and redirect through the SpillSRA stop
-                        // handler so the live SRA GPRs/FPRs/flags are written back to CPUState before
-                        // ExecuteThread returns. This mirrors FEX's own suspend-time reconstruction
+                        // fast-paths that never rewrite CPUState.rip. Redirecting to the non-spill
+                        // ThreadStopHandlerAddress would resume ExecuteThread from that stale rip with
+                        // stale registers, re-executing an already-retired instruction - e.g. a `retn`
+                        // whose return slot has since been reused by a later call, popping garbage and
+                        // producing a wild branch ("NoExec instruction" in the entry block). Reconstructing
+                        // the real guest rip from the faulting host PC and redirecting through the
+                        // SpillSRA stop handler writes the live SRA GPRs/FPRs/flags back to CPUState
+                        // before ExecuteThread returns, mirroring FEX's own suspend-time reconstruction
                         // (Source/Windows/WOW64/Module.cpp ReconstructThreadState, which does exactly
                         // RestoreRIPFromHostPC + SRA spill). Both halves are required: without the rip
                         // reconstruction resume lands on the stale instruction; without the SRA spill it
@@ -2812,11 +2806,11 @@ namespace sogen::fex
                     // ExitFunctionLinkerAddress's own JIT-emitted epilogue strb (both write to this
                     // same page as ordinary bookkeeping, coincidentally racing with a stop request
                     // from another thread, e.g. the quantum timer, that just mprotect'd the page).
-                    // Redirecting to ThreadStopHandlerAddress here would be wrong in either case -
+                    // Redirecting to ThreadStopHandlerAddress here would be wrong in either case:
                     // that entry point expects to unwind a live JIT dispatcher stack frame, not
-                    // whatever is actually executing at the moment of the race (this was in fact the
-                    // actual root cause of a long-standing intermittent pc==lr==0 crash - see task
-                    // #14's investigation, for the host-C++-side instance of this same class of bug).
+                    // whatever is actually executing at the moment of the race, and doing so from the
+                    // host-C++-side DeferredSignalRefCountGuard destructor corrupts the stack,
+                    // producing a pc==lr==0 crash.
                     // The store's actual value is inconsequential - only the page's protection state
                     // drives the cooperative-stop mechanism - so just skip the single faulting store
                     // instruction; the next real JIT block entry will still see the page protected
@@ -2884,31 +2878,27 @@ namespace sogen::fex
                     }
                 }
 
-                // ROOT CAUSE FIX (confirmed via the fault_event ring buffer + a raw instruction-word
-                // capture): a BUS_ADRALN fault whose *address* falls inside the live JIT CodeBuffer,
-                // but whose *PC* is FEXCore's own host C++ code (e.g. ExitFunctionLink's self-
-                // modifying-write path), decodes to a perfectly ordinary, 4-byte-aligned 32-bit `str`
-                // (confirmed by capturing the raw instruction word: 0xb900032a = `str w10, [x25]`, no
-                // offset, size=32-bit, not an exclusive/ordered form at all) - i.e. this is NOT a real
-                // alignment fault (plain STR never requires alignment on ARM64, and this address is
-                // aligned anyway). This is the JIT write-XOR-execute race - the CodeBuffer is currently
-                // execute-only - which Darwin evidently sometimes reports via BUS_ADRALN instead of the
-                // expected SEGV_ACCERR/SEGV_MAPERR, mirroring the already-documented SEGV_MAPERR-
-                // instead-of-SEGV_ACCERR quirk for the exact same underlying mechanism (see the
-                // JITGuardPage comment below). Before this fix, such a fault fell into the BUS_ADRALN
-                // branch further down unconditionally, which routes to handle_general_memory_violation
-                // - designed for genuine guest memory accesses, it unwinds via
+                // A BUS_ADRALN fault whose *address* falls inside the live JIT CodeBuffer, but whose
+                // *PC* is FEXCore's own host C++ code (e.g. ExitFunctionLink's self-modifying-write
+                // path), decodes to a perfectly ordinary, 4-byte-aligned 32-bit `str` (e.g. 0xb900032a
+                // = `str w10, [x25]`, no offset, size=32-bit, not an exclusive/ordered form at all) -
+                // i.e. this is NOT a real alignment fault (plain STR never requires alignment on
+                // ARM64, and this address is aligned anyway). This is the JIT write-XOR-execute race -
+                // the CodeBuffer is currently execute-only - which Darwin sometimes reports via
+                // BUS_ADRALN instead of the expected SEGV_ACCERR/SEGV_MAPERR, mirroring the
+                // already-documented SEGV_MAPERR-instead-of-SEGV_ACCERR quirk for the exact same
+                // underlying mechanism (see the JITGuardPage comment below). Falling through to the
+                // BUS_ADRALN branch further down would route this to handle_general_memory_violation -
+                // designed for genuine guest memory accesses, it unwinds via
                 // defer_hook_dispatch/ThreadStopHandlerAddress as if interrupting the JIT dispatcher's
                 // own call frame. That's wrong here: execution is several real C++ call frames deep
                 // inside FEXCore's own code (dispatcher trampoline -> embedder wrapper ->
                 // ExitFunctionLink), so popping "the dispatcher's" callee-saved registers off the stack
                 // pops whatever's actually there instead - corrupting STATE (x28) and other SRA
                 // registers with stack garbage, which then crashes on the *next* unlinked call with an
-                // unrelated-looking null-Frame dereference. Confirmed directly: the ring buffer's very
-                // first captured fault was exactly this, immediately preceding the corrupted-STATE
-                // crash this investigation chased for two sessions.
+                // unrelated-looking null-Frame dereference.
                 //
-                // Fix: treat it exactly like the SEGV_ACCERR/SEGV_MAPERR write-protect race just below
+                // Treat it exactly like the SEGV_ACCERR/SEGV_MAPERR write-protect race just below
                 // - toggle write access on and retry the identical instruction, bounded by the same
                 // per-address retry counter (a genuinely different bug at this exact address, rather
                 // than an unresolvable race, would still eventually surface as unhandled after
@@ -2971,7 +2961,7 @@ namespace sogen::fex
                     return true;
                 }
 
-                // See g_jit_write_protect_retry_counts' doc comment: FEXCore's own code-patching paths
+                // See jit_write_protect_retry_count_for's doc comment: FEXCore's own code-patching paths
                 // (ExitFunctionLink, block delinkers) don't reliably leave this thread's JIT write-
                 // protect state correct for the duration of their self-modifying writes into a
                 // CodeBuffer. Set it to whatever the faulting access actually needs and retry the
@@ -2981,13 +2971,12 @@ namespace sogen::fex
                 // mode (1); a data write needs write mode (0) - guessing the wrong direction here
                 // would just re-fault immediately and consume a retry harmlessly.
                 //
-                // Gated on IsAddressInCodeBuffer(fault_addr) - this branch previously fired for *any*
-                // SEGV_ACCERR/SEGV_MAPERR regardless of the fault address, silently wasting up to
-                // max_write_protect_retries toggling W^X for faults that were never a CodeBuffer
-                // write-protect race at all (confirmed via the fault_event ring buffer: a genuine
-                // branch-to-null, pc==fault_addr==0, was retried 4 times this way before falling
-                // through as unhandled - toggling JIT write-protection has nothing to do with a null
-                // pointer, and doing so pointlessly here is itself a needless, easily-avoided risk).
+                // Gated on IsAddressInCodeBuffer(fault_addr): without this gate, the branch would fire
+                // for *any* SEGV_ACCERR/SEGV_MAPERR regardless of the fault address, wasting up to
+                // max_write_protect_retries toggling W^X for faults that are never a CodeBuffer
+                // write-protect race at all - e.g. a genuine branch-to-null (pc==fault_addr==0) would
+                // be retried this way before falling through as unhandled, even though toggling JIT
+                // write-protection has nothing to do with a null pointer.
                 if (this->context_ && this->context_->IsAddressInCodeBuffer(this->thread_, fault_addr))
                 {
                     const auto fault_addr_u64 = reinterpret_cast<uint64_t>(info->si_addr);
@@ -3486,8 +3475,8 @@ namespace sogen::fex
         // FEXCore checks this before compiling/executing a guest address (see the decoder's use of
         // QueryGuestExecutableRange) and synthesizes a #PF (IR "Break" op, TrapNo=X86_TRAPNO_PF) if the
         // address isn't reported as executable here - so returning the default-constructed {} for
-        // every address (as this stub previously did unconditionally) made every guest instruction
-        // fetch look like a DEP violation to FEXCore.
+        // every address would make every guest instruction fetch look like a DEP violation to
+        // FEXCore.
         auto& regions = this->emulator_.regions_;
         auto it = regions.upper_bound(address);
         if (it == regions.begin())
