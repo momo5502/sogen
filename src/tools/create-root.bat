@@ -85,6 +85,9 @@ CALL :collect ktmw32.dll
 CALL :collect mfplat.dll
 CALL :collect mfreadwrite.dll
 CALL :collect mmdevapi.dll
+CALL :collect audioses.dll
+CALL :collect avrt.dll
+CALL :collect resourcepolicyclient.dll
 CALL :collect mobilenetworking.dll
 CALL :collect mpr.dll
 CALL :collect msacm32.dll
