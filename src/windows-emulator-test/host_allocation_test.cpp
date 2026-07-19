@@ -30,6 +30,22 @@ namespace sogen::test
             // so a pick that lands here is re-picked identically every iteration until the retry cap.
             std::vector<host_reserved_range> hidden_from_full_scan{};
 
+            // Guest ranges the memory manager claimed/released at the host level - the mechanism a
+            // shared-address-space backend uses to keep reserved-but-uncommitted guest ranges
+            // unavailable to the host's own allocator, and to hand them back once genuinely freed.
+            std::vector<host_reserved_range> claimed_ranges{};
+            std::vector<host_reserved_range> released_ranges{};
+
+            void reserve_guest_address_range(const uint64_t address, const size_t size) override
+            {
+                this->claimed_ranges.push_back({.address = address, .size = size});
+            }
+
+            void release_guest_address_range(const uint64_t address, const size_t size) override
+            {
+                this->released_ranges.push_back({.address = address, .size = size});
+            }
+
             std::vector<host_reserved_range> reserved_host_ranges() const override
             {
                 return this->foreign_ranges;
@@ -197,5 +213,65 @@ namespace sogen::test
         ASSERT_NE(host_base, 0u);
         ASSERT_GE(host_base, naive_base + large_region);
         ASSERT_TRUE(mm.host_window_is_free(host_base, size));
+    }
+
+    // allocate_mmio may claim an address inside an already-recorded host_reserved range (the KUSD
+    // MMIO page lives inside the __PAGEZERO carve-out on FEX/Apple). Nesting the MMIO entry inside
+    // the host_reserved one would break the pairwise-non-overlap invariant
+    // overlaps_reserved_region's fast path depends on: a query above the small MMIO entry would see
+    // only that entry as its predecessor and miss the much larger host_reserved range still
+    // covering the queried address. The host_reserved coverage must instead be split around the
+    // MMIO hole so every part of it stays visible to overlap queries.
+    TEST(HostAllocationTest, OverlapQuerySeesHostReservedCoverageAroundNestedMmio)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr uint64_t reserved_base = 0x70000000;
+        constexpr size_t reserved_size = 0x20000000;
+        constexpr uint64_t mmio_base = 0x7ffe0000;
+        constexpr size_t mmio_size = 0x1000;
+
+        host.foreign_ranges.push_back({.address = reserved_base, .size = reserved_size});
+        mm.reserve_host_memory_ranges();
+
+        ASSERT_TRUE(mm.allocate_mmio(mmio_base, mmio_size, [](uint64_t, void*, size_t) {}, [](uint64_t, const void*, size_t) {}));
+
+        ASSERT_EQ(mm.get_region_kind(mmio_base), memory_region_kind::mmio);
+        ASSERT_EQ(mm.get_region_kind(mmio_base - 1), memory_region_kind::host_reserved);
+        ASSERT_EQ(mm.get_region_kind(mmio_base + mmio_size), memory_region_kind::host_reserved);
+
+        // A range inside the host-reserved coverage above the MMIO page must still be reported as
+        // occupied, and the MMIO page itself must remain queryable as its own region.
+        ASSERT_TRUE(mm.overlaps_reserved_region(0x80000000, 0x1000));
+        ASSERT_TRUE(mm.overlaps_reserved_region(mmio_base, mmio_size));
+        ASSERT_TRUE(mm.overlaps_reserved_region(reserved_base, 0x1000));
+        ASSERT_FALSE(mm.overlaps_reserved_region(reserved_base + reserved_size, 0x1000));
+    }
+
+    // A decommit must keep the guest range claimed at the host level (the range is still
+    // MEM_RESERVE'd - a foreign host allocation landing there would be clobbered by a later
+    // recommit), while a genuine release must hand the claim back. The memory manager signals the
+    // latter via release_guest_address_range with a range covering the freed allocation.
+    TEST(HostAllocationTest, ReleaseNotifiesHostClaimReleaseButDecommitDoesNot)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr size_t size = 0x11000;
+        const uint64_t base = mm.allocate_memory(size, nt_memory_permission{memory_permission::read_write});
+        ASSERT_NE(base, 0u);
+
+        ASSERT_EQ(host.claimed_ranges.size(), 1u);
+        ASSERT_EQ(host.claimed_ranges[0].address, base);
+        ASSERT_EQ(host.claimed_ranges[0].size, size);
+
+        ASSERT_TRUE(mm.decommit_memory(base, size));
+        ASSERT_TRUE(host.released_ranges.empty());
+
+        ASSERT_TRUE(mm.release_memory(base, 0));
+        ASSERT_EQ(host.released_ranges.size(), 1u);
+        ASSERT_LE(host.released_ranges[0].address, base);
+        ASSERT_GE(host.released_ranges[0].address + host.released_ranges[0].size, base + size);
     }
 } // namespace sogen::test
