@@ -55,8 +55,9 @@ namespace sogen
         // process's own executable - is mapped. Backends that execute guest code natively on real
         // x86-64 hardware (KVM/Unicorn/WHP) don't need this - the CPU transparently switches to
         // compatibility mode on the CS segment load alone, so the default implementation is a no-op.
-        // A JIT-based backend (FEXCore) can't do that - its bitness is fixed per compiled context -
-        // so it uses this to learn the process's bitness before its first block is compiled.
+        // A JIT-based backend (FEXCore) is fixed-bitness per compiled context and only stands up the
+        // 64-bit one, so it uses this to reject a WoW64 (32-bit) process with a clear error up
+        // front, before its first block would be mis-decoded as 64-bit code.
         virtual void notify_process_bitness(bool /*is_wow64_process*/)
         {
         }

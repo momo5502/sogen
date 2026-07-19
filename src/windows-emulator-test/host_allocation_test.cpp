@@ -111,13 +111,13 @@ namespace sogen::test
         };
     }
 
-    // Regression coverage for the module-relocation fallback's host-collision recovery. Before the fix,
-    // map_module_from_data's relocation fallback picked a base with find_free_allocation_base (sogen's own
-    // bookkeeping only) and retried the map exactly once; if that pick was already occupied by a foreign
-    // host mapping - possible on backends sharing the guest VA with the host process (FEX on Apple Silicon)
-    // where any real host allocation can land on a guest-owned VA - it threw "Memory range not allocatable".
-    // The fallback now routes through find_free_host_allocation_base, which confirms the pick is actually
-    // free at the host level and re-picks past any foreign occupant. This exercises that shared helper.
+    // Regression coverage for the module-relocation fallback's host-collision recovery.
+    // map_module_from_data's relocation fallback must route through find_free_host_allocation_base
+    // rather than find_free_allocation_base (sogen's own bookkeeping only): on backends sharing the
+    // guest VA with the host process (FEX on Apple Silicon), any real host allocation can land on a
+    // guest-owned VA, so a bookkeeping-only pick can already be occupied by a foreign host mapping.
+    // find_free_host_allocation_base confirms the pick is actually free at the host level and
+    // re-picks past any foreign occupant; this test exercises that shared helper.
     TEST(HostAllocationTest, FindFreeHostBaseSkipsForeignOccupiedPick)
     {
         fake_host_memory host{};
@@ -126,7 +126,7 @@ namespace sogen::test
         constexpr size_t size = 0x2000;
         constexpr uint64_t start = DEFAULT_ALLOCATION_ADDRESS_64BIT;
 
-        // The address the plain, bookkeeping-only pick hands back - the one the old fallback used.
+        // The address the plain, bookkeeping-only pick hands back.
         const uint64_t naive_base = mm.find_free_allocation_base(size, start);
         ASSERT_NE(naive_base, 0u);
 

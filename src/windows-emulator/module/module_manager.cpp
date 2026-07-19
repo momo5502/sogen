@@ -463,10 +463,10 @@ namespace sogen
         current_execution_mode_ = detect_execution_mode(executable_path, logger);
         context.is_wow64_process = (current_execution_mode_ == execution_mode::wow64_32bit);
 
-        // Must happen before any module gets mapped below: a JIT-based backend (FEXCore) needs to
-        // know the bitness before compiling its first block (see notify_process_bitness's doc
-        // comment), and a backend's host-range reservations can depend on it, so they are
-        // recomputed now that the bitness is known.
+        // Must happen before any module gets mapped below: a fixed-bitness JIT backend (FEXCore)
+        // rejects unsupported execution modes here, before its first block would be mis-decoded
+        // (see notify_process_bitness's doc comment). The host-range reservations are re-derived
+        // afterwards so module mapping starts from a fresh view of the backend's host layout.
         emu.notify_process_bitness(context.is_wow64_process);
         this->memory_->reset_host_memory_ranges();
 

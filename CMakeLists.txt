@@ -57,9 +57,9 @@ endif()
 ##########################################
 
 # FEX-Emu backend (x86/x86-64 -> AArch64). FEX only JITs to ARM64, so the backend is restricted to
-# ARM64 Linux/Android/Darwin hosts.
-# FEX is vendored as a submodule (deps/FEX, pointed at a fork with Darwin portability patches - see
-# docs/fex-backend.md) and built in-tree. It requires Clang and only JITs to AArch64, and on Linux
+# ARM64 hosts.
+# FEX is vendored as a submodule (deps/FEX, pointed at github.com/JackTYM/FEX, a fork with Darwin
+# portability patches) and built in-tree. It requires Clang and only JITs to AArch64, and on Linux
 # its headers need a libstdc++ with std::atomic_ref (the Android NDK's libc++ lacks it), so Linux is
 # restricted to ARM64 + Clang, not Android/NDK. Apple Clang's libc++ has std::atomic_ref, so Darwin
 # has no equivalent NDK-style exclusion. Enabled automatically when those hold and the submodule is
