@@ -92,6 +92,16 @@ namespace sogen
         {
         }
 
+        // Counterpart to reserve_guest_address_range: called by the memory manager once a guest range
+        // is genuinely released (freed) - not on a mere decommit, where the guest range stays reserved
+        // and the host-level claim must persist. The caller guarantees [address, address + size)
+        // contains no reserved guest ranges at call time (it passes the released range expanded to the
+        // surrounding unreserved gap), so the backend may drop any host-level claim wholly inside it.
+        // No-op for backends with an independent guest address space (the default).
+        virtual void release_guest_address_range(uint64_t /*address*/, size_t /*size*/)
+        {
+        }
+
         template <typename T>
         T read_memory(const uint64_t address) const
         {

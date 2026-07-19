@@ -24,7 +24,10 @@
 //     which invokes the registered syscall instruction-hook. That is what lets the Windows emulation
 //     layer service NT syscalls.
 //
-// This file targets AArch64 Linux/Android hosts (FEX only JITs to ARM64). It is written against the
+// The functional target of this file is Darwin on Apple Silicon (FEX only JITs to ARM64): the signal
+// handlers, MMIO fault emulation, and 16KB/4KB page reconciliation below are all Darwin-only. The
+// AArch64 Linux path compiles (CI build coverage) but has none of that runtime support and is not
+// expected to run; Android is excluded outright by the CMake gate. The file is written against the
 // FEXCore embedding API; spots that depend on FEX-version-specific internals are marked TODO(fex).
 // ---------------------------------------------------------------------------------------------------
 
@@ -366,11 +369,18 @@ namespace sogen::fex
         // This has a real, understood downstream consequence beyond just that crash, tracked
         // separately: handle_general_memory_violation also uses this same decoder to classify a
         // fault's memory_operation (write vs. read) for the *genuine* protection-violation dispatch
-        // path, not just the false-fault path - so a plain guest store to a legitimately read-only
-        // page is misclassified as a read, which can route it into the false-fault recovery above
-        // instead of correctly raising STATUS_ACCESS_VIOLATION to the guest. Not fixed here since a
-        // safe fix needs a classification-only check independent of this decode table (which is
-        // unsafe to broaden, per the hang above) and that hasn't been implemented/verified yet.
+        // path, not just the false-fault path. A plain (non-atomic) STR to memory that IS mapped
+        // read-only is therefore misclassified as a read: since the page's shadow entry declares
+        // read permission, the "read" appears legitimate and is routed into the false-fault
+        // recovery paths, which both fail for a genuine protection violation - the fault then
+        // surfaces as an UNHANDLED host signal that aborts the whole emulator process, instead of
+        // being delivered to the guest as STATUS_ACCESS_VIOLATION. Any guest that deliberately
+        // writes to read-only memory and catches the resulting exception (packers/DRM protections
+        // do this routinely) hits this. A plain store to UNMAPPED memory does reach the guest as an
+        // exception, but with the read/write flag (ExceptionInformation[0]) wrongly reporting a
+        // read. Not fixed here since a safe fix needs a classification-only check independent of
+        // this decode table (which is unsafe to broaden, per the hang above) and that hasn't been
+        // implemented/verified yet.
         struct decoded_arm64_store
         {
             uint32_t size = 0; // bytes: 1, 2, 4, 8
@@ -689,6 +699,14 @@ namespace sogen::fex
 
         void install_fault_signal_handlers(fex_x86_64_emulator& emulator)
         {
+            // Fault routing is process-global (one sigaction handler set, one active-instance
+            // pointer). A second live instance would silently receive the first one's faults, so
+            // refuse it outright - reachable e.g. via the Python bindings constructing two emulators.
+            if (g_active_emulator != nullptr)
+            {
+                throw std::runtime_error("Only one FEX emulator instance can be active per process");
+            }
+
             g_active_emulator = &emulator;
 
             // A dedicated alternate signal stack (SA_ONSTACK), so a second, different signal
@@ -1030,6 +1048,21 @@ namespace sogen::fex
             }
 
             // Release everything we mmap'd into the (host == guest) address space.
+#ifdef __APPLE__
+            // All host mappings this backend owns are tracked as 16KB host pages (see
+            // mapped_host_pages_apple_), including PROT_NONE reservation claims that no regions_
+            // entry covers; map_host_memory aliases (owned=false) are never in this set. Darwin's
+            // munmap also requires host-page alignment, which regions_ entries don't guarantee.
+            for (const auto host_page : this->mapped_host_pages_apple_)
+            {
+                ::munmap(reinterpret_cast<void*>(host_page), host_page_size_apple);
+            }
+
+            if (g_active_emulator == this)
+            {
+                g_active_emulator = nullptr;
+            }
+#else
             for (const auto& [address, region] : this->regions_)
             {
                 if (region.owned)
@@ -1037,6 +1070,7 @@ namespace sogen::fex
                     ::munmap(reinterpret_cast<void*>(address), region.size);
                 }
             }
+#endif
 
             // Per-logical-thread call-ret buffers (see ensure_callret_buffer) live in host allocator
             // space, not regions_, and are never freed as individual guest threads exit - release them
@@ -1434,13 +1468,14 @@ namespace sogen::fex
             // section's raw file bytes, before/regardless of the section's final protection). Unlike
             // Unicorn's uc_mem_write, which operates on emulated memory with no real host enforcement,
             // FEX's guest-VA==host-VA model is backed by actual host mprotect state, so such a write
-            // needs a temporary permission bump around the memcpy.
-            const memory_permission declared = this->permission_covering(address);
-            const bool needs_temporary_write = (declared & memory_permission::write) == memory_permission::none;
+            // needs a temporary permission bump around the memcpy. Every page of the range must be
+            // checked, not just the first: a write straddling into a read-only region would otherwise
+            // fault mid-memmove on the host instead of taking the bump.
+            const bool needs_temporary_write = !this->range_is_writable(address, size);
 
             if (needs_temporary_write)
             {
-                this->set_temporary_write_access(address, size, declared, true);
+                this->set_temporary_write_access(address, size, true);
             }
 
             // memmove, not memcpy: see try_read_memory - the source may overlap the guest destination.
@@ -1448,7 +1483,7 @@ namespace sogen::fex
 
             if (needs_temporary_write)
             {
-                this->set_temporary_write_access(address, size, declared, false);
+                this->set_temporary_write_access(address, size, false);
             }
 
             // Writing to a mapped region may overwrite already-translated code; drop FEX's cache for it.
@@ -1771,6 +1806,24 @@ namespace sogen::fex
                 this->mapped_host_pages_apple_.insert(host_page);
             }
         }
+
+        void release_guest_address_range(uint64_t address, size_t size) override
+        {
+            // The caller guarantees [address, address + size) contains no reserved guest ranges (see
+            // memory_interface), so every host page still mapped wholly inside it is a stale
+            // reservation claim whose guest range has been released - hand it back to the OS.
+            // Boundary pages straddling the range's edges are kept: their outside part may belong to
+            // a neighboring, still-live reservation.
+            const uint64_t start = host_page_align_up_apple(address);
+            const uint64_t end = host_page_align_down_apple(address + size);
+
+            auto it = this->mapped_host_pages_apple_.lower_bound(start);
+            while (it != this->mapped_host_pages_apple_.end() && *it + host_page_size_apple <= end)
+            {
+                ::munmap(reinterpret_cast<void*>(*it), host_page_size_apple);
+                it = this->mapped_host_pages_apple_.erase(it);
+            }
+        }
 #endif
 
         void map_host_memory(uint64_t address, size_t size, void* host_pointer, memory_permission permissions) override
@@ -1893,40 +1946,52 @@ namespace sogen::fex
 
         // --[ region bookkeeping ]-------------------------------------------------------------------
 
-        // Returns the declared permission of the region containing `address` (memory_permission::none
-        // if it isn't covered - callers should already have checked is_range_mapped).
-        memory_permission permission_covering(uint64_t address) const
+        // True if every byte of [address, address+size) lies in a region declared writable - the
+        // range-wide counterpart of is_range_mapped's walk (callers should already have checked
+        // is_range_mapped).
+        bool range_is_writable(uint64_t address, size_t size) const
         {
-            auto it = this->regions_.upper_bound(address);
-            if (it == this->regions_.begin())
+            uint64_t cursor = address;
+            const uint64_t end = address + size;
+
+            while (cursor < end)
             {
-                return memory_permission::none;
+                auto it = this->regions_.upper_bound(cursor);
+                if (it == this->regions_.begin())
+                {
+                    return false;
+                }
+                --it;
+
+                const uint64_t region_end = it->first + it->second.size;
+                if (cursor < it->first || cursor >= region_end ||
+                    (it->second.permissions & memory_permission::write) == memory_permission::none)
+                {
+                    return false;
+                }
+                cursor = region_end;
             }
-            --it;
-            const uint64_t region_end = it->first + it->second.size;
-            if (address < it->first || address >= region_end)
-            {
-                return memory_permission::none;
-            }
-            return it->second.permissions;
+
+            return true;
         }
 
         // Temporarily grants write access to [address, address+size) for a loader-privileged write
         // (sogen itself writing guest memory it declared read-only, e.g. a PE section's initial file
-        // content before its final permission is locked in) and reverts to the declared permission
+        // content before its final permission is locked in) and reverts to the declared permissions
         // afterwards. Unlike guest code, which can't write here at all, this path needs one because
         // FEX/KVM enforce the declared permission via real host protection - unlike Unicorn, whose
         // uc_mem_write operates on its own emulated memory independent of any host mprotect state.
-        void set_temporary_write_access(uint64_t address, size_t size, memory_permission declared, bool enable)
+        void set_temporary_write_access(uint64_t address, size_t size, bool enable)
         {
 #ifdef __APPLE__
-            (void)declared; // Apple restores via sync_host_page_apple, which re-derives it from the shadow table.
             const uint64_t start = host_page_align_down_apple(address);
             const uint64_t end = host_page_align_up_apple(address + size);
             for (uint64_t host_page = start; host_page < end; host_page += host_page_size_apple)
             {
                 if (!enable)
                 {
+                    // Restores via sync_host_page_apple, which re-derives the declared permissions
+                    // from the shadow table.
                     this->sync_host_page_apple(host_page);
                     continue;
                 }
@@ -1943,15 +2008,34 @@ namespace sogen::fex
                 ::mprotect(reinterpret_cast<void*>(host_page), host_page_size_apple, to_prot_apple(effective | memory_permission::write));
             }
 #else
-            const uint64_t start = address & ~(page_size - 1);
-            const uint64_t end = (address + size + page_size - 1) & ~(page_size - 1);
-            const memory_permission perm = enable ? (declared | memory_permission::write) : declared;
-            ::mprotect(reinterpret_cast<void*>(start), end - start, to_prot(perm));
+            // The range can span several regions_ entries with different declared permissions, so
+            // both the bump and the restore work per intersecting entry.
+            const uint64_t end = address + size;
+
+            auto it = this->regions_.upper_bound(address);
+            if (it != this->regions_.begin())
+            {
+                --it;
+            }
+
+            for (; it != this->regions_.end() && it->first < end; ++it)
+            {
+                const uint64_t region_end = it->first + it->second.size;
+                if (region_end <= address)
+                {
+                    continue;
+                }
+
+                const uint64_t sub_start = std::max(it->first, address & ~(page_size - 1));
+                const uint64_t sub_end = std::min(region_end, (end + page_size - 1) & ~(page_size - 1));
+                const memory_permission perm = enable ? (it->second.permissions | memory_permission::write) : it->second.permissions;
+                ::mprotect(reinterpret_cast<void*>(sub_start), sub_end - sub_start, to_prot(perm));
+            }
 #endif
         }
 
         // Removes every regions_ entry intersecting [address, address+size) so the map stays
-        // non-overlapping (the invariant is_range_mapped/permission_covering rely on). The guest
+        // non-overlapping (the invariant is_range_mapped/range_is_writable rely on). The guest
         // memory manager tracks memory at a coarser granularity than this backend: it commits a
         // reserved region in gap-filling sub-ranges (each a separate map_memory here, so regions_
         // can hold several entries tiling one of its committed regions), but later decommits/releases
@@ -2145,8 +2229,19 @@ namespace sogen::fex
             {
                 if (currently_mapped)
                 {
-                    ::munmap(host_ptr, host_page_size_apple);
-                    this->mapped_host_pages_apple_.erase(host_page_addr);
+                    // The guest range covering this host page may merely be decommitted while still
+                    // MEM_RESERVE'd, so the page must stay claimed at the host level - munmapping it
+                    // would let a foreign host allocation land here and be clobbered by a later
+                    // recommit's MAP_FIXED. Replacing the mapping in place (instead of mprotect'ing
+                    // it) discards the old contents, so a later recommit sees zeroed pages as
+                    // MEM_COMMIT requires. The claim is only dropped by release_guest_address_range
+                    // once the guest range is genuinely released.
+                    void* result =
+                        ::mmap(host_ptr, host_page_size_apple, PROT_NONE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+                    if (result != host_ptr)
+                    {
+                        throw std::runtime_error("FEX backend failed to re-reserve decommitted guest memory");
+                    }
                 }
                 return;
             }
@@ -3239,8 +3334,9 @@ namespace sogen::fex
             // timer thread). FEXCore's JIT emits a `str zr, [InterruptFaultPage]` at every translated
             // block's entry when Config.NeedsPendingInterruptFaultCheck is set (see
             // initialize_context's CONFIG_GDBSERVER comment) - protecting that page makes the next
-            // block entry fault, landing in handle_fault_signal, which sees stop_requested_ and
-            // redirects into FEXCore's own ThreadStopHandlerAddress instead of resuming.
+            // block entry fault, landing in handle_fault_signal, which redirects any fault on
+            // InterruptFaultPage into FEXCore's own ThreadStopHandlerAddress instead of resuming
+            // (it does not consult stop_requested_ for that).
             if (this->thread_ == nullptr)
             {
                 return;

@@ -112,8 +112,7 @@ namespace sogen
         bool host_window_is_free(uint64_t address, size_t size) const;
 
         // Like reserve_host_memory_ranges, but first releases every previously-tracked range before
-        // re-querying the backend - needed only when the backend's answer can genuinely change (e.g.
-        // a JIT backend learning a process's bitness, see module_manager::map_main_modules). Not
+        // re-querying the backend - needed only when the backend's answer can genuinely change. Not
         // safe to call from a hot path: doubles the syscall count of a routine re-scan for no
         // benefit, and momentarily un-reserves everything, widening a real race window against
         // anything else in the process mapping host memory concurrently.
@@ -213,9 +212,8 @@ namespace sogen
         std::atomic<std::uint64_t> layout_version_{0};
         std::uint64_t default_allocation_address_{0x100000000ULL};
         bool dep_enabled_{true};
-        // Addresses reserved by the last reserve_host_memory_ranges() call, so a later call (e.g.
-        // once a process's bitness becomes known) can release the previous set before asking the
-        // backend for a fresh one - see reserve_host_memory_ranges's doc comment.
+        // Addresses reserved by reserve_host_memory_ranges() so far, so reset_host_memory_ranges can
+        // release the previous set before asking the backend for a fresh one.
         std::vector<uint64_t> host_reserved_addresses_{};
 
         void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) final;
@@ -234,6 +232,10 @@ namespace sogen
         // back into reserve_host_memory_ranges.
         bool allocate_memory_raw(uint64_t address, size_t size, nt_memory_permission permissions, bool reserve_only,
                                  memory_region_kind kind);
+
+        void reserve_host_range_gaps(uint64_t address, size_t size);
+        void carve_host_reserved_hole(uint64_t address, size_t size);
+        void release_host_claims(uint64_t released_end);
     };
 
     namespace memory_region_policy
