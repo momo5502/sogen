@@ -416,10 +416,25 @@ namespace sogen
             {
                 constexpr int64_t default_period = 100000; // 10 ms
                 constexpr int64_t minimum_period = 30000;  // 3 ms
-                writer.write_ndr_pointer(true);            // defaultPeriod referent
-                writer.write_ndr_pointer(true);            // minimumPeriod referent
-                writer.write<int64_t>(default_period);
-                writer.write<int64_t>(minimum_period);
+
+                // Two [in,out,unique] hyper* out-params. Classic NDR (32-bit) flushes each top-level pointer's
+                // pointee inline, right after its referent id (referent, then 8-aligned hyper); NDR64 (64-bit)
+                // marshals all referent ids first and defers the pointees. Emit whichever the guest's transfer
+                // syntax expects, or the client rejects the reply with E_INVALIDARG.
+                if (writer.pointer_size() == utils::aligned_binary_writer::pointer_size_32)
+                {
+                    writer.write_ndr_pointer(true); // defaultPeriod referent
+                    writer.write<int64_t>(default_period);
+                    writer.write_ndr_pointer(true); // minimumPeriod referent
+                    writer.write<int64_t>(minimum_period);
+                }
+                else
+                {
+                    writer.write_ndr_pointer(true); // defaultPeriod referent
+                    writer.write_ndr_pointer(true); // minimumPeriod referent
+                    writer.write<int64_t>(default_period);
+                    writer.write<int64_t>(minimum_period);
+                }
                 writer.align_to(sizeof(uint32_t));
                 writer.write(k_hr_ok);
                 return STATUS_SUCCESS;
