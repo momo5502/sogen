@@ -30,6 +30,7 @@ namespace sogen
         constexpr uint32_t k_audio_opnum_get_audio_session = 6;     // {D574D111} AudioServerGetAudioSession
         constexpr uint32_t k_audio_opnum_create_stream = 7;         // {D574D111} CreateRemoteStream
         constexpr uint32_t k_audio_opnum_get_session_state = 27;    // {D574D111} AudioSessionGetState
+        constexpr uint32_t k_audio_opnum_destroy_session = 55;      // {D574D111} AudioSessionDestroy
         constexpr uint32_t k_audio_opnum_destroy_stream = 13;       // {D574D111} AudioServerDestroyStream
         constexpr uint32_t k_audio_opnum_start_stream = 8;          // {D574D111} StartStream (IAudioClient::Start)
         constexpr uint32_t k_audio_opnum_stop_stream = 9;           // {D574D111} StopStream (IAudioClient::Stop)
@@ -321,6 +322,8 @@ namespace sogen
                         return handle_get_audio_session(writer);
                     case k_audio_opnum_get_session_state:
                         return handle_get_session_state(writer);
+                    case k_audio_opnum_destroy_session:
+                        return handle_destroy_session(writer);
                     case k_audio_opnum_create_stream:
                         return handle_create_stream(win_emu, c, writer, reply_handles);
                     case k_audio_opnum_start_stream:
@@ -615,6 +618,19 @@ namespace sogen
                 writer.write<uint32_t>(0); // context handle attributes
                 writer.write(k_session_context_uuid.data(), k_session_context_uuid.size(), 1);
                 writer.write<uint16_t>(0); // [out] AudioSessionState = AudioSessionStateInactive
+                writer.align_to(sizeof(uint32_t));
+                writer.write(k_hr_ok); // return HRESULT
+                return STATUS_SUCCESS;
+            }
+
+            // {D574D111} opnum 55: AudioSessionDestroy([in, out] session ctx). The 32-bit DirectSound session
+            // setup releases the session control it fetched via GetAudioSession/GetSessionState; leaving this
+            // opnum unimplemented returns STATUS_NOT_SUPPORTED (-> HRESULT_FROM_WIN32 NOT_SUPPORTED) and aborts
+            // Initialize. Marshal the [in,out] context handle back and report success.
+            static NTSTATUS handle_destroy_session(utils::aligned_binary_writer& writer)
+            {
+                writer.write<uint32_t>(0); // context handle attributes
+                writer.write(k_session_context_uuid.data(), k_session_context_uuid.size(), 1);
                 writer.align_to(sizeof(uint32_t));
                 writer.write(k_hr_ok); // return HRESULT
                 return STATUS_SUCCESS;

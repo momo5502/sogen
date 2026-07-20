@@ -151,21 +151,28 @@ namespace sogen
                 return; // caller did not reserve space for a handle attribute
             }
 
+            // The ALPC attribute structs preceding the HANDLE attribute embed pointers/SIZE_T, so their sizes
+            // (and the HANDLE attribute's own field offsets) differ between a native 64-bit receiver and a
+            // 32-bit WoW64 one. Placing the attribute at 64-bit offsets for a WoW64 client makes rpcrt4 read the
+            // handle count/handle from the wrong place, aborting the import (observed as HRESULT_FROM_WIN32
+            // FILE_NOT_FOUND -> AUDCLNT_E_DEVICE_INVALIDATED). Size each preceding attribute per guest bitness.
+            const bool wow64 = c.proc.is_wow64_process;
+            const uint64_t security_size = wow64 ? 0x0C : 0x20;
+            const uint64_t view_size = wow64 ? 0x10 : 0x20;
+            const uint64_t context_size = wow64 ? 0x14 : 0x20;
+
             uint64_t offset = sizeof(ALPC_MESSAGE_ATTRIBUTES);
             if (header.AllocatedAttributes & ALPC_MESSAGE_SECURITY_ATTRIBUTE)
             {
-                offset += 0x20;
+                offset += security_size;
             }
             if (header.AllocatedAttributes & ALPC_MESSAGE_VIEW_ATTRIBUTE)
             {
-                offset += 0x20;
+                offset += view_size;
             }
             if (header.AllocatedAttributes & ALPC_MESSAGE_CONTEXT_ATTRIBUTE)
             {
-                // ALPC_CONTEXT_ATTR is {PortContext; MessageContext; Sequence; MessageId; CallbackId} = 0x1c,
-                // padded to 0x20. rpcrt4's handle-import offset calc (rpcrt4!0x54180) uses 0x20 here, so the
-                // HANDLE attribute lands at header+VIEW+0x20; using 0x18 would mis-place it by 8 bytes.
-                offset += 0x20;
+                offset += context_size;
             }
 
             // On a real ALPC receive the KERNEL (not the caller) fills the whole handle attribute: a non-zero
@@ -177,14 +184,19 @@ namespace sogen
             constexpr ULONG alpc_received_handle_flags = 0x001243fb & ~0x00040000u; // clear ALPC_HANDLEFLG_INDIRECT
             const auto& h = handles.front();
             const auto attr_base = attributes.value() + offset;
+
+            // ALPC_HANDLE_ATTR = {ULONG Flags; HANDLE Handle; ULONG ObjectType; ACCESS_MASK DesiredAccess}. The
+            // HANDLE (and thus the following fields) is pointer-aligned, so Handle sits at +8 for a 64-bit
+            // receiver but +4 for WoW64. rpcrt4 reads the field at Handle-offset+8 as the delivered HANDLE COUNT
+            // (it fetches each handle via NtAlpcQueryInformationMessage, not from the Handle field itself).
+            const uint64_t handle_off = wow64 ? 4 : 8;
+            const uint64_t count_off = handle_off + (wow64 ? 4 : 8); // ObjectType slot, reused as handle count
+            const uint64_t access_off = count_off + 4;
             emulator_object<ULONG>{c.emu, attr_base + 0}.write(alpc_received_handle_flags);
-            emulator_object<EmulatorTraits<Emu64>::HANDLE>{c.emu, attr_base + 8}.write(
+            emulator_object<EmulatorTraits<Emu64>::HANDLE>{c.emu, attr_base + handle_off}.write(
                 static_cast<EmulatorTraits<Emu64>::HANDLE>(h.handle));
-            // rpcrt4's handle import (rpcrt4!0x919e0) reads attr+0x10 as the HANDLE COUNT and then fetches each
-            // handle via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation) - it does NOT read the
-            // Handle field above. So this field must be the number of delivered handles, not an object type.
-            emulator_object<ULONG>{c.emu, attr_base + 0x10}.write(static_cast<ULONG>(handles.size()));
-            emulator_object<ULONG>{c.emu, attr_base + 0x14}.write(h.desired_access);
+            emulator_object<ULONG>{c.emu, attr_base + count_off}.write(static_cast<ULONG>(handles.size()));
+            emulator_object<ULONG>{c.emu, attr_base + access_off}.write(h.desired_access);
 
             // Report exactly the attributes the reply carries (CONTEXT|HANDLE), matching the real kernel, rather
             // than OR-ing HANDLE onto whatever stale ValidAttributes the caller's buffer happened to contain.
