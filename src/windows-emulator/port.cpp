@@ -41,6 +41,33 @@ namespace sogen
             }
         };
 
+        // The per-stream WASAPI CrossProcessEndpoint control channel. Event-driven (AUDCLNT_STREAMFLAGS_
+        // EVENTCALLBACK) DirectSound clients connect a dedicated ALPC port and send small fixed command
+        // messages here (SetEventHandle, opcode in the first data dword, the event handle as a client->server
+        // ALPC handle attribute), then read an NTSTATUS the server writes at data offset 4. The engine side is
+        // this emulator (the render_stream drains the shared buffer directly, so we do not need the event), so
+        // acknowledge every command with STATUS_SUCCESS. Without this the send lands on a dummy port
+        // (STATUS_NOT_SUPPORTED -> AUDCLNT NOT_SUPPORTED) and Initialize fails.
+        struct endpoint_control_port : port
+        {
+            lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) override
+            {
+                std::vector<uint8_t> payload(c.send_buffer_length, 0);
+                if (c.send_buffer && c.send_buffer_length)
+                {
+                    win_emu.emu().read_memory(c.send_buffer, payload.data(), payload.size());
+                }
+
+                constexpr size_t status_offset = 4; // command status the client reads back
+                if (payload.size() >= status_offset + sizeof(uint32_t))
+                {
+                    std::memset(payload.data() + status_offset, 0, sizeof(uint32_t));
+                }
+
+                return {STATUS_SUCCESS, std::move(payload)};
+            }
+        };
+
         // Minimal RPC stub: completes the LRPC bind and answers every call with an S_OK return and no [out]
         // data. Enough for fire-and-forget power/notification registrations (e.g. \RPC Control\umpo) that the
         // audio stack performs during stream setup and only checks for success.
@@ -101,6 +128,12 @@ namespace sogen
             // User-Mode Power Orchestrator. The audio stack registers a power request here while starting a
             // stream; without a responder the render worker retries and then stalls.
             return std::make_unique<stub_rpc_port>();
+        }
+
+        if (port.empty())
+        {
+            // Unnamed ALPC ports in the audio stack are the per-stream WASAPI endpoint control channel.
+            return std::make_unique<endpoint_control_port>();
         }
 
         return std::make_unique<dummy_port>(std::u16string(port));
