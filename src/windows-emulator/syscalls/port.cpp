@@ -132,6 +132,14 @@ namespace sogen
                                             connection_message, buffer_length, out_message_attributes, in_message_attributes, timeout);
         }
 
+        NTSTATUS handle_NtAlpcDisconnectPort(const syscall_context& c, const handle port_handle, const ULONG /*flags*/)
+        {
+            // Tear down the ALPC connection (e.g. the audio stack closing a per-stream endpoint). The handle
+            // itself is released separately via NtClose; just drop our port state if we track it.
+            c.proc.ports.erase(port_handle);
+            return STATUS_SUCCESS;
+        }
+
         // Deliver reply handles (e.g. the shared render section in an audio Initialize reply) to the receiver
         // via an ALPC HANDLE message attribute. The attribute buffer is an 8-byte {Allocated; Valid} header
         // followed by the per-attribute structs laid out highest-bit-first for the attributes the caller
