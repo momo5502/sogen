@@ -155,6 +155,12 @@ namespace sogen
         // latency to roughly this plus that buffer.
         constexpr uint64_t k_host_queue_cushion_ms = 60;
         constexpr uint64_t k_host_queue_cushion = k_sample_rate * k_block_align * k_host_queue_cushion_ms / 1000;
+
+        // The engine period reported by handle_get_device_period, and the same span expressed in bytes. An
+        // event-driven client is woken once per period consumed, so this also paces how often we signal it.
+        constexpr int64_t k_device_period_hns = 100000; // 10 ms
+        constexpr int64_t k_device_minimum_period_hns = 30000;
+        constexpr auto k_device_period = std::chrono::microseconds{k_device_period_hns / 10};
         constexpr audio_format k_stream_format{k_sample_rate, 2, 32, true};
 
         // Emulates the audio endpoint's hardware DMA. The render section handed to the guest is backed by a
@@ -236,6 +242,7 @@ namespace sogen
                 bool tried_start = false;
                 bool has_device = false;
                 std::chrono::steady_clock::time_point anchor{};
+                std::chrono::steady_clock::time_point last_signal{};
 
                 while (!this->stop_)
                 {
@@ -253,6 +260,8 @@ namespace sogen
                         tried_start = true;
                         anchor = std::chrono::steady_clock::now();
                     }
+
+                    uint64_t play{};
 
                     if (has_device)
                     {
@@ -283,22 +292,33 @@ namespace sogen
                             played =
                                 static_cast<uint64_t>(k_sample_rate) * k_block_align * static_cast<uint64_t>(elapsed_ns) / k_ns_per_second;
                         }
-                        this->write_play_cursor(std::min(played, write));
+                        play = std::min(played, write);
                     }
                     else
                     {
                         // No host audio device (e.g. headless / CI): keep the play cursor level with the write
                         // cursor so the guest's render loop never blocks waiting for a buffer that nothing drains.
-                        this->write_play_cursor(write);
+                        play = write;
                     }
 
+                    this->write_play_cursor(play);
+
                     // Wake an EVENTCALLBACK client: it fills one buffer, then waits on its render event for the
-                    // engine to report a consumed period before writing more. NtSetEvent just sets this flag (the
-                    // scheduler polls it), so signaling it from this thread is safe; the pointer is stable while
+                    // engine to report an elapsed period before writing more. Pace that to one wake per period,
+                    // like a real engine -- firing on every poll tick only wakes the client to find no new space,
+                    // and each wake costs a guest thread dispatch. Drive it from the clock rather than from how far
+                    // the play cursor moved: the cursor never passes the write cursor, so a client that wakes
+                    // without writing would stall it and never be woken again. NtSetEvent only sets this flag (the
+                    // scheduler polls it), so signaling from this thread is safe, and the pointer stays valid while
                     // the stream lives (see process_context::audio_render_event).
-                    if (auto* render_event = this->win_emu_.process.audio_render_event)
+                    const auto now = std::chrono::steady_clock::now();
+                    if (now - last_signal >= k_device_period)
                     {
-                        render_event->signaled = true;
+                        last_signal = now;
+                        if (auto* render_event = this->win_emu_.process.audio_render_event)
+                        {
+                            render_event->signaled = true;
+                        }
                     }
 
                     submitted = write;
@@ -443,8 +463,8 @@ namespace sogen
             //   standard shared-mode engine periods (10 ms default, 3 ms minimum).
             static NTSTATUS handle_get_device_period(utils::aligned_binary_writer& writer)
             {
-                constexpr int64_t default_period = 100000; // 10 ms
-                constexpr int64_t minimum_period = 30000;  // 3 ms
+                constexpr int64_t default_period = k_device_period_hns;
+                constexpr int64_t minimum_period = k_device_minimum_period_hns;
 
                 // Two [in,out,unique] hyper* out-params. Classic NDR (32-bit) flushes each top-level pointer's
                 // pointee inline, right after its referent id (referent, then 8-aligned hyper); NDR64 (64-bit)
