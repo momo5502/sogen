@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace sogen
 {
@@ -31,6 +32,14 @@ namespace sogen
         // Enqueue interleaved PCM in the format last passed to start(). The host plays it back at the device
         // rate, buffering as needed.
         virtual void submit(const void* data, size_t size) = 0;
+
+        // Bytes handed to submit() that the device has not played yet, when the backend can report it. Callers
+        // use it to derive how much audio actually reached the speakers instead of estimating from wall clock,
+        // which lets them apply real backpressure and keep latency bounded. std::nullopt = not supported.
+        virtual std::optional<uint64_t> queued_bytes() const
+        {
+            return std::nullopt;
+        }
 
         virtual void stop() = 0;
     };

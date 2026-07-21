@@ -149,6 +149,12 @@ namespace sogen
         constexpr uint32_t k_block_align = 8; // channels * bytes-per-sample
         constexpr uint64_t k_hns_per_second = 10000000;
         constexpr uint64_t k_default_buffer_duration = k_hns_per_second; // 1 s
+
+        // How far the guest may run ahead of what the host device has actually played. It keeps the sink supplied
+        // (the guest's own buffer is often only ~20 ms, far too thin a cushion on its own) while bounding total
+        // latency to roughly this plus that buffer.
+        constexpr uint64_t k_host_queue_cushion_ms = 60;
+        constexpr uint64_t k_host_queue_cushion = k_sample_rate * k_block_align * k_host_queue_cushion_ms / 1000;
         constexpr audio_format k_stream_format{k_sample_rate, 2, 32, true};
 
         // Emulates the audio endpoint's hardware DMA. The render section handed to the guest is backed by a
@@ -254,18 +260,29 @@ namespace sogen
                         {
                             const uint64_t ring_offset = pos % this->buffer_bytes_;
                             const uint64_t chunk = std::min<uint64_t>(write - pos, this->buffer_bytes_ - ring_offset);
-                            this->win_emu_.audio().submit(this->host_ptr_ + k_render_data_offset + ring_offset,
-                                                          static_cast<size_t>(chunk));
+                            this->win_emu_.audio().submit(this->host_ptr_ + k_render_data_offset + ring_offset, static_cast<size_t>(chunk));
                             pos += chunk;
                         }
 
-                        // Advance the play cursor at the real device rate so the guest sees genuine backpressure:
-                        // it can run ahead by at most one buffer, then blocks until playback catches up. Capped at
-                        // the write cursor -- the endpoint can never play past what the guest produced.
-                        const auto elapsed_ns =
-                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - anchor).count();
-                        const auto played =
-                            static_cast<uint64_t>(k_sample_rate) * k_block_align * static_cast<uint64_t>(elapsed_ns) / k_ns_per_second;
+                        // Advance the play cursor so the guest sees genuine backpressure. Prefer deriving it from
+                        // what the device actually played (everything submitted minus what is still queued) plus a
+                        // fixed cushion: a wall-clock estimate drifts ahead of the device clock, so the host queue
+                        // grows without bound and latency creeps up to seconds the longer playback runs. The
+                        // cushion keeps the sink from starving, since the guest's own buffer is far too small to
+                        // serve as one. Fall back to the clock when the sink cannot report its queue.
+                        uint64_t played{};
+                        if (const auto queued = this->win_emu_.audio().queued_bytes())
+                        {
+                            const auto consumed = write > *queued ? write - *queued : 0;
+                            played = consumed + k_host_queue_cushion;
+                        }
+                        else
+                        {
+                            const auto elapsed_ns =
+                                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - anchor).count();
+                            played =
+                                static_cast<uint64_t>(k_sample_rate) * k_block_align * static_cast<uint64_t>(elapsed_ns) / k_ns_per_second;
+                        }
                         this->write_play_cursor(std::min(played, write));
                     }
                     else
@@ -273,6 +290,15 @@ namespace sogen
                         // No host audio device (e.g. headless / CI): keep the play cursor level with the write
                         // cursor so the guest's render loop never blocks waiting for a buffer that nothing drains.
                         this->write_play_cursor(write);
+                    }
+
+                    // Wake an EVENTCALLBACK client: it fills one buffer, then waits on its render event for the
+                    // engine to report a consumed period before writing more. NtSetEvent just sets this flag (the
+                    // scheduler polls it), so signaling it from this thread is safe; the pointer is stable while
+                    // the stream lives (see process_context::audio_render_event).
+                    if (auto* render_event = this->win_emu_.process.audio_render_event)
+                    {
+                        render_event->signaled = true;
                     }
 
                     submitted = write;
@@ -541,7 +567,7 @@ namespace sogen
                 // thread (see render_stream). The guest maps this same memory as the shared audio buffer, so the
                 // drain thread reads the committed PCM and advances the play cursor without any CPU-backend hooks.
                 this->render_stream_ = std::make_unique<render_stream>(win_emu, buffer_bytes, render_section_size,
-                                                                      render_control_header.data(), render_control_header.size());
+                                                                       render_control_header.data(), render_control_header.size());
                 const auto backing = this->render_stream_->guest_address();
                 if (backing == 0)
                 {

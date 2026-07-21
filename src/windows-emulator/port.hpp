@@ -156,6 +156,7 @@ namespace sogen
         emulator_object<PORT_MESSAGE64> send_message;
         emulator_object<PORT_MESSAGE64> receive_message;
         EmulatorTraits<Emu64>::SIZE_T receive_buffer_length{};
+        uint64_t send_handle{}; // handle delivered by a client->server ALPC HANDLE attribute (0 = none)
 
         lpc_message_context(memory_interface& emu)
             : send_message(emu),
@@ -189,6 +190,7 @@ namespace sogen
         ULONG send_buffer_length{};
         emulator_pointer recv_buffer{};
         ULONG recv_buffer_length{};
+        uint64_t send_handle{}; // handle delivered by a client->server ALPC HANDLE attribute (0 = none)
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -196,6 +198,7 @@ namespace sogen
             buffer.write(send_buffer_length);
             buffer.write(recv_buffer);
             buffer.write(recv_buffer_length);
+            buffer.write(send_handle);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -204,6 +207,7 @@ namespace sogen
             buffer.read(send_buffer_length);
             buffer.read(recv_buffer);
             buffer.read(recv_buffer_length);
+            buffer.read(send_handle);
         }
     };
 

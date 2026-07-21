@@ -85,6 +85,17 @@ namespace sogen
                 }
             }
 
+            std::optional<uint64_t> queued_bytes() const override
+            {
+                if (!this->stream_)
+                {
+                    return std::nullopt;
+                }
+
+                const auto queued = SDL_GetAudioStreamQueued(this->stream_);
+                return queued < 0 ? std::nullopt : std::optional{static_cast<uint64_t>(queued)};
+            }
+
             void stop() override
             {
                 if (this->stream_)

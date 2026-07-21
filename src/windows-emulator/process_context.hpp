@@ -553,6 +553,13 @@ namespace sogen
         // rather than reading the handle attribute directly. Transient (valid only until the next reply).
         std::vector<alpc_reply_handle> pending_alpc_message_handles{};
 
+        // The guest event a WASAPI EVENTCALLBACK client registered via SetEventHandle on its render endpoint.
+        // The audio render thread signals it at the device rate so the client's render loop wakes and refills the
+        // shared buffer. Transient runtime state; std::map keeps the event node pointer stable, and the stream
+        // (and its render thread) is torn down before the client closes the event, so the pointer stays valid
+        // while it is signaled. Not serialized (re-established on the next SetEventHandle).
+        event* audio_render_event{nullptr};
+
         // Extended parameters from last NtMapViewOfSectionEx call
         // These can be used by other syscalls like NtAllocateVirtualMemoryEx
         uint64_t last_extended_params_numa_node{0};

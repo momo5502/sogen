@@ -52,6 +52,14 @@ namespace sogen
         {
             lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) override
             {
+                // SetEventHandle delivers the client's render event as a client->server ALPC handle attribute.
+                // Remember it so the audio render thread can signal it at the device rate (EVENTCALLBACK); without
+                // that wake the client writes one pre-roll buffer and then blocks forever waiting on the event.
+                if (c.send_handle)
+                {
+                    win_emu.process.audio_render_event = win_emu.process.events.get(c.send_handle);
+                }
+
                 std::vector<uint8_t> payload(c.send_buffer_length, 0);
                 if (c.send_buffer && c.send_buffer_length)
                 {
@@ -218,6 +226,7 @@ namespace sogen
         context.recv_buffer = c.receive_message ? c.receive_message.value() + header_size : 0;
         context.recv_buffer_length =
             c.receive_buffer_length >= header_size ? static_cast<ULONG>(c.receive_buffer_length - header_size) : data_length;
+        context.send_handle = c.send_handle;
 
         auto request_result = this->handle_request(win_emu, context);
         const auto payload_size = request_result.payload ? static_cast<ULONG>(request_result.payload->size()) : context.recv_buffer_length;
