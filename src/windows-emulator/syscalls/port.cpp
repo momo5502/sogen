@@ -132,6 +132,14 @@ namespace sogen
                                             connection_message, buffer_length, out_message_attributes, in_message_attributes, timeout);
         }
 
+        NTSTATUS handle_NtAlpcDisconnectPort(const syscall_context& c, const handle port_handle, const ULONG /*flags*/)
+        {
+            // Tear down the ALPC connection. The handle itself is released separately via NtClose; just drop our
+            // port state if we track it.
+            c.proc.ports.erase(port_handle);
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const handle port_handle, const ULONG /*flags*/,
                                                   const emulator_object<PORT_MESSAGE64> send_message,
                                                   const emulator_object<ALPC_MESSAGE_ATTRIBUTES>
