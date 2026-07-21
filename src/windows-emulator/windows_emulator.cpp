@@ -1331,6 +1331,15 @@ namespace sogen
 
                     if (!this->should_stop)
                     {
+                        // Under the kernel lock so this switch_thread/stop() pair can't straddle a vCPU's
+                        // own scheduling step: perform_thread_switch consumes switch_thread (exchange to
+                        // false) under the lock, and a preemption whose switch request lands before that
+                        // consume while its stop() only lands inside the next quantum surfaces there as a
+                        // stop with no pending switch - the exact shape of a fatal wind-down, tearing the
+                        // whole run off at a random parked rip. Serialized against the scheduler, the pair
+                        // lands either fully before the consume (plain early switch) or fully inside the
+                        // running quantum (ordinary preemption), never split across it.
+                        const std::scoped_lock kernel_lock(this->kernel_lock_);
                         for (uint32_t i = 0; i < this->vcpu_count_; ++i)
                         {
                             auto& v = this->vcpu(i);
