@@ -1126,9 +1126,26 @@ namespace sogen::fex
             {
                 this->context_->ExecuteThread(this->thread_);
 
-                if (!this->dispatch_pending_hook_if_any() || this->stop_requested_)
+                const bool hook_dispatched = this->dispatch_pending_hook_if_any();
+                const bool interrupt_page_unwind = std::exchange(this->interrupt_page_unwind_, false);
+
+                // An InterruptFaultPage unwind with no stop pending is the quantum timer racing this
+                // quantum's own entry: stop() sets stop_requested_ then protects the page, but a
+                // concurrently-entered start() has already cleared the flag and only then does the
+                // timer's mprotect land - past this quantum's re-arm above. The very first block-entry
+                // check then faults with nothing actually requested. Treating that as a real stop makes
+                // the caller (windows_emulator::vcpu_worker) read it as a fatal wind-down and tear the
+                // whole run off; re-arm and resume instead - the timer's pending switch_thread request is
+                // simply honored at the next genuine stop. Any OTHER hook-less clean return still
+                // terminates the loop as before.
+                if (this->stop_requested_ || (!hook_dispatched && !interrupt_page_unwind))
                 {
                     break;
+                }
+
+                if (interrupt_page_unwind)
+                {
+                    ::mprotect(this->thread_->InterruptFaultPage, sizeof(this->thread_->InterruptFaultPage), PROT_READ | PROT_WRITE);
                 }
             }
 #else
@@ -2795,6 +2812,7 @@ namespace sogen::fex
                         // reconstruction resume lands on the stale instruction; without the SRA spill it
                         // resumes with stale registers.
                         this->thread_->CurrentFrame->State.rip = this->context_->RestoreRIPFromHostPC(this->thread_, fault_pc);
+                        this->interrupt_page_unwind_ = true;
                         const auto& stop_cfg = this->signal_delegator_->GetConfig();
                         arm_thread_state64_set_pc_fptr(uctx->uc_mcontext->__ss,
                                                        reinterpret_cast<void*>(stop_cfg.ThreadStopHandlerAddressSpillSRA));
@@ -3362,6 +3380,10 @@ namespace sogen::fex
         // See pending_fault_kind's doc comment (declared earlier in this class, near
         // defer_hook_dispatch/dispatch_pending_hook_if_any).
         pending_fault_dispatch pending_fault_dispatch_{};
+        // Set by handle_fault_signal when it unwinds ExecuteThread through an InterruptFaultPage hit;
+        // consumed by start()'s loop to tell that unwind apart from any other clean return. No atomics:
+        // the signal handler runs on the same host thread whose start() consumes the flag.
+        bool interrupt_page_unwind_ = false;
 #endif
 
         std::map<uint64_t, mapped_region> regions_;
