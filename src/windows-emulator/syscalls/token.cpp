@@ -594,12 +594,7 @@ namespace sogen
                 return_length.write(required_size);
             }
 
-            if (buffer == 0)
-            {
-                return STATUS_INVALID_PARAMETER;
-            }
-
-            if (buffer_length < required_size)
+            if (buffer == 0 || buffer_length < required_size)
             {
                 return STATUS_BUFFER_TOO_SMALL;
             }

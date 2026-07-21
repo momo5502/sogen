@@ -77,6 +77,10 @@ namespace sogen
             {u"ConDrv\\Server"sv, create_dummy_device},
             // Generic
             {u"Console"sv, create_console_device},
+            // Multimedia Class Scheduler. avrt!AvSetMmThreadCharacteristics opens this to raise the audio
+            // render worker's scheduling priority; the emulator has no priority classes, so accepting the open
+            // and succeeding its ioctls is enough for the worker to proceed.
+            {u"MMCSS\\MmThread"sv, create_dummy_device},
             {u"Nsi"sv, create_network_store_interface},
             {u"MountPointManager"sv, create_mount_point_manager},
             {u"KsecDD"sv, create_security_support_provider},

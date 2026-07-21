@@ -560,6 +560,12 @@ namespace sogen
             window.processId = process_context::process_id;
         });
 
+        // Seed the shared foreground window with the desktop so the guest's client-side GetForegroundWindow
+        // never returns null before an app window activates (UI activation events later refine it).
+        this->user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) {
+            server_info.foregroundWindow = this->default_desktop_window_handle.bits; //
+        });
+
         const auto create_shell_window = [&](const std::u16string_view class_name, const std::u16string_view title, const int32_t x,
                                              const int32_t y, const int32_t width, const int32_t height) {
             auto [handle, shell_win] = this->windows.create(win_emu.memory);

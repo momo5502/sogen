@@ -514,7 +514,7 @@ namespace sogen
         handle_store<handle_types::event, event> events{};
         handle_store<handle_types::file, file> files{};
         utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
-        handle_store<handle_types::section, section> sections{};
+        handle_store<handle_types::section, section, 2> sections{};
         handle_store<handle_types::device, io_device_container> devices{};
         handle console_handle{};
         handle_store<handle_types::semaphore, semaphore> semaphores{};
