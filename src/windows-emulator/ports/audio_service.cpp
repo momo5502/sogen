@@ -573,9 +573,9 @@ namespace sogen
                 reply_handles.push_back(alpc_reply_handle{
                     .handle = section_handle.bits, .object_type = alpc_objtype_section, .desired_access = section_access});
 
-                // The 120-byte op7 [out] _Struct_4 wire, replayed BYTE-FOR-BYTE from a live capture
-                // (build/.../capture/alpc_reply_27_op7_len144.bin, NDR payload @ +0x18). Decompiled IDL
-                // (docs/audio-capture/audioclient_rpc_idl.txt, AudioServerCreateStream): GUID + nAvgBytesPerSec
+                // The 120-byte op7 [out] _Struct_4 wire, replayed BYTE-FOR-BYTE from a live capture (see
+                // tools/alpc_capture.py). Per audiosrv's decompiled IDL, AudioServerCreateStream returns a GUID
+                // + nAvgBytesPerSec
                 // + [system_handle(sh_file)] HANDLE (+0x18, null here) + i64 cookie (+0x20) + i64 (+0x28) +
                 // three default _Struct_5 unions + a _Struct_9 union whose selector (+0x54 = 1) picks the
                 // sh_section arm, and whose handle index (+0x58 = 1) references the delivered render section.
@@ -610,9 +610,9 @@ namespace sogen
 
             // {D574D111} opnum 6: AudioServerGetAudioSession([in] stream ctx, [out] session ctx). Right after
             // CreateRemoteStream the DirectSound client (unlike the WASAPI one) fetches the audio-session handle;
-            // an unimplemented reply here aborts Initialize (DestroyStream + E_FAIL). Per the decompiled IDL
-            // (docs/audio-capture/audioclient_rpc_idl.txt) the only [out] is the session context handle (a 4-byte
-            // attributes field + 16-byte UUID); the NDR64 return HRESULT follows immediately. No reserved tail.
+            // an unimplemented reply here aborts Initialize (DestroyStream + E_FAIL). Per audiosrv's decompiled
+            // IDL the only [out] is the session context handle (a 4-byte attributes field + 16-byte UUID); the
+            // NDR64 return HRESULT follows immediately. No reserved tail.
             static NTSTATUS handle_get_audio_session(utils::aligned_binary_writer& writer)
             {
                 writer.write<uint32_t>(0); // context handle attributes
