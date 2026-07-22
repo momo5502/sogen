@@ -40,7 +40,12 @@ namespace sogen
 
                 if (c.proc.etw_notification_event)
                 {
-                    return STATUS_UNSUCCESSFUL;
+                    // Several components each register an ETW notification event (dsound's TraceLogging does so
+                    // during DirectSoundCreate). The emulator tracks a single one and delivers no ETW
+                    // notifications, so accept later registrations instead of failing: returning
+                    // STATUS_UNSUCCESSFUL here makes dsound propagate ERROR_GEN_FAILURE (0x8007001F) out of
+                    // DirectSoundCreate, silencing any app whose ETW init ran first (e.g. Miles / MW3).
+                    return STATUS_SUCCESS;
                 }
 
                 const auto held_handle = c.proc.events.duplicate(event_handle);

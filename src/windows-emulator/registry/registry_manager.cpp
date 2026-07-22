@@ -244,6 +244,93 @@ namespace sogen
         this->add_path_mapping(machine / "SOFTWARE" / "Wow6432Node" / "Policies", machine / "SOFTWARE" / "Policies");
         this->add_path_mapping(machine / "SOFTWARE" / "Wow6432Node" / "RegisteredApplications",
                                machine / "SOFTWARE" / "RegisteredApplications");
+
+        this->alias_remote_audio_endpoints(machine);
+    }
+
+    // On a headless/server host the local Render/Capture endpoint folders are empty, while an RDP session
+    // populates RemoteRender/RemoteCapture with the redirected device. mmdevapi resolves the default endpoint
+    // by opening MMDevices\Audio\Render\{id} (or Capture\{id}), so alias each remote endpoint into the local
+    // folder it expects, making the RDP audio device usable as the default playback/recording endpoint.
+    void registry_manager::alias_remote_audio_endpoints(const std::filesystem::path& machine)
+    {
+        const auto audio = machine / "SOFTWARE" / "Microsoft" / "Windows" / "CurrentVersion" / "MMDevices" / "Audio";
+
+        const std::array<std::pair<const char*, const char*>, 2> folders = {{
+            {"Render", "RemoteRender"},
+            {"Capture", "RemoteCapture"},
+        }};
+
+        for (const auto& [local, remote] : folders)
+        {
+            const auto remote_key = this->get_key(utils::path_key{audio / remote});
+            if (!remote_key)
+            {
+                continue;
+            }
+
+            // RDP remote endpoints carry no DeviceState value; mmdevapi/audioses treat a missing or zero
+            // state as an invalidated device, so mark each aliased endpoint active.
+            for (size_t i = 0;; ++i)
+            {
+                const auto name = this->get_sub_key_name(*remote_key, i);
+                if (!name)
+                {
+                    break;
+                }
+
+                const auto endpoint_key = this->get_key(utils::path_key{audio / remote / std::string(*name)});
+                if (!endpoint_key)
+                {
+                    continue;
+                }
+
+                if (!this->get_value(*endpoint_key, "DeviceState"))
+                {
+                    constexpr uint32_t device_state_active = 1; // DEVICE_STATE_ACTIVE
+                    const auto* state_bytes = reinterpret_cast<const std::byte*>(&device_state_active);
+                    this->set_value(*endpoint_key, "DeviceState", 4 /* REG_DWORD */,
+                                    std::span<const std::byte>(state_bytes, sizeof(device_state_active)));
+                }
+
+                // mmdevapi's endpoint enumeration (IMMDeviceEnumerator::EnumAudioEndpoints) only exposes a
+                // device whose "Protocol" DWORD is 0 (or absent); RDP-redirected endpoints set a non-zero
+                // Protocol to flag themselves remote, which makes the enumeration - and therefore the legacy
+                // DirectSound device discovery built on top of it - skip them. Force it to 0 so the redirected
+                // endpoint is enumerated as a local device.
+                constexpr uint32_t protocol_local = 0;
+                const auto* protocol_bytes = reinterpret_cast<const std::byte*>(&protocol_local);
+                this->set_value(*endpoint_key, "Protocol", 4 /* REG_DWORD */,
+                                std::span<const std::byte>(protocol_bytes, sizeof(protocol_local)));
+            }
+
+            // Expose the remote endpoints under the local folder. mmdevapi/WASAPI resolves a device by
+            // opening Render\{id}, but DirectSound enumerates devices through the legacy waveOut/waveIn path
+            // (winmm/wdmaud), which ENUMERATES the subkeys of Render\ - a per-endpoint path mapping redirects
+            // lookups but is not enumerable, so the wave layer would see zero devices (-> DSERR_NODRIVER). A
+            // headless/RDP host has an empty local Render folder, so alias the whole folder (covers both
+            // lookups and enumeration); only if the host has real local endpoints do we fall back to
+            // per-endpoint lookup mappings so we don't shadow them.
+            const auto local_key = this->get_key(utils::path_key{audio / local});
+            const bool local_empty = !local_key || !this->get_sub_key_name(*local_key, 0).has_value();
+            if (local_empty)
+            {
+                this->add_path_mapping(audio / local, audio / remote);
+            }
+            else
+            {
+                for (size_t i = 0;; ++i)
+                {
+                    const auto name = this->get_sub_key_name(*remote_key, i);
+                    if (!name)
+                    {
+                        break;
+                    }
+
+                    this->add_path_mapping(audio / local / std::string(*name), audio / remote / std::string(*name));
+                }
+            }
+        }
     }
 
     utils::path_key registry_manager::normalize_path(utils::path_key path) const
