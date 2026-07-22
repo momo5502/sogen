@@ -378,7 +378,7 @@ namespace sogen
                     return 0;
                 }
 
-                if (base > std::numeric_limits<uint32_t>::max())
+                if (c.proc.is_wow64_process && base > std::numeric_limits<uint32_t>::max())
                 {
                     c.win_emu.memory.release_memory(base, 0);
                     return 0;

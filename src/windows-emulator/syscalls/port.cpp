@@ -134,8 +134,6 @@ namespace sogen
 
         NTSTATUS handle_NtAlpcDisconnectPort(const syscall_context& c, const handle port_handle, const ULONG /*flags*/)
         {
-            // Tear down the ALPC connection (e.g. the audio stack closing a per-stream endpoint). The handle
-            // itself is released separately via NtClose; just drop our port state if we track it.
             c.proc.ports.erase(port_handle);
             return STATUS_SUCCESS;
         }
