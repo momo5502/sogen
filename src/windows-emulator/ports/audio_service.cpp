@@ -347,6 +347,11 @@ namespace sogen
                     }
                 }
 
+                if (iface != k_iface_mmdevice_enum)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
                 switch (procedure_id)
                 {
                 case k_audio_opnum_mmdev_get_blob:
