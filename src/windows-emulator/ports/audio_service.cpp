@@ -21,19 +21,20 @@ namespace sogen
         constexpr std::array<uint8_t, 16> k_iface_audio_client = {0x11, 0xd1, 0x74, 0xd5, 0x26, 0x61, 0xd7, 0x49,
                                                                   0x9b, 0x86, 0x4d, 0xe6, 0xb6, 0x50, 0xd4, 0xfc};
 
-        constexpr uint32_t k_audio_opnum_mmdev_get_blob = 0;        // {923F85B3} [out] serialized blob, no [in]
-        constexpr uint32_t k_audio_opnum_get_default_endpoint = 25; // {923F85B3}
-        constexpr uint32_t k_audio_opnum_get_mix_format = 0;        // {D574D111}
-        constexpr uint32_t k_audio_opnum_is_format_supported = 1;   // {D574D111} AudioServerIsFormatSupported
-        constexpr uint32_t k_audio_opnum_get_device_period = 2;     // {D574D111} AudioServerGetDevicePeriod
-        constexpr uint32_t k_audio_opnum_open_stream = 4;           // {D574D111} (Initialize prep)
-        constexpr uint32_t k_audio_opnum_get_audio_session = 6;     // {D574D111} AudioServerGetAudioSession
-        constexpr uint32_t k_audio_opnum_create_stream = 7;         // {D574D111} CreateRemoteStream
-        constexpr uint32_t k_audio_opnum_get_session_state = 27;    // {D574D111} AudioSessionGetState
-        constexpr uint32_t k_audio_opnum_destroy_session = 55;      // {D574D111} AudioSessionDestroy
-        constexpr uint32_t k_audio_opnum_destroy_stream = 13;       // {D574D111} AudioServerDestroyStream
-        constexpr uint32_t k_audio_opnum_start_stream = 8;          // {D574D111} StartStream (IAudioClient::Start)
-        constexpr uint32_t k_audio_opnum_stop_stream = 9;           // {D574D111} StopStream (IAudioClient::Stop)
+        constexpr uint32_t k_audio_opnum_mmdev_get_blob = 0;           // {923F85B3} [out] serialized blob, no [in]
+        constexpr uint32_t k_audio_opnum_get_default_endpoint = 25;    // {923F85B3}
+        constexpr uint32_t k_audio_opnum_get_mix_format = 0;           // {D574D111}
+        constexpr uint32_t k_audio_opnum_is_format_supported = 1;      // {D574D111} AudioServerIsFormatSupported
+        constexpr uint32_t k_audio_opnum_get_device_period = 2;        // {D574D111} AudioServerGetDevicePeriod
+        constexpr uint32_t k_audio_opnum_open_stream = 4;              // {D574D111} (Initialize prep)
+        constexpr uint32_t k_audio_opnum_get_audio_session = 6;        // {D574D111} AudioServerGetAudioSession
+        constexpr uint32_t k_audio_opnum_create_stream = 7;            // {D574D111} CreateRemoteStream
+        constexpr uint32_t k_audio_opnum_get_session_state = 27;       // {D574D111} AudioSessionGetState
+        constexpr uint32_t k_audio_opnum_destroy_session = 55;         // {D574D111} AudioSessionDestroy
+        constexpr uint32_t k_audio_opnum_destroy_stream = 13;          // {D574D111} AudioServerDestroyStream
+        constexpr uint32_t k_audio_opnum_start_stream = 8;             // {D574D111} StartStream (IAudioClient::Start)
+        constexpr uint32_t k_audio_opnum_stop_stream = 9;              // {D574D111} StopStream (IAudioClient::Stop)
+        constexpr uint32_t k_audio_opnum_derive_stream_category = 122; // {D574D111} AudioServerDeriveStreamCategory
 
         constexpr NTSTATUS k_hr_ok = 0;
 
@@ -340,6 +341,8 @@ namespace sogen
                         return handle_post_create(writer);
                     case k_audio_opnum_stop_stream:
                         return handle_post_create(writer);
+                    case k_audio_opnum_derive_stream_category:
+                        return handle_derive_stream_category(win_emu, c, writer);
                     case 5:
                         return handle_post_create(writer);
                     default:
@@ -629,6 +632,24 @@ namespace sogen
                 writer.write<uint16_t>(0); // [out] AudioSessionState = AudioSessionStateInactive
                 writer.align_to(sizeof(uint32_t));
                 writer.write(k_hr_ok); // return HRESULT
+                return STATUS_SUCCESS;
+            }
+
+            // {D574D111} opnum 122: AudioServerDeriveStreamCategory([in] short category, [in] int flags,
+            // [out] int* derived). The client asks the engine to map the category it requested onto the one the
+            // endpoint will actually use, which a real engine may downgrade by policy. We apply no policy, so echo
+            // the request back. The [in] short sits at offset 0, ahead of its two padding bytes.
+            static NTSTATUS handle_derive_stream_category(windows_emulator& win_emu, const lpc_request_context& c,
+                                                          utils::aligned_binary_writer& writer)
+            {
+                uint16_t category = 0;
+                if (c.send_buffer_length >= sizeof(category))
+                {
+                    category = win_emu.emu().read_memory<uint16_t>(c.send_buffer);
+                }
+
+                writer.write<uint32_t>(category); // [out] derived AUDIO_STREAM_CATEGORY
+                writer.write(k_hr_ok);            // return HRESULT
                 return STATUS_SUCCESS;
             }
 
