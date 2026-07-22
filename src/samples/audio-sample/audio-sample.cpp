@@ -7,6 +7,7 @@
 #include <audioclient.h>
 
 #include <cmath>
+#include <numbers>
 #include <cstdio>
 #include <cstring>
 
@@ -63,7 +64,7 @@ int main()
                           (format->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
                            reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(format)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
     const double frequency = 440.0;
-    const double step = 2.0 * 3.14159265358979323846 * frequency / format->nSamplesPerSec;
+    const double step = 2.0 * std::numbers::pi * frequency / format->nSamplesPerSec;
     for (UINT32 frame = 0; frame < buffer_frames; ++frame)
     {
         const double sample = 0.25 * std::sin(step * frame);
@@ -72,12 +73,12 @@ int main()
             BYTE* slot = data + (static_cast<size_t>(frame) * format->nBlockAlign) + (channel * (format->wBitsPerSample / 8));
             if (is_float)
             {
-                const float value = static_cast<float>(sample);
+                const auto value = static_cast<float>(sample);
                 std::memcpy(slot, &value, sizeof(value));
             }
             else
             {
-                const int16_t value = static_cast<int16_t>(sample * 32767.0);
+                const auto value = static_cast<int16_t>(sample * 32767.0);
                 std::memcpy(slot, &value, sizeof(value));
             }
         }

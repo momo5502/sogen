@@ -327,6 +327,12 @@ namespace sogen
         // Prints BEL contention stats when SOGEN_LOCK_PROFILE is set (see kernel_lock).
         void dump_lock_profile();
 
+        // Signal a guest event from a host-owned thread (e.g. the audio render thread). The handle is resolved
+        // under the kernel lock, so it cannot race a concurrent close on an emulator thread; a handle the guest
+        // has already closed is simply ignored. Returns false without signaling if the lock is busy -- callers
+        // here drive periodic work and can retry, and blocking would stall them behind long kernel operations.
+        bool try_signal_guest_event(handle event_handle);
+
         uint64_t get_executed_instructions() const
         {
             return this->executed_instructions_;

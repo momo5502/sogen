@@ -6,6 +6,7 @@
 #include "../registry/registry_utils.hpp"
 
 #include <platform/unicode.hpp>
+#include <utils/string.hpp>
 
 namespace sogen
 {
@@ -120,18 +121,10 @@ namespace sogen
                 return {};
             }
 
-            std::vector<uint8_t> bytes(count, 0);
+            std::vector<std::byte> bytes(count, std::byte{});
             win_emu.emu().read_memory(address, bytes.data(), bytes.size());
 
-            std::string hex;
-            hex.reserve(static_cast<size_t>(count) * 3);
-            char tmp[4];
-            for (const auto b : bytes)
-            {
-                (void)snprintf(tmp, sizeof(tmp), "%02x ", b);
-                hex += tmp;
-            }
-            return hex;
+            return utils::string::to_hex_string(bytes);
         }
 
         // Layout of the WASAPI shared-buffer control header the guest maps. The client writes interleaved PCM
@@ -161,7 +154,7 @@ namespace sogen
         constexpr int64_t k_device_period_hns = 100000; // 10 ms
         constexpr int64_t k_device_minimum_period_hns = 30000;
         constexpr auto k_device_period = std::chrono::microseconds{k_device_period_hns / 10};
-        constexpr audio_format k_stream_format{k_sample_rate, 2, 32, true};
+        constexpr audio_format k_stream_format{.sample_rate = k_sample_rate, .channels = 2, .bits_per_sample = 32, .is_float = true};
 
         // Emulates the audio endpoint's hardware DMA. The render section handed to the guest is backed by a
         // host-owned buffer aliased into the guest address space (allocate_host_memory), so the guest and this
@@ -308,17 +301,13 @@ namespace sogen
                     // like a real engine -- firing on every poll tick only wakes the client to find no new space,
                     // and each wake costs a guest thread dispatch. Drive it from the clock rather than from how far
                     // the play cursor moved: the cursor never passes the write cursor, so a client that wakes
-                    // without writing would stall it and never be woken again. NtSetEvent only sets this flag (the
-                    // scheduler polls it), so signaling from this thread is safe, and the pointer stays valid while
-                    // the stream lives (see process_context::audio_render_event).
+                    // without writing would stall it and never be woken again.
                     const auto now = std::chrono::steady_clock::now();
-                    if (now - last_signal >= k_device_period)
+                    const auto render_event = this->win_emu_.process.audio_render_event.load(std::memory_order_relaxed);
+                    if (render_event && now - last_signal >= k_device_period &&
+                        this->win_emu_.try_signal_guest_event(make_handle(render_event)))
                     {
                         last_signal = now;
-                        if (auto* render_event = this->win_emu_.process.audio_render_event)
-                        {
-                            render_event->signaled = true;
-                        }
                     }
 
                     submitted = write;
@@ -343,12 +332,6 @@ namespace sogen
                                 utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>& reply_handles) override
             {
                 const auto& iface = this->bound_interface();
-                if (getenv("EMULATOR_LOG_RPC"))
-                {
-                    win_emu.log.error("[audiosrv] call iface=%02x%02x%02x%02x opnum=%u send=%u\n", iface[0], iface[1], iface[2], iface[3],
-                                      procedure_id, c.send_buffer_length);
-                }
-
                 if (iface == k_iface_audio_client)
                 {
                     switch (procedure_id)
@@ -535,7 +518,7 @@ namespace sogen
                 }
 
                 const uint64_t buffer_frames = (k_sample_rate * duration_hns + k_hns_per_second - 1) / k_hns_per_second;
-                const uint32_t buffer_bytes = static_cast<uint32_t>(buffer_frames * k_block_align);
+                const auto buffer_bytes = static_cast<uint32_t>(buffer_frames * k_block_align);
                 const uint32_t buffer_extent = k_render_data_offset + buffer_bytes; // control header + sample area
                 const uint64_t render_section_size = (buffer_extent + 0xFFF) & ~uint64_t{0xFFF};
 
@@ -605,7 +588,8 @@ namespace sogen
                 // A zero/wrong ObjectType makes rpcrt4 __fastfail(FAST_FAIL_INVALID_ARG). Report SECTION access.
                 constexpr uint32_t alpc_objtype_section = 0x80;
                 constexpr uint32_t section_access = 0xF001F; // SECTION_ALL_ACCESS
-                reply_handles.push_back(alpc_reply_handle{section_handle.bits, alpc_objtype_section, section_access});
+                reply_handles.push_back(alpc_reply_handle{
+                    .handle = section_handle.bits, .object_type = alpc_objtype_section, .desired_access = section_access});
 
                 // The 120-byte op7 [out] _Struct_4 wire, replayed BYTE-FOR-BYTE from a live capture
                 // (build/.../capture/alpc_reply_27_op7_len144.bin, NDR payload @ +0x18). Decompiled IDL

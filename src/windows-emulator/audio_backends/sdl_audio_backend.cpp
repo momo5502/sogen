@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include <platform/audio_backend.hpp>
 
+#include <mutex>
 #include <optional>
 
 #include <SDL3/SDL.h>
@@ -43,12 +44,14 @@ namespace sogen
 
             bool start(const audio_format& format) override
             {
+                const std::lock_guard lock{this->mutex_};
+
                 if (this->stream_ && this->format_ == format)
                 {
                     return true;
                 }
 
-                this->stop();
+                this->close_stream();
 
                 const auto sdl_format = to_sdl_format(format);
                 if (!sdl_format || format.channels == 0 || format.sample_rate == 0)
@@ -79,6 +82,8 @@ namespace sogen
 
             void submit(const void* data, const size_t size) override
             {
+                const std::lock_guard lock{this->mutex_};
+
                 if (this->stream_ && data && size)
                 {
                     SDL_PutAudioStreamData(this->stream_, data, static_cast<int>(size));
@@ -87,6 +92,8 @@ namespace sogen
 
             std::optional<uint64_t> queued_bytes() const override
             {
+                const std::lock_guard lock{this->mutex_};
+
                 if (!this->stream_)
                 {
                     return std::nullopt;
@@ -98,6 +105,13 @@ namespace sogen
 
             void stop() override
             {
+                const std::lock_guard lock{this->mutex_};
+                this->close_stream();
+            }
+
+          private:
+            void close_stream()
+            {
                 if (this->stream_)
                 {
                     SDL_DestroyAudioStream(this->stream_);
@@ -106,7 +120,9 @@ namespace sogen
                 }
             }
 
-          private:
+            // The audio render thread submits and polls the queue while the emulator thread may start or stop the
+            // sink (e.g. when the UI backend is swapped), so every entry point serializes on this.
+            mutable std::mutex mutex_{};
             bool initialized_{false};
             SDL_AudioStream* stream_{nullptr};
             audio_format format_{};

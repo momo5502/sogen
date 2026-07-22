@@ -57,7 +57,7 @@ namespace sogen
                 // that wake the client writes one pre-roll buffer and then blocks forever waiting on the event.
                 if (c.send_handle)
                 {
-                    win_emu.process.audio_render_event = win_emu.process.events.get(c.send_handle);
+                    win_emu.process.audio_render_event.store(c.send_handle, std::memory_order_relaxed);
                 }
 
                 std::vector<uint8_t> payload(c.send_buffer_length, 0);
@@ -339,19 +339,6 @@ namespace sogen
 
         std::vector<alpc_reply_handle> reply_handles;
         const auto status = this->handle_rpc(win_emu, procedure_id, rpc_context, writer, reply_handles);
-
-        if (getenv("EMULATOR_LOG_RPC"))
-        {
-            std::string hex;
-            char tmp[4];
-            for (size_t i = sizeof(header); i < payload.size() && i < sizeof(header) + 128; ++i)
-            {
-                (void)snprintf(tmp, sizeof(tmp), "%02x ", payload[i]);
-                hex += tmp;
-            }
-            win_emu.log.error("[rpc] opnum=%u reply ndr(%zu) handles(%zu): %s\n", procedure_id, payload.size() - sizeof(header),
-                              reply_handles.size(), hex.c_str());
-        }
 
         lpc_request_result result{status, std::move(payload)};
         result.handles = std::move(reply_handles);

@@ -1678,6 +1678,25 @@ namespace sogen
         }
     }
 
+    bool windows_emulator::try_signal_guest_event(const handle event_handle)
+    {
+        if (!this->kernel_lock_.try_lock())
+        {
+            return false;
+        }
+
+        const std::lock_guard<kernel_lock> lock{this->kernel_lock_, std::adopt_lock};
+
+        auto* entry = this->process.events.get(event_handle);
+        if (!entry)
+        {
+            return false;
+        }
+
+        entry->signaled = true;
+        return true;
+    }
+
     void windows_emulator::dump_lock_profile()
     {
         if (!kernel_lock::profiling_enabled())
