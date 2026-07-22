@@ -8,9 +8,6 @@ add_subdirectory(test-sample)
 add_subdirectory(vulkan-shim)
 add_subdirectory(vulkan-shim-test)
 add_subdirectory(steam-shim)
-add_subdirectory(audio-sample)
-add_subdirectory(dsound-sample)
-add_subdirectory(speaker-config-sample)
 
 ##########################################
 

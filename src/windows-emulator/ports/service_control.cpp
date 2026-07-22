@@ -3,7 +3,6 @@
 
 #include "binary_writer.hpp"
 #include "../windows_emulator.hpp"
-#include <utils/string.hpp>
 
 namespace sogen
 {
@@ -120,17 +119,8 @@ namespace sogen
                     write_return(writer, k_error_success);
                     return STATUS_SUCCESS;
 
-                default: {
-                    const auto count = std::min<ULONG>(c.send_buffer_length, 64);
-                    std::vector<std::byte> bytes(count, std::byte{});
-                    if (count)
-                    {
-                        win_emu.emu().read_memory(c.send_buffer, bytes.data(), bytes.size());
-                    }
-                    win_emu.log.error("[svcctl] UNHANDLED opnum=%u send_len=%u in: %s\n", procedure_id, c.send_buffer_length,
-                                      utils::string::to_hex_string(bytes).c_str());
+                default:
                     return STATUS_NOT_SUPPORTED;
-                }
                 }
             }
         };

@@ -6,7 +6,6 @@
 #include "../registry/registry_utils.hpp"
 
 #include <platform/unicode.hpp>
-#include <utils/string.hpp>
 
 namespace sogen
 {
@@ -106,25 +105,7 @@ namespace sogen
                 }
             }
 
-            if (!first_active && !first_any)
-            {
-                win_emu.log.error("[audiosrv] no audio endpoint found for flow=%u\n", data_flow);
-            }
             return first_active ? first_active : first_any;
-        }
-
-        std::string dump_hex(windows_emulator& win_emu, const emulator_pointer address, const ULONG length, const ULONG cap = 128)
-        {
-            const auto count = std::min<ULONG>(length, cap);
-            if (!address || count == 0)
-            {
-                return {};
-            }
-
-            std::vector<std::byte> bytes(count, std::byte{});
-            win_emu.emu().read_memory(address, bytes.data(), bytes.size());
-
-            return utils::string::to_hex_string(bytes);
         }
 
         // Layout of the WASAPI shared-buffer control header the guest maps. The client writes interleaved PCM
@@ -362,7 +343,7 @@ namespace sogen
                     case 5:
                         return handle_post_create(writer);
                     default:
-                        return log_unhandled(win_emu, "AudioClient", procedure_id, c);
+                        return STATUS_NOT_SUPPORTED;
                     }
                 }
 
@@ -373,19 +354,12 @@ namespace sogen
                 case k_audio_opnum_get_default_endpoint:
                     return handle_get_default_endpoint(win_emu, c, writer);
                 default:
-                    return log_unhandled(win_emu, "MMDevEnum", procedure_id, c);
+                    return STATUS_NOT_SUPPORTED;
                 }
             }
 
           private:
             std::unique_ptr<render_stream> render_stream_{};
-
-            static NTSTATUS log_unhandled(windows_emulator& win_emu, const char* iface, const uint32_t opnum, const lpc_request_context& c)
-            {
-                win_emu.log.error("[audiosrv] UNHANDLED %s opnum=%u send_len=%u recv_len=%u req: %s\n", iface, opnum, c.send_buffer_length,
-                                  c.recv_buffer_length, dump_hex(win_emu, c.send_buffer, c.send_buffer_length).c_str());
-                return STATUS_NOT_SUPPORTED;
-            }
 
             // {D574D111} opnum 0: AudioServerGetMixFormat(endpointId, VadServerSettings*, [out] WAVEFORMATEX**).
             // The [out] format is an FC_CSTRUCT (18-byte WAVEFORMATEX base + cbSize-conformant tail) behind a
