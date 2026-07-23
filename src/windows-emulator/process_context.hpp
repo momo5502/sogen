@@ -28,9 +28,21 @@ namespace sogen
 
 #define STACK_SIZE       0x40000ULL // 256KB
 
-#define GDT_ADDR         0x35000
-#define GDT_LIMIT        0x1000
-#define GDT_ENTRY_SIZE   0x8
+#ifdef __APPLE__
+// Darwin refuses MAP_FIXED anywhere in the low ~4GB regardless of ASLR (the standard 64-bit
+// Mach-O __PAGEZERO convention, enforced at the mmap syscall level) - a backend sharing the guest
+// address space with the host process (guest VA == host VA, e.g. FEX) can never place anything
+// there. GDT_ADDR is a fixed constant sogen always uses directly (not chosen dynamically via
+// find_free_allocation_base, so the reserved-host-ranges mechanism can't route around it), so it
+// has to live well above that floor here. Chosen far from typical host dyld/heap/stack placement
+// (which stays within a few GB above 4GB) to also avoid the *dynamic*, ASLR-dependent collisions
+// that reserved-host-ranges handles for everything else.
+#define GDT_ADDR 0x7ffff0000000ULL
+#else
+#define GDT_ADDR 0x35000
+#endif
+#define GDT_LIMIT      0x1000
+#define GDT_ENTRY_SIZE 0x8
 
     // Each vCPU gets its own GDT page. Most descriptors are identical, but the WOW64 FS descriptor
     // (selector 0x53) holds a per-thread 32-bit TEB base that the guest reloads on every 64<->32

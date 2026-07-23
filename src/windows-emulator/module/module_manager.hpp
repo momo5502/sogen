@@ -1,5 +1,6 @@
 #pragma once
 #include <emulator.hpp>
+#include <arch_emulator.hpp>
 
 #include "mapped_module.hpp"
 #include "../file_system.hpp"
@@ -95,8 +96,8 @@ namespace sogen
 
         module_manager(memory_manager& memory, file_system& file_sys, callbacks& cb);
 
-        void map_main_modules(const windows_path& executable_path, windows_version_manager& version, process_context& context,
-                              const logger& logger);
+        void map_main_modules(x86_64_emulator& emu, const windows_path& executable_path, windows_version_manager& version,
+                              process_context& context, const logger& logger);
 
         std::optional<uint64_t> get_module_load_count_by_path(const windows_path& path);
         mapped_module* map_module(windows_path file, const logger& logger, bool is_static = false, bool allow_duplicate = false,

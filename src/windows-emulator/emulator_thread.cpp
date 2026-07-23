@@ -1211,6 +1211,15 @@ namespace sogen
         setup_stack(emu, context, this->stack_base, static_cast<size_t>(this->stack_size));
         emu.set_segment_base(x86_register::gs, this->gs_segment->get_base());
 
+        // Seed the shared FPU control state with the x86 power-on/reset defaults (all exceptions masked,
+        // round-to-nearest). Some emulator backends initialise these registers to 0, which leaves every
+        // floating-point exception - including the near-ubiquitous inexact/precision (PM) condition -
+        // UNMASKED. Guest code (e.g. the CRT's pow/_except1 path) reads the live control word via fnstcw
+        // and raises STATUS_FLOAT_INEXACT_RESULT (C000008F) when it finds inexact unmasked, which is a
+        // crash that never occurs on real Windows where the default control word masks it.
+        emu.reg<uint16_t>(x86_register::fpcw, 0x037F);
+        emu.reg<uint32_t>(x86_register::mxcsr, 0x1F80);
+
         CONTEXT64 ctx{};
         ctx.ContextFlags = CONTEXT64_ALL;
 

@@ -37,6 +37,21 @@ namespace sogen
 
         virtual bool supports_instruction_counting() const = 0;
 
+        // Whether this backend reports read_instruction_pointer() already advanced past a trapping
+        // INT3 (0xCC) byte for a breakpoint exception, rather than at the INT3 itself. Real x86
+        // hardware treats #BP as a trap (RIP already past it when the fault is observed), which is
+        // why NT's KiBreakpointTrap decrements the trap-frame RIP by 1 to report the INT3's own
+        // address to guest handlers - but not every backend's *emulation* of that trap surfaces the
+        // same already-advanced value: KVM/WHP both catch INT3 by decoding/exiting at the
+        // instruction's own address (pre-advance, no correction needed), while FEXCore's JIT
+        // translation of INT3 sets SetRIPToNext before the host trap fires (already advanced,
+        // needs the same -1 correction real hardware's trap frame would have received). Defaults to
+        // false (matches every backend except FEX).
+        virtual bool reports_breakpoint_rip_past_instruction() const
+        {
+            return false;
+        }
+
         // Whether stop() may be safely called from a different thread while the CPU is executing.
         // Hypervisor-backed backends can cancel execution from any thread; the JIT/interpreter
         // backends cannot, so they must be preempted cooperatively from the CPU thread instead.

@@ -45,6 +45,22 @@ namespace sogen
         virtual void set_segment_base(register_type base, pointer_type value) = 0;
         virtual pointer_type get_segment_base(register_type base) = 0;
         virtual void load_gdt(pointer_type address, uint32_t limit) = 0;
+
+        // Add new virtuals at the end of the class so the vtable slots of existing methods never
+        // move; this keeps separately built backends (e.g. the dynamically loaded KVM/unicorn/FEX
+        // backends) ABI-compatible with the analyzer that calls through this interface.
+        //
+        // Called once, from module_manager::map_main_modules() right after the process's execution
+        // mode is determined (PE-header-driven detection) and before any module - including this
+        // process's own executable - is mapped. Backends that execute guest code natively on real
+        // x86-64 hardware (KVM/Unicorn/WHP) don't need this - the CPU transparently switches to
+        // compatibility mode on the CS segment load alone, so the default implementation is a no-op.
+        // A JIT-based backend (FEXCore) is fixed-bitness per compiled context and only stands up the
+        // 64-bit one, so it uses this to reject a WoW64 (32-bit) process with a clear error up
+        // front, before its first block would be mis-decoded as 64-bit code.
+        virtual void notify_process_bitness(bool /*is_wow64_process*/)
+        {
+        }
     };
 
     template <typename Traits>

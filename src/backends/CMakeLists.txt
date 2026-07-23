@@ -11,3 +11,8 @@ endif()
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")
   add_subdirectory(kvm-emulator)
 endif()
+
+# SOGEN_ENABLE_FEX is resolved at the top level (ARM64 Linux/Darwin + Clang + FEXCore available).
+if (SOGEN_ENABLE_FEX)
+  add_subdirectory(fex-emulator)
+endif()

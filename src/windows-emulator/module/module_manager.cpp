@@ -453,8 +453,8 @@ namespace sogen
         }
     }
 
-    void module_manager::map_main_modules(const windows_path& executable_path, windows_version_manager& version, process_context& context,
-                                          const logger& logger)
+    void module_manager::map_main_modules(x86_64_emulator& emu, const windows_path& executable_path, windows_version_manager& version,
+                                          process_context& context, const logger& logger)
     {
         const auto& system_root = version.get_system_root();
         const auto system32_path = system_root / "System32";
@@ -462,6 +462,13 @@ namespace sogen
 
         current_execution_mode_ = detect_execution_mode(executable_path, logger);
         context.is_wow64_process = (current_execution_mode_ == execution_mode::wow64_32bit);
+
+        // Must happen before any module gets mapped below: a fixed-bitness JIT backend (FEXCore)
+        // rejects unsupported execution modes here, before its first block would be mis-decoded
+        // (see notify_process_bitness's doc comment). The host-range reservations are re-derived
+        // afterwards so module mapping starts from a fresh view of the backend's host layout.
+        emu.notify_process_bitness(context.is_wow64_process);
+        this->memory_->reset_host_memory_ranges();
 
         switch (current_execution_mode_)
         {

@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 #include "memory_permission_ext.hpp"
 #include "memory_region.hpp"
@@ -29,6 +30,7 @@ namespace sogen
         pagefile_section_view,
         section_image,
         mmio,
+        host_reserved,
     };
 
     // This maps to the `basic_memory_region` struct defined in
@@ -87,6 +89,35 @@ namespace sogen
         bool protect_memory(uint64_t address, size_t size, nt_memory_permission permissions,
                             nt_memory_permission* old_permissions = nullptr);
 
+        // Asks the backend which of its own host address ranges the guest address space must avoid
+        // (see memory_interface::reserved_host_ranges) and pre-reserves any newly-discovered ones so
+        // future allocations steer clear. No-op for backends with an independent guest address space
+        // (the default). Must be called before any guest memory is allocated in the range(s) it
+        // reserves to be effective. Cheap and safe to call frequently (e.g. before every dynamic
+        // allocation) - only ever adds ranges, never releases existing ones, so it can't momentarily
+        // drop a reservation. See reset_host_memory_ranges for the rare case that needs to release
+        // and re-query from scratch.
+        void reserve_host_memory_ranges();
+
+        // Windowed form of reserve_host_memory_ranges: reserves only backend host ranges intersecting
+        // [address, size). Used by the fixed-address allocate_memory overload, which only needs its
+        // own target window checked, not a full-address-space rescan on every module (re)map.
+        void reserve_host_memory_ranges_in(uint64_t address, size_t size);
+
+        // True if no foreign host mapping currently intersects [address, size), via a bounded,
+        // windowed backend probe (usually a single query, unlike reserve_host_memory_ranges' full
+        // address-space rescan). Records nothing - a pure check, for callers that only want to
+        // confirm a candidate before committing to it (see the size-only allocate_memory overload
+        // and handle_NtAllocateVirtualMemoryEx) rather than track the result.
+        bool host_window_is_free(uint64_t address, size_t size) const;
+
+        // Like reserve_host_memory_ranges, but first releases every previously-tracked range before
+        // re-querying the backend - needed only when the backend's answer can genuinely change. Not
+        // safe to call from a hot path: doubles the syscall count of a routine re-scan for no
+        // benefit, and momentarily un-reserves everything, widening a real race window against
+        // anything else in the process mapping host memory concurrently.
+        void reset_host_memory_ranges();
+
         bool allocate_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb);
         // Reserves the range and aliases it onto caller-owned host memory (e.g. a host Vulkan mapping) so the
         // guest accesses it coherently. The region is treated like MMIO: not serialized, host_pointer not owned.
@@ -115,13 +146,31 @@ namespace sogen
         uint64_t find_free_allocation_base(size_t size, uint64_t start, uint64_t alignment, uint64_t lowest_address,
                                            uint64_t highest_address) const;
 
+        // Like find_free_allocation_base, but also confirms the pick is actually free at the host level
+        // (not merely per sogen's own bookkeeping) and rescans + re-picks past any foreign host mapping
+        // that has claimed it since the last scan, bounded by an internal retry cap (returns 0 if none
+        // could be confirmed). On backends with an independent guest address space (the default) this is
+        // identical to find_free_allocation_base - host_window_is_free is always true there. Shared by the
+        // size-only allocate_memory overload and the fixed-address module-relocation fallback so both get
+        // the same host-race recovery; see the size-only allocate_memory overload for the full rationale.
+        uint64_t find_free_host_allocation_base(size_t size, uint64_t start);
+
+        // Same as above, but bounds the search to [MIN_ALLOCATION_ADDRESS, highest_address] instead of the
+        // full address space - for callers with a hard architectural ceiling (e.g. a below-4GB requirement)
+        // where a pick above that ceiling would be useless regardless of whether it's free.
+        uint64_t find_free_host_allocation_base(size_t size, uint64_t start, uint64_t highest_address);
+
         region_info get_region_info(uint64_t address);
         std::optional<std::u16string> get_region_mapped_filename(uint64_t address) const;
         void set_region_mapped_filename(uint64_t address, std::u16string filename);
 
         reserved_region_map::iterator find_reserved_region(uint64_t address);
 
-        bool overlaps_reserved_region(uint64_t address, size_t size) const;
+        // ignore_host_reserved skips conflicts against memory_region_kind::host_reserved entries (see
+        // reserve_host_memory_ranges) - used by allocate_mmio, since an MMIO region is trapped via
+        // fault handling rather than backed by real host memory, so it doesn't need the backend's own
+        // host address space to be free there.
+        bool overlaps_reserved_region(uint64_t address, size_t size, bool ignore_host_reserved = false) const;
 
         memory_region_kind get_region_kind(uint64_t address) const;
 
@@ -163,6 +212,9 @@ namespace sogen
         std::atomic<std::uint64_t> layout_version_{0};
         std::uint64_t default_allocation_address_{0x100000000ULL};
         bool dep_enabled_{true};
+        // Addresses reserved by reserve_host_memory_ranges() so far, so reset_host_memory_ranges can
+        // release the previous set before asking the backend for a fresh one.
+        std::vector<uint64_t> host_reserved_addresses_{};
 
         void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) final;
         void map_memory(uint64_t address, size_t size, memory_permission permissions) final;
@@ -173,6 +225,17 @@ namespace sogen
         void update_layout_version();
         bool commit_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool allow_image_section);
         memory_permission get_effective_permissions(nt_memory_permission permissions) const;
+
+        // The actual fixed-address allocation logic, without the reserve_host_memory_ranges rescan
+        // the public allocate_memory(address, ...) performs first. reserve_host_memory_ranges itself
+        // calls this (not the public overload) for each backend-reported range, to avoid recursing
+        // back into reserve_host_memory_ranges.
+        bool allocate_memory_raw(uint64_t address, size_t size, nt_memory_permission permissions, bool reserve_only,
+                                 memory_region_kind kind);
+
+        void reserve_host_range_gaps(uint64_t address, size_t size);
+        void carve_host_reserved_hole(uint64_t address, size_t size);
+        void release_host_claims(uint64_t released_end);
     };
 
     namespace memory_region_policy
