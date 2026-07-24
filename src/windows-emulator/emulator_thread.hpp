@@ -370,7 +370,6 @@ namespace sogen
         uint32_t get_message_queue_status(windows_emulator& win_emu);
         std::optional<msg> peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter = 0, UINT filter_min = 0, UINT filter_max = 0,
                                                 bool remove = false);
-        bool remove_pending_message(hwnd window, UINT message);
         void post_message(windows_emulator& win_emu, msg msg, bool try_coalesce = false);
 
         bool is_terminated() const;

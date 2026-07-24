@@ -394,20 +394,6 @@ namespace sogen
             }
         }
 
-        void queue_window_paint(const syscall_context& c, window& win)
-        {
-            if (win.paint_message_posted)
-            {
-                return;
-            }
-
-            if (auto* thread = c.proc.find_thread_by_id(win.thread_id))
-            {
-                thread->post_message(c.win_emu, msg{.window = win.handle, .message = WM_PAINT, .wParam = 0, .lParam = 0});
-                win.paint_message_posted = true;
-            }
-        }
-
         RECT union_update_rect(const RECT& a, const RECT& b)
         {
             const auto empty_rect = [](const RECT& r) { //
@@ -454,7 +440,25 @@ namespace sogen
                 c.win_emu.ui().invalidate(win.handle, update_rect);
             }
 
-            queue_window_paint(c, win);
+            if (c.proc.is_window_effectively_visible(win.handle))
+            {
+                if (auto* thread = c.proc.find_thread_by_id(win.thread_id))
+                {
+                    thread->queue_status_changed_bits |= QS_PAINT;
+                }
+            }
+        }
+
+        void set_internal_paint_pending(const syscall_context& c, window& win, const bool pending)
+        {
+            win.internal_paint_pending = pending;
+            if (pending && c.proc.is_window_effectively_visible(win.handle))
+            {
+                if (auto* thread = c.proc.find_thread_by_id(win.thread_id))
+                {
+                    thread->queue_status_changed_bits |= QS_PAINT;
+                }
+            }
         }
 
         // Invalidate a window together with its visible descendant controls. Used when a window
@@ -731,7 +735,6 @@ namespace sogen
         void validate_window(window& win)
         {
             win.update_pending = false;
-            win.paint_message_posted = false;
             win.erase_pending = false;
             win.update_rect = {};
         }
@@ -2003,7 +2006,7 @@ namespace sogen
 
         hdc handle_NtUserBeginPaint(const syscall_context& c, const hwnd window, const emulator_object<EMU_PAINTSTRUCT> paint_struct)
         {
-            const auto* win = c.proc.windows.get(window);
+            auto* win = c.proc.windows.get(window);
             if (!win)
             {
                 return 0;
@@ -2020,12 +2023,14 @@ namespace sogen
                 EMU_PAINTSTRUCT ps{};
                 ps.paint_hdc = dc;
                 ps.fErase = win->erase_pending ? TRUE : FALSE;
-                ps.rcPaint = win->update_pending ? win->update_rect : get_client_rect(*win);
+                ps.rcPaint = win->update_pending ? win->update_rect : RECT{};
                 ps.fRestore = FALSE;
                 ps.fIncUpdate = FALSE;
                 paint_struct.write(ps);
             }
 
+            validate_window(*win);
+            win->internal_paint_pending = false;
             return dc;
         }
 
@@ -2061,7 +2066,6 @@ namespace sogen
                 (void)handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(ps.paint_hdc));
             }
 
-            validate_window(*win);
             return TRUE;
         }
 
@@ -3510,7 +3514,6 @@ namespace sogen
                 {
                     (void)handle_NtGdiFlush(c);
                     present_existing_guest_window_surface(c, *win);
-                    validate_window(*win);
                 }
             }
 
@@ -3706,6 +3709,11 @@ namespace sogen
 
         void collect_pending_paint_tree(const syscall_context& c, window& win, std::vector<uint64_t>& order)
         {
+            if (!c.proc.is_window_effectively_visible(win.handle))
+            {
+                return;
+            }
+
             if (win.update_pending && win.thread_id == c.vcpu.active_thread->id)
             {
                 order.push_back(static_cast<uint64_t>(win.handle));
@@ -3714,7 +3722,7 @@ namespace sogen
             for (auto& [index, child] : c.proc.windows)
             {
                 (void)index;
-                if (child.parent_handle == win.handle && (child.style & WS_VISIBLE) != 0)
+                if (child.parent_handle == win.handle)
                 {
                     collect_pending_paint_tree(c, child, order);
                 }
@@ -3727,9 +3735,6 @@ namespace sogen
             {
                 if (auto* win = c.proc.windows.get(static_cast<hwnd>(state.pending.back())))
                 {
-                    c.thread().remove_pending_message(win->handle, WM_PAINT);
-                    // Painting continues asynchronously through completion_NtUserUpdateWindow; the guest is
-                    // suspended here, so this immediate return value is unused (matches handle_NtUserShowWindow).
                     dispatch_window_message(c, callback_id::NtUserUpdateWindow, std::move(state), *win, WM_PAINT);
                     return {};
                 }
@@ -3746,16 +3751,8 @@ namespace sogen
                 return FALSE;
             }
 
-            // UpdateWindow paints synchronously, bypassing the message queue. Apps such as the open-iw5 splash
-            // rely on this to display content without running a message loop, so a merely queued WM_PAINT would
-            // never be pumped. Dispatch WM_PAINT now to the window and its invalid visible child controls.
-            // Cross-thread windows cannot be painted on this thread, so fall back to posting the paint.
             if (win->thread_id != c.vcpu.active_thread->id)
             {
-                if (win->update_pending)
-                {
-                    queue_window_paint(c, *win);
-                }
                 return TRUE;
             }
 
@@ -3785,7 +3782,6 @@ namespace sogen
                 {
                     (void)handle_NtGdiFlush(c);
                     present_existing_guest_window_surface(c, *win);
-                    validate_window(*win);
                 }
             }
 
@@ -4551,7 +4547,7 @@ namespace sogen
                 validate_window(*win);
             }
 
-            if ((flags & (RDW_INVALIDATE | RDW_INTERNALPAINT)) != 0)
+            if ((flags & RDW_INVALIDATE) != 0)
             {
                 std::optional<RECT> rect{};
                 if (update_rect)
@@ -4562,9 +4558,14 @@ namespace sogen
                 invalidate_window(c, *win, rect, (flags & RDW_ERASE) != 0 && (flags & RDW_NOERASE) == 0);
             }
 
+            if ((flags & RDW_INTERNALPAINT) != 0)
+            {
+                set_internal_paint_pending(c, *win, true);
+            }
+
             if ((flags & RDW_NOINTERNALPAINT) != 0)
             {
-                win->paint_message_posted = false;
+                set_internal_paint_pending(c, *win, false);
             }
 
             return TRUE;
