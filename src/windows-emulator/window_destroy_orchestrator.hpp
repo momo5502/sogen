@@ -31,8 +31,8 @@ namespace sogen
       private:
         hwnd find_window_by_guest_pointer(uint64_t window_ptr) const;
         void unlink_window_from_parent_and_siblings(const window& win) const;
-        window_destroy_frame make_frame(const window& win) const;
-        void push_frame(const window& win) const;
+        window_destroy_frame make_frame(const window& win, bool is_direct_target) const;
+        void push_frame(const window& win, bool is_direct_target) const;
         void pop_frame_allocation(window_destroy_frame& frame) const;
         std::vector<hwnd> collect_dependents(const window& win) const;
         void finalize_frame(window_destroy_frame& frame, const window& win) const;

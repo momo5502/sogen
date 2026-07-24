@@ -884,6 +884,32 @@ namespace sogen
         return std::nullopt;
     }
 
+    bool emulator_thread::remove_pending_message(const hwnd window, const UINT message)
+    {
+        const auto it = std::ranges::find_if(
+            this->message_queue, [window, message](const msg& queued) { return queued.window == window && queued.message == message; });
+        if (it == this->message_queue.end())
+        {
+            return false;
+        }
+
+        const auto removed_bits = get_message_queue_status_bits(*it);
+        for_each_queue_status_bit(removed_bits, [this](const uint32_t bit, const size_t index) {
+            if (this->message_queue_status_bit_counts[index] <= 1)
+            {
+                this->message_queue_status_bit_counts[index] = 0;
+                this->message_queue_status_bits &= ~bit;
+            }
+            else
+            {
+                --this->message_queue_status_bit_counts[index];
+            }
+        });
+
+        this->message_queue.erase(it);
+        return true;
+    }
+
     bool emulator_thread::can_coalesce_message(const msg& msg) const
     {
         if (message_queue.empty())

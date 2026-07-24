@@ -160,6 +160,7 @@ namespace sogen
         emulator_pointer wnd_proc{};
         hmenu system_menu_handle{};
         bool host_surface_window{};
+        bool message_only{};
         bool unicode_proc{};
 
         window(memory_interface& memory)
@@ -216,6 +217,7 @@ namespace sogen
             buffer.write(this->wnd_proc);
             buffer.write(this->system_menu_handle);
             buffer.write(this->host_surface_window);
+            buffer.write(this->message_only);
             buffer.write(this->unicode_proc);
         }
 
@@ -242,6 +244,7 @@ namespace sogen
             buffer.read(this->wnd_proc);
             buffer.read(this->system_menu_handle);
             buffer.read(this->host_surface_window);
+            buffer.read(this->message_only);
             buffer.read(this->unicode_proc);
         }
     };
