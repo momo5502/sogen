@@ -10,6 +10,16 @@ namespace sogen
 
     struct completion_state;
 
+    struct user_callback_result
+    {
+        uint64_t value{};
+        uint32_t output_size{};
+        uint64_t output{};
+    };
+
+    static_assert(sizeof(user_callback_result) == 24);
+    static_assert(offsetof(user_callback_result, output) == 16);
+
     struct syscall_context
     {
         windows_emulator& win_emu;
@@ -24,7 +34,7 @@ namespace sogen
         mutable bool run_callback{false};
         bool is_callback_completion{false};
         completion_state* current_completion_state{};
-        uint64_t previous_callback_result{};
+        user_callback_result previous_callback_result{};
 
         emulator_thread& thread() const
         {
@@ -38,7 +48,16 @@ namespace sogen
             {
                 throw std::runtime_error("Attempted to get callback result in a non-completion context");
             }
-            return static_cast<T>(this->previous_callback_result);
+            return static_cast<T>(this->previous_callback_result.value);
+        }
+
+        const user_callback_result& get_user_callback_result() const
+        {
+            if (!this->is_callback_completion)
+            {
+                throw std::runtime_error("Attempted to get callback result in a non-completion context");
+            }
+            return this->previous_callback_result;
         }
 
         template <typename T>

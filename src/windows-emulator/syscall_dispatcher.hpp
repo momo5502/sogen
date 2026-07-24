@@ -6,6 +6,7 @@ namespace sogen
 {
 
     struct syscall_context;
+    struct user_callback_result;
     using syscall_handler = void (*)(const syscall_context& c);
 
     struct syscall_handler_entry
@@ -235,7 +236,7 @@ namespace sogen
         void dispatch(windows_emulator& win_emu, vcpu_context& vcpu);
         static void dispatch_callback(windows_emulator& win_emu, std::string& syscall_name);
         dispatch_result dispatch_completion(windows_emulator& win_emu, vcpu_context& vcpu, callback_id callback_id,
-                                            completion_state* completion_state, uint64_t callback_result);
+                                            completion_state* completion_state, const user_callback_result& callback_result);
 
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);
