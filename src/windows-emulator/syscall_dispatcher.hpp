@@ -25,6 +25,8 @@ namespace sogen
     {
         virtual ~completion_state() = default;
 
+        uint64_t callback_output_target{};
+
         void serialize(utils::buffer_serializer& buffer) const
         {
             this->serialize_object(buffer);

@@ -2,6 +2,7 @@
 #include "../cpu_context.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../user_callback_dispatch.hpp"
 
 #include <algorithm>
 #include <utils/finally.hpp>
@@ -1000,6 +1001,16 @@ namespace sogen
         NTSTATUS handle_NtCallbackReturn(const syscall_context& c, const emulator_pointer callback_result_ptr,
                                          const ULONG callback_result_length, const NTSTATUS /*callback_status*/)
         {
+            struct callback_result_data
+            {
+                uint64_t result{};
+                uint32_t output_size{};
+                uint32_t reserved{};
+                uint64_t output{};
+            };
+
+            static_assert(sizeof(callback_result_data) == 24);
+
             auto& t = c.thread();
 
             if (t.callback_stack.empty())
@@ -1012,16 +1023,48 @@ namespace sogen
 
             if (callback_result_ptr != 0 && callback_result_length != 0)
             {
-                // user32's SFI-table-driven dispatch stubs (the __guard_xfg_dispatch_icall_fptr family
-                // used for e.g. NtUserMessageCall completions) always pass a real result pointer with
-                // ResultLength=0x18 - a 24-byte structure whose first 8 bytes are the actual LRESULT the
-                // callback computed.
-                const auto read_length = std::min<ULONG>(callback_result_length, sizeof(callback_result));
-                std::array<std::byte, sizeof(callback_result)> result_bytes{};
-                if (c.win_emu.memory.try_read_memory(callback_result_ptr, result_bytes.data(), read_length))
+                callback_result_data result_data{};
+                const auto read_length = std::min<ULONG>(callback_result_length, sizeof(result_data));
+                if (c.win_emu.memory.try_read_memory(callback_result_ptr, &result_data, read_length))
                 {
-                    callback_result = 0;
-                    memcpy(&callback_result, result_bytes.data(), read_length);
+                    callback_result = result_data.result;
+
+                    auto& frame = t.callback_stack.back();
+                    if (frame.callback_output_target != 0 && callback_result_length >= sizeof(result_data) && result_data.output != 0)
+                    {
+                        EMU_WINDOWPOS window_pos{};
+                        bool copied{};
+                        if (c.proc.is_wow64_process && result_data.output_size >= sizeof(wow64_window_pos_callback_data))
+                        {
+                            wow64_window_pos_callback_data window_pos32{};
+                            if (c.win_emu.memory.try_read_memory(result_data.output, &window_pos32, sizeof(window_pos32)))
+                            {
+                                window_pos = {
+                                    .hwnd = window_pos32.hwnd,
+                                    .hwndInsertAfter = window_pos32.hwndInsertAfter,
+                                    .x = window_pos32.x,
+                                    .y = window_pos32.y,
+                                    .cx = window_pos32.cx,
+                                    .cy = window_pos32.cy,
+                                    .flags = window_pos32.flags,
+                                };
+                                copied = true;
+                            }
+                        }
+                        else if (!c.proc.is_wow64_process && result_data.output_size >= sizeof(window_pos))
+                        {
+                            copied = c.win_emu.memory.try_read_memory(result_data.output, &window_pos, sizeof(window_pos));
+                        }
+
+                        if (copied)
+                        {
+                            c.win_emu.memory.write_memory(frame.callback_output_target, &window_pos, sizeof(window_pos));
+                            if (frame.state)
+                            {
+                                frame.state->callback_output_target = frame.callback_output_target;
+                            }
+                        }
+                    }
                 }
             }
 

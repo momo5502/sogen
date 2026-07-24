@@ -87,6 +87,19 @@ namespace sogen
             pointer xpfnProc{};
         };
 
+        struct wow64_window_pos_callback_data
+        {
+            uint32_t hwnd{};
+            uint32_t hwndInsertAfter{};
+            int32_t x{};
+            int32_t y{};
+            int32_t cx{};
+            int32_t cy{};
+            uint32_t flags{};
+        };
+
+        static_assert(sizeof(wow64_window_pos_callback_data) == 28);
+
         struct fn_inout_lp_point5_message
         {
             pointer pwnd{};
@@ -97,6 +110,7 @@ namespace sogen
             {
                 EMU_MINMAXINFO point5;
                 EMU_WINDOWPOS window_pos;
+                wow64_window_pos_callback_data window_pos32;
             } data{};
 
             pointer xParam{};
@@ -392,6 +406,19 @@ namespace sogen
             {
                 invalidate_window(c, win, std::nullopt, false);
             }
+        }
+
+        void apply_window_pos_callback_result(const syscall_context& c, window& win,
+                                              const emulator_stack_allocation& window_pos_alloc)
+        {
+            EMU_WINDOWPOS position{};
+            c.emu.read_memory(window_pos_alloc.address(), &position, sizeof(position));
+
+            const auto x = (position.flags & SWP_NOMOVE) != 0 ? win.x : position.x;
+            const auto y = (position.flags & SWP_NOMOVE) != 0 ? win.y : position.y;
+            const auto width = (position.flags & SWP_NOSIZE) != 0 ? win.width : position.cx;
+            const auto height = (position.flags & SWP_NOSIZE) != 0 ? win.height : position.cy;
+            update_window_geometry(c, win, x, y, width, height, false);
         }
 
         RECT union_update_rect(const RECT& a, const RECT& b)
@@ -825,7 +852,24 @@ namespace sogen
                 {
                     if (message == WM_WINDOWPOSCHANGING)
                     {
-                        c.emu.read_memory(l_param, &args.data.window_pos, sizeof(args.data.window_pos));
+                        EMU_WINDOWPOS window_pos{};
+                        c.emu.read_memory(l_param, &window_pos, sizeof(window_pos));
+                        if (c.proc.is_wow64_process)
+                        {
+                            args.data.window_pos32 = {
+                                .hwnd = static_cast<uint32_t>(window_pos.hwnd),
+                                .hwndInsertAfter = static_cast<uint32_t>(window_pos.hwndInsertAfter),
+                                .x = window_pos.x,
+                                .y = window_pos.y,
+                                .cx = window_pos.cx,
+                                .cy = window_pos.cy,
+                                .flags = window_pos.flags,
+                            };
+                        }
+                        else
+                        {
+                            args.data.window_pos = window_pos;
+                        }
                     }
                     else
                     {
@@ -834,6 +878,10 @@ namespace sogen
                 }
 
                 dispatch_user_callback(c, id, k_fn_inout_lp_point5_callback_id, std::forward<T>(state), args);
+                if (message == WM_WINDOWPOSCHANGING)
+                {
+                    c.thread().callback_stack.back().callback_output_target = l_param;
+                }
                 return;
             }
 
@@ -3087,7 +3135,7 @@ namespace sogen
                                              const DWORD /*flags*/, const pointer /*acbi_buffer*/)
         {
             auto& s = c.get_completion_state<window_create_state>();
-            const auto* win = c.proc.windows.get(s.handle);
+            auto* win = c.proc.windows.get(s.handle);
 
             const auto release_window_create_allocations = [&] {
                 if (s.window_pos_alloc)
@@ -3106,6 +3154,15 @@ namespace sogen
             {
                 release_window_create_allocations();
                 return 0;
+            }
+
+            if (s.callback_output_target != 0)
+            {
+                if (s.callback_output_target == s.window_pos_alloc.address())
+                {
+                    apply_window_pos_callback_result(c, *win, s.window_pos_alloc);
+                }
+                s.callback_output_target = 0;
             }
 
             if (!s.message_queue.empty())
@@ -3152,6 +3209,26 @@ namespace sogen
         BOOL completion_NtUserDestroyWindow(const syscall_context& c, const hwnd /*window*/)
         {
             auto& s = c.get_completion_state<window_destroy_state>();
+            if (s.callback_output_target != 0)
+            {
+                const auto apply_result = [&](std::vector<window_destroy_frame>& frames) {
+                    for (auto& frame : frames)
+                    {
+                        if (frame.window_pos_alloc && frame.window_pos_alloc.address() == s.callback_output_target)
+                        {
+                            if (auto* win = c.proc.windows.get(frame.handle))
+                            {
+                                apply_window_pos_callback_result(c, *win, frame.window_pos_alloc);
+                            }
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+
+                apply_result(s.frames);
+                s.callback_output_target = 0;
+            }
             return advance_window_destroy(c, s);
         }
 
@@ -3389,7 +3466,16 @@ namespace sogen
         BOOL completion_NtUserShowWindow(const syscall_context& c, const hwnd hwnd, const LONG /*cmd_show*/)
         {
             auto& s = c.get_completion_state<window_show_state>();
-            const auto* win = c.proc.windows.get(hwnd);
+            auto* win = c.proc.windows.get(hwnd);
+
+            if (s.callback_output_target != 0)
+            {
+                if (s.callback_output_target == s.window_pos_alloc.address())
+                {
+                    apply_window_pos_callback_result(c, *win, s.window_pos_alloc);
+                }
+                s.callback_output_target = 0;
+            }
 
             if (!s.message_queue.empty())
             {
