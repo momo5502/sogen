@@ -115,6 +115,22 @@ namespace sogen::fex::detail
             return gpr_access{greg_rsi, 0, 4, true};
         case x86_register::edi:
             return gpr_access{greg_rdi, 0, 4, true};
+        case x86_register::r8d:
+            return gpr_access{greg_r8 + 0, 0, 4, true};
+        case x86_register::r9d:
+            return gpr_access{greg_r8 + 1, 0, 4, true};
+        case x86_register::r10d:
+            return gpr_access{greg_r8 + 2, 0, 4, true};
+        case x86_register::r11d:
+            return gpr_access{greg_r8 + 3, 0, 4, true};
+        case x86_register::r12d:
+            return gpr_access{greg_r8 + 4, 0, 4, true};
+        case x86_register::r13d:
+            return gpr_access{greg_r8 + 5, 0, 4, true};
+        case x86_register::r14d:
+            return gpr_access{greg_r8 + 6, 0, 4, true};
+        case x86_register::r15d:
+            return gpr_access{greg_r8 + 7, 0, 4, true};
 
         // 16 bit
         case x86_register::ax:
@@ -133,6 +149,22 @@ namespace sogen::fex::detail
             return gpr_access{greg_rsi, 0, 2};
         case x86_register::di:
             return gpr_access{greg_rdi, 0, 2};
+        case x86_register::r8w:
+            return gpr_access{greg_r8 + 0, 0, 2};
+        case x86_register::r9w:
+            return gpr_access{greg_r8 + 1, 0, 2};
+        case x86_register::r10w:
+            return gpr_access{greg_r8 + 2, 0, 2};
+        case x86_register::r11w:
+            return gpr_access{greg_r8 + 3, 0, 2};
+        case x86_register::r12w:
+            return gpr_access{greg_r8 + 4, 0, 2};
+        case x86_register::r13w:
+            return gpr_access{greg_r8 + 5, 0, 2};
+        case x86_register::r14w:
+            return gpr_access{greg_r8 + 6, 0, 2};
+        case x86_register::r15w:
+            return gpr_access{greg_r8 + 7, 0, 2};
 
         // 8 bit low
         case x86_register::al:
@@ -151,6 +183,22 @@ namespace sogen::fex::detail
             return gpr_access{greg_rsi, 0, 1};
         case x86_register::dil:
             return gpr_access{greg_rdi, 0, 1};
+        case x86_register::r8b:
+            return gpr_access{greg_r8 + 0, 0, 1};
+        case x86_register::r9b:
+            return gpr_access{greg_r8 + 1, 0, 1};
+        case x86_register::r10b:
+            return gpr_access{greg_r8 + 2, 0, 1};
+        case x86_register::r11b:
+            return gpr_access{greg_r8 + 3, 0, 1};
+        case x86_register::r12b:
+            return gpr_access{greg_r8 + 4, 0, 1};
+        case x86_register::r13b:
+            return gpr_access{greg_r8 + 5, 0, 1};
+        case x86_register::r14b:
+            return gpr_access{greg_r8 + 6, 0, 1};
+        case x86_register::r15b:
+            return gpr_access{greg_r8 + 7, 0, 1};
 
         // 8 bit high
         case x86_register::ah:
