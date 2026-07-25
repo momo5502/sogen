@@ -564,6 +564,11 @@ namespace sogen
             return false;
         }
 
+        if (entry->second.kind == memory_region_kind::host_reserved)
+        {
+            return false;
+        }
+
         if (memory_region_policy::is_section_kind(entry->second.kind) &&
             !(allow_image_section && entry->second.kind == memory_region_kind::section_image))
         {

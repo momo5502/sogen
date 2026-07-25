@@ -249,6 +249,32 @@ namespace sogen::test
         ASSERT_FALSE(mm.overlaps_reserved_region(reserved_base + reserved_size, 0x1000));
     }
 
+    // carve_host_reserved_hole assumes a host_reserved range never has anything committed inside it
+    // (it drops the range's tracking entry wholesale when splitting around an MMIO hole), so
+    // commit_memory must reject host_reserved targets outright - otherwise a guest
+    // NtAllocateVirtualMemory(MEM_COMMIT) at an explicit base inside the range would populate
+    // committed_regions there, and a later carve would silently orphan that committed mapping.
+    TEST(HostAllocationTest, CommitIntoHostReservedRegionIsRejected)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr uint64_t reserved_base = 0x70000000;
+        constexpr size_t reserved_size = 0x20000000;
+
+        host.foreign_ranges.push_back({.address = reserved_base, .size = reserved_size});
+        mm.reserve_host_memory_ranges();
+        ASSERT_EQ(mm.get_region_kind(reserved_base), memory_region_kind::host_reserved);
+
+        constexpr uint64_t commit_base = reserved_base + 0x100000;
+        ASSERT_FALSE(mm.commit_memory(commit_base, 0x1000, nt_memory_permission{memory_permission::read_write}));
+
+        const auto& regions = mm.get_reserved_regions();
+        const auto entry = regions.find(reserved_base);
+        ASSERT_NE(entry, regions.end());
+        ASSERT_TRUE(entry->second.committed_regions.empty());
+    }
+
     // A decommit must keep the guest range claimed at the host level (the range is still
     // MEM_RESERVE'd - a foreign host allocation landing there would be clobbered by a later
     // recommit), while a genuine release must hand the claim back. The memory manager signals the
