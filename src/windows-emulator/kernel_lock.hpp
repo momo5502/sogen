@@ -52,6 +52,27 @@ namespace sogen
             this->owner_.store(std::this_thread::get_id(), std::memory_order_relaxed);
         }
 
+        // Acquire only if the lock is free. Lets a host-owned thread touch kernel state without ever stalling
+        // behind a long-running emulator operation; the caller is expected to retry later or skip the work.
+        bool try_lock()
+        {
+            assert(!this->is_held_by_current_thread() && "The kernel lock is not recursive");
+
+            if (!this->mutex_.try_lock())
+            {
+                return false;
+            }
+
+            if (profiling_enabled())
+            {
+                this->acquisitions_.fetch_add(1, std::memory_order_relaxed);
+                this->held_since_ = std::chrono::steady_clock::now();
+            }
+
+            this->owner_.store(std::this_thread::get_id(), std::memory_order_relaxed);
+            return true;
+        }
+
         void unlock()
         {
             this->owner_.store({}, std::memory_order_relaxed);

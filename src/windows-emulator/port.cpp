@@ -3,9 +3,11 @@
 #include "logger.hpp"
 #include "windows_emulator.hpp"
 #include "ports/api_port.hpp"
+#include "ports/audio_service.hpp"
 #include "ports/core_messaging_registrar.hpp"
 #include "ports/dns_resolver.hpp"
 #include "ports/lsa_policy_lookup.hpp"
+#include "ports/service_control.hpp"
 #include "binary_writer.hpp"
 
 #include <platform/unicode.hpp>
@@ -39,11 +41,50 @@ namespace sogen
             }
         };
 
-        struct noop_rpc_port : rpc_port
+        // The per-stream WASAPI CrossProcessEndpoint control channel. Event-driven (AUDCLNT_STREAMFLAGS_
+        // EVENTCALLBACK) DirectSound clients connect a dedicated ALPC port and send small fixed command
+        // messages here (SetEventHandle, opcode in the first data dword, the event handle as a client->server
+        // ALPC handle attribute), then read an NTSTATUS the server writes at data offset 4. The engine side is
+        // this emulator (the render_stream drains the shared buffer directly, so we do not need the event), so
+        // acknowledge every command with STATUS_SUCCESS. Without this the send lands on a dummy port
+        // (STATUS_NOT_SUPPORTED -> AUDCLNT NOT_SUPPORTED) and Initialize fails.
+        struct endpoint_control_port : port
         {
-            NTSTATUS handle_rpc(windows_emulator& /*win_emu*/, const uint32_t /*procedure_id*/, const lpc_request_context&,
-                                utils::aligned_binary_writer& /*writer*/) override
+            lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) override
             {
+                // SetEventHandle delivers the client's render event as a client->server ALPC handle attribute.
+                // Remember it so the audio render thread can signal it at the device rate (EVENTCALLBACK); without
+                // that wake the client writes one pre-roll buffer and then blocks forever waiting on the event.
+                if (c.send_handle)
+                {
+                    win_emu.process.audio_render_event.store(c.send_handle, std::memory_order_relaxed);
+                }
+
+                std::vector<uint8_t> payload(c.send_buffer_length, 0);
+                if (c.send_buffer && c.send_buffer_length)
+                {
+                    win_emu.emu().read_memory(c.send_buffer, payload.data(), payload.size());
+                }
+
+                constexpr size_t status_offset = 4; // command status the client reads back
+                if (payload.size() >= status_offset + sizeof(uint32_t))
+                {
+                    std::memset(payload.data() + status_offset, 0, sizeof(uint32_t));
+                }
+
+                return {STATUS_SUCCESS, std::move(payload)};
+            }
+        };
+
+        // Minimal RPC stub: completes the LRPC bind and answers every call with an S_OK return and no [out]
+        // data. Enough for fire-and-forget power/notification registrations (e.g. \RPC Control\umpo) that the
+        // audio stack performs during stream setup and only checks for success.
+        struct stub_rpc_port : rpc_port
+        {
+            NTSTATUS handle_rpc(windows_emulator& /*win_emu*/, uint32_t /*procedure_id*/, const lpc_request_context& /*c*/,
+                                utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>& /*reply_handles*/) override
+            {
+                writer.write<uint32_t>(0); // return HRESULT S_OK
                 return STATUS_SUCCESS;
             }
         };
@@ -67,6 +108,11 @@ namespace sogen
             return create_lsa_policy_lookup_port();
         }
 
+        if (port == u"\\RPC Control\\Audiosrv" || port == u"\\RPC Control\\AudioClientRpc" || port == u"\\RPC Control\\AudioSrvServiceRpc")
+        {
+            return create_audio_service_port();
+        }
+
         if (port == u"\\WindowsErrorReportingServicePort")
         {
             return std::make_unique<noop_port>();
@@ -79,10 +125,23 @@ namespace sogen
 
         if (port == u"\\RPC Control\\ntsvcs")
         {
-            // Service-control RPC is probed during network stack initialization.
-            // A zero-payload RPC success is enough for the current callers to continue
-            // instead of turning the probe into a hard network failure.
-            return std::make_unique<noop_rpc_port>();
+            // Hosts the svcctl (Service Control Manager) and PnP RPC interfaces. mmdevapi opens the AudioSrv
+            // service through svcctl while creating a render audio client, so the open/close calls must return
+            // a real context handle; other interfaces on this port fall back to a zero-payload success.
+            return create_service_control_port();
+        }
+
+        if (port == u"\\RPC Control\\umpo")
+        {
+            // User-Mode Power Orchestrator. The audio stack registers a power request here while starting a
+            // stream; without a responder the render worker retries and then stalls.
+            return std::make_unique<stub_rpc_port>();
+        }
+
+        if (port.empty())
+        {
+            // Unnamed ALPC ports in the audio stack are the per-stream WASAPI endpoint control channel.
+            return std::make_unique<endpoint_control_port>();
         }
 
         return std::make_unique<dummy_port>(std::u16string(port));
@@ -167,6 +226,7 @@ namespace sogen
         context.recv_buffer = c.receive_message ? c.receive_message.value() + header_size : 0;
         context.recv_buffer_length =
             c.receive_buffer_length >= header_size ? static_cast<ULONG>(c.receive_buffer_length - header_size) : data_length;
+        context.send_handle = c.send_handle;
 
         auto request_result = this->handle_request(win_emu, context);
         const auto payload_size = request_result.payload ? static_cast<ULONG>(request_result.payload->size()) : context.recv_buffer_length;
@@ -184,6 +244,7 @@ namespace sogen
         {
             result.payload = std::move(*request_result.payload);
         }
+        result.handles = std::move(request_result.handles);
 
         return result;
     }
@@ -220,6 +281,14 @@ namespace sogen
             return STATUS_INVALID_PARAMETER;
         }
 
+        // The bind carries the target interface's RPC_SYNTAX_IDENTIFIER GUID at offset 12.
+        constexpr ULONG rpc_handshake_interface_offset = 12;
+        if (c.send_buffer_length >= rpc_handshake_interface_offset + this->bound_interface_.size())
+        {
+            win_emu.emu().read_memory(c.send_buffer + rpc_handshake_interface_offset, this->bound_interface_.data(),
+                                      this->bound_interface_.size());
+        }
+
         std::vector<uint8_t> payload(c.send_buffer_length, 0);
         win_emu.emu().read_memory(c.recv_buffer, payload.data(), payload.size());
 
@@ -252,8 +321,11 @@ namespace sogen
                                           0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
         std::memcpy(header.data() + 12, &call_id, sizeof(call_id));
 
+        const auto pointer_size = win_emu.process.is_wow64_process ? utils::aligned_binary_writer::pointer_size_32
+                                                                   : utils::aligned_binary_writer::pointer_size_64;
+
         std::vector<uint8_t> payload;
-        utils::aligned_binary_writer writer(payload, win_emu.process.is_wow64_process ? sizeof(uint32_t) : sizeof(uint64_t));
+        utils::aligned_binary_writer writer(payload, pointer_size);
         writer.write(header.data(), header.size());
 
         lpc_request_context rpc_context{};
@@ -265,9 +337,12 @@ namespace sogen
             rpc_context.recv_buffer_length = c.recv_buffer_length - static_cast<DWORD>(header.size());
         }
 
-        const auto status = this->handle_rpc(win_emu, procedure_id, rpc_context, writer);
+        std::vector<alpc_reply_handle> reply_handles;
+        const auto status = this->handle_rpc(win_emu, procedure_id, rpc_context, writer, reply_handles);
 
-        return {status, std::move(payload)};
+        lpc_request_result result{status, std::move(payload)};
+        result.handles = std::move(reply_handles);
+        return result;
     }
 
 } // namespace sogen

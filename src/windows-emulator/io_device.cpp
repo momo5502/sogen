@@ -24,6 +24,17 @@ namespace sogen
             }
         };
 
+        // A device whose handle opens but that fails every ioctl. Used for the PnP DevQuery interface that
+        // audioses probes for device properties: a clean error makes the caller fall back to its defaults,
+        // whereas returning success with no data leads it to read uninitialized output.
+        struct unsupported_io_device : stateless_device
+        {
+            NTSTATUS io_control(windows_emulator&, const io_device_context&) override
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+        };
+
         struct transport_stub_device : stateless_device
         {
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
@@ -56,6 +67,11 @@ namespace sogen
             return std::make_unique<transport_stub_device>();
         }
 
+        std::unique_ptr<io_device> create_unsupported_io_device(const device_creation_context&)
+        {
+            return std::make_unique<unsupported_io_device>();
+        }
+
         std::unique_ptr<io_device> create_named_pipe_device(const device_creation_context&)
         {
             return std::make_unique<named_pipe>();
@@ -75,6 +91,7 @@ namespace sogen
             {u"DeviceApi\\CMApi"sv, create_dummy_device},
             {u"DeviceApi\\CMNotify"sv, create_dummy_device},
             {u"ConDrv\\Server"sv, create_dummy_device},
+            {u"DeviceApi\\Dev\\Query"sv, create_unsupported_io_device},
             // Generic
             {u"Console"sv, create_console_device},
             // Multimedia Class Scheduler. avrt!AvSetMmThreadCharacteristics opens this to raise the audio
