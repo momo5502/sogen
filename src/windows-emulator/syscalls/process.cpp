@@ -593,7 +593,7 @@ namespace sogen
             if (c.proc.is_current_process_handle(process_handle))
             {
                 c.proc.exit_status = exit_status;
-                c.emu.stop();
+                c.win_emu.stop();
                 return STATUS_SUCCESS;
             }
 
