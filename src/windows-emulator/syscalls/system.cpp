@@ -327,7 +327,10 @@ namespace sogen
                 c.vcpu.active_thread->teb64->access([&](const TEB64& teb) { process_id = teb.ClientId.UniqueProcess; });
             }
 
-            constexpr auto required = static_cast<uint32_t>(sizeof(proc_t));
+            const auto image_name = u8_to_u16(c.win_emu.mod_manager.executable->name);
+            const auto image_name_length = image_name.size() * sizeof(char16_t);
+            const auto image_name_buffer_length = image_name_length + sizeof(char16_t);
+            const auto required = static_cast<uint32_t>(sizeof(proc_t) + image_name_buffer_length);
 
             if (return_length)
             {
@@ -350,7 +353,13 @@ namespace sogen
             // when no separate sequence number is available.
             proc.SequenceNumber = process_id;
 
+            const auto image_name_buffer = system_information + sizeof(proc);
+            proc.ImageName.Length = static_cast<USHORT>(image_name_length);
+            proc.ImageName.MaximumLength = static_cast<USHORT>(image_name_buffer_length);
+            proc.ImageName.Buffer = image_name_buffer;
+
             c.emu.write_memory(system_information, &proc, sizeof(proc));
+            c.emu.write_memory(image_name_buffer, image_name.c_str(), image_name_buffer_length);
 
             return STATUS_SUCCESS;
         }
@@ -389,7 +398,11 @@ namespace sogen
                 thread_ids.push_back(active_tid);
             }
 
-            const auto required = static_cast<uint32_t>(sizeof(proc_t) + thread_ids.size() * sizeof(thread_t));
+            const auto image_name = u8_to_u16(c.win_emu.mod_manager.executable->name);
+            const auto image_name_length = image_name.size() * sizeof(char16_t);
+            const auto image_name_buffer_length = image_name_length + sizeof(char16_t);
+            const auto thread_information_length = thread_ids.size() * sizeof(thread_t);
+            const auto required = static_cast<uint32_t>(sizeof(proc_t) + thread_information_length + image_name_buffer_length);
 
             if (return_length)
             {
@@ -409,6 +422,12 @@ namespace sogen
             proc.UniqueProcessId = process_id;
             proc.HandleCount = 0;
             proc.SessionId = 0;
+
+            const auto image_name_buffer = system_information + sizeof(proc) + thread_information_length;
+            proc.ImageName.Length = static_cast<USHORT>(image_name_length);
+            proc.ImageName.MaximumLength = static_cast<USHORT>(image_name_buffer_length);
+            proc.ImageName.Buffer = image_name_buffer;
+
             c.emu.write_memory(system_information, &proc, sizeof(proc));
 
             for (size_t i = 0; i < thread_ids.size(); ++i)
@@ -423,6 +442,8 @@ namespace sogen
                 info.WaitReason = 6;  // WrQueue
                 c.emu.write_memory(system_information + sizeof(proc_t) + i * sizeof(thread_t), &info, sizeof(info));
             }
+
+            c.emu.write_memory(image_name_buffer, image_name.c_str(), image_name_buffer_length);
 
             return STATUS_SUCCESS;
         }
@@ -593,29 +614,37 @@ namespace sogen
                         info.MaximumProcessors = 2;
                         info.ProcessorArchitecture =
                             (info_class == SystemProcessorInformation ? PROCESSOR_ARCHITECTURE_AMD64 : PROCESSOR_ARCHITECTURE_INTEL);
+                        // TODO: Figure out the best way to derive this from 'kusd.ProcessorFeatures'
                         info.ProcessorFeatureBits = static_cast<ULONG>(PROCESSOR_FEATURE_BITS);
                     });
 
             case SystemProcessorFeaturesInformation:
-                return handle_query<uint64_t>(c.emu, system_information, system_information_length, return_length, [&](uint64_t& bits) { //
-                    bits = PROCESSOR_FEATURE_BITS;
-                });
+                return handle_query<SYSTEM_PROCESSOR_FEATURES_INFORMATION64>(c.emu, system_information, system_information_length,
+                                                                             return_length,
+                                                                             [&](SYSTEM_PROCESSOR_FEATURES_INFORMATION64& info) {
+                                                                                 // TODO: Figure out the best way to derive this from
+                                                                                 //       'kusd.ProcessorFeatures'
+                                                                                 info.ProcessorFeatureBits = PROCESSOR_FEATURE_BITS;
+                                                                             });
 
             case SystemProcessorFeaturesBitMapInformation:
-                return handle_query<std::array<ULONG64, 2>>(c.emu, system_information, system_information_length, return_length,
-                                                            [&](std::array<ULONG64, 2>& bitmap) {
-                                                                bitmap = {};
+                return handle_query<std::array<ULONG64, 2>>(
+                    c.emu, system_information, system_information_length, return_length, [&](std::array<ULONG64, 2>& bitmap) {
+                        bitmap = {};
 
-                                                                c.proc.kusd.access([&](KUSER_SHARED_DATA64& kusd) {
-                                                                    for (size_t index = 0; index < 128; ++index)
-                                                                    {
-                                                                        if (kusd.ProcessorFeatures.arr[index])
-                                                                        {
-                                                                            bitmap.at(index / 64) |= ULONG64{1} << (index % 64);
-                                                                        }
-                                                                    }
-                                                                });
-                                                            });
+                        c.proc.kusd.access([&](KUSER_SHARED_DATA64& kusd) {
+                            const auto& features = kusd.ProcessorFeatures.arr;
+                            const std::size_t count = std::min<std::size_t>(128, std::size(features));
+
+                            for (std::size_t index = 0; index < count; ++index)
+                            {
+                                if (features[index])
+                                {
+                                    bitmap[index / 64] |= ULONG64{1} << (index % 64);
+                                }
+                            }
+                        });
+                    });
 
             case SystemNumaProcessorMap:
                 return handle_query<SYSTEM_NUMA_INFORMATION64>(c.emu, system_information, system_information_length, return_length,

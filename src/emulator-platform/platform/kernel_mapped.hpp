@@ -1703,10 +1703,12 @@ namespace sogen
 
     typedef struct _GROUP_AFFINITY
     {
-        KAFFINITY Mask;
+        EMULATOR_CAST(EmulatorTraits<Emu64>::ULONG_PTR, KAFFINITY) Mask;
         WORD Group;
         WORD Reserved[3];
     } GROUP_AFFINITY, *PGROUP_AFFINITY;
+
+    static_assert(sizeof(GROUP_AFFINITY) == 0x10);
 
     struct THREAD_TLS_INFORMATION
     {
