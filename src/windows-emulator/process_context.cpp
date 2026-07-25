@@ -91,7 +91,12 @@ namespace sogen
 
             // One GDT page per vCPU (see gdt_base_for_vcpu): the WOW64 FS descriptor holds a per-thread
             // TEB base, so a shared GDT cannot serve WOW64 threads on different vCPUs at the same time.
-            memory.allocate_memory(GDT_ADDR, static_cast<size_t>(page_align_up(vcpu_count * GDT_LIMIT)), memory_permission::read_write);
+            const bool allocated =
+                memory.allocate_memory(GDT_ADDR, static_cast<size_t>(page_align_up(vcpu_count * GDT_LIMIT)), memory_permission::read_write);
+            if (!allocated)
+            {
+                throw std::runtime_error("Failed to allocate memory for GDT");
+            }
 
             for (size_t i = 0; i < vcpu_count; ++i)
             {
