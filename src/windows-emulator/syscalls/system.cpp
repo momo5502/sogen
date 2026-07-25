@@ -235,6 +235,7 @@ namespace sogen
 
         constexpr uint64_t FAKE_KERNEL_BASE = 0xFFFFF80000000000ULL;
         constexpr uint32_t FAKE_KERNEL_SIZE = 0x00A00000;
+        constexpr uint64_t PROCESSOR_FEATURE_BITS = 0x421993DFEULL;
 
         template <typename Traits>
         void fill_ntoskrnl_module(RTL_PROCESS_MODULE_INFORMATION<Traits>& m)
@@ -438,7 +439,6 @@ namespace sogen
             case SystemProcessInformation:
                 return handle_system_process_information(c, system_information, system_information_length, return_length);
 
-            case 250: // Build 27744
             case SystemFlushInformation:
             case SystemCodeIntegrityPolicyInformation:
             case SystemHypervisorSharedPageInformation:
@@ -593,7 +593,29 @@ namespace sogen
                         info.MaximumProcessors = 2;
                         info.ProcessorArchitecture =
                             (info_class == SystemProcessorInformation ? PROCESSOR_ARCHITECTURE_AMD64 : PROCESSOR_ARCHITECTURE_INTEL);
+                        info.ProcessorFeatureBits = static_cast<ULONG>(PROCESSOR_FEATURE_BITS);
                     });
+
+            case SystemProcessorFeaturesInformation:
+                return handle_query<uint64_t>(c.emu, system_information, system_information_length, return_length, [&](uint64_t& bits) { //
+                    bits = PROCESSOR_FEATURE_BITS;
+                });
+
+            case SystemProcessorFeaturesBitMapInformation:
+                return handle_query<std::array<ULONG64, 2>>(c.emu, system_information, system_information_length, return_length,
+                                                            [&](std::array<ULONG64, 2>& bitmap) {
+                                                                bitmap = {};
+
+                                                                c.proc.kusd.access([&](KUSER_SHARED_DATA64& kusd) {
+                                                                    for (size_t index = 0; index < 128; ++index)
+                                                                    {
+                                                                        if (kusd.ProcessorFeatures.arr[index])
+                                                                        {
+                                                                            bitmap.at(index / 64) |= ULONG64{1} << (index % 64);
+                                                                        }
+                                                                    }
+                                                                });
+                                                            });
 
             case SystemNumaProcessorMap:
                 return handle_query<SYSTEM_NUMA_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
