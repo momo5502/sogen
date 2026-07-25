@@ -408,17 +408,112 @@ namespace sogen
             }
         }
 
-        void apply_window_pos_callback_result(const syscall_context& c, window& win,
-                                              const emulator_stack_allocation& window_pos_alloc)
+        std::optional<EMU_WINDOWPOS> read_window_pos_callback_output(const syscall_context& c)
+        {
+            const auto& result = c.get_user_callback_result();
+            if (result.output == 0)
+            {
+                return std::nullopt;
+            }
+
+            if (c.proc.is_wow64_process)
+            {
+                if (result.output_size < sizeof(wow64_window_pos_callback_data))
+                {
+                    return std::nullopt;
+                }
+
+                wow64_window_pos_callback_data position{};
+                if (!c.win_emu.memory.try_read_memory(result.output, &position, sizeof(position)))
+                {
+                    return std::nullopt;
+                }
+
+                return EMU_WINDOWPOS{
+                    .hwnd = position.hwnd,
+                    .hwndInsertAfter = position.hwndInsertAfter,
+                    .x = position.x,
+                    .y = position.y,
+                    .cx = position.cx,
+                    .cy = position.cy,
+                    .flags = position.flags,
+                };
+            }
+
+            if (result.output_size < sizeof(EMU_WINDOWPOS))
+            {
+                return std::nullopt;
+            }
+
+            EMU_WINDOWPOS position{};
+            if (!c.win_emu.memory.try_read_memory(result.output, &position, sizeof(position)))
+            {
+                return std::nullopt;
+            }
+            return position;
+        }
+
+        void complete_window_position_change(const syscall_context& c, window& win, const uint64_t window_pos_address,
+                                              emulator_stack_allocation& changed_window_pos_alloc, std::vector<qmsg>& message_queue)
         {
             EMU_WINDOWPOS position{};
-            c.emu.read_memory(window_pos_alloc.address(), &position, sizeof(position));
+            c.emu.read_memory(window_pos_address, &position, sizeof(position));
+            if (const auto callback_position = read_window_pos_callback_output(c))
+            {
+                position = *callback_position;
+                c.emu.write_memory(window_pos_address, &position, sizeof(position));
+            }
 
             const auto x = (position.flags & SWP_NOMOVE) != 0 ? win.x : position.x;
             const auto y = (position.flags & SWP_NOMOVE) != 0 ? win.y : position.y;
             const auto width = (position.flags & SWP_NOSIZE) != 0 ? win.width : position.cx;
             const auto height = (position.flags & SWP_NOSIZE) != 0 ? win.height : position.cy;
             update_window_geometry(c, win, x, y, width, height, false);
+
+            EMU_WINDOWPOS changed_position{
+                .hwnd = position.hwnd,
+                .hwndInsertAfter = position.hwndInsertAfter,
+                .x = win.x,
+                .y = win.y,
+                .cx = win.width,
+                .cy = win.height,
+                .flags = position.flags,
+            };
+            if ((position.flags & SWP_NOMOVE) != 0)
+            {
+                changed_position.flags |= SWP_NOCLIENTMOVE;
+            }
+            if ((position.flags & SWP_NOSIZE) != 0)
+            {
+                changed_position.flags |= SWP_NOCLIENTSIZE;
+            }
+
+            if (changed_window_pos_alloc)
+            {
+                c.emu.write_memory(changed_window_pos_alloc.address(), &changed_position, sizeof(changed_position));
+            }
+            else
+            {
+                changed_window_pos_alloc = c.emu.push_stack(changed_position);
+            }
+
+            for (auto& message : message_queue)
+            {
+                switch (message.message)
+                {
+                case WM_WINDOWPOSCHANGED:
+                    message.lParam = changed_window_pos_alloc.address();
+                    break;
+                case WM_MOVE:
+                    message.lParam = static_cast<uint64_t>(((win.y & 0xFFFF) << 16) | (win.x & 0xFFFF));
+                    break;
+                case WM_SIZE:
+                    message.lParam = static_cast<uint64_t>(((win.height & 0xFFFF) << 16) | (win.width & 0xFFFF));
+                    break;
+                default:
+                    break;
+                }
+            }
         }
 
         RECT union_update_rect(const RECT& a, const RECT& b)
@@ -878,10 +973,6 @@ namespace sogen
                 }
 
                 dispatch_user_callback(c, id, k_fn_inout_lp_point5_callback_id, std::forward<T>(state), args);
-                if (message == WM_WINDOWPOSCHANGING)
-                {
-                    c.thread().callback_stack.back().callback_output_target = l_param;
-                }
                 return;
             }
 
@@ -945,6 +1036,10 @@ namespace sogen
         {
             const auto m = message_queue.back();
             message_queue.pop_back();
+            if (m.message == WM_WINDOWPOSCHANGING)
+            {
+                state.pending_window_pos_address = m.lParam;
+            }
 
             dispatch_window_message(c, id, std::forward<T>(state), win, m.message, m.wParam, m.lParam);
         }
@@ -3092,7 +3187,7 @@ namespace sogen
                     std::vector<qmsg> show_messages = {
                         {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
                         {.message = WM_SIZE, .wParam = 0, .lParam = size_lparam},
-                        {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.changed_window_pos_alloc.address()},
+                        {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = 0},
                         {.message = WM_SETFOCUS, .wParam = 0, .lParam = 0},
                         {.message = WM_ACTIVATE, .wParam = 1, .lParam = 0},
                         {.message = WM_NCACTIVATE, .wParam = 1, .lParam = 0},
@@ -3156,13 +3251,10 @@ namespace sogen
                 return 0;
             }
 
-            if (s.callback_output_target != 0)
+            if (s.pending_window_pos_address != 0)
             {
-                if (s.callback_output_target == s.window_pos_alloc.address())
-                {
-                    apply_window_pos_callback_result(c, *win, s.window_pos_alloc);
-                }
-                s.callback_output_target = 0;
+                complete_window_position_change(c, *win, s.pending_window_pos_address, s.changed_window_pos_alloc, s.message_queue);
+                s.pending_window_pos_address = 0;
             }
 
             if (!s.message_queue.empty())
@@ -3209,25 +3301,18 @@ namespace sogen
         BOOL completion_NtUserDestroyWindow(const syscall_context& c, const hwnd /*window*/)
         {
             auto& s = c.get_completion_state<window_destroy_state>();
-            if (s.callback_output_target != 0)
+            const auto pending_frame = std::ranges::find_if(s.frames, [](const window_destroy_frame& frame) {
+                return frame.pending_window_pos_address != 0;
+            });
+            if (pending_frame != s.frames.end())
             {
-                const auto apply_result = [&](std::vector<window_destroy_frame>& frames) {
-                    for (auto& frame : frames)
-                    {
-                        if (frame.window_pos_alloc && frame.window_pos_alloc.address() == s.callback_output_target)
-                        {
-                            if (auto* win = c.proc.windows.get(frame.handle))
-                            {
-                                apply_window_pos_callback_result(c, *win, frame.window_pos_alloc);
-                            }
-                            return true;
-                        }
-                    }
-                    return false;
-                };
-
-                apply_result(s.frames);
-                s.callback_output_target = 0;
+                if (auto* win = c.proc.windows.get(pending_frame->handle))
+                {
+                    complete_window_position_change(c, *win, pending_frame->pending_window_pos_address,
+                                                    pending_frame->changed_window_pos_alloc,
+                                                    pending_frame->message_queue);
+                }
+                pending_frame->pending_window_pos_address = 0;
             }
             return advance_window_destroy(c, s);
         }
@@ -3396,7 +3481,7 @@ namespace sogen
                 state.message_queue = {
                     {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
                     {.message = WM_SIZE, .wParam = 0, .lParam = size_lparam},
-                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.changed_window_pos_alloc.address()},
+                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = 0},
                 };
 
                 if (activate_window)
@@ -3440,7 +3525,7 @@ namespace sogen
                     {.message = WM_KILLFOCUS, .wParam = 0, .lParam = 0},
                     {.message = WM_ACTIVATE, .wParam = 0, .lParam = 0},
                     {.message = WM_NCACTIVATE, .wParam = FALSE, .lParam = 0},
-                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.changed_window_pos_alloc.address()},
+                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = 0},
                     {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address()},
                     {.message = WM_SHOWWINDOW, .wParam = FALSE, .lParam = 0},
                 };
@@ -3468,13 +3553,10 @@ namespace sogen
             auto& s = c.get_completion_state<window_show_state>();
             auto* win = c.proc.windows.get(hwnd);
 
-            if (s.callback_output_target != 0)
+            if (s.pending_window_pos_address != 0)
             {
-                if (s.callback_output_target == s.window_pos_alloc.address())
-                {
-                    apply_window_pos_callback_result(c, *win, s.window_pos_alloc);
-                }
-                s.callback_output_target = 0;
+                complete_window_position_change(c, *win, s.pending_window_pos_address, s.changed_window_pos_alloc, s.message_queue);
+                s.pending_window_pos_address = 0;
             }
 
             if (!s.message_queue.empty())

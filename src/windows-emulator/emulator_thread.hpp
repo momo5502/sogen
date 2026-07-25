@@ -217,7 +217,6 @@ namespace sogen
         uint16_t es{};
         uint16_t fs{};
         uint16_t gs{};
-        uint64_t callback_output_target{};
         std::unique_ptr<completion_state> state{};
 
         callback_frame();

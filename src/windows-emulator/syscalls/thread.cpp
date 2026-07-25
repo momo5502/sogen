@@ -1024,43 +1024,6 @@ namespace sogen
                     {
                         callback_result.output_size = result_data.output_size;
                         callback_result.output = result_data.output;
-
-                        auto& frame = t.callback_stack.back();
-                        if (frame.callback_output_target != 0 && result_data.output != 0)
-                        {
-                            EMU_WINDOWPOS window_pos{};
-                            bool copied{};
-                            if (c.proc.is_wow64_process && result_data.output_size >= sizeof(wow64_window_pos_callback_data))
-                            {
-                                wow64_window_pos_callback_data window_pos32{};
-                                if (c.win_emu.memory.try_read_memory(result_data.output, &window_pos32, sizeof(window_pos32)))
-                                {
-                                    window_pos = {
-                                        .hwnd = window_pos32.hwnd,
-                                        .hwndInsertAfter = window_pos32.hwndInsertAfter,
-                                        .x = window_pos32.x,
-                                        .y = window_pos32.y,
-                                        .cx = window_pos32.cx,
-                                        .cy = window_pos32.cy,
-                                        .flags = window_pos32.flags,
-                                    };
-                                    copied = true;
-                                }
-                            }
-                            else if (!c.proc.is_wow64_process && result_data.output_size >= sizeof(window_pos))
-                            {
-                                copied = c.win_emu.memory.try_read_memory(result_data.output, &window_pos, sizeof(window_pos));
-                            }
-
-                            if (copied)
-                            {
-                                c.win_emu.memory.write_memory(frame.callback_output_target, &window_pos, sizeof(window_pos));
-                                if (frame.state)
-                                {
-                                    frame.state->callback_output_target = frame.callback_output_target;
-                                }
-                            }
-                        }
                     }
                 }
             }
