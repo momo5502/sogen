@@ -350,23 +350,37 @@ namespace sogen
             }
         }
 
+        // Host filesystem timestamps are real wall-clock time, not virtualized like KUSER_SHARED_DATA's clock -
+        // under the deterministic instruction-tick clock (windows_emulator::uses_relative_time), two runs that
+        // touch the same file at different real moments would otherwise observe different values. Zero them
+        // instead; that mirrors real Windows returning no timestamp when one isn't available.
+        LARGE_INTEGER get_file_time(const bool deterministic, const timespec ts)
+        {
+            if (deterministic)
+            {
+                return {};
+            }
+
+            return convert_timespec_to_filetime(ts);
+        }
+
         std::vector<file_entry> scan_directory(const file_system& file_sys, const windows_path& win_path,
-                                               const std::u16string_view file_mask)
+                                               const std::u16string_view file_mask, const bool deterministic_time)
         {
             std::vector<file_entry> files{};
 
             const auto dir = file_sys.translate(win_path);
-            const auto make_file_entry = [](const std::filesystem::path& file_path, const std::filesystem::path& host_path,
-                                            const bool is_directory) {
+            const auto make_file_entry = [deterministic_time](const std::filesystem::path& file_path,
+                                                              const std::filesystem::path& host_path, const bool is_directory) {
                 file_entry entry{.file_path = file_path, .is_directory = is_directory};
 
                 struct compat_stat file_stat{};
                 if (compat_stat(host_path, &file_stat))
                 {
                     entry.file_size = is_directory ? 0 : static_cast<uint64_t>(file_stat.st_size);
-                    entry.creation_time = convert_timespec_to_filetime(file_stat.st_ctimespec);
-                    entry.last_access_time = convert_timespec_to_filetime(file_stat.st_atimespec);
-                    entry.last_write_time = convert_timespec_to_filetime(file_stat.st_mtimespec);
+                    entry.creation_time = get_file_time(deterministic_time, file_stat.st_ctimespec);
+                    entry.last_access_time = get_file_time(deterministic_time, file_stat.st_atimespec);
+                    entry.last_write_time = get_file_time(deterministic_time, file_stat.st_mtimespec);
                 }
 
                 return entry;
@@ -421,7 +435,7 @@ namespace sogen
                 c.win_emu.callbacks.on_generic_access("Enumerating directory", f->name + mask);
 
                 f->enumeration_state.emplace(file_enumeration_state{});
-                f->enumeration_state->files = scan_directory(c.win_emu.file_sys, f->name, mask);
+                f->enumeration_state->files = scan_directory(c.win_emu.file_sys, f->name, mask, c.win_emu.uses_relative_time());
             }
 
             auto& enum_state = *f->enumeration_state;
@@ -783,9 +797,9 @@ namespace sogen
 
                 const emulator_object<FILE_BASIC_INFORMATION> info{c.emu, address};
                 FILE_BASIC_INFORMATION i{};
-                i.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
-                i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
-                i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
+                i.CreationTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_ctimespec);
+                i.LastAccessTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_atimespec);
+                i.LastWriteTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_mtimespec);
                 i.ChangeTime = i.LastWriteTime;
                 i.FileAttributes = is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
 
@@ -1126,9 +1140,9 @@ namespace sogen
 
                 EMU_FILE_STAT_BASIC_INFORMATION i{};
 
-                i.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
-                i.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
-                i.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
+                i.CreationTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_ctimespec);
+                i.LastAccessTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_atimespec);
+                i.LastWriteTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_mtimespec);
                 i.ChangeTime = i.LastWriteTime;
                 i.FileAttributes = is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
 
@@ -2032,9 +2046,9 @@ namespace sogen
             }
 
             file_information.access([&](FILE_NETWORK_OPEN_INFORMATION& info) {
-                info.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
-                info.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
-                info.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
+                info.CreationTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_ctimespec);
+                info.LastAccessTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_atimespec);
+                info.LastWriteTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_mtimespec);
                 info.AllocationSize.QuadPart = static_cast<LONGLONG>(file_stat.st_size);
                 info.EndOfFile.QuadPart = static_cast<LONGLONG>(file_stat.st_size);
                 info.ChangeTime = info.LastWriteTime;
@@ -2098,9 +2112,9 @@ namespace sogen
             }
 
             file_information.access([&](FILE_BASIC_INFORMATION& info) {
-                info.CreationTime = convert_timespec_to_filetime(file_stat.st_ctimespec);
-                info.LastAccessTime = convert_timespec_to_filetime(file_stat.st_atimespec);
-                info.LastWriteTime = convert_timespec_to_filetime(file_stat.st_mtimespec);
+                info.CreationTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_ctimespec);
+                info.LastAccessTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_atimespec);
+                info.LastWriteTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_mtimespec);
                 info.ChangeTime = info.LastWriteTime;
                 info.FileAttributes = (file_stat.st_mode & S_IFDIR) != 0 ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
             });
