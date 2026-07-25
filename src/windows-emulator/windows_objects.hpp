@@ -13,6 +13,7 @@
 
 namespace sogen
 {
+
     struct timer : ref_counted_object
     {
         std::u16string name{};
