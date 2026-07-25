@@ -343,6 +343,11 @@ namespace sogen
             return this->instruction_precision_;
         }
 
+        bool uses_relative_time() const
+        {
+            return this->use_relative_time_;
+        }
+
         uint32_t vcpu_count() const
         {
             return this->vcpu_count_;
