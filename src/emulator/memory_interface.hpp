@@ -62,6 +62,14 @@ namespace sogen
         }
 
         template <typename T>
+        T read_memory(const uint64_t address, const size_t size) const
+        {
+            T value{};
+            this->read_memory(address, &value, std::min(size, sizeof(T)));
+            return value;
+        }
+
+        template <typename T>
         T read_memory(const void* address) const
         {
             return this->read_memory<T>(reinterpret_cast<uint64_t>(address));
