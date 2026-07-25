@@ -467,7 +467,29 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            c.win_emu.log.error("Unsupported thread query info class: %X\n", info_class);
+            if (info_class == ThreadGroupInformation)
+            {
+                if (return_length)
+                {
+                    return_length.write(sizeof(GROUP_AFFINITY));
+                }
+
+                if (thread_information_length != sizeof(GROUP_AFFINITY))
+                {
+                    return STATUS_BUFFER_OVERFLOW;
+                }
+
+                const emulator_object<GROUP_AFFINITY> info{c.emu, thread_information};
+                info.access([&](GROUP_AFFINITY& ga) {
+                    const auto processor_count =
+                        c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
+                    ga.Mask = processor_count >= 64 ? ~0ull : ((1ull << processor_count) - 1);
+                });
+
+                return STATUS_SUCCESS;
+            }
+
+            c.win_emu.log.error("Unsupported thread query info class: 0x%X\n", info_class);
             c.emu.stop();
 
             return STATUS_NOT_SUPPORTED;

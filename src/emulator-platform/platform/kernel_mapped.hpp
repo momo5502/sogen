@@ -1701,6 +1701,13 @@ namespace sogen
         LARGE_INTEGER UserTime;
     } KERNEL_USER_TIMES, *PKERNEL_USER_TIMES;
 
+    typedef struct _GROUP_AFFINITY
+    {
+        KAFFINITY Mask;
+        WORD Group;
+        WORD Reserved[3];
+    } GROUP_AFFINITY, *PGROUP_AFFINITY;
+
     struct THREAD_TLS_INFORMATION
     {
         ULONG Flags;
