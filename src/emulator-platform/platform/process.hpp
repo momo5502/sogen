@@ -1268,6 +1268,18 @@ namespace sogen
     };
 
     template <typename Traits>
+    struct SYSTEM_BASICPROCESS_INFORMATION
+    {
+        ULONG NextEntryOffset;
+        Traits::HANDLE UniqueProcessId;
+        Traits::HANDLE InheritedFromUniqueProcessId;
+        ULONG64 SequenceNumber;
+        UNICODE_STRING<Traits> ImageName;
+    };
+
+    static_assert(sizeof(SYSTEM_BASICPROCESS_INFORMATION<EmulatorTraits<Emu64>>) == 0x30);
+
+    template <typename Traits>
     struct SYSTEM_PROCESS_INFORMATION
     {
         ULONG NextEntryOffset;

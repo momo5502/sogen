@@ -312,6 +312,48 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_system_basicprocess_information(const syscall_context& c, const uint64_t system_information,
+                                                        const uint32_t system_information_length,
+                                                        const emulator_object<uint32_t> return_length)
+        {
+            using Traits = EmulatorTraits<Emu64>;
+            using proc_t = SYSTEM_BASICPROCESS_INFORMATION<Traits>;
+
+            uint64_t process_id = process_context::process_id;
+
+            if (c.vcpu.active_thread && c.vcpu.active_thread->teb64)
+            {
+                c.vcpu.active_thread->teb64->access([&](const TEB64& teb) { process_id = teb.ClientId.UniqueProcess; });
+            }
+
+            constexpr auto required = static_cast<uint32_t>(sizeof(proc_t));
+
+            if (return_length)
+            {
+                return_length.write(required);
+            }
+
+            if (system_information_length < required)
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            proc_t proc{};
+
+            proc.NextEntryOffset = 0; // Single process; terminator
+            proc.UniqueProcessId = process_id;
+            proc.InheritedFromUniqueProcessId = 0;
+
+            // Ideally this should be a monotonically increasing value assigned when
+            // the emulated process is created. The process ID is a reasonable fallback
+            // when no separate sequence number is available.
+            proc.SequenceNumber = process_id;
+
+            c.emu.write_memory(system_information, &proc, sizeof(proc));
+
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_system_process_information(const syscall_context& c, const uint64_t system_information,
                                                    const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
         {
@@ -390,11 +432,13 @@ namespace sogen
         {
             switch (info_class)
             {
+            case SystemBasicProcessInformation:
+                return handle_system_basicprocess_information(c, system_information, system_information_length, return_length);
+
             case SystemProcessInformation:
                 return handle_system_process_information(c, system_information, system_information_length, return_length);
 
             case 250: // Build 27744
-            case 252:
             case SystemFlushInformation:
             case SystemCodeIntegrityPolicyInformation:
             case SystemHypervisorSharedPageInformation:
