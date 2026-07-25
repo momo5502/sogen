@@ -901,20 +901,6 @@ namespace sogen
             dispatch_window_message(c, id, std::forward<T>(state), win, m.message, m.wParam, m.lParam);
         }
 
-        void release_window_create_allocations(const syscall_context& c, window_create_state& state)
-        {
-            if (state.window_pos_alloc)
-            {
-                c.emu.pop_stack(state.changed_window_pos_alloc);
-                c.emu.pop_stack(state.activation_window_pos_alloc);
-                c.emu.pop_stack(state.window_pos_alloc);
-            }
-
-            c.emu.pop_stack(state.min_max_info_alloc);
-            c.emu.pop_stack(state.window_rect_alloc);
-            c.emu.pop_stack(state.create_struct_alloc);
-        }
-
         BOOL advance_window_destroy(const syscall_context& c, window_destroy_state& state)
         {
             window_destroy_orchestrator orchestrator{state, c};
@@ -3107,9 +3093,22 @@ namespace sogen
             auto& s = c.get_completion_state<window_create_state>();
             const auto* win = c.proc.windows.get(s.handle);
 
+            const auto release_window_create_allocations = [&] {
+                if (s.window_pos_alloc)
+                {
+                    c.emu.pop_stack(s.changed_window_pos_alloc);
+                    c.emu.pop_stack(s.activation_window_pos_alloc);
+                    c.emu.pop_stack(s.window_pos_alloc);
+                }
+
+                c.emu.pop_stack(s.min_max_info_alloc);
+                c.emu.pop_stack(s.window_rect_alloc);
+                c.emu.pop_stack(s.create_struct_alloc);
+            };
+
             if (!win)
             {
-                release_window_create_allocations(c, s);
+                release_window_create_allocations();
                 return 0;
             }
 
@@ -3131,7 +3130,7 @@ namespace sogen
                 return {};
             }
 
-            release_window_create_allocations(c, s);
+            release_window_create_allocations();
 
             return s.handle;
         }
