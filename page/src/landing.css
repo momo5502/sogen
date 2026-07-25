@@ -21,9 +21,18 @@
 
 /* Faint dot grid used behind the hero */
 .lp-dots {
-  background-image: radial-gradient(rgba(27, 26, 23, 0.13) 1px, transparent 1px);
+  background-image: radial-gradient(
+    rgba(27, 26, 23, 0.13) 1px,
+    transparent 1px
+  );
   background-size: 22px 22px;
-  mask-image: linear-gradient(to bottom, transparent, black 15%, black 80%, transparent);
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black 15%,
+    black 80%,
+    transparent
+  );
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent,

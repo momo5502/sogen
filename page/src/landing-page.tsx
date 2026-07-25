@@ -55,14 +55,7 @@ const pythonTheme: PrismTheme = {
 
 /* The color ramp used by Sogen's terminal output, reused as the
    accent system across the page. */
-const ramp = [
-  "#f4c04a",
-  "#cdd24a",
-  "#9fd24a",
-  "#5ecb9a",
-  "#45c2cf",
-  "#5cb8f7",
-];
+const ramp = ["#f4c04a", "#cdd24a", "#9fd24a", "#5ecb9a", "#45c2cf", "#5cb8f7"];
 
 function scrollTo(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
@@ -305,8 +298,8 @@ export function LandingPage() {
 
               <p className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-pretty text-[var(--lp-ink-soft)] sm:text-xl">
                 Sogen runs Windows and Linux programs without a real operating
-                system, and lets you see and control everything they do, down
-                to the instruction.
+                system, and lets you see and control everything they do, down to
+                the instruction.
               </p>
 
               <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -359,10 +352,10 @@ export function LandingPage() {
                 Emulate the syscalls. Run everything else for real.
               </h2>
               <p className="mt-5 text-lg leading-relaxed text-[var(--lp-ink-soft)]">
-                Instead of reimplementing thousands of Windows APIs, Sogen
-                loads your binary together with the real system DLLs and runs
-                them on an emulated CPU. Only the thin syscall layer at the
-                very bottom is answered by Sogen itself.
+                Instead of reimplementing thousands of Windows APIs, Sogen loads
+                your binary together with the real system DLLs and runs them on
+                an emulated CPU. Only the thin syscall layer at the very bottom
+                is answered by Sogen itself.
               </p>
             </div>
 
@@ -600,9 +593,9 @@ export function LandingPage() {
                   A debugger anti-debug checks can't see.
                 </h2>
                 <p className="mt-5 text-lg leading-relaxed text-[var(--lp-ink-soft)]">
-                  Sogen implements the GDB protocol, so you can debug with
-                  tools you already know, like IDA Pro or GDB, or use the
-                  built-in in-browser debugger.
+                  Sogen implements the GDB protocol, so you can debug with tools
+                  you already know, like IDA Pro or GDB, or use the built-in
+                  in-browser debugger.
                 </p>
                 <p className="mt-4 text-lg leading-relaxed text-[var(--lp-ink-soft)]">
                   The debugger runs at the emulator level, outside the process,
@@ -765,8 +758,8 @@ export function LandingPage() {
               Help build Sogen.
             </h2>
             <p className="mx-auto mt-4 max-w-xl text-lg leading-relaxed text-neutral-400">
-              There's always more to build. Report a bug, add a syscall, or
-              open a pull request.
+              There's always more to build. Report a bug, add a syscall, or open
+              a pull request.
             </p>
             <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <a
