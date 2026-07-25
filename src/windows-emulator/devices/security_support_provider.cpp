@@ -10,8 +10,16 @@ namespace sogen
 
     namespace
     {
-        // Partial layout of the KsecDD ioctl 0x390400 request, covering the two fields the handler
-        // consumes: the operation selector and the requested algorithm name.
+        struct ksec_base_algorithm_request
+        {
+            std::array<uint8_t, 6> reserved0;
+            uint16_t operation;
+            std::array<uint8_t, 0x28> reserved1;
+        };
+
+        static_assert(offsetof(ksec_base_algorithm_request, operation) == 6);
+        static_assert(sizeof(ksec_base_algorithm_request) == 0x30);
+
         struct ksec_algorithm_request
         {
             std::array<uint8_t, 6> reserved0;
@@ -64,49 +72,52 @@ namespace sogen
                     return STATUS_NOT_SUPPORTED;
                 }
 
-                // The input buffer and its length are guest-controlled; require the full request layout
-                // before reading any field out of it.
-                if (!c.input_buffer || c.input_buffer_length < sizeof(ksec_algorithm_request))
+                if (!c.input_buffer || c.input_buffer_length < sizeof(ksec_base_algorithm_request))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const auto request = win_emu.emu().read_memory<ksec_algorithm_request>(c.input_buffer);
+                const auto request = win_emu.emu().read_memory<ksec_base_algorithm_request>(c.input_buffer);
 
-                if (request.operation == 2)
+                if (request.operation != 2)
                 {
-                    // algorithm_name is guest-controlled and may not be NUL-terminated; the util bounds the
-                    // view to the fixed array so we never scan past it looking for a terminator.
-                    const auto algorithm_name = utils::string::to_string_view<char16_t>(request.algorithm_name);
-
-                    // The response is a fixed-size record; never write past the guest-declared output buffer.
-                    const auto write_response = [&](const auto& output_data) -> NTSTATUS {
-                        if (!c.output_buffer || c.output_buffer_length < sizeof(output_data))
-                        {
-                            return STATUS_BUFFER_TOO_SMALL;
-                        }
-
-                        win_emu.emu().write_memory(c.output_buffer, output_data);
-
-                        if (c.io_status_block)
-                        {
-                            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                            block.Information = sizeof(output_data);
-                            c.io_status_block.write(block);
-                        }
-
-                        return STATUS_SUCCESS;
-                    };
-
-                    if (algorithm_name == u"SHA256")
-                    {
-                        return write_response(sha256_output_data);
-                    }
-
-                    return write_response(rng_output_data);
+                    return STATUS_SUCCESS;
                 }
 
-                return STATUS_SUCCESS;
+                std::u16string_view algorithm_name{};
+
+                if (c.input_buffer_length >= sizeof(ksec_algorithm_request))
+                {
+                    const auto algorithm_request = win_emu.emu().read_memory<ksec_algorithm_request>(c.input_buffer);
+
+                    // The field is guest-controlled and may not be NUL-terminated.
+                    algorithm_name = utils::string::to_string_view<char16_t>(algorithm_request.algorithm_name);
+                }
+
+                const auto write_response = [&](const auto& output_data) -> NTSTATUS {
+                    if (!c.output_buffer || c.output_buffer_length < sizeof(output_data))
+                    {
+                        return STATUS_BUFFER_TOO_SMALL;
+                    }
+
+                    win_emu.emu().write_memory(c.output_buffer, output_data);
+
+                    if (c.io_status_block)
+                    {
+                        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                        block.Information = sizeof(output_data);
+                        c.io_status_block.write(block);
+                    }
+
+                    return STATUS_SUCCESS;
+                };
+
+                if (algorithm_name == u"SHA256")
+                {
+                    return write_response(sha256_output_data);
+                }
+
+                return write_response(rng_output_data);
             }
         };
     }
