@@ -323,11 +323,19 @@ namespace sogen
         // SYSTEM_MEMORY_NUMA_PERFORMANCE_INFORMATION_OUTPUT // since 24H2 // 240
         SystemCodeIntegritySignedPoliciesFullInformation,
         SystemSecureSecretsInformation,
-        SystemTrustedAppsRuntimeInformation,          // SYSTEM_TRUSTEDAPPS_RUNTIME_INFORMATION
-        SystemBadPageInformationEx,                   // SYSTEM_BAD_PAGE_INFORMATION
-        SystemResourceDeadlockTimeout,                // ULONG
-        SystemBreakOnContextUnwindFailureInformation, // ULONG (requires SeDebugPrivilege)
-        SystemOslRamdiskInformation,                  // SYSTEM_OSL_RAMDISK_INFORMATION
+        SystemTrustedAppsRuntimeInformation,           // SYSTEM_TRUSTEDAPPS_RUNTIME_INFORMATION
+        SystemBadPageInformationEx,                    // SYSTEM_BAD_PAGE_INFORMATION
+        SystemResourceDeadlockTimeout,                 // ULONG
+        SystemBreakOnContextUnwindFailureInformation,  // ULONG (requires SeDebugPrivilege)
+        SystemOslRamdiskInformation,                   // SYSTEM_OSL_RAMDISK_INFORMATION
+        ystemCodeIntegrityPolicyManagementInformation, // SYSTEM_CODEINTEGRITYPOLICY_MANAGEMENT // since 25H2
+        SystemMemoryNumaCacheInformation,              // SYSTEM_MEMORY_NUMA_CACHE_INFORMATION
+        SystemProcessorFeaturesBitMapInformation,      // ULONG64[2] // RTL_BITMAP_EX // RtlInitializeBitMapEx // 250
+        SystemRefTraceInformationEx,                   // SYSTEM_REF_TRACE_INFORMATION_EX
+        SystemBasicProcessInformation,                 // SYSTEM_BASICPROCESS_INFORMATION
+        SystemHandleCountInformation,                  // SYSTEM_HANDLECOUNT_INFORMATION
+        SystemRuntimeAttestationReport,                // SYSTEM_RUNTIME_REPORT_INPUT
+        SystemPoolTagInformation2,                     // SYSTEM_POOLTAG_INFORMATION2 // since 26H1
         MaxSystemInfoClass
     };
 
