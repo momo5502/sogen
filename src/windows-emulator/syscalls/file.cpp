@@ -352,13 +352,15 @@ namespace sogen
 
         // Host filesystem timestamps are real wall-clock time, not virtualized like KUSER_SHARED_DATA's clock -
         // under the deterministic instruction-tick clock (windows_emulator::uses_relative_time), two runs that
-        // touch the same file at different real moments would otherwise observe different values. Zero them
-        // instead; that mirrors real Windows returning no timestamp when one isn't available.
+        // touch the same file at different real moments would otherwise observe different values. Substitute a
+        // fixed point in time instead of zeroing: a zero FILETIME is the 1601 epoch, and some directory
+        // enumeration consumers reject entries with a timestamp older than 1970 (see PR #1210).
         LARGE_INTEGER get_file_time(const bool deterministic, const timespec ts)
         {
             if (deterministic)
             {
-                return {};
+                constexpr __time64_t fixed_unix_time = 1700000000; // 2023-11-14, arbitrary but fixed
+                return utils::convert_unix_to_windows_time(fixed_unix_time);
             }
 
             return convert_timespec_to_filetime(ts);
