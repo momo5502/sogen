@@ -359,8 +359,7 @@ namespace sogen
         {
             if (deterministic)
             {
-                constexpr __time64_t fixed_unix_time = 1700000000; // 2023-11-14, arbitrary but fixed
-                return utils::convert_unix_to_windows_time(fixed_unix_time);
+                return utils::convert_unix_to_windows_time(1700000000); // 2023-11-14, arbitrary but fixed
             }
 
             return convert_timespec_to_filetime(ts);
