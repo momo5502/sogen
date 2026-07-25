@@ -10,16 +10,6 @@ namespace sogen
 
     namespace
     {
-        struct ksec_base_algorithm_request
-        {
-            std::array<uint8_t, 6> reserved0;
-            uint16_t operation;
-            std::array<uint8_t, 0x28> reserved1;
-        };
-
-        static_assert(offsetof(ksec_base_algorithm_request, operation) == 6);
-        static_assert(sizeof(ksec_base_algorithm_request) == 0x30);
-
         struct ksec_algorithm_request
         {
             std::array<uint8_t, 6> reserved0;
@@ -31,6 +21,8 @@ namespace sogen
         static_assert(offsetof(ksec_algorithm_request, operation) == 6);
         static_assert(offsetof(ksec_algorithm_request, algorithm_name) == 0x30);
         static_assert(sizeof(ksec_algorithm_request) == 0x40);
+
+        constexpr std::size_t ksec_algorithm_request_min_size = offsetof(ksec_algorithm_request, algorithm_name);
 
         struct security_support_provider : stateless_device
         {
@@ -72,12 +64,13 @@ namespace sogen
                     return STATUS_NOT_SUPPORTED;
                 }
 
-                if (!c.input_buffer || c.input_buffer_length < sizeof(ksec_base_algorithm_request))
+                if (!c.input_buffer || c.input_buffer_length < ksec_algorithm_request_min_size)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const auto request = win_emu.emu().read_memory<ksec_base_algorithm_request>(c.input_buffer);
+                const auto request =
+                    win_emu.emu().read_memory<ksec_algorithm_request>(c.input_buffer, static_cast<size_t>(c.input_buffer_length));
 
                 if (request.operation != 2)
                 {
@@ -88,10 +81,8 @@ namespace sogen
 
                 if (c.input_buffer_length >= sizeof(ksec_algorithm_request))
                 {
-                    const auto algorithm_request = win_emu.emu().read_memory<ksec_algorithm_request>(c.input_buffer);
-
                     // The field is guest-controlled and may not be NUL-terminated.
-                    algorithm_name = utils::string::to_string_view<char16_t>(algorithm_request.algorithm_name);
+                    algorithm_name = utils::string::to_string_view<char16_t>(request.algorithm_name);
                 }
 
                 const auto write_response = [&](const auto& output_data) -> NTSTATUS {
