@@ -1337,15 +1337,6 @@ namespace sogen::fex
             return false;
         }
 
-        // FEXCore's INT3 handling (OpcodeDispatcher.cpp) sets SetRIPToNext, so the RIP observed once
-        // the breakpoint fault surfaces here is already one past the 0xCC byte - unlike KVM/WHP, which
-        // both catch INT3 at the instruction's own (pre-advance) address. See
-        // reports_breakpoint_rip_past_instruction's doc comment.
-        bool reports_breakpoint_rip_past_instruction() const override
-        {
-            return true;
-        }
-
         // request_thread_stop() mprotects InterruptFaultPage to PROT_NONE, which is safe to call from
         // any host thread - the software-quantum watchdog thread in windows_emulator::start() relies on
         // exactly this (supports_instruction_counting() is false, so that path is the only time-slicing
@@ -3083,6 +3074,17 @@ namespace sogen::fex
             }
             else
             {
+                // FEXCore's INT3 (0xCC) translation stores the post-instruction RIP (INTOp's
+                // SetRIPToNext in OpcodeDispatcher.cpp), while NT (KiBreakpointTrap) and the KVM/WHP
+                // backends all report #BP at the 0xCC itself - normalize here so shared dispatch sees
+                // one convention. Only the direct #BP needs this: a GP-remapped `INT N` (e.g. the
+                // 2-byte `CD 2D` debug service trap, whose byte pattern exception_dispatch.cpp expects
+                // to find at RIP) already stores the instruction's own address.
+                if (frame->SynchronousFaultData.TrapNo == FEXCore::X86State::X86_TRAPNO_BP)
+                {
+                    frame->State.rip -= 1;
+                }
+
                 dispatch.kind = pending_fault_kind::interrupt;
                 dispatch.vector = vector;
             }
