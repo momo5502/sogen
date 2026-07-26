@@ -592,6 +592,17 @@ jobs:
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/test-sample.exe
           LINUX_TEST_ROOT: ${{github.workspace}}/deps/sogen-linux-files/test/linux
 
+      - name: Upload Serialization Mismatch Dumps
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Serialization Mismatch ${{ matrix.platform }} ${{ matrix.emulator }} ${{ matrix.configuration }}
+          path: |
+            build/${{matrix.preset}}/artifacts/*.a.bin
+            build/${{matrix.preset}}/artifacts/*.b.bin
+          if-no-files-found: ignore
+          retention-days: 7
+
   win-test:
     name: Windows Test
     runs-on: windows-latest
@@ -662,6 +673,17 @@ jobs:
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{ matrix.preset }}/artifacts/test-sample.exe
 
+      - name: Upload Serialization Mismatch Dumps
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Serialization Mismatch Windows ${{ matrix.configuration }} ${{ matrix.emulator }} ${{ matrix.emulation-root }}
+          path: |
+            build/${{ matrix.preset }}/artifacts/*.a.bin
+            build/${{ matrix.preset }}/artifacts/*.b.bin
+          if-no-files-found: ignore
+          retention-days: 7
+
   smoke-test-node:
     name: Smoke Test Node.js
     runs-on: ubuntu-24.04
@@ -693,6 +715,17 @@ jobs:
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
+
+      - name: Upload Serialization Mismatch Dumps
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Serialization Mismatch Node.js
+          path: |
+            build/release/artifacts/*.a.bin
+            build/release/artifacts/*.b.bin
+          if-no-files-found: ignore
+          retention-days: 7
 
   smoke-test-whp:
     name: Smoke Test WHP x86_64
@@ -839,6 +872,17 @@ jobs:
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
+
+      - name: Upload Serialization Mismatch Dumps
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: Serialization Mismatch MinGW x86_64
+          path: |
+            build/release/artifacts/*.a.bin
+            build/release/artifacts/*.b.bin
+          if-no-files-found: ignore
+          retention-days: 7
 
   smoke-test-android:
     name: Smoke Test Android

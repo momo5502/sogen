@@ -1,7 +1,25 @@
 #include "emulation_test_utils.hpp"
 
+#include <utils/io.hpp>
+
 namespace sogen::test
 {
+    namespace
+    {
+        void dump_and_expect_equal(const char* label, const std::vector<std::byte>& a, const std::vector<std::byte>& b)
+        {
+            if (a == b)
+            {
+                return;
+            }
+
+            utils::io::write_file(std::string(label) + ".a.bin", a);
+            utils::io::write_file(std::string(label) + ".b.bin", b);
+
+            ADD_FAILURE() << label << ": serialized buffers differ (dumps written to the working directory)";
+        }
+    }
+
     TEST(SerializationTest, ResettingEmulatorWorks)
     {
         auto emu = create_sample_emulator();
@@ -26,7 +44,7 @@ namespace sogen::test
         utils::buffer_serializer end_state2{};
         emu.serialize(end_state2);
 
-        ASSERT_EQ(end_state1.get_buffer(), end_state2.get_buffer());
+        dump_and_expect_equal("ResettingEmulatorWorks", end_state1.get_buffer(), end_state2.get_buffer());
     }
 
     TEST(SerializationTest, SerializedDataIsReproducible)
@@ -47,10 +65,7 @@ namespace sogen::test
         utils::buffer_serializer serializer2{};
         new_emu.serialize(serializer2);
 
-        auto buffer1 = serializer1.move_buffer();
-        auto buffer2 = serializer2.move_buffer();
-
-        ASSERT_EQ(serializer1.get_buffer(), serializer2.get_buffer());
+        dump_and_expect_equal("SerializedDataIsReproducible", serializer1.get_buffer(), serializer2.get_buffer());
     }
 
     TEST(SerializationTest, EmulationIsReproducible)
@@ -71,7 +86,7 @@ namespace sogen::test
         utils::buffer_serializer serializer2{};
         emu2.serialize(serializer2);
 
-        ASSERT_EQ(serializer1.get_buffer(), serializer2.get_buffer());
+        dump_and_expect_equal("EmulationIsReproducible", serializer1.get_buffer(), serializer2.get_buffer());
     }
 
     TEST(SerializationTest, DeserializedEmulatorBehavesLikeSource)
@@ -99,6 +114,6 @@ namespace sogen::test
         emu.serialize(serializer1);
         new_emu.serialize(serializer2);
 
-        ASSERT_EQ(serializer1.get_buffer(), serializer2.get_buffer());
+        dump_and_expect_equal("DeserializedEmulatorBehavesLikeSource", serializer1.get_buffer(), serializer2.get_buffer());
     }
 } // namespace sogen::test
