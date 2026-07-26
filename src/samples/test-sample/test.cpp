@@ -1305,6 +1305,79 @@ namespace
         return true;
     }
 
+    bool test_paint_message_queue()
+    {
+        WNDCLASSEXA wc = {};
+        wc.cbSize = sizeof(wc);
+        wc.lpszClassName = "TestPaintMsgQueueClass";
+        wc.hInstance = GetModuleHandleA(nullptr);
+        wc.lpfnWndProc = DefWindowProcA;
+
+        if (!RegisterClassExA(&wc))
+        {
+            puts("Failed to register paint window class");
+            return false;
+        }
+
+        const auto unregister_class = sogen::utils::finally([&] { UnregisterClassA(wc.lpszClassName, wc.hInstance); });
+
+        const HWND hwnd = CreateWindowExA(0, wc.lpszClassName, nullptr, WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0, 100, 100, nullptr, nullptr,
+                                          wc.hInstance, nullptr);
+        if (!hwnd)
+        {
+            puts("Failed to create paint window");
+            return false;
+        }
+
+        const auto destroy_window = sogen::utils::finally([&] { DestroyWindow(hwnd); });
+
+        UpdateWindow(hwnd);
+        RedrawWindow(hwnd, nullptr, nullptr, RDW_NOINTERNALPAINT | RDW_VALIDATE);
+        ValidateRect(hwnd, nullptr);
+
+        MSG msg = {};
+        while (PeekMessageA(&msg, hwnd, WM_PAINT, WM_PAINT, PM_REMOVE))
+        {
+            ValidateRect(hwnd, nullptr);
+        }
+
+        if (!RedrawWindow(hwnd, nullptr, nullptr, RDW_INTERNALPAINT))
+        {
+            puts("Failed to request internal paint");
+            return false;
+        }
+
+        if (!PeekMessageA(&msg, hwnd, WM_PAINT, WM_PAINT, PM_NOREMOVE))
+        {
+            puts("Internal WM_PAINT was not available");
+            return false;
+        }
+
+        if (PeekMessageA(&msg, hwnd, WM_PAINT, WM_PAINT, PM_NOREMOVE))
+        {
+            puts("PM_NOREMOVE did not consume internal WM_PAINT");
+            return false;
+        }
+
+        InvalidateRect(hwnd, nullptr, FALSE);
+        RedrawWindow(hwnd, nullptr, nullptr, RDW_INTERNALPAINT);
+
+        if (!PeekMessageA(&msg, hwnd, WM_PAINT, WM_PAINT, PM_REMOVE))
+        {
+            puts("Combined WM_PAINT was not available");
+            return false;
+        }
+
+        if (!PeekMessageA(&msg, hwnd, WM_PAINT, WM_PAINT, PM_NOREMOVE))
+        {
+            puts("PM_REMOVE consumed the invalid update region");
+            return false;
+        }
+
+        ValidateRect(hwnd, nullptr);
+        return true;
+    }
+
     bool test_private_namespace()
     {
         auto create_boundary_descriptor = [](const wchar_t* name) -> HANDLE {
@@ -1618,7 +1691,8 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
     RUN_TEST(test_user_callback, "User Callback")
-    RUN_TEST(test_message_queue, "Message Queue")
+    RUN_TEST(test_message_queue, "Message Queue (General)")
+    RUN_TEST(test_paint_message_queue, "Message Queue (Paint)")
     RUN_TEST(test_settimer, "User Timer")
     RUN_TEST(test_private_namespace, "Private Namespace")
     RUN_TEST(test_actctx, "Activation Context")

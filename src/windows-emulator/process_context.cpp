@@ -897,6 +897,27 @@ namespace sogen
         return nullptr;
     }
 
+    bool process_context::is_window_effectively_visible(const hwnd window) const
+    {
+        const auto* current = this->windows.get(window);
+        if (!current)
+        {
+            return false;
+        }
+
+        for (size_t guard = 0; current && guard < this->windows.size(); ++guard)
+        {
+            if (current->message_only || (current->style & WS_VISIBLE) == 0)
+            {
+                return false;
+            }
+
+            current = current->parent_handle != 0 ? this->windows.get(current->parent_handle) : nullptr;
+        }
+
+        return current == nullptr;
+    }
+
     // NOLINTNEXTLINE(cert-dcl50-cpp,readability-convert-member-functions-to-static)
     bool process_context::is_current_process_handle(const handle handle) const
     {

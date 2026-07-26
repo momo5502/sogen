@@ -16,7 +16,7 @@ namespace sogen
 
     void window_destroy_orchestrator::start(window& root) const
     {
-        this->push_frame(root);
+        this->push_frame(root, true);
     }
 
     std::optional<window_destroy_step> window_destroy_orchestrator::advance() const
@@ -32,11 +32,18 @@ namespace sogen
                 continue;
             }
 
+            if (frame.unlink_pending && (frame.message_queue.empty() || frame.message_queue.back().message != WM_PARENTNOTIFY))
+            {
+                this->unlink_window_from_parent_and_siblings(*win);
+                frame.unlink_pending = false;
+            }
+
             if (!frame.message_queue.empty())
             {
                 const auto m = frame.message_queue.back();
                 frame.message_queue.pop_back();
-                return window_destroy_step{.handle = frame.handle, .message = m};
+                const auto target = m.message == WM_PARENTNOTIFY ? frame.parent_notify_handle : frame.handle;
+                return window_destroy_step{.handle = target, .message = m};
             }
 
             switch (frame.phase)
@@ -53,24 +60,48 @@ namespace sogen
                 {
                     if (auto* dependent_win = this->proc_.windows.get(dependent))
                     {
-                        this->push_frame(*dependent_win);
+                        this->push_frame(*dependent_win, false);
                     }
                 }
                 continue;
             }
 
             case window_destroy_phase::nc_destroy:
-                frame.phase = window_destroy_phase::finalize;
-                frame.message_queue = {{.message = WM_NCDESTROY, .wParam = 0, .lParam = 0}};
+                this->state_.nc_destroy_frames.push_back(std::move(frame));
+                this->state_.frames.pop_back();
                 continue;
 
             case window_destroy_phase::finalize:
-                this->finalize_frame(frame, *win);
-                this->state_.frames.pop_back();
-                continue;
+                throw std::runtime_error("Invalid window destruction phase");
             }
         }
 
+        while (this->state_.nc_destroy_index < this->state_.nc_destroy_frames.size())
+        {
+            auto& frame = this->state_.nc_destroy_frames[this->state_.nc_destroy_index];
+            auto* win = this->proc_.windows.get(frame.handle);
+            if (!win || win->thread_id != this->thread_.id)
+            {
+                this->pop_frame_allocation(frame);
+                ++this->state_.nc_destroy_index;
+                continue;
+            }
+
+            if (frame.phase == window_destroy_phase::nc_destroy)
+            {
+                frame.phase = window_destroy_phase::finalize;
+                return window_destroy_step{
+                    .handle = frame.handle,
+                    .message = {.message = WM_NCDESTROY, .wParam = 0, .lParam = 0},
+                };
+            }
+
+            this->finalize_frame(frame, *win);
+            ++this->state_.nc_destroy_index;
+        }
+
+        this->state_.nc_destroy_frames.clear();
+        this->state_.nc_destroy_index = 0;
         return std::nullopt;
     }
 
@@ -139,30 +170,52 @@ namespace sogen
         }
     }
 
-    window_destroy_frame window_destroy_orchestrator::make_frame(const window& win) const
+    window_destroy_frame window_destroy_orchestrator::make_frame(const window& win, const bool is_direct_target) const
     {
         window_destroy_frame frame{};
         frame.handle = win.handle;
 
-        if ((win.style & WS_VISIBLE) != 0)
+        if (is_direct_target && (win.style & WS_VISIBLE) != 0)
         {
-            EMU_WINDOWPOS wp{};
-            wp.hwnd = win.handle;
-            wp.hwndInsertAfter = 0;
-            wp.x = win.x;
-            wp.y = win.y;
-            wp.cx = win.width;
-            wp.cy = win.height;
-            wp.flags = SWP_HIDEWINDOW;
-            frame.window_pos_alloc = this->emu_.push_stack(wp);
+            const auto flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW;
+            const EMU_WINDOWPOS changing_position{
+                .hwnd = win.handle,
+                .hwndInsertAfter = 0,
+                .x = 0,
+                .y = 0,
+                .cx = 0,
+                .cy = 0,
+                .flags = flags,
+            };
+            const EMU_WINDOWPOS changed_position{
+                .hwnd = win.handle,
+                .hwndInsertAfter = 0,
+                .x = win.x,
+                .y = win.y,
+                .cx = win.width,
+                .cy = win.height,
+                .flags = flags | SWP_NOCLIENTSIZE | SWP_NOCLIENTMOVE,
+            };
+            frame.window_pos_alloc = this->emu_.push_stack(changing_position);
+            frame.changed_window_pos_alloc = this->emu_.push_stack(changed_position);
 
             frame.message_queue = {
                 {.message = WM_DESTROY, .wParam = 0, .lParam = 0},
                 {.message = WM_KILLFOCUS, .wParam = 0, .lParam = 0},
+            };
+            const std::initializer_list<qmsg> hide_messages = {
                 {.message = WM_ACTIVATE, .wParam = 0, .lParam = 0},
                 {.message = WM_NCACTIVATE, .wParam = FALSE, .lParam = 0},
-                {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = frame.window_pos_alloc.address()},
+                {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = frame.changed_window_pos_alloc.address()},
                 {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = frame.window_pos_alloc.address()},
+                {.message = WM_UAHDESTROYWINDOW, .wParam = 0, .lParam = 0},
+            };
+            frame.message_queue.insert(frame.message_queue.end(), hide_messages);
+        }
+        else if (is_direct_target)
+        {
+            frame.message_queue = {
+                {.message = WM_DESTROY, .wParam = 0, .lParam = 0},
                 {.message = WM_UAHDESTROYWINDOW, .wParam = 0, .lParam = 0},
             };
         }
@@ -170,21 +223,35 @@ namespace sogen
         {
             frame.message_queue = {
                 {.message = WM_DESTROY, .wParam = 0, .lParam = 0},
-                {.message = WM_UAHDESTROYWINDOW, .wParam = 0, .lParam = 0},
             };
+        }
+
+        if ((win.style & WS_CHILD) != 0 && (win.ex_style & WS_EX_NOPARENTNOTIFY) == 0)
+        {
+            uint64_t child_id{};
+            win.guest.access([&](const USER_WINDOW& guest_win) { child_id = guest_win.wID; });
+            frame.parent_notify_handle = win.parent_handle;
+            frame.message_queue.push_back({
+                .message = WM_PARENTNOTIFY,
+                .wParam = static_cast<uint64_t>(WM_DESTROY) | (static_cast<uint64_t>(child_id & 0xFFFF) << 16),
+                .lParam = win.handle,
+            });
         }
 
         return frame;
     }
 
-    void window_destroy_orchestrator::push_frame(const window& win) const
+    void window_destroy_orchestrator::push_frame(const window& win, const bool is_direct_target) const
     {
-        this->unlink_window_from_parent_and_siblings(win);
-        this->state_.frames.push_back(this->make_frame(win));
+        this->state_.frames.push_back(this->make_frame(win, is_direct_target));
     }
 
     void window_destroy_orchestrator::pop_frame_allocation(window_destroy_frame& frame) const
     {
+        if (frame.changed_window_pos_alloc)
+        {
+            this->emu_.pop_stack(frame.changed_window_pos_alloc);
+        }
         if (frame.window_pos_alloc)
         {
             this->emu_.pop_stack(frame.window_pos_alloc);

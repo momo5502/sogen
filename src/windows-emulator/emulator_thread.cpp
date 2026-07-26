@@ -805,13 +805,22 @@ namespace sogen
             (void)this->synthesize_due_user_timer(win_emu);
         }
 
-        return this->message_queue_status_bits;
+        auto status = this->message_queue_status_bits;
+        const auto has_pending_paint = std::ranges::any_of(win_emu.process.windows, [this, &win_emu](const auto& entry) {
+            const auto& win = entry.second;
+            return win.thread_id == this->id && (win.update_pending || win.internal_paint_pending) &&
+                   win_emu.process.is_window_effectively_visible(win.handle);
+        });
+        if (has_pending_paint)
+        {
+            status |= QS_PAINT;
+        }
+
+        return status;
     }
 
     namespace
     {
-        // GetMessage(hWnd) retrieves messages for hWnd and all of its children (IsChild semantics),
-        // so a message targeted at a child control must match a filter naming any of its ancestors.
         bool window_matches_filter(const process_context& process, const hwnd target, const hwnd filter)
         {
             auto current = target;
@@ -879,6 +888,38 @@ namespace sogen
                 message_queue.erase(it);
             }
             return msg;
+        }
+
+        if ((filter_min == 0 && filter_max == 0) || (filter_min <= WM_PAINT && WM_PAINT <= filter_max))
+        {
+            for (auto& [index, win] : win_emu.process.windows)
+            {
+                (void)index;
+                if (win.thread_id != this->id || (!win.update_pending && !win.internal_paint_pending) ||
+                    !win_emu.process.is_window_effectively_visible(win.handle))
+                {
+                    continue;
+                }
+
+                if (hwnd_filter == static_cast<hwnd>(-1))
+                {
+                    continue;
+                }
+                if (hwnd_filter != 0 && !window_matches_filter(win_emu.process, win.handle, hwnd_filter))
+                {
+                    continue;
+                }
+
+                win.internal_paint_pending = false;
+                return msg{
+                    .window = win.handle,
+                    .message = WM_PAINT,
+                    .wParam = 0,
+                    .lParam = 0,
+                    .time = get_current_message_time(win_emu.clock()),
+                    .pt = {.x = win_emu.process.cursor_x, .y = win_emu.process.cursor_y},
+                };
+            }
         }
 
         return std::nullopt;

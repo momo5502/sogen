@@ -171,6 +171,9 @@ namespace sogen
 
 #define EMU_HWND_MESSAGE ((hwnd) - 3)
 
+#define SWP_NOCLIENTSIZE 0x0800
+#define SWP_NOCLIENTMOVE 0x1000
+
 #ifndef OS_WINDOWS
 #define MAXINTATOM                  0xC000
 
@@ -188,17 +191,26 @@ namespace sogen
 #define WS_MINIMIZEBOX              0x00020000L
 #define WS_MAXIMIZEBOX              0x00010000L
 
+#define WS_EX_NOPARENTNOTIFY        0x00000004L
+
 #define SWP_NOSIZE                  0x0001
 #define SWP_NOMOVE                  0x0002
+#define SWP_NOZORDER                0x0004
 #define SWP_NOREDRAW                0x0008
+#define SWP_NOACTIVATE              0x0010
 #define SWP_SHOWWINDOW              0x0040
 #define SWP_HIDEWINDOW              0x0080
+
+#define SW_SHOWNOACTIVATE           4
+#define SW_SHOWMINNOACTIVE          7
+#define SW_SHOWNA                   8
 
 #define WM_CREATE                   0x0001
 #define WM_DESTROY                  0x0002
 #define WM_MOVE                     0x0003
 #define WM_SIZE                     0x0005
 #define WM_ACTIVATE                 0x0006
+#define WM_ACTIVATEAPP              0x001C
 #define WM_SETFOCUS                 0x0007
 #define WM_KILLFOCUS                0x0008
 #define WM_QUIT                     0x0012
@@ -221,6 +233,7 @@ namespace sogen
 #define WM_SYSDEADCHAR              0x0107
 #define WM_UNICHAR                  0x0109
 #define WM_MOUSEMOVE                0x0200
+#define WM_PARENTNOTIFY             0x0210
 #define WM_LBUTTONDOWN              0x0201
 #define WM_LBUTTONUP                0x0202
 #define WM_LBUTTONDBLCLK            0x0203

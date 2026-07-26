@@ -154,12 +154,13 @@ namespace sogen
         uint32_t style{};
         RECT update_rect{};
         bool update_pending{};
-        bool paint_message_posted{};
+        bool internal_paint_pending{};
         bool erase_pending{};
         std::map<std::u16string, uint64_t> props{};
         emulator_pointer wnd_proc{};
         hmenu system_menu_handle{};
         bool host_surface_window{};
+        bool message_only{};
         bool unicode_proc{};
 
         window(memory_interface& memory)
@@ -210,12 +211,13 @@ namespace sogen
             buffer.write(this->style);
             buffer.write(this->update_rect);
             buffer.write(this->update_pending);
-            buffer.write(this->paint_message_posted);
+            buffer.write(this->internal_paint_pending);
             buffer.write(this->erase_pending);
             buffer.write_map(this->props);
             buffer.write(this->wnd_proc);
             buffer.write(this->system_menu_handle);
             buffer.write(this->host_surface_window);
+            buffer.write(this->message_only);
             buffer.write(this->unicode_proc);
         }
 
@@ -236,12 +238,13 @@ namespace sogen
             buffer.read(this->style);
             buffer.read(this->update_rect);
             buffer.read(this->update_pending);
-            buffer.read(this->paint_message_posted);
+            buffer.read(this->internal_paint_pending);
             buffer.read(this->erase_pending);
             buffer.read_map(this->props);
             buffer.read(this->wnd_proc);
             buffer.read(this->system_menu_handle);
             buffer.read(this->host_surface_window);
+            buffer.read(this->message_only);
             buffer.read(this->unicode_proc);
         }
     };

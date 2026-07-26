@@ -409,6 +409,7 @@ namespace sogen
         generic_handle_store* get_handle_store(handle handle);
         emulator_thread* find_thread_by_id(uint32_t thread_id);
         const emulator_thread* find_thread_by_id(uint32_t thread_id) const;
+        bool is_window_effectively_visible(hwnd window) const;
         bool is_current_process_handle(handle handle) const;
         bool is_current_thread_handle(handle handle, const emulator_thread* active_thread) const;
         bool is_object_pseudo_handle(handle handle) const;
