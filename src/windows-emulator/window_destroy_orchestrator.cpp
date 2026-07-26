@@ -306,6 +306,7 @@ namespace sogen
     void window_destroy_orchestrator::finalize_frame(window_destroy_frame& frame, const window& win) const
     {
         this->pop_frame_allocation(frame);
+        this->thread_.remove_window_messages(frame.handle);
 
         win.guest.access([&](USER_WINDOW& guest_win) {
             guest_win.spwndParent = 0;
