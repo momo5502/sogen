@@ -592,6 +592,18 @@ jobs:
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/test-sample.exe
           LINUX_TEST_ROOT: ${{github.workspace}}/deps/sogen-linux-files/test/linux
 
+      # TEMPORARY: captures the raw serialized buffers on a SerializationTest mismatch (see
+      # serialization_test.cpp's dump_buffer_to_file) so they can be fed back into the real
+      # (de)serialize code to find which component owns the divergence. Revert once the cause is
+      # identified.
+      - name: Upload serialization mismatch dumps
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: serialization-mismatch-${{ matrix.platform }}-${{ matrix.emulator }}-${{ matrix.emulation-root }}
+          path: ${{ github.workspace }}/*.bin
+          if-no-files-found: ignore
+
   win-test:
     name: Windows Test
     runs-on: windows-latest
