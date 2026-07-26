@@ -9,6 +9,7 @@
 #include <optional>
 #include <stdexcept>
 #include <cassert>
+#include <cstring>
 
 namespace sogen
 {
@@ -225,13 +226,69 @@ namespace sogen
                 continue;
             }
 
+            const auto reserved_base = i->first;
             ++i;
 
             for (const auto& region : reserved_region.committed_regions)
             {
                 data.resize(region.second.length);
 
+                // TEMPORARY: bisects a captured mismatch dump to the exact guest memory region owning the
+                // divergence. SOGEN_TRACE_TARGET_OFFSET is the absolute buffer offset from the earlier
+                // top-level trace. Revert with the rest of the debug instrumentation.
+                const auto* target_env = getenv("SOGEN_TRACE_TARGET_OFFSET");
+                size_t before = 0;
+                bool in_range = false;
+                if (target_env)
+                {
+                    const auto target = static_cast<size_t>(std::strtoull(target_env, nullptr, 10));
+                    before = buffer.get_offset();
+                    const auto after_estimate = before + region.second.length + region.second.length / 256 + 16;
+                    in_range = (target >= before && target < after_estimate);
+                }
+
                 buffer.read(data.data(), region.second.length);
+
+                if (in_range)
+                {
+                    const auto target = static_cast<size_t>(std::strtoull(target_env, nullptr, 10));
+                    printf("[offset-trace] committed_region base=0x%llx length=0x%zx (%zu) reserved_base=0x%llx "
+                           "kind=%d buffer_offset_before=%zu target=%zu\n",
+                           static_cast<unsigned long long>(region.first), region.second.length, region.second.length,
+                           static_cast<unsigned long long>(reserved_base), static_cast<int>(reserved_region.kind), before, target);
+
+                    const auto rel = target - before - 1;
+                    const auto win_start = rel > 64 ? rel - 64 : 0;
+                    const auto win_end = std::min(data.size(), rel + 64);
+                    printf("[offset-trace] target guest_address=0x%llx relative_offset=%zu\n",
+                           static_cast<unsigned long long>(region.first + rel), rel);
+                    printf("[offset-trace] hex[%zu..%zu) (rel_target=%zu):\n", win_start, win_end, rel);
+                    for (size_t k = win_start; k < win_end; ++k)
+                    {
+                        printf("%02x ", data[k]);
+                        if ((k - win_start + 1) % 16 == 0)
+                        {
+                            printf("\n");
+                        }
+                    }
+                    printf("\n");
+
+                    for (size_t start = rel >= 7 ? rel - 7 : 0; start <= rel && start + 8 <= data.size(); ++start)
+                    {
+                        uint64_t value = 0;
+                        memcpy(&value, data.data() + start, sizeof(value));
+
+                        constexpr uint64_t hundred_ns_per_sec = 10000000ULL;
+                        constexpr uint64_t epoch_diff_sec = 11644473600ULL;
+                        const auto filetime_sec = static_cast<int64_t>(value / hundred_ns_per_sec) - static_cast<int64_t>(epoch_diff_sec);
+
+                        printf("[offset-trace] candidate u64 @rel=%zu (target-%lld): 0x%016llx = %llu; as FILETIME -> "
+                               "unix_seconds=%lld\n",
+                               start, static_cast<long long>(rel) - static_cast<long long>(start), static_cast<unsigned long long>(value),
+                               static_cast<unsigned long long>(value), static_cast<long long>(filetime_sec));
+                    }
+                    fflush(stdout);
+                }
 
                 const auto effective_permission = this->get_effective_permissions(region.second.permissions);
                 this->map_memory(region.first, region.second.length, effective_permission);
