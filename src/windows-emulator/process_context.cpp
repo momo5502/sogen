@@ -905,7 +905,7 @@ namespace sogen
             return false;
         }
 
-        while (current)
+        for (size_t guard = 0; current && guard < this->windows.size(); ++guard)
         {
             if (current->message_only || (current->style & WS_VISIBLE) == 0)
             {
@@ -915,7 +915,7 @@ namespace sogen
             current = current->parent_handle != 0 ? this->windows.get(current->parent_handle) : nullptr;
         }
 
-        return true;
+        return current == nullptr;
     }
 
     // NOLINTNEXTLINE(cert-dcl50-cpp,readability-convert-member-functions-to-static)

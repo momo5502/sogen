@@ -2989,10 +2989,6 @@ namespace sogen
             {
                 state.message_queue.push_back({.message = WM_GETMINMAXINFO, .wParam = 0, .lParam = state.min_max_info_alloc.address()});
             }
-            else if (notify_parent)
-            {
-                state.parent_handle = parent_win->handle;
-            }
 
             if ((style & WS_VISIBLE) != 0)
             {
