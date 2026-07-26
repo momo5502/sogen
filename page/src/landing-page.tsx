@@ -312,16 +312,13 @@ export function LandingPage() {
             </div>
 
             <div className="mx-auto mt-14 max-w-4xl sm:mt-20">
-              {/* preview.svg ships its own window chrome, so no WindowFrame here */}
-              <div className="overflow-hidden rounded-xl border border-[var(--lp-frame-border)] bg-neutral-950 shadow-[var(--lp-shadow)]">
-                <img
-                  src="https://momo5502.com/sogen/preview.svg"
-                  alt="The Sogen emulator tracing a program's execution"
-                  className="w-full"
-                  width={1200}
-                  height={680}
-                />
-              </div>
+              <img
+                src="https://momo5502.com/sogen/preview.svg"
+                alt="The Sogen emulator tracing a program's execution"
+                className="w-full"
+                width={1200}
+                height={680}
+              />
             </div>
           </div>
         </section>
