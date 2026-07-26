@@ -598,8 +598,8 @@ jobs:
         with:
           name: Serialization Mismatch ${{ matrix.platform }} ${{ matrix.emulator }} ${{ matrix.configuration }}
           path: |
-            *.a.bin
-            *.b.bin
+            build/${{matrix.preset}}/artifacts/*.a.bin
+            build/${{matrix.preset}}/artifacts/*.b.bin
           if-no-files-found: ignore
           retention-days: 7
 
@@ -679,8 +679,8 @@ jobs:
         with:
           name: Serialization Mismatch Windows ${{ matrix.configuration }} ${{ matrix.emulator }} ${{ matrix.emulation-root }}
           path: |
-            *.a.bin
-            *.b.bin
+            build/${{ matrix.preset }}/artifacts/*.a.bin
+            build/${{ matrix.preset }}/artifacts/*.b.bin
           if-no-files-found: ignore
           retention-days: 7
 
@@ -722,8 +722,8 @@ jobs:
         with:
           name: Serialization Mismatch Node.js
           path: |
-            *.a.bin
-            *.b.bin
+            build/release/artifacts/*.a.bin
+            build/release/artifacts/*.b.bin
           if-no-files-found: ignore
           retention-days: 7
 
@@ -879,8 +879,8 @@ jobs:
         with:
           name: Serialization Mismatch MinGW x86_64
           path: |
-            *.a.bin
-            *.b.bin
+            build/release/artifacts/*.a.bin
+            build/release/artifacts/*.b.bin
           if-no-files-found: ignore
           retention-days: 7
 

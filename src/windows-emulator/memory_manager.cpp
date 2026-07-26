@@ -9,70 +9,12 @@
 #include <optional>
 #include <stdexcept>
 #include <cassert>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 
 namespace sogen
 {
 
     namespace
     {
-        // Bisects a captured serialization-mismatch dump (see windows-emulator-test/serialization_test.cpp) down
-        // to the exact committed guest-memory region owning a given absolute buffer offset. SOGEN_TRACE_OFFSETS
-        // must also be set so the caller knows which offset to target (the top-level trace in
-        // windows_emulator.cpp names "memory" as the owning component and its byte range). Prints the region,
-        // a hex window around the offset, and every 8-byte-aligned value nearby interpreted as a FILETIME, since
-        // an embedded host timestamp is a common cause of this kind of non-determinism.
-        void trace_target_offset(const uint64_t reserved_base, const memory_region_kind kind, const size_t before,
-                                 const std::vector<uint8_t>& data)
-        {
-            const auto* target_env = std::getenv("SOGEN_TRACE_TARGET_OFFSET");
-            if (!target_env)
-            {
-                return;
-            }
-
-            const auto target = static_cast<size_t>(std::strtoull(target_env, nullptr, 10));
-            const auto after = before + data.size();
-            if (target < before || target >= after)
-            {
-                return;
-            }
-
-            const auto rel = target - before;
-            const auto win_start = rel > 64 ? rel - 64 : 0;
-            const auto win_end = std::min(data.size(), rel + 64);
-
-            std::printf("[offset-trace] committed region reserved_base=0x%llx kind=%d length=0x%zx buffer_offset_before=%zu "
-                        "target=%zu\n",
-                        static_cast<unsigned long long>(reserved_base), static_cast<int>(kind), data.size(), before, target);
-            std::printf("[offset-trace] hex[%zu..%zu) (rel_target=%zu):\n", win_start, win_end, rel);
-            for (size_t k = win_start; k < win_end; ++k)
-            {
-                std::printf("%02x ", data[k]);
-                if ((k - win_start + 1) % 16 == 0)
-                {
-                    std::printf("\n");
-                }
-            }
-            std::printf("\n");
-
-            for (size_t start = rel >= 7 ? rel - 7 : 0; start <= rel && start + 8 <= data.size(); ++start)
-            {
-                uint64_t value = 0;
-                memcpy(&value, data.data() + start, sizeof(value));
-
-                constexpr uint64_t hundred_ns_per_sec = 10000000ULL;
-                constexpr uint64_t epoch_diff_sec = 11644473600ULL;
-                const auto filetime_sec = static_cast<int64_t>(value / hundred_ns_per_sec) - static_cast<int64_t>(epoch_diff_sec);
-
-                std::printf("[offset-trace] candidate u64 @rel=%zu: 0x%016llx; as FILETIME -> unix_seconds=%lld\n", start,
-                            static_cast<unsigned long long>(value), static_cast<long long>(filetime_sec));
-            }
-            std::fflush(stdout);
-        }
-
         void split_regions(memory_manager::committed_region_map& regions, const std::vector<uint64_t>& split_points)
         {
             for (auto i = regions.begin(); i != regions.end(); ++i)
@@ -276,7 +218,6 @@ namespace sogen
 
         for (auto i = this->reserved_regions_.begin(); i != this->reserved_regions_.end();)
         {
-            const auto reserved_base = i->first;
             auto& reserved_region = i->second;
             if (reserved_region.kind == memory_region_kind::mmio)
             {
@@ -290,9 +231,7 @@ namespace sogen
             {
                 data.resize(region.second.length);
 
-                const auto before = buffer.get_offset();
                 buffer.read(data.data(), region.second.length);
-                trace_target_offset(reserved_base, reserved_region.kind, before, data);
 
                 const auto effective_permission = this->get_effective_permissions(region.second.permissions);
                 this->map_memory(region.first, region.second.length, effective_permission);

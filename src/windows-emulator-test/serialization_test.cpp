@@ -1,35 +1,11 @@
 #include "emulation_test_utils.hpp"
 
-#include <cstdio>
-#include <cstdlib>
-#include <string>
+#include <utils/io.hpp>
 
 namespace sogen::test
 {
     namespace
     {
-        // On a serialization mismatch, dumps both buffers to <label>.a.bin/<label>.b.bin under
-        // $GITHUB_WORKSPACE (or the working directory outside CI) and fails the test. CI uploads these as
-        // artifacts; SerializationOffsetFinder.Run (serialization_offset_finder_test.cpp) replays a downloaded
-        // dump through the real deserialize() code with SOGEN_TRACE_OFFSETS/SOGEN_TRACE_TARGET_OFFSET
-        // (windows_emulator.cpp / memory_manager.cpp) to pin down which component owns the divergence.
-        void dump_buffer_to_file(const char* label, const char* suffix, const std::vector<std::byte>& buffer)
-        {
-            const char* dir = std::getenv("GITHUB_WORKSPACE");
-            const std::string path = (dir ? std::string(dir) + "/" : std::string()) + label + "." + suffix + ".bin";
-
-            FILE* file = std::fopen(path.c_str(), "wb");
-            if (!file)
-            {
-                std::printf("[serial-diff] %s: failed to open %s for writing\n", label, path.c_str());
-                return;
-            }
-
-            std::fwrite(buffer.data(), 1, buffer.size(), file);
-            std::fclose(file);
-            std::printf("[serial-diff] %s: dumped %zu bytes to %s\n", label, buffer.size(), path.c_str());
-        }
-
         void dump_and_expect_equal(const char* label, const std::vector<std::byte>& a, const std::vector<std::byte>& b)
         {
             if (a == b)
@@ -37,10 +13,10 @@ namespace sogen::test
                 return;
             }
 
-            dump_buffer_to_file(label, "a", a);
-            dump_buffer_to_file(label, "b", b);
+            utils::io::write_file(std::string(label) + ".a.bin", a);
+            utils::io::write_file(std::string(label) + ".b.bin", b);
 
-            ADD_FAILURE() << "[serial-diff] " << label << ": serialized buffers differ (dumps written above for offline diagnosis)";
+            ADD_FAILURE() << label << ": serialized buffers differ (dumps written to the working directory)";
         }
     }
 

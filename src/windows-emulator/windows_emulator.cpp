@@ -1789,87 +1789,36 @@ namespace sogen
         this->process.serialize(buffer, this->vcpus_[0]->active_thread);
     }
 
-    namespace
-    {
-        // Prints the byte-offset range of each top-level deserialize() step under SOGEN_TRACE_OFFSETS=1, so a
-        // captured serialization-mismatch dump (see windows-emulator-test/serialization_test.cpp) can be
-        // bisected to the component that owns the divergence without guessing from a hex dump.
-        void trace_offset(const char* step, const size_t before, const utils::buffer_deserializer& buffer)
-        {
-            if (!std::getenv("SOGEN_TRACE_OFFSETS"))
-            {
-                return;
-            }
-
-            std::printf("[offset-trace] %-28s [%zu, %zu)\n", step, before, buffer.get_offset());
-            std::fflush(stdout);
-        }
-    }
-
     void windows_emulator::deserialize(utils::buffer_deserializer& buffer)
     {
         this->register_factories(buffer);
 
-        auto mark = buffer.get_offset();
         buffer.read(this->application_settings_);
-        trace_offset("application_settings_", mark, buffer);
-
-        mark = buffer.get_offset();
         buffer.read(this->setup_completed_);
-        trace_offset("setup_completed_", mark, buffer);
-
-        mark = buffer.get_offset();
         buffer.read(this->executed_instructions_);
-        trace_offset("executed_instructions_", mark, buffer);
-
-        mark = buffer.get_offset();
         buffer.read_atomic(this->vcpus_[0]->switch_thread);
-        trace_offset("switch_thread", mark, buffer);
 
         const auto old_relative_time = this->use_relative_time_;
-        mark = buffer.get_offset();
         buffer.read(this->use_relative_time_);
-        trace_offset("use_relative_time_", mark, buffer);
 
         if (old_relative_time != this->use_relative_time_)
         {
             throw std::runtime_error("Can not deserialize emulator with different time dimensions");
         }
 
-        mark = buffer.get_offset();
         this->version.deserialize(buffer);
-        trace_offset("version", mark, buffer);
-
-        mark = buffer.get_offset();
         this->registry.deserialize_runtime_state(buffer);
-        trace_offset("registry", mark, buffer);
 
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
 
         // Match raw serialize() above; do not use backend snapshot mode here.
-        mark = buffer.get_offset();
         this->emu().deserialize_state(buffer, false);
-        trace_offset("emu (backend state)", mark, buffer);
-
-        mark = buffer.get_offset();
         this->memory.deserialize_memory_state(buffer, false);
-        trace_offset("memory", mark, buffer);
-
-        mark = buffer.get_offset();
         this->mod_manager.deserialize(buffer);
-        trace_offset("mod_manager", mark, buffer);
-
         this->install_section_first_execution_hooks();
-
-        mark = buffer.get_offset();
         this->dispatcher.deserialize(buffer);
-        trace_offset("dispatcher", mark, buffer);
-
-        mark = buffer.get_offset();
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
-        trace_offset("process", mark, buffer);
-
         this->restore_ui_backend();
     }
 
