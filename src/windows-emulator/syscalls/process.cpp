@@ -62,7 +62,29 @@ namespace sogen
                     constexpr ULONG dep_disabled_execute_flags = 0x32;
                     flags = c.win_emu.memory.is_dep_enabled() ? dep_enabled_execute_flags : dep_disabled_execute_flags;
                 });
-            case ProcessGroupInformation:
+            case ProcessGroupInformation: {
+                constexpr uint32_t group_count = 1;
+                constexpr uint32_t required_length = group_count * sizeof(USHORT);
+
+                if (return_length)
+                {
+                    return_length.write(required_length);
+                }
+
+                // ProcessGroupInformation is a variable-length USHORT array,
+                // so a larger buffer is valid.
+                if (process_information_length < required_length)
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                const emulator_object<USHORT> info{c.emu, process_information};
+                info.access([](USHORT& group) {
+                    group = 0; // The process belongs to processor group 0.
+                });
+
+                return STATUS_SUCCESS;
+            }
             case ProcessMitigationPolicy: {
                 // ProcessMitigationPolicy requires special handling because the caller
                 // specifies which policy to query via the Policy field in the input buffer.
@@ -171,6 +193,9 @@ namespace sogen
             case ProcessBasicInformation: {
                 const auto init_basic_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
                     basic_info.PebBaseAddress = c.proc.peb64.value();
+                    const auto processor_count =
+                        c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
+                    basic_info.AffinityMask = processor_count >= 64 ? ~0ull : ((1ull << processor_count) - 1);
                     basic_info.UniqueProcessId = process_context::process_id;
                 };
 

@@ -323,11 +323,19 @@ namespace sogen
         // SYSTEM_MEMORY_NUMA_PERFORMANCE_INFORMATION_OUTPUT // since 24H2 // 240
         SystemCodeIntegritySignedPoliciesFullInformation,
         SystemSecureSecretsInformation,
-        SystemTrustedAppsRuntimeInformation,          // SYSTEM_TRUSTEDAPPS_RUNTIME_INFORMATION
-        SystemBadPageInformationEx,                   // SYSTEM_BAD_PAGE_INFORMATION
-        SystemResourceDeadlockTimeout,                // ULONG
-        SystemBreakOnContextUnwindFailureInformation, // ULONG (requires SeDebugPrivilege)
-        SystemOslRamdiskInformation,                  // SYSTEM_OSL_RAMDISK_INFORMATION
+        SystemTrustedAppsRuntimeInformation,            // SYSTEM_TRUSTEDAPPS_RUNTIME_INFORMATION
+        SystemBadPageInformationEx,                     // SYSTEM_BAD_PAGE_INFORMATION
+        SystemResourceDeadlockTimeout,                  // ULONG
+        SystemBreakOnContextUnwindFailureInformation,   // ULONG (requires SeDebugPrivilege)
+        SystemOslRamdiskInformation,                    // SYSTEM_OSL_RAMDISK_INFORMATION
+        SystemCodeIntegrityPolicyManagementInformation, // SYSTEM_CODEINTEGRITYPOLICY_MANAGEMENT // since 25H2
+        SystemMemoryNumaCacheInformation,               // SYSTEM_MEMORY_NUMA_CACHE_INFORMATION
+        SystemProcessorFeaturesBitMapInformation,       // ULONG64[2] // RTL_BITMAP_EX // RtlInitializeBitMapEx // 250
+        SystemRefTraceInformationEx,                    // SYSTEM_REF_TRACE_INFORMATION_EX
+        SystemBasicProcessInformation,                  // SYSTEM_BASICPROCESS_INFORMATION
+        SystemHandleCountInformation,                   // SYSTEM_HANDLECOUNT_INFORMATION
+        SystemRuntimeAttestationReport,                 // SYSTEM_RUNTIME_REPORT_INPUT
+        SystemPoolTagInformation2,                      // SYSTEM_POOLTAG_INFORMATION2 // since 26H1
         MaxSystemInfoClass
     };
 
@@ -557,6 +565,12 @@ namespace sogen
         USHORT ProcessorRevision;
         USHORT MaximumProcessors;
         ULONG ProcessorFeatureBits;
+    };
+
+    struct SYSTEM_PROCESSOR_FEATURES_INFORMATION64
+    {
+        ULONGLONG ProcessorFeatureBits;
+        ULONGLONG Reserved[3];
     };
 
 #if !defined(OS_WINDOWS) || !defined(_WIN64)
@@ -1258,6 +1272,18 @@ namespace sogen
         typename Traits::PVOID EndOfData;
         SYSTEM_MEMORY_USAGE<Traits> MemoryUsage[1];
     };
+
+    template <typename Traits>
+    struct SYSTEM_BASICPROCESS_INFORMATION
+    {
+        ULONG NextEntryOffset;
+        Traits::HANDLE UniqueProcessId;
+        Traits::HANDLE InheritedFromUniqueProcessId;
+        ULONG64 SequenceNumber;
+        UNICODE_STRING<Traits> ImageName;
+    };
+
+    static_assert(sizeof(SYSTEM_BASICPROCESS_INFORMATION<EmulatorTraits<Emu64>>) == 0x30);
 
     template <typename Traits>
     struct SYSTEM_PROCESS_INFORMATION

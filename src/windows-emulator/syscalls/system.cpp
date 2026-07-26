@@ -235,6 +235,7 @@ namespace sogen
 
         constexpr uint64_t FAKE_KERNEL_BASE = 0xFFFFF80000000000ULL;
         constexpr uint32_t FAKE_KERNEL_SIZE = 0x00A00000;
+        constexpr uint64_t PROCESSOR_FEATURE_BITS = 0x421993DFEULL;
 
         template <typename Traits>
         void fill_ntoskrnl_module(RTL_PROCESS_MODULE_INFORMATION<Traits>& m)
@@ -312,6 +313,57 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_system_basicprocess_information(const syscall_context& c, const uint64_t system_information,
+                                                        const uint32_t system_information_length,
+                                                        const emulator_object<uint32_t> return_length)
+        {
+            using Traits = EmulatorTraits<Emu64>;
+            using proc_t = SYSTEM_BASICPROCESS_INFORMATION<Traits>;
+
+            uint64_t process_id = process_context::process_id;
+
+            if (c.vcpu.active_thread && c.vcpu.active_thread->teb64)
+            {
+                c.vcpu.active_thread->teb64->access([&](const TEB64& teb) { process_id = teb.ClientId.UniqueProcess; });
+            }
+
+            const auto image_name = u8_to_u16(c.win_emu.mod_manager.executable->name);
+            const auto image_name_length = image_name.size() * sizeof(char16_t);
+            const auto image_name_buffer_length = image_name_length + sizeof(char16_t);
+            const auto required = static_cast<uint32_t>(sizeof(proc_t) + image_name_buffer_length);
+
+            if (return_length)
+            {
+                return_length.write(required);
+            }
+
+            if (system_information_length < required)
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            proc_t proc{};
+
+            proc.NextEntryOffset = 0; // Single process; terminator
+            proc.UniqueProcessId = process_id;
+            proc.InheritedFromUniqueProcessId = 0;
+
+            // Ideally this should be a monotonically increasing value assigned when
+            // the emulated process is created. The process ID is a reasonable fallback
+            // when no separate sequence number is available.
+            proc.SequenceNumber = process_id;
+
+            const auto image_name_buffer = system_information + sizeof(proc);
+            proc.ImageName.Length = static_cast<USHORT>(image_name_length);
+            proc.ImageName.MaximumLength = static_cast<USHORT>(image_name_buffer_length);
+            proc.ImageName.Buffer = image_name_buffer;
+
+            c.emu.write_memory(system_information, &proc, sizeof(proc));
+            c.emu.write_memory(image_name_buffer, image_name.c_str(), image_name_buffer_length);
+
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_system_process_information(const syscall_context& c, const uint64_t system_information,
                                                    const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
         {
@@ -346,7 +398,11 @@ namespace sogen
                 thread_ids.push_back(active_tid);
             }
 
-            const auto required = static_cast<uint32_t>(sizeof(proc_t) + thread_ids.size() * sizeof(thread_t));
+            const auto image_name = u8_to_u16(c.win_emu.mod_manager.executable->name);
+            const auto image_name_length = image_name.size() * sizeof(char16_t);
+            const auto image_name_buffer_length = image_name_length + sizeof(char16_t);
+            const auto thread_information_length = thread_ids.size() * sizeof(thread_t);
+            const auto required = static_cast<uint32_t>(sizeof(proc_t) + thread_information_length + image_name_buffer_length);
 
             if (return_length)
             {
@@ -366,6 +422,12 @@ namespace sogen
             proc.UniqueProcessId = process_id;
             proc.HandleCount = 0;
             proc.SessionId = 0;
+
+            const auto image_name_buffer = system_information + sizeof(proc) + thread_information_length;
+            proc.ImageName.Length = static_cast<USHORT>(image_name_length);
+            proc.ImageName.MaximumLength = static_cast<USHORT>(image_name_buffer_length);
+            proc.ImageName.Buffer = image_name_buffer;
+
             c.emu.write_memory(system_information, &proc, sizeof(proc));
 
             for (size_t i = 0; i < thread_ids.size(); ++i)
@@ -381,6 +443,8 @@ namespace sogen
                 c.emu.write_memory(system_information + sizeof(proc_t) + i * sizeof(thread_t), &info, sizeof(info));
             }
 
+            c.emu.write_memory(image_name_buffer, image_name.c_str(), image_name_buffer_length);
+
             return STATUS_SUCCESS;
         }
 
@@ -390,11 +454,12 @@ namespace sogen
         {
             switch (info_class)
             {
+            case SystemBasicProcessInformation:
+                return handle_system_basicprocess_information(c, system_information, system_information_length, return_length);
+
             case SystemProcessInformation:
                 return handle_system_process_information(c, system_information, system_information_length, return_length);
 
-            case 250: // Build 27744
-            case 252:
             case SystemFlushInformation:
             case SystemCodeIntegrityPolicyInformation:
             case SystemHypervisorSharedPageInformation:
@@ -549,6 +614,36 @@ namespace sogen
                         info.MaximumProcessors = 2;
                         info.ProcessorArchitecture =
                             (info_class == SystemProcessorInformation ? PROCESSOR_ARCHITECTURE_AMD64 : PROCESSOR_ARCHITECTURE_INTEL);
+                        // TODO: Figure out the best way to derive this from 'kusd.ProcessorFeatures'
+                        info.ProcessorFeatureBits = static_cast<ULONG>(PROCESSOR_FEATURE_BITS);
+                    });
+
+            case SystemProcessorFeaturesInformation:
+                return handle_query<SYSTEM_PROCESSOR_FEATURES_INFORMATION64>(c.emu, system_information, system_information_length,
+                                                                             return_length,
+                                                                             [&](SYSTEM_PROCESSOR_FEATURES_INFORMATION64& info) {
+                                                                                 // TODO: Figure out the best way to derive this from
+                                                                                 //       'kusd.ProcessorFeatures'
+                                                                                 info.ProcessorFeatureBits = PROCESSOR_FEATURE_BITS;
+                                                                             });
+
+            case SystemProcessorFeaturesBitMapInformation:
+                return handle_query<std::array<ULONG64, 2>>(
+                    c.emu, system_information, system_information_length, return_length, [&](std::array<ULONG64, 2>& bitmap) {
+                        bitmap = {};
+
+                        c.proc.kusd.access([&](KUSER_SHARED_DATA64& kusd) {
+                            const auto& features = kusd.ProcessorFeatures.arr;
+                            const std::size_t count = std::min<std::size_t>(128, std::size(features));
+
+                            for (std::size_t index = 0; index < count; ++index)
+                            {
+                                if (features[index])
+                                {
+                                    bitmap[index / 64] |= ULONG64{1} << (index % 64);
+                                }
+                            }
+                        });
                     });
 
             case SystemNumaProcessorMap:
