@@ -36,6 +36,7 @@ jobs:
 
   clang-tidy:
     name: Run Clang Tidy
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     env:
       LLVM_VERSION: 21
     runs-on: ${{ matrix.runner }}
@@ -105,6 +106,7 @@ jobs:
 
   verify-formatting:
     name: Verify Formatting
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     runs-on: ubuntu-24.04
     env:
       LLVM_VERSION: 21
@@ -199,15 +201,9 @@ jobs:
       matrix:
         platform:
           - Windows 2025
-          - Windows 2022
-          #- Windows 2019
         include:
           - platform: Windows 2025
             runner: windows-2025
-          - platform: Windows 2022
-            runner: windows-2022
-          #- platform: Windows 2019
-          #  runner: windows-2019
     steps:
       - name: Checkout Source
         uses: actions/checkout@v7
@@ -260,18 +256,6 @@ jobs:
         platform:
           - Windows x86
           - Windows x86_64
-          - MinGW x86_64
-          #- Linux x86_64 GCC
-          - Linux x86_64 GCC Sanitizer
-          - Linux x86_64 Clang
-          - macOS arm64
-          #- macOS x86_64
-          #- iOS arm64
-          - Android x86_64
-          #- Android arm64-v8a
-          - Emscripten Web
-          - Emscripten Web Memory 64
-          - Emscripten Node.js
         configuration:
           #- Debug
           - Release
@@ -286,45 +270,6 @@ jobs:
           - platform: Windows x86_64
             runner: windows-latest
             devcmd_arch: x64
-          - platform: MinGW x86_64
-            runner: ubuntu-24.04
-            rust-target: x86_64-pc-windows-gnu
-            cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/mingw-w64.cmake"
-          - platform: Linux x86_64 GCC Sanitizer
-            runner: ubuntu-24.04
-            cmake-options: "-DSOGEN_ENABLE_SANITIZER=On"
-          #- platform: Linux x86_64 GCC
-          #  runner: ubuntu-24.04
-          - platform: Linux x86_64 Clang
-            runner: ubuntu-24.04
-            clang-version: 21
-          #- platform: iOS arm64
-          #  runner: macos-latest
-          #  rust-target: aarch64-apple-ios
-          #  cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/ios.cmake"
-          - platform: macOS arm64
-            runner: macos-latest
-          #- platform: macOS x86_64
-          #  runner: macos-15-intel
-          - platform: Android x86_64
-            runner: ubuntu-24.04
-            abi: x86_64
-            rust-target: x86_64-linux-android
-            cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
-          #- platform: Android arm64-v8a
-          #  runner: ubuntu-24.04
-          #  abi: arm64-v8a
-          #  rust-target: aarch64-linux-android
-          #  cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/android-ndk.cmake"
-          - platform: Emscripten Web
-            runner: ubuntu-24.04
-            cmake-options: "-DSOGEN_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
-          - platform: Emscripten Web Memory 64
-            runner: ubuntu-24.04
-            cmake-options: "-DSOGEN_ENABLE_RUST_CODE=Off -DSOGEN_EMSCRIPTEN_MEMORY64=On -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
-          - platform: Emscripten Node.js
-            runner: ubuntu-24.04
-            cmake-options: "-DSOGEN_EMSCRIPTEN_SUPPORT_NODEJS=On -DSOGEN_ENABLE_RUST_CODE=Off -DCMAKE_TOOLCHAIN_FILE=$(dirname $(which emcc))/cmake/Modules/Platform/Emscripten.cmake"
     steps:
       - name: Checkout Source
         uses: actions/checkout@v7
@@ -446,11 +391,8 @@ jobs:
         platform:
           - Windows x86_64
         configuration:
-          - Debug
           - Release
         include:
-          - configuration: Debug
-            preset: debug
           - configuration: Release
             preset: release
           - platform: Windows x86_64
@@ -507,41 +449,17 @@ jobs:
       matrix:
         platform:
           - Windows x86
-          #- Windows x86_64
-          #- Linux x86_64 GCC
-          - Linux x86_64 GCC Sanitizer
-          - Linux x86_64 Clang
-          - macOS arm64
-          #- macOS x86_64
         emulator:
           - Unicorn
-          - Icicle
         emulation-root:
           - Windows 2025
-          #- Windows 2022
-          #- Windows 2019
         configuration:
-          #- Debug
           - Release
         include:
-          #- configuration: Debug
-          #  preset: debug
           - configuration: Release
             preset: release
           - platform: Windows x86
             runner: windows-latest
-          #- platform: Windows x86_64
-          #  runner: windows-latest
-          #- platform: Linux x86_64 GCC
-          #  runner: ubuntu-24.04
-          - platform: Linux x86_64 GCC Sanitizer
-            runner: ubuntu-24.04
-          - platform: Linux x86_64 Clang
-            runner: ubuntu-24.04
-          - platform: macOS arm64
-            runner: macos-latest
-          #- platform: macOS x86_64
-          #  runner: macos-15-intel
     steps:
       - name: Checkout Source
         uses: actions/checkout@v7
@@ -612,24 +530,12 @@ jobs:
       fail-fast: false
       matrix:
         configuration:
-          - Debug
           - Release
         emulator:
           - Unicorn
-          - Icicle
-          #- WHP
         emulation-root:
           - Windows 2025
-          - Windows 2022
-          #- Windows 2019
-        exclude:
-          # The old root exists to prove the pre-Windows-11 guest DLL set still emulates.
-          # That is a guest-side property, so Release alone covers it.
-          - emulation-root: Windows 2022
-            configuration: Debug
         include:
-          - configuration: Debug
-            preset: debug
           - configuration: Release
             preset: release
     steps:
@@ -688,6 +594,7 @@ jobs:
 
   smoke-test-node:
     name: Smoke Test Node.js
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     runs-on: ubuntu-24.04
     needs: [create-emulation-root, build]
     steps:
@@ -720,6 +627,7 @@ jobs:
 
   smoke-test-whp:
     name: Smoke Test WHP x86_64
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     runs-on: windows-latest
     needs: [create-emulation-root, build]
     steps:
@@ -768,6 +676,7 @@ jobs:
 
   smoke-test-kvm:
     name: Smoke Test KVM x86_64
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     runs-on: ubuntu-24.04
     needs: [create-emulation-root, build]
     steps:
@@ -814,6 +723,7 @@ jobs:
 
   smoke-test-win32:
     name: Smoke Test Windows x86
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     runs-on: windows-latest
     needs: [create-emulation-root, build]
     steps:
@@ -840,6 +750,7 @@ jobs:
 
   smoke-test-mingw:
     name: Smoke Test MinGW x86_64
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     runs-on: windows-latest
     needs: [create-emulation-root, build]
     steps:
@@ -866,6 +777,7 @@ jobs:
 
   smoke-test-android:
     name: Smoke Test Android
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     runs-on: ${{ matrix.runner }}
     needs: [create-emulation-root, build]
     strategy:
@@ -934,6 +846,7 @@ jobs:
 
   build-page:
     name: Build Page
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     runs-on: ubuntu-latest
     needs: [create-emulation-root, build]
     steps:
@@ -997,6 +910,7 @@ jobs:
 
   build-python-wheel:
     name: Build Python Wheel (${{ matrix.display }})
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -1070,6 +984,7 @@ jobs:
 
   test-python-wheel:
     name: Test Python Wheel (${{ matrix.display }})
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     runs-on: ${{ matrix.runner }}
     needs: [build-python-wheel, build-isolate, create-emulation-root]
     strategy:
@@ -1156,6 +1071,7 @@ jobs:
 
   build-python-sdist:
     name: Build Python Sdist
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout Source
@@ -1186,6 +1102,7 @@ jobs:
 
   test-python-sdist:
     name: Test Python Sdist
+    if: false # TEMPORARY: disabled on this debug branch, unrelated to the SerializationTest repro
     runs-on: ubuntu-24.04
     needs: [build-python-sdist]
     steps:
