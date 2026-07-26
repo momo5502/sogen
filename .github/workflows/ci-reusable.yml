@@ -662,6 +662,18 @@ jobs:
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{ matrix.preset }}/artifacts/test-sample.exe
 
+      # TEMPORARY: captures the raw serialized buffers on a SerializationTest mismatch (see
+      # serialization_test.cpp's dump_buffer_to_file) so they can be fed back into the real
+      # (de)serialize code to find which component owns the divergence. Revert with the rest of
+      # the debug instrumentation once the cause is identified.
+      - name: Upload serialization mismatch dumps
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: serialization-mismatch-Windows-${{ matrix.emulator }}-${{ matrix.emulation-root }}-${{ matrix.configuration }}
+          path: ${{ github.workspace }}/*.bin
+          if-no-files-found: ignore
+
   smoke-test-node:
     name: Smoke Test Node.js
     runs-on: ubuntu-24.04
