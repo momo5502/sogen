@@ -4,14 +4,45 @@
   --lp-paper: #fafaf7;
   --lp-paper-2: #f2f1ec;
   --lp-ink: #1b1a17;
+  --lp-ink-hover: #000000;
   --lp-ink-soft: #55534c;
   --lp-hairline: rgba(27, 26, 23, 0.1);
+  --lp-hairline-strong: rgba(27, 26, 23, 0.4);
+  --lp-hover: rgba(27, 26, 23, 0.05);
+  --lp-frame-border: rgba(27, 26, 23, 0.15);
+  --lp-nav-bg: rgba(250, 250, 247, 0.85);
+  --lp-dot: rgba(27, 26, 23, 0.13);
+  --lp-shadow: 0 16px 40px -20px rgba(27, 26, 23, 0.3);
+  --lp-panel-soft: #a3a3a3;
+  --lp-panel-border: rgba(255, 255, 255, 0.2);
+  --lp-panel-border-hover: rgba(255, 255, 255, 0.4);
+  --lp-panel-hover: rgba(255, 255, 255, 0.05);
+  --lp-panel-btn-hover: #ffffff;
   --lp-accent: #00a3e8;
-  --lp-accent-text: #0077b8;
 
   background-color: var(--lp-paper);
   color: var(--lp-ink);
   -webkit-font-smoothing: antialiased;
+}
+
+.dark .lp {
+  --lp-paper: #161513;
+  --lp-paper-2: #1d1c19;
+  --lp-ink: #edece7;
+  --lp-ink-hover: #ffffff;
+  --lp-ink-soft: #a09e96;
+  --lp-hairline: rgba(237, 236, 231, 0.12);
+  --lp-hairline-strong: rgba(237, 236, 231, 0.4);
+  --lp-hover: rgba(237, 236, 231, 0.07);
+  --lp-frame-border: rgba(237, 236, 231, 0.15);
+  --lp-nav-bg: rgba(22, 21, 19, 0.85);
+  --lp-dot: rgba(237, 236, 231, 0.12);
+  --lp-shadow: 0 16px 40px -20px rgba(0, 0, 0, 0.6);
+  --lp-panel-soft: #55534c;
+  --lp-panel-border: rgba(27, 26, 23, 0.25);
+  --lp-panel-border-hover: rgba(27, 26, 23, 0.5);
+  --lp-panel-hover: rgba(27, 26, 23, 0.05);
+  --lp-panel-btn-hover: #000000;
 }
 
 .lp ::selection {
@@ -21,10 +52,7 @@
 
 /* Faint dot grid used behind the hero */
 .lp-dots {
-  background-image: radial-gradient(
-    rgba(27, 26, 23, 0.13) 1px,
-    transparent 1px
-  );
+  background-image: radial-gradient(var(--lp-dot) 1px, transparent 1px);
   background-size: 22px 22px;
   mask-image: linear-gradient(
     to bottom,
@@ -42,32 +70,7 @@
   );
 }
 
-/* Blueprint-style "+" marks on diagram corners */
-.lp-corners {
-  position: relative;
-}
-
-.lp-corners::before,
-.lp-corners::after {
-  position: absolute;
-  content: "+";
-  font-family: ui-monospace, monospace;
-  font-size: 1rem;
-  line-height: 1;
-  color: rgba(27, 26, 23, 0.4);
-}
-
-.lp-corners::before {
-  top: -0.625rem;
-  left: -0.875rem;
-}
-
-.lp-corners::after {
-  right: -0.875rem;
-  bottom: -0.625rem;
-}
-
-/* Light scrollbar inside the landing page, overriding the global dark one */
+/* Scrollbar matching the theme, overriding the global dark one */
 @media (pointer: fine) {
   .lp ::-webkit-scrollbar-thumb {
     background-color: rgba(27, 26, 23, 0.35);
@@ -77,6 +80,14 @@
 
   .lp ::-webkit-scrollbar-thumb:hover {
     background-color: rgba(27, 26, 23, 0.55);
+  }
+
+  .dark .lp ::-webkit-scrollbar-thumb {
+    background-color: rgba(237, 236, 231, 0.35);
+  }
+
+  .dark .lp ::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(237, 236, 231, 0.55);
   }
 }
 

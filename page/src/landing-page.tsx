@@ -6,9 +6,12 @@ import {
   ArrowUpRight,
   BookOpen,
   Play,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { Github } from "react-bootstrap-icons";
 import type { ReactNode } from "react";
+import { useTheme } from "@/components/theme-provider";
 import { Highlight } from "prism-react-renderer";
 import type { PrismTheme } from "prism-react-renderer";
 
@@ -83,6 +86,24 @@ function Eyebrow({
   );
 }
 
+function ThemeToggle() {
+  const { theme, setTheme } = useTheme();
+  const isDark =
+    theme === "dark" ||
+    (theme === "system" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+  return (
+    <button
+      onClick={() => setTheme(isDark ? "light" : "dark")}
+      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-md text-[var(--lp-ink-soft)] transition-colors duration-200 hover:bg-[var(--lp-hover)] hover:text-[var(--lp-ink)]"
+    >
+      {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+    </button>
+  );
+}
+
 function PillLink({
   href,
   variant = "primary",
@@ -95,11 +116,11 @@ function PillLink({
   children: ReactNode;
 }) {
   const base =
-    "group inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-full px-6 py-3 text-[0.9375rem] font-semibold transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-accent)]";
+    "group inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-lg px-6 py-3 text-[0.9375rem] font-semibold transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-accent)]";
   const styles =
     variant === "primary"
-      ? "bg-[var(--lp-ink)] text-[var(--lp-paper)] hover:bg-black"
-      : "border border-[var(--lp-hairline)] text-[var(--lp-ink)] hover:border-[rgba(27,26,23,0.35)] hover:bg-[rgba(27,26,23,0.03)]";
+      ? "bg-[var(--lp-ink)] text-[var(--lp-paper)] hover:bg-[var(--lp-ink-hover)]"
+      : "border border-[var(--lp-hairline)] text-[var(--lp-ink)] hover:border-[var(--lp-hairline-strong)] hover:bg-[var(--lp-hover)]";
 
   return (
     <a
@@ -124,7 +145,7 @@ function WindowFrame({
 }) {
   return (
     <div
-      className={`overflow-hidden rounded-xl border border-[rgba(27,26,23,0.15)] bg-neutral-950 shadow-[0_24px_48px_-24px_rgba(27,26,23,0.4)] ${className}`}
+      className={`overflow-hidden rounded-xl border border-[var(--lp-frame-border)] bg-neutral-950 shadow-[var(--lp-shadow)] ${className}`}
     >
       <div className="flex items-center gap-1.5 border-b border-white/10 px-4 py-3">
         <span className="h-2.5 w-2.5 rounded-full bg-[#e25a48]/80" />
@@ -142,16 +163,10 @@ function WindowFrame({
 export function LandingPage() {
   const capabilities = [
     {
-      key: "ntdll.dll",
-      title: "Real system DLLs",
-      description:
-        "Sogen maps and runs the actual Windows system libraries: ntdll, kernel32, user32. Because the real code runs, behavior matches the real OS, edge cases and quirks included.",
-    },
-    {
       key: 'hooks.apis["Sleep"]',
       title: "Hook & rewrite",
       description:
-        "Intercept any instruction, memory access, syscall or API call. Log it, change its result, or block it entirely, from C++ or Python.",
+        "Pause on anything the program does, log it, change its result, or block it entirely, from C++ or Python.",
     },
     {
       key: "snapshot()",
@@ -160,34 +175,10 @@ export function LandingPage() {
         "Serialize the full emulator state to disk, take fast in-memory snapshots, or load a Windows minidump and continue executing from the moment it captured.",
     },
     {
-      key: "gdb remote",
-      title: "Undetectable debugging",
-      description:
-        "A built-in GDB protocol server lets IDA Pro, GDB or the in-browser debugger attach from outside the process, invisible to anti-debug checks.",
-    },
-    {
-      key: "unicorn · icicle · whp · kvm",
-      title: "Four CPU backends",
-      description:
-        "Software emulation (Unicorn, icicle) when you need instruction-level control; hardware virtualization (Hyper-V, KVM) when you need near-native speed.",
-    },
-    {
       key: "replay",
       title: "Deterministic execution",
       description:
         "Every run is reproducible, down to the instruction. A bug that happened once happens every time you go looking for it.",
-    },
-    {
-      key: "gui · d3d · dxvk",
-      title: "Windows, graphics, games",
-      description:
-        "GUI apps run with working windows, dialogs and controls. GPU paravirtualization plus DXVK brings Direct3D 8–11 titles to your real GPU. (Experimental.)",
-    },
-    {
-      key: "wasm32",
-      title: "One core, every platform",
-      description:
-        "The same C++ core runs on Windows, Linux, macOS, Android and iOS, and compiles to WebAssembly to run entirely in your browser.",
     },
   ];
 
@@ -196,19 +187,19 @@ export function LandingPage() {
       icon: Bug,
       title: "Analyze malware",
       description:
-        "Run a sample and watch every syscall, memory access and API call it makes, without any risk to your machine.",
+        "Run a sample and watch everything it does, with zero risk to your machine.",
     },
     {
       icon: Lock,
       title: "Understand DRM",
       description:
-        "Follow licensing and protection logic step by step, with a debugger the protection cannot see.",
+        "Follow licensing and protection logic step by step, at your own pace.",
     },
     {
       icon: Box,
       title: "Sandbox apps & games",
       description:
-        "Run untrusted software, even games, in full isolation, with working windows and GPU acceleration.",
+        "Run untrusted software in complete isolation from your real system.",
     },
   ];
 
@@ -228,7 +219,7 @@ export function LandingPage() {
 
       <div className="lp min-h-screen overflow-x-hidden font-sans">
         {/* ── Navigation ─────────────────────────────────────────── */}
-        <nav className="sticky top-0 z-50 border-b border-[var(--lp-hairline)] bg-[rgba(250,250,247,0.85)] backdrop-blur-md">
+        <nav className="sticky top-0 z-50 border-b border-[var(--lp-hairline)] bg-[var(--lp-nav-bg)] backdrop-blur-md">
           <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 sm:px-8">
             <a
               href="#/"
@@ -243,7 +234,7 @@ export function LandingPage() {
                 <button
                   key={link.id}
                   onClick={() => scrollTo(link.id)}
-                  className="cursor-pointer rounded-full px-4 py-2 text-sm font-medium text-[var(--lp-ink-soft)] transition-colors duration-200 hover:bg-[rgba(27,26,23,0.05)] hover:text-[var(--lp-ink)]"
+                  className="cursor-pointer rounded-md px-4 py-2 text-sm font-medium text-[var(--lp-ink-soft)] transition-colors duration-200 hover:bg-[var(--lp-hover)] hover:text-[var(--lp-ink)]"
                 >
                   {link.label}
                 </button>
@@ -252,25 +243,26 @@ export function LandingPage() {
                 href="https://github.com/momo5502/sogen/wiki"
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-full px-4 py-2 text-sm font-medium text-[var(--lp-ink-soft)] transition-colors duration-200 hover:bg-[rgba(27,26,23,0.05)] hover:text-[var(--lp-ink)]"
+                className="rounded-md px-4 py-2 text-sm font-medium text-[var(--lp-ink-soft)] transition-colors duration-200 hover:bg-[var(--lp-hover)] hover:text-[var(--lp-ink)]"
               >
                 Docs
               </a>
             </div>
 
             <div className="flex items-center gap-2">
+              <ThemeToggle />
               <a
                 href="https://github.com/momo5502/sogen"
                 target="_blank"
                 rel="noreferrer"
                 aria-label="Sogen on GitHub"
-                className="flex h-10 w-10 items-center justify-center rounded-full text-[var(--lp-ink-soft)] transition-colors duration-200 hover:bg-[rgba(27,26,23,0.05)] hover:text-[var(--lp-ink)]"
+                className="flex h-10 w-10 items-center justify-center rounded-md text-[var(--lp-ink-soft)] transition-colors duration-200 hover:bg-[var(--lp-hover)] hover:text-[var(--lp-ink)]"
               >
                 <Github className="h-5 w-5" />
               </a>
               <a
                 href="#/playground"
-                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-[var(--lp-ink)] px-4 py-2 text-sm font-semibold text-[var(--lp-paper)] transition-colors duration-200 hover:bg-black sm:px-5"
+                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-[var(--lp-ink)] px-4 py-2 text-sm font-semibold text-[var(--lp-paper)] transition-colors duration-200 hover:bg-[var(--lp-ink-hover)] sm:px-5"
               >
                 Try online
                 <ArrowRight className="h-4 w-4" />
@@ -317,15 +309,11 @@ export function LandingPage() {
                   View source
                 </PillLink>
               </div>
-
-              <p className="mt-5 font-mono text-xs text-[var(--lp-ink-soft)]/80">
-                Free & open source · GPL-2.0 · Nothing to install
-              </p>
             </div>
 
             <div className="mx-auto mt-14 max-w-4xl sm:mt-20">
               {/* preview.svg ships its own window chrome, so no WindowFrame here */}
-              <div className="overflow-hidden rounded-xl border border-[rgba(27,26,23,0.15)] bg-neutral-950 shadow-[0_24px_48px_-24px_rgba(27,26,23,0.4)]">
+              <div className="overflow-hidden rounded-xl border border-[var(--lp-frame-border)] bg-neutral-950 shadow-[var(--lp-shadow)]">
                 <img
                   src="https://momo5502.com/sogen/preview.svg"
                   alt="The Sogen emulator tracing a program's execution"
@@ -359,7 +347,7 @@ export function LandingPage() {
               </p>
             </div>
 
-            <div className="lp-corners mt-14">
+            <div className="mt-14">
               <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-[1fr_auto_1.5fr_auto_1fr] lg:gap-4">
                 {/* Input */}
                 <div className="flex flex-col rounded-lg border border-[var(--lp-hairline)] bg-[var(--lp-paper)] p-5">
@@ -383,7 +371,7 @@ export function LandingPage() {
                 </div>
 
                 {/* Sogen stack */}
-                <div className="overflow-hidden rounded-lg border border-[rgba(27,26,23,0.4)] bg-[var(--lp-paper)]">
+                <div className="overflow-hidden rounded-lg border border-[var(--lp-hairline-strong)] bg-[var(--lp-paper)]">
                   <div className="border-b border-[var(--lp-hairline)] px-5 py-3 font-mono text-[0.6875rem] font-semibold tracking-[0.18em] uppercase">
                     Sogen
                   </div>
@@ -420,7 +408,7 @@ export function LandingPage() {
                       </div>
                     ))}
                   </div>
-                  <div className="border-t border-dashed border-[rgba(27,26,23,0.25)] px-5 py-3 font-mono text-xs leading-relaxed text-[var(--lp-ink-soft)]">
+                  <div className="border-t border-dashed border-[var(--lp-hairline-strong)] px-5 py-3 font-mono text-xs leading-relaxed text-[var(--lp-ink-soft)]">
                     ↳ your hooks attach to every instruction, memory access,
                     syscall and API call
                   </div>
@@ -448,11 +436,6 @@ export function LandingPage() {
                 </div>
               </div>
             </div>
-
-            <p className="mt-8 font-mono text-sm text-[var(--lp-ink-soft)]">
-              Real DLLs on top, emulated syscalls below: behavior closely
-              matches the real OS, edge cases included.
-            </p>
           </div>
         </section>
 
@@ -497,7 +480,7 @@ export function LandingPage() {
                 Capabilities
               </Eyebrow>
               <h2 className="mt-4 text-3xl font-bold tracking-tight text-balance sm:text-4xl">
-                Everything it does, in one sheet.
+                Full control over every run.
               </h2>
             </div>
 
@@ -539,8 +522,7 @@ export function LandingPage() {
               </h2>
               <p className="mt-5 text-lg leading-relaxed text-[var(--lp-ink-soft)]">
                 Sogen runs entirely in your browser. Nothing is uploaded,
-                everything runs locally, and there is nothing to install. Drop
-                in a binary and start tracing.
+                everything runs locally. Drop in a binary and start tracing.
               </p>
               <div className="mt-8">
                 <PillLink href="#/playground">
@@ -740,7 +722,7 @@ export function LandingPage() {
             {["wY9Q0DhodOQ", "RkodCUEmiuA"].map((id) => (
               <div
                 key={id}
-                className="aspect-video overflow-hidden rounded-xl border border-[rgba(27,26,23,0.15)] bg-neutral-950 shadow-[0_24px_48px_-24px_rgba(27,26,23,0.4)]"
+                className="aspect-video overflow-hidden rounded-xl border border-[var(--lp-frame-border)] bg-neutral-950 shadow-[var(--lp-shadow)]"
               >
                 <YoutubeVideo id={id} />
               </div>
@@ -751,13 +733,13 @@ export function LandingPage() {
         {/* ── CTA panel ──────────────────────────────────────────── */}
         <section className="mx-auto max-w-6xl px-5 pb-20 sm:px-8 sm:pb-28">
           <div className="rounded-2xl bg-[var(--lp-ink)] px-6 py-16 text-center sm:px-12 sm:py-20">
-            <span className="font-mono text-[0.6875rem] font-medium tracking-[0.18em] text-neutral-400 uppercase">
+            <span className="font-mono text-[0.6875rem] font-medium tracking-[0.18em] text-[var(--lp-panel-soft)] uppercase">
               Open source
             </span>
             <h2 className="mx-auto mt-4 max-w-xl text-3xl font-bold tracking-tight text-balance text-[var(--lp-paper)] sm:text-4xl">
               Help build Sogen.
             </h2>
-            <p className="mx-auto mt-4 max-w-xl text-lg leading-relaxed text-neutral-400">
+            <p className="mx-auto mt-4 max-w-xl text-lg leading-relaxed text-[var(--lp-panel-soft)]">
               There's always more to build. Report a bug, add a syscall, or open
               a pull request.
             </p>
@@ -766,7 +748,7 @@ export function LandingPage() {
                 href="https://github.com/momo5502/sogen"
                 target="_blank"
                 rel="noreferrer"
-                className="group inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-full bg-[var(--lp-paper)] px-6 py-3 text-[0.9375rem] font-semibold text-[var(--lp-ink)] transition-colors duration-200 hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-accent)]"
+                className="group inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-lg bg-[var(--lp-paper)] px-6 py-3 text-[0.9375rem] font-semibold text-[var(--lp-ink)] transition-colors duration-200 hover:bg-[var(--lp-panel-btn-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-accent)]"
               >
                 <Github className="h-4 w-4" />
                 Contribute on GitHub
@@ -776,7 +758,7 @@ export function LandingPage() {
                 href="https://github.com/momo5502/sogen/wiki"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-full border border-white/20 px-6 py-3 text-[0.9375rem] font-semibold text-[var(--lp-paper)] transition-colors duration-200 hover:border-white/40 hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-accent)]"
+                className="inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-lg border border-[var(--lp-panel-border)] px-6 py-3 text-[0.9375rem] font-semibold text-[var(--lp-paper)] transition-colors duration-200 hover:border-[var(--lp-panel-border-hover)] hover:bg-[var(--lp-panel-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-accent)]"
               >
                 <BookOpen className="h-4 w-4" />
                 Read the wiki
