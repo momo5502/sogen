@@ -87,19 +87,6 @@ namespace sogen
             pointer xpfnProc{};
         };
 
-        struct wow64_window_pos_callback_data
-        {
-            uint32_t hwnd{};
-            uint32_t hwndInsertAfter{};
-            int32_t x{};
-            int32_t y{};
-            int32_t cx{};
-            int32_t cy{};
-            uint32_t flags{};
-        };
-
-        static_assert(sizeof(wow64_window_pos_callback_data) == 28);
-
         struct fn_inout_lp_point5_message
         {
             pointer pwnd{};
@@ -110,7 +97,7 @@ namespace sogen
             {
                 EMU_MINMAXINFO point5;
                 EMU_WINDOWPOS window_pos;
-                wow64_window_pos_callback_data window_pos32;
+                EMU_WINDOWPOS32 window_pos32;
             } data{};
 
             pointer xParam{};
@@ -410,7 +397,7 @@ namespace sogen
 
         std::optional<EMU_WINDOWPOS> read_window_pos_callback_output(const syscall_context& c)
         {
-            const auto& result = c.get_user_callback_result();
+            const auto& result = c.get_callback_result_object();
             if (result.output == 0)
             {
                 return std::nullopt;
@@ -418,12 +405,12 @@ namespace sogen
 
             if (c.proc.is_wow64_process)
             {
-                if (result.output_size < sizeof(wow64_window_pos_callback_data))
+                if (result.output_size < sizeof(EMU_WINDOWPOS32))
                 {
                     return std::nullopt;
                 }
 
-                wow64_window_pos_callback_data position{};
+                EMU_WINDOWPOS32 position{};
                 if (!c.win_emu.memory.try_read_memory(result.output, &position, sizeof(position)))
                 {
                     return std::nullopt;
@@ -454,7 +441,8 @@ namespace sogen
         }
 
         void complete_window_position_change(const syscall_context& c, window& win, const uint64_t window_pos_address,
-                                              emulator_stack_allocation& changed_window_pos_alloc, std::vector<qmsg>& message_queue)
+                                             emulator_stack_allocation& changed_window_pos_alloc, std::vector<qmsg>& message_queue,
+                                             const bool update_changed_window_position)
         {
             EMU_WINDOWPOS position{};
             c.emu.read_memory(window_pos_address, &position, sizeof(position));
@@ -490,6 +478,14 @@ namespace sogen
 
             if (changed_window_pos_alloc)
             {
+                if (!update_changed_window_position)
+                {
+                    EMU_WINDOWPOS previous_changed_position{};
+                    c.emu.read_memory(changed_window_pos_alloc.address(), &previous_changed_position, sizeof(previous_changed_position));
+                    changed_position.hwnd = previous_changed_position.hwnd;
+                    changed_position.hwndInsertAfter = previous_changed_position.hwndInsertAfter;
+                    changed_position.flags = previous_changed_position.flags;
+                }
                 c.emu.write_memory(changed_window_pos_alloc.address(), &changed_position, sizeof(changed_position));
             }
             else
@@ -508,7 +504,7 @@ namespace sogen
                     message.lParam = static_cast<uint64_t>(((win.y & 0xFFFF) << 16) | (win.x & 0xFFFF));
                     break;
                 case WM_SIZE:
-                    message.lParam = static_cast<uint64_t>(((win.height & 0xFFFF) << 16) | (win.width & 0xFFFF));
+                    message.lParam = static_cast<uint64_t>(((win.client_height() & 0xFFFF) << 16) | (win.client_width() & 0xFFFF));
                     break;
                 default:
                     break;
@@ -1036,10 +1032,6 @@ namespace sogen
         {
             const auto m = message_queue.back();
             message_queue.pop_back();
-            if (m.message == WM_WINDOWPOSCHANGING)
-            {
-                state.pending_window_pos_address = m.lParam;
-            }
 
             dispatch_window_message(c, id, std::forward<T>(state), win, m.message, m.wParam, m.lParam);
         }
@@ -3138,7 +3130,7 @@ namespace sogen
                 invalidate_window(c, win);
 
                 const auto move_lparam = static_cast<uint64_t>(((y & 0xFFFF) << 16) | (x & 0xFFFF));
-                const auto size_lparam = static_cast<uint64_t>(((height & 0xFFFF) << 16) | (width & 0xFFFF));
+                const auto size_lparam = static_cast<uint64_t>(((win.client_height() & 0xFFFF) << 16) | (win.client_width() & 0xFFFF));
 
                 if (has_child_parent)
                 {
@@ -3253,7 +3245,10 @@ namespace sogen
 
             if (s.pending_window_pos_address != 0)
             {
-                complete_window_position_change(c, *win, s.pending_window_pos_address, s.changed_window_pos_alloc, s.message_queue);
+                const bool activation_position =
+                    s.activation_window_pos_alloc && s.pending_window_pos_address == s.activation_window_pos_alloc.address();
+                complete_window_position_change(c, *win, s.pending_window_pos_address, s.changed_window_pos_alloc, s.message_queue,
+                                                !activation_position);
                 s.pending_window_pos_address = 0;
             }
 
@@ -3269,6 +3264,10 @@ namespace sogen
                         return {};
                     }
                     s.message_queue.pop_back();
+                }
+                else if (next.message == WM_WINDOWPOSCHANGING)
+                {
+                    s.pending_window_pos_address = next.lParam;
                 }
 
                 dispatch_next_message(c, callback_id::NtUserCreateWindowEx, std::move(s), *win, s.message_queue);
@@ -3301,18 +3300,18 @@ namespace sogen
         BOOL completion_NtUserDestroyWindow(const syscall_context& c, const hwnd /*window*/)
         {
             auto& s = c.get_completion_state<window_destroy_state>();
-            const auto pending_frame = std::ranges::find_if(s.frames, [](const window_destroy_frame& frame) {
-                return frame.pending_window_pos_address != 0;
-            });
-            if (pending_frame != s.frames.end())
+            if (!s.frames.empty())
             {
-                if (auto* win = c.proc.windows.get(pending_frame->handle))
+                auto& frame = s.frames.back();
+                if (frame.pending_window_pos_address != 0)
                 {
-                    complete_window_position_change(c, *win, pending_frame->pending_window_pos_address,
-                                                    pending_frame->changed_window_pos_alloc,
-                                                    pending_frame->message_queue);
+                    if (auto* win = c.proc.windows.get(frame.handle))
+                    {
+                        complete_window_position_change(c, *win, frame.pending_window_pos_address, frame.changed_window_pos_alloc,
+                                                        frame.message_queue, true);
+                    }
+                    frame.pending_window_pos_address = 0;
                 }
-                pending_frame->pending_window_pos_address = 0;
             }
             return advance_window_destroy(c, s);
         }
@@ -3476,7 +3475,7 @@ namespace sogen
             if (want_visible)
             {
                 const auto move_lparam = static_cast<uint64_t>(((win->y & 0xFFFF) << 16) | (win->x & 0xFFFF));
-                const auto size_lparam = static_cast<uint64_t>(((win->height & 0xFFFF) << 16) | (win->width & 0xFFFF));
+                const auto size_lparam = static_cast<uint64_t>(((win->client_height() & 0xFFFF) << 16) | (win->client_width() & 0xFFFF));
 
                 state.message_queue = {
                     {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
@@ -3555,12 +3554,21 @@ namespace sogen
 
             if (s.pending_window_pos_address != 0)
             {
-                complete_window_position_change(c, *win, s.pending_window_pos_address, s.changed_window_pos_alloc, s.message_queue);
+                const bool activation_position =
+                    s.activation_window_pos_alloc && s.pending_window_pos_address == s.activation_window_pos_alloc.address();
+                complete_window_position_change(c, *win, s.pending_window_pos_address, s.changed_window_pos_alloc, s.message_queue,
+                                                !activation_position);
                 s.pending_window_pos_address = 0;
             }
 
             if (!s.message_queue.empty())
             {
+                const auto& next = s.message_queue.back();
+                if (next.message == WM_WINDOWPOSCHANGING)
+                {
+                    s.pending_window_pos_address = next.lParam;
+                }
+
                 dispatch_next_message(c, callback_id::NtUserShowWindow, std::move(s), *win, s.message_queue);
                 return {};
             }

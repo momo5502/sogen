@@ -51,7 +51,7 @@ namespace sogen
             return static_cast<T>(this->previous_callback_result.value);
         }
 
-        const user_callback_result& get_user_callback_result() const
+        const user_callback_result& get_callback_result_object() const
         {
             if (!this->is_callback_completion)
             {

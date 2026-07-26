@@ -2,7 +2,6 @@
 #include "../cpu_context.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
-#include "../user_callback_dispatch.hpp"
 
 #include <algorithm>
 #include <utils/finally.hpp>
@@ -1015,6 +1014,7 @@ namespace sogen
 
             if (callback_result_ptr != 0 && callback_result_length != 0)
             {
+                // When present, the callback result pointer always contains the actual callback result value!
                 user_callback_result result_data{};
                 const auto read_length = std::min<ULONG>(callback_result_length, sizeof(result_data));
                 if (c.win_emu.memory.try_read_memory(callback_result_ptr, &result_data, read_length))

@@ -1391,6 +1391,7 @@ namespace sogen
         buffer.write(this->es);
         buffer.write(this->fs);
         buffer.write(this->gs);
+
         buffer.write(static_cast<bool>(this->state));
         if (this->state)
         {
@@ -1424,6 +1425,7 @@ namespace sogen
         buffer.read(this->es);
         buffer.read(this->fs);
         buffer.read(this->gs);
+
         bool has_state{};
         buffer.read(has_state);
 
