@@ -57,7 +57,8 @@ endif()
 ##########################################
 
 # FEX-Emu backend (x86/x86-64 -> AArch64). FEX only JITs to ARM64, so the backend is restricted to
-# ARM64 hosts.
+# ARM64 hosts. See docs/fex-backend.md, including its security/address-space model - FEX shares the
+# guest and host address space, unlike this project's other backends.
 # FEX is vendored as a submodule (deps/FEX, pointed at github.com/JackTYM/FEX, a fork with Darwin
 # portability patches) and built in-tree. It requires Clang and only JITs to AArch64, and on Linux
 # its headers need a libstdc++ with std::atomic_ref (the Android NDK's libc++ lacks it), so Linux is

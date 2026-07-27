@@ -31,7 +31,8 @@ namespace sogen
 #ifdef __APPLE__
 // Darwin refuses MAP_FIXED anywhere in the low ~4GB regardless of ASLR (the standard 64-bit
 // Mach-O __PAGEZERO convention, enforced at the mmap syscall level) - a backend sharing the guest
-// address space with the host process (guest VA == host VA, e.g. FEX) can never place anything
+// address space with the host process (guest VA == host VA, e.g. FEX - see docs/fex-backend.md's
+// "Security / address-space model" for what that implies more broadly) can never place anything
 // there. GDT_ADDR is a fixed constant sogen always uses directly (not chosen dynamically via
 // find_free_allocation_base, so the reserved-host-ranges mechanism can't route around it), so it
 // has to live well above that floor here. Chosen far from typical host dyld/heap/stack placement
