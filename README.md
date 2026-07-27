@@ -90,6 +90,10 @@ print(emu.process.exit_status)
 
 See `examples/python/README.md` for setup details and a larger example.
 
+## Unofficial Bindings
+
+[Dart bindings](https://github.com/Wdestroier/sogen_dart) are available in a separate repository.
+
 ## Quick Start (Windows + Visual Studio)
 
 > [!TIP]  
