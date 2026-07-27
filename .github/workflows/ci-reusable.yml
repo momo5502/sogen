@@ -264,6 +264,7 @@ jobs:
           #- Linux x86_64 GCC
           - Linux x86_64 GCC Sanitizer
           - Linux x86_64 Clang
+          - Linux arm64 Clang
           - macOS arm64
           #- macOS x86_64
           #- iOS arm64
@@ -297,6 +298,9 @@ jobs:
           #  runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
+            clang-version: 21
+          - platform: Linux arm64 Clang
+            runner: ubuntu-24.04-arm
             clang-version: 21
           #- platform: iOS arm64
           #  runner: macos-latest
@@ -347,7 +351,7 @@ jobs:
 
       - name: Install Clang
         uses: nick-fields/retry@v4.0.0
-        if: "${{ matrix.platform == 'Linux x86_64 Clang' }}"
+        if: "${{ matrix.clang-version }}"
         with:
           max_attempts: 5
           timeout_minutes: 15
@@ -361,6 +365,19 @@ jobs:
             sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ matrix.clang-version }} 100
             sudo update-alternatives --set cc /usr/bin/clang-${{ matrix.clang-version }}
             sudo update-alternatives --set c++ /usr/bin/clang++-${{ matrix.clang-version }}
+
+      # ubuntu-24.04-arm doesn't ship ninja-build preinstalled the way ubuntu-24.04 (x86_64) does,
+      # and every preset here requires the Ninja generator.
+      - name: Install Ninja
+        if: "${{ matrix.platform == 'Linux arm64 Clang' }}"
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ninja-build
 
       - name: Set up MinGW
         uses: egor-tensin/setup-mingw@v3
@@ -389,7 +406,7 @@ jobs:
           echo "ANDROID_ABI=${{ matrix.abi }}" >> $GITHUB_ENV
 
       - name: Install Linux UI Dependencies
-        if: "${{ contains(matrix.platform, 'Linux x86_64') }}"
+        if: "${{ startsWith(matrix.platform, 'Linux') }}"
         uses: nick-fields/retry@v4.0.0
         with:
           max_attempts: 5
@@ -415,6 +432,14 @@ jobs:
 
       - name: Install libclang (Steam bridge codegen)
         run: python -m pip install --disable-pip-version-check libclang
+
+      # deps/FEX/CMakeLists.txt invokes aarch64_fit_native.py via execute_process(COMMAND python3 ...),
+      # which resolves through PATH - the interpreter Set up Python just configured, not a system one.
+      # Needed on every platform SOGEN_ENABLE_FEX can be true on (see the root CMakeLists' gate: ARM64 +
+      # Clang + Linux-or-Darwin).
+      - name: Install FEXCore Build Prerequisites (Python)
+        if: "${{ matrix.platform == 'Linux arm64 Clang' || matrix.platform == 'macOS arm64' }}"
+        run: python -m pip install --disable-pip-version-check packaging
 
       - name: CMake Build
         run: cmake --preset=${{matrix.preset}} ${{matrix.cmake-options}} && cmake --build --preset=${{matrix.preset}}
@@ -497,58 +522,6 @@ jobs:
           name: Temp Isolate ${{ matrix.platform }} ${{matrix.configuration}} Test Config
           path: "build/${{matrix.preset}}/**/CTestTestfile.cmake"
           retention-days: 1
-
-  build-fex:
-    name: Build FEX Backend (Linux arm64)
-    runs-on: ubuntu-24.04-arm
-    env:
-      LLVM_VERSION: 21
-    steps:
-      - name: Checkout Source
-        uses: actions/checkout@v7
-        with:
-          submodules: recursive
-
-      - name: Install Clang
-        uses: nick-fields/retry@v4.0.0
-        with:
-          max_attempts: 5
-          timeout_minutes: 20
-          retry_wait_seconds: 60
-          command: |
-            wget https://apt.llvm.org/llvm.sh
-            chmod +x llvm.sh
-            sudo ./llvm.sh ${{ env.LLVM_VERSION }}
-            sudo apt install -y clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }}
-            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-${{ env.LLVM_VERSION }} 100
-            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ env.LLVM_VERSION }} 100
-            sudo update-alternatives --set cc /usr/bin/clang-${{ env.LLVM_VERSION }}
-            sudo update-alternatives --set c++ /usr/bin/clang++-${{ env.LLVM_VERSION }}
-
-      - name: Install Build Dependencies
-        uses: nick-fields/retry@v4.0.0
-        with:
-          max_attempts: 5
-          timeout_minutes: 15
-          retry_wait_seconds: 60
-          command: |
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends \
-              ninja-build python3 \
-              libasound2-dev libpulse-dev libjack-jackd2-dev libsndio-dev \
-              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev \
-              libxi-dev libxss-dev libxtst-dev libxkbcommon-dev \
-              libdrm-dev libgbm-dev libgl1-mesa-dev libegl-dev libgles-dev \
-              libdbus-1-dev libudev-dev \
-              libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
-
-      # Build only the FEX backend; FEXCore itself is built via an ExternalProject restricted to its
-      # FEXCore_shared target (see deps/CMakeLists.txt), so this does not build FEX's loader/server tools.
-      - name: CMake Configure
-        run: cmake --preset=release
-
-      - name: Build FEX backend
-        run: cmake --build --preset=release --target fex-emulator
 
   test:
     name: Test
@@ -1312,7 +1285,6 @@ jobs:
         create-emulation-root,
         build,
         build-isolate,
-        build-fex,
         test,
         win-test,
         verify-formatting,
