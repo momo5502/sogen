@@ -975,6 +975,33 @@ namespace sogen
         message_queue.push_back(msg);
     }
 
+    void emulator_thread::remove_window_messages(const hwnd window)
+    {
+        for (auto it = this->message_queue.begin(); it != this->message_queue.end();)
+        {
+            if (it->window != window)
+            {
+                ++it;
+                continue;
+            }
+
+            const auto removed_bits = get_message_queue_status_bits(*it);
+            for_each_queue_status_bit(removed_bits, [this](const uint32_t bit, const size_t index) {
+                if (this->message_queue_status_bit_counts[index] <= 1)
+                {
+                    this->message_queue_status_bit_counts[index] = 0;
+                    this->message_queue_status_bits &= ~bit;
+                }
+                else
+                {
+                    --this->message_queue_status_bit_counts[index];
+                }
+            });
+
+            it = this->message_queue.erase(it);
+        }
+    }
+
     bool emulator_thread::is_terminated() const
     {
         return this->exit_status.has_value();

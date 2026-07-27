@@ -6,6 +6,7 @@ namespace sogen
 {
 
     struct syscall_context;
+    struct user_callback_result;
     using syscall_handler = void (*)(const syscall_context& c);
 
     struct syscall_handler_entry
@@ -58,6 +59,7 @@ namespace sogen
         emulator_stack_allocation changed_window_pos_alloc{};
 
         std::vector<qmsg> message_queue{};
+        uint64_t pending_window_pos_address{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -71,6 +73,7 @@ namespace sogen
             buffer.write(this->activation_window_pos_alloc);
             buffer.write(this->changed_window_pos_alloc);
             buffer.write_vector(this->message_queue);
+            buffer.write(this->pending_window_pos_address);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -84,6 +87,7 @@ namespace sogen
             buffer.read(this->activation_window_pos_alloc);
             buffer.read(this->changed_window_pos_alloc);
             buffer.read_vector(this->message_queue);
+            buffer.read(this->pending_window_pos_address);
         }
     };
 
@@ -104,6 +108,7 @@ namespace sogen
         std::vector<qmsg> message_queue{};
         window_destroy_phase phase{window_destroy_phase::messages};
         bool unlink_pending{true};
+        uint64_t pending_window_pos_address{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -114,6 +119,7 @@ namespace sogen
             buffer.write_vector(this->message_queue);
             buffer.write(this->phase);
             buffer.write(this->unlink_pending);
+            buffer.write(this->pending_window_pos_address);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -125,6 +131,7 @@ namespace sogen
             buffer.read_vector(this->message_queue);
             buffer.read(this->phase);
             buffer.read(this->unlink_pending);
+            buffer.read(this->pending_window_pos_address);
         }
     };
 
@@ -157,6 +164,7 @@ namespace sogen
         emulator_stack_allocation activation_window_pos_alloc{};
         emulator_stack_allocation changed_window_pos_alloc{};
         std::vector<qmsg> message_queue{};
+        uint64_t pending_window_pos_address{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -166,6 +174,7 @@ namespace sogen
             buffer.write(this->activation_window_pos_alloc);
             buffer.write(this->changed_window_pos_alloc);
             buffer.write_vector(this->message_queue);
+            buffer.write(this->pending_window_pos_address);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -175,6 +184,7 @@ namespace sogen
             buffer.read(this->activation_window_pos_alloc);
             buffer.read(this->changed_window_pos_alloc);
             buffer.read_vector(this->message_queue);
+            buffer.read(this->pending_window_pos_address);
         }
     };
 
@@ -233,7 +243,7 @@ namespace sogen
         void dispatch(windows_emulator& win_emu, vcpu_context& vcpu);
         static void dispatch_callback(windows_emulator& win_emu, std::string& syscall_name);
         dispatch_result dispatch_completion(windows_emulator& win_emu, vcpu_context& vcpu, callback_id callback_id,
-                                            completion_state* completion_state, uint64_t callback_result);
+                                            completion_state* completion_state, const user_callback_result& callback_result);
 
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);

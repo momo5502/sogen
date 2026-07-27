@@ -42,6 +42,10 @@ namespace sogen
             {
                 const auto m = frame.message_queue.back();
                 frame.message_queue.pop_back();
+                if (m.message == WM_WINDOWPOSCHANGING)
+                {
+                    frame.pending_window_pos_address = m.lParam;
+                }
                 const auto target = m.message == WM_PARENTNOTIFY ? frame.parent_notify_handle : frame.handle;
                 return window_destroy_step{.handle = target, .message = m};
             }
@@ -206,7 +210,7 @@ namespace sogen
             const std::initializer_list<qmsg> hide_messages = {
                 {.message = WM_ACTIVATE, .wParam = 0, .lParam = 0},
                 {.message = WM_NCACTIVATE, .wParam = FALSE, .lParam = 0},
-                {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = frame.changed_window_pos_alloc.address()},
+                {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = 0},
                 {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = frame.window_pos_alloc.address()},
                 {.message = WM_UAHDESTROYWINDOW, .wParam = 0, .lParam = 0},
             };
@@ -302,6 +306,7 @@ namespace sogen
     void window_destroy_orchestrator::finalize_frame(window_destroy_frame& frame, const window& win) const
     {
         this->pop_frame_allocation(frame);
+        this->thread_.remove_window_messages(frame.handle);
 
         win.guest.access([&](USER_WINDOW& guest_win) {
             guest_win.spwndParent = 0;

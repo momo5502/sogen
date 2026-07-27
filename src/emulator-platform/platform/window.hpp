@@ -127,6 +127,17 @@ namespace sogen
         uint32_t flags;
     };
 
+    struct EMU_WINDOWPOS32
+    {
+        uint32_t hwnd;
+        uint32_t hwndInsertAfter;
+        int x;
+        int y;
+        int cx;
+        int cy;
+        uint32_t flags;
+    };
+
     struct EMU_CREATESTRUCT
     {
         pointer lpCreateParams;

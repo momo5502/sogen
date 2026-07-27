@@ -155,7 +155,7 @@ namespace sogen
     }
 
     dispatch_result syscall_dispatcher::dispatch_completion(windows_emulator& win_emu, vcpu_context& vcpu, callback_id callback_id,
-                                                            completion_state* completion_state, uint64_t callback_result)
+                                                            completion_state* completion_state, const user_callback_result& callback_result)
     {
         auto& emu = vcpu.cpu;
 

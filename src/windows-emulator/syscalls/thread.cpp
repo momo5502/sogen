@@ -1007,21 +1007,24 @@ namespace sogen
                 throw std::runtime_error("Unexpected callback return");
             }
 
-            uint64_t callback_result = t.callback_return_rax.value_or(c.emu.reg<uint64_t>(x86_register::rax));
+            user_callback_result callback_result{
+                .value = t.callback_return_rax.value_or(c.emu.reg<uint64_t>(x86_register::rax)),
+            };
             t.callback_return_rax.reset();
 
             if (callback_result_ptr != 0 && callback_result_length != 0)
             {
-                // user32's SFI-table-driven dispatch stubs (the __guard_xfg_dispatch_icall_fptr family
-                // used for e.g. NtUserMessageCall completions) always pass a real result pointer with
-                // ResultLength=0x18 - a 24-byte structure whose first 8 bytes are the actual LRESULT the
-                // callback computed.
-                const auto read_length = std::min<ULONG>(callback_result_length, sizeof(callback_result));
-                std::array<std::byte, sizeof(callback_result)> result_bytes{};
-                if (c.win_emu.memory.try_read_memory(callback_result_ptr, result_bytes.data(), read_length))
+                // When present, the callback result pointer always contains the actual callback result value!
+                user_callback_result result_data{};
+                const auto read_length = std::min<ULONG>(callback_result_length, sizeof(result_data));
+                if (c.win_emu.memory.try_read_memory(callback_result_ptr, &result_data, read_length))
                 {
-                    callback_result = 0;
-                    memcpy(&callback_result, result_bytes.data(), read_length);
+                    callback_result.value = result_data.value;
+                    if (callback_result_length >= sizeof(result_data))
+                    {
+                        callback_result.output_size = result_data.output_size;
+                        callback_result.output = result_data.output;
+                    }
                 }
             }
 

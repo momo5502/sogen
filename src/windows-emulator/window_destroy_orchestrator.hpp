@@ -40,7 +40,7 @@ namespace sogen
         window_destroy_state& state_;
         x86_64_cpu& emu_;
         process_context& proc_;
-        const emulator_thread& thread_;
+        emulator_thread& thread_;
         ui_backend& ui_;
     };
 
