@@ -5587,8 +5587,66 @@ namespace sogen
             return FALSE;
         }
 
-        BOOL handle_NtUserGetWindowPlacement()
+        BOOL handle_NtUserGetWindowPlacement(const syscall_context& c, const hwnd window_handle, const emulator_pointer placement_address)
         {
+            if (placement_address == 0)
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return FALSE;
+            }
+
+            DWORD requested_length{};
+            if (!c.win_emu.memory.try_read_memory(placement_address, &requested_length, sizeof(requested_length)))
+            {
+                set_guest_last_error(c, 998); // ERROR_NOACCESS
+                return FALSE;
+            }
+
+            if (requested_length != sizeof(EMU_WINDOWPLACEMENT))
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return FALSE;
+            }
+
+            const auto* win = c.proc.windows.get(window_handle);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                return FALSE;
+            }
+
+            EMU_WINDOWPLACEMENT placement{};
+            placement.length = sizeof(placement);
+            placement.flags = 0;
+
+            if ((win->style & WS_MINIMIZE) != 0)
+            {
+                placement.showCmd = SW_SHOWMINIMIZED;
+            }
+            else if ((win->style & WS_MAXIMIZE) != 0)
+            {
+                placement.showCmd = SW_SHOWMAXIMIZED;
+            }
+            else
+            {
+                placement.showCmd = SW_SHOWNORMAL;
+            }
+
+            // The emulator does not currently maintain separate minimized and
+            // maximized placement coordinates.
+            placement.ptMinPosition = {.x = -1, .y = -1};
+            placement.ptMaxPosition = {.x = -1, .y = -1};
+
+            // This is the best available restored rectangle in the current
+            // window model.
+            placement.rcNormalPosition = get_window_rect(*win);
+
+            if (!c.win_emu.memory.try_write_memory(placement_address, &placement, sizeof(placement)))
+            {
+                set_guest_last_error(c, 998); // ERROR_NOACCESS
+                return FALSE;
+            }
+
             return TRUE;
         }
 

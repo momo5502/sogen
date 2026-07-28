@@ -180,6 +180,16 @@ namespace sogen
         hbitmap hbmpItem;
     };
 
+    struct EMU_WINDOWPLACEMENT
+    {
+        DWORD length;
+        DWORD flags;
+        DWORD showCmd;
+        POINT ptMinPosition;
+        POINT ptMaxPosition;
+        RECT rcNormalPosition;
+    };
+
 #define EMU_HWND_MESSAGE ((hwnd) - 3)
 
 #define SWP_NOCLIENTSIZE 0x0800
