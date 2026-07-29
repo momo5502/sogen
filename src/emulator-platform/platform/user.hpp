@@ -56,7 +56,9 @@ namespace sogen
         uint8_t pad_1394[0x74];
         uint32_t dpi96DialogBaseUnitWidth;
         uint32_t dpi96DialogBaseUnitHeight;
-        uint8_t pad_1410[0x746];
+        uint8_t pad_1410[0x73C];
+        uint32_t asyncKeyStateGeneration;
+        uint8_t pad_1b50[0x6];
         uint16_t systemDpi;
         uint8_t pad_1b58[0x286];
         uint64_t foregroundWindow;
@@ -69,6 +71,7 @@ namespace sogen
     static_assert(offsetof(USER_SERVERINFO, defaultFontWidthScale) == 0x1390);
     static_assert(offsetof(USER_SERVERINFO, dpi96DialogBaseUnitWidth) == 0x1408);
     static_assert(offsetof(USER_SERVERINFO, dpi96DialogBaseUnitHeight) == 0x140C);
+    static_assert(offsetof(USER_SERVERINFO, asyncKeyStateGeneration) == 0x1B4C);
     static_assert(offsetof(USER_SERVERINFO, systemDpi) == 0x1B56);
     static_assert(offsetof(USER_SERVERINFO, foregroundWindow) == 0x1DE0);
     static_assert(sizeof(USER_SERVERINFO) == 0x1de8);
