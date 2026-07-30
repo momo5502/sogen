@@ -379,6 +379,8 @@ namespace sogen
         void update_window_geometry(const syscall_context& c, window& win, const int x, const int y, const int width, const int height,
                                     const bool repaint)
         {
+            const bool geometry_changed = x != win.x || y != win.y || width != win.width || height != win.height;
+
             win.x = x;
             win.y = y;
             win.width = width;
@@ -390,7 +392,7 @@ namespace sogen
                 c.win_emu.ui().set_window_rect(win.handle, get_window_rect(win));
             }
 
-            if (repaint)
+            if (repaint && geometry_changed)
             {
                 invalidate_window(c, win, std::nullopt, false);
             }
@@ -3210,11 +3212,14 @@ namespace sogen
                     state.window_pos_alloc = c.emu.push_stack(show_position);
                     state.activation_window_pos_alloc = c.emu.push_stack(activation_position);
                     state.changed_window_pos_alloc = c.emu.push_stack(changed_position);
+                    state.erase_background_dc = create_gdi_window_dc(c, handle.bits);
 
                     std::vector<qmsg> show_messages = {
                         {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
                         {.message = WM_SIZE, .wParam = 0, .lParam = size_lparam},
                         {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = 0},
+                        {.message = WM_ERASEBKGND, .wParam = state.erase_background_dc, .lParam = 0},
+                        {.message = WM_NCPAINT, .wParam = k_hrgn_window, .lParam = 0},
                         {.message = WM_SETFOCUS, .wParam = 0, .lParam = 0},
                         {.message = WM_ACTIVATE, .wParam = 1, .lParam = 0},
                         {.message = WM_NCACTIVATE, .wParam = 1, .lParam = 0},
@@ -3270,6 +3275,11 @@ namespace sogen
                 c.emu.pop_stack(s.min_max_info_alloc);
                 c.emu.pop_stack(s.window_rect_alloc);
                 c.emu.pop_stack(s.create_struct_alloc);
+
+                if (s.erase_background_dc)
+                {
+                    (void)handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(s.erase_background_dc));
+                }
             };
 
             if (!win)
@@ -3512,10 +3522,13 @@ namespace sogen
                 const auto move_lparam = static_cast<uint64_t>(((win->y & 0xFFFF) << 16) | (win->x & 0xFFFF));
                 const auto size_lparam = static_cast<uint64_t>(((win->client_height() & 0xFFFF) << 16) | (win->client_width() & 0xFFFF));
 
+                state.erase_background_dc = create_gdi_window_dc(c, hwnd);
                 state.message_queue = {
                     {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
                     {.message = WM_SIZE, .wParam = 0, .lParam = size_lparam},
                     {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = 0},
+                    {.message = WM_ERASEBKGND, .wParam = state.erase_background_dc, .lParam = 0},
+                    {.message = WM_NCPAINT, .wParam = k_hrgn_window, .lParam = 0},
                 };
 
                 if (activate_window)
@@ -3614,6 +3627,11 @@ namespace sogen
             }
             c.emu.pop_stack(s.changed_window_pos_alloc);
             c.emu.pop_stack(s.window_pos_alloc);
+
+            if (s.erase_background_dc)
+            {
+                (void)handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(s.erase_background_dc));
+            }
 
             return s.was_visible ? TRUE : FALSE;
         }
@@ -4459,7 +4477,7 @@ namespace sogen
                     c.win_emu.ui().set_window_visible(hWnd, false);
                 }
             }
-            else if ((flags & SWP_SHOWWINDOW) != 0)
+            else if ((flags & SWP_SHOWWINDOW) != 0 && (win->style & WS_VISIBLE) == 0)
             {
                 win->style |= WS_VISIBLE;
                 win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win->style; });

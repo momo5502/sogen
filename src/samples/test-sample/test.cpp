@@ -1307,11 +1307,47 @@ namespace
 
     bool test_paint_message_queue()
     {
+        struct paint_state
+        {
+            HWND window{};
+            int ncpaint{};
+            int erase{};
+            int paint{};
+        };
+
+        thread_local paint_state* active_paint_state{};
+
         WNDCLASSEXA wc = {};
         wc.cbSize = sizeof(wc);
         wc.lpszClassName = "TestPaintMsgQueueClass";
         wc.hInstance = GetModuleHandleA(nullptr);
-        wc.lpfnWndProc = DefWindowProcA;
+        wc.lpfnWndProc = [](const HWND hwnd, const UINT message, const WPARAM w_param, const LPARAM l_param) -> LRESULT {
+            if (active_paint_state && hwnd == active_paint_state->window)
+            {
+                if (message == WM_NCPAINT)
+                {
+                    ++active_paint_state->ncpaint;
+                }
+                else if (message == WM_ERASEBKGND)
+                {
+                    ++active_paint_state->erase;
+                    PAINTSTRUCT paint{};
+                    BeginPaint(hwnd, &paint);
+                    EndPaint(hwnd, &paint);
+                    return TRUE;
+                }
+                else if (message == WM_PAINT)
+                {
+                    ++active_paint_state->paint;
+                    PAINTSTRUCT paint{};
+                    BeginPaint(hwnd, &paint);
+                    EndPaint(hwnd, &paint);
+                    return 0;
+                }
+            }
+
+            return DefWindowProcA(hwnd, message, w_param, l_param);
+        };
 
         if (!RegisterClassExA(&wc))
         {
@@ -1321,8 +1357,8 @@ namespace
 
         const auto unregister_class = sogen::utils::finally([&] { UnregisterClassA(wc.lpszClassName, wc.hInstance); });
 
-        const HWND hwnd = CreateWindowExA(0, wc.lpszClassName, nullptr, WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0, 0, 100, 100, nullptr, nullptr,
-                                          wc.hInstance, nullptr);
+        const HWND hwnd =
+            CreateWindowExA(0, wc.lpszClassName, nullptr, WS_OVERLAPPEDWINDOW, 0, 0, 100, 100, nullptr, nullptr, wc.hInstance, nullptr);
         if (!hwnd)
         {
             puts("Failed to create paint window");
@@ -1331,7 +1367,29 @@ namespace
 
         const auto destroy_window = sogen::utils::finally([&] { DestroyWindow(hwnd); });
 
-        UpdateWindow(hwnd);
+        paint_state state{.window = hwnd};
+        active_paint_state = &state;
+        const auto clear_paint_state = sogen::utils::finally([&] { active_paint_state = nullptr; });
+
+        ShowWindow(hwnd, SW_SHOWDEFAULT);
+
+        RECT update_rect{};
+        if (state.ncpaint != 1 || state.erase != 1)
+        {
+            puts("ShowWindow did not synthesize nonclient and background paint");
+            return false;
+        }
+        if (state.paint != 0 || !GetUpdateRect(hwnd, &update_rect, FALSE))
+        {
+            puts("ShowWindow background paint unexpectedly validated the window");
+            return false;
+        }
+        if (!UpdateWindow(hwnd) || state.paint != 1 || GetUpdateRect(hwnd, &update_rect, FALSE))
+        {
+            puts("UpdateWindow did not paint and validate the window after ShowWindow");
+            return false;
+        }
+
         RedrawWindow(hwnd, nullptr, nullptr, RDW_NOINTERNALPAINT | RDW_VALIDATE);
         ValidateRect(hwnd, nullptr);
 
@@ -1375,6 +1433,7 @@ namespace
         }
 
         ValidateRect(hwnd, nullptr);
+
         return true;
     }
 

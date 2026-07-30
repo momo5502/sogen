@@ -60,6 +60,7 @@ namespace sogen
 
         std::vector<qmsg> message_queue{};
         uint64_t pending_window_pos_address{};
+        hdc erase_background_dc{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -74,6 +75,7 @@ namespace sogen
             buffer.write(this->changed_window_pos_alloc);
             buffer.write_vector(this->message_queue);
             buffer.write(this->pending_window_pos_address);
+            buffer.write(this->erase_background_dc);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -88,6 +90,7 @@ namespace sogen
             buffer.read(this->changed_window_pos_alloc);
             buffer.read_vector(this->message_queue);
             buffer.read(this->pending_window_pos_address);
+            buffer.read(this->erase_background_dc);
         }
     };
 
@@ -165,6 +168,7 @@ namespace sogen
         emulator_stack_allocation changed_window_pos_alloc{};
         std::vector<qmsg> message_queue{};
         uint64_t pending_window_pos_address{};
+        hdc erase_background_dc{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -175,6 +179,7 @@ namespace sogen
             buffer.write(this->changed_window_pos_alloc);
             buffer.write_vector(this->message_queue);
             buffer.write(this->pending_window_pos_address);
+            buffer.write(this->erase_background_dc);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -185,6 +190,7 @@ namespace sogen
             buffer.read(this->changed_window_pos_alloc);
             buffer.read_vector(this->message_queue);
             buffer.read(this->pending_window_pos_address);
+            buffer.read(this->erase_background_dc);
         }
     };
 
