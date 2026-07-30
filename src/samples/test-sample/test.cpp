@@ -1183,7 +1183,8 @@ namespace
 
     bool test_message_queue()
     {
-        static thread_local UINT wnd_proc_num = 0;
+        thread_local UINT wnd_proc_num = 0;
+        thread_local UINT destroy_count = 0;
         static const UINT wnd_msg_id = WM_APP + 2;
 
         WNDCLASSEXA wc = {};
@@ -1206,6 +1207,19 @@ namespace
                     wnd_proc_num += 1;
                     return 777;
                 }
+            }
+            else if (msg == WM_CLOSE)
+            {
+                wnd_proc_num += 1;
+                if (wnd_proc_num == 2)
+                {
+                    return 0;
+                }
+            }
+            else if (msg == WM_DESTROY)
+            {
+                ++destroy_count;
+                PostQuitMessage(42);
             }
             return DefWindowProcA(hwnd, msg, wp, lp);
         };
@@ -1272,8 +1286,30 @@ namespace
             return false;
         }
 
-        constexpr int quit_code = 42;
-        PostQuitMessage(quit_code);
+        SendMessageA(hwnd, WM_CLOSE, 0, 0);
+        if (!IsWindow(hwnd) || destroy_count != 0)
+        {
+            puts("WndProc unexpectedly destroyed the window on cancelled WM_CLOSE");
+            if (IsWindow(hwnd))
+            {
+                DestroyWindow(hwnd);
+            }
+            UnregisterClassA(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
+
+        SendMessageA(hwnd, WM_CLOSE, 0, 0);
+        if (IsWindow(hwnd) || destroy_count != 1)
+        {
+            puts("DefWindowProc did not destroy the window on WM_CLOSE");
+            if (IsWindow(hwnd))
+            {
+                DestroyWindow(hwnd);
+            }
+            UnregisterClassA(wc.lpszClassName, wc.hInstance);
+            return false;
+        }
+        hwnd = nullptr;
 
         const BOOL quit_result = GetMessageA(&msg, nullptr, 0, 0);
         if (quit_result != 0)
@@ -1292,15 +1328,13 @@ namespace
             return false;
         }
 
-        if (msg.wParam != quit_code)
+        if (msg.wParam != 42)
         {
             puts("WM_QUIT exit code mismatch");
-            DestroyWindow(hwnd);
             UnregisterClassA(wc.lpszClassName, wc.hInstance);
             return false;
         }
 
-        DestroyWindow(hwnd);
         UnregisterClassA(wc.lpszClassName, wc.hInstance);
         return true;
     }

@@ -5,7 +5,7 @@
 namespace sogen
 {
 
-    window_destroy_orchestrator::window_destroy_orchestrator(window_destroy_state& state, const syscall_context& c)
+    window_destroy_orchestrator::window_destroy_orchestrator(window_destroy_data& state, const syscall_context& c)
         : state_(state),
           emu_(c.emu),
           proc_(c.proc),
