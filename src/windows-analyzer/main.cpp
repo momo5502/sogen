@@ -53,6 +53,7 @@ namespace sogen
             mutable bool use_gdb{false};
             std::string gdb_host{"127.0.0.1"};
             uint16_t gdb_port{28960};
+            std::string gdb_architecture{"64bits"};
             bool log_executable_access{false};
             bool log_foreign_module_access{false};
             bool tenet_trace{false};
@@ -99,6 +100,26 @@ namespace sogen
             {
                 container.emplace(str.substr(current_start));
             }
+        }
+
+        gdb_target_architecture parse_gdb_target_architecture(const std::string_view value)
+        {
+            if (value == "auto")
+            {
+                return gdb_target_architecture::automatic;
+            }
+
+            if (value == "32bits")
+            {
+                return gdb_target_architecture::bits_32;
+            }
+
+            if (value == "64bits")
+            {
+                return gdb_target_architecture::bits_64;
+            }
+
+            throw std::invalid_argument("Invalid GDB target architecture");
         }
 
         struct analysis_state
@@ -385,7 +406,7 @@ namespace sogen
 
                     const auto should_stop = [&] { return signals_received > 0; };
 
-                    win_x86_64_gdb_stub_handler handler{win_emu, should_stop};
+                    win_x86_64_gdb_stub_handler handler{win_emu, should_stop, parse_gdb_target_architecture(options.gdb_architecture)};
                     gdb_stub::run_gdb_stub(address, handler);
                 }
                 else if (!options.minidump_path.empty())
@@ -838,6 +859,10 @@ namespace sogen
             auto* const debug_option = app.add_flag("-d,--debug", options.use_gdb, "Enable GDB debugging mode");
             app.add_option("--bind", options.gdb_host, "IP or hostname to bind to in GDB mode")->capture_default_str()->needs(debug_option);
             app.add_option("--port", options.gdb_port, "Port to listen to in GDB mode")->capture_default_str()->needs(debug_option);
+            app.add_option("--gdb-arch", options.gdb_architecture, "GDB target architecture: auto, 64bits or 32bits")
+                ->capture_default_str()
+                ->check(CLI::IsMember({"auto", "64bits", "32bits"}))
+                ->needs(debug_option);
             app.add_option("--break-call", options.break_call, "In GDB mode, stop before the specified traced function/syscall call")
                 ->needs(debug_option);
 
