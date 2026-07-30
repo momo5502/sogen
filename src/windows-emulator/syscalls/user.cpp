@@ -38,6 +38,7 @@ namespace sogen
         constexpr uint32_t k_color_window = 5;
         constexpr uint32_t k_color_btnface = 15;
         constexpr auto k_user_timer_minimum = std::chrono::milliseconds{10};
+        constexpr uint64_t k_hrgn_window = 1;
 
         struct send_message_callback_info
         {
@@ -2967,7 +2968,7 @@ namespace sogen
                 guest_win.spwndOwner = parent_win && has_owner ? parent_win->guest.value() : 0;
                 guest_win.lpfnWndProc = win.wnd_proc;
                 guest_win.pcls = class_obj_addr;
-                guest_win.hrgnUpdate = !is_message_only ? 0x12345678 : 0;
+                guest_win.hrgnUpdate = !is_message_only ? k_hrgn_window : 0;
                 guest_win.cbWndExtra = wnd_class->cbWndExtra;
                 // Control id offset is build-specific: Win11 reads wID (WND+0x140), Server 2022 reads
                 // spmenu (WND+0x98). Populate both so builtin wndprocs emit the right WM_COMMAND id.
