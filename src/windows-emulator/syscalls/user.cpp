@@ -1501,6 +1501,8 @@ namespace sogen
         hdc create_gdi_window_dc(const syscall_context& c, hwnd window);
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         BOOL handle_NtGdiFlush(const syscall_context& c);
+        BOOL handle_NtGdiPatBlt(const syscall_context& c, hdc dc, LONG x, LONG y, LONG width, LONG height, DWORD rop);
+        uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, hdc dc, uint32_t brush, emulator_pointer old_brush_ptr);
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
         void draw_system_button_glyph(const syscall_context& c, hdc dc, int x, int y, uint32_t index);
         BOOL handle_NtUserRemoveMenu(const syscall_context& c, hmenu menu, UINT position, UINT flags);
@@ -1769,6 +1771,30 @@ namespace sogen
             });
 
             return brush;
+        }
+
+        BOOL handle_NtUserFillWindow(const syscall_context& c, const hwnd parent_window, const hwnd window, const hdc dc, const hbrush brush)
+        {
+            auto* win = c.proc.windows.get(window);
+            if (dc == 0 || !win || (parent_window != 0 && !c.proc.windows.get(parent_window)))
+            {
+                return FALSE;
+            }
+
+            constexpr hbrush ctlcolor_max = 7;
+            uint64_t control_brush = brush;
+            if (control_brush < ctlcolor_max)
+            {
+                control_brush = handle_NtUserGetControlBrush(c, parent_window, dc, static_cast<uint32_t>(brush));
+            }
+
+            constexpr DWORD patcopy = 0x00F00021;
+            const auto previous_brush = handle_NtGdiSelectBrushLocal(c, dc, static_cast<uint32_t>(control_brush), 0);
+            const auto client_rect = get_client_rect(*win);
+            const auto result = handle_NtGdiPatBlt(c, dc, client_rect.left, client_rect.top, client_rect.right - client_rect.left,
+                                                   client_rect.bottom - client_rect.top, patcopy);
+            handle_NtGdiSelectBrushLocal(c, dc, static_cast<uint32_t>(previous_brush), 0);
+            return result;
         }
 
         BOOL handle_NtUserReleaseDC()

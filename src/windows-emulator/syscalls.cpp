@@ -477,6 +477,7 @@ namespace sogen
         hdc handle_NtUserGetWindowDC(const syscall_context& c, hwnd window);
         hwnd handle_NtUserWindowFromDC(const syscall_context& c, hdc dc);
         uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd window, hdc dc, uint32_t control_type);
+        BOOL handle_NtUserFillWindow(const syscall_context& c, hwnd parent_window, hwnd window, hdc dc, hbrush brush);
         BOOL handle_NtUserReleaseDC();
         hwnd handle_NtUserSetCapture(const syscall_context& c, hwnd window);
         BOOL handle_NtUserReleaseCapture(const syscall_context& c);
@@ -1477,6 +1478,7 @@ namespace sogen
         add_handler(NtUserGetWindowDC);
         add_handler(NtUserWindowFromDC);
         add_handler(NtUserGetControlBrush);
+        add_handler(NtUserFillWindow);
         add_handler(NtUserGetOemBitmapSize);
         add_handler(NtUserSetCapture);
         add_handler(NtUserReleaseCapture);
