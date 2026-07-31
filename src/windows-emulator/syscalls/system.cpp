@@ -448,6 +448,38 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_system_pagefile_information(const syscall_context& c, const uint64_t system_information,
+                                                    const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
+        {
+            using info_t = SYSTEM_PAGEFILE_INFORMATION<EmulatorTraits<Emu64>>;
+
+            constexpr std::u16string_view page_file_name{u"\\??\\C:\\pagefile.sys"};
+            constexpr auto page_file_name_size = static_cast<uint32_t>(page_file_name.size() * sizeof(char16_t));
+            constexpr auto required_length = static_cast<uint32_t>(sizeof(info_t)) + page_file_name_size;
+
+            if (return_length)
+            {
+                return_length.write(required_length);
+            }
+
+            if (system_information_length < required_length)
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            info_t info{};
+            info.TotalSize = 0x100000;
+            info.TotalInUse = 0x1000;
+            info.PeakUsage = 0x2000;
+            info.PageFileName.Length = page_file_name_size;
+            info.PageFileName.MaximumLength = page_file_name_size;
+            info.PageFileName.Buffer = system_information + sizeof(info);
+
+            c.emu.write_memory(system_information, info);
+            c.emu.write_memory(info.PageFileName.Buffer, page_file_name.data(), page_file_name_size);
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtQuerySystemInformationEx(const syscall_context& c, const uint32_t info_class, const uint64_t input_buffer,
                                                    const uint32_t input_buffer_length, const uint64_t system_information,
                                                    const uint32_t system_information_length, const emulator_object<uint32_t> return_length)
@@ -727,14 +759,14 @@ namespace sogen
                     [&](SYSTEM_EXCEPTION_INFORMATION& info) { memset(&info, 0, sizeof(info)); });
 
             case SystemLookasideInformation:
-            case SystemPageFileInformation:
-                // Variable-length lists we don't model (per-lookaside-list stats / configured page files).
-                // Report an empty set.
                 if (return_length)
                 {
                     return_length.try_write(0);
                 }
                 return STATUS_SUCCESS;
+
+            case SystemPageFileInformation:
+                return handle_system_pagefile_information(c, system_information, system_information_length, return_length);
 
             case SystemMemoryListInformation:
                 return handle_query<SYSTEM_MEMORY_LIST_INFORMATION64>(

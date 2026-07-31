@@ -1325,8 +1325,19 @@ namespace sogen
         // Followed by SYSTEM_THREAD_INFORMATION<Traits> Threads[NumberOfThreads]
     };
 
+    template <typename Traits>
+    struct SYSTEM_PAGEFILE_INFORMATION
+    {
+        ULONG NextEntryOffset;
+        ULONG TotalSize;
+        ULONG TotalInUse;
+        ULONG PeakUsage;
+        UNICODE_STRING<Traits> PageFileName;
+    };
+
     static_assert(sizeof(SYSTEM_THREAD_INFORMATION<EmulatorTraits<Emu64>>) == 0x50);
     static_assert(sizeof(SYSTEM_PROCESS_INFORMATION<EmulatorTraits<Emu64>>) == 0x100);
+    static_assert(sizeof(SYSTEM_PAGEFILE_INFORMATION<EmulatorTraits<Emu64>>) == 0x20);
 
     struct PROCESS_PRIORITY_CLASS
     {
