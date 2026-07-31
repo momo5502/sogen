@@ -1443,6 +1443,48 @@ namespace sogen
                 item.text = read_menu_item_text(c, mi, item_text);
             }
         }
+
+        uint64_t pack_message_lparam(const int low, const int high)
+        {
+            return static_cast<uint64_t>(static_cast<uint16_t>(low)) | (static_cast<uint64_t>(static_cast<uint16_t>(high)) << 16);
+        }
+
+        std::vector<qmsg> build_show_window_messages(const syscall_context& c, const window& win, const hdc erase_background_dc,
+                                                     const uint64_t window_pos_address,
+                                                     const std::optional<uint64_t> activation_window_pos_address)
+        {
+            std::vector<qmsg> messages = {
+                {.message = WM_MOVE, .wParam = 0, .lParam = pack_message_lparam(win.x, win.y)},
+                {.message = WM_SIZE, .wParam = 0, .lParam = pack_message_lparam(win.client_width(), win.client_height())},
+                {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = 0},
+                {.message = WM_ERASEBKGND, .wParam = erase_background_dc, .lParam = 0},
+                {.message = WM_NCPAINT, .wParam = k_hrgn_window, .lParam = 0},
+            };
+
+            if (activation_window_pos_address)
+            {
+                messages.push_back({.message = WM_SETFOCUS, .wParam = 0, .lParam = 0});
+                messages.push_back({.message = WM_ACTIVATE, .wParam = 1, .lParam = 0});
+                messages.push_back({.message = WM_NCACTIVATE, .wParam = TRUE, .lParam = 0});
+                if (!win.message_only && !is_application_active(c))
+                {
+                    messages.push_back({.message = WM_ACTIVATEAPP, .wParam = TRUE, .lParam = 0});
+                }
+                messages.push_back({
+                    .message = WM_WINDOWPOSCHANGING,
+                    .wParam = 0,
+                    .lParam = *activation_window_pos_address,
+                });
+            }
+
+            messages.push_back({
+                .message = WM_WINDOWPOSCHANGING,
+                .wParam = 0,
+                .lParam = window_pos_address,
+            });
+            messages.push_back({.message = WM_SHOWWINDOW, .wParam = TRUE, .lParam = 0});
+            return messages;
+        }
     }
 
     namespace syscalls
@@ -3166,11 +3208,10 @@ namespace sogen
             {
                 invalidate_window(c, win);
 
-                const auto move_lparam = static_cast<uint64_t>(((y & 0xFFFF) << 16) | (x & 0xFFFF));
-                const auto size_lparam = static_cast<uint64_t>(((win.client_height() & 0xFFFF) << 16) | (win.client_width() & 0xFFFF));
-
                 if (has_child_parent)
                 {
+                    const auto move_lparam = pack_message_lparam(x, y);
+                    const auto size_lparam = pack_message_lparam(win.client_width(), win.client_height());
                     std::vector<qmsg> child_messages{{.message = WM_SHOWWINDOW, .wParam = TRUE, .lParam = 0}};
                     if (notify_parent)
                     {
@@ -3214,26 +3255,8 @@ namespace sogen
                     state.changed_window_pos_alloc = c.emu.push_stack(changed_position);
                     state.erase_background_dc = create_gdi_window_dc(c, handle.bits);
 
-                    std::vector<qmsg> show_messages = {
-                        {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
-                        {.message = WM_SIZE, .wParam = 0, .lParam = size_lparam},
-                        {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = 0},
-                        {.message = WM_ERASEBKGND, .wParam = state.erase_background_dc, .lParam = 0},
-                        {.message = WM_NCPAINT, .wParam = k_hrgn_window, .lParam = 0},
-                        {.message = WM_SETFOCUS, .wParam = 0, .lParam = 0},
-                        {.message = WM_ACTIVATE, .wParam = 1, .lParam = 0},
-                        {.message = WM_NCACTIVATE, .wParam = 1, .lParam = 0},
-                    };
-                    if (!is_message_only && !is_application_active(c))
-                    {
-                        show_messages.push_back({.message = WM_ACTIVATEAPP, .wParam = TRUE, .lParam = 0});
-                    }
-                    const std::initializer_list<qmsg> position_messages = {
-                        {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.activation_window_pos_alloc.address()},
-                        {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address()},
-                        {.message = WM_SHOWWINDOW, .wParam = 1, .lParam = 0},
-                    };
-                    show_messages.insert(show_messages.end(), position_messages);
+                    auto show_messages = build_show_window_messages(c, win, state.erase_background_dc, state.window_pos_alloc.address(),
+                                                                    state.activation_window_pos_alloc.address());
                     state.message_queue.insert(state.message_queue.begin(), show_messages.begin(), show_messages.end());
                 }
             }
@@ -3519,18 +3542,9 @@ namespace sogen
 
             if (want_visible)
             {
-                const auto move_lparam = static_cast<uint64_t>(((win->y & 0xFFFF) << 16) | (win->x & 0xFFFF));
-                const auto size_lparam = static_cast<uint64_t>(((win->client_height() & 0xFFFF) << 16) | (win->client_width() & 0xFFFF));
-
                 state.erase_background_dc = create_gdi_window_dc(c, hwnd);
-                state.message_queue = {
-                    {.message = WM_MOVE, .wParam = 0, .lParam = move_lparam},
-                    {.message = WM_SIZE, .wParam = 0, .lParam = size_lparam},
-                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = 0},
-                    {.message = WM_ERASEBKGND, .wParam = state.erase_background_dc, .lParam = 0},
-                    {.message = WM_NCPAINT, .wParam = k_hrgn_window, .lParam = 0},
-                };
 
+                std::optional<uint64_t> activation_window_pos_address{};
                 if (activate_window)
                 {
                     const EMU_WINDOWPOS activation_position{
@@ -3543,26 +3557,11 @@ namespace sogen
                         .flags = SWP_NOMOVE | SWP_NOSIZE,
                     };
                     state.activation_window_pos_alloc = c.emu.push_stack(activation_position);
-
-                    state.message_queue.push_back({.message = WM_SETFOCUS, .wParam = 0, .lParam = 0});
-                    state.message_queue.push_back({.message = WM_ACTIVATE, .wParam = 1, .lParam = 0});
-                    state.message_queue.push_back({.message = WM_NCACTIVATE, .wParam = TRUE, .lParam = 0});
-                    if (!win->message_only && !is_application_active(c))
-                    {
-                        state.message_queue.push_back({.message = WM_ACTIVATEAPP, .wParam = TRUE, .lParam = 0});
-                    }
-                    state.message_queue.push_back({
-                        .message = WM_WINDOWPOSCHANGING,
-                        .wParam = 0,
-                        .lParam = state.activation_window_pos_alloc.address(),
-                    });
+                    activation_window_pos_address = state.activation_window_pos_alloc.address();
                 }
 
-                const std::initializer_list<qmsg> show_messages = {
-                    {.message = WM_WINDOWPOSCHANGING, .wParam = 0, .lParam = state.window_pos_alloc.address()},
-                    {.message = WM_SHOWWINDOW, .wParam = TRUE, .lParam = 0},
-                };
-                state.message_queue.insert(state.message_queue.end(), show_messages);
+                state.message_queue = build_show_window_messages(c, *win, state.erase_background_dc, state.window_pos_alloc.address(),
+                                                                 activation_window_pos_address);
 
                 win->style |= WS_VISIBLE;
             }
