@@ -35,7 +35,7 @@ namespace sogen
         void setup_wow64_fs_segment(memory_manager& memory, uint64_t teb32_addr, uint64_t gdt_base)
         {
             const uint64_t base = teb32_addr;
-            const uint32_t limit = 0xFFF; // 4KB - size of TEB32 (matching Windows)
+            const uint32_t limit = sizeof(TEB32) - 1;
 
             // Build the GDT descriptor matching Windows format exactly
             // Format: | Base[31:24] | G|D|L|AVL | Limit[19:16] | P|DPL|S|Type | Base[23:16] | Base[15:0] | Limit[15:0] |
@@ -806,7 +806,7 @@ namespace sogen
 
         // Calculate required GS segment size for WOW64 (64-bit TEB + 32-bit TEB)
         constexpr auto teb64_size = sizeof(TEB64);
-        constexpr auto teb32_size = sizeof(TEB32); // 4120 bytes
+        constexpr auto teb32_size = sizeof(TEB32);
         constexpr auto wow_teb_offset = page_align_up(teb64_size);
         const uint64_t required_gs_size = teb64_size + wow_teb_offset + teb32_size; // Need space for both TEBs
         const auto actual_gs_size =

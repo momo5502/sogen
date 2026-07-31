@@ -833,6 +833,13 @@ namespace sogen
         WORD Reserved[3];
     };
 
+    struct EMU_GROUP_AFFINITY32
+    {
+        EMULATOR_CAST(std::uint32_t, KAFFINITY) Mask;
+        WORD Group;
+        WORD Reserved[3];
+    };
+
     typedef struct _SYSTEM_NUMA_INFORMATION64
     {
         ULONG HighestNodeNumber;
