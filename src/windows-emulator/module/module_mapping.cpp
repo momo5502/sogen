@@ -173,8 +173,9 @@ namespace sogen
                     }
                     else
                     {
-                        const auto by_name_address =
-                            binary.image_base + original_thunk.u1.AddressOfData + offsetof(IMAGE_IMPORT_BY_NAME, Name);
+                        // BUG: ntdll ldr discards highpart. this handles intentionally malformed PEs.
+                        const auto rva_of_data = static_cast<uint32_t>(original_thunk.u1.AddressOfData);
+                        const auto by_name_address = binary.image_base + rva_of_data + offsetof(IMAGE_IMPORT_BY_NAME, Name);
                         sym.name = read_mapped_string(memory, by_name_address);
                     }
                 }
