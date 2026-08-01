@@ -303,11 +303,38 @@ namespace sogen
         return dependents;
     }
 
+    static void clear_cached_window(const emulator_thread& thread, const hwnd handle, const uint64_t guest_pointer)
+    {
+        if (thread.teb64)
+        {
+            thread.teb64->access([&](TEB64& teb) {
+                if (teb.Win32ClientInfo.arr[8] == handle && teb.Win32ClientInfo.arr[9] == guest_pointer)
+                {
+                    teb.Win32ClientInfo.arr[8] = 0;
+                    teb.Win32ClientInfo.arr[9] = 0;
+                }
+            });
+        }
+
+        if (thread.teb32)
+        {
+            thread.teb32->access([&](TEB32& teb) {
+                if (teb.Win32ClientInfo[8] == static_cast<uint32_t>(handle) &&
+                    teb.Win32ClientInfo[9] == static_cast<uint32_t>(guest_pointer))
+                {
+                    teb.Win32ClientInfo[8] = 0;
+                    teb.Win32ClientInfo[9] = 0;
+                }
+            });
+        }
+    }
+
     void window_destroy_orchestrator::finalize_frame(window_destroy_frame& frame, const window& win) const
     {
         this->pop_frame_allocation(frame);
         this->thread_.remove_window_messages(frame.handle);
 
+        clear_cached_window(this->thread_, win.handle, win.guest.value());
         win.guest.access([&](USER_WINDOW& guest_win) {
             guest_win.spwndParent = 0;
             guest_win.spwndChild = 0;
