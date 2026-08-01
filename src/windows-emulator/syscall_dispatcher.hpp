@@ -163,12 +163,21 @@ namespace sogen
     struct window_show_state : completion_state
     {
         bool was_visible{};
+
         emulator_stack_allocation window_pos_alloc{};
         emulator_stack_allocation activation_window_pos_alloc{};
         emulator_stack_allocation changed_window_pos_alloc{};
         std::vector<qmsg> message_queue{};
         uint64_t pending_window_pos_address{};
+
         hdc erase_background_dc{};
+        hwnd parent_erase_window{};
+        hdc parent_erase_background_dc{};
+        bool parent_erase_pending{};
+
+        std::vector<hwnd> visible_descendants{};
+        std::vector<qmsg> descendant_message_queue{};
+        hdc descendant_erase_background_dc{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -180,6 +189,12 @@ namespace sogen
             buffer.write_vector(this->message_queue);
             buffer.write(this->pending_window_pos_address);
             buffer.write(this->erase_background_dc);
+            buffer.write(this->parent_erase_window);
+            buffer.write(this->parent_erase_background_dc);
+            buffer.write(this->parent_erase_pending);
+            buffer.write_vector(this->visible_descendants);
+            buffer.write_vector(this->descendant_message_queue);
+            buffer.write(this->descendant_erase_background_dc);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -191,6 +206,12 @@ namespace sogen
             buffer.read_vector(this->message_queue);
             buffer.read(this->pending_window_pos_address);
             buffer.read(this->erase_background_dc);
+            buffer.read(this->parent_erase_window);
+            buffer.read(this->parent_erase_background_dc);
+            buffer.read(this->parent_erase_pending);
+            buffer.read_vector(this->visible_descendants);
+            buffer.read_vector(this->descendant_message_queue);
+            buffer.read(this->descendant_erase_background_dc);
         }
     };
 
