@@ -503,6 +503,8 @@ namespace sogen
         BOOL handle_NtUserClipCursor(const syscall_context& c, emulator_pointer rect);
         BOOL handle_NtUserGetWindowCompositionAttribute(const syscall_context& c, hwnd window,
                                                         emulator_object<USER_WINDOWCOMPOSITIONATTRIBDATA> attribute_data);
+        BOOL handle_NtUserSetWindowCompositionAttribute(const syscall_context& c, hwnd window,
+                                                        emulator_object<USER_WINDOWCOMPOSITIONATTRIBDATA> attribute_data);
         BOOL handle_NtUserSetCursorPos(const syscall_context& c, int32_t x, int32_t y);
         hcursor handle_NtUserSetCursor(const syscall_context& c, hcursor cursor);
         hcursor handle_NtUserGetCursor(const syscall_context& c);
@@ -660,7 +662,6 @@ namespace sogen
         BOOL handle_NtUserRemoveMenu(const syscall_context& c, hmenu menu, UINT position, UINT flags);
         BOOL handle_NtUserDestroyMenu(const syscall_context& c, hmenu menu);
         BOOL handle_NtUserDrawMenuBar(const syscall_context& c, hwnd hwnd);
-        BOOL handle_NtUserSetWindowCompositionAttribute(const syscall_context& c, hwnd hwnd, emulator_pointer data);
         BOOL handle_NtUserCreateCaret();
         BOOL handle_NtUserDestroyCaret();
         BOOL handle_NtUserSetCaretPos();

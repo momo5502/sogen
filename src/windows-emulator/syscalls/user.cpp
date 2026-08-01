@@ -2270,8 +2270,6 @@ namespace sogen
             return TRUE;
         }
 
-        // DwmGetWindowAttribute funnels into this. There is no DWM in the emulated session, so windows are never
-        // composed, never cloaked, and their extended frame equals the plain window rect.
         BOOL handle_NtUserGetWindowCompositionAttribute(const syscall_context& c, const hwnd window,
                                                         const emulator_object<USER_WINDOWCOMPOSITIONATTRIBDATA> attribute_data)
         {
@@ -2280,33 +2278,10 @@ namespace sogen
                 return FALSE;
             }
 
-            // The struct carries pointer/size_t fields, so a 32-bit (WoW64) guest passes a 12-byte layout, not
-            // the native 24-byte one; read the matching width.
-            uint32_t attrib = 0;
-            uint64_t pv_data = 0;
-            uint64_t cb_data = 0;
-            if (c.proc.is_wow64_process)
-            {
-                struct wow64_composition_data
-                {
-                    uint32_t attrib;
-                    uint32_t pv_data;
-                    uint32_t cb_data;
-                };
-
-                static_assert(sizeof(wow64_composition_data) == 12);
-                const auto data = emulator_object<wow64_composition_data>{c.emu, attribute_data.value()}.read();
-                attrib = data.attrib;
-                pv_data = data.pv_data;
-                cb_data = data.cb_data;
-            }
-            else
-            {
-                const auto data = attribute_data.read();
-                attrib = data.Attrib;
-                pv_data = data.pvData;
-                cb_data = data.cbData;
-            }
+            const auto data = attribute_data.read();
+            uint32_t attrib = data.Attrib;
+            uint64_t pv_data = data.pvData;
+            uint64_t cb_data = data.cbData;
 
             if (pv_data == 0 || cb_data == 0)
             {
@@ -2321,7 +2296,16 @@ namespace sogen
 
             switch (attrib)
             {
-            case WCA_NCRENDERING_ENABLED:
+            case WCA_NCRENDERING_ENABLED: {
+                if (cb_data < sizeof(uint32_t))
+                {
+                    return FALSE;
+                }
+
+                constexpr BOOL value = TRUE;
+                c.emu.write_memory(pv_data, &value, sizeof(value));
+                return TRUE;
+            }
             case WCA_CLOAKED: {
                 if (cb_data < sizeof(uint32_t))
                 {
@@ -2348,6 +2332,44 @@ namespace sogen
                 c.win_emu.log.warn("Unsupported window composition attribute: %u\n", attrib);
                 return FALSE;
             }
+        }
+
+        BOOL handle_NtUserSetWindowCompositionAttribute(const syscall_context& c, const hwnd window,
+                                                        const emulator_object<USER_WINDOWCOMPOSITIONATTRIBDATA> attribute_data)
+        {
+            if (!attribute_data)
+            {
+                return FALSE;
+            }
+
+            const auto data = attribute_data.read();
+            uint32_t attrib = data.Attrib;
+            uint64_t pv_data = data.pvData;
+            uint64_t cb_data = data.cbData;
+
+            if (pv_data == 0 || cb_data == 0)
+            {
+                return FALSE;
+            }
+
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            if (attrib == WCA_NCRENDERING_ENABLED || attrib == WCA_NCRENDERING_POLICY)
+            {
+                // We don't track DWM state right now, so let's at least report the current hard-coded value.
+                sogen::msg queued_message{};
+                queued_message.window = window;
+                queued_message.message = WM_DWMNCRENDERINGCHANGED;
+                queued_message.wParam = 1;
+                queued_message.lParam = 0;
+                c.vcpu.active_thread->post_message(c.win_emu, queued_message);
+            }
+
+            return TRUE;
         }
 
         // GetKeyState / GetAsyncKeyState report whether a virtual key (or mouse button) is currently down.
@@ -3061,9 +3083,21 @@ namespace sogen
                     .top_level = !has_child_parent,
                 });
 
-                if (has_child_parent && parent_win && (style & WS_VISIBLE) != 0)
+                if (has_child_parent)
                 {
-                    invalidate_window(c, win);
+                    if (parent_win && (style & WS_VISIBLE) != 0)
+                    {
+                        invalidate_window(c, win);
+                    }
+                }
+                else
+                {
+                    sogen::msg queued_message{};
+                    queued_message.window = handle.bits;
+                    queued_message.message = WM_DWMNCRENDERINGCHANGED;
+                    queued_message.wParam = 1;
+                    queued_message.lParam = 0;
+                    c.vcpu.active_thread->post_message(c.win_emu, queued_message);
                 }
             }
 
@@ -5516,16 +5550,6 @@ namespace sogen
         }
 
         BOOL handle_NtUserDrawMenuBar(const syscall_context& c, const hwnd hwnd)
-        {
-            if (hwnd != 0 && !c.proc.windows.get(hwnd))
-            {
-                return FALSE;
-            }
-
-            return TRUE;
-        }
-
-        BOOL handle_NtUserSetWindowCompositionAttribute(const syscall_context& c, const hwnd hwnd, const emulator_pointer /*data*/)
         {
             if (hwnd != 0 && !c.proc.windows.get(hwnd))
             {

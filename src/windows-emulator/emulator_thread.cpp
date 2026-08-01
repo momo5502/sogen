@@ -426,6 +426,7 @@ namespace sogen
                     if (const auto* wnd = context.windows.get(context.default_desktop_window_handle))
                     {
                         info.spwndDesktop = wnd->guest.value();
+                        info.flags = 0x1;
                     }
                 });
                 teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
@@ -514,6 +515,7 @@ namespace sogen
                 if (const auto* wnd = context.windows.get(context.default_desktop_window_handle))
                 {
                     info.spwndDesktop = wnd->guest.value();
+                    info.flags = 0x1;
                 }
             });
             teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
