@@ -448,7 +448,12 @@ namespace sogen
                 }
 
                 const uint64_t user_ptr = (type == k_gdi_font_type) ? 0 : attr;
-                return allocate_gdi_handle(c, type, user_ptr, attr);
+                const auto handle_value = allocate_gdi_handle(c, type, user_ptr, attr);
+                if (handle_value == 0)
+                {
+                    c.win_emu.memory.release_memory(attr, 0);
+                }
+                return handle_value;
             }
 
             bool get_gdi_object_address(const syscall_context& c, const uint32_t handle_value, const uint8_t expected_type, uint64_t& addr)
@@ -1248,6 +1253,11 @@ namespace sogen
                 if (handle_value != 0)
                 {
                     c.proc.gdi_dc_states[handle_value] = {};
+                }
+                else
+                {
+                    c.win_emu.memory.release_memory(dc_attr, 0);
+                    dc_attr = 0;
                 }
                 return handle_value;
             }
@@ -2405,6 +2415,10 @@ namespace sogen
                 bmp_it != c.proc.gdi_bitmap_surfaces.end() && bmp_it->second.guest_owns_memory && bmp_it->second.guest_bits != 0)
             {
                 c.win_emu.memory.release_memory(bmp_it->second.guest_bits, 0);
+            }
+            if (entry.Object != 0)
+            {
+                c.win_emu.memory.release_memory(entry.Object, 0);
             }
 
             c.proc.gdi_dc_states.erase(handle_value);

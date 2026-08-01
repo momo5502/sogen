@@ -1331,9 +1331,9 @@ namespace
                 else if (message == WM_ERASEBKGND)
                 {
                     ++active_paint_state->erase;
-                    PAINTSTRUCT paint{};
-                    BeginPaint(hwnd, &paint);
-                    EndPaint(hwnd, &paint);
+                    RECT client_rect{};
+                    GetClientRect(hwnd, &client_rect);
+                    FillRect(reinterpret_cast<HDC>(w_param), &client_rect, reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1));
                     return TRUE;
                 }
                 else if (message == WM_PAINT)

@@ -46,6 +46,62 @@ namespace sogen
         }
     };
 
+    struct window_show_data
+    {
+        hwnd handle{};
+        emulator_stack_allocation window_pos_alloc{};
+        emulator_stack_allocation activation_window_pos_alloc{};
+        emulator_stack_allocation changed_window_pos_alloc{};
+        std::vector<qmsg> message_queue{};
+        uint64_t pending_window_pos_address{};
+        hwnd pending_erase_window{};
+
+        hdc erase_background_dc{};
+        hwnd parent_erase_window{};
+        hdc parent_erase_background_dc{};
+        bool parent_erase_pending{};
+
+        std::vector<hwnd> visible_descendants{};
+        std::vector<qmsg> descendant_message_queue{};
+        hdc descendant_erase_background_dc{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->handle);
+            buffer.write(this->window_pos_alloc);
+            buffer.write(this->activation_window_pos_alloc);
+            buffer.write(this->changed_window_pos_alloc);
+            buffer.write_vector(this->message_queue);
+            buffer.write(this->pending_window_pos_address);
+            buffer.write(this->pending_erase_window);
+            buffer.write(this->erase_background_dc);
+            buffer.write(this->parent_erase_window);
+            buffer.write(this->parent_erase_background_dc);
+            buffer.write(this->parent_erase_pending);
+            buffer.write_vector(this->visible_descendants);
+            buffer.write_vector(this->descendant_message_queue);
+            buffer.write(this->descendant_erase_background_dc);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->handle);
+            buffer.read(this->window_pos_alloc);
+            buffer.read(this->activation_window_pos_alloc);
+            buffer.read(this->changed_window_pos_alloc);
+            buffer.read_vector(this->message_queue);
+            buffer.read(this->pending_window_pos_address);
+            buffer.read(this->pending_erase_window);
+            buffer.read(this->erase_background_dc);
+            buffer.read(this->parent_erase_window);
+            buffer.read(this->parent_erase_background_dc);
+            buffer.read(this->parent_erase_pending);
+            buffer.read_vector(this->visible_descendants);
+            buffer.read_vector(this->descendant_message_queue);
+            buffer.read(this->descendant_erase_background_dc);
+        }
+    };
+
     struct window_create_state : completion_state
     {
         hwnd handle{};
@@ -54,13 +110,8 @@ namespace sogen
         emulator_stack_allocation min_max_info_alloc{};
         emulator_stack_allocation window_rect_alloc{};
         emulator_stack_allocation create_struct_alloc{};
-        emulator_stack_allocation window_pos_alloc{};
-        emulator_stack_allocation activation_window_pos_alloc{};
-        emulator_stack_allocation changed_window_pos_alloc{};
-
         std::vector<qmsg> message_queue{};
-        uint64_t pending_window_pos_address{};
-        hdc erase_background_dc{};
+        window_show_data show_data{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -70,12 +121,8 @@ namespace sogen
             buffer.write(this->min_max_info_alloc);
             buffer.write(this->window_rect_alloc);
             buffer.write(this->create_struct_alloc);
-            buffer.write(this->window_pos_alloc);
-            buffer.write(this->activation_window_pos_alloc);
-            buffer.write(this->changed_window_pos_alloc);
             buffer.write_vector(this->message_queue);
-            buffer.write(this->pending_window_pos_address);
-            buffer.write(this->erase_background_dc);
+            this->show_data.serialize(buffer);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -85,12 +132,8 @@ namespace sogen
             buffer.read(this->min_max_info_alloc);
             buffer.read(this->window_rect_alloc);
             buffer.read(this->create_struct_alloc);
-            buffer.read(this->window_pos_alloc);
-            buffer.read(this->activation_window_pos_alloc);
-            buffer.read(this->changed_window_pos_alloc);
             buffer.read_vector(this->message_queue);
-            buffer.read(this->pending_window_pos_address);
-            buffer.read(this->erase_background_dc);
+            this->show_data.deserialize(buffer);
         }
     };
 
@@ -163,55 +206,19 @@ namespace sogen
     struct window_show_state : completion_state
     {
         bool was_visible{};
-
-        emulator_stack_allocation window_pos_alloc{};
-        emulator_stack_allocation activation_window_pos_alloc{};
-        emulator_stack_allocation changed_window_pos_alloc{};
-        std::vector<qmsg> message_queue{};
-        uint64_t pending_window_pos_address{};
-
-        hdc erase_background_dc{};
-        hwnd parent_erase_window{};
-        hdc parent_erase_background_dc{};
-        bool parent_erase_pending{};
-
-        std::vector<hwnd> visible_descendants{};
-        std::vector<qmsg> descendant_message_queue{};
-        hdc descendant_erase_background_dc{};
+        window_show_data data{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->was_visible);
-            buffer.write(this->window_pos_alloc);
-            buffer.write(this->activation_window_pos_alloc);
-            buffer.write(this->changed_window_pos_alloc);
-            buffer.write_vector(this->message_queue);
-            buffer.write(this->pending_window_pos_address);
-            buffer.write(this->erase_background_dc);
-            buffer.write(this->parent_erase_window);
-            buffer.write(this->parent_erase_background_dc);
-            buffer.write(this->parent_erase_pending);
-            buffer.write_vector(this->visible_descendants);
-            buffer.write_vector(this->descendant_message_queue);
-            buffer.write(this->descendant_erase_background_dc);
+            this->data.serialize(buffer);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read(this->was_visible);
-            buffer.read(this->window_pos_alloc);
-            buffer.read(this->activation_window_pos_alloc);
-            buffer.read(this->changed_window_pos_alloc);
-            buffer.read_vector(this->message_queue);
-            buffer.read(this->pending_window_pos_address);
-            buffer.read(this->erase_background_dc);
-            buffer.read(this->parent_erase_window);
-            buffer.read(this->parent_erase_background_dc);
-            buffer.read(this->parent_erase_pending);
-            buffer.read_vector(this->visible_descendants);
-            buffer.read_vector(this->descendant_message_queue);
-            buffer.read(this->descendant_erase_background_dc);
+            this->data.deserialize(buffer);
         }
     };
 
