@@ -141,7 +141,7 @@ jobs:
           submodules: recursive
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -409,7 +409,7 @@ jobs:
       # and where the bridge isn't built the WIN32/host-platform gate just skips it). The root CMakeLists
       # resolves the PATH interpreter, so this and pip agree.
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -473,7 +473,7 @@ jobs:
       # and where the bridge isn't built the WIN32/host-platform gate just skips it). The root CMakeLists
       # resolves the PATH interpreter, so this and pip agree.
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -1044,7 +1044,7 @@ jobs:
           submodules: recursive
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.9"
         env:
@@ -1113,7 +1113,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.9"
         env:
@@ -1185,7 +1185,7 @@ jobs:
           submodules: recursive
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.9"
         env:
@@ -1210,7 +1210,7 @@ jobs:
     needs: [build-python-sdist]
     steps:
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.9"
         env:
