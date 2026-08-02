@@ -2639,8 +2639,9 @@ namespace sogen
                                .italic = true,
                                .supports_arabic_and_hebrew = false},
                 };
-                constexpr std::array<std::pair<BYTE, std::u16string_view>, 9> scripts{
+                constexpr std::array<std::pair<BYTE, std::u16string_view>, 10> scripts{
                     std::pair{static_cast<BYTE>(ANSI_CHARSET), u"Western"sv},
+                    std::pair{static_cast<BYTE>(SHIFTJIS_CHARSET), u"Japanese"sv},
                     std::pair{static_cast<BYTE>(HEBREW_CHARSET), u"Hebrew"sv},
                     std::pair{static_cast<BYTE>(ARABIC_CHARSET), u"Arabic"sv},
                     std::pair{static_cast<BYTE>(GREEK_CHARSET), u"Greek"sv},
