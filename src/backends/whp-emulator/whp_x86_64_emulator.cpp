@@ -42,6 +42,7 @@ namespace sogen::whp
         constexpr uint64_t internal_page_table_base = 0x0000007000000000ull;
         constexpr uint64_t syscall_hook_virtual_address = 0xFFFF800000001000ull;
         constexpr uint64_t unmapped_guest_page = (std::numeric_limits<uint64_t>::max)();
+        constexpr UINT32 xsave_state_capacity = 960;
 
         uint64_t align_down_to_page(const uint64_t value)
         {
@@ -871,11 +872,12 @@ namespace sogen::whp
         class whp_vcpu final : public x86_64_cpu
         {
           public:
-            whp_vcpu(whp_x86_64_emulator& emulator, const WHV_PARTITION_HANDLE partition, const UINT32 index)
+            whp_vcpu(whp_x86_64_emulator& emulator, const WHV_PARTITION_HANDLE partition, const UINT32 index, const bool xsave_enabled)
                 : emulator_(emulator),
                   partition_(partition),
                   vp_index_(index),
-                  vp_(partition, index)
+                  vp_(partition, index),
+                  xsave_enabled_(xsave_enabled)
             {
             }
 
@@ -1137,25 +1139,51 @@ namespace sogen::whp
                 WHP_CHECK_HR(WHvGetVirtualProcessorRegisters(this->partition_, this->vp_index_, names.data(),
                                                              static_cast<UINT32>(names.size()), values.data()));
 
-                std::vector<std::byte> bytes(sizeof(WHV_REGISTER_VALUE) * values.size());
-                std::memcpy(bytes.data(), values.data(), bytes.size());
+                const auto register_bytes = sizeof(WHV_REGISTER_VALUE) * values.size();
+                std::vector<std::byte> bytes(register_bytes + sizeof(UINT32) + (this->xsave_enabled_ ? xsave_state_capacity : 0));
+                std::memcpy(bytes.data(), values.data(), register_bytes);
+
+                UINT32 xsave_size = 0;
+                if (this->xsave_enabled_)
+                {
+                    // WHvGetVirtualProcessorRegisters exposes XMM0-XMM15 and legacy FP state, but not YMM_Hi128, AVX-512, AMX, or other
+                    // XSAVE-managed components. Capture the VP XSAVE state to preserve all enabled extended processor state.
+                    WHP_CHECK_HR(WHvGetVirtualProcessorState(this->partition_, this->vp_index_, WHvVirtualProcessorStateTypeXsaveState,
+                                                             bytes.data() + register_bytes + sizeof(xsave_size), xsave_state_capacity,
+                                                             &xsave_size));
+                }
+
+                std::memcpy(bytes.data() + register_bytes, &xsave_size, sizeof(xsave_size));
+                bytes.resize(register_bytes + sizeof(xsave_size) + xsave_size);
                 return bytes;
             }
 
             void restore_registers(const std::vector<std::byte>& register_data) override
             {
                 auto names = snapshot_register_names();
-                const auto expected_size = sizeof(WHV_REGISTER_VALUE) * names.size();
-                if (register_data.size() != expected_size)
+                const auto register_bytes = sizeof(WHV_REGISTER_VALUE) * names.size();
+                if (register_data.size() < register_bytes + sizeof(UINT32))
                 {
                     throw std::runtime_error("Unexpected WHP register snapshot size");
                 }
 
                 std::vector<WHV_REGISTER_VALUE> values(names.size());
-                std::memcpy(values.data(), register_data.data(), register_data.size());
+                std::memcpy(values.data(), register_data.data(), register_bytes);
+
+                UINT32 xsave_size = 0;
+                std::memcpy(&xsave_size, register_data.data() + register_bytes, sizeof(xsave_size));
+                if (register_data.size() != register_bytes + sizeof(xsave_size) + xsave_size || (xsave_size != 0 && !this->xsave_enabled_))
+                {
+                    throw std::runtime_error("Unexpected WHP register snapshot size");
+                }
 
                 WHP_CHECK_HR(WHvSetVirtualProcessorRegisters(this->partition_, this->vp_index_, names.data(),
                                                              static_cast<UINT32>(names.size()), values.data()));
+                if (xsave_size != 0)
+                {
+                    WHP_CHECK_HR(WHvSetVirtualProcessorState(this->partition_, this->vp_index_, WHvVirtualProcessorStateTypeXsaveState,
+                                                             register_data.data() + register_bytes + sizeof(xsave_size), xsave_size));
+                }
             }
 
             bool has_violation() const override
@@ -1230,6 +1258,7 @@ namespace sogen::whp
             WHV_PARTITION_HANDLE partition_{};
             UINT32 vp_index_{};
             virtual_processor_handle vp_;
+            bool xsave_enabled_{};
 
             std::atomic_bool stop_requested_{false};
             std::atomic_bool run_active_{false};
@@ -1264,7 +1293,8 @@ namespace sogen::whp
                 this->vcpus_.reserve(vcpu_count);
                 for (size_t i = 0; i < vcpu_count; ++i)
                 {
-                    auto vcpu = std::make_unique<whp_vcpu>(*this, this->partition_, static_cast<UINT32>(i));
+                    auto vcpu =
+                        std::make_unique<whp_vcpu>(*this, this->partition_, static_cast<UINT32>(i), this->has_supported_xsave_features_);
                     this->initialize_virtual_processor_state(*vcpu);
                     this->vcpus_.push_back(std::move(vcpu));
                 }
