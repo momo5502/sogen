@@ -1401,10 +1401,6 @@ namespace sogen
             menu_obj.init_guest();
 
             win.system_menu_handle = menu_obj.handle;
-            win.guest.access([&](USER_WINDOW& guest_win) { //
-                guest_win.spmenu = menu_obj.guest.value();
-            });
-
             return handle.bits;
         }
 
@@ -5486,8 +5482,35 @@ namespace sogen
             return handle.bits;
         }
 
-        BOOL handle_NtUserSetMenu()
+        BOOL handle_NtUserSetMenu(const syscall_context& c, const hwnd hwnd, const hmenu menu, const BOOL redraw)
         {
+            auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400);
+                return FALSE;
+            }
+
+            emulator_pointer menu_ptr = 0;
+            if (menu != 0)
+            {
+                const auto* menu_obj = c.proc.menus.get(menu);
+                if (!menu_obj)
+                {
+                    set_guest_last_error(c, 1401);
+                    return FALSE;
+                }
+
+                menu_ptr = menu_obj->guest.value();
+            }
+
+            win->guest.access([&](USER_WINDOW& guest_win) { guest_win.spmenu = menu_ptr; });
+
+            if (redraw != FALSE)
+            {
+                invalidate_window(c, *win);
+            }
+
             return TRUE;
         }
 
