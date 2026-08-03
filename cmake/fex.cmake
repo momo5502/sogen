@@ -25,16 +25,32 @@ if(SOGEN_ENABLE_FEX)
     set(_FEXCORE_SANITIZER_ARGS "")
   endif()
 
+  if(SOGEN_ENABLE_LTO)
+    set(_FEXCORE_LTO_ARGS -DENABLE_LTO=ON)
+  else()
+    set(_FEXCORE_LTO_ARGS -DENABLE_LTO=OFF)
+  endif()
+
+  # The sub-build is always single-config (Ninja) and needs a concrete build type at configure time.
+  # A multi-config outer generator has none - it picks the configuration at build time - so there is
+  # nothing to forward and FEXCore gets an optimized default instead.
+  get_property(_FEXCORE_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+  if(_FEXCORE_MULTI_CONFIG OR NOT CMAKE_BUILD_TYPE)
+    set(_FEXCORE_BUILD_TYPE "RelWithDebInfo")
+  else()
+    set(_FEXCORE_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
+  endif()
+
   ExternalProject_Add(fex_external
     SOURCE_DIR "${_FEX_SRC}"
     CMAKE_GENERATOR "Ninja"
     CMAKE_ARGS
-      -DCMAKE_BUILD_TYPE=Release
+      -DCMAKE_BUILD_TYPE=${_FEXCORE_BUILD_TYPE}
       -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
       -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
       ${_FEXCORE_OSX_ARGS}
       ${_FEXCORE_SANITIZER_ARGS}
-      -DENABLE_LTO=OFF
+      ${_FEXCORE_LTO_ARGS}
       -DENABLE_CCACHE=OFF
       -DBUILD_FEXCONFIG=OFF
       -DBUILD_THUNKS=OFF
