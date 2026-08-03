@@ -2005,12 +2005,8 @@ namespace sogen
 
         int32_t handle_NtGdiGetBitmapBits(const syscall_context& c, const handle bitmap, const int32_t count, const emulator_pointer bits)
         {
-            if (bits == 0 || count <= 0)
-            {
-                return 0;
-            }
-
             const auto it = c.proc.gdi_bitmap_surfaces.find(static_cast<uint32_t>(bitmap.bits));
+
             if (it == c.proc.gdi_bitmap_surfaces.end())
             {
                 return 0;
@@ -2018,9 +2014,67 @@ namespace sogen
 
             auto& surface = it->second;
             sync_surface_from_guest_dib(c, surface);
-            const auto byte_count = std::min(static_cast<size_t>(count), surface.pixels.size() * sizeof(uint32_t));
-            c.emu.write_memory(bits, surface.pixels.data(), byte_count);
-            return static_cast<int32_t>(byte_count);
+
+            const uint32_t bpp = surface.guest_bits != 0 ? surface.guest_bpp : 32;
+
+            if (bpp != 24 && bpp != 32)
+            {
+                c.win_emu.log.warn("NtGdiGetBitmapBits: Unsupported bitmap bit depth: %u bpp", bpp);
+                return 0;
+            }
+
+            // GetBitmapBits scanlines are aligned to 16-bit boundaries.
+            const size_t stride = ((static_cast<size_t>(surface.width) * bpp + 15) / 16) * 2;
+
+            const size_t total_size = stride * surface.height;
+
+            if (total_size > static_cast<size_t>((std::numeric_limits<int32_t>::max)()))
+            {
+                return 0;
+            }
+
+            // A null output buffer is a size query.
+            if (bits == 0)
+            {
+                return static_cast<int32_t>(total_size);
+            }
+
+            const size_t copy_size = count < 0 ? total_size : std::min(static_cast<size_t>(count), total_size);
+
+            if (copy_size == 0)
+            {
+                return 0;
+            }
+
+            std::vector<uint8_t> output(total_size, 0);
+
+            for (uint32_t y = 0; y < surface.height; ++y)
+            {
+                const uint32_t source_y = surface.guest_top_down ? y : surface.height - 1 - y;
+
+                const auto* source = surface.pixels.data() + static_cast<size_t>(source_y) * surface.width;
+
+                auto* destination = output.data() + static_cast<size_t>(y) * stride;
+
+                if (bpp == 32)
+                {
+                    std::memcpy(destination, source, static_cast<size_t>(surface.width) * sizeof(uint32_t));
+                }
+                else
+                {
+                    for (uint32_t x = 0; x < surface.width; ++x)
+                    {
+                        const uint32_t pixel = source[x];
+
+                        destination[x * 3 + 0] = static_cast<uint8_t>(pixel);
+                        destination[x * 3 + 1] = static_cast<uint8_t>(pixel >> 8);
+                        destination[x * 3 + 2] = static_cast<uint8_t>(pixel >> 16);
+                    }
+                }
+            }
+
+            c.emu.write_memory(bits, output.data(), copy_size);
+            return static_cast<int32_t>(copy_size);
         }
 
         uint64_t handle_NtGdiCreateDIBSection(const syscall_context& c, const hdc /*dc*/, const uint64_t /*section_app*/,

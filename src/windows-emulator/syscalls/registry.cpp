@@ -135,7 +135,7 @@ namespace sogen
                 }
 
                 KEY_FULL_INFORMATION info{};
-                info.ClassOffset = required_size;
+                info.ClassOffset = 0xFFFFFFFFu;
                 info.SubKeys = static_cast<ULONG>(hive_key->key.get_sub_key_count(hive_key->file));
                 info.Values = static_cast<ULONG>(hive_key->key.get_value_count(hive_key->file));
 

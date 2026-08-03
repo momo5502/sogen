@@ -667,7 +667,7 @@ namespace sogen
         BOOL handle_NtUserRemoveMenu(const syscall_context& c, hmenu menu, UINT position, UINT flags);
         BOOL handle_NtUserDestroyMenu(const syscall_context& c, hmenu menu);
         BOOL handle_NtUserDrawMenuBar(const syscall_context& c, hwnd hwnd);
-        BOOL handle_NtUserEnableMenuItem();
+        int32_t handle_NtUserEnableMenuItem(const syscall_context& c, hmenu menu, UINT item, UINT enable);
         BOOL handle_NtUserCreateCaret();
         BOOL handle_NtUserDestroyCaret();
         BOOL handle_NtUserSetCaretPos();
@@ -711,7 +711,7 @@ namespace sogen
         BOOL handle_NtUserHwndQueryRedirectionInfo();
         BOOL handle_NtUserEnableNonClientDpiScaling();
         BOOL handle_NtUserSetImeHotKey();
-        BOOL handle_NtUserVkKeyScanEx();
+        int16_t handle_NtUserVkKeyScanEx();
         BOOL handle_NtUserSetLayeredWindowAttributes();
 
         // syscalls/gdi.cpp:

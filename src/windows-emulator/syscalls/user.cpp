@@ -5579,9 +5579,46 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtUserEnableMenuItem()
+        int32_t handle_NtUserEnableMenuItem(const syscall_context& c, const hmenu menu, const UINT item, const UINT enable)
         {
-            return TRUE;
+            auto* menu_object = c.proc.menus.get(menu);
+            if (!menu_object)
+            {
+                return -1;
+            }
+
+            size_t index{};
+            if ((enable & MF_BYPOSITION) != 0)
+            {
+                if (item >= menu_object->items.size())
+                {
+                    return -1;
+                }
+
+                index = item;
+            }
+            else
+            {
+                const auto entry =
+                    std::ranges::find_if(menu_object->items, [&](const menu_item& candidate) { return candidate.id == item; });
+
+                if (entry == menu_object->items.end())
+                {
+                    return -1;
+                }
+
+                index = static_cast<size_t>(std::distance(menu_object->items.begin(), entry));
+            }
+
+            constexpr UINT state_mask = MF_DISABLED | MF_GRAYED;
+
+            auto& menu_item = menu_object->items[index];
+            const UINT previous_state = menu_item.state & state_mask;
+
+            menu_item.state = (menu_item.state & ~state_mask) | (enable & state_mask);
+
+            menu_object->sync_guest_item(c.win_emu.memory, index);
+            return static_cast<int32_t>(previous_state);
         }
 
         BOOL handle_NtUserCreateCaret()
@@ -5687,13 +5724,10 @@ namespace sogen
                 placement.showCmd = SW_SHOWNORMAL;
             }
 
-            // The emulator does not currently maintain separate minimized and
-            // maximized placement coordinates.
+            // TODO: The emulator does not currently maintain separate minimized and
+            //       maximized placement coordinates.
             placement.ptMinPosition = {.x = -1, .y = -1};
             placement.ptMaxPosition = {.x = -1, .y = -1};
-
-            // This is the best available restored rectangle in the current
-            // window model.
             placement.rcNormalPosition = get_window_rect(*win);
 
             if (!c.win_emu.memory.try_write_memory(placement_address, &placement, sizeof(placement)))
@@ -6309,9 +6343,9 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtUserVkKeyScanEx()
+        int16_t handle_NtUserVkKeyScanEx()
         {
-            return FALSE;
+            return -1;
         }
 
         BOOL handle_NtUserSetLayeredWindowAttributes()

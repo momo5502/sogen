@@ -42,7 +42,7 @@ namespace sogen::whp
         constexpr uint64_t internal_page_table_base = 0x0000007000000000ull;
         constexpr uint64_t syscall_hook_virtual_address = 0xFFFF800000001000ull;
         constexpr uint64_t unmapped_guest_page = (std::numeric_limits<uint64_t>::max)();
-        constexpr UINT32 xsave_state_capacity = 960;
+        constexpr uint32_t xsave_state_capacity = 0xFFF;
 
         uint64_t align_down_to_page(const uint64_t value)
         {
