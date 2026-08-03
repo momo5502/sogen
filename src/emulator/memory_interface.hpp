@@ -59,45 +59,34 @@ namespace sogen
         {
         }
 
-        // Ranges of the *host* process's own address space the guest address space must avoid, for
-        // backends that share one address space with the guest (guest VA == host VA) rather than
-        // sandboxing/translating it independently - e.g. the analyzer's own loaded image, dyld, and
-        // shared libraries. Queried once, early, before any guest memory is allocated, so the memory
-        // manager can pre-reserve these ranges. Backends with a fully independent guest address space
-        // (the default) have nothing to report. This is a best-effort snapshot taken at that one point
-        // in time - host allocations that happen afterwards are not covered.
+        // Ranges of the host process's own address space (its image, dyld, shared libraries) that the
+        // guest must avoid, for backends where guest VA == host VA. Best-effort snapshot: host
+        // allocations made after the query are not covered. Backends with an independent guest
+        // address space have nothing to report.
         virtual std::vector<host_reserved_range> reserved_host_ranges() const
         {
             return {};
         }
 
-        // Windowed form of reserved_host_ranges(), for callers that only need to know whether ONE
-        // specific range has been claimed by a foreign host mapping (e.g. a fixed-address allocation
-        // checking its exact target), rather than re-enumerating the whole address space. Returns
-        // only the reserved sub-ranges intersecting [address, address + size). Default: fall back to
-        // the full query, so backends that don't specialize keep identical behavior.
+        // reserved_host_ranges() restricted to [address, address + size), for callers checking one
+        // specific target instead of re-enumerating the whole address space.
         virtual std::vector<host_reserved_range> reserved_host_ranges_in(uint64_t /*address*/, size_t /*size*/) const
         {
             return this->reserved_host_ranges();
         }
 
-        // Called by the memory manager whenever it claims a guest address range - both when reserved
-        // (MEM_RESERVE, not yet backed by any real mapping) and when committed - so backends sharing
-        // the host address space with the guest (see reserved_host_ranges) can claim the same range at
-        // the host OS level immediately. Without this, a reserved-but-uncommitted range is invisible to
-        // the host allocator, so nothing stops an unconstrained host allocation (e.g. a JIT code buffer)
-        // from landing there before the guest range is actually committed. No-op for backends with an
-        // independent guest address space (the default).
+        // Called whenever the memory manager claims a guest range, including a bare MEM_RESERVE that is
+        // not backed by a real mapping yet. Backends sharing the address space with the guest (see
+        // reserved_host_ranges) must claim it at the host OS level here, otherwise an unconstrained
+        // host allocation (e.g. a JIT code buffer) can land inside a reserved-but-uncommitted range.
         virtual void reserve_guest_address_range(uint64_t /*address*/, size_t /*size*/)
         {
         }
 
-        // Counterpart to reserve_guest_address_range: called by the memory manager once a guest range
-        // is genuinely released (freed) - not on a mere decommit, where the guest range stays reserved
-        // and the host-level claim must persist. The caller guarantees [address, address + size)
-        // contains no reserved guest ranges at call time (it passes the released range expanded to the
-        // surrounding unreserved gap), so the backend may drop any host-level claim wholly inside it.
-        // No-op for backends with an independent guest address space (the default).
+        // Counterpart to reserve_guest_address_range, called once a guest range is genuinely freed -
+        // not on a decommit, where the range stays reserved and the host claim must persist. The
+        // caller expands the freed range to the surrounding unreserved gap, so the backend may drop
+        // any host claim wholly inside it.
         virtual void release_guest_address_range(uint64_t /*address*/, size_t /*size*/)
         {
         }

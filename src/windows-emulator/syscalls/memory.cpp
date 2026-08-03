@@ -26,10 +26,8 @@ namespace sogen
                 return value != 0 && (value & (value - 1)) == 0;
             }
 
-            // Backstop for the auto-placement pick/confirm loop below (see its own comment). Every
-            // non-settling iteration does a full reserve_host_memory_ranges() rescan, which is
-            // guaranteed to make find_free_allocation_base's next pick skip the offending range, so
-            // this only guards against pathological churn.
+            // Backstop only: every non-settling iteration of the pick/confirm loop below rescans, which
+            // is guaranteed to make the next pick skip the offending range.
             constexpr int max_host_reserved_retries = 8;
 
             std::optional<uint64_t> checked_add(const uint64_t lhs, const uint64_t rhs)
@@ -488,16 +486,11 @@ namespace sogen
             {
                 // Steers the pick away from addresses a foreign host mapping already occupies: on
                 // backends running guest VA == host VA (FEX on Apple), find_free_allocation_base's
-                // bookkeeping-only view can hand back an address the host process itself (a JIT code
-                // buffer, a framework's lazy allocation, a GCD worker stack) has claimed since the
-                // last scan. Only a heuristic - nothing holds the window between this probe and
-                // allocate_memory below, which re-checks it and takes the binding host-level claim;
-                // a foreign mapping landing in between makes that call fail cleanly instead of
-                // clobbering. The rescan is BOTH the full reserve_host_memory_ranges() AND the
-                // windowed reserve_host_memory_ranges_in(pick, size): the full scan retires a whole
-                // host-occupied region in one step so a pick at its low edge jumps clear, the
-                // windowed one covers ranges the full scan omits but the probe still reports
-                // occupied - see find_free_host_allocation_base for the full rationale.
+                // bookkeeping-only view can hand back an address the host process itself claimed since
+                // the last scan. Heuristic only - nothing holds the window until allocate_memory below
+                // re-checks it and takes the binding host-level claim, so a mapping landing in between
+                // makes that call fail cleanly instead of clobbering. Both rescan forms are needed; see
+                // memory_manager::find_free_host_allocation_base.
                 for (int attempt = 0;; ++attempt)
                 {
                     potential_base = c.win_emu.memory.find_free_allocation_base(

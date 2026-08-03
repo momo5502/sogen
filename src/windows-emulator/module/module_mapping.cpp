@@ -223,16 +223,9 @@ namespace sogen
             }
         }
 
-        // Applies one relocation block's fixups against a host-side mirror of the block's guest byte
-        // span, then commits the whole span with a single memory.write_memory call. A freshly-mapped
-        // module has not executed a single instruction yet at this point in the load sequence (this
-        // runs before protect_module_memory and before the module's entry point), so - unlike the
-        // general write_memory caller population, which can legitimately alias code (e.g. a syscall
-        // output buffer) - every one of these writes is provably invalidating a range that cannot yet
-        // hold a JIT translation. Reading, fixing up, and writing the whole block as one range still
-        // performs that (harmless-here) invalidation, but once per block instead of once per fixup,
-        // collapsing what can be thousands of individually-invalidating guest writes per module down
-        // to one per relocation block (typically ~one page's worth of fixups).
+        // Fixups are applied to a host-side mirror of the block's guest byte span and committed with a
+        // single write_memory. Every guest write triggers a JIT translation invalidation, so doing this
+        // per fixup costs thousands of invalidations per module instead of one per block.
         void apply_relocation_block(memory_manager& memory, const uint64_t image_base, const IMAGE_BASE_RELOCATION& relocation,
                                     const std::span<const uint16_t> entries, const uint64_t delta)
         {
@@ -349,7 +342,6 @@ namespace sogen
 
                 relocation_offset += relocation.SizeOfBlock;
 
-                // Read every entry descriptor for this block in one guest read instead of one per entry.
                 entries.resize(entry_count);
                 if (entry_count > 0)
                 {
@@ -565,33 +557,26 @@ namespace sogen
                 throw std::runtime_error("Memory range not allocatable");
             }
 
-            // 32-bit (WOW64) modules must stay below 4 GB; native modules use the 64-bit arena. An
-            // unbounded search can pick a base above 4GB for a 32-bit module once the low arena fills,
-            // and guest/WOW64 pointer marshaling then truncates it to 32 bits, aliasing it onto
-            // whatever unrelated low allocation sits at the truncated address - so cap explicitly.
+            // The ceiling is explicit because an unbounded search can pick a base above 4 GB for a
+            // 32-bit module once the low arena fills; WOW64 pointer marshaling then truncates it to 32
+            // bits, aliasing the module onto whatever unrelated allocation sits at the truncated address.
             const bool needs_below_4gb = force_wow64cpu_32bit_va || is_32bit;
             const uint64_t fallback_start = needs_below_4gb ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
             constexpr uint64_t below_4gb_ceiling = 0xFFFFFFFFULL;
             const uint64_t highest_address = needs_below_4gb ? below_4gb_ceiling : MAX_ALLOCATION_ADDRESS;
             const auto image_size = static_cast<size_t>(binary.size_of_image);
 
-            // The preferred base was taken, so relocate. find_free_host_allocation_base picks a base and
-            // confirms it is actually free at the host level, not merely per sogen's own bookkeeping. That
-            // matters on backends sharing the guest address space with the host process (FEX on Apple
-            // Silicon: guest VA == host VA), where a foreign host mapping (a lazily-loaded dylib, a thread
-            // stack, ASLR-placed anything) can occupy a VA sogen still believes is free - a single pick
-            // would then fail the map outright even though other addresses are available. The loop below
-            // re-picks past such a collision instead: a failed try_map_module_at_current_base has already
-            // recorded the intruding host range (via the fixed-address allocate_memory's windowed rescan),
-            // so the next pick steps past it. Bounded so a genuinely exhausted address space still
-            // terminates rather than spinning.
+            // The preferred base was taken, so relocate. On backends sharing the address space with the
+            // guest (FEX on Apple Silicon), a foreign host mapping can occupy a VA sogen still believes
+            // is free, and a single pick would fail the map outright even though other addresses are
+            // available. A failed try_map_module_at_current_base records the intruding host range via the
+            // fixed-address allocate_memory's windowed rescan, so re-picking steps past it; bounded so an
+            // exhausted address space terminates rather than spins.
             constexpr int max_host_relocation_retries = 8;
             bool mapped = false;
-            // The free-pick retry loop only makes sense when the caller left the target address up to
-            // us (relocation_base == 0) - if the caller specified a real target (mapping a view of an
-            // already-loaded image at that image's own base, so the view's internal absolute pointers
-            // stay correct), picking a different free host address instead would silently relocate the
-            // view away from where the caller actually needs it.
+            // Only valid when the caller left the target address to us. A caller-specified
+            // relocation_base means a view must land on an already-loaded image's own base for its
+            // internal absolute pointers to stay correct, so re-picking would silently misplace it.
             if (relocation_base == 0)
             {
                 for (int attempt = 0; attempt <= max_host_relocation_retries; ++attempt)

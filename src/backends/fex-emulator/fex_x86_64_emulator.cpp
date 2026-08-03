@@ -7,38 +7,24 @@
 #include "fex_x86_64_emulator.hpp"
 #include "fex_x86_64_common.hpp"
 
-// ---------------------------------------------------------------------------------------------------
-// FEX-Emu backend (basic support).
+// FEX (https://fex-emu.com) is an in-process x86-64 -> AArch64 binary translator. Unlike the
+// Unicorn/Icicle/KVM backends it does not manage a sandboxed guest address space: the translated
+// guest executes inside the host process with guest VA == host VA. So map_memory() is a real
+// mmap(MAP_FIXED) at the guest address and read/write_memory() a direct host memcpy, and - as with
+// KVM - there is no per-access or per-instruction instrumentation point, so memory/execution/block
+// hooks are accepted for API compatibility but never fire. Guest `syscall` instructions come back
+// through a FEXCore::HLE::SyscallHandler that invokes the registered syscall instruction hook.
 //
-// FEX (https://fex-emu.com) is an in-process x86/x86-64 -> AArch64 binary translator. Unlike the
-// Unicorn/Icicle/KVM backends, FEX does NOT manage a sandboxed guest address space: it executes the
-// translated guest inside the *host* process and treats guest virtual addresses as host virtual
-// addresses (a 1:1 mapping). Consequences that shape this backend:
-//
-//   * map_memory() is a real mmap(MAP_FIXED) at the guest address; read/write_memory() is a direct
-//     host memcpy once the range is known to be mapped.
-//   * The guest runs natively (JITed), so - exactly like the KVM backend - there is no per-access or
-//     per-instruction instrumentation point. Memory/execution/basic-block hooks are accepted for API
-//     compatibility but never fire.
-//   * Guest `syscall` instructions are routed back to sogen through a FEXCore::HLE::SyscallHandler,
-//     which invokes the registered syscall instruction-hook. That is what lets the Windows emulation
-//     layer service NT syscalls.
-//
-// The functional target of this file is Darwin on Apple Silicon (FEX only JITs to ARM64): the signal
-// handlers, MMIO fault emulation, and 16KB/4KB page reconciliation below are all Darwin-only. The
-// AArch64 Linux path compiles (CI build coverage) but has none of that runtime support and is not
-// expected to run; Android is excluded outright by the CMake gate. The file is written against the
-// FEXCore embedding API; spots that depend on FEX-version-specific internals are marked TODO(fex).
-// ---------------------------------------------------------------------------------------------------
+// The functional target is Darwin on Apple Silicon; the signal handlers, MMIO fault emulation and
+// 16KB/4KB page reconciliation below are all Darwin-only. The AArch64 Linux path only has build
+// coverage, and Android is excluded by the CMake gate.
 
 #include <cstdlib>
 #include <sys/mman.h>
 #include <unistd.h>
 
-// backtrace()/backtrace_symbols() are used unconditionally by the std::terminate handler below
-// (initialize_context()). SOGEN_ENABLE_FEX only ever enables this backend on Linux or Darwin (see
-// the top-level CMakeLists.txt gate), and both platforms' libc provide <execinfo.h>, so this
-// include does not need to be Apple-only.
+// Used unconditionally by the std::terminate handler in initialize_context(). Both platforms
+// SOGEN_ENABLE_FEX gates this backend to provide it, so the include need not be Apple-only.
 #include <execinfo.h>
 
 #ifdef __APPLE__
@@ -93,46 +79,26 @@ namespace sogen::fex
         constexpr size_t page_size = 0x1000;
 
 #ifdef __APPLE__
-        // FEXCore's own JITWriteScope (deps/FEX/FEXCore/include/FEXCore/Utils/AllocatorHooks.h) is a
-        // plain ctor/dtor boolean toggle around pthread_jit_write_protect_np, not a nesting counter.
-        // FEXCore::CPU::Arm64JITCore::ExitFunctionLink and its two delinker helpers (JIT.cpp) patch an
-        // already-JIT-compiled call site - self-modifying code needing write-protect disabled - but
-        // were written with no JITWriteScope of their own (upstream FEX targets Linux, which has no
-        // per-thread MAP_JIT W^X concept). Our own wrapper around Pointers.ExitFunctionLink brackets
-        // that call with a toggle to cover it, but ExitFunctionLink's "not yet compiled" path calls
-        // CompileBlock, which uses ITS OWN nested JITWriteScope - and that nested scope's destructor
-        // re-enables write-protect *before* control returns to our still-writing outer call, faulting
-        // on the self-modifying store with a real (not synthetic) protection violation.
+        // FEXCore's JITWriteScope (FEXCore/Utils/AllocatorHooks.h) is a plain ctor/dtor toggle around
+        // pthread_jit_write_protect_np, not a nesting counter. Arm64JITCore::ExitFunctionLink and its
+        // delinker helpers patch already-compiled call sites without a scope of their own (upstream FEX
+        // targets Linux, which has no per-thread MAP_JIT W^X). Bracketing our own call to
+        // Pointers.ExitFunctionLink is not enough: its "not yet compiled" path calls CompileBlock, whose
+        // nested JITWriteScope re-enables write protection before control returns to the still-writing
+        // outer call, faulting on the self-modifying store. Interposing pthread_jit_write_protect_np to
+        // make it reentrant does not work either - both ways of reaching the real implementation from
+        // inside the interposer (dlsym(RTLD_NEXT, ...) and dlopen(RTLD_NOLOAD)+dlsym-by-handle) resolve
+        // back to the replacement.
         //
-        // Interposing pthread_jit_write_protect_np itself (via the __interpose section) to make it
-        // reentrant is not viable: both escape hatches for reaching the *real* implementation from
-        // inside the interposer - dlsym(RTLD_NEXT, ...) and dlopen(RTLD_NOLOAD)+dlsym-by-handle -
-        // resolve back to the interposed replacement itself, because dyld's __interpose rewrite here
-        // isn't scoped to "other images calling in" the way DYLD_INTERPOSE is normally described;
-        // there's no reliable way to bypass it once installed for this exact symbol name process-wide.
+        // So the fault is reacted to instead: see handle_fault_signal's SEGV_ACCERR branch, which
+        // disables write protection and retries when the faulting PC lies in FEXCore's own code rather
+        // than in MAP_JIT memory. Retries are bounded per fault address so a different bug cannot spin.
         //
-        // Instead: react to the fault itself. The *executing* code at the moment of the crash
-        // (ExitFunctionLink, a plain libFEXCore.dylib function) is not MAP_JIT memory - only the
-        // CodeBuffer it writes into is - so leaving write-protect disabled for longer than strictly
-        // necessary is harmless as long as it's re-enabled before control returns to actually
-        // executing JIT-compiled (MAP_JIT) code again. See handle_fault_signal's SEGV_ACCERR branch:
-        // on a protection fault whose PC lands outside the dispatcher/guest range entirely (i.e.
-        // inside FEXCore's own regular code, not a Break-op trampoline), disable write-protect and
-        // retry the same faulting instruction rather than treating it as unhandled. Bounded per fault
-        // address so a genuinely different bug can't spin forever.
-        //
-        // A std::unordered_map<uint64_t, int> is not viable here: operator[] can insert a node or
-        // trigger a rehash - both call into the heap allocator - and this code runs inside a real
-        // hardware signal handler that can interrupt program execution at an arbitrary point,
-        // including mid-malloc()/free() of a totally unrelated allocation. Calling a non-async-
-        // signal-safe function from a signal handler in that situation is undefined behavior and can
-        // corrupt the allocator's internal free-list/lock if re-entered. A small fixed-size,
-        // non-allocating array, linear-scanned, is genuinely async-signal-safe, and sufficient because
-        // guest execution is single-threaded/cooperative (this handler resolves
-        // one fault to completion before the interrupted code can trigger another), so realistically
-        // only one address is ever mid-retry at a time; a healthy call site resolves in <= 1 retry and
-        // never spins, so eviction (once all slots are in use) can never take budget away from an
-        // address that's actually mid-retry.
+        // The bound is tracked in a fixed array rather than an unordered_map because it is updated from
+        // a real hardware signal handler that can interrupt an unrelated malloc()/free(); operator[] can
+        // insert or rehash and is not async-signal-safe. Eight slots suffice: guest execution is
+        // cooperative, so only one address is ever mid-retry, and a healthy call site resolves in <= 1
+        // retry, so eviction cannot take budget from an address that is.
         struct jit_write_protect_retry_slot
         {
             uint64_t address = 0;
@@ -145,10 +111,8 @@ namespace sogen::fex
         jit_write_protect_retry_slot g_jit_write_protect_retry_slots[jit_write_protect_retry_slot_count];
         size_t g_jit_write_protect_retry_next_evict = 0;
 
-        // A burst of retries for the same address within this window counts toward the retry bound;
-        // a gap at least this long since the address last faulted means it's being reused healthily
-        // (a fresh, unrelated race resolved in the meantime), not spinning - see
-        // jit_write_protect_retry_count_for's doc comment.
+        // A gap at least this long since an address last faulted means the site is being reused
+        // healthily rather than spinning, so its retry budget is reset.
         constexpr uint64_t jit_write_protect_retry_reset_window_ns = 100'000'000; // 100ms
 
         uint64_t monotonic_now_ns()
@@ -158,12 +122,10 @@ namespace sogen::fex
             return static_cast<uint64_t>(ts.tv_sec) * 1'000'000'000ULL + static_cast<uint64_t>(ts.tv_nsec);
         }
 
-        // Returns the retry counter for fault_addr, resetting it first if the address hasn't
-        // faulted within jit_write_protect_retry_reset_window_ns - otherwise a slot that legitimately
-        // resolves this race many times over a long run would eventually exhaust its retry budget and
-        // start being treated as unresolvable, turning an occasional benign race into an eventual hard
-        // crash. Async-signal-safe: fixed-array scan, no allocation; clock_gettime(CLOCK_MONOTONIC) is
-        // vDSO-backed and safe to call from a signal handler.
+        // Resets the counter when the address has not faulted within the window: otherwise a site that
+        // legitimately resolves this race many times over a long run would exhaust its budget and turn a
+        // benign race into a hard crash. Async-signal-safe: fixed-array scan, no allocation, and
+        // clock_gettime(CLOCK_MONOTONIC) is vDSO-backed.
         int& jit_write_protect_retry_count_for(const uint64_t fault_addr)
         {
             const uint64_t now_ns = monotonic_now_ns();
@@ -208,14 +170,12 @@ namespace sogen::fex
             return (value + host_page_size_apple - 1) & ~(host_page_size_apple - 1);
         }
 
-        // Decodes just enough of an AArch64 "Load register" instruction to service an mmio_region
-        // fault: destination register, transfer size, and zero/sign extension. Deliberately does not
-        // decode the addressing mode (immediate, unscaled, register-offset, ...) - the effective
-        // address is already known exactly (it's the fault address FEXCore's guest-VA==host-VA model
-        // uses directly), so only the fields the "Load/store register" encoding class keeps at fixed
-        // bit positions across every addressing-mode sub-form are needed (size/opc at [31:30]/[23:22],
-        // Rt at [4:0] - see the AArch64 ISA's C4.1.3 "Loads and stores" encoding table). Stores are not
-        // decoded: this backend's only MMIO consumer is read-only (see mmio_region's doc comment).
+        // Decodes only what an mmio_region fault needs: destination register, transfer size and
+        // extension. The addressing mode is deliberately not decoded - the effective address is already
+        // known, being the fault address itself under guest VA == host VA - so only the fields the
+        // "Load/store register" class keeps at fixed bit positions across every sub-form are read
+        // (size/opc at [31:30]/[23:22], Rt at [4:0]; AArch64 ISA C4.1.3). Stores are not decoded: this
+        // backend's only MMIO consumer is read-only.
         struct decoded_arm64_load
         {
             uint32_t size = 0; // bytes: 1, 2, 4, 8, 16
@@ -349,35 +309,21 @@ namespace sogen::fex
             return std::nullopt;
         }
 
-        // Decodes an AArch64 "Store-release register" (STLR/STLRB/STLRH) instruction - the
-        // counterpart to decode_arm64_load's LDAR/LDAPR handling, used only for the misaligned-atomic
-        // fallback in handle_fault_signal (see its doc comment), never for mmio_region (this backend's
-        // only MMIO consumer is read-only). Same fixed-Rm, no-addressing-mode shape as LDAR/LDAPR.
+        // Store-release forms (STLR/STLRB/STLRH), the counterpart to decode_arm64_load's LDAR/LDAPR
+        // handling. Used only by handle_fault_signal's misaligned-atomic fallback, never for
+        // mmio_region, whose only consumer here is read-only.
         //
-        // Deliberately does NOT also decode plain STR/STUR (unlike decode_arm64_load, which does
-        // cover the equivalent plain-load forms): broadening this table to cover them for
-        // handle_general_memory_violation's Category-3 "false fault" case causes a real,
-        // reproducible hang isolated to this table specifically (decode_arm64_load's equivalent
-        // plain-load coverage is safe - the KUSD/MMIO path already exercises it) with a root cause
-        // that is not yet understood, so this table must stay narrow. Category-3 false-fault
-        // emulation is therefore currently limited to loads and STLR-family stores; a plain-store
-        // false fault falls through to a crash instead of being emulated.
+        // Deliberately narrow: broadening this table to plain STR/STUR for
+        // handle_general_memory_violation's Category-3 false-fault case causes a reproducible hang
+        // isolated to this table (decode_arm64_load's equivalent plain-load coverage is safe), with a
+        // root cause that is not yet understood.
         //
-        // This has a real, understood downstream consequence beyond just that crash, tracked
-        // separately: handle_general_memory_violation also uses this same decoder to classify a
-        // fault's memory_operation (write vs. read) for the *genuine* protection-violation dispatch
-        // path, not just the false-fault path. A plain (non-atomic) STR to memory that IS mapped
-        // read-only is therefore misclassified as a read: since the page's shadow entry declares
-        // read permission, the "read" appears legitimate and is routed into the false-fault
-        // recovery paths, which both fail for a genuine protection violation - the fault then
-        // surfaces as an UNHANDLED host signal that aborts the whole emulator process, instead of
-        // being delivered to the guest as STATUS_ACCESS_VIOLATION. Any guest that deliberately
-        // writes to read-only memory and catches the resulting exception (packers/DRM protections
-        // do this routinely) hits this. A plain store to UNMAPPED memory does reach the guest as an
-        // exception, but with the read/write flag (ExceptionInformation[0]) wrongly reporting a
-        // read. Not fixed here since a safe fix needs a classification-only check independent of
-        // this decode table (which is unsafe to broaden, per the hang above) and that hasn't been
-        // implemented/verified yet.
+        // Known consequence, tracked separately: handle_general_memory_violation also uses this decoder
+        // to classify a fault as read vs. write on the genuine protection-violation path, so a plain STR
+        // to read-only memory is misclassified as a read, routed into false-fault recovery, and surfaces
+        // as an unhandled host signal instead of a guest STATUS_ACCESS_VIOLATION - which any guest that
+        // writes to read-only memory and catches the exception (packers, DRM) will hit. A plain store to
+        // unmapped memory does reach the guest, but with ExceptionInformation[0] wrongly saying read.
         struct decoded_arm64_store
         {
             uint32_t size = 0; // bytes: 1, 2, 4, 8
@@ -438,15 +384,11 @@ namespace sogen::fex
         }
 
 #ifdef __APPLE__
-        // Apple Silicon's kernel categorically refuses simultaneous write+exec on any mapping that
-        // isn't MAP_JIT-backed (mprotect fails outright with EACCES) - unlike Linux, where W^X for
-        // guest memory is advisory at best. This is independent of the 16KB/4KB reconciliation
-        // above: even a single guest region directly requesting RWX hits it, which real PE loaders
-        // do routinely (map .text RWX to patch ASLR relocations, then narrow to RX before the module
-        // ever executes). Favoring write over exec here handles that common, well-defined sequence
-        // correctly; it would be wrong for a page that is genuinely written and executed in the same
-        // window without an intervening apply_memory_protection call, which is not how real PE
-        // loading behaves.
+        // Apple Silicon's kernel refuses simultaneous write+exec on any non-MAP_JIT mapping (mprotect
+        // fails with EACCES), unlike Linux where guest W^X is advisory. Real PE loaders hit this
+        // routinely: map .text RWX to apply relocations, then narrow to RX before executing. Favoring
+        // write handles that sequence; it would be wrong for a page genuinely written and executed in
+        // the same window without an intervening apply_memory_protection call, which PE loading is not.
         int to_prot_apple(const memory_permission permissions)
         {
             int prot = to_prot(permissions);
@@ -586,15 +528,12 @@ namespace sogen::fex
             bool owned = true; // false for map_host_memory aliases we must not munmap
         };
 
-        // FEX runs the guest natively with guest VA == host VA, so there is no per-instruction hook
-        // to intercept a specific address the way an interpreted backend can. This backend's only
-        // current MMIO consumer is KUSER_SHARED_DATA at 0x7ffe0000, which falls inside Darwin's
-        // mandatory __PAGEZERO segment and cannot be backed by real memory (confirmed via both
-        // mmap(MAP_FIXED) and mach_vm_allocate) - so the region is deliberately left unmapped and
-        // every access faults into handle_mmio_fault, which decodes and emulates the single load.
-        // Read-only: this backend's only consumer treats guest writes as a no-op, so a write here is
-        // left to surface as a normal access violation, matching real Windows (KUSER_SHARED_DATA is
-        // read-only user-mapped memory there too) - not a general MMIO implementation.
+        // The guest runs natively with guest VA == host VA, so there is no per-instruction hook to
+        // intercept a specific address. The only MMIO consumer here is KUSER_SHARED_DATA at 0x7ffe0000,
+        // which falls inside Darwin's mandatory __PAGEZERO segment and cannot be backed by real memory
+        // (confirmed via both mmap(MAP_FIXED) and mach_vm_allocate), so the region is left unmapped and
+        // every access faults into handle_mmio_fault. Read-only, matching real Windows: a guest write is
+        // left to surface as a normal access violation. Not a general MMIO implementation.
         struct mmio_region
         {
             uint64_t address = 0;
@@ -620,12 +559,10 @@ namespace sogen::fex
             return value != 0;
         }
 
-        // Real Apple Silicon feature detection via sysctlbyname's hw.optional.arm.* namespace, in
-        // place of FEXCore's own FetchHostFeatures() (Linux-only: reads MIDR_EL1, which isn't
-        // EL0-readable/trap-emulated on Darwin the way arm64 Linux's kernel does it). Confirmed
-        // present on Apple Silicon (M-series) via `sysctl -a | grep hw.optional`; anything not
-        // confirmed present, or without a clear ARM-feature mapping, is conservatively left false -
-        // that only costs codegen quality, never correctness.
+        // Replaces FEXCore's own FetchHostFeatures(), which is Linux-only: it reads MIDR_EL1, neither
+        // EL0-readable nor trap-emulated on Darwin. Anything not confirmed present in
+        // hw.optional.arm.*, or without a clear ARM-feature mapping, is left false - that costs codegen
+        // quality, never correctness.
         FEXCore::HostFeatures fetch_host_features_apple()
         {
             FEXCore::HostFeatures features{};
@@ -661,20 +598,17 @@ namespace sogen::fex
             features.SupportsAVX = false;
             features.SupportsSVEBitPerm = false;
 
-            // TPIDRRO_EL0 is not confirmed to carry a CPU index on Darwin the way arm64 Linux's
-            // kernel populates it; the fork's DEF_OP(ProcessorID) treats the non-TPIDRRO fallback as
-            // unsupported (matching the Windows/wine precedent), so leaving this false means a guest
-            // RDTSCP/RDPID will hard-error rather than silently read garbage. Known gap, not a
-            // correctness risk: real-world guest code rarely depends on RDTSCP/RDPID succeeding.
+            // TPIDRRO_EL0 is not confirmed to carry a CPU index on Darwin, and DEF_OP(ProcessorID)
+            // treats the non-TPIDRRO fallback as unsupported (matching the Windows/wine precedent), so
+            // leaving this false makes a guest RDTSCP/RDPID hard-error rather than read garbage.
             features.SupportsCPUIndexInTPIDRRO = false;
 
-            // FEXCore's CPUID brand-string leaves (0x80000002-4) index PerCPUData, whose size is
-            // CPUMIDRs.size(); an empty CPUMIDRs leaves PerCPUData empty and the leaf null-derefs
-            // its ProductName. Linux's FetchHostFeatures() populates this by reading MIDR_EL1 per
-            // core, which is unavailable from EL0 on Darwin. Report the host logical-CPU count with
-            // a placeholder MIDR of 0: the M-series parts aren't in FEXCore's MIDR table anyway, so
-            // it resolves to the "Unknown ARM CPU" brand string (FEXCore's own fallback) rather
-            // than crashing, and keeps the guest-visible core count (derived from Cores) realistic.
+            // FEXCore's CPUID brand-string leaves (0x80000002-4) index PerCPUData, sized from CPUMIDRs;
+            // an empty CPUMIDRs null-derefs the leaf's ProductName. Linux populates it from per-core
+            // MIDR_EL1, unavailable from EL0 on Darwin, so the host logical-CPU count is reported with a
+            // placeholder MIDR of 0: M-series parts are absent from FEXCore's MIDR table anyway, so it
+            // resolves to FEXCore's own "Unknown ARM CPU" fallback while keeping the guest-visible core
+            // count realistic.
             uint32_t logical_cpus = 1;
             size_t logical_cpus_len = sizeof(logical_cpus);
             if (::sysctlbyname("hw.logicalcpu", &logical_cpus, &logical_cpus_len, nullptr, 0) != 0 || logical_cpus == 0)
@@ -686,10 +620,9 @@ namespace sogen::fex
             return features;
         }
 
-        // sogen runs one FEX-backed guest thread per process (the cooperative, single-emulation-
-        // -host-thread model - see the class-level comment), so a single active-instance pointer is
-        // enough for the signal handler below to reach the emulator's hook tables/thread state. Real
-        // signal handlers can't be non-static member functions, so this indirection is required.
+        // sogen runs one FEX-backed guest thread per process, so a single active-instance pointer is
+        // enough for the signal handler below to reach the emulator's hook tables and thread state.
+        // Signal handlers cannot be non-static member functions, hence the indirection.
         fex_x86_64_emulator* g_active_emulator = nullptr;
 
         void fault_signal_handler(int sig, siginfo_t* info, void* raw_ucontext);
@@ -706,10 +639,8 @@ namespace sogen::fex
 
             g_active_emulator = &emulator;
 
-            // A dedicated alternate signal stack (SA_ONSTACK), so a second, different signal
-            // (SIGBUS/SIGILL) arriving while this handler is already executing on the faulting
-            // thread's normal stack doesn't have to nest on that same, potentially near-exhausted,
-            // faulting stack.
+            // A dedicated alternate stack, so a second signal arriving while this handler is already
+            // running does not nest on the faulting thread's potentially near-exhausted stack.
             static std::byte alt_stack[64 * 1024];
             stack_t ss{};
             ss.ss_sp = alt_stack;
@@ -726,25 +657,19 @@ namespace sogen::fex
             ::sigaction(SIGBUS, &action, nullptr);
             ::sigaction(SIGILL, &action, nullptr);
 
-            // FEXCore's IR "Break" op (see handle_fault_signal's FaultToTopAndGeneratedException
-            // comment) models x86 HLT/UD2/INT3/INT1/INTO/unhandled-INT-N uniformly via distinct native
-            // trap instructions chosen per Dispatcher.cpp's GuestSignal_SIG* stubs: HLT/UDF raise
-            // SIGILL, BRK raises SIGTRAP. INT3 (x86_64_dbgbreak/DebugBreak()) goes through the SIGTRAP
-            // stub - without a handler registered here, that BRK was an entirely unhandled hardware
-            // trap, terminating the process (exit 128+SIGTRAP) instead of reaching the vector-dispatch
-            // logic below, which already handles vector 3 (breakpoint) correctly once it runs.
+            // FEXCore's IR "Break" op models x86 HLT/UD2/INT3/INT1/INTO uniformly via distinct native
+            // traps chosen per Dispatcher.cpp's GuestSignal_SIG* stubs: HLT/UDF raise SIGILL, BRK raises
+            // SIGTRAP. INT3 (DebugBreak()) goes through the SIGTRAP stub, so without a handler here that
+            // BRK is an unhandled hardware trap terminating the process, instead of reaching the vector
+            // dispatch below, which handles vector 3 correctly.
             ::sigaction(SIGTRAP, &action, nullptr);
         }
 
-        // FEXCore::CPU::Arm64JITCore::ExitFunctionLink (JIT.cpp) patches an already-compiled call
-        // site once its target block becomes known - self-modifying code, writing directly into a
-        // MAP_JIT code buffer. It doesn't bracket that write with a JIT-write-protect toggle (see
-        // FEXCore::Allocator::JITWriteScope) because it's written for Linux, which has no per-thread
-        // W^X state to worry about; on Apple Silicon the write faults with a real (not synthetic)
-        // protection violation, since MAP_JIT enforces write-XOR-execute per calling thread, not per
-        // mapping. FEXCore::HLE::CpuStateFrame::Pointers.ExitFunctionLink is a plain function-pointer
-        // slot JIT-compiled code calls through (see JIT.cpp's InitThreadPointers), so it can be
-        // intercepted here with a toggling wrapper instead of touching deps/FEX.
+        // Arm64JITCore::ExitFunctionLink (JIT.cpp) patches an already-compiled call site once its target
+        // block is known, writing straight into a MAP_JIT code buffer without a JITWriteScope, because
+        // it is written for Linux, which has no per-thread W^X state. Pointers.ExitFunctionLink is a
+        // plain function-pointer slot JIT code calls through (JIT.cpp's InitThreadPointers), so it can
+        // be wrapped here instead of patching deps/FEX.
         uint64_t g_original_exit_function_link = 0;
 
         uint64_t exit_function_link_jit_write_wrapper(FEXCore::Core::CpuStateFrame* frame, void* record)
@@ -758,37 +683,27 @@ namespace sogen::fex
             return result;
         }
 
-        // ===========================================================================================
-        // FEXCore-internal host allocation arena (Apple, guest VA == host VA).
+        // Under guest VA == host VA, any host allocation the kernel places freely can land inside the
+        // guest's own address space. FEXCore obtains all of its internal buffers - the BlockLinks
+        // red-black-tree storage, the JIT CodeBuffer, the dispatcher - through
+        // FEXCore::Allocator::mmap(nullptr, ...), a raw ::mmap(NULL, ...) with no coordination with
+        // sogen's bookkeeping, so an ordinary guest store into a buffer placed at a guest-owned address
+        // silently corrupts FEXCore's own state (the long-standing __tree_balance_after_insert /
+        // AddBlockLink corruption).
         //
-        // This backend runs guest VA == host VA, so any host allocation the kernel is free to place
-        // wherever it likes can land inside the guest's own address space. FEXCore obtains all of its
-        // internal buffers - the BlockLinks red-black-tree storage (fextl monotonic buffer resource),
-        // the JIT CodeBuffer, and the dispatcher - through FEXCore::Allocator::mmap(nullptr, ...) (via
-        // Allocator::VirtualAlloc), which by default is a raw ::mmap(NULL, ...) with zero coordination
-        // with sogen's guest bookkeeping. When one of those buffers happens to be placed at a host
-        // address the guest also owns, an ordinary guest SIMD/vector store silently overwrites
-        // FEXCore's own bookkeeping - the root cause of the long-standing __tree_balance_after_insert /
-        // AddBlockLink corruption (a wild guest store scribbling a live BlockLinks tree node with
-        // packed 16-bit-lane vector data).
-        //
-        // Fix: reserve one large host arena up-front, register its whole range as a reserved_host_range
-        // (so sogen's memory manager steers every guest allocation away from it - a genuine two-way
-        // exclusion), and satisfy every FEXCore::Allocator::mmap(nullptr, ...) request from inside it.
-        // Non-executable requests are placed with MAP_FIXED over the reserved region. Executable
-        // (MAP_JIT) requests cannot use MAP_FIXED - Apple rejects MAP_JIT|MAP_FIXED with EINVAL - so
-        // the sub-region is unmapped first and MAP_JIT is requested with the hole's address as a
-        // (non-fixed) hint, which the kernel reliably honors because nothing else competes for space
-        // inside the arena. The result is verified to land inside the arena or the request fails
-        // loudly (ENOMEM) rather than silently falling back to an unconstrained mapping that would
-        // reintroduce the exact aliasing hazard this exists to prevent.
-        // ===========================================================================================
+        // So one large host arena is reserved up-front and registered as a reserved_host_range, giving
+        // a two-way exclusion, and every FEXCore::Allocator::mmap(nullptr, ...) is satisfied from inside
+        // it. Non-executable requests are placed with MAP_FIXED. Executable (MAP_JIT) ones cannot be -
+        // Apple rejects MAP_JIT|MAP_FIXED with EINVAL - so the sub-region is unmapped first and MAP_JIT
+        // gets the hole's address as a non-fixed hint, which the kernel honors reliably since nothing
+        // else competes for space inside the arena. The result is verified to land inside the arena and
+        // fails loudly rather than silently falling back to an unconstrained mapping that would
+        // reintroduce the aliasing hazard.
         class fex_internal_arena
         {
           public:
-            // Sized to comfortably exceed any realistic FEXCore-internal need (BlockLinks growth, the
-            // JIT CodeBuffer and its growth, the dispatcher) for a full game/application workload.
-            // Pure VA reservation (PROT_NONE) until sub-regions are actually committed.
+            // Pure VA reservation (PROT_NONE) until sub-regions are committed, sized to exceed any
+            // realistic FEXCore-internal need for a full application workload.
             static constexpr size_t arena_size = 0x1'0000'0000ULL; // 4 GiB
 
             static fex_internal_arena& instance()
@@ -797,9 +712,8 @@ namespace sogen::fex
                 return arena;
             }
 
-            // Reserve the arena and install the FEXCore allocator hooks. Must run before the first
-            // FEXCore-internal allocation (context/CodeBuffer creation) and before the memory
-            // manager first queries reserved_host_ranges(). Idempotent.
+            // Must run before the first FEXCore-internal allocation (context/CodeBuffer creation) and
+            // before the memory manager first queries reserved_host_ranges(). Idempotent.
             void install()
             {
                 if (this->base_ != 0)
@@ -854,9 +768,7 @@ namespace sogen::fex
                 return this->base_ != 0 && a >= this->base_ && a < this->base_ + arena_size;
             }
 
-            // Reserve `size` bytes of VA inside the arena. Reuses a freed block (first fit, splitting
-            // any remainder back onto the free list) before extending the bump cursor. Returns 0 on
-            // exhaustion. Caller holds lock_.
+            // Returns 0 on exhaustion. Caller holds lock_.
             uintptr_t reserve(const size_t size)
             {
                 for (auto it = this->free_list_.begin(); it != this->free_list_.end(); ++it)
@@ -912,20 +824,16 @@ namespace sogen::fex
 
                 if (flags & MAP_JIT)
                 {
-                    // FEXCore's CodeBuffer sizes its request to include a trailing guard page at the
-                    // very end (see CPUBackend.h's UsableSize(): AllocatedSize - FEX_HOST_PAGE_SIZE) and
-                    // tries to mprotect(PROT_NONE) that last page itself. That mprotect() call always
-                    // fails on Apple Silicon (EACCES) - MAP_JIT protection can only be fixed at mmap()
-                    // time, not adjusted after the fact by an ordinary mprotect() - which is exactly the
-                    // "Failed to mprotect last page of code buffer" diagnostic CPUBackend.cpp logs.
-                    // Provide a REAL guard here instead: make only the leading portion (excluding that
-                    // final host page) the actual executable MAP_JIT mapping, and simply never touch the
-                    // trailing page - it stays part of the arena's permanent PROT_NONE reservation, which
-                    // genuinely faults on any access, landing exactly where UsableSize() already expects
-                    // the buffer to end. `Ptr`/`AllocatedSize` as seen by the caller are unaffected; only
-                    // how much of that byte range is truly writable/executable changes. Skipped for
-                    // requests no bigger than one host page (e.g. Dispatcher's fixed-size, guardless
-                    // buffer) so a small allocation isn't shrunk into uselessness.
+                    // FEXCore's CodeBuffer sizes its request to include a trailing guard page
+                    // (CPUBackend.h's UsableSize(): AllocatedSize - FEX_HOST_PAGE_SIZE) and
+                    // mprotect(PROT_NONE)s that page itself. That always fails on Apple Silicon with
+                    // EACCES - MAP_JIT protection is fixed at mmap() time and cannot be adjusted
+                    // afterwards - which is the "Failed to mprotect last page of code buffer" diagnostic
+                    // CPUBackend.cpp logs. A real guard is provided instead: only the leading portion
+                    // becomes the executable MAP_JIT mapping and the trailing page stays part of the
+                    // arena's permanent PROT_NONE reservation, faulting on any access exactly where
+                    // UsableSize() expects the buffer to end. Skipped at or below one host page so a
+                    // small allocation (the Dispatcher's guardless buffer) is not shrunk into uselessness.
                     const size_t exec_size = rounded > host_page_size_apple ? rounded - host_page_size_apple : rounded;
 
                     // MAP_JIT | MAP_FIXED is rejected on Apple, so punch a hole in the arena and place
@@ -992,11 +900,8 @@ namespace sogen::fex
 
     class fex_x86_64_emulator;
 
-    // -----------------------------------------------------------------------------------------------
-    // The syscall handler bridges FEX's guest `syscall` exits to the registered instruction hook.
-    // Method bodies are defined out of line (after fex_x86_64_emulator is complete) since they touch
-    // the emulator's internals.
-    // -----------------------------------------------------------------------------------------------
+    // Bridges FEX's guest `syscall` exits to the registered instruction hook. Method bodies are out of
+    // line, after fex_x86_64_emulator is complete, since they touch its internals.
     class fex_syscall_handler final : public FEXCore::HLE::SyscallHandler
     {
       public:
@@ -1017,9 +922,6 @@ namespace sogen::fex
         fex_x86_64_emulator& emulator_;
     };
 
-    // -----------------------------------------------------------------------------------------------
-    // The emulator itself.
-    // -----------------------------------------------------------------------------------------------
     class fex_x86_64_emulator final : public x86_64_emulator
     {
       public:
@@ -1078,7 +980,7 @@ namespace sogen::fex
             }
         }
 
-        // --[ cpu_interface ]------------------------------------------------------------------------
+        // cpu_interface
 
         bool read_descriptor_table(int reg, descriptor_table_register& table) override
         {
@@ -1116,12 +1018,10 @@ namespace sogen::fex
             // ExecuteThread runs the translated guest until the thread is asked to stop (which the
             // syscall bridge does when a hook calls stop()), or the guest faults/exits.
 #ifdef __APPLE__
-            // On this platform it can also return early because handle_fault_signal deferred a hook
-            // dispatch (see pending_fault_dispatch_'s doc comment) rather than a genuine stop -
-            // dispatch it here, in normal call context where it's actually safe to do so, then simply
-            // resume by calling ExecuteThread again (it always (re-)starts fresh from
-            // CurrentFrame->State.rip, which the hook is free to have redirected), unless the hook
-            // itself asked to stop.
+            // Here it can also return early because handle_fault_signal deferred a hook dispatch (see
+            // pending_fault_dispatch_) rather than genuinely stopping - dispatch it in normal call
+            // context, where that is safe, then resume by calling ExecuteThread again; it always
+            // restarts from CurrentFrame->State.rip, which the hook is free to have redirected.
             for (;;)
             {
                 this->context_->ExecuteThread(this->thread_);
@@ -1131,13 +1031,11 @@ namespace sogen::fex
 
                 // An InterruptFaultPage unwind with no stop pending is the quantum timer racing this
                 // quantum's own entry: stop() sets stop_requested_ then protects the page, but a
-                // concurrently-entered start() has already cleared the flag and only then does the
-                // timer's mprotect land - past this quantum's re-arm above. The very first block-entry
-                // check then faults with nothing actually requested. Treating that as a real stop makes
-                // the caller (windows_emulator::vcpu_worker) read it as a fatal wind-down and tear the
-                // whole run off; re-arm and resume instead - the timer's pending switch_thread request is
-                // simply honored at the next genuine stop. Any OTHER hook-less clean return still
-                // terminates the loop as before.
+                // concurrently-entered start() has already cleared the flag and the timer's mprotect
+                // only lands after the re-arm above, so the first block-entry check faults with nothing
+                // requested. Treating that as a real stop makes windows_emulator::vcpu_worker read it as
+                // a fatal wind-down, so re-arm and resume instead; the timer's pending switch_thread
+                // request is honored at the next genuine stop.
                 if (this->stop_requested_ || (!hook_dispatched && !interrupt_page_unwind))
                 {
                     break;
@@ -1290,12 +1188,10 @@ namespace sogen::fex
             return data;
         }
 
-        // Copies a saved CPUState blob into the thread's live frame while preserving the fields that
-        // are genuinely per-FEXCore-thread-global rather than per-logical-guest-thread. L1Pointer/L1Mask (the
-        // JIT lookup-cache pointers) are rewritten by FEXCore itself when the cache reallocates, so the
-        // value already live in CurrentFrame->State is always the correct one - keep it across the memcpy
-        // rather than letting a stale/foreign snapshot clobber it. callret_sp/_pad1 are handled by
-        // ensure_callret_stack (see its doc comment).
+        // Preserves the fields that are per-FEXCore-thread-global rather than per-logical-guest-thread:
+        // FEXCore rewrites L1Pointer/L1Mask itself whenever the JIT lookup cache reallocates, so the
+        // live values are always the correct ones and a stale snapshot must not clobber them.
+        // callret_sp/_pad1 are handled by ensure_callret_buffer.
         void restore_state_into(FEXCore::Core::InternalThreadState* thread, const std::byte* src)
         {
             auto& state = thread->CurrentFrame->State;
@@ -1346,7 +1242,7 @@ namespace sogen::fex
             return true;
         }
 
-        // --[ emulator ]-----------------------------------------------------------------------------
+        // emulator
 
         std::string get_name() const override
         {
@@ -1372,7 +1268,7 @@ namespace sogen::fex
             this->restore_registers(buffer.read_vector<std::byte>());
         }
 
-        // --[ x86_emulator ]-------------------------------------------------------------------------
+        // x86_emulator
 
         void set_segment_base(x86_register base, pointer_type value) override
         {
@@ -1401,11 +1297,6 @@ namespace sogen::fex
             return 0;
         }
 
-        // Called once, before load_gdt() or create_thread(), right after the windows-emulator layer
-        // determines the process's execution mode (see arch_emulator.hpp's doc comment on this
-        // virtual). FEXCore is fixed-bitness per compiled Context and this backend only stands up
-        // the single 64-bit one, so a WoW64 process cannot run here - fail up front with a clear
-        // error instead of mis-decoding the guest's 32-bit code as 64-bit garbage later.
         void notify_process_bitness(bool is_wow64_process) override
         {
             if (is_wow64_process)
@@ -1428,7 +1319,7 @@ namespace sogen::fex
             this->cpu_state().segment_arrays[0] = reinterpret_cast<FEXCore::Core::CPUState::gdt_segment*>(address);
         }
 
-        // --[ memory_interface (public) ]------------------------------------------------------------
+        // memory_interface (public)
 
         void read_memory(uint64_t address, void* data, size_t size) const override
         {
@@ -1469,13 +1360,11 @@ namespace sogen::fex
                 return false;
             }
 
-            // sogen's own loader writes guest memory it has already declared read-only (e.g. a PE
-            // section's raw file bytes, before/regardless of the section's final protection). Unlike
-            // Unicorn's uc_mem_write, which operates on emulated memory with no real host enforcement,
-            // FEX's guest-VA==host-VA model is backed by actual host mprotect state, so such a write
-            // needs a temporary permission bump around the memcpy. Every page of the range must be
-            // checked, not just the first: a write straddling into a read-only region would otherwise
-            // fault mid-memmove on the host instead of taking the bump.
+            // sogen's loader writes guest memory it has already declared read-only (a PE section's raw
+            // file bytes, regardless of the section's final protection). Unlike Unicorn's uc_mem_write,
+            // this backend's guest VA == host VA is backed by real host mprotect state, so the write
+            // needs a temporary permission bump. Every page must be checked, not just the first: a write
+            // straddling into a read-only region would otherwise fault mid-memmove.
             const bool needs_temporary_write = !this->range_is_writable(address, size);
 
             if (needs_temporary_write)
@@ -1496,12 +1385,11 @@ namespace sogen::fex
             return true;
         }
 
-        // --[ hook_interface ]-----------------------------------------------------------------------
+        // hook_interface
         //
-        // Like the KVM backend, FEX runs the guest natively, so fine-grained memory/execution/basic-
-        // block hooks cannot fire. They are accepted (and tracked, so delete_hook works) for API
-        // compatibility. Only instruction hooks for `syscall` are actually wired (see the syscall
-        // bridge). cpuid/rdtsc could later be wired through FEX's CPUID/TSC override hooks.
+        // As with KVM, the guest runs natively, so fine-grained memory/execution/basic-block hooks
+        // cannot fire; they are accepted and tracked (so delete_hook works) purely for API
+        // compatibility. Only `syscall` instruction hooks are actually wired.
 
         emulator_hook* hook_memory_execution(memory_execution_hook_callback callback) override
         {
@@ -1602,30 +1490,20 @@ namespace sogen::fex
 #ifdef __APPLE__
         std::vector<host_reserved_range> reserved_host_ranges() const override
         {
-            // Guest VA == host VA, so this process's own memory (its loaded image, dyld, shared
-            // libraries, thread stacks, heap) shares the same address space the guest uses - unlike
-            // Unicorn/Icicle/KVM, which sandbox or translate the guest address space independently.
-            // Enumerate everything currently mapped in this process via the Mach VM region API (the
-            // Darwin equivalent of walking /proc/self/maps) so the memory manager can steer guest
-            // allocations away from it. One-shot snapshot: see the interface doc comment for the
-            // residual risk of host allocations made after this call.
+            // Enumerates everything currently mapped in this process via the Mach VM region API, the
+            // Darwin equivalent of walking /proc/self/maps.
             std::vector<host_reserved_range> ranges;
 
-            // Every 64-bit Mach-O executable reserves a __PAGEZERO segment spanning at least [0, 4GB)
-            // to make null-pointer dereferences fault. It's an OS/linker convention enforced at the
-            // mmap syscall level (MAP_FIXED requests anywhere in this low range are refused), not
-            // something that shows up as a discoverable, listed VM region via mach_vm_region below -
-            // confirmed empirically: mach_vm_region's first real hit starts well above 4GB (its exact
-            // position shifts with ASLR), yet mapping guest memory anywhere in the gap below it still
-            // fails. Reserve the whole gap up to wherever the scan's first real region actually
-            // starts, rather than guessing a fixed size.
+            // Every 64-bit Mach-O executable reserves a __PAGEZERO segment spanning at least [0, 4GB),
+            // an OS/linker convention enforced at the mmap syscall level rather than a listed VM region
+            // mach_vm_region reports: its first real hit starts well above 4GB (ASLR-dependent), yet
+            // mapping guest memory anywhere in the gap below still fails. So the whole gap up to the
+            // scan's first real region is reserved rather than guessing a fixed size.
             //
-            // The FEXCore-internal arena (see fex_internal_arena) is a live mapping the Mach scan
-            // below would otherwise report as many separate sub-regions (PROT_NONE reservation, the
-            // committed BlockLinks buffers, the MAP_JIT CodeBuffer, freed holes...). Skip all of them
-            // and register the whole arena as a single reserved range instead, so the guest steers
-            // clear of every part of it - including sub-regions allocated lazily after this one-shot
-            // snapshot and any transient unmapped holes - with no dependence on the scan's timing.
+            // The FEXCore-internal arena would otherwise be reported as many separate sub-regions
+            // (PROT_NONE reservation, committed BlockLinks buffers, the MAP_JIT CodeBuffer, freed
+            // holes). Registering it as one range instead covers sub-regions allocated lazily after this
+            // one-shot snapshot and any transient holes, with no dependence on the scan's timing.
             const auto& arena = fex_internal_arena::instance();
             const uint64_t arena_base = arena.base();
             const uint64_t arena_end = arena.active() ? arena_base + arena.size() : 0;
@@ -1666,13 +1544,10 @@ namespace sogen::fex
                     first_region = false;
                 }
 
-                // AddressSanitizer reserves an enormous, sparse shadow-memory map: individual
-                // regions spanning tens of GB up to multiple TB, placed high in the address space
-                // (0x600000000000+ and ~0x7e00000000 on macOS/arm64). They sit far above where the
-                // guest actually allocates during execution, but feeding them to the memory manager
-                // as reserved ranges bloats reserved_regions_ into the thousands, turning its
-                // per-allocation O(n) overlap scans into an O(n^2) stall during process setup. Skip
-                // these giant reservations in instrumented builds only; release builds are unaffected.
+                // AddressSanitizer's sparse shadow map spans tens of GB up to multiple TB per region,
+                // placed far above where the guest ever allocates. Feeding those to the memory manager
+                // bloats reserved_regions_ into the thousands and stalls process setup, so they are
+                // skipped - in instrumented builds only.
 #if defined(__has_feature)
 #if __has_feature(address_sanitizer)
                 constexpr mach_vm_size_t asan_shadow_region_threshold = 0x100000000ULL; // 4 GiB
@@ -1692,19 +1567,12 @@ namespace sogen::fex
 
         std::vector<host_reserved_range> reserved_host_ranges_in(uint64_t address, size_t size) const override
         {
-            // Targeted equivalent of reserved_host_ranges() for a single query window. The fixed-
-            // address allocate_memory overload only needs to know whether THIS window has been
-            // claimed by a foreign host mapping since sogen last released it - not to re-enumerate
-            // every region in the process, whose count (and thus that walk's cost) grows unbounded
-            // over a long session. mach_vm_region's start-address parameter lets the kernel skip
-            // straight to the first region at or above the window, so this visits only regions
-            // actually inside the window (usually none).
-            //
-            // The arena and the __PAGEZERO gap are captured into reserved_regions_ by the first full
-            // scan at startup and never released, so overlaps_reserved_region already rejects a
-            // target landing in them without help here; the only thing a rescan of an otherwise-free
-            // window can add is a foreign mapping in a gap an earlier guest unmap munmap'd back to
-            // the OS - which is exactly what a bare "is anything mapped in this host window" probe finds.
+            // mach_vm_region's start-address parameter lets the kernel skip straight to the first region
+            // at or above the window, so this visits only regions actually inside it (usually none),
+            // instead of re-walking every region in the process - a count that grows unbounded over a
+            // long session. The arena and the __PAGEZERO gap are captured by the first full scan at
+            // startup and never released, so the only thing a rescan of an otherwise-free window adds is
+            // a foreign mapping in a gap an earlier guest unmap returned to the OS.
             std::vector<host_reserved_range> ranges;
 
             const mach_vm_address_t window_start = address;
@@ -1742,7 +1610,7 @@ namespace sogen::fex
       private:
         friend class fex_syscall_handler;
 
-        // --[ memory_interface (private) ]-----------------------------------------------------------
+        // memory_interface (private)
 
         void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback /*write_cb*/) override
         {
@@ -1786,15 +1654,10 @@ namespace sogen::fex
 #ifdef __APPLE__
         void reserve_guest_address_range(uint64_t address, size_t size) override
         {
-            // Called for every guest allocation, including reserve-only ones that never reach
-            // map_memory. Guest VA == host VA here, so a reserved-but-uncommitted range still needs to
-            // be unavailable to the host's own allocator - otherwise something like a FEXCore JIT code
-            // buffer (allocated via plain mmap(NULL, ...), unaware of sogen's guest bookkeeping) can be
-            // handed this exact address before the guest range is ever committed.
             // Pages already ours (from this or an adjacent guest region sharing the host page) keep
-            // their mapping - sync_host_page_apple/map_memory applies the real permission when
-            // committed. Everything else is claimed one mmap per contiguous run: whole module image
-            // reservations come through here, and a per-page syscall makes process startup crawl.
+            // their mapping; sync_host_page_apple/map_memory applies the real permission on commit.
+            // Everything else is claimed one mmap per contiguous run: whole module image reservations
+            // come through here, and a per-page syscall makes process startup crawl.
             const uint64_t start = host_page_align_down_apple(address);
             const uint64_t end = host_page_align_up_apple(address + size);
             for (uint64_t host_page = start; host_page < end;)
@@ -1829,11 +1692,9 @@ namespace sogen::fex
 
         void release_guest_address_range(uint64_t address, size_t size) override
         {
-            // The caller guarantees [address, address + size) contains no reserved guest ranges (see
-            // memory_interface), so every host page still mapped wholly inside it is a stale
-            // reservation claim whose guest range has been released - hand it back to the OS.
-            // Boundary pages straddling the range's edges are kept: their outside part may belong to
-            // a neighboring, still-live reservation.
+            // The caller guarantees the range holds no reserved guest ranges (see memory_interface), so
+            // every host page wholly inside it is a stale claim and can go back to the OS. Boundary
+            // pages are kept: their outside part may belong to a neighboring, still-live reservation.
             const uint64_t start = host_page_align_up_apple(address);
             const uint64_t end = host_page_align_down_apple(address + size);
 
@@ -1856,11 +1717,9 @@ namespace sogen::fex
             const uint64_t host_address = address;
 
 #ifdef __APPLE__
-            // Darwin has no mremap(); mach_vm_remap() is the Mach equivalent - it creates a new
-            // mapping at `address` that refers to the same underlying pages as `host_pointer`
-            // (VM_FLAGS_FIXED forces the target address; VM_FLAGS_OVERWRITE replaces whatever
-            // reservation sogen's memory_manager already put there, matching mmap(MAP_FIXED)'s
-            // semantics). copy=FALSE: alias, don't duplicate, matching Linux's MREMAP_MAYMOVE path.
+            // Darwin has no mremap(); mach_vm_remap() is the Mach equivalent. VM_FLAGS_OVERWRITE
+            // replaces whatever reservation the memory manager already put there, matching
+            // mmap(MAP_FIXED); copy=FALSE aliases rather than duplicates, matching MREMAP_MAYMOVE.
             mach_vm_address_t target_address = host_address;
             vm_prot_t cur_protection = VM_PROT_NONE;
             vm_prot_t max_protection = VM_PROT_NONE;
@@ -1890,12 +1749,10 @@ namespace sogen::fex
 
         bool host_memory_aliasing_is_coherent() const override
         {
-            // Conservative, matching the KVM backend's reasoning: Apple Silicon's unified memory
-            // architecture makes CPU/GPU cache coherency for Metal buffers (what MoltenVK's Vulkan
-            // buffers ultimately are) far more likely than on discrete-GPU x86 setups, but there is no
-            // confirmed guarantee across every Metal storage mode this bridge might use. An
-            // unnecessary flush on already-coherent memory is a harmless no-op; wrongly claiming
-            // coherence when it isn't would surface as real rendering corruption, so default to false.
+            // Apple Silicon's unified memory makes CPU/GPU coherency for the Metal buffers behind
+            // MoltenVK's Vulkan buffers likely, but it is not guaranteed across every Metal storage
+            // mode this bridge might use. An unnecessary flush is a harmless no-op, whereas wrongly
+            // claiming coherence surfaces as rendering corruption.
             return false;
         }
 
@@ -1906,14 +1763,12 @@ namespace sogen::fex
                 return;
             }
 
-            // Evicts the CPU data cache for [host_pointer, host_pointer + size) out to memory, so a
-            // GPU reading the same physical pages non-coherently sees the guest's writes - the ARM64
-            // equivalent of the KVM backend's clflushopt+sfence pair.
+            // The ARM64 equivalent of the KVM backend's clflushopt+sfence pair: evict the CPU data cache
+            // out to memory so a GPU reading the same physical pages non-coherently sees guest writes.
 #ifdef __APPLE__
-            // Darwin's official public API for exactly this ("useful when dealing with cache
-            // incoherent devices or DMA" - OSCacheControl.h) - prefer it over hand-rolled `dc civac`
-            // inline asm, since EL0 access to cache-maintenance instructions isn't something this
-            // embedder should assume is unconditionally permitted by the kernel.
+            // Darwin's public API for exactly this ("useful when dealing with cache incoherent devices
+            // or DMA" - OSCacheControl.h), preferred over hand-rolled `dc civac`, since EL0 access to
+            // cache-maintenance instructions is not something an embedder should assume is permitted.
             ::sys_dcache_flush(const_cast<void*>(host_pointer), size);
 #else
             constexpr size_t cache_line_size = 64; // Conservative for all known ARM64 implementations.
@@ -1964,11 +1819,9 @@ namespace sogen::fex
             this->mark_executable_range(address, size, permissions);
         }
 
-        // --[ region bookkeeping ]-------------------------------------------------------------------
+        // region bookkeeping
 
-        // True if every byte of [address, address+size) lies in a region declared writable - the
-        // range-wide counterpart of is_range_mapped's walk (callers should already have checked
-        // is_range_mapped).
+        // Callers are expected to have checked is_range_mapped already.
         bool range_is_writable(uint64_t address, size_t size) const
         {
             uint64_t cursor = address;
@@ -1995,12 +1848,10 @@ namespace sogen::fex
             return true;
         }
 
-        // Temporarily grants write access to [address, address+size) for a loader-privileged write
-        // (sogen itself writing guest memory it declared read-only, e.g. a PE section's initial file
-        // content before its final permission is locked in) and reverts to the declared permissions
-        // afterwards. Unlike guest code, which can't write here at all, this path needs one because
-        // FEX/KVM enforce the declared permission via real host protection - unlike Unicorn, whose
-        // uc_mem_write operates on its own emulated memory independent of any host mprotect state.
+        // For loader-privileged writes: sogen itself writing guest memory it declared read-only, such as
+        // a PE section's initial file content before its final permission is locked in. Needed because
+        // this backend enforces the declared permission through real host protection, unlike Unicorn's
+        // uc_mem_write, which operates on emulated memory independent of any host mprotect state.
         void set_temporary_write_access(uint64_t address, size_t size, bool enable)
         {
 #ifdef __APPLE__
@@ -2054,18 +1905,13 @@ namespace sogen::fex
 #endif
         }
 
-        // Removes every regions_ entry intersecting [address, address+size) so the map stays
-        // non-overlapping (the invariant is_range_mapped/range_is_writable rely on). The guest
-        // memory manager tracks memory at a coarser granularity than this backend: it commits a
-        // reserved region in gap-filling sub-ranges (each a separate map_memory here, so regions_
-        // can hold several entries tiling one of its committed regions), but later decommits/releases
-        // that committed region in one call - i.e. an unmap range that spans several regions_ entries
-        // and does not start exactly at each entry's key. A plain regions_.erase(address) would drop
-        // only the entry keyed at address and orphan the rest; a later allocation reusing that
-        // address space then overlaps the orphan, and is_range_mapped's --upper_bound walk lands on
-        // the stale inner entry (whose end is below the target) and wrongly reports "not mapped".
-        // Entries straddling an edge of the range are trimmed/split so their part outside the range
-        // survives (the host-level unmap/remap only ever touches [address, address+size)).
+        // Keeps regions_ non-overlapping, the invariant is_range_mapped/range_is_writable rely on. The
+        // guest memory manager commits a reserved region in gap-filling sub-ranges (several map_memory
+        // calls, so several entries tile one committed region) but decommits it in one call, so an
+        // unmap range spans several entries and does not start at each entry's key. A plain
+        // regions_.erase(address) would orphan the rest, and is_range_mapped's --upper_bound walk would
+        // later land on a stale inner entry and wrongly report "not mapped". Entries straddling an edge
+        // are trimmed or split, since the host-level unmap only touches [address, address+size).
         void erase_region_range(uint64_t address, size_t size)
         {
             const uint64_t end = address + size;
@@ -2110,15 +1956,12 @@ namespace sogen::fex
             }
         }
 
-        // Records `permissions` on every regions_ entry intersecting [address, address+size),
-        // splitting entries that straddle an edge so only the in-range part changes. A protection
-        // change from the guest can target a sub-range of a larger committed region, start mid-entry,
-        // or span several entries - all of which a plain regions_.find(address) either misses (mid-
-        // entry, no key) or over-applies (sets a larger region's permission for a sub-range write).
-        // Since QueryGuestExecutableRange decides executability straight from these recorded
-        // permissions, a stale entry makes the JIT reject a legitimately-executable page (a NoExec
-        // "wild branch") or execute a page it should not. Gaps in the tiling are preserved (only
-        // already-present entries are rewritten - unmapped holes are never fabricated as mapped).
+        // Splits entries straddling an edge so only the in-range part changes. A guest protection change
+        // can target a sub-range of a larger committed region, start mid-entry, or span several entries,
+        // all of which a plain regions_.find(address) either misses or over-applies. Since
+        // QueryGuestExecutableRange decides executability straight from these recorded permissions, a
+        // stale entry makes the JIT reject a legitimately-executable page or execute one it should not.
+        // Gaps in the tiling are preserved: unmapped holes are never fabricated as mapped.
         void set_region_range_permissions(uint64_t address, size_t size, memory_permission permissions)
         {
             const uint64_t end = address + size;
@@ -2196,12 +2039,9 @@ namespace sogen::fex
         }
 
 #ifdef __APPLE__
-        // --[ 16KB-host vs 4KB-guest permission reconciliation (Apple only) ]------------------------
-        //
-        // Updates the per-4KB shadow for [address, address+size) then re-syncs every 16KB host page
-        // it touches. `permissions` is nullopt for unmap (the pages become "never requested" again,
-        // which must still fault like reserved-but-uncommitted guest memory - not silently allowed).
-
+        // 16KB-host vs 4KB-guest permission reconciliation. nullopt permissions means unmap: the pages
+        // become "never requested" again, which must still fault like reserved-but-uncommitted guest
+        // memory rather than being silently allowed.
         void set_shadow_range_apple(uint64_t address, size_t size, std::optional<memory_permission> permissions)
         {
             for (uint64_t page = address; page < address + size; page += page_size)
@@ -2217,15 +2057,11 @@ namespace sogen::fex
             }
         }
 
-        // Applies the effective host permission for one 16KB-aligned host page, derived from its
-        // (up to four) 4KB shadow slots:
-        //   - all slots agree (including "all absent") -> apply exactly, the common case.
-        //   - slots disagree -> union (most permissive). This also covers the "some slot absent"
-        //     case for now: until the Mach exception handler (a later phase) can resolve faults on a
-        //     PROT_NONE page, a guard/reserved slot sharing a host page with mapped memory is folded
-        //     into the union rather than made to fault - a temporary relaxation, not the final
-        //     design; tightening this to genuinely fault (and resolving the resulting "legitimate
-        //     access from a stricter neighbor" case) is deferred to that phase.
+        // Derives one 16KB host page's permission from its up to four 4KB shadow slots, taking their
+        // union when they disagree. The union also swallows the "some slot absent" case: a
+        // guard/reserved slot sharing a host page with mapped memory is folded in rather than made to
+        // fault, a deliberate relaxation until a Mach exception handler can resolve faults on a
+        // PROT_NONE page without breaking a legitimate access from a stricter neighbor.
         void sync_host_page_apple(uint64_t host_page_addr)
         {
             memory_permission effective = memory_permission::none;
@@ -2249,13 +2085,11 @@ namespace sogen::fex
             {
                 if (currently_mapped)
                 {
-                    // The guest range covering this host page may merely be decommitted while still
-                    // MEM_RESERVE'd, so the page must stay claimed at the host level - munmapping it
-                    // would let a foreign host allocation land here and be clobbered by a later
-                    // recommit's MAP_FIXED. Replacing the mapping in place (instead of mprotect'ing
-                    // it) discards the old contents, so a later recommit sees zeroed pages as
-                    // MEM_COMMIT requires. The claim is only dropped by release_guest_address_range
-                    // once the guest range is genuinely released.
+                    // The guest range may merely be decommitted while still MEM_RESERVE'd, so the page
+                    // must stay claimed: munmapping it would let a foreign host allocation land here
+                    // and be clobbered by a later recommit's MAP_FIXED. Replacing the mapping rather
+                    // than mprotect'ing it discards the old contents, so a recommit sees the zeroed
+                    // pages MEM_COMMIT requires. release_guest_address_range drops the claim for good.
                     void* result =
                         ::mmap(host_ptr, host_page_size_apple, PROT_NONE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
                     if (result != host_ptr)
@@ -2295,36 +2129,26 @@ namespace sogen::fex
         }
 #endif
 
-        // --[ FEX context plumbing ]-----------------------------------------------------------------
+        // FEX context plumbing
 
         void initialize_context()
         {
-            // Without an installed handler, LogMan::Msg::MFmtImpl/LogMan::Throw::MFmt silently
-            // discard the formatted message (see LogManager.cpp - `if (Handler) { ... }`) while
-            // still unconditionally executing FEX_TRAP_EXECUTION for ASSERT-level messages - meaning
-            // every internal FEXCore assertion failure would otherwise crash with zero indication of
-            // what actually failed. Install both handlers to print to stderr; this runs from ordinary
-            // call context (assertions fire synchronously, not from a signal handler), so plain
-            // fprintf is fine here, no async-signal-safety concerns apply.
+            // Without an installed handler, LogMan silently discards the formatted message (LogManager.
+            // cpp's `if (Handler)`) while still executing FEX_TRAP_EXECUTION for ASSERT-level messages,
+            // so every internal FEXCore assertion failure crashes with no indication of what failed.
             LogMan::Msg::InstallHandler([](LogMan::DebugLevels level, const char* message) {
                 fprintf(stderr, "[FEXCore LogMan] level=%s: %s\n", LogMan::DebugLevelStr(level), message);
             });
             LogMan::Throw::InstallHandler([](const char* message) { fprintf(stderr, "[FEXCore LogMan THROW] %s\n", message); });
 
 #ifdef __APPLE__
-            // Confine every FEXCore-internal host allocation (BlockLinks tree storage, JIT CodeBuffer,
-            // dispatcher) to a dedicated arena disjoint from the guest address space, and install the
-            // FEXCore::Allocator::mmap/munmap hooks that steer them there. Must happen before the very
-            // first internal allocation below (CreateNewContext allocates the CodeBuffer/dispatcher)
-            // and before reserved_host_ranges() is first queried, so the whole arena is off-limits to
-            // guest allocations. See fex_internal_arena's comment for the full rationale.
+            // Must happen before the first FEXCore-internal allocation (CreateNewContext allocates the
+            // CodeBuffer and dispatcher) and before reserved_host_ranges() is first queried, so the
+            // whole arena is off-limits to guest allocations.
             fex_internal_arena::instance().install();
 #endif
 
-            // libc++abi's default terminate handler prints nothing useful for an uncaught exception
-            // by default. Install our own to print the exception's what() plus a real backtrace
-            // before aborting - this runs from ordinary call context (std::terminate is not a signal
-            // handler), so backtrace()/backtrace_symbols()/fprintf are all safe here.
+            // libc++abi's default terminate handler prints nothing useful for an uncaught exception.
             std::set_terminate([]() {
                 fprintf(stderr, "[FEX backend] std::terminate invoked\n");
                 if (auto exc = std::current_exception())
@@ -2359,15 +2183,10 @@ namespace sogen::fex
             FEXCore::Config::Initialize();
             FEXCore::Config::Load();
 
-            // Diagnostic tooling: FEXCore's own per-block IR dump. When the env var
-            // EMULATOR_FEX_DUMPIR names an existing directory, FEXCore writes one file per
-            // translated guest basic block into it, keyed by the block's guest RIP:
-            // "<dir>/<rip:x>-pre.ir" (frontend IR straight out of the decoder, BEFOREOPT) and
-            // "<dir>/<rip:x>-post.ir" (after all optimization + register allocation, AFTEROPT).
-            // This lets a specific guest RVA window be inspected instruction-by-instruction to
-            // find a miscompiled/mis-decoded op. It is a pure runtime config (no FEXCore rebuild)
-            // and is confirmed not to perturb timing-sensitive JIT bugs, unlike inline hot-path
-            // C++ diagnostics. Off (zero overhead) unless the env var is set.
+            // With EMULATOR_FEX_DUMPIR naming an existing directory, FEXCore writes one file per
+            // translated guest basic block, keyed by guest RIP: "<rip:x>-pre.ir" straight out of the
+            // decoder and "<rip:x>-post.ir" after optimization and register allocation. Unlike inline
+            // hot-path diagnostics, this is confirmed not to perturb timing-sensitive JIT bugs.
             // PassManagerDumpIR value 3 == BEFOREOPT(1)|AFTEROPT(2).
             if (const char* dumpir_dir = std::getenv("EMULATOR_FEX_DUMPIR"))
             {
@@ -2377,13 +2196,11 @@ namespace sogen::fex
 
             FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "1");
 
-            // Piggyback on FEXCore's own GdbServer config flag: its only effect inside FEXCore
-            // (ContextImpl::InitCore, Core.cpp) is setting Config.NeedsPendingInterruptFaultCheck,
-            // which makes the JIT emit a `str zr, [InterruptFaultPage]` at every block entry
-            // (JIT.cpp's EmitSuspendInterruptCheck) - the mechanism request_thread_stop() needs to
-            // force a stuck-in-JIT thread to fault so handle_fault_signal gets a chance to run. We
-            // don't use FEXCore's actual built-in gdbserver (sogen has its own, separate stub), so
-            // this has no other observable effect.
+            // Piggybacks on FEXCore's GdbServer flag, whose only effect inside FEXCore (ContextImpl::
+            // InitCore) is setting Config.NeedsPendingInterruptFaultCheck, making the JIT emit a
+            // `str zr, [InterruptFaultPage]` at every block entry - the mechanism request_thread_stop()
+            // needs to force a stuck-in-JIT thread to fault. FEXCore's own gdbserver is unused (sogen
+            // has its own stub), so there is no other observable effect.
             FEXCore::Config::Set(FEXCore::Config::CONFIG_GDBSERVER, "1");
 
 #ifdef __APPLE__
@@ -2396,11 +2213,9 @@ namespace sogen::fex
             this->syscall_handler_ = std::make_unique<fex_syscall_handler>(*this);
             this->context_->SetSyscallHandler(this->syscall_handler_.get());
 
-            // InitCore() requires a non-null SignalDelegator. FEXCore's SetConfig()/GetConfig() (the
-            // dispatcher entry-point addresses used by handle_fault_signal below) are concrete, non-
-            // virtual methods on the base class, so the plain base satisfies everything InitCore()
-            // needs; real fault *delivery* is handled by the host signal handler installed below
-            // instead of a SignalDelegator subclass.
+            // InitCore() requires a non-null SignalDelegator, and the dispatcher entry-point addresses
+            // handle_fault_signal needs come from non-virtual base-class methods, so the plain base
+            // suffices - fault delivery is handled by the host signal handler installed below.
             this->signal_delegator_ = std::make_unique<FEXCore::SignalDelegator>();
             this->context_->SetSignalDelegator(this->signal_delegator_.get());
 
@@ -2413,10 +2228,8 @@ namespace sogen::fex
 
 #ifdef __APPLE__
       public:
-        // Applies a decode_arm64_load result once its data has been fetched (from an mmio_region's
-        // read_cb, or a plain memcpy off real guest memory - see handle_mmio_fault and
-        // handle_misaligned_atomic_fault) - writes the (possibly extended) value into the destination
-        // register and advances PC past the single decoded instruction.
+        // Applies a decode_arm64_load result once its data has been fetched, writing the possibly
+        // extended value into the destination register and advancing PC past the decoded instruction.
         void complete_decoded_load(ucontext_t* uctx, const decoded_arm64_load& decoded, const void* data, uint64_t pc)
         {
             if (decoded.is_vector)
@@ -2482,11 +2295,8 @@ namespace sogen::fex
             const auto decoded = decode_arm64_load(insn);
             if (!decoded)
             {
-                // fprintf/stdio is not async-signal-safe (internal buffering/locking) - this runs
-                // inside a real signal handler, so use snprintf into a fixed stack buffer followed by
-                // a single write(2) instead, the standard pragmatic idiom for signal-handler-safe
-                // formatted output (see jit_write_protect_retry_count_for's doc comment for the fuller
-                // async-signal-safety rationale that motivated this).
+                // stdio is not async-signal-safe and this runs inside a real signal handler, hence
+                // snprintf into a fixed stack buffer followed by a single write(2).
                 char buf[128];
                 const int len = snprintf(buf, sizeof(buf), "[MMIO] unrecognized instruction 0x%08x at pc=%p for fault_addr=0x%llx\n", insn,
                                          reinterpret_cast<void*>(pc), static_cast<unsigned long long>(fault_addr));
@@ -2504,14 +2314,12 @@ namespace sogen::fex
             return true;
         }
 
-        // Real hardware LDAR/LDAPR/STLR (load-acquire/store-release) instructions require natural
-        // alignment, unlike plain LDR/STR - but x86 permits unaligned accesses freely, and FEX uses
-        // this family to model x86's stronger memory ordering on ARM's weaker one, so an ordinary
-        // unaligned guest access to otherwise legitimately mapped memory can fault here (Darwin
-        // reports it as SIGBUS/BUS_ADRALN). sogen runs every guest thread of a process cooperatively
-        // on a single host thread (see windows_emulator.cpp's central loop), so there is no real
-        // concurrent host-thread race for these instructions to order against here - downgrading to a
-        // plain, non-atomic access is therefore correctness-preserving, not just a workaround.
+        // LDAR/LDAPR/STLR require natural alignment on real hardware, unlike plain LDR/STR, but x86
+        // permits unaligned accesses freely and FEX uses this family to model x86's stronger memory
+        // ordering, so an ordinary unaligned guest access to legitimately mapped memory faults here
+        // (Darwin reports SIGBUS/BUS_ADRALN). sogen runs every guest thread of a process cooperatively
+        // on one host thread, so there is no concurrent host-thread race for these instructions to
+        // order against, making the downgrade to a plain access correctness-preserving.
         bool handle_misaligned_atomic_fault(ucontext_t* uctx, uint64_t fault_addr)
         {
             const uint64_t pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
@@ -2548,20 +2356,14 @@ namespace sogen::fex
             return false;
         }
 
-        // memory_violation_hooks_/interrupt_hooks_ callbacks are shared, backend-agnostic
-        // windows-emulator code (dispatch_exception and friends) that allocates, logs, and mutates
-        // STL containers freely - safe when invoked from normal call context (as KVM/Unicorn do, after
-        // a blocking syscall or interpreter callback returns), but NOT safe to call directly from
-        // inside handle_fault_signal, a real kernel-delivered SIGSEGV/SIGBUS/SIGILL handler that can
-        // interrupt an unrelated malloc()/free() or STL mutation already in progress on this thread -
-        // confirmed to be a real, ASLR-timing-dependent heap-corruption hazard (see
-        // jit_write_protect_retry_count_for's doc comment for the same class of bug at smaller scale).
-        // Instead of calling hooks in-handler, stash what's needed here (plain data, no allocation) and
-        // force ExecuteThread to unwind back to start() (via ThreadStopHandlerAddress, exactly like a
-        // real stop - but without touching stop_requested_), which then dispatches the hook in normal
-        // context and resumes guest execution by simply re-entering ExecuteThread: it always starts
-        // fresh from CurrentFrame->State.rip, which is exactly what AbsoluteLoopTopAddressFillSRA
-        // already re-derived SRA from, so this is behaviorally identical to resuming in-handler.
+        // memory_violation_hooks_/interrupt_hooks_ callbacks are backend-agnostic windows-emulator code
+        // that allocates, logs and mutates STL containers freely. That is fine from normal call context
+        // (where KVM/Unicorn invoke them) but not from inside handle_fault_signal, which can interrupt
+        // an unrelated malloc()/free() on this thread - a confirmed, ASLR-timing-dependent heap
+        // corruption hazard. So the handler stashes plain data here instead and forces ExecuteThread to
+        // unwind back to start() via ThreadStopHandlerAddress, without touching stop_requested_; start()
+        // dispatches the hook in normal context and resumes by re-entering ExecuteThread, which always
+        // restarts from CurrentFrame->State.rip.
         enum class pending_fault_kind
         {
             none,
@@ -2579,10 +2381,9 @@ namespace sogen::fex
             int vector = 0;
         };
 
-        // Called only from start(), in normal call context, right after ExecuteThread returns - see
-        // pending_fault_dispatch_'s doc comment. Returns true if a hook was actually dispatched (i.e.
-        // ExecuteThread returned because handle_fault_signal deferred a hook, not because of a genuine
-        // stop_requested_ - start()'s loop uses the return value to decide whether to resume).
+        // Called only from start(), in normal call context, right after ExecuteThread returns. The
+        // return value tells start()'s loop whether ExecuteThread came back because a hook was deferred
+        // or because of a genuine stop.
         bool dispatch_pending_hook_if_any()
         {
             const pending_fault_dispatch dispatch = this->pending_fault_dispatch_;
@@ -2608,24 +2409,15 @@ namespace sogen::fex
             }
         }
 
-        // Called only from within handle_fault_signal (real signal-handler context) whenever a hook
-        // needs to run. See pending_fault_dispatch_'s doc comment for why hooks can't be called
-        // directly from here: stash the (plain-data, non-allocating) dispatch request and force
-        // ExecuteThread to unwind back to start(), which dispatches it safely in normal call context
-        // and then simply resumes by re-entering ExecuteThread - it always starts fresh from
-        // CurrentFrame->State.rip, which the hook is free to redirect (e.g. into the guest's own
-        // exception dispatcher), exactly as it could before when resumed via
-        // AbsoluteLoopTopAddressFillSRA directly from here.
+        // Called only from signal-handler context; see pending_fault_kind for why hooks cannot run
+        // directly there.
         //
-        // sra_already_spilled distinguishes the two unwind entry points the dispatcher provides
-        // (Dispatcher.cpp: ThreadStopHandlerAddressSpillSRA falls through SpillStaticRegs into
-        // ThreadStopHandlerAddress's plain PopCalleeSavedRegisters+ret) - callers whose fault happened
-        // via FEXCore's own controlled synthetic-exception path (vector==14/interrupt dispatch, where
-        // SRA is already spilled to CpuStateFrame by the time this C++ code runs) must pass true;
-        // callers interrupting arbitrary, uncontrolled points in live guest-translated JIT code (a
-        // real hardware fault directly on translated code, see handle_general_memory_violation) must
-        // pass false, since SRA is still live only in host registers there and skipping the spill
-        // leaves stale/inconsistent state for the next ExecuteThread entry to read.
+        // sra_already_spilled picks between the dispatcher's two unwind entry points
+        // (ThreadStopHandlerAddressSpillSRA falls through SpillStaticRegs into ThreadStopHandlerAddress).
+        // A fault taken via FEXCore's own synthetic-exception path (vector 14) has SRA already spilled to
+        // CpuStateFrame and passes true; a real hardware fault interrupting live translated code passes
+        // false, since SRA is still only in host registers there and skipping the spill would leave the
+        // next ExecuteThread entry reading stale state.
         void defer_hook_dispatch(ucontext_t* uctx, const pending_fault_dispatch& dispatch, bool sra_already_spilled)
         {
             this->pending_fault_dispatch_ = dispatch;
@@ -2634,9 +2426,8 @@ namespace sogen::fex
             arm_thread_state64_set_pc_fptr(uctx->uc_mcontext->__ss, reinterpret_cast<void*>(target));
         }
 
-        // True if a host PC lies inside the FEXCore Context's dispatcher trampoline. The dispatcher
-        // is host MAP_JIT code (like a CodeBuffer) but IsAddressInCodeBuffer does not recognize it, so
-        // the CodeBuffer-gated W^X retries in handle_fault_signal never fire for a dispatcher fault.
+        // The dispatcher is host MAP_JIT code like a CodeBuffer, but IsAddressInCodeBuffer does not
+        // recognize it, so the CodeBuffer-gated W^X retries never fire for a dispatcher fault.
         bool host_pc_in_dispatcher(uint64_t pc) const
         {
             if (this->signal_delegator_ == nullptr)
@@ -2647,23 +2438,15 @@ namespace sogen::fex
             return pc >= cfg.DispatcherBegin && pc < cfg.DispatcherEnd;
         }
 
-        // FEXCore's call-ret shadow stack (REG_CALLRET_SP == x25, ensure_callret_buffer) is a return-
-        // address predictor bracketed by a guard page on each side. A deep guest call chain - or a
-        // guest stack pivot / longjmp that abandons already-pushed frames, as steam_api.dll's RLD DRM
-        // does - legitimately underflows (or overflows) it past the committed region into a guard page.
-        // Upstream FEX treats this as expected and recovers by resetting REG_CALLRET_SP to the buffer's
-        // default location: Linux SyscallHandler::HandleSegfault (LinuxSyscalls/SyscallsSMCTracking.cpp)
-        // and Windows FEX::Windows::CallRetStack::HandleAccessViolation (Source/Windows/Common/
-        // CallRetStack.h, called from WOW64/Module.cpp) do exactly this. sogen's macOS backend set up
-        // the buffer and its default location (matching GetCallRetStackInfo) but never ported the guard-
-        // page fault recovery, so a guard-page hit fell through to handle_general_memory_violation,
-        // which mis-read the host callret-stack address as a bogus guest access violation and crashed
-        // building a synthetic exception with it. Classify by shape (fault address inside the
-        // thread's callret allocation, guard pages included) rather than si_code - Darwin reports a
-        // PROT_NONE guard-page hit as SEGV_ACCERR/SEGV_MAPERR/BUS_ADRALN interchangeably (see the
-        // CodeBuffer-race comments) - and reset x25 to the default location, mirroring GetCallRetStackInfo
-        // exactly (Base +- host_page guard, DefaultLocation = Base + CALLRET_STACK_SIZE/4). Strict no-op
-        // for any fault outside the callret allocation.
+        // FEXCore's call-ret shadow stack (x25, see ensure_callret_buffer) is a return-address predictor
+        // bracketed by a guard page on each side. A deep guest call chain, or a stack pivot/longjmp
+        // abandoning already-pushed frames as steam_api.dll's RLD DRM does, legitimately runs past the
+        // committed region into a guard page. Upstream FEX treats that as expected and recovers by
+        // resetting the register to the buffer's default location (Linux
+        // SyscallHandler::HandleSegfault, Windows FEX::Windows::CallRetStack::HandleAccessViolation),
+        // which this mirrors: Base +- host_page guard, DefaultLocation = Base + CALLRET_STACK_SIZE/4,
+        // matching GetCallRetStackInfo. Classified by shape rather than si_code, since Darwin reports a
+        // PROT_NONE guard-page hit as SEGV_ACCERR/SEGV_MAPERR/BUS_ADRALN interchangeably.
         bool handle_callret_stack_fault(ucontext_t* uctx, uint64_t fault_addr) const
         {
             if (this->thread_ == nullptr || this->thread_->CallRetStackBase == nullptr)
@@ -2681,19 +2464,13 @@ namespace sogen::fex
             return true;
         }
 
-        // Real (non-synthetic) guest memory violations: FEXCore's own vector-14 synthetic #PF
-        // (NoExecOp, see handle_fault_signal) is handled separately, but an ordinary guest
-        // load/store/instruction-fetch that directly faults - a real Windows PAGE_GUARD page,
-        // genuinely unmapped memory, or a Category-3 shadow-table page (page_shadow_apple_'s doc
-        // comment: mprotect'd to PROT_NONE because some 4KB guest slot within its host page is
-        // guard/unmapped while another slot is legitimately mapped) - has no path to
-        // memory_violation_hooks_ otherwise. Consult the shadow table for the *specific* 4KB guest
-        // page the fault address falls in: if the requested operation exceeds what's declared there,
-        // this is a real violation - classify it and defer_hook_dispatch (mirroring the existing
-        // vector-14 branch). Otherwise the access is genuinely legitimate per the shadow (a false
-        // fault from a stricter neighbor sharing the host page) - decode-and-emulate it exactly like
-        // handle_misaligned_atomic_fault already does for a different fault kind (same technique,
-        // reused directly).
+        // Real (non-synthetic) guest memory violations, which have no other path to
+        // memory_violation_hooks_: a Windows PAGE_GUARD page, genuinely unmapped memory, or a host page
+        // mprotect'd to PROT_NONE because one 4KB guest slot inside it is guard/unmapped while another
+        // is legitimately mapped. The shadow table for the specific 4KB page decides: an operation
+        // exceeding what is declared there is a real violation and gets deferred to the hooks, otherwise
+        // the access is a false fault from a stricter neighbor sharing the host page and is
+        // decode-and-emulated the same way handle_misaligned_atomic_fault does.
         bool handle_general_memory_violation(ucontext_t* uctx, uint64_t fault_addr)
         {
             const uint64_t pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
@@ -2716,17 +2493,12 @@ namespace sogen::fex
 
             const auto type = (declared == memory_permission::none) ? memory_violation_type::unmapped : memory_violation_type::protection;
 
-            // This fault interrupted live guest-translated JIT code at an arbitrary point. FEX's call-ret
-            // block-chaining (directly-linked blocks and callret RET fast-paths) advances execution
-            // WITHOUT rewriting CurrentFrame->State.rip - it holds whatever was last written to it (e.g.
-            // a prior syscall's fallthrough), so it is frequently STALE here. The
-            // memory-violation hook (and the synthetic exception record it dispatches to the guest) reads
-            // State.rip as the faulting instruction pointer, so without this it reports a misleading PC -
-            // unlike Unicorn/native, which are instruction-precise and report the true faulting insn.
-            // Reconstruct the real guest rip from the live host PC (the same mechanism FEX's own
-            // suspend-time ReconstructThreadState and the InterruptFaultPage cooperative-stop path use);
-            // the host PC is squarely inside a compiled block here, so this resolves accurately. Guard on
-            // a non-zero result so a failed reconstruction never zeroes a usable stale rip.
+            // FEX's block chaining (directly-linked blocks and callret RET fast-paths) advances execution
+            // without rewriting CurrentFrame->State.rip, so it holds whatever was last written to it and
+            // is frequently stale here. The memory-violation hook reads State.rip as the faulting
+            // instruction pointer, so it must be reconstructed from the live host PC - the same mechanism
+            // FEX's own ReconstructThreadState uses. Guarded on a non-zero result so a failed
+            // reconstruction never zeroes a usable stale rip.
             if (const uint64_t recon_rip = this->context_->RestoreRIPFromHostPC(this->thread_, pc))
             {
                 this->thread_->CurrentFrame->State.rip = recon_rip;
@@ -2745,10 +2517,7 @@ namespace sogen::fex
             return true;
         }
 
-        // Called (via the free-function signal handler below) for SIGSEGV/SIGBUS/SIGILL/SIGTRAP.
-        // Returns true if the fault was recognized and handled (FEXCore's own guest-exception
-        // trampoline, a recoverable JIT W^X/guard-page condition, or a guest memory violation whose
-        // hook dispatch has been deferred); false for anything else, which the wrapper reports as an
+        // Returns false for anything it does not recognize, which the wrapper below reports as an
         // unhandled host fault and re-raises with default disposition.
         bool handle_fault_signal(int sig, siginfo_t* info, void* raw_ucontext)
         {
@@ -2763,60 +2532,40 @@ namespace sogen::fex
             {
                 const auto fault_addr = reinterpret_cast<uint64_t>(info->si_addr);
 
-                // This check must run first, before any signal/si_code-specific branch below: just
-                // like the CodeBuffer race (see the BUS_ADRALN branch's own comment), Darwin can
-                // report this exact same PROT_NONE violation as BUS_ADRALN instead of the expected
-                // SEGV_ACCERR/SEGV_MAPERR. Since InterruptFaultPage's address is never inside the
-                // CodeBuffer, a misclassified BUS_ADRALN fault here would fall past that check
-                // straight into handle_general_memory_violation, which unconditionally treats
-                // fault_addr as a *guest* address (page_shadow_apple_ lookup) and
-                // dispatches a synthetic guest memory-violation exception with that bogus "guest
-                // address" (really just this backend's own internal heap pointer) - corrupting
-                // whatever the resulting nonsense exception dispatch touches downstream. Checking this
-                // first, before any signal/si_code-specific branch, means every InterruptFaultPage
-                // fault is caught here regardless of how Darwin classifies it.
+                // Must run before any si_code-specific branch below, because Darwin can report this
+                // PROT_NONE violation as BUS_ADRALN instead of SEGV_ACCERR/SEGV_MAPERR. Since
+                // InterruptFaultPage is never inside the CodeBuffer, a misclassified fault would
+                // otherwise fall through to handle_general_memory_violation, which treats fault_addr as
+                // a guest address and would dispatch a synthetic guest exception built from this
+                // backend's own internal pointer.
                 const auto interrupt_page_addr = reinterpret_cast<uint64_t>(this->thread_->InterruptFaultPage);
                 if (fault_addr >= interrupt_page_addr && fault_addr < interrupt_page_addr + sizeof(this->thread_->InterruptFaultPage))
                 {
                     const auto fault_pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
                     const bool is_dispatch_code = this->context_ && this->context_->IsAddressInCodeBuffer(this->thread_, fault_pc);
 
-                    // ExitFunctionLinkerAddress's OWN epilogue (EmitSignalGuardedRegion's closing
-                    // sequence, Dispatcher.cpp) also writes to InterruptFaultPage from inside the
-                    // CodeBuffer - via a `strb`, functionally identical to the DeferredSignalRefCount
-                    // Guard host-C++ destructor below, just JIT-emitted. IsAddressInCodeBuffer alone
-                    // can't tell this apart from a genuine per-block-entry interrupt check
-                    // (EmitSuspendInterruptCheck's 64-bit `str`/128-bit vector `str`, JIT.cpp) - both
-                    // are "inside the CodeBuffer". Redirecting to ThreadStopHandlerAddress while
-                    // actually mid-trampoline-epilogue pops the dispatcher's own frame at the wrong
-                    // stack depth. Distinguish via the raw instruction word: STRB (unsigned-offset
-                    // immediate) always encodes with size=00,V=0,opc=00 - genuinely distinct from both
-                    // of EmitSuspendInterruptCheck's forms (64-bit `str` has size=11; 128-bit vector
-                    // `str` has V=1) - so this mask catches only the epilogue's strb, never either
-                    // genuine block-entry form.
+                    // ExitFunctionLinkerAddress's own epilogue (EmitSignalGuardedRegion's closing
+                    // sequence) also writes InterruptFaultPage from inside the CodeBuffer, via a
+                    // JIT-emitted `strb`, so IsAddressInCodeBuffer cannot tell it apart from a genuine
+                    // per-block-entry interrupt check. Redirecting to ThreadStopHandlerAddress while
+                    // mid-epilogue pops the dispatcher's frame at the wrong stack depth. The raw
+                    // instruction word distinguishes them: STRB (unsigned-offset immediate) encodes
+                    // size=00,V=0,opc=00, distinct from both of EmitSuspendInterruptCheck's forms
+                    // (64-bit `str` has size=11, the 128-bit vector `str` has V=1).
                     const bool is_strb_epilogue_write = (*reinterpret_cast<const uint32_t*>(fault_pc) & 0xFFC00000u) == 0x39000000u;
 
                     if (is_dispatch_code && !is_strb_epilogue_write)
                     {
-                        // This cooperative stop is taken at a genuine JIT block-entry / loop back-edge
-                        // interrupt check (EmitSuspendInterruptCheck, JIT.cpp), triggered by the
-                        // quantum-timer thread's async mprotect of InterruptFaultPage. At such a point
-                        // the live guest state is in host registers (SRA) and CPUState.rip holds
-                        // whatever was last written to it, which is frequently stale: a completed
-                        // syscall leaves rip at its fallthrough (HandleSyscall sets rip = syscall+2),
-                        // and execution then runs on through directly-linked blocks / callret RET
-                        // fast-paths that never rewrite CPUState.rip. Redirecting to the non-spill
-                        // ThreadStopHandlerAddress would resume ExecuteThread from that stale rip with
-                        // stale registers, re-executing an already-retired instruction - e.g. a `retn`
-                        // whose return slot has since been reused by a later call, popping garbage and
-                        // producing a wild branch ("NoExec instruction" in the entry block). Reconstructing
-                        // the real guest rip from the faulting host PC and redirecting through the
-                        // SpillSRA stop handler writes the live SRA GPRs/FPRs/flags back to CPUState
-                        // before ExecuteThread returns, mirroring FEX's own suspend-time reconstruction
-                        // (Source/Windows/WOW64/Module.cpp ReconstructThreadState, which does exactly
-                        // RestoreRIPFromHostPC + SRA spill). Both halves are required: without the rip
-                        // reconstruction resume lands on the stale instruction; without the SRA spill it
-                        // resumes with stale registers.
+                        // A genuine cooperative stop at a JIT block-entry interrupt check, triggered by
+                        // the quantum timer's async mprotect. Live guest state is in host registers
+                        // (SRA) and CPUState.rip is frequently stale, since a completed syscall leaves
+                        // it at its fallthrough and execution then runs through directly-linked blocks
+                        // and callret RET fast-paths that never rewrite it. Resuming from that stale rip
+                        // with stale registers re-executes an already-retired instruction - a `retn`
+                        // whose return slot was reused pops garbage and branches wild. Both halves are
+                        // therefore required: reconstruct the rip from the faulting host PC, and unwind
+                        // through the SpillSRA handler so the live SRA registers reach CPUState before
+                        // ExecuteThread returns. This mirrors FEX's own ReconstructThreadState.
                         this->thread_->CurrentFrame->State.rip = this->context_->RestoreRIPFromHostPC(this->thread_, fault_pc);
                         this->interrupt_page_unwind_ = true;
                         const auto& stop_cfg = this->signal_delegator_->GetConfig();
@@ -2825,43 +2574,29 @@ namespace sogen::fex
                         return true;
                     }
 
-                    // Not a genuine block-entry check - either FEXCore's own
-                    // DeferredSignalRefCountGuard destructor (SignalScopeGuards.h, host C++ code) or
-                    // ExitFunctionLinkerAddress's own JIT-emitted epilogue strb (both write to this
-                    // same page as ordinary bookkeeping, coincidentally racing with a stop request
-                    // from another thread, e.g. the quantum timer, that just mprotect'd the page).
-                    // Redirecting to ThreadStopHandlerAddress here would be wrong in either case:
-                    // that entry point expects to unwind a live JIT dispatcher stack frame, not
-                    // whatever is actually executing at the moment of the race, and doing so from the
-                    // host-C++-side DeferredSignalRefCountGuard destructor corrupts the stack,
-                    // producing a pc==lr==0 crash.
-                    // The store's actual value is inconsequential - only the page's protection state
-                    // drives the cooperative-stop mechanism - so just skip the single faulting store
-                    // instruction; the next real JIT block entry will still see the page protected
-                    // and stop correctly.
+                    // Not a block-entry check but ordinary bookkeeping racing a stop request from another
+                    // thread: either FEXCore's DeferredSignalRefCountGuard destructor or
+                    // ExitFunctionLinkerAddress's JIT-emitted epilogue strb. ThreadStopHandlerAddress
+                    // expects to unwind a live JIT dispatcher frame, so taking it from the host-C++ side
+                    // corrupts the stack into a pc==lr==0 crash. Only the page's protection state drives
+                    // the stop mechanism, not the stored value, so skip the faulting store; the next real
+                    // block entry still sees the page protected and stops correctly.
                     arm_thread_state64_set_pc_fptr(uctx->uc_mcontext->__ss, reinterpret_cast<void*>(fault_pc + 4));
                     return true;
                 }
 
-                // A W^X (write-XOR-execute) instruction-fetch fault on FEXCore's own dispatcher
-                // trampoline. The dispatcher is host MAP_JIT code, just like a CodeBuffer, but
-                // IsAddressInCodeBuffer does not recognize it, so the CodeBuffer-gated W^X retries
-                // below never fire for it. The W^X retry paths in this handler can leave this
-                // thread's per-thread JIT write-protect in write mode, so re-entering the dispatcher
-                // then faults on the instruction fetch (fault address == pc). Darwin reports this as
-                // SIGSEGV or SIGBUS with any of SEGV_ACCERR/SEGV_MAPERR/BUS_ADRALN (see the
-                // CodeBuffer-race comments below for the same si_code ambiguity), so classify by
-                // shape - an instruction fetch (fault_addr == pc) inside the dispatcher range -
-                // rather than by si_code, and toggle execute mode and retry the identical
-                // instruction.
+                // A W^X instruction-fetch fault on FEXCore's dispatcher trampoline: it is host MAP_JIT
+                // code like a CodeBuffer, but IsAddressInCodeBuffer does not recognize it, so the
+                // CodeBuffer-gated retries below never fire for it, and this handler's other retry paths
+                // can leave the thread's JIT write-protect in write mode. Classified by shape - an
+                // instruction fetch inside the dispatcher range - rather than si_code, since Darwin
+                // reports this as any of SEGV_ACCERR/SEGV_MAPERR/BUS_ADRALN.
                 //
-                // Deliberately NOT bounded by the per-address retry budget the CodeBuffer cases use:
-                // a host pc inside the dispatcher is unambiguously FEXCore's own code executing
-                // (never a wild guest branch), and the dispatcher is genuine RWX-capable MAP_JIT, so
-                // toggling execute mode ALWAYS lets the fetch succeed and execution proceeds - it
-                // can never spin. A spuriously exhausted budget here would drop the fault through to
-                // handle_general_memory_violation, which would mis-read the host dispatcher address
-                // as a bogus guest access violation.
+                // Deliberately unbounded, unlike the CodeBuffer cases: a host pc inside the dispatcher
+                // is unambiguously FEXCore's own code on genuine RWX-capable MAP_JIT, so toggling
+                // execute mode always lets the fetch succeed and can never spin. A spuriously exhausted
+                // budget would instead drop the fault into handle_general_memory_violation, which would
+                // mis-read the host dispatcher address as a guest access violation.
                 {
                     const auto host_pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
                     if (fault_addr == host_pc && this->host_pc_in_dispatcher(host_pc))
@@ -2871,25 +2606,18 @@ namespace sogen::fex
                     }
                 }
 
-                // A call-ret shadow-stack guard-page hit (underflow/overflow) - reset REG_CALLRET_SP to
-                // the buffer's default location and resume, exactly as upstream FEX does. Checked early,
-                // by shape, before the general-violation routing that would otherwise mis-dispatch this
-                // host arena address as a bogus guest access violation (see the helper's doc comment).
+                // Checked early, before the general-violation routing that would otherwise mis-dispatch
+                // this host arena address as a guest access violation.
                 if (this->handle_callret_stack_fault(uctx, fault_addr))
                 {
                     return true;
                 }
 
-                // An instruction-fetch fault reports si_addr == the faulting pc itself (a real MMIO
-                // data access from a mapped mmio_region's guest address never coincides with a live
-                // code address, so this is never a false negative for a genuine MMIO hit). Excluding
-                // it here matters: if the underlying root cause is a bad branch to a garbage/null pc
-                // (root-caused elsewhere, not by this backend's fault handling), that garbage address
-                // can coincidentally fall inside some registered mmio_region's range purely by chance -
-                // routing it into handle_mmio_fault would then try to decode "the instruction at pc"
-                // from that same garbage/unmapped address and crash again there instead, which is a
-                // confusing secondary symptom of the real bug, not a new one. Let it fall through to
-                // the ordinary unhandled-signal report untouched.
+                // An instruction-fetch fault reports si_addr == pc, which a genuine MMIO data access
+                // never does, so excluding it costs no real MMIO hits. It matters because a bad branch
+                // to a garbage pc can land inside a registered mmio_region by chance; handle_mmio_fault
+                // would then try to decode the instruction at that same garbage address and crash there
+                // instead, masking the real bug behind a confusing secondary symptom.
                 const auto pc_for_mmio_check = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
                 if (fault_addr != pc_for_mmio_check)
                 {
@@ -2902,31 +2630,17 @@ namespace sogen::fex
                     }
                 }
 
-                // A BUS_ADRALN fault whose *address* falls inside the live JIT CodeBuffer, but whose
-                // *PC* is FEXCore's own host C++ code (e.g. ExitFunctionLink's self-modifying-write
-                // path), decodes to a perfectly ordinary, 4-byte-aligned 32-bit `str` (e.g. 0xb900032a
-                // = `str w10, [x25]`, no offset, size=32-bit, not an exclusive/ordered form at all) -
-                // i.e. this is NOT a real alignment fault (plain STR never requires alignment on
-                // ARM64, and this address is aligned anyway). This is the JIT write-XOR-execute race -
-                // the CodeBuffer is currently execute-only - which Darwin sometimes reports via
-                // BUS_ADRALN instead of the expected SEGV_ACCERR/SEGV_MAPERR, mirroring the
-                // already-documented SEGV_MAPERR-instead-of-SEGV_ACCERR quirk for the exact same
-                // underlying mechanism (see the JITGuardPage comment below). Falling through to the
-                // BUS_ADRALN branch further down would route this to handle_general_memory_violation -
-                // designed for genuine guest memory accesses, it unwinds via
-                // defer_hook_dispatch/ThreadStopHandlerAddress as if interrupting the JIT dispatcher's
-                // own call frame. That's wrong here: execution is several real C++ call frames deep
-                // inside FEXCore's own code (dispatcher trampoline -> embedder wrapper ->
-                // ExitFunctionLink), so popping "the dispatcher's" callee-saved registers off the stack
-                // pops whatever's actually there instead - corrupting STATE (x28) and other SRA
-                // registers with stack garbage, which then crashes on the *next* unlinked call with an
-                // unrelated-looking null-Frame dereference.
-                //
-                // Treat it exactly like the SEGV_ACCERR/SEGV_MAPERR write-protect race just below
-                // - toggle write access on and retry the identical instruction, bounded by the same
-                // per-address retry counter (a genuinely different bug at this exact address, rather
-                // than an unresolvable race, would still eventually surface as unhandled after
-                // max_write_protect_retries, not spin forever).
+                // A BUS_ADRALN whose address is inside the live CodeBuffer but whose PC is FEXCore's own
+                // host C++ code (ExitFunctionLink's self-modifying write) is not a real alignment fault
+                // at all - it decodes to an ordinary aligned 32-bit `str`. It is the JIT W^X race, which
+                // Darwin sometimes reports as BUS_ADRALN instead of SEGV_ACCERR/SEGV_MAPERR, the same
+                // si_code ambiguity documented at the JITGuardPage branch below. Falling through to the
+                // BUS_ADRALN branch would route it into handle_general_memory_violation, which unwinds
+                // via ThreadStopHandlerAddress as if interrupting the JIT dispatcher's own frame -
+                // wrong here, since execution is several real C++ frames deep inside FEXCore, so popping
+                // "the dispatcher's" callee-saved registers corrupts STATE (x28) and other SRA registers
+                // with stack garbage and crashes later on an unrelated-looking null-Frame dereference.
+                // Treated instead like the write-protect race below, with the same per-address bound.
                 if (sig == SIGBUS && info->si_code == BUS_ADRALN && this->context_ &&
                     this->context_->IsAddressInCodeBuffer(this->thread_, fault_addr))
                 {
@@ -2940,37 +2654,26 @@ namespace sogen::fex
                     }
                 }
 
-                // See handle_misaligned_atomic_fault's doc comment: BUS_ADRALN is Darwin's alignment-
-                // fault si_code, specific enough that this is never confused with a real access
-                // violation (SEGV_ACCERR/SEGV_MAPERR, handled separately below). Routed through
-                // handle_general_memory_violation rather than calling handle_misaligned_atomic_fault
-                // directly: that doc comment's "otherwise legitimately mapped memory" assumption isn't
-                // actually guaranteed - a guest instruction can compute a genuinely garbage/unmapped
-                // address (a real access violation that merely happens to also be unaligned), and
-                // blindly memcpy-ing to/from it would fault a second time inside the signal handler
-                // itself, surfacing as an unhandled crash instead of a normal guest exception. Going
-                // through the shadow-table-validated path first means a genuinely bad address gets
-                // correctly classified and raised via memory_violation_hooks_ instead. The CodeBuffer
-                // case above is handled first and returns early, so by this point fault_addr is known
-                // not to be a CodeBuffer address - this is a genuine guest-memory BUS_ADRALN.
+                // A genuine guest-memory alignment fault (the CodeBuffer case above returns early).
+                // Routed through handle_general_memory_violation rather than calling
+                // handle_misaligned_atomic_fault directly, because that helper's "legitimately mapped
+                // memory" premise is not guaranteed: a guest instruction can compute a garbage address
+                // that merely happens to also be unaligned, and memcpy-ing to it would fault a second
+                // time inside the signal handler. The shadow-table-validated path classifies such an
+                // address correctly and raises it via memory_violation_hooks_ instead.
                 if (sig == SIGBUS && info->si_code == BUS_ADRALN && this->handle_general_memory_violation(uctx, fault_addr))
                 {
                     return true;
                 }
             }
 
-            // JIT code-buffer overflow guard: FEXCore protects the last host page of each CodeBuffer
-            // (CPUBackend.cpp's CodeBuffer constructor) and deliberately writes into it mid-compile to
-            // detect running out of space. Not a real bug - resume via the jump-buffer FEXCore already
-            // set up before compiling started (mirrors SignalDelegator.cpp's
-            // HandleFrontendSIGSEGV/ManuallyLoadJumpBuf). Darwin can report this access violation as
-            // either SIGSEGV or SIGBUS depending on the exact protection-fault kind, unlike Linux's
-            // single SIGSEGV, so both are checked here. Empirically, Darwin also sometimes reports
-            // this exact MAP_JIT write-XOR-execute violation as SEGV_MAPERR (si_code=1, normally
-            // "not mapped at all") rather than SEGV_ACCERR (si_code=2, normally "mapped, wrong
-            // permission") - confirmed by querying mach_vm_region for the fault address from within
-            // this handler and finding it fully mapped RWX (region_prot=7) despite the si_code=1
-            // report, so both si_codes are treated the same way below.
+            // FEXCore protects the last host page of each CodeBuffer and deliberately writes into it
+            // mid-compile to detect running out of space, so this is expected: resume via the jump
+            // buffer it set up beforehand, mirroring SignalDelegator.cpp's HandleFrontendSIGSEGV.
+            // Unlike Linux's single SIGSEGV, Darwin reports these as either SIGSEGV or SIGBUS, and
+            // sometimes as SEGV_MAPERR ("not mapped") rather than SEGV_ACCERR ("wrong permission") -
+            // confirmed by querying mach_vm_region from inside this handler and finding the address
+            // fully mapped RWX despite the si_code=1 report - so both si_codes are treated alike.
             if ((sig == SIGSEGV || sig == SIGBUS) && (info->si_code == SEGV_ACCERR || info->si_code == SEGV_MAPERR))
             {
                 const auto guard_page = this->thread_->JITGuardPage;
@@ -2985,22 +2688,15 @@ namespace sogen::fex
                     return true;
                 }
 
-                // See jit_write_protect_retry_count_for's doc comment: FEXCore's own code-patching paths
-                // (ExitFunctionLink, block delinkers) don't reliably leave this thread's JIT write-
-                // protect state correct for the duration of their self-modifying writes into a
-                // CodeBuffer. Set it to whatever the faulting access actually needs and retry the
-                // exact same faulting instruction (PC/registers otherwise untouched) rather than
-                // treating this as fatal - bounded per fault address so a genuinely different bug
-                // can't spin forever. An instruction-fetch fault (PC == fault address) needs execute
-                // mode (1); a data write needs write mode (0) - guessing the wrong direction here
-                // would just re-fault immediately and consume a retry harmlessly.
+                // FEXCore's code-patching paths (ExitFunctionLink, block delinkers) do not reliably
+                // leave this thread's JIT write-protect state correct across their self-modifying
+                // writes, so set whatever the faulting access needs and retry the same instruction.
+                // An instruction fetch (PC == fault address) needs execute mode, a data write needs
+                // write mode; guessing wrong just re-faults and consumes a retry harmlessly.
                 //
-                // Gated on IsAddressInCodeBuffer(fault_addr): without this gate, the branch would fire
-                // for *any* SEGV_ACCERR/SEGV_MAPERR regardless of the fault address, wasting up to
-                // max_write_protect_retries toggling W^X for faults that are never a CodeBuffer
-                // write-protect race at all - e.g. a genuine branch-to-null (pc==fault_addr==0) would
-                // be retried this way before falling through as unhandled, even though toggling JIT
-                // write-protection has nothing to do with a null pointer.
+                // The IsAddressInCodeBuffer gate matters: without it the branch fires for any
+                // SEGV_ACCERR/SEGV_MAPERR, burning retries toggling W^X on faults that were never a
+                // CodeBuffer race - a branch-to-null would be retried this way before falling through.
                 if (this->context_ && this->context_->IsAddressInCodeBuffer(this->thread_, fault_addr))
                 {
                     const auto fault_addr_u64 = reinterpret_cast<uint64_t>(info->si_addr);
@@ -3022,12 +2718,9 @@ namespace sogen::fex
             // FEXCore's guest-exception trampoline always re-enters within the dispatcher range.
             if (!this->host_pc_in_dispatcher(pc))
             {
-                // Not FEXCore's own guest-exception trampoline (that always re-enters within the
-                // dispatcher range). The common case: real, translated guest code faulted directly -
-                // see handle_general_memory_violation. Only attempt that once we've confirmed pc is
-                // genuinely inside a live JIT code buffer (the public IsAddressInCodeBuffer API) -
-                // otherwise this is a real host bug elsewhere that we have no business trying to
-                // interpret as guest state; the signal handler wrapper below logs and re-raises it.
+                // The common case: translated guest code faulted directly. Only attempted once pc is
+                // confirmed inside a live JIT code buffer - anything else is a host bug elsewhere that
+                // must not be interpreted as guest state, and the wrapper below logs and re-raises it.
                 if ((sig == SIGSEGV || sig == SIGBUS) && this->context_ && this->context_->IsAddressInCodeBuffer(this->thread_, pc) &&
                     this->handle_general_memory_violation(uctx, reinterpret_cast<uint64_t>(info->si_addr)))
                 {
@@ -3043,22 +2736,18 @@ namespace sogen::fex
                 return false;
             }
 
-            // FEXCore's IR "Break" op raises this both for x86 conditions with a compile-time-known
-            // trap vector (HLT/UD2/INT3/INT1/INTO/unhandled INT N) and for its own synthetic #PF
-            // (X86_TRAPNO_PF, e.g. NoExecOp when QueryGuestExecutableRange reports an address isn't
-            // executable). Vector 14 is therefore a real memory-access-violation-shaped event and
-            // needs the fault address; everything else is a plain CPU exception vector. Mirrors the
-            // KVM backend's #PF vs. other-vector split in handle_exception() (kvm_x86_64_emulator.cpp).
+            // FEXCore's IR "Break" op raises this both for x86 conditions with a compile-time-known trap
+            // vector (HLT/UD2/INT3/INT1/INTO/unhandled INT N) and for its own synthetic #PF (NoExecOp,
+            // when QueryGuestExecutableRange reports an address is not executable), so vector 14 needs
+            // the fault address while everything else is a plain exception vector. Mirrors the KVM
+            // backend's #PF vs. other-vector split in handle_exception().
             auto vector = static_cast<int>(frame->SynchronousFaultData.TrapNo);
 
-            // sogen has no guest IDT (this is a user-mode-only emulator - there's no kernel to
-            // populate one), so a guest `INT N` FEXCore can't dispatch directly synthesizes a real
-            // #GP(13) whose error code names the referenced IDT selector (bit1 set, selector index in
-            // bits[15:3]) - the same effect real hardware produces for an unprivileged/absent IDT gate.
-            // Unicorn/KVM don't model IDT lookups at all and report `INT N` as vector N directly, so
-            // remap FEX's more architecturally faithful #GP back to the plain vector windows_emulator.cpp's
-            // shared interrupt dispatch already expects - otherwise e.g. a CFG/__fastfail `int 0x29`
-            // re-faults on the same instruction forever instead of reaching fast-fail dispatch.
+            // sogen has no guest IDT, so a guest `INT N` FEXCore cannot dispatch synthesizes a #GP(13)
+            // whose error code names the referenced IDT selector (bit 1 set, index in bits[15:3]), just
+            // as real hardware does for an absent IDT gate. Unicorn/KVM model no IDT lookup and report
+            // `INT N` as vector N, so FEX's more faithful #GP is remapped back to the plain vector the
+            // shared interrupt dispatch expects - otherwise a __fastfail `int 0x29` re-faults forever.
             constexpr int gp_fault_vector = 13;
             constexpr uint32_t idt_reference_bit = 0x2;
             if (vector == gp_fault_vector && (frame->SynchronousFaultData.err_code & idt_reference_bit) != 0)
@@ -3066,10 +2755,9 @@ namespace sogen::fex
                 vector = static_cast<int>(frame->SynchronousFaultData.err_code >> 3);
             }
 
-            // Must be reset before deferring the hook dispatch (not after) - it gates re-entry into
-            // this branch (see the check above), and the hook may not actually run until start() gets
-            // around to it in normal context; the next real fault of this shape must not be swallowed
-            // in the meantime.
+            // Must be reset before deferring, not after: it gates re-entry into this branch, and the
+            // hook does not run until start() reaches it, so the next real fault of this shape would
+            // otherwise be swallowed in the meantime.
             frame->SynchronousFaultData.FaultToTopAndGeneratedException = false;
 
             pending_fault_dispatch dispatch{};
@@ -3089,12 +2777,10 @@ namespace sogen::fex
             }
             else
             {
-                // FEXCore's INT3 (0xCC) translation stores the post-instruction RIP (INTOp's
-                // SetRIPToNext in OpcodeDispatcher.cpp), while NT (KiBreakpointTrap) and the KVM/WHP
-                // backends all report #BP at the 0xCC itself - normalize here so shared dispatch sees
-                // one convention. Only the direct #BP needs this: a GP-remapped `INT N` (e.g. the
-                // 2-byte `CD 2D` debug service trap, whose byte pattern exception_dispatch.cpp expects
-                // to find at RIP) already stores the instruction's own address.
+                // FEXCore's INT3 translation stores the post-instruction RIP (INTOp's SetRIPToNext),
+                // while NT and the KVM/WHP backends report #BP at the 0xCC itself. Only the direct #BP
+                // needs normalizing: a GP-remapped `INT N` (e.g. the `CD 2D` debug service trap, whose
+                // bytes exception_dispatch.cpp expects to find at RIP) already stores its own address.
                 if (frame->SynchronousFaultData.TrapNo == FEXCore::X86State::X86_TRAPNO_BP)
                 {
                     frame->State.rip -= 1;
@@ -3104,13 +2790,8 @@ namespace sogen::fex
                 dispatch.vector = vector;
             }
 
-            // See defer_hook_dispatch's doc comment: the hook runs later, in normal call context, once
-            // start() dispatches it - it may call this->stop() synchronously (e.g. the fast-fail path),
-            // which start()'s loop checks for after dispatching, matching this function's old behavior
-            // of redirecting into ThreadStopHandlerAddress instead of resuming when that happens. SRA
-            // is already spilled here (this is FEXCore's own controlled synthetic-exception/Break-op
-            // path, not an arbitrary interruption of live JIT code), matching this function's own old
-            // (pre-hook-deferral) comment justifying the non-spilling ThreadStopHandlerAddress variant.
+            // SRA is already spilled: this is FEXCore's own controlled synthetic-exception/Break-op
+            // path, not an arbitrary interruption of live JIT code.
             this->defer_hook_dispatch(uctx, dispatch, /*sra_already_spilled=*/true);
             return true;
         }
@@ -3123,45 +2804,27 @@ namespace sogen::fex
             this->thread_ =
                 this->context_->CreateThread(this->staged_state_.rip, this->staged_state_.gregs[detail::greg_rsp], &this->staged_state_);
 
-            // FEXCore's core does not set up the "call-ret stack" (its own dedicated shadow stack for
-            // x86 CALL/RET emulation, SRA-mapped to callret_sp) - on Linux this is embedder glue
-            // (ThreadManager::CreateThread, Source/Tools/LinuxEmulation/LinuxSyscalls/ThreadManager.cpp)
-            // that has to be replicated here: without it, the very first x86 CALL in JIT-compiled code
-            // dereferences a null callret_sp and crashes. See ensure_callret_stack's doc comment for
-            // why each logical guest thread needs its own, not just this first one.
+            // FEXCore's core does not set up the call-ret shadow stack; on Linux that is embedder glue
+            // in ThreadManager::CreateThread, replicated here. Without it the first x86 CALL in compiled
+            // code dereferences a null callret_sp and crashes.
             this->ensure_callret_stack(this->thread_->CurrentFrame->State);
 
 #ifdef __APPLE__
-            // See exit_function_link_jit_write_wrapper's doc comment: intercept the plain function-
-            // pointer slot JIT-compiled code calls through to patch call sites, so the write into the
-            // (MAP_JIT) code buffer happens with this thread's JIT write-protection disabled.
+            // See exit_function_link_jit_write_wrapper: the call-site patch must happen with this
+            // thread's JIT write-protection disabled.
             g_original_exit_function_link = this->thread_->CurrentFrame->Pointers.ExitFunctionLink;
             this->thread_->CurrentFrame->Pointers.ExitFunctionLink = reinterpret_cast<uint64_t>(&exit_function_link_jit_write_wrapper);
 #endif
         }
 
-        // FEXCore's call-ret shadow stack (callret_sp, see CoreState.h) has no notion of "logical
-        // guest thread" - it's just a raw pointer into whatever host buffer this sets up. sogen models
-        // multiple logical guest threads as CPUState-sized snapshots swapped in and out of this one
-        // FEXCore thread (see save_registers/restore_registers); if every logical thread's callret_sp
-        // pointed at the same buffer, a thread suspended mid-call-chain (e.g. blocked in a syscall,
-        // with pending pushed return addresses) would have those frames corrupted the moment a
-        // different logical thread starts pushing its own calls from the same default position. Give
-        // each logical thread its own private buffer instead, identified by state._pad1 (otherwise-
-        // unused CPUState padding immediately after callret_sp) doubling as a marker: 0 means this
-        // exact snapshot has never been assigned one (true for the very first snapshot any logical
-        // thread starts from - captured before any thread/buffer existed - and for a thread that
-        // hasn't made its first CALL yet), non-zero is that buffer's base pointer, safe to trust and
-        // reuse verbatim since it round-trips with the rest of this logical thread's own snapshot
-        // (save_registers/restore_registers memcpy the whole CPUState, _pad1 included). Also keeps
-        // Thread->CallRetStackBase in sync - FEXCore's own code-invalidation path
-        // (Core.cpp/JIT.cpp's `Allocator::VirtualDontNeed(Thread->CallRetStackBase, ...)`) resets
-        // whatever buffer that field currently names, so it must always point at the logical thread
-        // that's actually active right now.
-        // Allocates this logical thread's private call-ret shadow-stack buffer on first use (state._pad1
-        // == 0), recording it in state._pad1 (round-tripped by save/restore). Does NOT touch
-        // InternalThreadState::CallRetStackBase - callers point it at the buffer themselves
-        // (ensure_callret_stack, restore_state_into).
+        // FEXCore's call-ret shadow stack has no notion of "logical guest thread" - callret_sp is just a
+        // raw pointer into whatever host buffer this sets up. sogen models logical guest threads as
+        // CPUState snapshots swapped in and out of one FEXCore thread, so a shared buffer would let one
+        // logical thread's pushes corrupt the pending frames of another suspended mid-call-chain. Each
+        // gets its own, identified by state._pad1, the unused CPUState padding right after callret_sp,
+        // doubling as a marker: 0 means this snapshot has never been assigned one, non-zero is the
+        // buffer's base, safe to reuse since it round-trips with the rest of the snapshot. Callers point
+        // InternalThreadState::CallRetStackBase at it themselves.
         void ensure_callret_buffer(FEXCore::Core::CPUState& state)
         {
             if (state._pad1 == 0)
@@ -3172,16 +2835,11 @@ namespace sogen::fex
                 constexpr size_t callret_stack_size = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
                 const size_t callret_alloc_size = callret_stack_size + 2 * host_page;
 
-                // Route the reservation through FEXCore::Allocator::mmap, not raw ::mmap. On Apple
-                // (guest VA == host VA) this is the fex_internal_arena hook installed by install(),
-                // so the call-ret shadow stack is placed inside the guest-excluded arena instead of
-                // at an unconstrained kernel-chosen address. FEXCore's JIT consumes callret_sp as a
-                // plain host pointer (REG_CALLRET_SP stp/ldp push/pop in BranchOps.cpp); if that
-                // buffer aliased the live guest stack, a host-side callret push/pop would scribble
-                // guest memory with no guest instruction involved - the same host/guest aliasing
-                // hazard fix #5 solved for FEXCore's other internal buffers, which this embedder-side
-                // allocation was overlooked by. On Linux this pointer defaults to a raw ::mmap, so
-                // behavior there is unchanged.
+                // Routed through FEXCore::Allocator::mmap rather than raw ::mmap so that on Apple it
+                // hits the fex_internal_arena hook and lands inside the guest-excluded arena. The JIT
+                // consumes callret_sp as a plain host pointer, so a buffer aliasing the live guest stack
+                // would let a host-side push/pop scribble guest memory with no guest instruction
+                // involved. On Linux the hook defaults to raw ::mmap, so behavior there is unchanged.
                 void* alloc_base = FEXCore::Allocator::mmap(nullptr, callret_alloc_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
                 if (alloc_base == MAP_FAILED)
                 {
@@ -3329,11 +2987,9 @@ namespace sogen::fex
             std::unique_lock lock(context->GetCodeInvalidationMutex());
 
 #ifdef __APPLE__
-            // Invalidating a range can synchronously delink already-linked call sites (see
-            // AddBlockLink's delinker callbacks in JIT.cpp), writing directly into a MAP_JIT code
-            // buffer - same per-thread JIT-write-protect requirement as
-            // exit_function_link_jit_write_wrapper, but for a call site we make ourselves rather than
-            // one JIT-compiled code makes through a function-pointer slot.
+            // Invalidating a range can synchronously delink already-linked call sites (AddBlockLink's
+            // delinker callbacks), writing into a MAP_JIT buffer - the same per-thread write-protect
+            // requirement as exit_function_link_jit_write_wrapper.
             ::pthread_jit_write_protect_np(0);
 #endif
             context->InvalidateCodeBuffersCodeRange(address, size);
@@ -3353,14 +3009,11 @@ namespace sogen::fex
 
         void request_thread_stop()
         {
-            // Forces the in-flight ExecuteThread to return, whether called from the same thread
-            // (synchronously, e.g. from within a syscall hook) or a different one (e.g. a quantum
-            // timer thread). FEXCore's JIT emits a `str zr, [InterruptFaultPage]` at every translated
-            // block's entry when Config.NeedsPendingInterruptFaultCheck is set (see
-            // initialize_context's CONFIG_GDBSERVER comment) - protecting that page makes the next
-            // block entry fault, landing in handle_fault_signal, which redirects any fault on
-            // InterruptFaultPage into FEXCore's own ThreadStopHandlerAddress instead of resuming
-            // (it does not consult stop_requested_ for that).
+            // Forces the in-flight ExecuteThread to return, from this thread or another. With
+            // Config.NeedsPendingInterruptFaultCheck set (see initialize_context's CONFIG_GDBSERVER
+            // comment) the JIT emits a `str zr, [InterruptFaultPage]` at every block entry, so
+            // protecting that page makes the next entry fault into handle_fault_signal, which redirects
+            // it to ThreadStopHandlerAddress without consulting stop_requested_.
             if (this->thread_ == nullptr)
             {
                 return;
@@ -3374,16 +3027,14 @@ namespace sogen::fex
             return reinterpret_cast<emulator_hook*>(this->next_hook_id_++);
         }
 
-        // --[ state ]--------------------------------------------------------------------------------
+        // state
 
         fextl::unique_ptr<FEXCore::Context::Context> context_{};
         FEXCore::Core::InternalThreadState* thread_ = nullptr;
 
         std::unique_ptr<fex_syscall_handler> syscall_handler_{};
-        // FEXCore::SignalDelegator has no pure virtuals, so InitCore() is satisfied with the plain
-        // base class. It does no actual fault handling - fault delivery happens via the host
-        // sigaction handler (handle_fault_signal); the base only carries the dispatcher config
-        // (ThreadStopHandlerAddress, DispatcherBegin/End) that handler reads.
+        // Does no fault handling; the plain base only carries the dispatcher config
+        // (ThreadStopHandlerAddress, DispatcherBegin/End) that handle_fault_signal reads.
         std::unique_ptr<FEXCore::SignalDelegator> signal_delegator_{};
         FEXCore::Core::CPUState staged_state_{};
 
@@ -3394,14 +3045,11 @@ namespace sogen::fex
         uintptr_t next_hook_id_ = 1;
 
 #ifdef __APPLE__
-        // See pending_fault_kind's doc comment (declared earlier in this class, near
-        // defer_hook_dispatch/dispatch_pending_hook_if_any).
         pending_fault_dispatch pending_fault_dispatch_{};
-        // Set by handle_fault_signal when it unwinds ExecuteThread through an InterruptFaultPage hit;
-        // consumed by start()'s loop to tell that unwind apart from any other clean return. Same-thread
-        // signal-handler-to-mainline communication still needs atomic (not just same-thread ordering):
-        // the C++ abstract machine has no signal-delivery control-flow edge, so an optimizer is free to
-        // treat this field as unmodified across the opaque ExecuteThread() call and cache a stale read.
+        // Set by handle_fault_signal on an InterruptFaultPage unwind, consumed by start()'s loop to tell
+        // it apart from any other clean return. Atomic even though both ends are the same thread: the
+        // C++ abstract machine has no signal-delivery control-flow edge, so an optimizer may treat this
+        // as unmodified across the opaque ExecuteThread() call and cache a stale read.
         std::atomic<bool> interrupt_page_unwind_{false};
 #endif
 
@@ -3414,14 +3062,12 @@ namespace sogen::fex
         std::vector<std::pair<void*, size_t>> callret_buffers_;
 
 #ifdef __APPLE__
-        // Apple Silicon's host page (16KB, see host_page_size_apple) is coarser than the guest's
-        // architectural page (4KB, `page_size` above), so a single host mprotect/mmap can't always
-        // express what the guest requested independently per 4KB page - e.g. a PE image's .text
-        // (RX) directly followed by .data (RW) land in the same host page. page_shadow_apple_ is
-        // the source of truth per guest 4KB page (absent = never requested/unmapped, which must
-        // still fault like reserved-but-uncommitted memory); mapped_host_pages_apple_ tracks which
-        // 16KB-aligned host pages currently have a live mmap, so sync_host_page_apple can tell a
-        // first-time mmap from a protection change on an existing one.
+        // Apple Silicon's 16KB host page is coarser than the guest's 4KB architectural page, so one host
+        // mprotect cannot always express what the guest requested per 4KB page - a PE image's .text (RX)
+        // directly followed by .data (RW) share a host page. page_shadow_apple_ is the per-4KB source of
+        // truth (absent = never requested, which must still fault); mapped_host_pages_apple_ tracks
+        // which host pages have a live mmap, so sync_host_page_apple can tell a first-time mmap from a
+        // protection change.
         std::map<uint64_t, memory_permission> page_shadow_apple_;
         std::set<uint64_t> mapped_host_pages_apple_;
 #endif
@@ -3449,9 +3095,7 @@ namespace sogen::fex
                 return;
             }
 
-            // See jit_write_protect_retry_count_for's doc comment: fprintf/stdio is not async-signal-
-            // safe. snprintf into a fixed stack buffer + a single write(2) is the standard pragmatic
-            // idiom for signal-handler-safe formatted output.
+            // stdio is not async-signal-safe; snprintf into a fixed stack buffer plus a single write(2).
             char buf[160];
             const uint64_t pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
             const int len = snprintf(buf, sizeof(buf), "[FEX backend] unhandled signal %d si_code=%d at pc=0x%llx fault_addr=%p\n", sig,
@@ -3470,26 +3114,15 @@ namespace sogen::fex
     } // namespace
 #endif
 
-    // -----------------------------------------------------------------------------------------------
-    // fex_syscall_handler method bodies (fex_x86_64_emulator is now complete).
-    // -----------------------------------------------------------------------------------------------
-
     uint64_t fex_syscall_handler::HandleSyscall(FEXCore::Core::CpuStateFrame* /*frame*/, FEXCore::HLE::SyscallArguments* /*args*/)
     {
-        // SyscallOp (deps/FEX OpcodeDispatcher.cpp) stores CPUState.rip = the address of the `syscall`
-        // instruction ITSELF (GetRelocatedPC(Op, -Op->InstSize)) before invoking us, so during the hook the
-        // guest rip points AT the syscall - exactly the convention sogen's shared syscall layer expects (see
-        // syscall_utils.hpp write_syscall_result). That layer leaves CPUState.rip so that advancing it by the
-        // 2-byte syscall length yields the intended next rip, in EVERY case: a non-redirecting syscall leaves
-        // rip AT the syscall (advance -> the following instruction), while a redirecting syscall (NtContinue,
-        // exception/APC returns, retriggers) sets rip = (target - 2) precisely so this advance lands on the
-        // real target. On non-_WIN32 hosts `syscall` is not FLAGS_BLOCK_END (X86Tables.h) so the JIT would
-        // otherwise fall through and either re-execute the syscall on a block re-entry or, for a redirect,
-        // branch to (target - 2) - the mid-instruction landing that produced the RtlUserThreadStart-2 `int
-        // 0xAC` fault storm during loader init. Mirror the other backends (Unicorn's skip_instruction skips
-        // exactly the syscall's length unconditionally): always advance rip past the 2-byte syscall. The
-        // SyscallOp block-split's CondJump then compares this against the fallthrough to pick continue-in-line
-        // vs ExitFunction(redirect target), both now landing on a real instruction boundary.
+        // SyscallOp sets CPUState.rip to the address of the `syscall` instruction itself before invoking
+        // us, which is the convention sogen's shared syscall layer expects: it leaves rip so that
+        // advancing by the 2-byte syscall length always yields the intended next rip - the following
+        // instruction for a plain syscall, and the real target for a redirecting one, which sets
+        // rip = target - 2. On non-_WIN32 hosts `syscall` is not FLAGS_BLOCK_END, so without the
+        // unconditional advance below the JIT falls through and either re-executes the syscall on block
+        // re-entry or, for a redirect, branches into the middle of an instruction at target - 2.
         auto* hook = this->emulator_.syscall_hook_;
         if (hook != nullptr && hook->callback)
         {
@@ -3513,11 +3146,9 @@ namespace sogen::fex
     FEXCore::HLE::ExecutableRangeInfo fex_syscall_handler::QueryGuestExecutableRange(FEXCore::Core::InternalThreadState* /*thread*/,
                                                                                      uint64_t address)
     {
-        // FEXCore checks this before compiling/executing a guest address (see the decoder's use of
-        // QueryGuestExecutableRange) and synthesizes a #PF (IR "Break" op, TrapNo=X86_TRAPNO_PF) if the
-        // address isn't reported as executable here - so returning the default-constructed {} for
-        // every address would make every guest instruction fetch look like a DEP violation to
-        // FEXCore.
+        // FEXCore checks this before compiling a guest address and synthesizes a #PF if it is not
+        // reported executable here, so a blanket {} would make every guest instruction fetch look like
+        // a DEP violation.
         auto& regions = this->emulator_.regions_;
         auto it = regions.upper_bound(address);
         if (it == regions.begin())

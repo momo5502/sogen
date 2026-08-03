@@ -36,9 +36,9 @@ namespace sogen::fex::detail
         flags, // (r/e)flags - reconstructed via the FEX context
         xmm,   // xmm0..xmm15 (128 bit, held in CPUState::xmm)
         mm,    // mm0..mm7 / st0..st7 mantissa (CPUState::mm)
-        mxcsr, //
-        fcw,   // x87 control word
-        fsw,   // x87 status word
+        mxcsr,
+        fcw, // x87 control word
+        fsw, // x87 status word
         fs_base,
         gs_base,
         segment, // segment selector (cs/ds/es/fs/gs/ss index)

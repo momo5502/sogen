@@ -29,15 +29,12 @@ namespace sogen
 #define STACK_SIZE       0x40000ULL // 256KB
 
 #ifdef __APPLE__
-// Darwin refuses MAP_FIXED anywhere in the low ~4GB regardless of ASLR (the standard 64-bit
-// Mach-O __PAGEZERO convention, enforced at the mmap syscall level) - a backend sharing the guest
-// address space with the host process (guest VA == host VA, e.g. FEX - see docs/fex-backend.md's
-// "Security / address-space model" for what that implies more broadly) can never place anything
-// there. GDT_ADDR is a fixed constant sogen always uses directly (not chosen dynamically via
-// find_free_allocation_base, so the reserved-host-ranges mechanism can't route around it), so it
-// has to live well above that floor here. Chosen far from typical host dyld/heap/stack placement
-// (which stays within a few GB above 4GB) to also avoid the *dynamic*, ASLR-dependent collisions
-// that reserved-host-ranges handles for everything else.
+// Darwin refuses MAP_FIXED anywhere in the low ~4GB regardless of ASLR (the 64-bit Mach-O
+// __PAGEZERO convention, enforced at the mmap syscall level), so a backend sharing the address
+// space with the guest (guest VA == host VA, e.g. FEX) can never place anything there. GDT_ADDR is
+// hardcoded rather than picked via find_free_allocation_base, so the reserved-host-ranges mechanism
+// cannot route around it: it has to sit above that floor, and far from typical host dyld/heap/stack
+// placement (a few GB above 4GB) to dodge the dynamic ASLR collisions handled elsewhere.
 #define GDT_ADDR 0x7ffff0000000ULL
 #else
 #define GDT_ADDR 0x35000
