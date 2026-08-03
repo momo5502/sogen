@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 27;
+    inline constexpr uint32_t protocol_version = 28;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -174,6 +174,14 @@ namespace sogen::gpu_bridge
         cmd_blit_image = 0x887,
         reset_descriptor_pool = 0x888,
         cmd_clear_attachments = 0x889,
+        cmd_copy_query_pool_results = 0x88A,
+        cmd_draw_indexed_indirect = 0x88B,
+        cmd_draw_indexed_indirect_count = 0x88C,
+        cmd_draw_indirect = 0x88D,
+        cmd_draw_indirect_count = 0x88E,
+        cmd_next_subpass = 0x88F,
+        free_descriptor_sets = 0x890,
+        get_shader_module_identifier = 0x891,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -247,6 +255,7 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_queue_present = make_ioctl(static_cast<uint32_t>(command::queue_present));
     inline constexpr uint32_t ioctl_create_shader_module = make_ioctl(static_cast<uint32_t>(command::create_shader_module));
     inline constexpr uint32_t ioctl_destroy_shader_module = make_ioctl(static_cast<uint32_t>(command::destroy_shader_module));
+    inline constexpr uint32_t ioctl_get_shader_module_identifier = make_ioctl(static_cast<uint32_t>(command::get_shader_module_identifier));
     inline constexpr uint32_t ioctl_create_image_view = make_ioctl(static_cast<uint32_t>(command::create_image_view));
     inline constexpr uint32_t ioctl_destroy_image_view = make_ioctl(static_cast<uint32_t>(command::destroy_image_view));
     inline constexpr uint32_t ioctl_create_buffer_view = make_ioctl(static_cast<uint32_t>(command::create_buffer_view));
@@ -272,6 +281,7 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_destroy_descriptor_pool = make_ioctl(static_cast<uint32_t>(command::destroy_descriptor_pool));
     inline constexpr uint32_t ioctl_reset_descriptor_pool = make_ioctl(static_cast<uint32_t>(command::reset_descriptor_pool));
     inline constexpr uint32_t ioctl_allocate_descriptor_sets = make_ioctl(static_cast<uint32_t>(command::allocate_descriptor_sets));
+    inline constexpr uint32_t ioctl_free_descriptor_sets = make_ioctl(static_cast<uint32_t>(command::free_descriptor_sets));
     inline constexpr uint32_t ioctl_update_descriptor_sets = make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets));
     inline constexpr uint32_t ioctl_update_descriptor_sets_batch = make_ioctl(static_cast<uint32_t>(command::update_descriptor_sets_batch));
     inline constexpr uint32_t ioctl_create_sampler = make_ioctl(static_cast<uint32_t>(command::create_sampler));
@@ -1290,6 +1300,13 @@ namespace sogen::gpu_bridge
         // uint8_t code[code_size];
     };
 
+    struct shader_module_identifier_response
+    {
+        int32_t vk_result;
+        uint32_t identifier_size;
+        std::array<uint8_t, 32> identifier;
+    };
+
     struct create_image_view_request
     {
         object_id device;
@@ -1405,6 +1422,66 @@ namespace sogen::gpu_bridge
         object_id query_pool;
         uint32_t query;
         uint32_t pipeline_stage; // VkPipelineStageFlagBits
+    };
+
+    struct cmd_copy_query_pool_results_request
+    {
+        object_id command_buffer;
+        object_id query_pool;
+        uint32_t first_query;
+        uint32_t query_count;
+        object_id destination_buffer;
+        uint64_t destination_offset;
+        uint64_t stride;
+        uint32_t flags;
+        uint32_t reserved;
+    };
+
+    struct cmd_draw_indexed_indirect_request
+    {
+        object_id command_buffer;
+        object_id buffer;
+        uint64_t offset;
+        uint32_t draw_count;
+        uint32_t stride;
+    };
+
+    struct cmd_draw_indexed_indirect_count_request
+    {
+        object_id command_buffer;
+        object_id buffer;
+        uint64_t offset;
+        object_id count_buffer;
+        uint64_t count_buffer_offset;
+        uint32_t max_draw_count;
+        uint32_t stride;
+    };
+
+    struct cmd_draw_indirect_request
+    {
+        object_id command_buffer;
+        object_id buffer;
+        uint64_t offset;
+        uint32_t draw_count;
+        uint32_t stride;
+    };
+
+    struct cmd_draw_indirect_count_request
+    {
+        object_id command_buffer;
+        object_id buffer;
+        uint64_t offset;
+        object_id count_buffer;
+        uint64_t count_buffer_offset;
+        uint32_t max_draw_count;
+        uint32_t stride;
+    };
+
+    struct cmd_next_subpass_request
+    {
+        object_id command_buffer;
+        uint32_t contents;
+        uint32_t reserved;
     };
 
     // out = object_response
@@ -1891,6 +1968,14 @@ namespace sogen::gpu_bridge
         // object_id sets[count];
     };
 
+    struct free_descriptor_sets_request
+    {
+        object_id device;
+        object_id descriptor_pool;
+        uint32_t set_count;
+        uint32_t reserved;
+    };
+
     // One descriptor write (trailing-array element of update_descriptor_sets). Models a single buffer or
     // image descriptor per write (descriptor_count == 1). For buffer types the buffer/offset/range fields
     // apply; for image types (combined image sampler) the sampler/image_view/image_layout fields apply.
@@ -1901,7 +1986,7 @@ namespace sogen::gpu_bridge
         uint32_t dst_array_element;
         uint32_t descriptor_type; // VkDescriptorType
         uint32_t reserved;
-        object_id buffer;      // VK_DESCRIPTOR_TYPE_*_BUFFER: the bound buffer (else null_object)
+        object_id buffer_or_view;
         uint64_t offset;       // buffer offset
         uint64_t range;        // buffer range (VK_WHOLE_SIZE allowed)
         object_id sampler;     // image types: the sampler (else null_object)
@@ -1975,6 +2060,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(get_image_subresource_layout_request) == 32, "wire layout drift");
     static_assert(sizeof(get_image_subresource_layout_response) == 48, "wire layout drift");
     static_assert(sizeof(create_buffer_view_request) == 40, "wire layout drift");
+    static_assert(sizeof(shader_module_identifier_response) == 40, "wire layout drift");
     static_assert(sizeof(buffer_copy_region) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_buffer_request) == 32, "wire layout drift");
     static_assert(sizeof(create_query_pool_request) == 24, "wire layout drift");
@@ -1984,6 +2070,13 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_begin_query_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_end_query_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_write_timestamp_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_copy_query_pool_results_request) == 56, "wire layout drift");
+    static_assert(sizeof(cmd_draw_indexed_indirect_request) == 32, "wire layout drift");
+    static_assert(sizeof(cmd_draw_indexed_indirect_count_request) == 48, "wire layout drift");
+    static_assert(sizeof(cmd_draw_indirect_request) == 32, "wire layout drift");
+    static_assert(sizeof(cmd_draw_indirect_count_request) == 48, "wire layout drift");
+    static_assert(sizeof(cmd_next_subpass_request) == 16, "wire layout drift");
+    static_assert(sizeof(free_descriptor_sets_request) == 24, "wire layout drift");
     static_assert(sizeof(reset_query_pool_request) == 24, "wire layout drift");
     static_assert(sizeof(vertex_buffer_binding) == 16, "wire layout drift");
     static_assert(sizeof(vertex_buffer_binding2) == 32, "wire layout drift");

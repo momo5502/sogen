@@ -212,9 +212,11 @@ namespace sogen
             constexpr uint32_t k_dxgk_max_list_count = 0x10000;            // 64k entries (<= 1.5 MiB of list bytes)
             constexpr uint64_t k_dxgk_dedicated_video_memory_size = 4ull * 1024 * 1024 * 1024;
             constexpr uint64_t k_dxgk_shared_system_memory_size = 8ull * 1024 * 1024 * 1024;
-            constexpr uint32_t k_dxgk_fake_vendor_id = 0x10DE;
-            constexpr uint32_t k_dxgk_fake_device_id = 0x1C03;
-            constexpr uint32_t k_dxgk_fake_revision_id = 0xA1;
+            constexpr uint32_t k_dxgk_vendor_id = 0x10DE;
+            constexpr uint32_t k_dxgk_device_id = 0x2487;
+            constexpr uint32_t k_dxgk_subsystem_id = 0x153010DE;
+            constexpr uint32_t k_dxgk_revision_id = 0xA1;
+            constexpr uint32_t k_dxgk_bus_number = 1;
             constexpr uint32_t k_dxgk_open_resource_resource_private_size = 0x18;
             constexpr uint32_t k_dxgk_open_resource_allocation_private_size = 0x18;
             constexpr uint32_t k_dxgk_open_resource_descriptor_size = 0x80;
@@ -4201,11 +4203,11 @@ namespace sogen
                     UINT32 FunctionNumber;
                 } ids{};
 
-                ids.VendorID = k_dxgk_fake_vendor_id;
-                ids.DeviceID = k_dxgk_fake_device_id;
-                ids.SubSystemID = 0;
-                ids.RevisionID = k_dxgk_fake_revision_id;
-                ids.BusNumber = 0;
+                ids.VendorID = k_dxgk_vendor_id;
+                ids.DeviceID = k_dxgk_device_id;
+                ids.SubSystemID = k_dxgk_subsystem_id;
+                ids.RevisionID = k_dxgk_revision_id;
+                ids.BusNumber = k_dxgk_bus_number;
                 ids.DeviceNumber = 0;
                 ids.FunctionNumber = 0;
 

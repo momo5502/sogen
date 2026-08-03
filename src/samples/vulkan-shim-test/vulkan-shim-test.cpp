@@ -490,6 +490,14 @@ int main(int argc, char** argv)
         return 2;
     }
 
+    const auto write_timestamp2 = reinterpret_cast<PFN_vkCmdWriteTimestamp2>(get_instance_proc(nullptr, "vkCmdWriteTimestamp2"));
+    const auto write_timestamp2_khr = reinterpret_cast<PFN_vkCmdWriteTimestamp2KHR>(get_instance_proc(nullptr, "vkCmdWriteTimestamp2KHR"));
+    if (!write_timestamp2 || !write_timestamp2_khr)
+    {
+        std::printf("[shim-test] no vkCmdWriteTimestamp2 entry point\n");
+        return 3;
+    }
+
     const auto create_instance = reinterpret_cast<PFN_vkCreateInstance>(get_instance_proc(nullptr, "vkCreateInstance"));
     if (!create_instance)
     {
