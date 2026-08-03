@@ -468,6 +468,7 @@ namespace sogen
         };
 
         int32_t create_descriptor_set_layout(uint64_t device, std::span<const descriptor_binding> bindings, uint64_t& out_layout);
+        int32_t get_descriptor_set_layout_support(uint64_t device, std::span<const descriptor_binding> bindings, uint32_t& supported);
         void destroy_descriptor_set_layout(uint64_t device, uint64_t layout);
         int32_t create_descriptor_pool(uint64_t device, uint32_t max_sets, std::span<const descriptor_pool_size> sizes, uint64_t& out_pool);
         int32_t reset_descriptor_pool(uint64_t device, uint64_t pool, uint32_t flags);

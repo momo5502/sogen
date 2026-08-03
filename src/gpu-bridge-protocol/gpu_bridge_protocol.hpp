@@ -183,6 +183,7 @@ namespace sogen::gpu_bridge
         free_descriptor_sets = 0x890,
         get_shader_module_identifier = 0x891,
         get_shader_module_create_info_identifier = 0x892,
+        get_descriptor_set_layout_support = 0x893,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -278,6 +279,8 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_get_surface_capabilities = make_ioctl(static_cast<uint32_t>(command::get_surface_capabilities));
     inline constexpr uint32_t ioctl_record_commands = make_ioctl(static_cast<uint32_t>(command::record_commands));
     inline constexpr uint32_t ioctl_create_descriptor_set_layout = make_ioctl(static_cast<uint32_t>(command::create_descriptor_set_layout));
+    inline constexpr uint32_t ioctl_get_descriptor_set_layout_support =
+        make_ioctl(static_cast<uint32_t>(command::get_descriptor_set_layout_support));
     inline constexpr uint32_t ioctl_destroy_descriptor_set_layout =
         make_ioctl(static_cast<uint32_t>(command::destroy_descriptor_set_layout));
     inline constexpr uint32_t ioctl_create_descriptor_pool = make_ioctl(static_cast<uint32_t>(command::create_descriptor_pool));
@@ -1950,6 +1953,23 @@ namespace sogen::gpu_bridge
         // descriptor_set_layout_binding bindings[binding_count];
     };
 
+    // A separate query payload deliberately preserves the existing create-layout wire format. The bridge
+    // only evaluates the subset it can also create faithfully: flags == 0, no input pNext structures, and
+    // no immutable samplers. More advanced layouts are rejected conservatively by the guest shim.
+    struct get_descriptor_set_layout_support_request
+    {
+        object_id device;
+        uint32_t binding_count;
+        uint32_t reserved;
+        // descriptor_set_layout_binding bindings[binding_count];
+    };
+
+    struct descriptor_set_layout_support_response
+    {
+        int32_t vk_result;
+        uint32_t supported; // VkBool32
+    };
+
     // One pool size (trailing-array element of create_descriptor_pool).
     struct descriptor_pool_size
     {
@@ -2132,6 +2152,8 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_set_stencil_op_request) == 32, "wire layout drift");
     static_assert(sizeof(cmd_set_dynamic_u32_request) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
+    static_assert(sizeof(get_descriptor_set_layout_support_request) == 16, "wire layout drift");
+    static_assert(sizeof(descriptor_set_layout_support_response) == 8, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");
     static_assert(sizeof(create_sampler_request) == 64, "wire layout drift");
     static_assert(sizeof(enumerate_device_extension_properties_request) == 16, "wire layout drift");

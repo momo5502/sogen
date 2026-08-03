@@ -4259,13 +4259,92 @@ extern "C"
         return static_cast<VkResult>(response.vk_result);
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDescriptorSetLayoutSupport(VkDevice, const VkDescriptorSetLayoutCreateInfo*,
-                                                                                     VkDescriptorSetLayoutSupport* pSupport)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDescriptorSetLayoutSupport(
+        VkDevice device, const VkDescriptorSetLayoutCreateInfo* pCreateInfo, VkDescriptorSetLayoutSupport* pSupport)
     {
-        if (pSupport)
+        if (!pSupport)
         {
-            pSupport->supported = VK_TRUE;
+            return;
         }
+
+        pSupport->supported = VK_FALSE;
+
+        // Initialize the one output-chain structure relevant to descriptor-layout support. Unknown output
+        // structures make the query unsupported rather than leaving partially initialized data behind.
+        bool unsupported_output_chain = false;
+        for (auto* base = static_cast<VkBaseOutStructure*>(pSupport->pNext); base != nullptr; base = base->pNext)
+        {
+            if (base->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_LAYOUT_SUPPORT)
+            {
+                auto* const variable = reinterpret_cast<VkDescriptorSetVariableDescriptorCountLayoutSupport*>(base);
+                variable->maxVariableDescriptorCount = 0;
+            }
+            else
+            {
+                unsupported_output_chain = true;
+            }
+        }
+
+        if (unsupported_output_chain || !pCreateInfo ||
+            (pCreateInfo->bindingCount != 0 && !pCreateInfo->pBindings))
+        {
+            return;
+        }
+
+        // Keep this query aligned with what vkCreateDescriptorSetLayout currently marshals. Layout flags,
+        // input pNext structures (including binding flags), and immutable samplers are not represented by
+        // the create command, so claiming support for them would recreate the original false positive.
+        if (pCreateInfo->flags != 0 || pCreateInfo->pNext != nullptr)
+        {
+            return;
+        }
+        for (uint32_t i = 0; i < pCreateInfo->bindingCount; ++i)
+        {
+            if (pCreateInfo->pBindings[i].pImmutableSamplers != nullptr)
+            {
+                return;
+            }
+        }
+
+        gb::get_descriptor_set_layout_support_request header{};
+        header.device = to_object_id(device);
+        header.binding_count = pCreateInfo->bindingCount;
+        if (header.binding_count >
+            (static_cast<size_t>(UINT32_MAX) - sizeof(header)) / sizeof(gb::descriptor_set_layout_binding))
+        {
+            return;
+        }
+
+        std::vector<uint8_t> message(sizeof(header) +
+                                     static_cast<size_t>(header.binding_count) * sizeof(gb::descriptor_set_layout_binding));
+        std::memcpy(message.data(), &header, sizeof(header));
+        for (uint32_t i = 0; i < header.binding_count; ++i)
+        {
+            const VkDescriptorSetLayoutBinding& b = pCreateInfo->pBindings[i];
+            const gb::descriptor_set_layout_binding wire{
+                .binding = b.binding,
+                .descriptor_type = static_cast<uint32_t>(b.descriptorType),
+                .descriptor_count = b.descriptorCount,
+                .stage_flags = b.stageFlags,
+            };
+            std::memcpy(message.data() + sizeof(header) + static_cast<size_t>(i) * sizeof(wire), &wire, sizeof(wire));
+        }
+
+        gb::descriptor_set_layout_support_response response{};
+        if (!bridge_call(gb::ioctl_get_descriptor_set_layout_support, message.data(), static_cast<DWORD>(message.size()), &response,
+                         sizeof(response)) ||
+            response.vk_result != VK_SUCCESS)
+        {
+            return;
+        }
+
+        pSupport->supported = response.supported ? VK_TRUE : VK_FALSE;
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDescriptorSetLayoutSupportKHR(
+        VkDevice device, const VkDescriptorSetLayoutCreateInfo* pCreateInfo, VkDescriptorSetLayoutSupport* pSupport)
+    {
+        vkGetDescriptorSetLayoutSupport(device, pCreateInfo, pSupport);
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceImageSparseMemoryRequirements(VkDevice,
@@ -5379,6 +5458,8 @@ extern "C"
             {.name = "vkAllocateDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkAllocateDescriptorSets)},
             {.name = "vkFreeDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkFreeDescriptorSets)},
             {.name = "vkGetDescriptorSetLayoutSupport", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDescriptorSetLayoutSupport)},
+            {.name = "vkGetDescriptorSetLayoutSupportKHR",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDescriptorSetLayoutSupportKHR)},
             {.name = "vkGetDeviceImageSparseMemoryRequirements",
              .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceImageSparseMemoryRequirements)},
             {.name = "vkGetDeviceMemoryCommitment", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetDeviceMemoryCommitment)},

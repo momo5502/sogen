@@ -208,6 +208,8 @@ namespace sogen
                     return handle_record_commands(win_emu, context);
                 case gpu_bridge::ioctl_create_descriptor_set_layout:
                     return handle_create_descriptor_set_layout(win_emu, context);
+                case gpu_bridge::ioctl_get_descriptor_set_layout_support:
+                    return handle_get_descriptor_set_layout_support(win_emu, context);
                 case gpu_bridge::ioctl_destroy_descriptor_set_layout:
                     return handle_destroy_descriptor_set_layout(win_emu, context);
                 case gpu_bridge::ioctl_create_descriptor_pool:
@@ -2242,6 +2244,38 @@ namespace sogen
                 uint64_t layout = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_descriptor_set_layout(request.device, bindings, layout);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = layout});
+            }
+
+            NTSTATUS handle_get_descriptor_set_layout_support(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::get_descriptor_set_layout_support_request;
+
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<gpu_bridge::descriptor_set_layout_binding> wire;
+                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.binding_count, wire))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<vulkan_host::descriptor_binding> bindings(wire.size());
+                auto binding_out = bindings.begin();
+                for (const auto& entry : wire)
+                {
+                    *binding_out = {.binding = entry.binding,
+                                    .descriptor_type = entry.descriptor_type,
+                                    .descriptor_count = entry.descriptor_count,
+                                    .stage_flags = entry.stage_flags};
+                    ++binding_out;
+                }
+
+                gpu_bridge::descriptor_set_layout_support_response response{};
+                response.vk_result = this->vulkan_.get_descriptor_set_layout_support(request.device, bindings, response.supported);
+                return write_output(win_emu, context, response);
             }
 
             NTSTATUS handle_destroy_descriptor_set_layout(windows_emulator& win_emu, const io_device_context& context)
