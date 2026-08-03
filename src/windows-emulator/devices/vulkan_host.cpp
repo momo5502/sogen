@@ -4981,9 +4981,9 @@ namespace sogen
     int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
                                                   const shader_stage_source& vertex_shader, const shader_stage_source& fragment_shader,
                                                   uint32_t flags, uint32_t width, uint32_t height, std::span<const vertex_binding> bindings,
-                                                  std::span<const vertex_attribute> attributes, const depth_state& depth,
-                                                  std::span<const uint32_t> color_formats, uint32_t depth_format, uint32_t stencil_format,
-                                                  uint32_t rasterization_samples, uint32_t primitive_topology,
+                                                  std::span<const vertex_attribute> attributes, std::span<const vertex_divisor> divisors,
+                                                  const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
+                                                  uint32_t stencil_format, uint32_t rasterization_samples, uint32_t primitive_topology,
                                                   uint32_t primitive_restart_enable, std::span<const uint32_t> dynamic_states,
                                                   const specialization& vs_spec, const specialization& fs_spec,
                                                   std::span<const color_blend_attachment> blend_attachments_in, uint64_t& out_pipeline)
@@ -5123,8 +5123,33 @@ namespace sogen
                 {.location = a.location, .binding = a.binding, .format = static_cast<VkFormat>(a.format), .offset = a.offset});
         }
 
+        std::vector<VkVertexInputBindingDivisorDescription> vk_divisors;
+        vk_divisors.reserve(divisors.size());
+        for (const vertex_divisor& divisor : divisors)
+        {
+            const auto binding =
+                std::ranges::find_if(bindings, [&](const vertex_binding& candidate) { return candidate.binding == divisor.binding; });
+            if (binding == bindings.end() || binding->input_rate != VK_VERTEX_INPUT_RATE_INSTANCE ||
+                std::ranges::find_if(vk_divisors, [&](const VkVertexInputBindingDivisorDescription& candidate) {
+                    return candidate.binding == divisor.binding;
+                }) != vk_divisors.end())
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            vk_divisors.push_back({.binding = divisor.binding, .divisor = divisor.divisor});
+        }
+
+        VkPipelineVertexInputDivisorStateCreateInfo divisor_state{};
+        if (!vk_divisors.empty())
+        {
+            divisor_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO;
+            divisor_state.vertexBindingDivisorCount = static_cast<uint32_t>(vk_divisors.size());
+            divisor_state.pVertexBindingDivisors = vk_divisors.data();
+        }
+
         VkPipelineVertexInputStateCreateInfo vertex_input{};
         vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertex_input.pNext = vk_divisors.empty() ? nullptr : &divisor_state;
         vertex_input.vertexBindingDescriptionCount = static_cast<uint32_t>(vk_bindings.size());
         vertex_input.pVertexBindingDescriptions = vk_bindings.empty() ? nullptr : vk_bindings.data();
         vertex_input.vertexAttributeDescriptionCount = static_cast<uint32_t>(vk_attributes.size());

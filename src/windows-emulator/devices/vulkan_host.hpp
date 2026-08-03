@@ -502,6 +502,12 @@ namespace sogen
             uint32_t offset;
         };
 
+        struct vertex_divisor
+        {
+            uint32_t binding;
+            uint32_t divisor;
+        };
+
         // Optional depth-stencil state for a pipeline (test_enable == 0 => none, as before).
         struct depth_state
         {
@@ -552,15 +558,15 @@ namespace sogen
         // color_formats/depth_format/stencil_format, with viewport and scissor as dynamic state.
         int32_t create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
                                          const shader_stage_source& vertex_shader, const shader_stage_source& fragment_shader,
-                                         uint32_t flags, uint32_t width, uint32_t height,
-                                         std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
+                                         uint32_t flags, uint32_t width, uint32_t height, std::span<const vertex_binding> bindings,
+                                         std::span<const vertex_attribute> attributes, std::span<const vertex_divisor> divisors,
                                          const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
                                          uint32_t stencil_format, uint32_t rasterization_samples, uint32_t primitive_topology,
                                          uint32_t primitive_restart_enable, std::span<const uint32_t> dynamic_states,
                                          const specialization& vs_spec, const specialization& fs_spec,
                                          std::span<const color_blend_attachment> blend_attachments, uint64_t& out_pipeline);
-        int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, const shader_stage_source& shader,
-                                          uint32_t flags, uint64_t& out_pipeline);
+        int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, const shader_stage_source& shader, uint32_t flags,
+                                        uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 
         // clear_depth is used only when the render pass has a depth attachment.

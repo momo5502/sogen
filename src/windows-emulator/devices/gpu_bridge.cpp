@@ -2042,8 +2042,8 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                // The vertex input state trails the header: binding_count vertex_input_binding entries
-                // then attribute_count vertex_input_attribute entries. Bound the read by the buffer.
+                // The vertex input state trails the header: bindings, attributes, then per-binding divisors.
+                // Bound every section by the supplied IOCTL buffer before parsing it.
                 const auto available = context.input_buffer_length - static_cast<uint32_t>(sizeof(request_t));
                 std::vector<std::byte> trailer(available);
                 if (available > 0)
@@ -2053,7 +2053,9 @@ namespace sogen
 
                 const size_t bindings_bytes = static_cast<size_t>(request.binding_count) * sizeof(gpu_bridge::vertex_input_binding);
                 const size_t attributes_bytes = static_cast<size_t>(request.attribute_count) * sizeof(gpu_bridge::vertex_input_attribute);
-                if (bindings_bytes > trailer.size() || attributes_bytes > trailer.size() - bindings_bytes)
+                const size_t divisors_bytes = static_cast<size_t>(request.divisor_count) * sizeof(gpu_bridge::vertex_input_divisor);
+                if (bindings_bytes > trailer.size() || attributes_bytes > trailer.size() - bindings_bytes ||
+                    divisors_bytes > trailer.size() - bindings_bytes - attributes_bytes)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -2078,20 +2080,31 @@ namespace sogen
                     attribute = {.location = a.location, .binding = a.binding, .format = a.format, .offset = a.offset};
                 }
 
+                std::vector<vulkan_host::vertex_divisor> divisors(request.divisor_count);
+                size_t divisor_offset = bindings_bytes + attributes_bytes;
+                for (auto& divisor : divisors)
+                {
+                    gpu_bridge::vertex_input_divisor d{};
+                    std::memcpy(&d, trailer.data() + divisor_offset, sizeof(d));
+                    divisor_offset += sizeof(d);
+                    divisor = {.binding = d.binding, .divisor = d.divisor};
+                }
+
+                const size_t vertex_input_bytes = bindings_bytes + attributes_bytes + divisors_bytes;
                 const size_t dynamic_bytes = static_cast<size_t>(request.dynamic_state_count) * sizeof(uint32_t);
-                if (dynamic_bytes > trailer.size() - bindings_bytes - attributes_bytes)
+                if (dynamic_bytes > trailer.size() - vertex_input_bytes)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
                 std::vector<uint32_t> dynamic_states(request.dynamic_state_count);
                 if (request.dynamic_state_count > 0)
                 {
-                    std::memcpy(dynamic_states.data(), trailer.data() + bindings_bytes + attributes_bytes, dynamic_bytes);
+                    std::memcpy(dynamic_states.data(), trailer.data() + vertex_input_bytes, dynamic_bytes);
                 }
 
                 // The two per-stage specialization-constant blocks (vertex then fragment) trail the dynamic
                 // states: each is `entry_count` specialization_map_entry records followed by `data_size` bytes.
-                size_t spec_cursor = bindings_bytes + attributes_bytes + dynamic_bytes;
+                size_t spec_cursor = vertex_input_bytes + dynamic_bytes;
                 std::vector<vulkan_host::spec_entry> vs_entries;
                 std::vector<vulkan_host::spec_entry> fs_entries;
                 std::vector<uint8_t> vs_data;
@@ -2174,9 +2187,9 @@ namespace sogen
                 uint64_t pipeline = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
                     request.device, request.render_pass, request.pipeline_layout, vertex_shader, fragment_shader, request.flags,
-                    request.width, request.height, bindings, attributes, depth, color_formats, request.depth_format, request.stencil_format,
-                    request.rasterization_samples, request.primitive_topology, request.primitive_restart_enable, dynamic_states, vs_spec,
-                    fs_spec, blend_attachments, pipeline);
+                    request.width, request.height, bindings, attributes, divisors, depth, color_formats, request.depth_format,
+                    request.stencil_format, request.rasterization_samples, request.primitive_topology, request.primitive_restart_enable,
+                    dynamic_states, vs_spec, fs_spec, blend_attachments, pipeline);
                 if (result != 0)
                 {
                     win_emu.log.error(

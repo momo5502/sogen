@@ -1543,6 +1543,13 @@ namespace sogen::gpu_bridge
         uint32_t offset;
     };
 
+    // A VkVertexInputBindingDivisorDescription flattened to plain integers.
+    struct vertex_input_divisor
+    {
+        uint32_t binding;
+        uint32_t divisor;
+    };
+
     // A VkSpecializationMapEntry flattened (size is size_t in Vulkan; the wire keeps it 32-bit because the
     // guest is 32-bit and DXVK's spec constants are all 4 bytes). DXVK bakes d3d9 render state -- notably
     // SpecAlphaCompareOp (a VkCompareOp) -- into shaders via specialization constants; dropping them defaults
@@ -1555,9 +1562,9 @@ namespace sogen::gpu_bridge
         uint32_t size;
     };
 
-    // color attachment). The vertex input state is variable-length: the input buffer is this header
-    // immediately followed by `binding_count` vertex_input_binding entries and then `attribute_count`
-    // vertex_input_attribute entries. Both counts 0 => no vertex input (vertices baked into the shader).
+    // color attachment). The vertex input state is variable-length: the input buffer is this header,
+    // followed by binding_count vertex_input_binding entries, attribute_count vertex_input_attribute entries,
+    // and divisor_count vertex_input_divisor entries. Zero counts mean the corresponding state is absent.
     // out = object_response
     inline constexpr uint32_t max_color_attachments = 8;
 
@@ -1620,10 +1627,11 @@ namespace sogen::gpu_bridge
         // Per-color-attachment blend state (DXVK bakes D3D9 alpha blending statically). blend_attachment_count
         // entries are valid; the rest are zero. When blend_attachment_count == 0 the host disables blending.
         uint32_t blend_attachment_count;
-        uint32_t reserved_blend;
+        uint32_t divisor_count; // number of vertex_input_divisor entries trailing the attributes
         std::array<pipeline_blend_attachment, max_color_attachments> blend_attachments{};
         // vertex_input_binding bindings[binding_count];
         // vertex_input_attribute attributes[attribute_count];
+        // vertex_input_divisor divisors[divisor_count];
         // uint32_t dynamic_states[dynamic_state_count]; // VkDynamicState values DXVK declared on the pipeline
         // specialization_map_entry vs_spec_entries[vs_spec_entry_count];
         // uint8_t vs_spec_data[vs_spec_data_size];
@@ -2082,6 +2090,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(create_shader_module_request) == 16, "wire layout drift");
     static_assert(sizeof(shader_module_identifier_response) == 40, "wire layout drift");
     static_assert(sizeof(shader_stage_source) == 48, "wire layout drift");
+    static_assert(sizeof(vertex_input_divisor) == 8, "wire layout drift");
     static_assert(sizeof(create_compute_pipeline_request) == 72, "wire layout drift");
     static_assert(sizeof(create_graphics_pipeline_request) == 496, "wire layout drift");
     static_assert(sizeof(buffer_copy_region) == 24, "wire layout drift");
