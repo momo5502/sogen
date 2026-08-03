@@ -158,6 +158,7 @@ EXPORTS
     vkGetPipelineCacheData
     vkGetInstanceProcAddr
     vkGetQueryPoolResults
+    vkGetShaderModuleCreateInfoIdentifierEXT
     vkGetShaderModuleIdentifierEXT
     vkMergePipelineCaches
     vkGetPhysicalDeviceExternalSemaphoreProperties
