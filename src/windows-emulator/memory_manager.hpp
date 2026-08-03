@@ -81,6 +81,8 @@ namespace sogen
 
         using reserved_region_map = std::map<uint64_t, reserved_region>;
 
+        using memory_interface::read_memory;
+
         void read_memory(uint64_t address, void* data, size_t size) const final;
         bool try_read_memory(uint64_t address, void* data, size_t size) const final;
         void write_memory(uint64_t address, const void* data, size_t size) final;

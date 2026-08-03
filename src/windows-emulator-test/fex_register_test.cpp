@@ -12,7 +12,7 @@ namespace sogen::test
             }
             catch (const std::exception&)
             {
-                return nullptr;
+                return {};
             }
         }
     }

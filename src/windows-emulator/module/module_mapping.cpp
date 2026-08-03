@@ -280,8 +280,7 @@ namespace sogen
             }
 
             const auto span_size = static_cast<size_t>(max_end - min_offset);
-            std::vector<std::byte> block_buffer(span_size);
-            memory.read_memory(image_base + min_offset, block_buffer.data(), span_size);
+            auto block_buffer = memory.read_memory(image_base + min_offset, span_size);
 
             const utils::safe_buffer_accessor<std::byte> block{block_buffer};
 
