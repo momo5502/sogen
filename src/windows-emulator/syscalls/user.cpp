@@ -1773,7 +1773,8 @@ namespace sogen
             return brush;
         }
 
-        BOOL handle_NtUserFillWindow(const syscall_context& c, const hwnd parent_window, const hwnd window, const hdc dc, const hbrush brush)
+        BOOL handle_NtUserFillWindow(const syscall_context& c, const hwnd parent_window, const hwnd window, const hdc dc,
+                                     const hbrush brush)
         {
             auto* win = c.proc.windows.get(window);
             if (dc == 0 || !win || (parent_window != 0 && !c.proc.windows.get(parent_window)))

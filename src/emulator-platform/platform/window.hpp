@@ -201,9 +201,11 @@ namespace sogen
 #define WS_POPUP                    0x80000000L
 #define WS_CHILD                    0x40000000L
 #define WS_VISIBLE                  0x10000000L
+#define WS_MINIMIZE                 0x20000000L
 #define WS_DISABLED                 0x08000000L
 #define WS_CLIPSIBLINGS             0x04000000L
 #define WS_CLIPCHILDREN             0x02000000L
+#define WS_MAXIMIZE                 0x01000000L
 #define WS_CAPTION                  0x00C00000L
 #define WS_BORDER                   0x00800000L
 #define WS_DLGFRAME                 0x00400000L
@@ -222,6 +224,9 @@ namespace sogen
 #define SWP_SHOWWINDOW              0x0040
 #define SWP_HIDEWINDOW              0x0080
 
+#define SW_SHOWNORMAL               1
+#define SW_SHOWMINIMIZED            2
+#define SW_SHOWMAXIMIZED            3
 #define SW_SHOWNOACTIVATE           4
 #define SW_SHOWMINNOACTIVE          7
 #define SW_SHOWNA                   8
