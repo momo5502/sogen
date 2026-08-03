@@ -553,6 +553,8 @@ namespace sogen
 
       private:
         bool can_coalesce_message(const msg& msg) const;
+        std::optional<msg> peek_queued_message(const process_context& process, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
+                                               bool remove);
 
         void setup_registers(x86_64_cpu& emu, const process_context& context) const;
         void refresh_execution_context(x86_64_cpu& emu) const;

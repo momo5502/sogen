@@ -262,11 +262,13 @@ namespace sogen
 #define WM_COMMAND                  0x0111
 #define WM_TIMER                    0x0113
 #define WM_HOTKEY                   0x0312
+#define WM_DWMNCRENDERINGCHANGED    0x031F
 #define WM_WINDOWPOSCHANGING        0x0046
 #define WM_WINDOWPOSCHANGED         0x0047
 #define WM_NCCREATE                 0x0081
 #define WM_NCDESTROY                0x0082
 #define WM_NCCALCSIZE               0x0083
+#define WM_NCPAINT                  0x0085
 #define WM_NCACTIVATE               0x0086
 #define WM_NCMOUSEMOVE              0x00A0
 #define WM_NCLBUTTONDOWN            0x00A1

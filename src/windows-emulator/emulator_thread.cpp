@@ -426,6 +426,7 @@ namespace sogen
                     if (const auto* wnd = context.windows.get(context.default_desktop_window_handle))
                     {
                         info.spwndDesktop = wnd->guest.value();
+                        info.flags = 0x1;
                     }
                 });
                 teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
@@ -514,6 +515,7 @@ namespace sogen
                 if (const auto* wnd = context.windows.get(context.default_desktop_window_handle))
                 {
                     info.spwndDesktop = wnd->guest.value();
+                    info.flags = 0x1;
                 }
             });
             teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
@@ -844,11 +846,9 @@ namespace sogen
         }
     }
 
-    std::optional<msg> emulator_thread::peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
-                                                             bool remove)
+    std::optional<msg> emulator_thread::peek_queued_message(const process_context& process, const hwnd hwnd_filter, const UINT filter_min,
+                                                            const UINT filter_max, const bool remove)
     {
-        (void)this->synthesize_due_user_timer(win_emu, hwnd_filter, filter_min, filter_max);
-
         for (auto it = message_queue.begin(); it != message_queue.end(); ++it)
         {
             if (hwnd_filter == static_cast<hwnd>(-1))
@@ -858,7 +858,7 @@ namespace sogen
                     continue;
                 }
             }
-            else if (hwnd_filter != 0 && !window_matches_filter(win_emu.process, it->window, hwnd_filter))
+            else if (hwnd_filter != 0 && !window_matches_filter(process, it->window, hwnd_filter))
             {
                 continue;
             }
@@ -888,6 +888,17 @@ namespace sogen
                 message_queue.erase(it);
             }
             return msg;
+        }
+
+        return std::nullopt;
+    }
+
+    std::optional<msg> emulator_thread::peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
+                                                             bool remove)
+    {
+        if (auto queued_message = this->peek_queued_message(win_emu.process, hwnd_filter, filter_min, filter_max, remove))
+        {
+            return queued_message;
         }
 
         if ((filter_min == 0 && filter_max == 0) || (filter_min <= WM_PAINT && WM_PAINT <= filter_max))
@@ -920,6 +931,11 @@ namespace sogen
                     .pt = {.x = win_emu.process.cursor_x, .y = win_emu.process.cursor_y},
                 };
             }
+        }
+
+        if (this->synthesize_due_user_timer(win_emu, hwnd_filter, filter_min, filter_max))
+        {
+            return this->peek_queued_message(win_emu.process, hwnd_filter, filter_min, filter_max, remove);
         }
 
         return std::nullopt;

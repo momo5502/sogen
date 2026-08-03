@@ -230,7 +230,7 @@ namespace sogen
             };
         }
 
-        if ((win.style & WS_CHILD) != 0 && (win.ex_style & WS_EX_NOPARENTNOTIFY) == 0)
+        if (is_direct_target && (win.style & WS_CHILD) != 0 && (win.ex_style & WS_EX_NOPARENTNOTIFY) == 0 && win.parent_handle != 0)
         {
             uint64_t child_id{};
             win.guest.access([&](const USER_WINDOW& guest_win) { child_id = guest_win.wID; });

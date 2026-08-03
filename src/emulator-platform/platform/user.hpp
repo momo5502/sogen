@@ -382,6 +382,7 @@ namespace sogen
     enum USER_WINDOWCOMPOSITIONATTRIB : uint32_t
     {
         WCA_NCRENDERING_ENABLED = 1,
+        WCA_NCRENDERING_POLICY = 2,
         WCA_EXTENDED_FRAME_BOUNDS = 8,
         WCA_CLOAKED = 18,
     };
@@ -399,7 +400,9 @@ namespace sogen
     {
         uint8_t unknown0[0x8];
         uint64_t spwndDesktop;
-        uint8_t unknown10[0xEF];
+        uint8_t unknown10[0x30];
+        uint32_t flags;
+        uint8_t unknown44[0xFF];
     };
 
     // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
