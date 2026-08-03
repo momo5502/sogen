@@ -188,6 +188,35 @@ namespace
         }
     }
 
+    // Sparse operations are intentionally stubbed below, so none of the related capabilities may be
+    // advertised. Keep the masking in one place so the legacy and Features2/Properties2 query paths
+    // cannot drift apart.
+    void mask_unsupported_sparse_features(VkPhysicalDeviceFeatures& features)
+    {
+        features.shaderResourceResidency = VK_FALSE;
+        features.shaderResourceMinLod = VK_FALSE;
+        features.sparseBinding = VK_FALSE;
+        features.sparseResidencyBuffer = VK_FALSE;
+        features.sparseResidencyImage2D = VK_FALSE;
+        features.sparseResidencyImage3D = VK_FALSE;
+        features.sparseResidency2Samples = VK_FALSE;
+        features.sparseResidency4Samples = VK_FALSE;
+        features.sparseResidency8Samples = VK_FALSE;
+        features.sparseResidency16Samples = VK_FALSE;
+        features.sparseResidencyAliased = VK_FALSE;
+    }
+
+    void mask_unsupported_sparse_properties(VkPhysicalDeviceProperties& properties)
+    {
+        properties.limits.sparseAddressSpaceSize = 0;
+        properties.sparseProperties = {};
+    }
+
+    VkQueueFlags mask_unsupported_queue_flags(VkQueueFlags flags)
+    {
+        return flags & ~static_cast<VkQueueFlags>(VK_QUEUE_SPARSE_BINDING_BIT);
+    }
+
     // VkDeviceMemory is host-side; the guest can't see a host pointer. We emulate vkMapMemory by
     // staging a guest-side copy: download the host range on map, hand the app that buffer, and upload
     // it back on unmap so writes persist. allocationSize is tracked here to resolve VK_WHOLE_SIZE.
@@ -454,9 +483,15 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice,
                                                                                    VkPhysicalDeviceProperties* pProperties)
     {
+        if (!pProperties)
+        {
+            return;
+        }
+
         gb::get_physical_device_properties_request request{};
         request.physical_device = to_object_id(physicalDevice);
         bridge_call(gb::ioctl_get_physical_device_properties, &request, sizeof(request), pProperties, sizeof(*pProperties));
+        mask_unsupported_sparse_properties(*pProperties);
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceQueueFamilyProperties(VkPhysicalDevice physicalDevice,
@@ -489,7 +524,7 @@ extern "C"
             reinterpret_cast<const gb::queue_family_properties*>(buffer.data() + sizeof(gb::get_queue_family_properties_response));
         for (uint32_t i = 0; i < written; ++i)
         {
-            pProperties[i] = {.queueFlags = families[i].queue_flags,
+            pProperties[i] = {.queueFlags = mask_unsupported_queue_flags(families[i].queue_flags),
                               .queueCount = families[i].queue_count,
                               .timestampValidBits = families[i].timestamp_valid_bits,
                               .minImageTransferGranularity = {.width = families[i].min_image_transfer_granularity_width,
@@ -2870,6 +2905,7 @@ extern "C"
         {
             flags[i] = VK_TRUE;
         }
+        mask_unsupported_sparse_features(*pFeatures);
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice,
@@ -2879,6 +2915,9 @@ extern "C"
         {
             return;
         }
+
+        // Keep unsupported fields deterministic even if the bridge query fails before filling the root.
+        mask_unsupported_sparse_features(pFeatures->features);
 
         // Collect the caller's chain: the root VkPhysicalDeviceFeatures2 (carrying the base
         // VkPhysicalDeviceFeatures), then each pNext struct. For each we record its sType + pad-free
@@ -2953,6 +2992,8 @@ extern "C"
             }
             offset += record->body_size;
         }
+
+        mask_unsupported_sparse_features(pFeatures->features);
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice,
@@ -3124,7 +3165,7 @@ extern "C"
         for (uint32_t i = 0; i < count; ++i)
         {
             pProperties[i].queueFamilyProperties = {
-                .queueFlags = families[i].queue_flags,
+                .queueFlags = mask_unsupported_queue_flags(families[i].queue_flags),
                 .queueCount = families[i].queue_count,
                 .timestampValidBits = families[i].timestamp_valid_bits,
                 .minImageTransferGranularity = {.width = families[i].min_image_transfer_granularity_width,
