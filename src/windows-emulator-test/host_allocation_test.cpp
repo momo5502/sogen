@@ -300,4 +300,50 @@ namespace sogen::test
         ASSERT_LE(host.released_ranges[0].address, base);
         ASSERT_GE(host.released_ranges[0].address + host.released_ranges[0].size, base + size);
     }
+
+    // A reserve-only allocation at an explicit base (a MEM_RESERVE without MEM_COMMIT, a module
+    // image reservation, or an auto-placed base the caller picked itself) never reaches map_memory,
+    // so the host-level claim is the only thing keeping the host's own allocator out of the range
+    // until the guest commits - without it, the commit's MAP_FIXED would clobber whatever landed
+    // there in the meantime.
+    TEST(HostAllocationTest, FixedBaseReserveOnlyAllocationClaimsHostRange)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr uint64_t base = 0x40000000;
+        constexpr size_t size = 0x10000;
+
+        ASSERT_TRUE(mm.allocate_memory(base, size, nt_memory_permission{memory_permission::read_write}, true));
+
+        ASSERT_EQ(host.claimed_ranges.size(), 1u);
+        ASSERT_EQ(host.claimed_ranges[0].address, base);
+        ASSERT_EQ(host.claimed_ranges[0].size, size);
+
+        ASSERT_TRUE(mm.release_memory(base, 0));
+        ASSERT_EQ(host.released_ranges.size(), 1u);
+    }
+
+    // Models the residual race of a caller that confirmed a base free with host_window_is_free and
+    // only allocates it afterwards (handle_NtAllocateVirtualMemoryEx's auto-placement): a foreign
+    // host mapping claiming the base in between must make the allocation fail rather than have it
+    // claim - and later clobber - the intruder's range.
+    TEST(HostAllocationTest, ForeignMappingArrivingAfterTheProbeFailsTheAllocationWithoutClaiming)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr size_t size = 0x2000;
+        constexpr uint64_t start = DEFAULT_ALLOCATION_ADDRESS_64BIT;
+
+        const uint64_t confirmed_base = mm.find_free_allocation_base(size, start);
+        ASSERT_NE(confirmed_base, 0u);
+        ASSERT_TRUE(mm.host_window_is_free(confirmed_base, size));
+
+        host.foreign_ranges.push_back({.address = confirmed_base, .size = size});
+
+        ASSERT_FALSE(mm.allocate_memory(confirmed_base, size, nt_memory_permission{memory_permission::read_write}, true));
+        ASSERT_TRUE(host.claimed_ranges.empty());
+        ASSERT_EQ(mm.get_region_kind(confirmed_base), memory_region_kind::host_reserved);
+    }
 } // namespace sogen::test

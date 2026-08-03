@@ -486,26 +486,18 @@ namespace sogen
             auto potential_base = requested_base;
             if (!potential_base)
             {
-                // Pick a base from sogen's current view, then confirm just that window is still free at
-                // the host level (host_window_is_free - a bounded, usually single-syscall probe) before
-                // committing to it. Without some fresh check here, find_free_allocation_base can pick a
-                // base against a stale snapshot that the subsequent allocate_memory() call (which itself
-                // only confirms its own window, not the whole address space) then either rejects as
-                // overlapping a live host region - failing auto-placement with
-                // STATUS_MEMORY_NOT_ALLOCATED - or, worse, clobbers with a MAP_FIXED mmap on backends
-                // that run guest VA == host VA (FEX on Apple), where the host process's own mappings
-                // (JIT code buffers, a framework's lazy allocation, a GCD worker stack) share the guest
-                // address space and can appear at any point during execution. Only on an actual
-                // collision - rare - rescan and retry, mirroring the pick/confirm/retry loop
-                // memory_manager::find_free_host_allocation_base uses for the same reason.
-                //
-                // The rescan is BOTH the full reserve_host_memory_ranges() AND the windowed
-                // reserve_host_memory_ranges_in(pick, size) - see find_free_host_allocation_base for the full
-                // rationale. In short: the full scan retires every currently-visible foreign range at once so
-                // a pick at the low edge of a large host-occupied region jumps clear of the whole region,
-                // while the windowed record covers ranges the full scan deliberately omits but the windowed
-                // host_window_is_free probe still reports occupied - without it, a pick landing on such a
-                // range is never recorded as reserved and the loop re-picks the same base until exhaustion.
+                // Steers the pick away from addresses a foreign host mapping already occupies: on
+                // backends running guest VA == host VA (FEX on Apple), find_free_allocation_base's
+                // bookkeeping-only view can hand back an address the host process itself (a JIT code
+                // buffer, a framework's lazy allocation, a GCD worker stack) has claimed since the
+                // last scan. Only a heuristic - nothing holds the window between this probe and
+                // allocate_memory below, which re-checks it and takes the binding host-level claim;
+                // a foreign mapping landing in between makes that call fail cleanly instead of
+                // clobbering. The rescan is BOTH the full reserve_host_memory_ranges() AND the
+                // windowed reserve_host_memory_ranges_in(pick, size): the full scan retires a whole
+                // host-occupied region in one step so a pick at its low edge jumps clear, the
+                // windowed one covers ranges the full scan omits but the probe still reports
+                // occupied - see find_free_host_allocation_base for the full rationale.
                 for (int attempt = 0;; ++attempt)
                 {
                     potential_base = c.win_emu.memory.find_free_allocation_base(

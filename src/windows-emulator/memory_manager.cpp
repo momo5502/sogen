@@ -505,7 +505,21 @@ namespace sogen
         // grows over a session, for no additional safety.
         this->reserve_host_memory_ranges_in(address, size);
 
-        return this->allocate_memory_raw(address, size, permissions, reserve_only, kind);
+        if (!this->allocate_memory_raw(address, size, permissions, reserve_only, kind))
+        {
+            return false;
+        }
+
+        // A reserve-only range never reaches map_memory, so nothing else claims it at the host level:
+        // the host allocator would stay free to hand this address out until the guest commits, and
+        // the commit's MAP_FIXED would then clobber whatever landed there. The size-only overload
+        // claims its own picks for the same reason. Committed ranges are claimed by map_memory above.
+        if (reserve_only)
+        {
+            this->memory_->reserve_guest_address_range(address, size);
+        }
+
+        return true;
     }
 
     bool memory_manager::allocate_memory_raw(const uint64_t address, const size_t size, const nt_memory_permission permissions,

@@ -1791,24 +1791,39 @@ namespace sogen::fex
             // be unavailable to the host's own allocator - otherwise something like a FEXCore JIT code
             // buffer (allocated via plain mmap(NULL, ...), unaware of sogen's guest bookkeeping) can be
             // handed this exact address before the guest range is ever committed.
+            // Pages already ours (from this or an adjacent guest region sharing the host page) keep
+            // their mapping - sync_host_page_apple/map_memory applies the real permission when
+            // committed. Everything else is claimed one mmap per contiguous run: whole module image
+            // reservations come through here, and a per-page syscall makes process startup crawl.
             const uint64_t start = host_page_align_down_apple(address);
             const uint64_t end = host_page_align_up_apple(address + size);
-            for (uint64_t host_page = start; host_page < end; host_page += host_page_size_apple)
+            for (uint64_t host_page = start; host_page < end;)
             {
                 if (this->mapped_host_pages_apple_.contains(host_page))
                 {
-                    // Already ours (from this or an adjacent guest region sharing the host page) -
-                    // sync_host_page_apple/map_memory will apply the real permission when committed.
+                    host_page += host_page_size_apple;
                     continue;
                 }
 
-                void* result = ::mmap(reinterpret_cast<void*>(host_page), host_page_size_apple, PROT_NONE,
+                uint64_t run_end = host_page + host_page_size_apple;
+                while (run_end < end && !this->mapped_host_pages_apple_.contains(run_end))
+                {
+                    run_end += host_page_size_apple;
+                }
+
+                void* result = ::mmap(reinterpret_cast<void*>(host_page), static_cast<size_t>(run_end - host_page), PROT_NONE,
                                       MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
                 if (result == MAP_FAILED || result != reinterpret_cast<void*>(host_page))
                 {
                     throw std::runtime_error("FEX backend failed to reserve guest address range at the host level");
                 }
-                this->mapped_host_pages_apple_.insert(host_page);
+
+                for (uint64_t claimed = host_page; claimed < run_end; claimed += host_page_size_apple)
+                {
+                    this->mapped_host_pages_apple_.insert(claimed);
+                }
+
+                host_page = run_end;
             }
         }
 
