@@ -312,6 +312,7 @@ namespace sogen
             PFN_vkCreatePipelineLayout create_pipeline_layout{};
             PFN_vkDestroyPipelineLayout destroy_pipeline_layout{};
             PFN_vkCreateDescriptorSetLayout create_descriptor_set_layout{};
+            PFN_vkGetDescriptorSetLayoutSupport get_descriptor_set_layout_support{};
             PFN_vkDestroyDescriptorSetLayout destroy_descriptor_set_layout{};
             PFN_vkCreateDescriptorPool create_descriptor_pool{};
             PFN_vkDestroyDescriptorPool destroy_descriptor_pool{};
@@ -1820,6 +1821,13 @@ namespace sogen
             data.create_pipeline_layout = reinterpret_cast<PFN_vkCreatePipelineLayout>(resolve("vkCreatePipelineLayout"));
             data.destroy_pipeline_layout = reinterpret_cast<PFN_vkDestroyPipelineLayout>(resolve("vkDestroyPipelineLayout"));
             data.create_descriptor_set_layout = reinterpret_cast<PFN_vkCreateDescriptorSetLayout>(resolve("vkCreateDescriptorSetLayout"));
+            data.get_descriptor_set_layout_support =
+                reinterpret_cast<PFN_vkGetDescriptorSetLayoutSupport>(resolve("vkGetDescriptorSetLayoutSupport"));
+            if (!data.get_descriptor_set_layout_support)
+            {
+                data.get_descriptor_set_layout_support =
+                    reinterpret_cast<PFN_vkGetDescriptorSetLayoutSupport>(resolve("vkGetDescriptorSetLayoutSupportKHR"));
+            }
             data.destroy_descriptor_set_layout =
                 reinterpret_cast<PFN_vkDestroyDescriptorSetLayout>(resolve("vkDestroyDescriptorSetLayout"));
             data.create_descriptor_pool = reinterpret_cast<PFN_vkCreateDescriptorPool>(resolve("vkCreateDescriptorPool"));
@@ -4670,6 +4678,41 @@ namespace sogen
         const uint64_t id = this->impl_->next_id++;
         this->impl_->descriptor_set_layouts.emplace(id, impl::descriptor_set_layout_data{.handle = layout, .device_id = device});
         out_layout = id;
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::get_descriptor_set_layout_support(uint64_t device, std::span<const descriptor_binding> bindings,
+                                                            uint32_t& supported)
+    {
+        supported = VK_FALSE;
+
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.get_descriptor_set_layout_support)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<VkDescriptorSetLayoutBinding> vk_bindings;
+        vk_bindings.reserve(bindings.size());
+        for (const descriptor_binding& b : bindings)
+        {
+            VkDescriptorSetLayoutBinding vb{};
+            vb.binding = b.binding;
+            vb.descriptorType = static_cast<VkDescriptorType>(b.descriptor_type);
+            vb.descriptorCount = b.descriptor_count;
+            vb.stageFlags = b.stage_flags;
+            vk_bindings.push_back(vb);
+        }
+
+        VkDescriptorSetLayoutCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        info.bindingCount = static_cast<uint32_t>(vk_bindings.size());
+        info.pBindings = vk_bindings.empty() ? nullptr : vk_bindings.data();
+
+        VkDescriptorSetLayoutSupport support{};
+        support.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT;
+        dev->second.get_descriptor_set_layout_support(dev->second.handle, &info, &support);
+        supported = support.supported;
         return VK_SUCCESS;
     }
 

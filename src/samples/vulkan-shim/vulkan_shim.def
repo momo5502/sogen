@@ -149,6 +149,7 @@ EXPORTS
     vkGetDeviceImageSparseMemoryRequirements
     vkGetDeviceMemoryCommitment
     vkGetDescriptorSetLayoutSupport
+    vkGetDescriptorSetLayoutSupportKHR
     vkGetFenceStatus
     vkGetImageMemoryRequirements
     vkGetImageSparseMemoryRequirements
