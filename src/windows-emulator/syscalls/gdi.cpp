@@ -2803,6 +2803,12 @@ namespace sogen
             return required;
         }
 
+        uint32_t handle_NtGdiGetKerningPairs(const syscall_context&, const hdc /*dc*/, const uint32_t /*pair_count*/,
+                                             const emulator_pointer /*pairs*/)
+        {
+            return 0;
+        }
+
         BOOL handle_NtGdiGetTextExtent(const syscall_context& c, const hdc dc, const emulator_pointer /*text*/, const int32_t char_count,
                                        const emulator_pointer size, const ULONG /*flags*/)
         {

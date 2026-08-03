@@ -667,6 +667,7 @@ namespace sogen
         BOOL handle_NtUserRemoveMenu(const syscall_context& c, hmenu menu, UINT position, UINT flags);
         BOOL handle_NtUserDestroyMenu(const syscall_context& c, hmenu menu);
         BOOL handle_NtUserDrawMenuBar(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserEnableMenuItem();
         BOOL handle_NtUserCreateCaret();
         BOOL handle_NtUserDestroyCaret();
         BOOL handle_NtUserSetCaretPos();
@@ -708,6 +709,10 @@ namespace sogen
         BOOL handle_NtUserDisableThreadIme();
         BOOL handle_NtUserGetPointerDevices();
         BOOL handle_NtUserHwndQueryRedirectionInfo();
+        BOOL handle_NtUserEnableNonClientDpiScaling();
+        BOOL handle_NtUserSetImeHotKey();
+        BOOL handle_NtUserVkKeyScanEx();
+        BOOL handle_NtUserSetLayeredWindowAttributes();
 
         // syscalls/gdi.cpp:
         NTSTATUS handle_NtDxgkIsFeatureEnabled();
@@ -768,6 +773,7 @@ namespace sogen
                                              uint32_t file_count, uint32_t flags, uint32_t thread_id, emulator_pointer design_vector);
         uint32_t handle_NtGdiGetTextMetricsW(const syscall_context& c, hdc dc, emulator_pointer ptm, uint32_t cj);
         int32_t handle_NtGdiGetTextFaceW(const syscall_context& c, hdc dc, int32_t count, emulator_pointer face_name, BOOL alias_name);
+        uint32_t handle_NtGdiGetKerningPairs(const syscall_context& c, hdc dc, uint32_t pair_count, emulator_pointer pairs);
         uint32_t handle_NtGdiGetGlyphOutline(const syscall_context& c, hdc dc, UINT character, UINT format, emulator_pointer glyph_metrics,
                                              DWORD buffer_size, emulator_pointer buffer, emulator_pointer mat2);
         uint32_t handle_NtGdiGetOutlineTextMetricsInternalW(const syscall_context& c, hdc dc, uint32_t cj_copy, emulator_pointer metrics,
@@ -1378,6 +1384,7 @@ namespace sogen
         add_handler(NtGdiAddFontResourceW);
         add_handler(NtGdiGetTextMetricsW);
         add_handler(NtGdiGetTextFaceW);
+        add_handler(NtGdiGetKerningPairs);
         add_handler(NtGdiGetTextExtent);
         add_handler(NtGdiGetCharWidthW);
         add_handler(NtGdiGetCharABCWidthsW);
@@ -1708,6 +1715,7 @@ namespace sogen
         add_handler(NtUserRemoveMenu);
         add_handler(NtUserDestroyMenu);
         add_handler(NtUserDrawMenuBar);
+        add_handler(NtUserEnableMenuItem);
         add_handler(NtUserSetWindowCompositionAttribute);
         add_handler(NtUserGetWindowPlacement);
         add_handler(NtUserCreateCaret);
@@ -1755,6 +1763,10 @@ namespace sogen
         add_handler(NtUserDisableThreadIme);
         add_handler(NtUserGetPointerDevices);
         add_handler(NtUserHwndQueryRedirectionInfo);
+        add_handler(NtUserEnableNonClientDpiScaling);
+        add_handler(NtUserSetImeHotKey);
+        add_handler(NtUserVkKeyScanEx);
+        add_handler(NtUserSetLayeredWindowAttributes);
 
 #undef add_handler
     }

@@ -5555,6 +5555,11 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserEnableMenuItem()
+        {
+            return TRUE;
+        }
+
         BOOL handle_NtUserCreateCaret()
         {
             return TRUE;
@@ -6268,6 +6273,26 @@ namespace sogen
         BOOL handle_NtUserHwndQueryRedirectionInfo()
         {
             return FALSE;
+        }
+
+        BOOL handle_NtUserEnableNonClientDpiScaling()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetImeHotKey()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserVkKeyScanEx()
+        {
+            return FALSE;
+        }
+
+        BOOL handle_NtUserSetLayeredWindowAttributes()
+        {
+            return TRUE;
         }
     }
 
