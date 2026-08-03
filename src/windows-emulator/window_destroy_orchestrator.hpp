@@ -23,7 +23,7 @@ namespace sogen
     class window_destroy_orchestrator
     {
       public:
-        window_destroy_orchestrator(window_destroy_state& state, const syscall_context& c);
+        window_destroy_orchestrator(window_destroy_data& state, const syscall_context& c);
 
         void start(window& root) const;
         std::optional<window_destroy_step> advance() const;
@@ -37,7 +37,7 @@ namespace sogen
         std::vector<hwnd> collect_dependents(const window& win) const;
         void finalize_frame(window_destroy_frame& frame, const window& win) const;
 
-        window_destroy_state& state_;
+        window_destroy_data& state_;
         x86_64_cpu& emu_;
         process_context& proc_;
         emulator_thread& thread_;

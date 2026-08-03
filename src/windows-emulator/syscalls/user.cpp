@@ -1040,9 +1040,32 @@ namespace sogen
             dispatch_window_message(c, id, std::forward<T>(state), win, m.message, m.wParam, m.lParam);
         }
 
-        BOOL advance_window_destroy(const syscall_context& c, window_destroy_state& state)
+        void complete_window_destroy_step(const syscall_context& c, window_destroy_data& state)
         {
-            window_destroy_orchestrator orchestrator{state, c};
+            if (state.frames.empty())
+            {
+                return;
+            }
+
+            auto& frame = state.frames.back();
+            if (frame.pending_window_pos_address == 0)
+            {
+                return;
+            }
+
+            if (auto* win = c.proc.windows.get(frame.handle))
+            {
+                complete_window_position_change(c, *win, frame.pending_window_pos_address, frame.changed_window_pos_alloc,
+                                                frame.message_queue, true);
+            }
+            frame.pending_window_pos_address = 0;
+        }
+
+        template <typename State>
+        BOOL advance_window_destroy(const syscall_context& c, State& completion_state, window_destroy_data& destruction,
+                                    const callback_id completion_callback)
+        {
+            window_destroy_orchestrator orchestrator{destruction, c};
             const auto step = orchestrator.advance();
             if (!step)
             {
@@ -1052,11 +1075,11 @@ namespace sogen
             auto* win = c.proc.windows.get(step->handle);
             if (!win)
             {
-                return advance_window_destroy(c, state);
+                return advance_window_destroy(c, completion_state, destruction, completion_callback);
             }
 
-            dispatch_window_message(c, callback_id::NtUserDestroyWindow, std::move(state), *win, step->message.message,
-                                    step->message.wParam, step->message.lParam);
+            dispatch_window_message(c, completion_callback, std::move(completion_state), *win, step->message.message, step->message.wParam,
+                                    step->message.lParam);
             return {};
         }
 
@@ -3318,27 +3341,15 @@ namespace sogen
             }
 
             window_destroy_state state{};
-            window_destroy_orchestrator{state, c}.start(*win);
-            return advance_window_destroy(c, state);
+            window_destroy_orchestrator{state.destruction, c}.start(*win);
+            return advance_window_destroy(c, state, state.destruction, callback_id::NtUserDestroyWindow);
         }
 
         BOOL completion_NtUserDestroyWindow(const syscall_context& c, const hwnd /*window*/)
         {
             auto& s = c.get_completion_state<window_destroy_state>();
-            if (!s.frames.empty())
-            {
-                auto& frame = s.frames.back();
-                if (frame.pending_window_pos_address != 0)
-                {
-                    if (auto* win = c.proc.windows.get(frame.handle))
-                    {
-                        complete_window_position_change(c, *win, frame.pending_window_pos_address, frame.changed_window_pos_alloc,
-                                                        frame.message_queue, true);
-                    }
-                    frame.pending_window_pos_address = 0;
-                }
-            }
-            return advance_window_destroy(c, s);
+            complete_window_destroy_step(c, s.destruction);
+            return advance_window_destroy(c, s, s.destruction, callback_id::NtUserDestroyWindow);
         }
 
         BOOL handle_NtUserSetProp(const syscall_context& c, const hwnd window, const uint16_t atom, const uint64_t data)
@@ -3566,6 +3577,16 @@ namespace sogen
 
             if (type == FNID_DEFWINDOW)
             {
+                if (msg == WM_CLOSE)
+                {
+                    message_call_state state{};
+                    state.window = hwnd;
+                    state.message = msg;
+                    state.destroying_window = true;
+                    window_destroy_orchestrator{state.destruction, c}.start(*win);
+                    return advance_window_destroy(c, state, state.destruction, callback_id::NtUserMessageCall);
+                }
+
                 const auto result = handle_default_window_proc_message(c, *win, msg, w_param, l_param, ansi);
                 return write_message_call_result(c, result_info, result) ? TRUE : FALSE;
             }
@@ -3647,6 +3668,17 @@ namespace sogen
                                               const uint64_t /*l_param*/, const uint64_t result_info, const DWORD type, const BOOL /*ansi*/)
         {
             auto& state = c.get_completion_state<message_call_state>();
+
+            if (state.destroying_window)
+            {
+                complete_window_destroy_step(c, state.destruction);
+                if (!advance_window_destroy(c, state, state.destruction, callback_id::NtUserMessageCall))
+                {
+                    return {};
+                }
+                return write_message_call_result(c, result_info, 0) ? TRUE : FALSE;
+            }
+
             if (state.scratch_text != 0)
             {
                 c.win_emu.memory.release_memory(state.scratch_text, 0);

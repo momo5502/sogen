@@ -181,25 +181,40 @@ namespace sogen
         }
     };
 
-    struct window_destroy_state : completion_state
+    struct window_destroy_data
     {
         std::vector<window_destroy_frame> frames{};
         std::vector<window_destroy_frame> nc_destroy_frames{};
         uint32_t nc_destroy_index{};
 
-      private:
-        void serialize_object(utils::buffer_serializer& buffer) const override
+        void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write_vector(this->frames);
             buffer.write_vector(this->nc_destroy_frames);
             buffer.write(this->nc_destroy_index);
         }
 
-        void deserialize_object(utils::buffer_deserializer& buffer) override
+        void deserialize(utils::buffer_deserializer& buffer)
         {
             buffer.read_vector(this->frames);
             buffer.read_vector(this->nc_destroy_frames);
             buffer.read(this->nc_destroy_index);
+        }
+    };
+
+    struct window_destroy_state : completion_state
+    {
+        window_destroy_data destruction{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            this->destruction.serialize(buffer);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            this->destruction.deserialize(buffer);
         }
     };
 
@@ -228,6 +243,8 @@ namespace sogen
         UINT message{};
         uint64_t scratch_text{}; // guest buffer holding a re-encoded text payload; freed on completion
         bool dispatching_result_callback{};
+        bool destroying_window{};
+        window_destroy_data destruction{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -236,6 +253,8 @@ namespace sogen
             buffer.write(this->message);
             buffer.write(this->scratch_text);
             buffer.write(this->dispatching_result_callback);
+            buffer.write(this->destroying_window);
+            this->destruction.serialize(buffer);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -244,6 +263,8 @@ namespace sogen
             buffer.read(this->message);
             buffer.read(this->scratch_text);
             buffer.read(this->dispatching_result_callback);
+            buffer.read(this->destroying_window);
+            this->destruction.deserialize(buffer);
         }
     };
 
