@@ -182,6 +182,7 @@ namespace sogen::gpu_bridge
         cmd_next_subpass = 0x88F,
         free_descriptor_sets = 0x890,
         get_shader_module_identifier = 0x891,
+        get_shader_module_create_info_identifier = 0x892,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -256,6 +257,8 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_create_shader_module = make_ioctl(static_cast<uint32_t>(command::create_shader_module));
     inline constexpr uint32_t ioctl_destroy_shader_module = make_ioctl(static_cast<uint32_t>(command::destroy_shader_module));
     inline constexpr uint32_t ioctl_get_shader_module_identifier = make_ioctl(static_cast<uint32_t>(command::get_shader_module_identifier));
+    inline constexpr uint32_t ioctl_get_shader_module_create_info_identifier =
+        make_ioctl(static_cast<uint32_t>(command::get_shader_module_create_info_identifier));
     inline constexpr uint32_t ioctl_create_image_view = make_ioctl(static_cast<uint32_t>(command::create_image_view));
     inline constexpr uint32_t ioctl_destroy_image_view = make_ioctl(static_cast<uint32_t>(command::destroy_image_view));
     inline constexpr uint32_t ioctl_create_buffer_view = make_ioctl(static_cast<uint32_t>(command::create_buffer_view));
@@ -1290,21 +1293,24 @@ namespace sogen::gpu_bridge
         object_id object;
     };
 
-    // ioctl_create_shader_module: in header immediately followed by `code_size` bytes of SPIR-V;
-    // out = object_response
+    // ioctl_create_shader_module / ioctl_get_shader_module_create_info_identifier: header immediately
+    // followed by `code_size` bytes of SPIR-V. The create command returns object_response; the identifier
+    // command returns shader_module_identifier_response.
     struct create_shader_module_request
     {
         object_id device;
         uint32_t code_size; // bytes (multiple of 4)
-        uint32_t reserved;
+        uint32_t flags;     // VkShaderModuleCreateFlags
         // uint8_t code[code_size];
     };
+
+    inline constexpr uint32_t max_shader_module_identifier_size = 32;
 
     struct shader_module_identifier_response
     {
         int32_t vk_result;
         uint32_t identifier_size;
-        std::array<uint8_t, 32> identifier;
+        std::array<uint8_t, max_shader_module_identifier_size> identifier;
     };
 
     struct create_image_view_request
@@ -1537,6 +1543,13 @@ namespace sogen::gpu_bridge
         uint32_t offset;
     };
 
+    // A VkVertexInputBindingDivisorDescription flattened to plain integers.
+    struct vertex_input_divisor
+    {
+        uint32_t binding;
+        uint32_t divisor;
+    };
+
     // A VkSpecializationMapEntry flattened (size is size_t in Vulkan; the wire keeps it 32-bit because the
     // guest is 32-bit and DXVK's spec constants are all 4 bytes). DXVK bakes d3d9 render state -- notably
     // SpecAlphaCompareOp (a VkCompareOp) -- into shaders via specialization constants; dropping them defaults
@@ -1549,9 +1562,9 @@ namespace sogen::gpu_bridge
         uint32_t size;
     };
 
-    // color attachment). The vertex input state is variable-length: the input buffer is this header
-    // immediately followed by `binding_count` vertex_input_binding entries and then `attribute_count`
-    // vertex_input_attribute entries. Both counts 0 => no vertex input (vertices baked into the shader).
+    // color attachment). The vertex input state is variable-length: the input buffer is this header,
+    // followed by binding_count vertex_input_binding entries, attribute_count vertex_input_attribute entries,
+    // and divisor_count vertex_input_divisor entries. Zero counts mean the corresponding state is absent.
     // out = object_response
     inline constexpr uint32_t max_color_attachments = 8;
 
@@ -1570,13 +1583,24 @@ namespace sogen::gpu_bridge
         uint32_t color_write_mask;       // VkColorComponentFlags
     };
 
+    // A pipeline shader stage is backed either by a bridge shader-module object or by an EXT shader-module
+    // identifier. Exactly one of module and identifier_size must be non-zero.
+    struct shader_stage_source
+    {
+        object_id module;
+        uint32_t identifier_size;
+        uint32_t reserved;
+        std::array<uint8_t, max_shader_module_identifier_size> identifier{};
+    };
+
     struct create_graphics_pipeline_request
     {
         object_id device;
         object_id render_pass; // 0 => dynamic rendering: use the attachment formats below, and viewport/scissor are dynamic
         object_id pipeline_layout;
-        object_id vertex_shader;
-        object_id fragment_shader;
+        shader_stage_source vertex_shader;
+        shader_stage_source fragment_shader;
+        uint32_t flags; // VkPipelineCreateFlags
         uint32_t width;
         uint32_t height;
         uint32_t depth_test_enable;  // VkBool32 (0 => no depth-stencil state, as before)
@@ -1603,10 +1627,11 @@ namespace sogen::gpu_bridge
         // Per-color-attachment blend state (DXVK bakes D3D9 alpha blending statically). blend_attachment_count
         // entries are valid; the rest are zero. When blend_attachment_count == 0 the host disables blending.
         uint32_t blend_attachment_count;
-        uint32_t reserved_blend;
+        uint32_t divisor_count; // number of vertex_input_divisor entries trailing the attributes
         std::array<pipeline_blend_attachment, max_color_attachments> blend_attachments{};
         // vertex_input_binding bindings[binding_count];
         // vertex_input_attribute attributes[attribute_count];
+        // vertex_input_divisor divisors[divisor_count];
         // uint32_t dynamic_states[dynamic_state_count]; // VkDynamicState values DXVK declared on the pipeline
         // specialization_map_entry vs_spec_entries[vs_spec_entry_count];
         // uint8_t vs_spec_data[vs_spec_data_size];
@@ -1618,7 +1643,9 @@ namespace sogen::gpu_bridge
     {
         object_id device;
         object_id pipeline_layout;
-        object_id shader_module;
+        shader_stage_source shader;
+        uint32_t flags; // VkPipelineCreateFlags
+        uint32_t reserved;
     };
 
     struct create_compute_pipeline_response
@@ -2060,7 +2087,12 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(get_image_subresource_layout_request) == 32, "wire layout drift");
     static_assert(sizeof(get_image_subresource_layout_response) == 48, "wire layout drift");
     static_assert(sizeof(create_buffer_view_request) == 40, "wire layout drift");
+    static_assert(sizeof(create_shader_module_request) == 16, "wire layout drift");
     static_assert(sizeof(shader_module_identifier_response) == 40, "wire layout drift");
+    static_assert(sizeof(shader_stage_source) == 48, "wire layout drift");
+    static_assert(sizeof(vertex_input_divisor) == 8, "wire layout drift");
+    static_assert(sizeof(create_compute_pipeline_request) == 72, "wire layout drift");
+    static_assert(sizeof(create_graphics_pipeline_request) == 496, "wire layout drift");
     static_assert(sizeof(buffer_copy_region) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_buffer_request) == 32, "wire layout drift");
     static_assert(sizeof(create_query_pool_request) == 24, "wire layout drift");

@@ -4403,18 +4403,33 @@ extern "C"
                 height = static_cast<uint32_t>(ci.pViewportState->pViewports[0].height);
             }
 
-            // Vertex input state (variable-length): flatten the binding/attribute descriptions after the
-            // request header. Empty state (vertices baked into the shader) just sends counts of 0.
+            // Vertex input state (variable-length): flatten bindings, attributes, and the optional
+            // VkPipelineVertexInputDivisorStateCreateInfo pNext payload after the request header.
             uint32_t binding_count = 0;
             uint32_t attribute_count = 0;
+            uint32_t divisor_count = 0;
             const VkVertexInputBindingDescription* vk_bindings = nullptr;
             const VkVertexInputAttributeDescription* vk_attributes = nullptr;
+            const VkVertexInputBindingDivisorDescription* vk_divisors = nullptr;
             if (ci.pVertexInputState)
             {
                 binding_count = ci.pVertexInputState->vertexBindingDescriptionCount;
                 attribute_count = ci.pVertexInputState->vertexAttributeDescriptionCount;
                 vk_bindings = ci.pVertexInputState->pVertexBindingDescriptions;
                 vk_attributes = ci.pVertexInputState->pVertexAttributeDescriptions;
+
+                for (const auto* base = static_cast<const VkBaseInStructure*>(ci.pVertexInputState->pNext); base != nullptr;
+                     base = base->pNext)
+                {
+                    if (base->sType != VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_DIVISOR_STATE_CREATE_INFO)
+                    {
+                        continue;
+                    }
+                    const auto* divisor_state = reinterpret_cast<const VkPipelineVertexInputDivisorStateCreateInfo*>(base);
+                    divisor_count = divisor_state->vertexBindingDivisorCount;
+                    vk_divisors = divisor_state->pVertexBindingDivisors;
+                    break;
+                }
             }
 
             gb::create_graphics_pipeline_request request{};
@@ -4433,6 +4448,7 @@ extern "C"
             }
             request.binding_count = binding_count;
             request.attribute_count = attribute_count;
+            request.divisor_count = divisor_count;
             request.rasterization_samples = ci.pMultisampleState ? static_cast<uint32_t>(ci.pMultisampleState->rasterizationSamples) : 1u;
 
             request.primitive_topology = static_cast<uint32_t>(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
@@ -4506,6 +4522,7 @@ extern "C"
             };
             std::vector<uint8_t> message(sizeof(request) + static_cast<size_t>(binding_count) * sizeof(gb::vertex_input_binding) +
                                          static_cast<size_t>(attribute_count) * sizeof(gb::vertex_input_attribute) +
+                                         static_cast<size_t>(divisor_count) * sizeof(gb::vertex_input_divisor) +
                                          static_cast<size_t>(dynamic_state_count) * sizeof(uint32_t) +
                                          spec_block_bytes(vs_spec_entries, vs_spec_bytes) +
                                          spec_block_bytes(fs_spec_entries, fs_spec_bytes));
@@ -4527,6 +4544,14 @@ extern "C"
                 wire.binding = vk_attributes[a].binding;
                 wire.format = static_cast<uint32_t>(vk_attributes[a].format);
                 wire.offset = vk_attributes[a].offset;
+                std::memcpy(message.data() + cursor, &wire, sizeof(wire));
+                cursor += sizeof(wire);
+            }
+            for (uint32_t d = 0; d < divisor_count; ++d)
+            {
+                gb::vertex_input_divisor wire{};
+                wire.binding = vk_divisors[d].binding;
+                wire.divisor = vk_divisors[d].divisor;
                 std::memcpy(message.data() + cursor, &wire, sizeof(wire));
                 cursor += sizeof(wire);
             }
