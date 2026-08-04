@@ -677,6 +677,9 @@ namespace sogen::fex
             using exit_function_link_fn = uint64_t (*)(FEXCore::Core::CpuStateFrame*, void*);
             const auto real = reinterpret_cast<exit_function_link_fn>(g_original_exit_function_link);
 
+            // pthread_jit_write_protect_np is per-thread and exclusive with execute permission on this
+            // thread's MAP_JIT pages: leaving it disabled past this call would fault the next guest
+            // instruction fetch on this thread, not just widen an otherwise-harmless window.
             ::pthread_jit_write_protect_np(0);
             const uint64_t result = real(frame, record);
             ::pthread_jit_write_protect_np(1);

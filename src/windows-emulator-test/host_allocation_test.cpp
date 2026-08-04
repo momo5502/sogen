@@ -284,9 +284,9 @@ namespace sogen::test
         ASSERT_EQ(host.released_ranges.size(), 1u);
     }
 
-    // Models the residual race in handle_NtAllocateVirtualMemoryEx's auto-placement, which probes with
-    // host_window_is_free and only allocates afterwards: a foreign mapping claiming the base in between
-    // must fail the allocation rather than have it claim - and later clobber - the intruder's range.
+    // Exercises reserve_host_memory_ranges_in's existing guard at the top of allocate_memory, not the
+    // reserve-only host claim tested above: a fixed-address request racing a foreign mapping in after
+    // find_free_allocation_base/host_window_is_free confirmed the address free must still fail cleanly.
     TEST(HostAllocationTest, ForeignMappingArrivingAfterTheProbeFailsTheAllocationWithoutClaiming)
     {
         fake_host_memory host{};

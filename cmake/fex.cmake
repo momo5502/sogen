@@ -25,7 +25,10 @@ if(SOGEN_ENABLE_FEX)
     set(_FEXCORE_SANITIZER_ARGS "")
   endif()
 
-  if(SOGEN_ENABLE_LTO)
+  # Mirrors compiler-env.cmake's own LTO gate (SOGEN_ENABLE_CLANG_TIDY excluded there since IPO
+  # conflicts with clang-tidy's per-TU analysis) so the tidy preset doesn't LTO this sub-build while
+  # leaving the rest of the tree without it.
+  if(SOGEN_ENABLE_LTO AND NOT SOGEN_ENABLE_CLANG_TIDY)
     set(_FEXCORE_LTO_ARGS -DENABLE_LTO=ON)
   else()
     set(_FEXCORE_LTO_ARGS -DENABLE_LTO=OFF)
