@@ -303,6 +303,12 @@ namespace sogen
             PFN_vkCmdResetQueryPool cmd_reset_query_pool{};
             PFN_vkCmdBeginQuery cmd_begin_query{};
             PFN_vkCmdEndQuery cmd_end_query{};
+            PFN_vkCmdBeginQueryIndexedEXT cmd_begin_query_indexed{};
+            PFN_vkCmdEndQueryIndexedEXT cmd_end_query_indexed{};
+            PFN_vkCmdBindTransformFeedbackBuffersEXT cmd_bind_transform_feedback_buffers{};
+            PFN_vkCmdBeginTransformFeedbackEXT cmd_begin_transform_feedback{};
+            PFN_vkCmdEndTransformFeedbackEXT cmd_end_transform_feedback{};
+            PFN_vkCmdDrawIndirectByteCountEXT cmd_draw_indirect_byte_count{};
             PFN_vkCmdWriteTimestamp cmd_write_timestamp{};
             PFN_vkCmdCopyQueryPoolResults cmd_copy_query_pool_results{};
             PFN_vkCreateRenderPass create_render_pass{};
@@ -1812,6 +1818,16 @@ namespace sogen
             data.cmd_reset_query_pool = reinterpret_cast<PFN_vkCmdResetQueryPool>(resolve("vkCmdResetQueryPool"));
             data.cmd_begin_query = reinterpret_cast<PFN_vkCmdBeginQuery>(resolve("vkCmdBeginQuery"));
             data.cmd_end_query = reinterpret_cast<PFN_vkCmdEndQuery>(resolve("vkCmdEndQuery"));
+            data.cmd_begin_query_indexed = reinterpret_cast<PFN_vkCmdBeginQueryIndexedEXT>(resolve("vkCmdBeginQueryIndexedEXT"));
+            data.cmd_end_query_indexed = reinterpret_cast<PFN_vkCmdEndQueryIndexedEXT>(resolve("vkCmdEndQueryIndexedEXT"));
+            data.cmd_bind_transform_feedback_buffers =
+                reinterpret_cast<PFN_vkCmdBindTransformFeedbackBuffersEXT>(resolve("vkCmdBindTransformFeedbackBuffersEXT"));
+            data.cmd_begin_transform_feedback =
+                reinterpret_cast<PFN_vkCmdBeginTransformFeedbackEXT>(resolve("vkCmdBeginTransformFeedbackEXT"));
+            data.cmd_end_transform_feedback =
+                reinterpret_cast<PFN_vkCmdEndTransformFeedbackEXT>(resolve("vkCmdEndTransformFeedbackEXT"));
+            data.cmd_draw_indirect_byte_count =
+                reinterpret_cast<PFN_vkCmdDrawIndirectByteCountEXT>(resolve("vkCmdDrawIndirectByteCountEXT"));
             data.cmd_write_timestamp = reinterpret_cast<PFN_vkCmdWriteTimestamp>(resolve("vkCmdWriteTimestamp"));
             data.cmd_copy_query_pool_results = reinterpret_cast<PFN_vkCmdCopyQueryPoolResults>(resolve("vkCmdCopyQueryPoolResults"));
             data.create_render_pass = reinterpret_cast<PFN_vkCreateRenderPass>(resolve("vkCreateRenderPass"));
@@ -4376,6 +4392,177 @@ namespace sogen
         return VK_SUCCESS;
     }
 
+    int32_t vulkan_host::cmd_begin_query_indexed(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t flags,
+                                                   uint32_t index)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto qp = this->impl_->query_pools.find(query_pool);
+        if (cb == this->impl_->command_buffers.end() || qp == this->impl_->query_pools.end() ||
+            qp->second.device_id != cb->second.device_id)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_begin_query_indexed)
+        {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        dev->second.cmd_begin_query_indexed(cb->second.handle, qp->second.handle, query, static_cast<VkQueryControlFlags>(flags), index);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_end_query_indexed(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t index)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto qp = this->impl_->query_pools.find(query_pool);
+        if (cb == this->impl_->command_buffers.end() || qp == this->impl_->query_pools.end() ||
+            qp->second.device_id != cb->second.device_id)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_end_query_indexed)
+        {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        dev->second.cmd_end_query_indexed(cb->second.handle, qp->second.handle, query, index);
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_bind_transform_feedback_buffers(uint64_t command_buffer, uint32_t first_binding,
+                                                              std::span<const uint64_t> buffer_ids,
+                                                              std::span<const uint64_t> offsets,
+                                                              std::span<const uint64_t> sizes)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end() || buffer_ids.empty() || buffer_ids.size() != offsets.size() ||
+            buffer_ids.size() != sizes.size())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_bind_transform_feedback_buffers)
+        {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+
+        std::vector<VkBuffer> buffers;
+        buffers.reserve(buffer_ids.size());
+        for (size_t i = 0; i < buffer_ids.size(); ++i)
+        {
+            const auto buffer = this->impl_->buffers.find(buffer_ids[i]);
+            if (buffer == this->impl_->buffers.end() || buffer->second.device_id != cb->second.device_id ||
+                offsets[i] >= buffer->second.size ||
+                (sizes[i] != VK_WHOLE_SIZE && sizes[i] > buffer->second.size - offsets[i]))
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            buffers.push_back(buffer->second.handle);
+        }
+        dev->second.cmd_bind_transform_feedback_buffers(cb->second.handle, first_binding, static_cast<uint32_t>(buffers.size()),
+                                                        buffers.data(), offsets.data(), sizes.data());
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer,
+                                                   std::span<const uint64_t> counter_buffer_ids,
+                                                   std::span<const uint64_t> counter_buffer_offsets, bool has_counter_buffers,
+                                                   bool has_counter_buffer_offsets, bool begin)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        if (cb == this->impl_->command_buffers.end() || counter_buffer_ids.size() != counter_buffer_offsets.size() ||
+            (!has_counter_buffers && has_counter_buffer_offsets))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() ||
+            (begin ? !dev->second.cmd_begin_transform_feedback : !dev->second.cmd_end_transform_feedback))
+        {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+
+        std::vector<VkBuffer> counter_buffers;
+        if (has_counter_buffers)
+        {
+            counter_buffers.reserve(counter_buffer_ids.size());
+            for (size_t i = 0; i < counter_buffer_ids.size(); ++i)
+            {
+                if (counter_buffer_ids[i] == gpu_bridge::null_object)
+                {
+                    counter_buffers.push_back(VK_NULL_HANDLE);
+                    continue;
+                }
+
+                const auto buffer = this->impl_->buffers.find(counter_buffer_ids[i]);
+                const uint64_t offset = has_counter_buffer_offsets ? counter_buffer_offsets[i] : 0;
+                if (buffer == this->impl_->buffers.end() || buffer->second.device_id != cb->second.device_id ||
+                    offset > buffer->second.size || buffer->second.size - offset < sizeof(uint32_t))
+                {
+                    return VK_ERROR_INITIALIZATION_FAILED;
+                }
+                counter_buffers.push_back(buffer->second.handle);
+            }
+        }
+
+        const bool has_entries = !counter_buffer_ids.empty();
+        const VkBuffer* buffers = has_counter_buffers && has_entries ? counter_buffers.data() : nullptr;
+        const VkDeviceSize* offsets = has_counter_buffers && has_counter_buffer_offsets && has_entries
+                                          ? counter_buffer_offsets.data()
+                                          : nullptr;
+        if (begin)
+        {
+            dev->second.cmd_begin_transform_feedback(cb->second.handle, first_counter_buffer,
+                                                     static_cast<uint32_t>(counter_buffer_ids.size()), buffers, offsets);
+        }
+        else
+        {
+            dev->second.cmd_end_transform_feedback(cb->second.handle, first_counter_buffer,
+                                                   static_cast<uint32_t>(counter_buffer_ids.size()), buffers, offsets);
+        }
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::cmd_begin_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer,
+                                                       std::span<const uint64_t> counter_buffers,
+                                                       std::span<const uint64_t> counter_buffer_offsets, bool has_counter_buffers,
+                                                       bool has_counter_buffer_offsets)
+    {
+        return this->cmd_transform_feedback(command_buffer, first_counter_buffer, counter_buffers, counter_buffer_offsets,
+                                            has_counter_buffers, has_counter_buffer_offsets, true);
+    }
+
+    int32_t vulkan_host::cmd_end_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer,
+                                                     std::span<const uint64_t> counter_buffers,
+                                                     std::span<const uint64_t> counter_buffer_offsets, bool has_counter_buffers,
+                                                     bool has_counter_buffer_offsets)
+    {
+        return this->cmd_transform_feedback(command_buffer, first_counter_buffer, counter_buffers, counter_buffer_offsets,
+                                            has_counter_buffers, has_counter_buffer_offsets, false);
+    }
+
+    int32_t vulkan_host::cmd_draw_indirect_byte_count(uint64_t command_buffer, uint32_t instance_count, uint32_t first_instance,
+                                                       uint64_t counter_buffer, uint64_t counter_buffer_offset, uint32_t counter_offset,
+                                                       uint32_t vertex_stride)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto buffer = this->impl_->buffers.find(counter_buffer);
+        if (cb == this->impl_->command_buffers.end() || buffer == this->impl_->buffers.end() ||
+            buffer->second.device_id != cb->second.device_id || counter_buffer_offset > buffer->second.size ||
+            buffer->second.size - counter_buffer_offset < 4 || vertex_stride == 0)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end() || !dev->second.cmd_draw_indirect_byte_count)
+        {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        dev->second.cmd_draw_indirect_byte_count(cb->second.handle, instance_count, first_instance, buffer->second.handle,
+                                                 counter_buffer_offset, counter_offset, vertex_stride);
+        return VK_SUCCESS;
+    }
+
     int32_t vulkan_host::cmd_write_timestamp(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t pipeline_stage)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
@@ -5027,7 +5214,8 @@ namespace sogen
                                                   std::span<const vertex_attribute> attributes, std::span<const vertex_divisor> divisors,
                                                   const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
                                                   uint32_t stencil_format, uint32_t rasterization_samples, uint32_t primitive_topology,
-                                                  uint32_t primitive_restart_enable, std::span<const uint32_t> dynamic_states,
+                                                  uint32_t primitive_restart_enable, uint32_t rasterization_stream,
+                                                  uint32_t rasterization_stream_flags, std::span<const uint32_t> dynamic_states,
                                                   const specialization& vs_spec, const specialization& fs_spec,
                                                   std::span<const color_blend_attachment> blend_attachments_in, uint64_t& out_pipeline)
     {
@@ -5238,8 +5426,18 @@ namespace sogen
         dynamic_state.dynamicStateCount = static_cast<uint32_t>(dynamic_state_list.size());
         dynamic_state.pDynamicStates = dynamic_state_list.data();
 
+        VkPipelineRasterizationStateStreamCreateInfoEXT rasterization_stream_info{};
+        if (rasterization_stream != UINT32_MAX)
+        {
+            rasterization_stream_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_STREAM_CREATE_INFO_EXT;
+            rasterization_stream_info.flags =
+                static_cast<VkPipelineRasterizationStateStreamCreateFlagsEXT>(rasterization_stream_flags);
+            rasterization_stream_info.rasterizationStream = rasterization_stream;
+        }
+
         VkPipelineRasterizationStateCreateInfo rasterization{};
         rasterization.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+        rasterization.pNext = rasterization_stream != UINT32_MAX ? &rasterization_stream_info : nullptr;
         rasterization.polygonMode = VK_POLYGON_MODE_FILL;
         rasterization.cullMode = VK_CULL_MODE_NONE;
         rasterization.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;

@@ -1775,6 +1775,110 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_end_query, &request, sizeof(request));
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBeginQueryIndexedEXT(VkCommandBuffer commandBuffer, VkQueryPool queryPool,
+                                                                               uint32_t query, VkQueryControlFlags flags, uint32_t index)
+    {
+        gb::cmd_begin_query_indexed_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.query_pool = to_object_id(queryPool);
+        request.query = query;
+        request.flags = static_cast<uint32_t>(flags);
+        request.index = index;
+        record_command(request.command_buffer, gb::command::cmd_begin_query_indexed, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdEndQueryIndexedEXT(VkCommandBuffer commandBuffer, VkQueryPool queryPool,
+                                                                             uint32_t query, uint32_t index)
+    {
+        gb::cmd_end_query_indexed_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.query_pool = to_object_id(queryPool);
+        request.query = query;
+        request.index = index;
+        record_command(request.command_buffer, gb::command::cmd_end_query_indexed, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindTransformFeedbackBuffersEXT(
+        VkCommandBuffer commandBuffer, uint32_t firstBinding, uint32_t bindingCount, const VkBuffer* pBuffers,
+        const VkDeviceSize* pOffsets, const VkDeviceSize* pSizes)
+    {
+        gb::cmd_bind_transform_feedback_buffers_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.first_binding = firstBinding;
+        request.binding_count = bindingCount;
+
+        std::vector<uint8_t> message(sizeof(request) +
+                                     static_cast<size_t>(bindingCount) * sizeof(gb::transform_feedback_buffer_binding));
+        std::memcpy(message.data(), &request, sizeof(request));
+        size_t cursor = sizeof(request);
+        for (uint32_t i = 0; i < bindingCount; ++i)
+        {
+            const gb::transform_feedback_buffer_binding binding{.buffer = to_object_id(pBuffers[i]),
+                                                                 .offset = pOffsets[i],
+                                                                 .size = pSizes ? pSizes[i] : VK_WHOLE_SIZE};
+            std::memcpy(message.data() + cursor, &binding, sizeof(binding));
+            cursor += sizeof(binding);
+        }
+        record_command(request.command_buffer, gb::command::cmd_bind_transform_feedback_buffers, message.data(), message.size());
+    }
+
+    static void record_transform_feedback_command(gb::command command, VkCommandBuffer commandBuffer, uint32_t firstCounterBuffer,
+                                                  uint32_t counterBufferCount, const VkBuffer* pCounterBuffers,
+                                                  const VkDeviceSize* pCounterBufferOffsets)
+    {
+        gb::cmd_transform_feedback_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.first_counter_buffer = firstCounterBuffer;
+        request.counter_buffer_count = counterBufferCount;
+        request.has_counter_buffers = pCounterBuffers ? 1u : 0u;
+        request.has_counter_buffer_offsets = pCounterBufferOffsets ? 1u : 0u;
+
+        std::vector<uint8_t> message(sizeof(request) +
+                                     static_cast<size_t>(counterBufferCount) * sizeof(gb::transform_feedback_counter_buffer));
+        std::memcpy(message.data(), &request, sizeof(request));
+        size_t cursor = sizeof(request);
+        for (uint32_t i = 0; i < counterBufferCount; ++i)
+        {
+            const gb::transform_feedback_counter_buffer counter{
+                .buffer = pCounterBuffers ? to_object_id(pCounterBuffers[i]) : gb::null_object,
+                .offset = pCounterBufferOffsets ? pCounterBufferOffsets[i] : 0};
+            std::memcpy(message.data() + cursor, &counter, sizeof(counter));
+            cursor += sizeof(counter);
+        }
+        record_command(request.command_buffer, command, message.data(), message.size());
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBeginTransformFeedbackEXT(
+        VkCommandBuffer commandBuffer, uint32_t firstCounterBuffer, uint32_t counterBufferCount, const VkBuffer* pCounterBuffers,
+        const VkDeviceSize* pCounterBufferOffsets)
+    {
+        record_transform_feedback_command(gb::command::cmd_begin_transform_feedback, commandBuffer, firstCounterBuffer,
+                                          counterBufferCount, pCounterBuffers, pCounterBufferOffsets);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdEndTransformFeedbackEXT(
+        VkCommandBuffer commandBuffer, uint32_t firstCounterBuffer, uint32_t counterBufferCount, const VkBuffer* pCounterBuffers,
+        const VkDeviceSize* pCounterBufferOffsets)
+    {
+        record_transform_feedback_command(gb::command::cmd_end_transform_feedback, commandBuffer, firstCounterBuffer,
+                                          counterBufferCount, pCounterBuffers, pCounterBufferOffsets);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndirectByteCountEXT(
+        VkCommandBuffer commandBuffer, uint32_t instanceCount, uint32_t firstInstance, VkBuffer counterBuffer,
+        VkDeviceSize counterBufferOffset, uint32_t counterOffset, uint32_t vertexStride)
+    {
+        gb::cmd_draw_indirect_byte_count_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.counter_buffer = to_object_id(counterBuffer);
+        request.counter_buffer_offset = counterBufferOffset;
+        request.counter_offset = counterOffset;
+        request.vertex_stride = vertexStride;
+        request.instance_count = instanceCount;
+        request.first_instance = firstInstance;
+        record_command(request.command_buffer, gb::command::cmd_draw_indirect_byte_count, &request, sizeof(request));
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdWriteTimestamp(VkCommandBuffer commandBuffer,
                                                                          VkPipelineStageFlagBits pipelineStage, VkQueryPool queryPool,
                                                                          uint32_t query)
@@ -4658,6 +4762,23 @@ extern "C"
             request.primitive_topology = static_cast<uint32_t>(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 
             request.primitive_restart_enable = 0;
+            request.rasterization_stream = UINT32_MAX;
+
+            if (ci.pRasterizationState)
+            {
+                for (const auto* base = static_cast<const VkBaseInStructure*>(ci.pRasterizationState->pNext); base != nullptr;
+                     base = base->pNext)
+                {
+                    if (base->sType != VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_STREAM_CREATE_INFO_EXT)
+                    {
+                        continue;
+                    }
+                    const auto* stream = reinterpret_cast<const VkPipelineRasterizationStateStreamCreateInfoEXT*>(base);
+                    request.rasterization_stream = stream->rasterizationStream;
+                    request.rasterization_stream_flags = static_cast<uint32_t>(stream->flags);
+                    break;
+                }
+            }
 
             if (ci.pInputAssemblyState)
             {
@@ -5411,7 +5532,16 @@ extern "C"
             {.name = "vkGetQueryPoolResults", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetQueryPoolResults)},
             {.name = "vkCmdResetQueryPool", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdResetQueryPool)},
             {.name = "vkCmdBeginQuery", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginQuery)},
+            {.name = "vkCmdBeginQueryIndexedEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginQueryIndexedEXT)},
             {.name = "vkCmdEndQuery", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndQuery)},
+            {.name = "vkCmdEndQueryIndexedEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndQueryIndexedEXT)},
+            {.name = "vkCmdBindTransformFeedbackBuffersEXT",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindTransformFeedbackBuffersEXT)},
+            {.name = "vkCmdBeginTransformFeedbackEXT",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBeginTransformFeedbackEXT)},
+            {.name = "vkCmdEndTransformFeedbackEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndTransformFeedbackEXT)},
+            {.name = "vkCmdDrawIndirectByteCountEXT",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndirectByteCountEXT)},
             {.name = "vkCmdCopyQueryPoolResults", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdCopyQueryPoolResults)},
             {.name = "vkCmdWriteTimestamp", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdWriteTimestamp)},
             {.name = "vkCmdWriteTimestamp2", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdWriteTimestamp2)},

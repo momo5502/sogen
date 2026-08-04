@@ -14,6 +14,7 @@ EXPORTS
     vkBindBufferMemory
     vkBindImageMemory
     vkCmdBeginRenderPass
+    vkCmdBeginTransformFeedbackEXT
     vkCmdBeginRendering
     vkCmdBindDescriptorSets
     vkCmdBindDescriptorSets2KHR
@@ -23,6 +24,7 @@ EXPORTS
     vkCmdBeginDebugUtilsLabelEXT
     vkCmdBindVertexBuffers
     vkCmdBindVertexBuffers2
+    vkCmdBindTransformFeedbackBuffersEXT
     vkCmdBlitImage2
     vkCmdBlitImage
     vkCmdBlitImage2KHR
@@ -30,6 +32,7 @@ EXPORTS
     vkCmdClearColorImage
     vkCmdClearDepthStencilImage
     vkCmdBeginQuery
+    vkCmdBeginQueryIndexedEXT
     vkCmdCopyBuffer
     vkCmdCopyQueryPoolResults
     vkCmdCopyBufferToImage
@@ -49,7 +52,10 @@ EXPORTS
     vkCmdDrawIndexedIndirectCount
     vkCmdDrawIndirect
     vkCmdDrawIndirectCount
+    vkCmdDrawIndirectByteCountEXT
     vkCmdEndQuery
+    vkCmdEndQueryIndexedEXT
+    vkCmdEndTransformFeedbackEXT
     vkCmdResetQueryPool
     vkCmdWriteTimestamp
     vkCmdWriteTimestamp2
