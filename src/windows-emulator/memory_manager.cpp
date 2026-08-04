@@ -476,12 +476,11 @@ namespace sogen
         // claim a guest-visible VA at any time - e.g. AppKit/SkyLight lazily vm_allocate'ing a
         // window-tag shared page into a gap freed by an earlier guest DLL unload - and a fixed-address
         // mmap over it would silently destroy that mapping, so the target window is confirmed against
-        // the live host layout rather than sogen's bookkeeping as of the last rescan. Module
-        // preferred-base loads come through here on every DLL map/remap, and a collision then surfaces
-        // as an ordinary overlaps_reserved_region hit, routing relocatable modules through the existing
-        // find_free_allocation_base fallback. Only [address, size) is rescanned: it is the sole window
-        // this allocation could clobber, and a full-address-space rescan would grow more expensive the
-        // longer the host memory map does, for no additional safety.
+        // the live host layout, not sogen's bookkeeping as of the last rescan. Module preferred-base
+        // loads hit this on every DLL map/remap; a collision surfaces as an overlaps_reserved_region
+        // hit, routing relocatable modules through the existing find_free_allocation_base fallback.
+        // Only [address, size) is rescanned - the sole window this call could clobber - since a
+        // full-address-space rescan grows costlier as the host map does, for no added safety.
         this->reserve_host_memory_ranges_in(address, size);
 
         if (!this->allocate_memory_raw(address, size, permissions, reserve_only, kind))
@@ -883,10 +882,9 @@ namespace sogen
         // which would record a clamped window slice and stop the rescan below from recording an
         // intruder's full extent.
         //
-        // Both rescan forms are needed on collision. The full scan records every currently-visible
-        // foreign range at once, so a pick at the low edge of a large occupied region skips past the
-        // whole region in one step instead of crawling it in pick-sized slices. The windowed record
-        // retires exactly the window host_window_is_free flagged, covering backends whose full
+        // Both rescan forms are needed on collision: the full scan records every visible foreign range
+        // at once, so a pick at the low edge of a large occupied region skips the whole region in one
+        // step; the windowed record retires exactly the flagged window, covering backends whose full
         // reserved_host_ranges() omits ranges their windowed query still reports occupied - otherwise
         // the same pick would be rejected every iteration while the full rescan recorded nothing new.
         for (int attempt = 0;; ++attempt)

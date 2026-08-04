@@ -79,26 +79,20 @@ namespace sogen::fex
         constexpr size_t page_size = 0x1000;
 
 #ifdef __APPLE__
-        // FEXCore's JITWriteScope (FEXCore/Utils/AllocatorHooks.h) is a plain ctor/dtor toggle around
-        // pthread_jit_write_protect_np, not a nesting counter. Arm64JITCore::ExitFunctionLink and its
-        // delinker helpers patch already-compiled call sites without a scope of their own (upstream FEX
-        // targets Linux, which has no per-thread MAP_JIT W^X). Bracketing our own call to
-        // Pointers.ExitFunctionLink is not enough: its "not yet compiled" path calls CompileBlock, whose
-        // nested JITWriteScope re-enables write protection before control returns to the still-writing
-        // outer call, faulting on the self-modifying store. Interposing pthread_jit_write_protect_np to
-        // make it reentrant does not work either - both ways of reaching the real implementation from
-        // inside the interposer (dlsym(RTLD_NEXT, ...) and dlopen(RTLD_NOLOAD)+dlsym-by-handle) resolve
-        // back to the replacement.
+        // FEXCore's JITWriteScope (FEXCore/Utils/AllocatorHooks.h) toggles pthread_jit_write_protect_np
+        // per call, not via a nesting counter, so bracketing our own call to Pointers.ExitFunctionLink
+        // is not enough: its "not yet compiled" path calls CompileBlock, whose own nested JITWriteScope
+        // re-enables write protection before control returns to our still-writing outer call, faulting
+        // on the self-modifying store. Interposing pthread_jit_write_protect_np to make it reentrant
+        // does not work either - every route to the real implementation from inside the interposer
+        // resolves back to the replacement.
         //
-        // So the fault is reacted to instead: see handle_fault_signal's SEGV_ACCERR branch, which
-        // disables write protection and retries when the faulting PC lies in FEXCore's own code rather
-        // than in MAP_JIT memory. Retries are bounded per fault address so a different bug cannot spin.
-        //
-        // The bound is tracked in a fixed array rather than an unordered_map because it is updated from
-        // a real hardware signal handler that can interrupt an unrelated malloc()/free(); operator[] can
-        // insert or rehash and is not async-signal-safe. Eight slots suffice: guest execution is
-        // cooperative, so only one address is ever mid-retry, and a healthy call site resolves in <= 1
-        // retry, so eviction cannot take budget from an address that is.
+        // So the fault is reacted to instead: handle_fault_signal's SEGV_ACCERR branch disables write
+        // protection and retries when the faulting PC is FEXCore's own code, not MAP_JIT memory,
+        // bounded per fault address so a different bug cannot spin. The bound lives in a fixed array
+        // rather than an unordered_map since operator[] can rehash and is unsafe to call from a signal
+        // handler that may interrupt an unrelated malloc()/free(). Eight slots suffice: guest execution
+        // is cooperative, so at most one address is ever mid-retry.
         struct jit_write_protect_retry_slot
         {
             uint64_t address = 0;
@@ -310,20 +304,19 @@ namespace sogen::fex
         }
 
         // Store-release forms (STLR/STLRB/STLRH), the counterpart to decode_arm64_load's LDAR/LDAPR
-        // handling. Used only by handle_fault_signal's misaligned-atomic fallback, never for
-        // mmio_region, whose only consumer here is read-only.
+        // handling. Used only by handle_fault_signal's misaligned-atomic fallback; mmio_region's only
+        // consumer here is read-only.
         //
-        // Deliberately narrow: broadening this table to plain STR/STUR for
-        // handle_general_memory_violation's Category-3 false-fault case causes a reproducible hang
-        // isolated to this table (decode_arm64_load's equivalent plain-load coverage is safe), with a
-        // root cause that is not yet understood.
+        // Deliberately narrow: broadening to plain STR/STUR for handle_general_memory_violation's
+        // Category-3 false-fault case causes a reproducible hang isolated to this table (root cause not
+        // yet understood; decode_arm64_load's equivalent plain-load coverage is safe).
         //
-        // Known consequence, tracked separately: handle_general_memory_violation also uses this decoder
-        // to classify a fault as read vs. write on the genuine protection-violation path, so a plain STR
-        // to read-only memory is misclassified as a read, routed into false-fault recovery, and surfaces
-        // as an unhandled host signal instead of a guest STATUS_ACCESS_VIOLATION - which any guest that
-        // writes to read-only memory and catches the exception (packers, DRM) will hit. A plain store to
-        // unmapped memory does reach the guest, but with ExceptionInformation[0] wrongly saying read.
+        // Known consequence: handle_general_memory_violation also uses this decoder to classify a fault
+        // as read vs. write on the protection-violation path, so a plain STR to read-only memory is
+        // misclassified as a read and surfaces as an unhandled host signal instead of a guest
+        // STATUS_ACCESS_VIOLATION - hit by any guest writing to read-only memory and catching the
+        // exception (packers, DRM). A plain store to unmapped memory does reach the guest, but with
+        // ExceptionInformation[0] wrongly saying read.
         struct decoded_arm64_store
         {
             uint32_t size = 0; // bytes: 1, 2, 4, 8
@@ -686,22 +679,18 @@ namespace sogen::fex
             return result;
         }
 
-        // Under guest VA == host VA, any host allocation the kernel places freely can land inside the
-        // guest's own address space. FEXCore obtains all of its internal buffers - the BlockLinks
-        // red-black-tree storage, the JIT CodeBuffer, the dispatcher - through
-        // FEXCore::Allocator::mmap(nullptr, ...), a raw ::mmap(NULL, ...) with no coordination with
-        // sogen's bookkeeping, so an ordinary guest store into a buffer placed at a guest-owned address
-        // silently corrupts FEXCore's own state (the long-standing __tree_balance_after_insert /
-        // AddBlockLink corruption).
+        // Under guest VA == host VA, FEXCore's own internal buffers (obtained via a raw ::mmap(NULL,
+        // ...), uncoordinated with sogen's bookkeeping) can land inside the guest's own address space,
+        // so an ordinary guest write into a buffer placed there corrupts FEXCore's state (the
+        // long-standing __tree_balance_after_insert / AddBlockLink corruption).
         //
-        // So one large host arena is reserved up-front and registered as a reserved_host_range, giving
-        // a two-way exclusion, and every FEXCore::Allocator::mmap(nullptr, ...) is satisfied from inside
-        // it. Non-executable requests are placed with MAP_FIXED. Executable (MAP_JIT) ones cannot be -
-        // Apple rejects MAP_JIT|MAP_FIXED with EINVAL - so the sub-region is unmapped first and MAP_JIT
-        // gets the hole's address as a non-fixed hint, which the kernel honors reliably since nothing
-        // else competes for space inside the arena. The result is verified to land inside the arena and
-        // fails loudly rather than silently falling back to an unconstrained mapping that would
-        // reintroduce the aliasing hazard.
+        // So one large host arena is reserved up front and registered as a reserved_host_range for a
+        // two-way exclusion, and every FEXCore::Allocator::mmap(nullptr, ...) is satisfied from inside
+        // it. Non-executable requests use MAP_FIXED; executable (MAP_JIT) ones cannot - Apple rejects
+        // MAP_JIT|MAP_FIXED with EINVAL - so the sub-region is unmapped first and MAP_JIT gets the
+        // hole's address as a non-fixed hint, reliable since nothing else competes for space inside the
+        // arena. The result is verified to land inside the arena and fails loudly rather than silently
+        // falling back to an unconstrained mapping that would reintroduce the hazard.
         class fex_internal_arena
         {
           public:
@@ -2636,14 +2625,13 @@ namespace sogen::fex
                 // A BUS_ADRALN whose address is inside the live CodeBuffer but whose PC is FEXCore's own
                 // host C++ code (ExitFunctionLink's self-modifying write) is not a real alignment fault
                 // at all - it decodes to an ordinary aligned 32-bit `str`. It is the JIT W^X race, which
-                // Darwin sometimes reports as BUS_ADRALN instead of SEGV_ACCERR/SEGV_MAPERR, the same
-                // si_code ambiguity documented at the JITGuardPage branch below. Falling through to the
-                // BUS_ADRALN branch would route it into handle_general_memory_violation, which unwinds
-                // via ThreadStopHandlerAddress as if interrupting the JIT dispatcher's own frame -
-                // wrong here, since execution is several real C++ frames deep inside FEXCore, so popping
-                // "the dispatcher's" callee-saved registers corrupts STATE (x28) and other SRA registers
-                // with stack garbage and crashes later on an unrelated-looking null-Frame dereference.
-                // Treated instead like the write-protect race below, with the same per-address bound.
+                // Darwin sometimes reports as BUS_ADRALN instead of SEGV_ACCERR/SEGV_MAPERR (the same
+                // si_code ambiguity as the JITGuardPage branch below). Falling through to the BUS_ADRALN
+                // branch would unwind via ThreadStopHandlerAddress as if interrupting the JIT
+                // dispatcher's own frame - wrong here, since execution is several real C++ frames deep
+                // inside FEXCore, corrupting STATE (x28) and other SRA registers with stack garbage and
+                // crashing later on an unrelated-looking null-Frame dereference. Treated instead like
+                // the write-protect race below, with the same per-address bound.
                 if (sig == SIGBUS && info->si_code == BUS_ADRALN && this->context_ &&
                     this->context_->IsAddressInCodeBuffer(this->thread_, fault_addr))
                 {
