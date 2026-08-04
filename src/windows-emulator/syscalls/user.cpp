@@ -1401,10 +1401,6 @@ namespace sogen
             menu_obj.init_guest();
 
             win.system_menu_handle = menu_obj.handle;
-            win.guest.access([&](USER_WINDOW& guest_win) { //
-                guest_win.spmenu = menu_obj.guest.value();
-            });
-
             return handle.bits;
         }
 
@@ -1501,6 +1497,8 @@ namespace sogen
         hdc create_gdi_window_dc(const syscall_context& c, hwnd window);
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         BOOL handle_NtGdiFlush(const syscall_context& c);
+        BOOL handle_NtGdiPatBlt(const syscall_context& c, hdc dc, LONG x, LONG y, LONG width, LONG height, DWORD rop);
+        uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, hdc dc, uint32_t brush, emulator_pointer old_brush_ptr);
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
         void draw_system_button_glyph(const syscall_context& c, hdc dc, int x, int y, uint32_t index);
         BOOL handle_NtUserRemoveMenu(const syscall_context& c, hmenu menu, UINT position, UINT flags);
@@ -1769,6 +1767,31 @@ namespace sogen
             });
 
             return brush;
+        }
+
+        BOOL handle_NtUserFillWindow(const syscall_context& c, const hwnd parent_window, const hwnd window, const hdc dc,
+                                     const hbrush brush)
+        {
+            auto* win = c.proc.windows.get(window);
+            if (dc == 0 || !win || (parent_window != 0 && !c.proc.windows.get(parent_window)))
+            {
+                return FALSE;
+            }
+
+            constexpr hbrush ctlcolor_max = 7;
+            uint64_t control_brush = brush;
+            if (control_brush < ctlcolor_max)
+            {
+                control_brush = handle_NtUserGetControlBrush(c, parent_window, dc, static_cast<uint32_t>(brush));
+            }
+
+            constexpr DWORD patcopy = 0x00F00021;
+            const auto previous_brush = handle_NtGdiSelectBrushLocal(c, dc, static_cast<uint32_t>(control_brush), 0);
+            const auto client_rect = get_client_rect(*win);
+            const auto result = handle_NtGdiPatBlt(c, dc, client_rect.left, client_rect.top, client_rect.right - client_rect.left,
+                                                   client_rect.bottom - client_rect.top, patcopy);
+            handle_NtGdiSelectBrushLocal(c, dc, static_cast<uint32_t>(previous_brush), 0);
+            return result;
         }
 
         BOOL handle_NtUserReleaseDC()
@@ -5459,8 +5482,35 @@ namespace sogen
             return handle.bits;
         }
 
-        BOOL handle_NtUserSetMenu()
+        BOOL handle_NtUserSetMenu(const syscall_context& c, const hwnd hwnd, const hmenu menu, const BOOL redraw)
         {
+            auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400);
+                return FALSE;
+            }
+
+            emulator_pointer menu_ptr = 0;
+            if (menu != 0)
+            {
+                const auto* menu_obj = c.proc.menus.get(menu);
+                if (!menu_obj)
+                {
+                    set_guest_last_error(c, 1401);
+                    return FALSE;
+                }
+
+                menu_ptr = menu_obj->guest.value();
+            }
+
+            win->guest.access([&](USER_WINDOW& guest_win) { guest_win.spmenu = menu_ptr; });
+
+            if (redraw != FALSE)
+            {
+                invalidate_window(c, *win);
+            }
+
             return TRUE;
         }
 
@@ -5529,6 +5579,48 @@ namespace sogen
             return TRUE;
         }
 
+        int32_t handle_NtUserEnableMenuItem(const syscall_context& c, const hmenu menu, const UINT item, const UINT enable)
+        {
+            auto* menu_object = c.proc.menus.get(menu);
+            if (!menu_object)
+            {
+                return -1;
+            }
+
+            size_t index{};
+            if ((enable & MF_BYPOSITION) != 0)
+            {
+                if (item >= menu_object->items.size())
+                {
+                    return -1;
+                }
+
+                index = item;
+            }
+            else
+            {
+                const auto entry =
+                    std::ranges::find_if(menu_object->items, [&](const menu_item& candidate) { return candidate.id == item; });
+
+                if (entry == menu_object->items.end())
+                {
+                    return -1;
+                }
+
+                index = static_cast<size_t>(std::distance(menu_object->items.begin(), entry));
+            }
+
+            constexpr UINT state_mask = MF_DISABLED | MF_GRAYED;
+
+            auto& menu_item = menu_object->items[index];
+            const UINT previous_state = menu_item.state & state_mask;
+
+            menu_item.state = (menu_item.state & ~state_mask) | (enable & state_mask);
+
+            menu_object->sync_guest_item(c.win_emu.memory, index);
+            return static_cast<int32_t>(previous_state);
+        }
+
         BOOL handle_NtUserCreateCaret()
         {
             return TRUE;
@@ -5587,8 +5679,63 @@ namespace sogen
             return FALSE;
         }
 
-        BOOL handle_NtUserGetWindowPlacement()
+        BOOL handle_NtUserGetWindowPlacement(const syscall_context& c, const hwnd window_handle, const emulator_pointer placement_address)
         {
+            if (placement_address == 0)
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return FALSE;
+            }
+
+            DWORD requested_length{};
+            if (!c.win_emu.memory.try_read_memory(placement_address, &requested_length, sizeof(requested_length)))
+            {
+                set_guest_last_error(c, 998); // ERROR_NOACCESS
+                return FALSE;
+            }
+
+            if (requested_length != sizeof(EMU_WINDOWPLACEMENT))
+            {
+                set_guest_last_error(c, 87); // ERROR_INVALID_PARAMETER
+                return FALSE;
+            }
+
+            const auto* win = c.proc.windows.get(window_handle);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400); // ERROR_INVALID_WINDOW_HANDLE
+                return FALSE;
+            }
+
+            EMU_WINDOWPLACEMENT placement{};
+            placement.length = sizeof(placement);
+            placement.flags = 0;
+
+            if ((win->style & WS_MINIMIZE) != 0)
+            {
+                placement.showCmd = SW_SHOWMINIMIZED;
+            }
+            else if ((win->style & WS_MAXIMIZE) != 0)
+            {
+                placement.showCmd = SW_SHOWMAXIMIZED;
+            }
+            else
+            {
+                placement.showCmd = SW_SHOWNORMAL;
+            }
+
+            // TODO: The emulator does not currently maintain separate minimized and
+            //       maximized placement coordinates.
+            placement.ptMinPosition = {.x = -1, .y = -1};
+            placement.ptMaxPosition = {.x = -1, .y = -1};
+            placement.rcNormalPosition = get_window_rect(*win);
+
+            if (!c.win_emu.memory.try_write_memory(placement_address, &placement, sizeof(placement)))
+            {
+                set_guest_last_error(c, 998); // ERROR_NOACCESS
+                return FALSE;
+            }
+
             return TRUE;
         }
 
@@ -6184,6 +6331,26 @@ namespace sogen
         BOOL handle_NtUserHwndQueryRedirectionInfo()
         {
             return FALSE;
+        }
+
+        BOOL handle_NtUserEnableNonClientDpiScaling()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetImeHotKey()
+        {
+            return TRUE;
+        }
+
+        int16_t handle_NtUserVkKeyScanEx()
+        {
+            return -1;
+        }
+
+        BOOL handle_NtUserSetLayeredWindowAttributes()
+        {
+            return TRUE;
         }
     }
 

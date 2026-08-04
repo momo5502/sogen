@@ -7,6 +7,7 @@ namespace sogen
 #ifndef OS_WINDOWS
 #define ANSI_CHARSET       0
 #define DEFAULT_CHARSET    1
+#define SHIFTJIS_CHARSET   128
 #define GREEK_CHARSET      161
 #define TURKISH_CHARSET    162
 #define VIETNAMESE_CHARSET 163

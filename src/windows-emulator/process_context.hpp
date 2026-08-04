@@ -18,6 +18,8 @@
 
 #include "apiset/apiset.hpp"
 
+#include <array>
+
 namespace sogen
 {
 
@@ -568,6 +570,9 @@ namespace sogen
         uint16_t last_extended_params_image_machine{IMAGE_FILE_MACHINE_UNKNOWN};
 
         uint64_t next_luid{0x1001};
+        std::array<uint8_t, 6> uuid_seed{};
+        uint64_t next_uuid_time{};
+        uint32_t uuid_sequence{};
     };
 
 } // namespace sogen

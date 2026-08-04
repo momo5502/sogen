@@ -120,8 +120,47 @@ namespace sogen
 
             if (key_information_class == KeyFullInformation)
             {
-                c.win_emu.log.warn("Unsupported registry class: %X\n", key_information_class);
-                return STATUS_NOT_SUPPORTED;
+                const auto hive_key = c.win_emu.registry.get_hive_key(*key);
+                if (!hive_key.has_value())
+                {
+                    return STATUS_OBJECT_NAME_NOT_FOUND;
+                }
+
+                constexpr auto required_size = offsetof(KEY_FULL_INFORMATION, Class);
+                result_length.write(static_cast<ULONG>(required_size));
+
+                if (required_size > length)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                KEY_FULL_INFORMATION info{};
+                info.ClassOffset = 0xFFFFFFFFu;
+                info.SubKeys = static_cast<ULONG>(hive_key->key.get_sub_key_count(hive_key->file));
+                info.Values = static_cast<ULONG>(hive_key->key.get_value_count(hive_key->file));
+
+                for (size_t i = 0; i < info.SubKeys; ++i)
+                {
+                    const auto* name = hive_key->key.get_sub_key_name(hive_key->file, i);
+                    if (name)
+                    {
+                        info.MaxNameLength = std::max(info.MaxNameLength, static_cast<ULONG>(u8_to_u16(*name).size() * sizeof(char16_t)));
+                    }
+                }
+
+                for (size_t i = 0; i < info.Values; ++i)
+                {
+                    const auto* value = hive_key->key.get_value(hive_key->file, i);
+                    if (value)
+                    {
+                        info.MaxValueNameLength =
+                            std::max(info.MaxValueNameLength, static_cast<ULONG>(u8_to_u16(value->name).size() * sizeof(char16_t)));
+                        info.MaxValueDataLength = std::max(info.MaxValueDataLength, static_cast<ULONG>(value->data.size()));
+                    }
+                }
+
+                c.emu.write_memory(key_information, &info, required_size);
+                return STATUS_SUCCESS;
             }
 
             if (key_information_class == KeyCachedInformation)
