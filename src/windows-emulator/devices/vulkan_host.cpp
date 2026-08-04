@@ -1824,8 +1824,7 @@ namespace sogen
                 reinterpret_cast<PFN_vkCmdBindTransformFeedbackBuffersEXT>(resolve("vkCmdBindTransformFeedbackBuffersEXT"));
             data.cmd_begin_transform_feedback =
                 reinterpret_cast<PFN_vkCmdBeginTransformFeedbackEXT>(resolve("vkCmdBeginTransformFeedbackEXT"));
-            data.cmd_end_transform_feedback =
-                reinterpret_cast<PFN_vkCmdEndTransformFeedbackEXT>(resolve("vkCmdEndTransformFeedbackEXT"));
+            data.cmd_end_transform_feedback = reinterpret_cast<PFN_vkCmdEndTransformFeedbackEXT>(resolve("vkCmdEndTransformFeedbackEXT"));
             data.cmd_draw_indirect_byte_count =
                 reinterpret_cast<PFN_vkCmdDrawIndirectByteCountEXT>(resolve("vkCmdDrawIndirectByteCountEXT"));
             data.cmd_write_timestamp = reinterpret_cast<PFN_vkCmdWriteTimestamp>(resolve("vkCmdWriteTimestamp"));
@@ -4393,7 +4392,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::cmd_begin_query_indexed(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t flags,
-                                                   uint32_t index)
+                                                 uint32_t index)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto qp = this->impl_->query_pools.find(query_pool);
@@ -4430,9 +4429,8 @@ namespace sogen
     }
 
     int32_t vulkan_host::cmd_bind_transform_feedback_buffers(uint64_t command_buffer, uint32_t first_binding,
-                                                              std::span<const uint64_t> buffer_ids,
-                                                              std::span<const uint64_t> offsets,
-                                                              std::span<const uint64_t> sizes)
+                                                             std::span<const uint64_t> buffer_ids, std::span<const uint64_t> offsets,
+                                                             std::span<const uint64_t> sizes)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         if (cb == this->impl_->command_buffers.end() || buffer_ids.empty() || buffer_ids.size() != offsets.size() ||
@@ -4452,8 +4450,7 @@ namespace sogen
         {
             const auto buffer = this->impl_->buffers.find(buffer_ids[i]);
             if (buffer == this->impl_->buffers.end() || buffer->second.device_id != cb->second.device_id ||
-                offsets[i] >= buffer->second.size ||
-                (sizes[i] != VK_WHOLE_SIZE && sizes[i] > buffer->second.size - offsets[i]))
+                offsets[i] >= buffer->second.size || (sizes[i] != VK_WHOLE_SIZE && sizes[i] > buffer->second.size - offsets[i]))
             {
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
@@ -4465,9 +4462,9 @@ namespace sogen
     }
 
     int32_t vulkan_host::cmd_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer,
-                                                   std::span<const uint64_t> counter_buffer_ids,
-                                                   std::span<const uint64_t> counter_buffer_offsets, bool has_counter_buffers,
-                                                   bool has_counter_buffer_offsets, bool begin)
+                                                std::span<const uint64_t> counter_buffer_ids,
+                                                std::span<const uint64_t> counter_buffer_offsets, bool has_counter_buffers,
+                                                bool has_counter_buffer_offsets, bool begin)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         if (cb == this->impl_->command_buffers.end() || counter_buffer_ids.size() != counter_buffer_offsets.size() ||
@@ -4507,9 +4504,8 @@ namespace sogen
 
         const bool has_entries = !counter_buffer_ids.empty();
         const VkBuffer* buffers = has_counter_buffers && has_entries ? counter_buffers.data() : nullptr;
-        const VkDeviceSize* offsets = has_counter_buffers && has_counter_buffer_offsets && has_entries
-                                          ? counter_buffer_offsets.data()
-                                          : nullptr;
+        const VkDeviceSize* offsets =
+            has_counter_buffers && has_counter_buffer_offsets && has_entries ? counter_buffer_offsets.data() : nullptr;
         if (begin)
         {
             dev->second.cmd_begin_transform_feedback(cb->second.handle, first_counter_buffer,
@@ -4524,26 +4520,26 @@ namespace sogen
     }
 
     int32_t vulkan_host::cmd_begin_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer,
-                                                       std::span<const uint64_t> counter_buffers,
-                                                       std::span<const uint64_t> counter_buffer_offsets, bool has_counter_buffers,
-                                                       bool has_counter_buffer_offsets)
+                                                      std::span<const uint64_t> counter_buffers,
+                                                      std::span<const uint64_t> counter_buffer_offsets, bool has_counter_buffers,
+                                                      bool has_counter_buffer_offsets)
     {
         return this->cmd_transform_feedback(command_buffer, first_counter_buffer, counter_buffers, counter_buffer_offsets,
                                             has_counter_buffers, has_counter_buffer_offsets, true);
     }
 
     int32_t vulkan_host::cmd_end_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer,
-                                                     std::span<const uint64_t> counter_buffers,
-                                                     std::span<const uint64_t> counter_buffer_offsets, bool has_counter_buffers,
-                                                     bool has_counter_buffer_offsets)
+                                                    std::span<const uint64_t> counter_buffers,
+                                                    std::span<const uint64_t> counter_buffer_offsets, bool has_counter_buffers,
+                                                    bool has_counter_buffer_offsets)
     {
         return this->cmd_transform_feedback(command_buffer, first_counter_buffer, counter_buffers, counter_buffer_offsets,
                                             has_counter_buffers, has_counter_buffer_offsets, false);
     }
 
     int32_t vulkan_host::cmd_draw_indirect_byte_count(uint64_t command_buffer, uint32_t instance_count, uint32_t first_instance,
-                                                       uint64_t counter_buffer, uint64_t counter_buffer_offset, uint32_t counter_offset,
-                                                       uint32_t vertex_stride)
+                                                      uint64_t counter_buffer, uint64_t counter_buffer_offset, uint32_t counter_offset,
+                                                      uint32_t vertex_stride)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto buffer = this->impl_->buffers.find(counter_buffer);
@@ -4869,7 +4865,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::get_descriptor_set_layout_support(uint64_t device, std::span<const descriptor_binding> bindings,
-                                                            uint32_t& supported)
+                                                           uint32_t& supported)
     {
         supported = VK_FALSE;
 
@@ -5430,8 +5426,7 @@ namespace sogen
         if (rasterization_stream != UINT32_MAX)
         {
             rasterization_stream_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_STREAM_CREATE_INFO_EXT;
-            rasterization_stream_info.flags =
-                static_cast<VkPipelineRasterizationStateStreamCreateFlagsEXT>(rasterization_stream_flags);
+            rasterization_stream_info.flags = static_cast<VkPipelineRasterizationStateStreamCreateFlagsEXT>(rasterization_stream_flags);
             rasterization_stream_info.rasterizationStream = rasterization_stream;
         }
 

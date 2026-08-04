@@ -2842,8 +2842,7 @@ namespace sogen
                                                                           req.has_counter_buffer_offsets != 0);
                     }
                     return this->vulkan_.cmd_end_transform_feedback(req.command_buffer, req.first_counter_buffer, buffers, offsets,
-                                                                    req.has_counter_buffers != 0,
-                                                                    req.has_counter_buffer_offsets != 0);
+                                                                    req.has_counter_buffers != 0, req.has_counter_buffer_offsets != 0);
                 }
                 case gpu_bridge::command::cmd_draw_indirect_byte_count: {
                     gpu_bridge::cmd_draw_indirect_byte_count_request req{};

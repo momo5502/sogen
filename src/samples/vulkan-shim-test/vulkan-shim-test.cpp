@@ -486,8 +486,7 @@ namespace
             reinterpret_cast<PFN_vkGetShaderModuleIdentifierEXT>(get_device_proc(device, "vkGetShaderModuleIdentifierEXT"));
         const auto create_shader_module = reinterpret_cast<PFN_vkCreateShaderModule>(get_device_proc(device, "vkCreateShaderModule"));
         const auto destroy_shader_module = reinterpret_cast<PFN_vkDestroyShaderModule>(get_device_proc(device, "vkDestroyShaderModule"));
-        const auto create_pipeline_layout =
-            reinterpret_cast<PFN_vkCreatePipelineLayout>(get_device_proc(device, "vkCreatePipelineLayout"));
+        const auto create_pipeline_layout = reinterpret_cast<PFN_vkCreatePipelineLayout>(get_device_proc(device, "vkCreatePipelineLayout"));
         const auto destroy_pipeline_layout =
             reinterpret_cast<PFN_vkDestroyPipelineLayout>(get_device_proc(device, "vkDestroyPipelineLayout"));
         const auto create_compute_pipelines =
@@ -502,12 +501,11 @@ namespace
 
         // Minimal SPIR-V 1.0 compute shader: layout(local_size_x=1, local_size_y=1, local_size_z=1) in; void main() {}
         constexpr std::array<uint32_t, 42> compute_spirv{
-            0x07230203, 0x00010000, 0x00000000, 0x00000005, 0x00000000, 0x00020011, 0x00000001,
-            0x0003000e, 0x00000000, 0x00000001, 0x0005000f, 0x00000005, 0x00000003, 0x6e69616d,
-            0x00000000, 0x00060010, 0x00000003, 0x00000011, 0x00000001, 0x00000001, 0x00000001,
-            0x00030003, 0x00000002, 0x000001c2, 0x00040005, 0x00000003, 0x6e69616d, 0x00000000,
-            0x00020013, 0x00000001, 0x00030021, 0x00000002, 0x00000001, 0x00050036, 0x00000001,
-            0x00000003, 0x00000000, 0x00000002, 0x000200f8, 0x00000004, 0x000100fd, 0x00010038,
+            0x07230203, 0x00010000, 0x00000000, 0x00000005, 0x00000000, 0x00020011, 0x00000001, 0x0003000e, 0x00000000,
+            0x00000001, 0x0005000f, 0x00000005, 0x00000003, 0x6e69616d, 0x00000000, 0x00060010, 0x00000003, 0x00000011,
+            0x00000001, 0x00000001, 0x00000001, 0x00030003, 0x00000002, 0x000001c2, 0x00040005, 0x00000003, 0x6e69616d,
+            0x00000000, 0x00020013, 0x00000001, 0x00030021, 0x00000002, 0x00000001, 0x00050036, 0x00000001, 0x00000003,
+            0x00000000, 0x00000002, 0x000200f8, 0x00000004, 0x000100fd, 0x00010038,
         };
 
         VkShaderModuleCreateInfo shader_info{};
@@ -531,11 +529,10 @@ namespace
         from_module.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_IDENTIFIER_EXT;
         get_module_identifier(device, shader, &from_module);
 
-        const bool identifiers_match = from_create_info.identifierSize > 0 &&
-                                       from_create_info.identifierSize <= VK_MAX_SHADER_MODULE_IDENTIFIER_SIZE_EXT &&
-                                       from_create_info.identifierSize == from_module.identifierSize &&
-                                       std::memcmp(from_create_info.identifier, from_module.identifier,
-                                                   from_create_info.identifierSize) == 0;
+        const bool identifiers_match =
+            from_create_info.identifierSize > 0 && from_create_info.identifierSize <= VK_MAX_SHADER_MODULE_IDENTIFIER_SIZE_EXT &&
+            from_create_info.identifierSize == from_module.identifierSize &&
+            std::memcmp(from_create_info.identifier, from_module.identifier, from_create_info.identifierSize) == 0;
 
         VkPipelineLayoutCreateInfo layout_info{};
         layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -567,9 +564,8 @@ namespace
         }
 
         const bool pipeline_ok = pipeline_result == VK_SUCCESS || pipeline_result == VK_PIPELINE_COMPILE_REQUIRED_EXT;
-        std::printf("[shim-test] shader identifiers size=%u match=%s, identifier pipeline=%d -> %s\n",
-                    from_create_info.identifierSize, identifiers_match ? "yes" : "no", pipeline_result,
-                    (identifiers_match && pipeline_ok) ? "PASS" : "FAIL");
+        std::printf("[shim-test] shader identifiers size=%u match=%s, identifier pipeline=%d -> %s\n", from_create_info.identifierSize,
+                    identifiers_match ? "yes" : "no", pipeline_result, (identifiers_match && pipeline_ok) ? "PASS" : "FAIL");
 
         if (pipeline != VK_NULL_HANDLE)
         {
@@ -666,8 +662,8 @@ int main(int argc, char** argv)
         const auto create_device = reinterpret_cast<PFN_vkCreateDevice>(get_instance_proc(instance, "vkCreateDevice"));
         const auto get_device_queue = reinterpret_cast<PFN_vkGetDeviceQueue>(get_instance_proc(instance, "vkGetDeviceQueue"));
         const auto destroy_device = reinterpret_cast<PFN_vkDestroyDevice>(get_instance_proc(instance, "vkDestroyDevice"));
-        const auto enumerate_device_extensions = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
-            get_instance_proc(instance, "vkEnumerateDeviceExtensionProperties"));
+        const auto enumerate_device_extensions =
+            reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(get_instance_proc(instance, "vkEnumerateDeviceExtensionProperties"));
         const auto get_features2 =
             reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(get_instance_proc(instance, "vkGetPhysicalDeviceFeatures2"));
         const auto get_properties2 =
