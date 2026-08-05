@@ -361,15 +361,19 @@ namespace sogen
 
         ui_insets get_host_ui_client_insets(const window& win)
         {
-            const auto border = win.nonclient_border();
-            return {.left = border, .top = border, .right = border, .bottom = border};
+            const auto insets = win.nonclient_insets();
+            return {.left = insets.left, .top = insets.top, .right = insets.right, .bottom = insets.bottom};
         }
 
         void sync_guest_window_rects(window& win)
         {
             const auto window_rect = get_window_rect(win);
-            // Frameless: the client sits at the window origin, so it shares the top-left and shrinks by the frame.
-            const RECT client_rect{.left = win.x, .top = win.y, .right = win.x + win.client_width(), .bottom = win.y + win.client_height()};
+            const auto client_x = win.x + win.client_x_offset();
+            const auto client_y = win.y + win.client_y_offset();
+            const RECT client_rect{.left = client_x,
+                                   .top = client_y,
+                                   .right = client_x + win.client_width(),
+                                   .bottom = client_y + win.client_height()};
 
             win.guest.access([&](USER_WINDOW& guest_win) {
                 guest_win.rcWindow = window_rect;
@@ -1041,6 +1045,11 @@ namespace sogen
         template <typename T>
         void dispatch_next_message(const syscall_context& c, callback_id id, T&& state, const window& win, std::vector<qmsg>& message_queue)
         {
+            if (message_queue.empty())
+            {
+                throw std::runtime_error("Cannot dispatch the next message because the message queue is empty");
+            }
+
             const auto m = message_queue.back();
             message_queue.pop_back();
 
@@ -3053,10 +3062,15 @@ namespace sogen
                 guest_win.dwExStyle = ex_style;
                 guest_win.dwStyle = style;
                 guest_win.rcWindow = {.left = x, .top = y, .right = x + width, .bottom = y + height};
-                // The client rect is the window minus its non-client frame (see window::nonclient_border). The
+                // The client rect is the window minus its non-client frame (see window::nonclient_insets). The
                 // guest reads rcClient client-side to size its render target/backbuffer, so seeding it with the
-                // outer rect here makes a framed window render 2px too large and rescale (softening the frame).
-                guest_win.rcClient = {.left = x, .top = y, .right = x + win.client_width(), .bottom = y + win.client_height()};
+                // outer rect here makes a framed window render too large and rescale (softening the frame).
+                const auto client_x = x + win.client_x_offset();
+                const auto client_y = y + win.client_y_offset();
+                guest_win.rcClient = {.left = client_x,
+                                      .top = client_y,
+                                      .right = client_x + win.client_width(),
+                                      .bottom = client_y + win.client_height()};
                 if (parent_win && has_child_parent)
                 {
                     guest_win.spwndParent = parent_win->guest.value();
@@ -4485,8 +4499,7 @@ namespace sogen
                 return FALSE;
             }
 
-            window_position_state state{};
-            state.window_pos_alloc = c.emu.push_stack(EMU_WINDOWPOS{
+            EMU_WINDOWPOS position{
                 .hwnd = hWnd,
                 .hwndInsertAfter = hwnd_insert_after,
                 .x = x,
@@ -4494,7 +4507,10 @@ namespace sogen
                 .cx = cx,
                 .cy = cy,
                 .flags = flags,
-            });
+            };
+
+            window_position_state state{};
+            state.window_pos_alloc = c.emu.push_stack(position);
 
             if ((flags & SWP_NOSENDCHANGING) == 0)
             {
@@ -4509,10 +4525,15 @@ namespace sogen
                 const auto old_width = win->width;
                 const auto old_height = win->height;
 
-                EMU_WINDOWPOS position{};
-                c.emu.read_memory(state.window_pos_alloc.address(), &position, sizeof(position));
                 apply_window_position_change(c, *win, position, state.changed_window_pos_alloc, state.message_queue, true);
                 finish_set_window_position(c, *win, state, old_x, old_y, old_width, old_height);
+
+                if (state.message_queue.empty())
+                {
+                    c.emu.pop_stack(state.changed_window_pos_alloc);
+                    c.emu.pop_stack(state.window_pos_alloc);
+                    return TRUE;
+                }
 
                 dispatch_next_message(c, callback_id::NtUserSetWindowPos, std::move(state), *win, state.message_queue);
             }
@@ -6103,7 +6124,7 @@ namespace sogen
 
         uint64_t handle_NtUserGetProcessDpiAwarenessContext()
         {
-            return 0;
+            return USER_DEFAULT_DPI_CONTEXT;
         }
 
         NTSTATUS handle_NtUserSetProcessDpiAwarenessContext()

@@ -3374,7 +3374,7 @@ namespace sogen
                         win && win->client_width() > 0 && win->client_height() > 0)
                     {
                         // Client size, not outer: DXVK pins its swapchain to this extent and must match its
-                        // client-sized backbuffer, else the present upscales (see window::nonclient_border).
+                        // client-sized backbuffer, else the present upscales (see window::nonclient_insets).
                         window_width = static_cast<uint32_t>(win->client_width());
                         window_height = static_cast<uint32_t>(win->client_height());
                     }
