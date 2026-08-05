@@ -575,14 +575,14 @@ namespace sogen
                     win = win->parent_handle != 0 ? c.proc.windows.get(win->parent_handle) : nullptr;
                 }
 
-                if (!win || !win->host_surface_window || win->width <= 0 || win->height <= 0)
+                if (!win || !win->host_surface_window || win->client_width() <= 0 || win->client_height() <= 0)
                 {
                     return nullptr;
                 }
 
                 const auto top_handle = static_cast<uint32_t>(win->handle);
-                const auto width = static_cast<uint32_t>(win->width);
-                const auto height = static_cast<uint32_t>(win->height);
+                const auto width = static_cast<uint32_t>(win->client_width());
+                const auto height = static_cast<uint32_t>(win->client_height());
 
                 auto& surface = c.proc.gdi_window_surfaces[top_handle];
                 if (surface.width != width || surface.height != height || surface.pixels.size() != static_cast<size_t>(width) * height)

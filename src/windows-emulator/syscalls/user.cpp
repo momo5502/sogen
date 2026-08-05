@@ -444,18 +444,10 @@ namespace sogen
             return position;
         }
 
-        void complete_window_position_change(const syscall_context& c, window& win, const uint64_t window_pos_address,
-                                             emulator_stack_allocation& changed_window_pos_alloc, std::vector<qmsg>& message_queue,
-                                             const bool update_changed_window_position)
+        void apply_window_position_change(const syscall_context& c, window& win, const EMU_WINDOWPOS& position,
+                                          emulator_stack_allocation& changed_window_pos_alloc, std::vector<qmsg>& message_queue,
+                                          const bool update_changed_window_position)
         {
-            EMU_WINDOWPOS position{};
-            c.emu.read_memory(window_pos_address, &position, sizeof(position));
-            if (const auto callback_position = read_window_pos_callback_output(c))
-            {
-                position = *callback_position;
-                c.emu.write_memory(window_pos_address, &position, sizeof(position));
-            }
-
             const auto x = (position.flags & SWP_NOMOVE) != 0 ? win.x : position.x;
             const auto y = (position.flags & SWP_NOMOVE) != 0 ? win.y : position.y;
             const auto width = (position.flags & SWP_NOSIZE) != 0 ? win.width : position.cx;
@@ -514,6 +506,21 @@ namespace sogen
                     break;
                 }
             }
+        }
+
+        void complete_window_position_change(const syscall_context& c, window& win, const uint64_t window_pos_address,
+                                             emulator_stack_allocation& changed_window_pos_alloc, std::vector<qmsg>& message_queue,
+                                             const bool update_changed_window_position)
+        {
+            EMU_WINDOWPOS position{};
+            c.emu.read_memory(window_pos_address, &position, sizeof(position));
+            if (const auto callback_position = read_window_pos_callback_output(c))
+            {
+                position = *callback_position;
+                c.emu.write_memory(window_pos_address, &position, sizeof(position));
+            }
+
+            apply_window_position_change(c, win, position, changed_window_pos_alloc, message_queue, update_changed_window_position);
         }
 
         RECT union_update_rect(const RECT& a, const RECT& b)
@@ -4425,8 +4432,52 @@ namespace sogen
             return old_parent;
         }
 
-        BOOL handle_NtUserSetWindowPos(const syscall_context& c, const hwnd hWnd, const hwnd /*hwnd_insert_after*/, const int x,
-                                       const int y, const int cx, const int cy, const UINT flags)
+        void finish_set_window_position(const syscall_context& c, window& win, window_position_state& state, const int old_x,
+                                        const int old_y, const int old_width, const int old_height)
+        {
+            EMU_WINDOWPOS position{};
+            c.emu.read_memory(state.window_pos_alloc.address(), &position, sizeof(position));
+            const bool showing_hidden_window = (position.flags & SWP_SHOWWINDOW) != 0 && (win.style & WS_VISIBLE) == 0;
+            const bool hiding_visible_window = (position.flags & SWP_HIDEWINDOW) != 0 && (win.style & WS_VISIBLE) != 0;
+
+            if ((position.flags & SWP_HIDEWINDOW) != 0)
+            {
+                win.style &= ~WS_VISIBLE;
+                win.guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win.style; });
+                if (win.host_surface_window)
+                {
+                    c.win_emu.ui().set_window_visible(win.handle, false);
+                }
+            }
+            else if (showing_hidden_window)
+            {
+                win.style |= WS_VISIBLE;
+                win.guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win.style; });
+                if (win.host_surface_window)
+                {
+                    c.win_emu.ui().set_window_visible(win.handle, true);
+                }
+                invalidate_window_tree(c, win);
+            }
+
+            const bool geometry_changed = old_x != win.x || old_y != win.y || old_width != win.width || old_height != win.height;
+            if ((position.flags & SWP_NOREDRAW) == 0 && !showing_hidden_window && geometry_changed)
+            {
+                invalidate_window(c, win, std::nullopt, false);
+            }
+
+            const bool frame_changed = (position.flags & SWP_FRAMECHANGED) != 0;
+            const bool z_order_changed = (position.flags & SWP_NOZORDER) == 0;
+            if (geometry_changed || showing_hidden_window || hiding_visible_window || frame_changed || z_order_changed)
+            {
+                state.message_queue.push_back(
+                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.changed_window_pos_alloc.address()});
+            }
+            state.position_applied = true;
+        }
+
+        BOOL handle_NtUserSetWindowPos(const syscall_context& c, const hwnd hWnd, const hwnd hwnd_insert_after, const int x, const int y,
+                                       const int cx, const int cy, const UINT flags)
         {
             auto* win = c.proc.windows.get(hWnd);
             if (!win)
@@ -4434,36 +4485,76 @@ namespace sogen
                 return FALSE;
             }
 
-            const auto new_x = (flags & SWP_NOMOVE) ? win->x : x;
-            const auto new_y = (flags & SWP_NOMOVE) ? win->y : y;
-            const auto new_width = (flags & SWP_NOSIZE) ? win->width : cx;
-            const auto new_height = (flags & SWP_NOSIZE) ? win->height : cy;
-            const bool showing_hidden_window = (flags & SWP_SHOWWINDOW) != 0 && (win->style & WS_VISIBLE) == 0;
-            const bool repaint = (flags & SWP_NOREDRAW) == 0 && !showing_hidden_window;
+            window_position_state state{};
+            state.window_pos_alloc = c.emu.push_stack(EMU_WINDOWPOS{
+                .hwnd = hWnd,
+                .hwndInsertAfter = hwnd_insert_after,
+                .x = x,
+                .y = y,
+                .cx = cx,
+                .cy = cy,
+                .flags = flags,
+            });
 
-            update_window_geometry(c, *win, new_x, new_y, new_width, new_height, repaint);
-
-            if ((flags & SWP_HIDEWINDOW) != 0)
+            if ((flags & SWP_NOSENDCHANGING) == 0)
             {
-                win->style &= ~WS_VISIBLE;
-                win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win->style; });
-                if (win->host_surface_window)
-                {
-                    c.win_emu.ui().set_window_visible(hWnd, false);
-                }
+                const auto window_pos_address = state.window_pos_alloc.address();
+                dispatch_window_message(c, callback_id::NtUserSetWindowPos, std::move(state), *win, WM_WINDOWPOSCHANGING, 0,
+                                        window_pos_address);
             }
-            else if (showing_hidden_window)
+            else
             {
-                win->style |= WS_VISIBLE;
-                win->guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win->style; });
-                if (win->host_surface_window)
-                {
-                    c.win_emu.ui().set_window_visible(hWnd, true);
-                }
-                // Repaint the now-visible window and its child controls (see invalidate_window_tree).
-                invalidate_window_tree(c, *win);
+                const auto old_x = win->x;
+                const auto old_y = win->y;
+                const auto old_width = win->width;
+                const auto old_height = win->height;
+
+                EMU_WINDOWPOS position{};
+                c.emu.read_memory(state.window_pos_alloc.address(), &position, sizeof(position));
+                apply_window_position_change(c, *win, position, state.changed_window_pos_alloc, state.message_queue, true);
+                finish_set_window_position(c, *win, state, old_x, old_y, old_width, old_height);
+
+                dispatch_next_message(c, callback_id::NtUserSetWindowPos, std::move(state), *win, state.message_queue);
             }
 
+            return {};
+        }
+
+        BOOL completion_NtUserSetWindowPos(const syscall_context& c, const hwnd hWnd, const hwnd /*hwnd_insert_after*/, const int /*x*/,
+                                           const int /*y*/, const int /*cx*/, const int /*cy*/, const UINT /*flags*/)
+        {
+            auto& state = c.get_completion_state<window_position_state>();
+            auto* win = c.proc.windows.get(hWnd);
+            if (!win)
+            {
+                if (state.changed_window_pos_alloc)
+                {
+                    c.emu.pop_stack(state.changed_window_pos_alloc);
+                }
+                c.emu.pop_stack(state.window_pos_alloc);
+                return FALSE;
+            }
+
+            if (!state.position_applied)
+            {
+                const auto old_x = win->x;
+                const auto old_y = win->y;
+                const auto old_width = win->width;
+                const auto old_height = win->height;
+
+                complete_window_position_change(c, *win, state.window_pos_alloc.address(), state.changed_window_pos_alloc,
+                                                state.message_queue, true);
+                finish_set_window_position(c, *win, state, old_x, old_y, old_width, old_height);
+            }
+
+            if (!state.message_queue.empty())
+            {
+                dispatch_next_message(c, callback_id::NtUserSetWindowPos, std::move(state), *win, state.message_queue);
+                return {};
+            }
+
+            c.emu.pop_stack(state.changed_window_pos_alloc);
+            c.emu.pop_stack(state.window_pos_alloc);
             return TRUE;
         }
 

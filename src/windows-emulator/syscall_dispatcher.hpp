@@ -237,6 +237,31 @@ namespace sogen
         }
     };
 
+    struct window_position_state : completion_state
+    {
+        emulator_stack_allocation window_pos_alloc{};
+        emulator_stack_allocation changed_window_pos_alloc{};
+        std::vector<qmsg> message_queue{};
+        bool position_applied{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->window_pos_alloc);
+            buffer.write(this->changed_window_pos_alloc);
+            buffer.write_vector(this->message_queue);
+            buffer.write(this->position_applied);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->window_pos_alloc);
+            buffer.read(this->changed_window_pos_alloc);
+            buffer.read_vector(this->message_queue);
+            buffer.read(this->position_applied);
+        }
+    };
+
     struct message_call_state : completion_state
     {
         hwnd window{};
