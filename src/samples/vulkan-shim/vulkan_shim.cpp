@@ -256,8 +256,6 @@ namespace
     // lock. Each record is a gb::command_record_header followed by that command's request payload.
     std::unordered_map<gb::object_id, std::vector<uint8_t>> g_command_streams;
 
-    uint64_t g_next_pipeline_cache = UINT64_C(0xF000000000000000);
-
     // Pending coalesced vkUpdateDescriptorSets blobs (the hottest bridge call - DXVK updates per draw).
     // Unlike the per-command-buffer streams (each synchronised to one thread by Vulkan), this global is
     // touched by every DXVK thread, and the preemptive time-slice can interrupt a thread mid-append, so the
@@ -1916,17 +1914,12 @@ extern "C"
                                                                           VkPipelineStageFlags2 pipelineStage, VkQueryPool queryPool,
                                                                           uint32_t query)
     {
-        VkPipelineStageFlagBits legacy_stage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-        if (pipelineStage == VK_PIPELINE_STAGE_2_NONE)
-        {
-            // NONE has an empty first synchronization scope, matching legacy TOP_OF_PIPE.
-            legacy_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-        }
-        else if (pipelineStage <= UINT32_MAX)
-        {
-            legacy_stage = static_cast<VkPipelineStageFlagBits>(pipelineStage);
-        }
-        vkCmdWriteTimestamp(commandBuffer, legacy_stage, queryPool, query);
+        gb::cmd_write_timestamp2_request request{};
+        request.command_buffer = to_object_id(commandBuffer);
+        request.query_pool = to_object_id(queryPool);
+        request.query = query;
+        request.pipeline_stage = static_cast<uint64_t>(pipelineStage);
+        record_command(request.command_buffer, gb::command::cmd_write_timestamp2, &request, sizeof(request));
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdWriteTimestamp2KHR(VkCommandBuffer commandBuffer,
@@ -3499,42 +3492,145 @@ extern "C"
         }
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL
-    vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR(VkPhysicalDevice, uint32_t* pPropertyCount, VkCooperativeMatrixPropertiesKHR*)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR(
+        VkPhysicalDevice physicalDevice, uint32_t* pPropertyCount, VkCooperativeMatrixPropertiesKHR* pProperties)
     {
         if (!pPropertyCount)
         {
-            return VK_INCOMPLETE;
+            return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        *pPropertyCount = 0;
-        return VK_SUCCESS;
+        gb::physical_device_enumeration_request request{};
+        request.physical_device = to_object_id(physicalDevice);
+        request.max_count = pProperties ? *pPropertyCount : 0;
+        request.has_entries = pProperties != nullptr;
+
+        const size_t capacity = request.max_count;
+        if (capacity > (SIZE_MAX - sizeof(gb::physical_device_enumeration_response)) /
+                           sizeof(gb::cooperative_matrix_property))
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        const size_t buffer_size = sizeof(gb::physical_device_enumeration_response) +
+                                   capacity * sizeof(gb::cooperative_matrix_property);
+        if (buffer_size > MAXDWORD)
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        std::vector<std::byte> buffer(buffer_size);
+        if (!bridge_call(gb::ioctl_get_physical_device_cooperative_matrix_properties, &request, sizeof(request), buffer.data(),
+                         static_cast<DWORD>(buffer.size())))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto* response = reinterpret_cast<const gb::physical_device_enumeration_response*>(buffer.data());
+        const uint32_t written = std::min<uint32_t>(response->count, request.max_count);
+        const auto* entries = reinterpret_cast<const gb::cooperative_matrix_property*>(
+            buffer.data() + sizeof(gb::physical_device_enumeration_response));
+        for (uint32_t i = 0; i < written; ++i)
+        {
+            pProperties[i].sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR;
+            pProperties[i].MSize = entries[i].m_size;
+            pProperties[i].NSize = entries[i].n_size;
+            pProperties[i].KSize = entries[i].k_size;
+            pProperties[i].AType = static_cast<VkComponentTypeKHR>(entries[i].a_type);
+            pProperties[i].BType = static_cast<VkComponentTypeKHR>(entries[i].b_type);
+            pProperties[i].CType = static_cast<VkComponentTypeKHR>(entries[i].c_type);
+            pProperties[i].ResultType = static_cast<VkComponentTypeKHR>(entries[i].result_type);
+            pProperties[i].saturatingAccumulation = entries[i].saturating_accumulation;
+            pProperties[i].scope = static_cast<VkScopeKHR>(entries[i].scope);
+        }
+        *pPropertyCount = response->count;
+        return static_cast<VkResult>(response->vk_result);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceFragmentShadingRatesKHR(VkPhysicalDevice,
-                                                                                                    uint32_t* pFragmentShadingRateCount,
-                                                                                                    VkPhysicalDeviceFragmentShadingRateKHR*)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceFragmentShadingRatesKHR(
+        VkPhysicalDevice physicalDevice, uint32_t* pFragmentShadingRateCount,
+        VkPhysicalDeviceFragmentShadingRateKHR* pFragmentShadingRates)
     {
         if (!pFragmentShadingRateCount)
         {
-            return VK_INCOMPLETE;
+            return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        *pFragmentShadingRateCount = 0;
-        return VK_SUCCESS;
+        gb::physical_device_enumeration_request request{};
+        request.physical_device = to_object_id(physicalDevice);
+        request.max_count = pFragmentShadingRates ? *pFragmentShadingRateCount : 0;
+        request.has_entries = pFragmentShadingRates != nullptr;
+
+        const size_t capacity = request.max_count;
+        if (capacity > (SIZE_MAX - sizeof(gb::physical_device_enumeration_response)) / sizeof(gb::fragment_shading_rate))
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        const size_t buffer_size =
+            sizeof(gb::physical_device_enumeration_response) + capacity * sizeof(gb::fragment_shading_rate);
+        if (buffer_size > MAXDWORD)
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        std::vector<std::byte> buffer(buffer_size);
+        if (!bridge_call(gb::ioctl_get_physical_device_fragment_shading_rates, &request, sizeof(request), buffer.data(),
+                         static_cast<DWORD>(buffer.size())))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto* response = reinterpret_cast<const gb::physical_device_enumeration_response*>(buffer.data());
+        const uint32_t written = std::min<uint32_t>(response->count, request.max_count);
+        const auto* entries = reinterpret_cast<const gb::fragment_shading_rate*>(
+            buffer.data() + sizeof(gb::physical_device_enumeration_response));
+        for (uint32_t i = 0; i < written; ++i)
+        {
+            pFragmentShadingRates[i].sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_KHR;
+            pFragmentShadingRates[i].sampleCounts = entries[i].sample_counts;
+            pFragmentShadingRates[i].fragmentSize = {.width = entries[i].width, .height = entries[i].height};
+        }
+        *pFragmentShadingRateCount = response->count;
+        return static_cast<VkResult>(response->vk_result);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceCalibrateableTimeDomainsKHR(VkPhysicalDevice,
-                                                                                                        uint32_t* pTimeDomainCount,
-                                                                                                        VkTimeDomainKHR*)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceCalibrateableTimeDomainsKHR(
+        VkPhysicalDevice physicalDevice, uint32_t* pTimeDomainCount, VkTimeDomainKHR* pTimeDomains)
     {
         if (!pTimeDomainCount)
         {
-            return VK_INCOMPLETE;
+            return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        *pTimeDomainCount = 0;
-        return VK_SUCCESS;
+        gb::physical_device_enumeration_request request{};
+        request.physical_device = to_object_id(physicalDevice);
+        request.max_count = pTimeDomains ? *pTimeDomainCount : 0;
+        request.has_entries = pTimeDomains != nullptr;
+
+        const size_t capacity = request.max_count;
+        if (capacity > (SIZE_MAX - sizeof(gb::physical_device_enumeration_response)) / sizeof(uint32_t))
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        const size_t buffer_size = sizeof(gb::physical_device_enumeration_response) + capacity * sizeof(uint32_t);
+        if (buffer_size > MAXDWORD)
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        std::vector<std::byte> buffer(buffer_size);
+        if (!bridge_call(gb::ioctl_get_physical_device_calibrateable_time_domains, &request, sizeof(request), buffer.data(),
+                         static_cast<DWORD>(buffer.size())))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto* response = reinterpret_cast<const gb::physical_device_enumeration_response*>(buffer.data());
+        const uint32_t written = std::min<uint32_t>(response->count, request.max_count);
+        const auto* entries =
+            reinterpret_cast<const uint32_t*>(buffer.data() + sizeof(gb::physical_device_enumeration_response));
+        for (uint32_t i = 0; i < written; ++i)
+        {
+            pTimeDomains[i] = static_cast<VkTimeDomainKHR>(entries[i]);
+        }
+        *pTimeDomainCount = response->count;
+        return static_cast<VkResult>(response->vk_result);
     }
 
     // VK_KHR_get_surface_capabilities2 / VK_EXT_surface_maintenance1: delegate to the KHR queries.
@@ -4507,12 +4603,24 @@ extern "C"
         }
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceMemoryCommitment(VkDevice, VkDeviceMemory,
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDeviceMemoryCommitment(VkDevice device, VkDeviceMemory memory,
                                                                                  VkDeviceSize* pCommittedMemoryInBytes)
     {
-        if (pCommittedMemoryInBytes)
+        if (!pCommittedMemoryInBytes)
         {
-            *pCommittedMemoryInBytes = 0;
+            return;
+        }
+
+        *pCommittedMemoryInBytes = 0;
+        gb::get_device_memory_commitment_request request{};
+        request.device = to_object_id(device);
+        request.memory = to_object_id(memory);
+
+        gb::get_device_memory_commitment_response response{};
+        if (bridge_call(gb::ioctl_get_device_memory_commitment, &request, sizeof(request), &response, sizeof(response)) &&
+            response.vk_result == VK_SUCCESS)
+        {
+            *pCommittedMemoryInBytes = response.committed_bytes;
         }
     }
 
@@ -4617,38 +4725,128 @@ extern "C"
         }
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineCache(VkDevice, const VkPipelineCacheCreateInfo*,
-                                                                               const VkAllocationCallbacks*,
-                                                                               VkPipelineCache* pPipelineCache)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineCache(
+        VkDevice device, const VkPipelineCacheCreateInfo* pCreateInfo, const VkAllocationCallbacks*, VkPipelineCache* pPipelineCache)
     {
-        if (!pPipelineCache)
+        if (!pCreateInfo || !pPipelineCache || (pCreateInfo->initialDataSize > 0 && !pCreateInfo->pInitialData) ||
+            pCreateInfo->initialDataSize > UINT32_MAX)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        *pPipelineCache = to_handle<VkPipelineCache>(g_next_pipeline_cache++);
-        return VK_SUCCESS;
+
+        gb::create_pipeline_cache_request request{};
+        request.device = to_object_id(device);
+        request.flags = static_cast<uint32_t>(pCreateInfo->flags);
+        request.initial_data_size = static_cast<uint32_t>(pCreateInfo->initialDataSize);
+
+        if (pCreateInfo->initialDataSize > SIZE_MAX - sizeof(request) ||
+            sizeof(request) + pCreateInfo->initialDataSize > MAXDWORD)
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        std::vector<uint8_t> message(sizeof(request) + pCreateInfo->initialDataSize);
+        std::memcpy(message.data(), &request, sizeof(request));
+        if (pCreateInfo->initialDataSize > 0)
+        {
+            std::memcpy(message.data() + sizeof(request), pCreateInfo->pInitialData, pCreateInfo->initialDataSize);
+        }
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_pipeline_cache, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response)))
+        {
+            *pPipelineCache = VK_NULL_HANDLE;
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        *pPipelineCache = response.vk_result == VK_SUCCESS ? to_handle<VkPipelineCache>(response.object) : VK_NULL_HANDLE;
+        return static_cast<VkResult>(response.vk_result);
     }
 
-    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyPipelineCache(VkDevice, VkPipelineCache, const VkAllocationCallbacks*)
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyPipelineCache(VkDevice device, VkPipelineCache pipelineCache,
+                                                                            const VkAllocationCallbacks*)
     {
+        destroy_device_child(gb::ioctl_destroy_pipeline_cache, device, pipelineCache);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPipelineCacheData(VkDevice, VkPipelineCache, size_t* pDataSize, void*)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPipelineCacheData(VkDevice device, VkPipelineCache pipelineCache,
+                                                                                size_t* pDataSize, void* pData)
     {
         if (!pDataSize)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        *pDataSize = 0;
-        return VK_SUCCESS;
+
+        const size_t capacity = pData ? *pDataSize : 0;
+        if (capacity > SIZE_MAX - sizeof(gb::get_pipeline_cache_data_response) ||
+            sizeof(gb::get_pipeline_cache_data_response) + capacity > MAXDWORD)
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+
+        gb::get_pipeline_cache_data_request request{};
+        request.device = to_object_id(device);
+        request.pipeline_cache = to_object_id(pipelineCache);
+        request.max_data_size = capacity;
+        request.has_data = pData != nullptr;
+
+        std::vector<std::byte> buffer(sizeof(gb::get_pipeline_cache_data_response) + capacity);
+        if (!bridge_call(gb::ioctl_get_pipeline_cache_data, &request, sizeof(request), buffer.data(),
+                         static_cast<DWORD>(buffer.size())))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto* response = reinterpret_cast<const gb::get_pipeline_cache_data_response*>(buffer.data());
+        const size_t written = std::min<size_t>(static_cast<size_t>(response->data_size), capacity);
+        if (pData && written > 0)
+        {
+            std::memcpy(pData, buffer.data() + sizeof(gb::get_pipeline_cache_data_response), written);
+        }
+        *pDataSize = static_cast<size_t>(response->data_size);
+        return static_cast<VkResult>(response->vk_result);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkMergePipelineCaches(VkDevice, VkPipelineCache, uint32_t, const VkPipelineCache*)
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkMergePipelineCaches(VkDevice device, VkPipelineCache dstCache,
+                                                                               uint32_t srcCacheCount,
+                                                                               const VkPipelineCache* pSrcCaches)
     {
-        return VK_SUCCESS;
+        if (srcCacheCount > 0 && !pSrcCaches)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        if (srcCacheCount > (SIZE_MAX - sizeof(gb::merge_pipeline_caches_request)) / sizeof(gb::object_id))
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+
+        gb::merge_pipeline_caches_request request{};
+        request.device = to_object_id(device);
+        request.destination_cache = to_object_id(dstCache);
+        request.source_count = srcCacheCount;
+
+        const size_t message_size = sizeof(request) + static_cast<size_t>(srcCacheCount) * sizeof(gb::object_id);
+        if (message_size > MAXDWORD)
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+        std::vector<uint8_t> message(message_size);
+        std::memcpy(message.data(), &request, sizeof(request));
+        for (uint32_t i = 0; i < srcCacheCount; ++i)
+        {
+            const gb::object_id source = to_object_id(pSrcCaches[i]);
+            std::memcpy(message.data() + sizeof(request) + static_cast<size_t>(i) * sizeof(source), &source, sizeof(source));
+        }
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_merge_pipeline_caches, message.data(), static_cast<DWORD>(message.size()), &response,
+                         sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache,
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache pipelineCache,
                                                                                    uint32_t createInfoCount,
                                                                                    const VkGraphicsPipelineCreateInfo* pCreateInfos,
                                                                                    const VkAllocationCallbacks*, VkPipeline* pPipelines)
@@ -4745,11 +4943,12 @@ extern "C"
 
             gb::create_graphics_pipeline_request request{};
             request.device = to_object_id(device);
+            request.pipeline_cache = to_object_id(pipelineCache);
             request.render_pass = to_object_id(ci.renderPass);
             request.pipeline_layout = to_object_id(ci.layout);
             request.vertex_shader = vertex_shader.wire;
             request.fragment_shader = fragment_shader.wire;
-            request.flags = static_cast<uint32_t>(ci.flags);
+            request.flags = static_cast<uint32_t>(ci.flags & ~VK_PIPELINE_CREATE_DERIVATIVE_BIT);
             request.width = width;
             request.height = height;
             if (ci.pDepthStencilState && ci.pDepthStencilState->depthTestEnable)
@@ -4934,7 +5133,7 @@ extern "C"
         return overall;
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateComputePipelines(VkDevice device, VkPipelineCache,
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateComputePipelines(VkDevice device, VkPipelineCache pipelineCache,
                                                                                   uint32_t createInfoCount,
                                                                                   const VkComputePipelineCreateInfo* pCreateInfos,
                                                                                   const VkAllocationCallbacks*, VkPipeline* pPipelines)
@@ -4954,9 +5153,10 @@ extern "C"
 
             gb::create_compute_pipeline_request request{};
             request.device = to_object_id(device);
+            request.pipeline_cache = to_object_id(pipelineCache);
             request.pipeline_layout = to_object_id(ci.layout);
             request.shader = shader.wire;
-            request.flags = static_cast<uint32_t>(ci.flags);
+            request.flags = static_cast<uint32_t>(ci.flags & ~VK_PIPELINE_CREATE_DERIVATIVE_BIT);
 
             gb::create_compute_pipeline_response response{};
             const bool ok = bridge_call(gb::ioctl_create_compute_pipeline, &request, sizeof(request), &response, sizeof(response));
@@ -5167,6 +5367,13 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_draw_indexed_indirect_count, &request, sizeof(request));
     }
 
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndexedIndirectCountKHR(
+        VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer,
+        VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride)
+    {
+        vkCmdDrawIndexedIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
+    }
+
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndirect(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset,
                                                                        uint32_t drawCount, uint32_t stride)
     {
@@ -5193,6 +5400,13 @@ extern "C"
         request.max_draw_count = maxDrawCount;
         request.stride = stride;
         record_command(request.command_buffer, gb::command::cmd_draw_indirect_count, &request, sizeof(request));
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdDrawIndirectCountKHR(
+        VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer,
+        VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride)
+    {
+        vkCmdDrawIndirectCount(commandBuffer, buffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer,
@@ -5684,8 +5898,10 @@ extern "C"
             {.name = "vkCmdDrawIndexed", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndexed)},
             {.name = "vkCmdDrawIndexedIndirect", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndexedIndirect)},
             {.name = "vkCmdDrawIndexedIndirectCount", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndexedIndirectCount)},
+            {.name = "vkCmdDrawIndexedIndirectCountKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndexedIndirectCountKHR)},
             {.name = "vkCmdDrawIndirect", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndirect)},
             {.name = "vkCmdDrawIndirectCount", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndirectCount)},
+            {.name = "vkCmdDrawIndirectCountKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdDrawIndirectCountKHR)},
             {.name = "vkCmdEndRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdEndRenderPass)},
             {.name = "vkCmdNextSubpass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdNextSubpass)},
             {.name = "vkCmdPushConstants", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdPushConstants)},

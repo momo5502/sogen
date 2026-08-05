@@ -50,8 +50,10 @@ EXPORTS
     vkCmdDrawIndexed
     vkCmdDrawIndexedIndirect
     vkCmdDrawIndexedIndirectCount
+    vkCmdDrawIndexedIndirectCountKHR
     vkCmdDrawIndirect
     vkCmdDrawIndirectCount
+    vkCmdDrawIndirectCountKHR
     vkCmdDrawIndirectByteCountEXT
     vkCmdEndQuery
     vkCmdEndQueryIndexedEXT
