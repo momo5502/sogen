@@ -72,6 +72,13 @@ namespace sogen
         // always receives the true device-extension count.
         int32_t enumerate_device_extension_properties(uint64_t physical_device, void* out, size_t out_size, uint32_t& out_count);
 
+        int32_t get_physical_device_cooperative_matrix_properties(uint64_t physical_device, void* out, size_t out_size,
+                                                                  uint32_t max_count, bool has_entries, uint32_t& out_count);
+        int32_t get_physical_device_fragment_shading_rates(uint64_t physical_device, void* out, size_t out_size, uint32_t max_count,
+                                                           bool has_entries, uint32_t& out_count);
+        int32_t get_physical_device_calibrateable_time_domains(uint64_t physical_device, std::span<uint32_t> out_domains,
+                                                               uint32_t max_count, bool has_entries, uint32_t& out_count);
+
         // Queries vkGetPhysicalDeviceFeatures2 for the pNext chain the guest described. in_records is a
         // packed array of `struct_count` feature_chain_record {sType, body_size} (guest-supplied,
         // pad-free body sizes). out_blob receives, in the same order, one record + body bytes per entry
@@ -155,6 +162,7 @@ namespace sogen
         // fresh object id, or 0 on failure.
         int32_t allocate_memory(uint64_t device, uint64_t size, uint32_t memory_type_index, uint64_t& out_memory);
         void free_memory(uint64_t device, uint64_t memory);
+        int32_t get_device_memory_commitment(uint64_t device, uint64_t memory, uint64_t& out_committed_bytes);
 
         int32_t create_buffer(uint64_t device, uint64_t size, uint32_t usage, uint64_t& out_buffer);
         void destroy_buffer(uint64_t device, uint64_t buffer);
@@ -394,8 +402,12 @@ namespace sogen
 
         // --- graphics pipeline (enough for a render-pass triangle) ---
 
-        int32_t create_shader_module(uint64_t device, const void* code, size_t code_size, uint64_t& out_module);
+        int32_t create_shader_module(uint64_t device, uint32_t flags, const void* code, size_t code_size, uint64_t& out_module);
         void destroy_shader_module(uint64_t device, uint64_t shader_module);
+        int32_t get_shader_module_identifier(uint64_t device, uint64_t shader_module, std::span<uint8_t> identifier,
+                                             uint32_t& identifier_size);
+        int32_t get_shader_module_create_info_identifier(uint64_t device, uint32_t flags, const void* code, size_t code_size,
+                                                         std::span<uint8_t> identifier, uint32_t& identifier_size);
 
         // aspect_mask selects COLOR vs DEPTH (0 defaults to COLOR).
         int32_t create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask, uint32_t view_type,
@@ -414,7 +426,23 @@ namespace sogen
         int32_t cmd_reset_query_pool(uint64_t command_buffer, uint64_t query_pool, uint32_t first_query, uint32_t query_count);
         int32_t cmd_begin_query(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t flags);
         int32_t cmd_end_query(uint64_t command_buffer, uint64_t query_pool, uint32_t query);
+        int32_t cmd_begin_query_indexed(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t flags, uint32_t index);
+        int32_t cmd_end_query_indexed(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t index);
+        int32_t cmd_bind_transform_feedback_buffers(uint64_t command_buffer, uint32_t first_binding, std::span<const uint64_t> buffer_ids,
+                                                    std::span<const uint64_t> offsets, std::span<const uint64_t> sizes);
+        int32_t cmd_begin_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer,
+                                             std::span<const uint64_t> counter_buffers, std::span<const uint64_t> counter_buffer_offsets,
+                                             bool has_counter_buffers, bool has_counter_buffer_offsets);
+        int32_t cmd_end_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer,
+                                           std::span<const uint64_t> counter_buffers, std::span<const uint64_t> counter_buffer_offsets,
+                                           bool has_counter_buffers, bool has_counter_buffer_offsets);
+        int32_t cmd_draw_indirect_byte_count(uint64_t command_buffer, uint32_t instance_count, uint32_t first_instance,
+                                             uint64_t counter_buffer, uint64_t counter_buffer_offset, uint32_t counter_offset,
+                                             uint32_t vertex_stride);
         int32_t cmd_write_timestamp(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t pipeline_stage);
+        int32_t cmd_write_timestamp2(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint64_t pipeline_stage);
+        int32_t cmd_copy_query_pool_results(uint64_t command_buffer, uint64_t query_pool, uint32_t first_query, uint32_t query_count,
+                                            uint64_t destination_buffer, uint64_t destination_offset, uint64_t stride, uint32_t flags);
 
         // One color attachment + an optional depth attachment (depth_format == 0 => color only), single
         // subpass (initial/final layouts as given; PRESENT_SRC_KHR is mapped to TRANSFER_SRC_OPTIMAL).
@@ -453,7 +481,7 @@ namespace sogen
             uint32_t dst_binding;
             uint32_t dst_array_element;
             uint32_t descriptor_type;
-            uint64_t buffer;
+            uint64_t buffer_or_view;
             uint64_t offset;
             uint64_t range;
             uint64_t sampler;
@@ -462,6 +490,7 @@ namespace sogen
         };
 
         int32_t create_descriptor_set_layout(uint64_t device, std::span<const descriptor_binding> bindings, uint64_t& out_layout);
+        int32_t get_descriptor_set_layout_support(uint64_t device, std::span<const descriptor_binding> bindings, uint32_t& supported);
         void destroy_descriptor_set_layout(uint64_t device, uint64_t layout);
         int32_t create_descriptor_pool(uint64_t device, uint32_t max_sets, std::span<const descriptor_pool_size> sizes, uint64_t& out_pool);
         int32_t reset_descriptor_pool(uint64_t device, uint64_t pool, uint32_t flags);
@@ -470,6 +499,7 @@ namespace sogen
         // true count.
         int32_t allocate_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> set_layouts,
                                          std::span<uint64_t> out_sets, uint32_t& out_count);
+        int32_t free_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> sets);
         int32_t update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes);
 
         // Optionally one push-constant range from offset 0 (push_constant_size == 0 means none), plus a
@@ -493,6 +523,12 @@ namespace sogen
             uint32_t binding;
             uint32_t format;
             uint32_t offset;
+        };
+
+        struct vertex_divisor
+        {
+            uint32_t binding;
+            uint32_t divisor;
         };
 
         // Optional depth-stencil state for a pipeline (test_enable == 0 => none, as before).
@@ -533,19 +569,36 @@ namespace sogen
             std::span<const uint8_t> data;
         };
 
+        struct shader_stage_source
+        {
+            uint64_t module;
+            std::span<const uint8_t> identifier;
+        };
+
+        int32_t create_pipeline_cache(uint64_t device, uint32_t flags, std::span<const uint8_t> initial_data,
+                                      uint64_t& out_pipeline_cache);
+        void destroy_pipeline_cache(uint64_t device, uint64_t pipeline_cache);
+        int32_t get_pipeline_cache_data(uint64_t device, uint64_t pipeline_cache, void* out, size_t out_size, bool has_data,
+                                        size_t& data_size);
+        int32_t merge_pipeline_caches(uint64_t device, uint64_t destination_cache, std::span<const uint64_t> source_caches);
+
         // Triangle list, static full-extent viewport/scissor, one non-blended color attachment, optional
         // depth test. Empty vertex input (no bindings/attributes) leaves vertices to be baked into the shader.
         // When render_pass == 0 the pipeline is built for dynamic rendering (VK_KHR_dynamic_rendering) using
         // color_formats/depth_format/stencil_format, with viewport and scissor as dynamic state.
-        int32_t create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout, uint64_t vertex_shader,
-                                         uint64_t fragment_shader, uint32_t width, uint32_t height,
-                                         std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
+        int32_t create_graphics_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t render_pass, uint64_t pipeline_layout,
+                                         const shader_stage_source& vertex_shader, const shader_stage_source& fragment_shader,
+                                         uint32_t flags, uint32_t width, uint32_t height, std::span<const vertex_binding> bindings,
+                                         std::span<const vertex_attribute> attributes, std::span<const vertex_divisor> divisors,
                                          const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
                                          uint32_t stencil_format, uint32_t rasterization_samples, uint32_t primitive_topology,
-                                         uint32_t primitive_restart_enable, std::span<const uint32_t> dynamic_states,
+                                         uint32_t primitive_restart_enable, uint32_t rasterization_stream,
+                                         uint32_t rasterization_stream_flags, std::span<const uint32_t> dynamic_states,
                                          const specialization& vs_spec, const specialization& fs_spec,
                                          std::span<const color_blend_attachment> blend_attachments, uint64_t& out_pipeline);
-        int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, uint64_t shader_module, uint64_t& out_pipeline);
+        int32_t create_compute_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t pipeline_layout,
+                                        const shader_stage_source& shader, uint32_t flags,
+                                        uint64_t& out_pipeline);
         void destroy_pipeline(uint64_t device, uint64_t pipeline);
 
         // clear_depth is used only when the render pass has a depth attachment.
@@ -564,9 +617,16 @@ namespace sogen
         int32_t cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t index_type);
         int32_t cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count, uint32_t first_index,
                                  int32_t vertex_offset, uint32_t first_instance);
+        int32_t cmd_draw_indexed_indirect(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t draw_count, uint32_t stride);
+        int32_t cmd_draw_indexed_indirect_count(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint64_t count_buffer,
+                                                uint64_t count_buffer_offset, uint32_t max_draw_count, uint32_t stride);
+        int32_t cmd_draw_indirect(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t draw_count, uint32_t stride);
+        int32_t cmd_draw_indirect_count(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint64_t count_buffer,
+                                        uint64_t count_buffer_offset, uint32_t max_draw_count, uint32_t stride);
         int32_t cmd_bind_descriptor_sets(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t first_set,
                                          std::span<const uint64_t> sets, uint32_t bind_point, std::span<const uint32_t> dynamic_offsets);
         int32_t cmd_end_render_pass(uint64_t command_buffer);
+        int32_t cmd_next_subpass(uint64_t command_buffer, uint32_t contents);
         // Dynamic rendering (VK_KHR_dynamic_rendering / core 1.3). depth/stencil are null when absent.
         int32_t cmd_begin_rendering(uint64_t command_buffer, int32_t area_x, int32_t area_y, uint32_t area_w, uint32_t area_h,
                                     uint32_t layer_count, uint32_t view_mask, uint32_t flags, std::span<const rendering_attachment> color,
@@ -587,6 +647,10 @@ namespace sogen
         int32_t cmd_set_dynamic_u32(uint64_t command_buffer, uint32_t state, uint32_t value);
 
       private:
+        int32_t cmd_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer, std::span<const uint64_t> counter_buffer_ids,
+                                       std::span<const uint64_t> counter_buffer_offsets, bool has_counter_buffers,
+                                       bool has_counter_buffer_offsets, bool begin);
+
         struct impl;
         std::unique_ptr<impl> impl_;
     };
