@@ -19,7 +19,7 @@ namespace sogen
 
         struct parsed_registry_key
         {
-            utils::path_key path{};
+            std::filesystem::path path{};
             size_t line{};
             std::vector<parsed_registry_value> values{};
         };
@@ -443,10 +443,10 @@ namespace sogen
             return nt_root;
         }
 
-        utils::path_key parse_registry_key_path(const std::u16string_view path, const std::string_view source_name, const size_t line)
+        std::filesystem::path parse_registry_key_path(const std::u16string_view path, const std::string_view source_name,
+                                                        const size_t line)
         {
-            const auto nt_path = to_nt_registry_path(path, source_name, line);
-            return utils::path_key{std::filesystem::path{std::u16string{nt_path}}};
+            return std::filesystem::path{to_nt_registry_path(path, source_name, line)};
         }
 
         std::vector<parsed_registry_key> parse_registry_file(const std::span<const std::byte> contents, const std::string_view source_name)
