@@ -298,6 +298,11 @@ namespace sogen
             return {std::move(reg_key)};
         }
 
+        if (this->overlay_values_.contains(normal_key))
+        {
+            return {std::move(reg_key)};
+        }
+
         auto path = reg_key.path.get();
         const auto* entry = iterator->second->get_sub_key(path);
 
@@ -307,6 +312,40 @@ namespace sogen
         }
 
         return {std::move(reg_key)};
+    }
+
+    std::optional<registry_key> registry_manager::create_key(const utils::path_key& key)
+    {
+        const auto normal_key = this->normalize_path(key);
+        const auto iterator = this->find_hive(normal_key);
+        if (iterator == this->hives_.end())
+        {
+            return std::nullopt;
+        }
+
+        if (auto existing = this->get_key(normal_key))
+        {
+            return existing;
+        }
+
+        registry_key reg_key{};
+        reg_key.hive = iterator->first.get();
+        reg_key.path = normal_key.get().lexically_relative(reg_key.hive.get());
+
+        auto current_path = reg_key.hive.get();
+        for (const auto& component : reg_key.path.get())
+        {
+            current_path /= component;
+            this->overlay_values_.try_emplace(utils::path_key{current_path});
+        }
+
+        return {std::move(reg_key)};
+    }
+
+    bool registry_manager::can_create_key(const utils::path_key& key) const
+    {
+        const auto normal_key = this->normalize_path(key);
+        return this->find_hive(normal_key) != this->hives_.end();
     }
 
     std::optional<registry_value> registry_manager::get_value(const registry_key& key, const std::string_view name)
@@ -386,6 +425,19 @@ namespace sogen
     }
 
     registry_manager::hive_map::iterator registry_manager::find_hive(const utils::path_key& key)
+    {
+        for (auto i = this->hives_.begin(); i != this->hives_.end(); ++i)
+        {
+            if (is_subpath(i->first, key))
+            {
+                return i;
+            }
+        }
+
+        return this->hives_.end();
+    }
+
+    registry_manager::hive_map::const_iterator registry_manager::find_hive(const utils::path_key& key) const
     {
         for (auto i = this->hives_.begin(); i != this->hives_.end(); ++i)
         {
