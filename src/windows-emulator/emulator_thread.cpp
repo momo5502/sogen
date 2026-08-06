@@ -1295,6 +1295,13 @@ namespace sogen
         setup_stack(emu, context, this->stack_base, static_cast<size_t>(this->stack_size));
         emu.set_segment_base(x86_register::gs, this->gs_segment->get_base());
 
+        // x86 power-on defaults: all exceptions masked, round-to-nearest. Some backends initialise these
+        // registers to 0, leaving every floating-point exception unmasked - including the near-ubiquitous
+        // inexact/precision condition - so guest code reading the live control word via fnstcw (e.g. the
+        // CRT's pow/_except1 path) raises a STATUS_FLOAT_INEXACT_RESULT that never occurs on real Windows.
+        emu.reg<uint16_t>(x86_register::fpcw, 0x037F);
+        emu.reg<uint32_t>(x86_register::mxcsr, 0x1F80);
+
         CONTEXT64 ctx{};
         ctx.ContextFlags = CONTEXT64_ALL;
 

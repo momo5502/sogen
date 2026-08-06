@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "module_mapping.hpp"
 #include <address_utils.hpp>
+#include <algorithm>
 
 #include <utils/io.hpp>
 #include <utils/buffer_accessor.hpp>
@@ -84,12 +85,14 @@ namespace sogen
 
         template <typename T>
             requires(std::is_integral_v<T>)
-        void apply_relocation(memory_manager& memory, const uint64_t address, const uint64_t delta)
+        void apply_relocation(const utils::safe_buffer_accessor<std::byte> block, const uint64_t offset, const uint64_t delta)
         {
+            auto* const pointer = block.get_pointer_for_range(static_cast<size_t>(offset), sizeof(T));
+
             T value{};
-            memory.read_memory(address, &value, sizeof(value));
+            std::memcpy(&value, pointer, sizeof(value));
             value += static_cast<T>(delta);
-            memory.write_memory(address, &value, sizeof(value));
+            std::memcpy(pointer, &value, sizeof(value));
         }
 
         template <typename T>
@@ -221,6 +224,88 @@ namespace sogen
             }
         }
 
+        // Fixups are applied to a host-side mirror of the block's guest byte span and committed with a
+        // single write_memory. Every guest write triggers a JIT translation invalidation, so doing this
+        // per fixup costs thousands of invalidations per module instead of one per block.
+        void apply_relocation_block(memory_manager& memory, const uint64_t image_base, const IMAGE_BASE_RELOCATION& relocation,
+                                    const std::span<const uint16_t> entries, const uint64_t delta)
+        {
+            uint64_t min_offset = 0;
+            uint64_t max_end = 0;
+            bool has_fixup = false;
+
+            for (const auto entry : entries)
+            {
+                const int type = entry >> 12;
+                const auto offset = static_cast<uint16_t>(entry & 0xfff);
+                const auto total_offset = static_cast<uint64_t>(relocation.VirtualAddress) + offset;
+
+                size_t width = 0;
+                switch (type)
+                {
+                case IMAGE_REL_BASED_ABSOLUTE:
+                    continue;
+                case IMAGE_REL_BASED_HIGHLOW:
+                    width = sizeof(DWORD);
+                    break;
+                case IMAGE_REL_BASED_DIR64:
+                    width = sizeof(ULONGLONG);
+                    break;
+                default:
+                    throw std::runtime_error("Unknown relocation type: " + std::to_string(type));
+                }
+
+                if (!has_fixup)
+                {
+                    min_offset = total_offset;
+                    max_end = total_offset + width;
+                    has_fixup = true;
+                }
+                else
+                {
+                    min_offset = std::min(min_offset, total_offset);
+                    max_end = std::max(max_end, total_offset + width);
+                }
+            }
+
+            if (!has_fixup)
+            {
+                return;
+            }
+
+            const auto span_size = static_cast<size_t>(max_end - min_offset);
+            auto block_buffer = memory.read_memory(image_base + min_offset, span_size);
+
+            const utils::safe_buffer_accessor<std::byte> block{block_buffer};
+
+            for (const auto entry : entries)
+            {
+                const int type = entry >> 12;
+                const auto offset = static_cast<uint16_t>(entry & 0xfff);
+                const auto total_offset = static_cast<uint64_t>(relocation.VirtualAddress) + offset;
+                const auto local_offset = total_offset - min_offset;
+
+                switch (type)
+                {
+                case IMAGE_REL_BASED_ABSOLUTE:
+                    break;
+
+                case IMAGE_REL_BASED_HIGHLOW:
+                    apply_relocation<DWORD>(block, local_offset, delta);
+                    break;
+
+                case IMAGE_REL_BASED_DIR64:
+                    apply_relocation<ULONGLONG>(block, local_offset, delta);
+                    break;
+
+                default:
+                    throw std::runtime_error("Unknown relocation type: " + std::to_string(type));
+                }
+            }
+
+            memory.write_memory(image_base + min_offset, block_buffer.data(), span_size);
+        }
+
         template <typename T>
         void apply_relocations(const mapped_module& binary, memory_manager& memory, const PEOptionalHeader_t<T>& optional_header,
                                const uint64_t relocation_base)
@@ -240,47 +325,31 @@ namespace sogen
             auto relocation_offset = directory->VirtualAddress;
             const auto relocation_end = relocation_offset + directory->Size;
 
+            std::vector<uint16_t> entries{};
+
             while (relocation_offset < relocation_end)
             {
                 const auto relocation = read_mapped_object<IMAGE_BASE_RELOCATION>(memory, binary.image_base + relocation_offset);
 
-                if (relocation.VirtualAddress <= 0 || relocation.SizeOfBlock <= sizeof(IMAGE_BASE_RELOCATION))
+                if (relocation.VirtualAddress <= 0 || relocation.SizeOfBlock <= sizeof(IMAGE_BASE_RELOCATION) ||
+                    relocation.SizeOfBlock > relocation_end - relocation_offset)
                 {
                     break;
                 }
 
                 const auto data_size = relocation.SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION);
-                const auto entry_count = data_size / sizeof(uint16_t);
+                const auto entry_count = static_cast<size_t>(data_size / sizeof(uint16_t));
                 const auto entries_base = binary.image_base + relocation_offset + sizeof(IMAGE_BASE_RELOCATION);
 
                 relocation_offset += relocation.SizeOfBlock;
 
-                for (size_t i = 0; i < entry_count; ++i)
+                entries.resize(entry_count);
+                if (entry_count > 0)
                 {
-                    const auto entry = read_mapped_object<uint16_t>(memory, entries_base + i * sizeof(uint16_t));
-
-                    const int type = entry >> 12;
-                    const auto offset = static_cast<uint16_t>(entry & 0xfff);
-                    const auto total_offset = relocation.VirtualAddress + offset;
-                    const auto target_address = binary.image_base + total_offset;
-
-                    switch (type)
-                    {
-                    case IMAGE_REL_BASED_ABSOLUTE:
-                        break;
-
-                    case IMAGE_REL_BASED_HIGHLOW:
-                        apply_relocation<DWORD>(memory, target_address, delta);
-                        break;
-
-                    case IMAGE_REL_BASED_DIR64:
-                        apply_relocation<ULONGLONG>(memory, target_address, delta);
-                        break;
-
-                    default:
-                        throw std::runtime_error("Unknown relocation type: " + std::to_string(type));
-                    }
+                    memory.read_memory(entries_base, entries.data(), entry_count * sizeof(uint16_t));
                 }
+
+                apply_relocation_block(memory, binary.image_base, relocation, entries, delta);
             }
         }
 
@@ -489,27 +558,48 @@ namespace sogen
                 throw std::runtime_error("Memory range not allocatable");
             }
 
-            if (force_wow64cpu_32bit_va)
+            // The ceiling is explicit because an unbounded search can pick a base above 4 GB for a
+            // 32-bit module once the low arena fills; WOW64 pointer marshaling then truncates it to 32
+            // bits, aliasing the module onto whatever unrelated allocation sits at the truncated address.
+            const bool needs_below_4gb = force_wow64cpu_32bit_va || is_32bit;
+            const uint64_t fallback_start = needs_below_4gb ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
+            constexpr uint64_t below_4gb_ceiling = 0xFFFFFFFFULL;
+            const uint64_t highest_address = needs_below_4gb ? below_4gb_ceiling : MAX_ALLOCATION_ADDRESS;
+            const auto image_size = static_cast<size_t>(binary.size_of_image);
+
+            // The preferred base was taken, so relocate. On backends sharing the address space with the
+            // guest (FEX on Apple Silicon), a foreign host mapping can occupy a VA sogen still believes
+            // is free, and a single pick would fail the map outright even though other addresses are
+            // available. A failed try_map_module_at_current_base records the intruding host range via the
+            // fixed-address allocate_memory's windowed rescan, so re-picking steps past it; bounded so an
+            // exhausted address space terminates rather than spins.
+            constexpr int max_host_relocation_retries = 8;
+            bool mapped = false;
+            // Only valid when the caller left the target address to us. A caller-specified
+            // relocation_base means a view must land on an already-loaded image's own base for its
+            // internal absolute pointers to stay correct, so re-picking would silently misplace it.
+            if (relocation_base == 0)
             {
-                binary.image_base =
-                    memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image), DEFAULT_ALLOCATION_ADDRESS_32BIT);
-            }
-            else if (is_32bit)
-            {
-                // Use 32-bit allocation for WOW64 modules
-                binary.image_base =
-                    memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image), DEFAULT_ALLOCATION_ADDRESS_32BIT);
-            }
-            else
-            {
-                // Use 64-bit allocation for native modules
-                binary.image_base =
-                    memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image), DEFAULT_ALLOCATION_ADDRESS_64BIT);
+                for (int attempt = 0; attempt <= max_host_relocation_retries; ++attempt)
+                {
+                    binary.image_base = memory.find_free_host_allocation_base(image_size, fallback_start, highest_address);
+                    if (!binary.image_base)
+                    {
+                        break;
+                    }
+
+                    if (try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
+                                                       binary.image_base))
+                    {
+                        mapped = true;
+                        break;
+                    }
+                }
             }
 
-            if (!binary.image_base ||
-                !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
-                                                relocation_base ? relocation_base : binary.image_base))
+            if (!mapped && (!binary.image_base ||
+                            !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
+                                                            relocation_base ? relocation_base : binary.image_base)))
             {
                 throw std::runtime_error("Memory range not allocatable");
             }
