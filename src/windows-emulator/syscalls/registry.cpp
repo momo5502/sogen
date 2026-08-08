@@ -120,12 +120,6 @@ namespace sogen
 
             if (key_information_class == KeyFullInformation)
             {
-                const auto hive_key = c.win_emu.registry.get_hive_key(*key);
-                if (!hive_key.has_value())
-                {
-                    return STATUS_OBJECT_NAME_NOT_FOUND;
-                }
-
                 constexpr auto required_size = offsetof(KEY_FULL_INFORMATION, Class);
                 result_length.write(static_cast<ULONG>(required_size));
 
@@ -136,28 +130,11 @@ namespace sogen
 
                 KEY_FULL_INFORMATION info{};
                 info.ClassOffset = 0xFFFFFFFFu;
-                info.SubKeys = static_cast<ULONG>(hive_key->key.get_sub_key_count(hive_key->file));
-                info.Values = static_cast<ULONG>(hive_key->key.get_value_count(hive_key->file));
-
-                for (size_t i = 0; i < info.SubKeys; ++i)
-                {
-                    const auto* name = hive_key->key.get_sub_key_name(hive_key->file, i);
-                    if (name)
-                    {
-                        info.MaxNameLength = std::max(info.MaxNameLength, static_cast<ULONG>(u8_to_u16(*name).size() * sizeof(char16_t)));
-                    }
-                }
-
-                for (size_t i = 0; i < info.Values; ++i)
-                {
-                    const auto* value = hive_key->key.get_value(hive_key->file, i);
-                    if (value)
-                    {
-                        info.MaxValueNameLength =
-                            std::max(info.MaxValueNameLength, static_cast<ULONG>(u8_to_u16(value->name).size() * sizeof(char16_t)));
-                        info.MaxValueDataLength = std::max(info.MaxValueDataLength, static_cast<ULONG>(value->data.size()));
-                    }
-                }
+                info.SubKeys = static_cast<ULONG>(c.win_emu.registry.get_sub_key_count(*key));
+                info.Values = static_cast<ULONG>(c.win_emu.registry.get_value_count(*key));
+                info.MaxNameLength = 0x1000;
+                info.MaxValueNameLength = 0x1000;
+                info.MaxValueDataLength = 0x1000;
 
                 c.emu.write_memory(key_information, &info, required_size);
                 return STATUS_SUCCESS;
@@ -173,12 +150,6 @@ namespace sogen
                     key_name.pop_back();
                 }
 
-                const auto hive_key = c.win_emu.registry.get_hive_key(*key);
-                if (!hive_key.has_value())
-                {
-                    return STATUS_OBJECT_NAME_NOT_FOUND;
-                }
-
                 constexpr auto required_size = sizeof(KEY_CACHED_INFORMATION);
                 result_length.write(required_size);
 
@@ -188,8 +159,8 @@ namespace sogen
                 }
 
                 KEY_CACHED_INFORMATION info{};
-                info.SubKeys = static_cast<ULONG>(hive_key->key.get_sub_key_count(hive_key->file));
-                info.Values = static_cast<ULONG>(hive_key->key.get_value_count(hive_key->file));
+                info.SubKeys = static_cast<ULONG>(c.win_emu.registry.get_sub_key_count(*key));
+                info.Values = static_cast<ULONG>(c.win_emu.registry.get_value_count(*key));
                 info.NameLength = static_cast<ULONG>(key_name.size() * 2);
                 info.MaxValueDataLen = 0x1000;
                 info.MaxValueNameLen = 0x1000;
@@ -248,7 +219,7 @@ namespace sogen
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
 
-            const std::u16string original_name(value->name.begin(), value->name.end());
+            const auto original_name = u8_to_u16(value->name);
 
             if (key_value_information_class == KeyValueBasicInformation)
             {
@@ -531,7 +502,7 @@ namespace sogen
                 return STATUS_NO_MORE_ENTRIES;
             }
 
-            const std::u16string subkey_name_u16(subkey_name->begin(), subkey_name->end());
+            const auto subkey_name_u16 = u8_to_u16(*subkey_name);
 
             if (key_information_class == KeyBasicInformation)
             {
@@ -612,7 +583,7 @@ namespace sogen
                 return STATUS_NO_MORE_ENTRIES;
             }
 
-            const std::u16string value_name_u16(value->name.begin(), value->name.end());
+            const auto value_name_u16 = u8_to_u16(value->name);
 
             if (key_value_information_class == KeyValueBasicInformation)
             {
