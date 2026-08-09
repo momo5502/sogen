@@ -194,6 +194,10 @@ namespace sogen::gpu_bridge
         get_physical_device_cooperative_matrix_properties = 0x89B,
         get_physical_device_fragment_shading_rates = 0x89C,
         get_physical_device_calibrateable_time_domains = 0x89D,
+        create_pipeline_cache = 0x89E,
+        destroy_pipeline_cache = 0x89F,
+        get_pipeline_cache_data = 0x8A0,
+        merge_pipeline_caches = 0x8A1,
         get_device_memory_commitment = 0x8A2,
         get_calibrated_timestamps = 0x8A3,
     };
@@ -349,6 +353,10 @@ namespace sogen::gpu_bridge
         make_ioctl(static_cast<uint32_t>(command::get_physical_device_calibrateable_time_domains));
     inline constexpr uint32_t ioctl_get_device_memory_commitment = make_ioctl(static_cast<uint32_t>(command::get_device_memory_commitment));
     inline constexpr uint32_t ioctl_get_calibrated_timestamps = make_ioctl(static_cast<uint32_t>(command::get_calibrated_timestamps));
+    inline constexpr uint32_t ioctl_create_pipeline_cache = make_ioctl(static_cast<uint32_t>(command::create_pipeline_cache));
+    inline constexpr uint32_t ioctl_destroy_pipeline_cache = make_ioctl(static_cast<uint32_t>(command::destroy_pipeline_cache));
+    inline constexpr uint32_t ioctl_get_pipeline_cache_data = make_ioctl(static_cast<uint32_t>(command::get_pipeline_cache_data));
+    inline constexpr uint32_t ioctl_merge_pipeline_caches = make_ioctl(static_cast<uint32_t>(command::merge_pipeline_caches));
 
     // Opaque identifier handed to the guest in place of a host Vulkan handle. The host keeps the
     // real VkInstance / VkPhysicalDevice / ... in a table and the guest only ever sees this id, so
@@ -1384,6 +1392,40 @@ namespace sogen::gpu_bridge
         std::array<uint8_t, max_shader_module_identifier_size> identifier;
     };
 
+    struct create_pipeline_cache_request
+    {
+        object_id device;
+        uint32_t flags;             // VkPipelineCacheCreateFlags
+        uint32_t initial_data_size; // bytes immediately following this header
+        // uint8_t initial_data[initial_data_size];
+    };
+
+    struct get_pipeline_cache_data_request
+    {
+        object_id device;
+        object_id pipeline_cache;
+        uint64_t max_data_size; // guest-provided capacity
+        uint32_t has_data;      // non-zero when pData was supplied, even if max_data_size is zero
+        uint32_t reserved;
+    };
+
+    struct get_pipeline_cache_data_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        uint64_t data_size; // bytes written, or total required for a count-only query
+        // uint8_t data[data_size];
+    };
+
+    struct merge_pipeline_caches_request
+    {
+        object_id device;
+        object_id destination_cache;
+        uint32_t source_count;
+        uint32_t reserved;
+        // object_id source_caches[source_count];
+    };
+
     struct create_image_view_request
     {
         object_id device;
@@ -1748,7 +1790,8 @@ namespace sogen::gpu_bridge
     struct create_graphics_pipeline_request
     {
         object_id device;
-        object_id render_pass; // 0 => dynamic rendering: use the attachment formats below, and viewport/scissor are dynamic
+        object_id pipeline_cache; // null_object => VK_NULL_HANDLE
+        object_id render_pass;    // 0 => dynamic rendering: use the attachment formats below, and viewport/scissor are dynamic
         object_id pipeline_layout;
         shader_stage_source vertex_shader;
         shader_stage_source fragment_shader;
@@ -1796,6 +1839,7 @@ namespace sogen::gpu_bridge
     struct create_compute_pipeline_request
     {
         object_id device;
+        object_id pipeline_cache; // null_object => VK_NULL_HANDLE
         object_id pipeline_layout;
         shader_stage_source shader;
         uint32_t flags; // VkPipelineCreateFlags
@@ -2265,8 +2309,12 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(vertex_input_divisor) == 8, "wire layout drift");
     static_assert(sizeof(shader_module_identifier_response) == 40, "wire layout drift");
     static_assert(sizeof(shader_stage_source) == 48, "wire layout drift");
-    static_assert(sizeof(create_compute_pipeline_request) == 72, "wire layout drift");
-    static_assert(sizeof(create_graphics_pipeline_request) == 504, "wire layout drift");
+    static_assert(sizeof(create_pipeline_cache_request) == 16, "wire layout drift");
+    static_assert(sizeof(get_pipeline_cache_data_request) == 32, "wire layout drift");
+    static_assert(sizeof(get_pipeline_cache_data_response) == 16, "wire layout drift");
+    static_assert(sizeof(merge_pipeline_caches_request) == 24, "wire layout drift");
+    static_assert(sizeof(create_compute_pipeline_request) == 80, "wire layout drift");
+    static_assert(sizeof(create_graphics_pipeline_request) == 512, "wire layout drift");
     static_assert(sizeof(buffer_copy_region) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_buffer_request) == 32, "wire layout drift");
     static_assert(sizeof(create_query_pool_request) == 24, "wire layout drift");

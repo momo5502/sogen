@@ -4850,6 +4850,122 @@ extern "C"
     }
 }
 
+extern "C"
+{
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreatePipelineCache(VkDevice device,
+                                                                               const VkPipelineCacheCreateInfo* pCreateInfo,
+                                                                               const VkAllocationCallbacks*,
+                                                                               VkPipelineCache* pPipelineCache)
+    {
+        if (!pCreateInfo || !pPipelineCache || (pCreateInfo->initialDataSize > 0 && !pCreateInfo->pInitialData) ||
+            pCreateInfo->initialDataSize > UINT32_MAX)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        gb::create_pipeline_cache_request request{};
+        request.device = to_object_id(device);
+        request.flags = static_cast<uint32_t>(pCreateInfo->flags);
+        request.initial_data_size = static_cast<uint32_t>(pCreateInfo->initialDataSize);
+        if (request.initial_data_size > MAXDWORD - sizeof(request))
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+
+        std::vector<uint8_t> message(sizeof(request) + request.initial_data_size);
+        std::memcpy(message.data(), &request, sizeof(request));
+        if (request.initial_data_size > 0)
+        {
+            std::memcpy(message.data() + sizeof(request), pCreateInfo->pInitialData, request.initial_data_size);
+        }
+
+        gb::object_response response{};
+        if (!bridge_call(gb::ioctl_create_pipeline_cache, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response)))
+        {
+            *pPipelineCache = VK_NULL_HANDLE;
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        *pPipelineCache = response.vk_result == VK_SUCCESS ? to_handle<VkPipelineCache>(response.object) : VK_NULL_HANDLE;
+        return static_cast<VkResult>(response.vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkDestroyPipelineCache(VkDevice device, VkPipelineCache pipelineCache,
+                                                                            const VkAllocationCallbacks*)
+    {
+        destroy_device_child(gb::ioctl_destroy_pipeline_cache, device, pipelineCache);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkGetPipelineCacheData(VkDevice device, VkPipelineCache pipelineCache,
+                                                                                size_t* pDataSize, void* pData)
+    {
+        if (!pDataSize)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const size_t capacity = pData ? *pDataSize : 0;
+        if (capacity > MAXDWORD - sizeof(gb::get_pipeline_cache_data_response))
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+
+        gb::get_pipeline_cache_data_request request{};
+        request.device = to_object_id(device);
+        request.pipeline_cache = to_object_id(pipelineCache);
+        request.max_data_size = capacity;
+        request.has_data = pData != nullptr;
+
+        std::vector<std::byte> buffer(sizeof(gb::get_pipeline_cache_data_response) + capacity);
+        if (!bridge_call(gb::ioctl_get_pipeline_cache_data, &request, sizeof(request), buffer.data(), static_cast<DWORD>(buffer.size())))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto* response = reinterpret_cast<const gb::get_pipeline_cache_data_response*>(buffer.data());
+        const size_t written = std::min<size_t>(static_cast<size_t>(response->data_size), capacity);
+        if (pData && written > 0)
+        {
+            std::memcpy(pData, buffer.data() + sizeof(gb::get_pipeline_cache_data_response), written);
+        }
+        *pDataSize = static_cast<size_t>(response->data_size);
+        return static_cast<VkResult>(response->vk_result);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkMergePipelineCaches(VkDevice device, VkPipelineCache dstCache,
+                                                                               uint32_t srcCacheCount, const VkPipelineCache* pSrcCaches)
+    {
+        if (srcCacheCount > 0 && !pSrcCaches)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (srcCacheCount > (MAXDWORD - sizeof(gb::merge_pipeline_caches_request)) / sizeof(gb::object_id))
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
+
+        gb::merge_pipeline_caches_request request{};
+        request.device = to_object_id(device);
+        request.destination_cache = to_object_id(dstCache);
+        request.source_count = srcCacheCount;
+
+        const size_t message_size = sizeof(request) + static_cast<size_t>(srcCacheCount) * sizeof(gb::object_id);
+        std::vector<uint8_t> message(message_size);
+        std::memcpy(message.data(), &request, sizeof(request));
+        for (uint32_t i = 0; i < srcCacheCount; ++i)
+        {
+            const gb::object_id source = to_object_id(pSrcCaches[i]);
+            std::memcpy(message.data() + sizeof(request) + static_cast<size_t>(i) * sizeof(source), &source, sizeof(source));
+        }
+
+        gb::result_response response{};
+        if (!bridge_call(gb::ioctl_merge_pipeline_caches, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response)))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        return static_cast<VkResult>(response.vk_result);
+    }
+}
+
 namespace
 {
     struct resolved_stage_source
@@ -4913,7 +5029,7 @@ namespace
 
 extern "C"
 {
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache,
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache pipelineCache,
                                                                                    uint32_t createInfoCount,
                                                                                    const VkGraphicsPipelineCreateInfo* pCreateInfos,
                                                                                    const VkAllocationCallbacks*, VkPipeline* pPipelines)
@@ -5010,6 +5126,7 @@ extern "C"
 
             gb::create_graphics_pipeline_request request{};
             request.device = to_object_id(device);
+            request.pipeline_cache = to_object_id(pipelineCache);
             request.render_pass = to_object_id(ci.renderPass);
             request.pipeline_layout = to_object_id(ci.layout);
             request.vertex_shader = vertex_shader.wire;
@@ -5199,7 +5316,7 @@ extern "C"
         return overall;
     }
 
-    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateComputePipelines(VkDevice device, VkPipelineCache,
+    __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateComputePipelines(VkDevice device, VkPipelineCache pipelineCache,
                                                                                   uint32_t createInfoCount,
                                                                                   const VkComputePipelineCreateInfo* pCreateInfos,
                                                                                   const VkAllocationCallbacks*, VkPipeline* pPipelines)
@@ -5219,6 +5336,7 @@ extern "C"
 
             gb::create_compute_pipeline_request request{};
             request.device = to_object_id(device);
+            request.pipeline_cache = to_object_id(pipelineCache);
             request.pipeline_layout = to_object_id(ci.layout);
             request.shader = shader.wire;
             request.flags = static_cast<uint32_t>(ci.flags & ~VK_PIPELINE_CREATE_DERIVATIVE_BIT);
@@ -5938,6 +6056,10 @@ extern "C"
             {.name = "vkUpdateDescriptorSetWithTemplateKHR",
              .func = reinterpret_cast<PFN_vkVoidFunction>(vkUpdateDescriptorSetWithTemplate)},
             {.name = "vkCmdBindDescriptorSets", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCmdBindDescriptorSets)},
+            {.name = "vkCreatePipelineCache", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreatePipelineCache)},
+            {.name = "vkDestroyPipelineCache", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipelineCache)},
+            {.name = "vkGetPipelineCacheData", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetPipelineCacheData)},
+            {.name = "vkMergePipelineCaches", .func = reinterpret_cast<PFN_vkVoidFunction>(vkMergePipelineCaches)},
             {.name = "vkCreateGraphicsPipelines", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateGraphicsPipelines)},
             {.name = "vkCreateComputePipelines", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateComputePipelines)},
             {.name = "vkDestroyPipeline", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyPipeline)},

@@ -111,6 +111,7 @@ EXPORTS
     vkCreateImageView
     vkCreateInstance
     vkCreatePipelineLayout
+    vkCreatePipelineCache
     vkCreateRenderPass
     vkCreateSampler
     vkCreateShaderModule
@@ -130,6 +131,7 @@ EXPORTS
     vkDestroyImageView
     vkDestroyInstance
     vkDestroyPipeline
+    vkDestroyPipelineCache
     vkDestroyPipelineLayout
     vkDestroyRenderPass
     vkDestroySampler
@@ -163,6 +165,7 @@ EXPORTS
     vkGetImageSparseMemoryRequirements2KHR
     vkGetImageSubresourceLayout
     vkGetInstanceProcAddr
+    vkGetPipelineCacheData
     vkGetQueryPoolResults
     vkGetShaderModuleCreateInfoIdentifierEXT
     vkGetShaderModuleIdentifierEXT
@@ -197,6 +200,7 @@ EXPORTS
     vkGetPhysicalDeviceWin32PresentationSupportKHR
     vkGetSwapchainImagesKHR
     vkMapMemory
+    vkMergePipelineCaches
     vkQueuePresentKHR
     vkQueueBindSparse
     vkQueueSubmit

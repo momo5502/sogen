@@ -74,6 +74,14 @@ namespace sogen
                     return handle_get_physical_device_format_properties(win_emu, context);
                 case gpu_bridge::ioctl_create_compute_pipeline:
                     return handle_create_compute_pipeline(win_emu, context);
+                case gpu_bridge::ioctl_create_pipeline_cache:
+                    return handle_create_pipeline_cache(win_emu, context);
+                case gpu_bridge::ioctl_destroy_pipeline_cache:
+                    return handle_destroy_pipeline_cache(win_emu, context);
+                case gpu_bridge::ioctl_get_pipeline_cache_data:
+                    return handle_get_pipeline_cache_data(win_emu, context);
+                case gpu_bridge::ioctl_merge_pipeline_caches:
+                    return handle_merge_pipeline_caches(win_emu, context);
                 case gpu_bridge::ioctl_create_device:
                     return handle_create_device(win_emu, context);
                 case gpu_bridge::ioctl_get_device_queue:
@@ -1235,6 +1243,95 @@ namespace sogen
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
+            NTSTATUS handle_create_pipeline_cache(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::create_pipeline_cache_request;
+                if (!context.input_buffer || context.input_buffer_length < sizeof(request_t))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
+                const size_t available = context.input_buffer_length - sizeof(request_t);
+                if (request.initial_data_size > available || request.initial_data_size > max_array_readback_bytes)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<uint8_t> initial_data(request.initial_data_size);
+                if (!initial_data.empty())
+                {
+                    win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), initial_data.data(), initial_data.size());
+                }
+
+                uint64_t cache = gpu_bridge::null_object;
+                const int32_t result = this->vulkan_.create_pipeline_cache(request.device, request.flags, initial_data, cache);
+                return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = cache});
+            }
+
+            NTSTATUS handle_destroy_pipeline_cache(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                this->vulkan_.destroy_pipeline_cache(request.device, request.object);
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_pipeline_cache_data(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::get_pipeline_cache_data_request;
+                using response_t = gpu_bridge::get_pipeline_cache_data_response;
+                if (!context.input_buffer || context.input_buffer_length < sizeof(request_t))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto request = emulator_object<request_t>{win_emu.emu(), context.input_buffer}.read();
+                const size_t capacity = std::min<size_t>(context.output_buffer_length - sizeof(response_t), max_array_readback_bytes);
+                const auto requested = static_cast<size_t>(std::min<uint64_t>(request.max_data_size, capacity));
+                std::vector<std::byte> data(requested);
+
+                size_t data_size = 0;
+                const int32_t result =
+                    this->vulkan_.get_pipeline_cache_data(request.device, request.pipeline_cache, data.empty() ? nullptr : data.data(),
+                                                          data.size(), request.has_data != 0, data_size);
+
+                const response_t response{.vk_result = result, .reserved = 0, .data_size = data_size};
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response);
+                const size_t written = std::min(data_size, data.size());
+                if (written > 0)
+                {
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), data.data(), written);
+                }
+                set_information(context, static_cast<ULONG>(sizeof(response_t) + written));
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_merge_pipeline_caches(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::merge_pipeline_caches_request;
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<uint64_t> sources;
+                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.source_count, sources))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const int32_t result = this->vulkan_.merge_pipeline_caches(request.device, request.destination_cache, sources);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
             NTSTATUS handle_create_compute_pipeline(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::create_compute_pipeline_request request{};
@@ -1254,8 +1351,8 @@ namespace sogen
                 };
 
                 uint64_t pipeline = gpu_bridge::null_object;
-                const int32_t result =
-                    this->vulkan_.create_compute_pipeline(request.device, request.pipeline_layout, shader, request.flags, pipeline);
+                const int32_t result = this->vulkan_.create_compute_pipeline(request.device, request.pipeline_cache,
+                                                                             request.pipeline_layout, shader, request.flags, pipeline);
                 return write_output(win_emu, context,
                                     gpu_bridge::create_compute_pipeline_response{.vk_result = result, .reserved = 0, .pipeline = pipeline});
             }
@@ -2367,11 +2464,11 @@ namespace sogen
 
                 uint64_t pipeline = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
-                    request.device, request.render_pass, request.pipeline_layout, vertex_shader, fragment_shader, request.flags,
-                    request.width, request.height, bindings, attributes, divisors, depth, color_formats, request.depth_format,
-                    request.stencil_format, request.rasterization_samples, request.primitive_topology, request.primitive_restart_enable,
-                    request.rasterization_stream, request.rasterization_stream_flags, dynamic_states, vs_spec, fs_spec, blend_attachments,
-                    pipeline);
+                    request.device, request.pipeline_cache, request.render_pass, request.pipeline_layout, vertex_shader, fragment_shader,
+                    request.flags, request.width, request.height, bindings, attributes, divisors, depth, color_formats,
+                    request.depth_format, request.stencil_format, request.rasterization_samples, request.primitive_topology,
+                    request.primitive_restart_enable, request.rasterization_stream, request.rasterization_stream_flags, dynamic_states,
+                    vs_spec, fs_spec, blend_attachments, pipeline);
                 if (result != 0)
                 {
                     win_emu.log.error(
