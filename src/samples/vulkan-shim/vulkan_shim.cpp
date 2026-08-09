@@ -3949,11 +3949,16 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateShaderModule(VkDevice device, const VkShaderModuleCreateInfo* pCreateInfo,
                                                                               const VkAllocationCallbacks*, VkShaderModule* pShaderModule)
     {
+        if (pCreateInfo->codeSize > UINT32_MAX - sizeof(gb::create_shader_module_request))
+        {
+            return VK_ERROR_OUT_OF_HOST_MEMORY;
+        }
         const auto code_size = static_cast<uint32_t>(pCreateInfo->codeSize);
         std::vector<uint8_t> message(sizeof(gb::create_shader_module_request) + code_size);
         gb::create_shader_module_request header{};
         header.device = to_object_id(device);
         header.code_size = code_size;
+        header.flags = static_cast<uint32_t>(pCreateInfo->flags);
         std::memcpy(message.data(), &header, sizeof(header));
         std::memcpy(message.data() + sizeof(header), pCreateInfo->pCode, code_size);
 
@@ -3974,6 +3979,56 @@ extern "C"
                                                                            const VkAllocationCallbacks*)
     {
         destroy_device_child(gb::ioctl_destroy_shader_module, device, shaderModule);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetShaderModuleIdentifierEXT(VkDevice device, VkShaderModule shaderModule,
+                                                                                    VkShaderModuleIdentifierEXT* pIdentifier)
+    {
+        gb::device_child_request request{};
+        request.device = to_object_id(device);
+        request.object = to_object_id(shaderModule);
+
+        gb::shader_module_identifier_response response{};
+        if (!bridge_call(gb::ioctl_get_shader_module_identifier, &request, sizeof(request), &response, sizeof(response)) ||
+            response.vk_result != VK_SUCCESS)
+        {
+            pIdentifier->identifierSize = 0;
+            return;
+        }
+
+        pIdentifier->identifierSize = std::min<uint32_t>(response.identifier_size, VK_MAX_SHADER_MODULE_IDENTIFIER_SIZE_EXT);
+        std::memcpy(pIdentifier->identifier, response.identifier.data(), pIdentifier->identifierSize);
+    }
+
+    __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetShaderModuleCreateInfoIdentifierEXT(VkDevice device,
+                                                                                              const VkShaderModuleCreateInfo* pCreateInfo,
+                                                                                              VkShaderModuleIdentifierEXT* pIdentifier)
+    {
+        pIdentifier->identifierSize = 0;
+        if (pCreateInfo->codeSize > UINT32_MAX - sizeof(gb::create_shader_module_request))
+        {
+            return;
+        }
+
+        const auto code_size = static_cast<uint32_t>(pCreateInfo->codeSize);
+        std::vector<uint8_t> message(sizeof(gb::create_shader_module_request) + code_size);
+        gb::create_shader_module_request header{};
+        header.device = to_object_id(device);
+        header.code_size = code_size;
+        header.flags = static_cast<uint32_t>(pCreateInfo->flags);
+        std::memcpy(message.data(), &header, sizeof(header));
+        std::memcpy(message.data() + sizeof(header), pCreateInfo->pCode, code_size);
+
+        gb::shader_module_identifier_response response{};
+        if (!bridge_call(gb::ioctl_get_shader_module_create_info_identifier, message.data(), static_cast<DWORD>(message.size()), &response,
+                         sizeof(response)) ||
+            response.vk_result != VK_SUCCESS)
+        {
+            return;
+        }
+
+        pIdentifier->identifierSize = std::min<uint32_t>(response.identifier_size, VK_MAX_SHADER_MODULE_IDENTIFIER_SIZE_EXT);
+        std::memcpy(pIdentifier->identifier, response.identifier.data(), pIdentifier->identifierSize);
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateImageView(VkDevice device, const VkImageViewCreateInfo* pCreateInfo,
@@ -4659,38 +4714,71 @@ extern "C"
     {
         destroy_device_child(gb::ioctl_destroy_sampler, device, sampler);
     }
+}
 
-    namespace
+namespace
+{
+    struct resolved_stage_source
     {
-        // DXVK (VK_KHR_maintenance5) chains the SPIR-V inline through a VkShaderModuleCreateInfo on the
-        // stage's pNext instead of passing a VkShaderModule. The bridge models explicit shader modules,
-        // so materialize a temporary one from the inline code. Returns the module to use (and sets
-        // `owned` when the caller must destroy it after pipeline creation).
-        VkShaderModule resolve_stage_module(VkDevice device, const VkPipelineShaderStageCreateInfo& stage, bool& owned)
+        gb::shader_stage_source wire{};
+        VkShaderModule owned_module{VK_NULL_HANDLE};
+        bool valid{};
+    };
+
+    resolved_stage_source resolve_stage_source(VkDevice device, const VkPipelineShaderStageCreateInfo& stage)
+    {
+        resolved_stage_source result{};
+        if (stage.module != VK_NULL_HANDLE)
         {
-            owned = false;
-            if (stage.module != VK_NULL_HANDLE)
-            {
-                return stage.module;
-            }
-            for (const auto* next = static_cast<const VkBaseInStructure*>(stage.pNext); next != nullptr; next = next->pNext)
-            {
-                if (next->sType == VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO)
-                {
-                    const auto* info = reinterpret_cast<const VkShaderModuleCreateInfo*>(next);
-                    VkShaderModule module = VK_NULL_HANDLE;
-                    if (vkCreateShaderModule(device, info, nullptr, &module) == VK_SUCCESS)
-                    {
-                        owned = true;
-                        return module;
-                    }
-                    break;
-                }
-            }
-            return VK_NULL_HANDLE;
+            result.wire.module = to_object_id(stage.module);
+            result.valid = true;
+            return result;
         }
+
+        const VkShaderModuleCreateInfo* inline_info = nullptr;
+        const VkPipelineShaderStageModuleIdentifierCreateInfoEXT* identifier_info = nullptr;
+        for (const auto* next = static_cast<const VkBaseInStructure*>(stage.pNext); next != nullptr; next = next->pNext)
+        {
+            if (next->sType == VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO)
+            {
+                inline_info = reinterpret_cast<const VkShaderModuleCreateInfo*>(next);
+            }
+            else if (next->sType == VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_MODULE_IDENTIFIER_CREATE_INFO_EXT)
+            {
+                identifier_info = reinterpret_cast<const VkPipelineShaderStageModuleIdentifierCreateInfoEXT*>(next);
+            }
+        }
+
+        if (inline_info && identifier_info)
+        {
+            return result;
+        }
+
+        if (identifier_info)
+        {
+            if (identifier_info->identifierSize == 0 || identifier_info->identifierSize > gb::max_shader_module_identifier_size ||
+                !identifier_info->pIdentifier)
+            {
+                return result;
+            }
+            result.wire.identifier_size = identifier_info->identifierSize;
+            std::memcpy(result.wire.identifier.data(), identifier_info->pIdentifier, identifier_info->identifierSize);
+            result.valid = true;
+            return result;
+        }
+
+        if (inline_info && vkCreateShaderModule(device, inline_info, nullptr, &result.owned_module) == VK_SUCCESS)
+        {
+            result.wire.module = to_object_id(result.owned_module);
+            result.valid = true;
+        }
+        return result;
     }
 
+}
+
+extern "C"
+{
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkCreateGraphicsPipelines(VkDevice device, VkPipelineCache,
                                                                                    uint32_t createInfoCount,
                                                                                    const VkGraphicsPipelineCreateInfo* pCreateInfos,
@@ -4701,30 +4789,48 @@ extern "C"
         {
             const VkGraphicsPipelineCreateInfo& ci = pCreateInfos[i];
 
-            gb::object_id vertex_shader = gb::null_object;
-            gb::object_id fragment_shader = gb::null_object;
+            resolved_stage_source vertex_shader{};
+            resolved_stage_source fragment_shader{};
             const VkSpecializationInfo* vs_spec = nullptr;
             const VkSpecializationInfo* fs_spec = nullptr;
-            VkShaderModule owned_modules[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
-            uint32_t owned_count = 0;
+            bool stages_valid = true;
             for (uint32_t s = 0; s < ci.stageCount; ++s)
             {
-                bool owned = false;
-                const VkShaderModule module = resolve_stage_module(device, ci.pStages[s], owned);
-                if (owned && owned_count < 2)
+                resolved_stage_source source = resolve_stage_source(device, ci.pStages[s]);
+                if (!source.valid)
                 {
-                    owned_modules[owned_count++] = module;
+                    stages_valid = false;
+                    break;
                 }
                 if (ci.pStages[s].stage == VK_SHADER_STAGE_VERTEX_BIT)
                 {
-                    vertex_shader = to_object_id(module);
+                    vertex_shader = source;
                     vs_spec = ci.pStages[s].pSpecializationInfo;
                 }
                 else if (ci.pStages[s].stage == VK_SHADER_STAGE_FRAGMENT_BIT)
                 {
-                    fragment_shader = to_object_id(module);
+                    fragment_shader = source;
                     fs_spec = ci.pStages[s].pSpecializationInfo;
                 }
+                else if (source.owned_module != VK_NULL_HANDLE)
+                {
+                    vkDestroyShaderModule(device, source.owned_module, nullptr);
+                }
+            }
+            stages_valid = stages_valid && vertex_shader.valid && fragment_shader.valid;
+            if (!stages_valid)
+            {
+                if (vertex_shader.owned_module != VK_NULL_HANDLE)
+                {
+                    vkDestroyShaderModule(device, vertex_shader.owned_module, nullptr);
+                }
+                if (fragment_shader.owned_module != VK_NULL_HANDLE)
+                {
+                    vkDestroyShaderModule(device, fragment_shader.owned_module, nullptr);
+                }
+                pPipelines[i] = VK_NULL_HANDLE;
+                overall = VK_ERROR_INITIALIZATION_FAILED;
+                continue;
             }
             const uint32_t vs_spec_entries = (vs_spec && vs_spec->pMapEntries) ? vs_spec->mapEntryCount : 0u;
             const uint32_t vs_spec_bytes = (vs_spec && vs_spec->pData) ? static_cast<uint32_t>(vs_spec->dataSize) : 0u;
@@ -4772,8 +4878,8 @@ extern "C"
             request.device = to_object_id(device);
             request.render_pass = to_object_id(ci.renderPass);
             request.pipeline_layout = to_object_id(ci.layout);
-            request.vertex_shader = vertex_shader;
-            request.fragment_shader = fragment_shader;
+            request.vertex_shader = vertex_shader.wire;
+            request.fragment_shader = fragment_shader.wire;
             request.flags = static_cast<uint32_t>(ci.flags & ~VK_PIPELINE_CREATE_DERIVATIVE_BIT);
             request.width = width;
             request.height = height;
@@ -4947,9 +5053,13 @@ extern "C"
                 pPipelines[i] = to_handle<VkPipeline>(response.object);
             }
 
-            for (uint32_t m = 0; m < owned_count; ++m)
+            if (vertex_shader.owned_module != VK_NULL_HANDLE)
             {
-                vkDestroyShaderModule(device, owned_modules[m], nullptr);
+                vkDestroyShaderModule(device, vertex_shader.owned_module, nullptr);
+            }
+            if (fragment_shader.owned_module != VK_NULL_HANDLE)
+            {
+                vkDestroyShaderModule(device, fragment_shader.owned_module, nullptr);
             }
         }
         return overall;
@@ -4965,13 +5075,18 @@ extern "C"
         {
             const VkComputePipelineCreateInfo& ci = pCreateInfos[i];
 
-            bool owned = false;
-            const VkShaderModule module = resolve_stage_module(device, ci.stage, owned);
+            const resolved_stage_source shader = resolve_stage_source(device, ci.stage);
+            if (!shader.valid)
+            {
+                pPipelines[i] = VK_NULL_HANDLE;
+                overall = VK_ERROR_INITIALIZATION_FAILED;
+                continue;
+            }
 
             gb::create_compute_pipeline_request request{};
             request.device = to_object_id(device);
             request.pipeline_layout = to_object_id(ci.layout);
-            request.shader_module = to_object_id(module);
+            request.shader = shader.wire;
             request.flags = static_cast<uint32_t>(ci.flags & ~VK_PIPELINE_CREATE_DERIVATIVE_BIT);
 
             gb::create_compute_pipeline_response response{};
@@ -4986,9 +5101,9 @@ extern "C"
                 pPipelines[i] = to_handle<VkPipeline>(response.pipeline);
             }
 
-            if (owned)
+            if (shader.owned_module != VK_NULL_HANDLE)
             {
-                vkDestroyShaderModule(device, module, nullptr);
+                vkDestroyShaderModule(device, shader.owned_module, nullptr);
             }
         }
         return overall;
@@ -5648,6 +5763,9 @@ extern "C"
             {.name = "vkQueuePresentKHR", .func = reinterpret_cast<PFN_vkVoidFunction>(vkQueuePresentKHR)},
             {.name = "vkCreateShaderModule", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateShaderModule)},
             {.name = "vkDestroyShaderModule", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyShaderModule)},
+            {.name = "vkGetShaderModuleCreateInfoIdentifierEXT",
+             .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetShaderModuleCreateInfoIdentifierEXT)},
+            {.name = "vkGetShaderModuleIdentifierEXT", .func = reinterpret_cast<PFN_vkVoidFunction>(vkGetShaderModuleIdentifierEXT)},
             {.name = "vkCreateImageView", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateImageView)},
             {.name = "vkDestroyImageView", .func = reinterpret_cast<PFN_vkVoidFunction>(vkDestroyImageView)},
             {.name = "vkCreateRenderPass", .func = reinterpret_cast<PFN_vkVoidFunction>(vkCreateRenderPass)},
