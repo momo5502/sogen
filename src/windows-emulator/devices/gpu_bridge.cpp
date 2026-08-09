@@ -166,6 +166,8 @@ namespace sogen
                     return handle_create_shader_module(win_emu, context);
                 case gpu_bridge::ioctl_destroy_shader_module:
                     return handle_destroy_shader_module(win_emu, context);
+                case gpu_bridge::ioctl_get_shader_module_identifier:
+                    return handle_get_shader_module_identifier(win_emu, context);
                 case gpu_bridge::ioctl_create_image_view:
                     return handle_create_image_view(win_emu, context);
                 case gpu_bridge::ioctl_destroy_image_view:
@@ -214,6 +216,8 @@ namespace sogen
                     return handle_reset_descriptor_pool(win_emu, context);
                 case gpu_bridge::ioctl_allocate_descriptor_sets:
                     return handle_allocate_descriptor_sets(win_emu, context);
+                case gpu_bridge::ioctl_free_descriptor_sets:
+                    return handle_free_descriptor_sets(win_emu, context);
                 case gpu_bridge::ioctl_update_descriptor_sets:
                     return handle_update_descriptor_sets(win_emu, context);
                 case gpu_bridge::ioctl_update_descriptor_sets_batch:
@@ -1757,6 +1761,20 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            NTSTATUS handle_get_shader_module_identifier(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                gpu_bridge::shader_module_identifier_response response{};
+                response.vk_result = this->vulkan_.get_shader_module_identifier(request.device, request.object, response.identifier,
+                                                                                response.identifier_size);
+                return write_output(win_emu, context, response);
+            }
+
             NTSTATUS handle_create_image_view(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::create_image_view_request request{};
@@ -2256,6 +2274,25 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            NTSTATUS handle_free_descriptor_sets(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::free_descriptor_sets_request;
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<uint64_t> sets;
+                if (!read_trailing_array(win_emu, context, sizeof(request_t), request.set_count, sets))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const int32_t result = this->vulkan_.free_descriptor_sets(request.device, request.descriptor_pool, sets);
+                return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
+            }
+
             // Cap guest-declared descriptor-update payloads so a bogus IOCTL length can't force a huge allocation.
             static constexpr size_t max_descriptor_update_input_bytes = size_t{256} * 1024 * 1024;
 
@@ -2316,7 +2353,7 @@ namespace sogen
                              .dst_binding = w.dst_binding,
                              .dst_array_element = w.dst_array_element,
                              .descriptor_type = w.descriptor_type,
-                             .buffer = w.buffer,
+                             .buffer_or_view = w.buffer_or_view,
                              .offset = w.offset,
                              .range = w.range,
                              .sampler = w.sampler,
@@ -2324,7 +2361,6 @@ namespace sogen
                              .image_layout = w.image_layout};
                 }
                 offset += writes_bytes;
-
                 return this->vulkan_.update_descriptor_sets(request.device, writes);
             }
 
@@ -2630,6 +2666,15 @@ namespace sogen
                     }
                     return this->vulkan_.cmd_write_timestamp(req.command_buffer, req.query_pool, req.query, req.pipeline_stage);
                 }
+                case gpu_bridge::command::cmd_copy_query_pool_results: {
+                    gpu_bridge::cmd_copy_query_pool_results_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_copy_query_pool_results(req.command_buffer, req.query_pool, req.first_query, req.query_count,
+                                                                     req.destination_buffer, req.destination_offset, req.stride, req.flags);
+                }
                 case gpu_bridge::command::cmd_dispatch: {
                     gpu_bridge::cmd_dispatch_request req{};
                     if (!read(req))
@@ -2755,6 +2800,40 @@ namespace sogen
                     return this->vulkan_.cmd_draw_indexed(req.command_buffer, req.index_count, req.instance_count, req.first_index,
                                                           req.vertex_offset, req.first_instance);
                 }
+                case gpu_bridge::command::cmd_draw_indexed_indirect: {
+                    gpu_bridge::cmd_draw_indexed_indirect_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_draw_indexed_indirect(req.command_buffer, req.buffer, req.offset, req.draw_count, req.stride);
+                }
+                case gpu_bridge::command::cmd_draw_indexed_indirect_count: {
+                    gpu_bridge::cmd_draw_indexed_indirect_count_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_draw_indexed_indirect_count(req.command_buffer, req.buffer, req.offset, req.count_buffer,
+                                                                         req.count_buffer_offset, req.max_draw_count, req.stride);
+                }
+                case gpu_bridge::command::cmd_draw_indirect: {
+                    gpu_bridge::cmd_draw_indirect_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_draw_indirect(req.command_buffer, req.buffer, req.offset, req.draw_count, req.stride);
+                }
+                case gpu_bridge::command::cmd_draw_indirect_count: {
+                    gpu_bridge::cmd_draw_indirect_count_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_draw_indirect_count(req.command_buffer, req.buffer, req.offset, req.count_buffer,
+                                                                 req.count_buffer_offset, req.max_draw_count, req.stride);
+                }
                 case gpu_bridge::command::cmd_bind_descriptor_sets: {
                     gpu_bridge::cmd_bind_descriptor_sets_request req{};
                     if (!read(req))
@@ -2791,6 +2870,14 @@ namespace sogen
                         return vk_error_initialization_failed;
                     }
                     return this->vulkan_.cmd_end_render_pass(req.command_buffer);
+                }
+                case gpu_bridge::command::cmd_next_subpass: {
+                    gpu_bridge::cmd_next_subpass_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_next_subpass(req.command_buffer, req.contents);
                 }
                 case gpu_bridge::command::cmd_begin_rendering: {
                     gpu_bridge::cmd_begin_rendering_request req{};

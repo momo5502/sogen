@@ -396,6 +396,8 @@ namespace sogen
 
         int32_t create_shader_module(uint64_t device, const void* code, size_t code_size, uint64_t& out_module);
         void destroy_shader_module(uint64_t device, uint64_t shader_module);
+        int32_t get_shader_module_identifier(uint64_t device, uint64_t shader_module, std::span<uint8_t> identifier,
+                                             uint32_t& identifier_size);
 
         // aspect_mask selects COLOR vs DEPTH (0 defaults to COLOR).
         int32_t create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask, uint32_t view_type,
@@ -415,6 +417,8 @@ namespace sogen
         int32_t cmd_begin_query(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t flags);
         int32_t cmd_end_query(uint64_t command_buffer, uint64_t query_pool, uint32_t query);
         int32_t cmd_write_timestamp(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t pipeline_stage);
+        int32_t cmd_copy_query_pool_results(uint64_t command_buffer, uint64_t query_pool, uint32_t first_query, uint32_t query_count,
+                                            uint64_t destination_buffer, uint64_t destination_offset, uint64_t stride, uint32_t flags);
 
         // One color attachment + an optional depth attachment (depth_format == 0 => color only), single
         // subpass (initial/final layouts as given; PRESENT_SRC_KHR is mapped to TRANSFER_SRC_OPTIMAL).
@@ -453,7 +457,7 @@ namespace sogen
             uint32_t dst_binding;
             uint32_t dst_array_element;
             uint32_t descriptor_type;
-            uint64_t buffer;
+            uint64_t buffer_or_view;
             uint64_t offset;
             uint64_t range;
             uint64_t sampler;
@@ -470,6 +474,7 @@ namespace sogen
         // true count.
         int32_t allocate_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> set_layouts,
                                          std::span<uint64_t> out_sets, uint32_t& out_count);
+        int32_t free_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> sets);
         int32_t update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes);
 
         // Optionally one push-constant range from offset 0 (push_constant_size == 0 means none), plus a
@@ -564,9 +569,16 @@ namespace sogen
         int32_t cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t index_type);
         int32_t cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count, uint32_t first_index,
                                  int32_t vertex_offset, uint32_t first_instance);
+        int32_t cmd_draw_indexed_indirect(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t draw_count, uint32_t stride);
+        int32_t cmd_draw_indexed_indirect_count(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint64_t count_buffer,
+                                                uint64_t count_buffer_offset, uint32_t max_draw_count, uint32_t stride);
+        int32_t cmd_draw_indirect(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t draw_count, uint32_t stride);
+        int32_t cmd_draw_indirect_count(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint64_t count_buffer,
+                                        uint64_t count_buffer_offset, uint32_t max_draw_count, uint32_t stride);
         int32_t cmd_bind_descriptor_sets(uint64_t command_buffer, uint64_t pipeline_layout, uint32_t first_set,
                                          std::span<const uint64_t> sets, uint32_t bind_point, std::span<const uint32_t> dynamic_offsets);
         int32_t cmd_end_render_pass(uint64_t command_buffer);
+        int32_t cmd_next_subpass(uint64_t command_buffer, uint32_t contents);
         // Dynamic rendering (VK_KHR_dynamic_rendering / core 1.3). depth/stencil are null when absent.
         int32_t cmd_begin_rendering(uint64_t command_buffer, int32_t area_x, int32_t area_y, uint32_t area_w, uint32_t area_h,
                                     uint32_t layer_count, uint32_t view_mask, uint32_t flags, std::span<const rendering_attachment> color,

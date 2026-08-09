@@ -24,12 +24,14 @@ EXPORTS
     vkCmdBindVertexBuffers
     vkCmdBindVertexBuffers2
     vkCmdBlitImage2
+    vkCmdBlitImage
     vkCmdBlitImage2KHR
     vkCmdClearAttachments
     vkCmdClearColorImage
     vkCmdClearDepthStencilImage
     vkCmdBeginQuery
     vkCmdCopyBuffer
+    vkCmdCopyQueryPoolResults
     vkCmdCopyBufferToImage
     vkCmdCopyBufferToImage2
     vkCmdCopyImage
@@ -43,11 +45,18 @@ EXPORTS
     vkCmdDispatchIndirect
     vkCmdDraw
     vkCmdDrawIndexed
+    vkCmdDrawIndexedIndirect
+    vkCmdDrawIndexedIndirectCount
+    vkCmdDrawIndirect
+    vkCmdDrawIndirectCount
     vkCmdEndQuery
     vkCmdResetQueryPool
     vkCmdWriteTimestamp
+    vkCmdWriteTimestamp2
+    vkCmdWriteTimestamp2KHR
     vkCmdEndDebugUtilsLabelEXT
     vkCmdEndRenderPass
+    vkCmdNextSubpass
     vkCmdEndRendering
     vkCmdExecuteCommands
     vkCmdFillBuffer
@@ -90,6 +99,7 @@ EXPORTS
     vkCreateFence
     vkCreateFramebuffer
     vkCreateGraphicsPipelines
+    vkCreatePipelineCache
     vkCreateImage
     vkCreateImageView
     vkCreateInstance
@@ -113,6 +123,7 @@ EXPORTS
     vkDestroyImageView
     vkDestroyInstance
     vkDestroyPipeline
+    vkDestroyPipelineCache
     vkDestroyPipelineLayout
     vkDestroyRenderPass
     vkDestroySampler
@@ -122,6 +133,7 @@ EXPORTS
     vkDeviceWaitIdle
     vkEndCommandBuffer
     vkEnumerateDeviceExtensionProperties
+    vkEnumerateDeviceLayerProperties
     vkFlushMappedMemoryRanges
     vkInvalidateMappedMemoryRanges
     vkEnumerateInstanceExtensionProperties
@@ -129,18 +141,31 @@ EXPORTS
     vkEnumerateInstanceVersion
     vkEnumeratePhysicalDevices
     vkFreeCommandBuffers
+    vkFreeDescriptorSets
     vkFreeMemory
     vkGetBufferMemoryRequirements
     vkGetDeviceProcAddr
     vkGetDeviceQueue
+    vkGetDeviceImageSparseMemoryRequirements
+    vkGetDeviceMemoryCommitment
+    vkGetDescriptorSetLayoutSupport
     vkGetFenceStatus
     vkGetImageMemoryRequirements
+    vkGetImageSparseMemoryRequirements
+    vkGetImageSparseMemoryRequirements2
+    vkGetImageSparseMemoryRequirements2KHR
     vkGetImageSubresourceLayout
+    vkGetPipelineCacheData
     vkGetInstanceProcAddr
     vkGetQueryPoolResults
+    vkGetShaderModuleIdentifierEXT
+    vkMergePipelineCaches
     vkGetPhysicalDeviceExternalSemaphoreProperties
     vkGetPhysicalDeviceFeatures
     vkGetPhysicalDeviceFeatures2
+    vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR
+    vkGetPhysicalDeviceFragmentShadingRatesKHR
+    vkGetPhysicalDeviceCalibrateableTimeDomainsKHR
     vkGetPhysicalDeviceFormatProperties
     vkGetPhysicalDeviceFormatProperties2
     vkGetPhysicalDeviceImageFormatProperties
@@ -164,6 +189,7 @@ EXPORTS
     vkGetSwapchainImagesKHR
     vkMapMemory
     vkQueuePresentKHR
+    vkQueueBindSparse
     vkQueueSubmit
     vkQueueWaitIdle
     vkReleaseSwapchainImagesEXT
