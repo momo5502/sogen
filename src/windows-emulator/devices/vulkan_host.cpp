@@ -214,6 +214,9 @@ namespace sogen
             PFN_vkGetPhysicalDeviceFeatures2 get_physical_device_features2{};
             PFN_vkGetPhysicalDeviceProperties2 get_physical_device_properties2{};
             PFN_vkEnumerateDeviceExtensionProperties enumerate_device_extension_properties{};
+            PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR get_cooperative_matrix_properties{};
+            PFN_vkGetPhysicalDeviceFragmentShadingRatesKHR get_fragment_shading_rates{};
+            PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR get_calibrateable_time_domains{};
             PFN_vkCreateDevice create_device{};
             PFN_vkGetDeviceProcAddr get_device_proc_addr{};
         };
@@ -261,6 +264,8 @@ namespace sogen
             PFN_vkQueueSubmit2 queue_submit2{};
             PFN_vkAllocateMemory allocate_memory{};
             PFN_vkFreeMemory free_memory{};
+            PFN_vkGetDeviceMemoryCommitment get_device_memory_commitment{};
+            PFN_vkGetCalibratedTimestampsKHR get_calibrated_timestamps{};
             PFN_vkMapMemory map_memory{};
             PFN_vkUnmapMemory unmap_memory{};
             PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges{};
@@ -290,8 +295,6 @@ namespace sogen
             PFN_vkDestroySampler destroy_sampler{};
             PFN_vkCreateShaderModule create_shader_module{};
             PFN_vkDestroyShaderModule destroy_shader_module{};
-            PFN_vkGetShaderModuleIdentifierEXT get_shader_module_identifier{};
-            PFN_vkGetShaderModuleCreateInfoIdentifierEXT get_shader_module_create_info_identifier{};
             PFN_vkCreateImageView create_image_view{};
             PFN_vkDestroyImageView destroy_image_view{};
             PFN_vkCreateBufferView create_buffer_view{};
@@ -304,6 +307,7 @@ namespace sogen
             PFN_vkCmdBeginQuery cmd_begin_query{};
             PFN_vkCmdEndQuery cmd_end_query{};
             PFN_vkCmdWriteTimestamp cmd_write_timestamp{};
+            PFN_vkCmdWriteTimestamp2 cmd_write_timestamp2{};
             PFN_vkCmdCopyQueryPoolResults cmd_copy_query_pool_results{};
             PFN_vkCreateRenderPass create_render_pass{};
             PFN_vkDestroyRenderPass destroy_render_pass{};
@@ -1085,6 +1089,17 @@ namespace sogen
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceProperties2>(instance, "vkGetPhysicalDeviceProperties2");
         data.enumerate_device_extension_properties =
             this->impl_->load_instance_proc<PFN_vkEnumerateDeviceExtensionProperties>(instance, "vkEnumerateDeviceExtensionProperties");
+        data.get_cooperative_matrix_properties = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR>(
+            instance, "vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR");
+        data.get_fragment_shading_rates = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceFragmentShadingRatesKHR>(
+            instance, "vkGetPhysicalDeviceFragmentShadingRatesKHR");
+        data.get_calibrateable_time_domains = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR>(
+            instance, "vkGetPhysicalDeviceCalibrateableTimeDomainsKHR");
+        if (!data.get_calibrateable_time_domains)
+        {
+            data.get_calibrateable_time_domains = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR>(
+                instance, "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT");
+        }
         data.create_device = this->impl_->load_instance_proc<PFN_vkCreateDevice>(instance, "vkCreateDevice");
         data.get_device_proc_addr = this->impl_->load_instance_proc<PFN_vkGetDeviceProcAddr>(instance, "vkGetDeviceProcAddr");
 
@@ -1401,6 +1416,176 @@ namespace sogen
         }
 
         return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::get_physical_device_cooperative_matrix_properties(uint64_t physical_device, void* out, size_t out_size,
+                                                                           uint32_t max_count, bool has_entries, uint32_t& out_count)
+    {
+        out_count = 0;
+        const auto pd = this->impl_->physical_devices.find(physical_device);
+        if (pd == this->impl_->physical_devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto instance = this->impl_->instances.find(pd->second.instance_id);
+        if (instance == this->impl_->instances.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (!instance->second.get_cooperative_matrix_properties)
+        {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+
+        uint32_t count = max_count;
+        if (!has_entries)
+        {
+            const VkResult result = instance->second.get_cooperative_matrix_properties(pd->second.handle, &count, nullptr);
+            out_count = count;
+            return result;
+        }
+
+        std::vector<VkCooperativeMatrixPropertiesKHR> properties(std::max(max_count, 1u));
+        for (auto& property : properties)
+        {
+            property.sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_KHR;
+            property.pNext = nullptr;
+        }
+
+        const VkResult result = instance->second.get_cooperative_matrix_properties(pd->second.handle, &count, properties.data());
+        out_count = count;
+
+        const size_t capacity = out_size / sizeof(gpu_bridge::cooperative_matrix_property);
+        const size_t written = std::min<size_t>(count, std::min<size_t>(max_count, capacity));
+        auto* wire = static_cast<gpu_bridge::cooperative_matrix_property*>(out);
+        for (size_t i = 0; i < written; ++i)
+        {
+            wire[i] = {
+                .m_size = properties[i].MSize,
+                .n_size = properties[i].NSize,
+                .k_size = properties[i].KSize,
+                .a_type = static_cast<uint32_t>(properties[i].AType),
+                .b_type = static_cast<uint32_t>(properties[i].BType),
+                .c_type = static_cast<uint32_t>(properties[i].CType),
+                .result_type = static_cast<uint32_t>(properties[i].ResultType),
+                .saturating_accumulation = properties[i].saturatingAccumulation,
+                .scope = static_cast<uint32_t>(properties[i].scope),
+            };
+        }
+        return result;
+    }
+
+    int32_t vulkan_host::get_physical_device_fragment_shading_rates(uint64_t physical_device, void* out, size_t out_size,
+                                                                    uint32_t max_count, bool has_entries, uint32_t& out_count)
+    {
+        out_count = 0;
+        const auto pd = this->impl_->physical_devices.find(physical_device);
+        if (pd == this->impl_->physical_devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto instance = this->impl_->instances.find(pd->second.instance_id);
+        if (instance == this->impl_->instances.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (!instance->second.get_fragment_shading_rates)
+        {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+
+        uint32_t count = max_count;
+        if (!has_entries)
+        {
+            const VkResult result = instance->second.get_fragment_shading_rates(pd->second.handle, &count, nullptr);
+            out_count = count;
+            return result;
+        }
+
+        std::vector<VkPhysicalDeviceFragmentShadingRateKHR> rates(std::max(max_count, 1u));
+        for (auto& rate : rates)
+        {
+            rate.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_KHR;
+            rate.pNext = nullptr;
+        }
+
+        const VkResult result = instance->second.get_fragment_shading_rates(pd->second.handle, &count, rates.data());
+        out_count = count;
+
+        const size_t capacity = out_size / sizeof(gpu_bridge::fragment_shading_rate);
+        const size_t written = std::min<size_t>(count, std::min<size_t>(max_count, capacity));
+        auto* wire = static_cast<gpu_bridge::fragment_shading_rate*>(out);
+        for (size_t i = 0; i < written; ++i)
+        {
+            wire[i] = {
+                .sample_counts = rates[i].sampleCounts,
+                .width = rates[i].fragmentSize.width,
+                .height = rates[i].fragmentSize.height,
+            };
+        }
+        return result;
+    }
+
+    int32_t vulkan_host::get_physical_device_calibrateable_time_domains(uint64_t physical_device, std::span<uint32_t> out_domains,
+                                                                        uint32_t max_count, bool has_entries, uint32_t& out_count)
+    {
+        out_count = 0;
+        const auto pd = this->impl_->physical_devices.find(physical_device);
+        if (pd == this->impl_->physical_devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto instance = this->impl_->instances.find(pd->second.instance_id);
+        if (instance == this->impl_->instances.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (!instance->second.get_calibrateable_time_domains)
+        {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+
+        uint32_t count = max_count;
+        if (!has_entries)
+        {
+            const VkResult result = instance->second.get_calibrateable_time_domains(pd->second.handle, &count, nullptr);
+            out_count = count;
+            return result;
+        }
+
+        std::vector<VkTimeDomainKHR> domains(std::max(max_count, 1u));
+        const VkResult result = instance->second.get_calibrateable_time_domains(pd->second.handle, &count, domains.data());
+        out_count = count;
+        const size_t written = std::min<size_t>(count, std::min<size_t>(max_count, out_domains.size()));
+        for (size_t i = 0; i < written; ++i)
+        {
+            out_domains[i] = static_cast<uint32_t>(domains[i]);
+        }
+        return result;
+    }
+
+    int32_t vulkan_host::get_calibrated_timestamps(uint64_t device, std::span<const uint32_t> time_domains, std::span<uint64_t> timestamps,
+                                                   uint64_t& max_deviation)
+    {
+        max_deviation = 0;
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || time_domains.size() != timestamps.size())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (!dev->second.get_calibrated_timestamps)
+        {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+
+        std::vector<VkCalibratedTimestampInfoKHR> timestamp_infos(time_domains.size());
+        for (size_t i = 0; i < time_domains.size(); ++i)
+        {
+            timestamp_infos[i].sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_KHR;
+            timestamp_infos[i].timeDomain = static_cast<VkTimeDomainKHR>(time_domains[i]);
+        }
+        return dev->second.get_calibrated_timestamps(dev->second.handle, static_cast<uint32_t>(timestamp_infos.size()),
+                                                     timestamp_infos.data(), timestamps.data(), &max_deviation);
     }
 
     int32_t vulkan_host::get_physical_device_features2(uint64_t physical_device, const void* in_records, size_t in_records_size,
@@ -1765,6 +1950,13 @@ namespace sogen
             data.queue_submit2 = reinterpret_cast<PFN_vkQueueSubmit2>(resolve("vkQueueSubmit2"));
             data.allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(resolve("vkAllocateMemory"));
             data.free_memory = reinterpret_cast<PFN_vkFreeMemory>(resolve("vkFreeMemory"));
+            data.get_device_memory_commitment = reinterpret_cast<PFN_vkGetDeviceMemoryCommitment>(resolve("vkGetDeviceMemoryCommitment"));
+            data.get_calibrated_timestamps = reinterpret_cast<PFN_vkGetCalibratedTimestampsKHR>(resolve("vkGetCalibratedTimestampsKHR"));
+            if (!data.get_calibrated_timestamps)
+            {
+                data.get_calibrated_timestamps =
+                    reinterpret_cast<PFN_vkGetCalibratedTimestampsKHR>(resolve("vkGetCalibratedTimestampsEXT"));
+            }
             data.map_memory = reinterpret_cast<PFN_vkMapMemory>(resolve("vkMapMemory"));
             data.unmap_memory = reinterpret_cast<PFN_vkUnmapMemory>(resolve("vkUnmapMemory"));
             data.flush_mapped_memory_ranges = reinterpret_cast<PFN_vkFlushMappedMemoryRanges>(resolve("vkFlushMappedMemoryRanges"));
@@ -1797,10 +1989,6 @@ namespace sogen
             data.destroy_sampler = reinterpret_cast<PFN_vkDestroySampler>(resolve("vkDestroySampler"));
             data.create_shader_module = reinterpret_cast<PFN_vkCreateShaderModule>(resolve("vkCreateShaderModule"));
             data.destroy_shader_module = reinterpret_cast<PFN_vkDestroyShaderModule>(resolve("vkDestroyShaderModule"));
-            data.get_shader_module_identifier =
-                reinterpret_cast<PFN_vkGetShaderModuleIdentifierEXT>(resolve("vkGetShaderModuleIdentifierEXT"));
-            data.get_shader_module_create_info_identifier =
-                reinterpret_cast<PFN_vkGetShaderModuleCreateInfoIdentifierEXT>(resolve("vkGetShaderModuleCreateInfoIdentifierEXT"));
             data.create_image_view = reinterpret_cast<PFN_vkCreateImageView>(resolve("vkCreateImageView"));
             data.destroy_image_view = reinterpret_cast<PFN_vkDestroyImageView>(resolve("vkDestroyImageView"));
             data.create_buffer_view = reinterpret_cast<PFN_vkCreateBufferView>(resolve("vkCreateBufferView"));
@@ -1813,6 +2001,11 @@ namespace sogen
             data.cmd_begin_query = reinterpret_cast<PFN_vkCmdBeginQuery>(resolve("vkCmdBeginQuery"));
             data.cmd_end_query = reinterpret_cast<PFN_vkCmdEndQuery>(resolve("vkCmdEndQuery"));
             data.cmd_write_timestamp = reinterpret_cast<PFN_vkCmdWriteTimestamp>(resolve("vkCmdWriteTimestamp"));
+            data.cmd_write_timestamp2 = reinterpret_cast<PFN_vkCmdWriteTimestamp2>(resolve("vkCmdWriteTimestamp2"));
+            if (!data.cmd_write_timestamp2)
+            {
+                data.cmd_write_timestamp2 = reinterpret_cast<PFN_vkCmdWriteTimestamp2>(resolve("vkCmdWriteTimestamp2KHR"));
+            }
             data.cmd_copy_query_pool_results = reinterpret_cast<PFN_vkCmdCopyQueryPoolResults>(resolve("vkCmdCopyQueryPoolResults"));
             data.create_render_pass = reinterpret_cast<PFN_vkCreateRenderPass>(resolve("vkCreateRenderPass"));
             data.destroy_render_pass = reinterpret_cast<PFN_vkDestroyRenderPass>(resolve("vkDestroyRenderPass"));
@@ -1855,8 +2048,17 @@ namespace sogen
             data.cmd_draw_indexed_indirect = reinterpret_cast<PFN_vkCmdDrawIndexedIndirect>(resolve("vkCmdDrawIndexedIndirect"));
             data.cmd_draw_indexed_indirect_count =
                 reinterpret_cast<PFN_vkCmdDrawIndexedIndirectCount>(resolve("vkCmdDrawIndexedIndirectCount"));
+            if (!data.cmd_draw_indexed_indirect_count)
+            {
+                data.cmd_draw_indexed_indirect_count =
+                    reinterpret_cast<PFN_vkCmdDrawIndexedIndirectCount>(resolve("vkCmdDrawIndexedIndirectCountKHR"));
+            }
             data.cmd_draw_indirect = reinterpret_cast<PFN_vkCmdDrawIndirect>(resolve("vkCmdDrawIndirect"));
             data.cmd_draw_indirect_count = reinterpret_cast<PFN_vkCmdDrawIndirectCount>(resolve("vkCmdDrawIndirectCount"));
+            if (!data.cmd_draw_indirect_count)
+            {
+                data.cmd_draw_indirect_count = reinterpret_cast<PFN_vkCmdDrawIndirectCount>(resolve("vkCmdDrawIndirectCountKHR"));
+            }
             data.cmd_end_render_pass = reinterpret_cast<PFN_vkCmdEndRenderPass>(resolve("vkCmdEndRenderPass"));
             data.cmd_next_subpass = reinterpret_cast<PFN_vkCmdNextSubpass>(resolve("vkCmdNextSubpass"));
             data.cmd_push_constants = reinterpret_cast<PFN_vkCmdPushConstants>(resolve("vkCmdPushConstants"));
@@ -2741,6 +2943,26 @@ namespace sogen
         }
 
         this->impl_->memories.erase(it);
+    }
+
+    int32_t vulkan_host::get_device_memory_commitment(uint64_t device, uint64_t memory, uint64_t& out_committed_bytes)
+    {
+        out_committed_bytes = 0;
+        const auto dev = this->impl_->devices.find(device);
+        const auto mem = this->impl_->memories.find(memory);
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || mem->second.device_id != device)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (!dev->second.get_device_memory_commitment)
+        {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+
+        VkDeviceSize committed = 0;
+        dev->second.get_device_memory_commitment(dev->second.handle, mem->second.handle, &committed);
+        out_committed_bytes = committed;
+        return VK_SUCCESS;
     }
 
     int32_t vulkan_host::create_buffer(uint64_t device, uint64_t size, uint32_t usage, uint64_t& out_buffer)
@@ -4000,7 +4222,7 @@ namespace sogen
         return frames;
     }
 
-    int32_t vulkan_host::create_shader_module(uint64_t device, uint32_t flags, const void* code, size_t code_size, uint64_t& out_module)
+    int32_t vulkan_host::create_shader_module(uint64_t device, const void* code, size_t code_size, uint64_t& out_module)
     {
         out_module = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -4011,7 +4233,6 @@ namespace sogen
 
         VkShaderModuleCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        info.flags = static_cast<VkShaderModuleCreateFlags>(flags);
         info.codeSize = code_size;
         info.pCode = static_cast<const uint32_t*>(code);
 
@@ -4041,50 +4262,6 @@ namespace sogen
             dev->second.destroy_shader_module(dev->second.handle, it->second.handle, nullptr);
         }
         this->impl_->shader_modules.erase(it);
-    }
-
-    int32_t vulkan_host::get_shader_module_identifier(uint64_t device, uint64_t shader_module, std::span<uint8_t> identifier,
-                                                      uint32_t& identifier_size)
-    {
-        identifier_size = 0;
-        const auto dev = this->impl_->devices.find(device);
-        const auto module = this->impl_->shader_modules.find(shader_module);
-        if (dev == this->impl_->devices.end() || module == this->impl_->shader_modules.end() || module->second.device_id != device ||
-            !dev->second.get_shader_module_identifier)
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        VkShaderModuleIdentifierEXT result{};
-        result.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_IDENTIFIER_EXT;
-        dev->second.get_shader_module_identifier(dev->second.handle, module->second.handle, &result);
-        identifier_size = std::min<uint32_t>(result.identifierSize, static_cast<uint32_t>(identifier.size()));
-        std::memcpy(identifier.data(), result.identifier, identifier_size);
-        return VK_SUCCESS;
-    }
-
-    int32_t vulkan_host::get_shader_module_create_info_identifier(uint64_t device, uint32_t flags, const void* code, size_t code_size,
-                                                                  std::span<uint8_t> identifier, uint32_t& identifier_size)
-    {
-        identifier_size = 0;
-        const auto dev = this->impl_->devices.find(device);
-        if (dev == this->impl_->devices.end() || !dev->second.get_shader_module_create_info_identifier)
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        VkShaderModuleCreateInfo create_info{};
-        create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        create_info.flags = static_cast<VkShaderModuleCreateFlags>(flags);
-        create_info.codeSize = code_size;
-        create_info.pCode = static_cast<const uint32_t*>(code);
-
-        VkShaderModuleIdentifierEXT result{};
-        result.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_IDENTIFIER_EXT;
-        dev->second.get_shader_module_create_info_identifier(dev->second.handle, &create_info, &result);
-        identifier_size = std::min<uint32_t>(result.identifierSize, static_cast<uint32_t>(identifier.size()));
-        std::memcpy(identifier.data(), result.identifier, identifier_size);
-        return VK_SUCCESS;
     }
 
     int32_t vulkan_host::create_image_view(uint64_t device, uint64_t image, uint32_t format, uint32_t aspect_mask, uint32_t view_type,
@@ -4394,6 +4571,29 @@ namespace sogen
         return VK_SUCCESS;
     }
 
+    int32_t vulkan_host::cmd_write_timestamp2(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint64_t pipeline_stage)
+    {
+        const auto cb = this->impl_->command_buffers.find(command_buffer);
+        const auto qp = this->impl_->query_pools.find(query_pool);
+        if (cb == this->impl_->command_buffers.end() || qp == this->impl_->query_pools.end() ||
+            qp->second.device_id != cb->second.device_id)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const auto dev = this->impl_->devices.find(cb->second.device_id);
+        if (dev == this->impl_->devices.end())
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (!dev->second.cmd_write_timestamp2)
+        {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+
+        dev->second.cmd_write_timestamp2(cb->second.handle, static_cast<VkPipelineStageFlags2>(pipeline_stage), qp->second.handle, query);
+        return VK_SUCCESS;
+    }
+
     int32_t vulkan_host::cmd_copy_query_pool_results(uint64_t command_buffer, uint64_t query_pool, uint32_t first_query,
                                                      uint32_t query_count, uint64_t destination_buffer, uint64_t destination_offset,
                                                      uint64_t stride, uint32_t flags)
@@ -4682,7 +4882,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::get_descriptor_set_layout_support(uint64_t device, std::span<const descriptor_binding> bindings,
-                                                            uint32_t& supported)
+                                                           uint32_t& supported)
     {
         supported = VK_FALSE;
 
@@ -5021,12 +5221,12 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
-                                                  const shader_stage_source& vertex_shader, const shader_stage_source& fragment_shader,
-                                                  uint32_t flags, uint32_t width, uint32_t height, std::span<const vertex_binding> bindings,
-                                                  std::span<const vertex_attribute> attributes, std::span<const vertex_divisor> divisors,
-                                                  const depth_state& depth, std::span<const uint32_t> color_formats, uint32_t depth_format,
-                                                  uint32_t stencil_format, uint32_t rasterization_samples, uint32_t primitive_topology,
+    int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout, uint64_t vertex_shader,
+                                                  uint64_t fragment_shader, uint32_t flags, uint32_t width, uint32_t height,
+                                                  std::span<const vertex_binding> bindings, std::span<const vertex_attribute> attributes,
+                                                  std::span<const vertex_divisor> divisors, const depth_state& depth,
+                                                  std::span<const uint32_t> color_formats, uint32_t depth_format, uint32_t stencil_format,
+                                                  uint32_t rasterization_samples, uint32_t primitive_topology,
                                                   uint32_t primitive_restart_enable, std::span<const uint32_t> dynamic_states,
                                                   const specialization& vs_spec, const specialization& fs_spec,
                                                   std::span<const color_blend_attachment> blend_attachments_in, uint64_t& out_pipeline)
@@ -5040,33 +5240,15 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        const auto resolve_stage = [&](const shader_stage_source& source, VkShaderModule& module) {
-            const bool has_module = source.module != 0;
-            const bool has_identifier = !source.identifier.empty();
-            if (has_module == has_identifier || source.identifier.size() > VK_MAX_SHADER_MODULE_IDENTIFIER_SIZE_EXT)
-            {
-                return false;
-            }
-            if (!has_module)
-            {
-                module = VK_NULL_HANDLE;
-                return true;
-            }
-            const auto shader = this->impl_->shader_modules.find(source.module);
-            if (shader == this->impl_->shader_modules.end() || shader->second.device_id != device)
-            {
-                return false;
-            }
-            module = shader->second.handle;
-            return true;
-        };
-
-        VkShaderModule vertex_module = VK_NULL_HANDLE;
-        VkShaderModule fragment_module = VK_NULL_HANDLE;
-        if (!resolve_stage(vertex_shader, vertex_module) || !resolve_stage(fragment_shader, fragment_module))
+        const auto vert = this->impl_->shader_modules.find(vertex_shader);
+        const auto frag = this->impl_->shader_modules.find(fragment_shader);
+        if (vert == this->impl_->shader_modules.end() || frag == this->impl_->shader_modules.end() || vert->second.device_id != device ||
+            frag->second.device_id != device)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
+        const VkShaderModule vertex_module = vert->second.handle;
+        const VkShaderModule fragment_module = frag->second.handle;
 
         // render_pass == 0 means the pipeline targets dynamic rendering (DXVK 2.x): there is no render-pass
         // object; the attachment formats come in via VkPipelineRenderingCreateInfo and viewport/scissor are
@@ -5124,28 +5306,13 @@ namespace sogen
 
         const specialization fs_effective = fs_spec;
 
-        std::array<VkPipelineShaderStageModuleIdentifierCreateInfoEXT, 2> stage_identifiers{};
-        const auto initialize_identifier = [&](size_t index, const shader_stage_source& source) -> const void* {
-            if (source.identifier.empty())
-            {
-                return nullptr;
-            }
-            auto& identifier = stage_identifiers[index];
-            identifier.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_MODULE_IDENTIFIER_CREATE_INFO_EXT;
-            identifier.identifierSize = static_cast<uint32_t>(source.identifier.size());
-            identifier.pIdentifier = source.identifier.data();
-            return &identifier;
-        };
-
         std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
         stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        stages[0].pNext = initialize_identifier(0, vertex_shader);
         stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
         stages[0].module = vertex_module;
         stages[0].pName = "main";
         stages[0].pSpecializationInfo = build_spec(vs_spec, 0);
         stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        stages[1].pNext = initialize_identifier(1, fragment_shader);
         stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
         stages[1].module = fragment_module;
         stages[1].pName = "main";
@@ -5330,8 +5497,8 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, const shader_stage_source& shader,
-                                                 uint32_t flags, uint64_t& out_pipeline)
+    int32_t vulkan_host::create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, uint64_t shader_module, uint32_t flags,
+                                                 uint64_t& out_pipeline)
     {
         out_pipeline = 0;
 
@@ -5343,30 +5510,10 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        const bool has_module = shader.module != 0;
-        const bool has_identifier = !shader.identifier.empty();
-        if (has_module == has_identifier || shader.identifier.size() > VK_MAX_SHADER_MODULE_IDENTIFIER_SIZE_EXT)
+        const auto shader = this->impl_->shader_modules.find(shader_module);
+        if (shader == this->impl_->shader_modules.end() || shader->second.device_id != device)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        VkShaderModule module = VK_NULL_HANDLE;
-        if (has_module)
-        {
-            const auto module_it = this->impl_->shader_modules.find(shader.module);
-            if (module_it == this->impl_->shader_modules.end() || module_it->second.device_id != device)
-            {
-                return VK_ERROR_INITIALIZATION_FAILED;
-            }
-            module = module_it->second.handle;
-        }
-
-        VkPipelineShaderStageModuleIdentifierCreateInfoEXT identifier{};
-        if (has_identifier)
-        {
-            identifier.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_MODULE_IDENTIFIER_CREATE_INFO_EXT;
-            identifier.identifierSize = static_cast<uint32_t>(shader.identifier.size());
-            identifier.pIdentifier = shader.identifier.data();
         }
 
         VkComputePipelineCreateInfo info{};
@@ -5374,9 +5521,8 @@ namespace sogen
         info.flags = static_cast<VkPipelineCreateFlags>(flags);
         info.layout = layout->second.handle;
         info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        info.stage.pNext = has_identifier ? &identifier : nullptr;
         info.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-        info.stage.module = module;
+        info.stage.module = shader->second.handle;
         info.stage.pName = "main";
 
         VkPipeline pipeline{};

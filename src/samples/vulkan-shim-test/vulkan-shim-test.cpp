@@ -5,7 +5,9 @@
 
 #include <windows.h>
 
+#include <array>
 #include <cstdio>
+#include <cstring>
 #include <vector>
 
 #define VK_NO_PROTOTYPES
@@ -84,6 +86,120 @@ namespace
 
         destroy_fence(device, fence, nullptr);
         destroy_command_pool(device, pool, nullptr);
+    }
+
+    // Records both promoted spellings with synchronization2-only stage bits. Ending the command buffer
+    // flushes the shim command stream, so this catches any truncation or legacy-stage substitution.
+    bool test_write_timestamp2(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkDevice device, uint32_t queue_family,
+                               PFN_vkCmdWriteTimestamp2 write_timestamp2, PFN_vkCmdWriteTimestamp2KHR write_timestamp2_khr)
+    {
+        const auto create_command_pool = reinterpret_cast<PFN_vkCreateCommandPool>(get_instance_proc(instance, "vkCreateCommandPool"));
+        const auto destroy_command_pool = reinterpret_cast<PFN_vkDestroyCommandPool>(get_instance_proc(instance, "vkDestroyCommandPool"));
+        const auto allocate_command_buffers =
+            reinterpret_cast<PFN_vkAllocateCommandBuffers>(get_instance_proc(instance, "vkAllocateCommandBuffers"));
+        const auto begin_command_buffer = reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
+        const auto end_command_buffer = reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
+        const auto create_query_pool = reinterpret_cast<PFN_vkCreateQueryPool>(get_instance_proc(instance, "vkCreateQueryPool"));
+        const auto destroy_query_pool = reinterpret_cast<PFN_vkDestroyQueryPool>(get_instance_proc(instance, "vkDestroyQueryPool"));
+        if (!create_command_pool || !destroy_command_pool || !allocate_command_buffers || !begin_command_buffer || !end_command_buffer ||
+            !create_query_pool || !destroy_query_pool)
+        {
+            std::printf("[shim-test] timestamp2 support entry point missing\n");
+            return false;
+        }
+
+        VkCommandPoolCreateInfo pool_info{};
+        pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        pool_info.queueFamilyIndex = queue_family;
+
+        VkCommandPool pool = VK_NULL_HANDLE;
+        if (create_command_pool(device, &pool_info, nullptr, &pool) != VK_SUCCESS)
+        {
+            std::printf("[shim-test] timestamp2 vkCreateCommandPool failed\n");
+            return false;
+        }
+
+        VkCommandBufferAllocateInfo alloc_info{};
+        alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        alloc_info.commandPool = pool;
+        alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        alloc_info.commandBufferCount = 1;
+
+        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+        const VkResult allocate_result = allocate_command_buffers(device, &alloc_info, &command_buffer);
+
+        VkQueryPoolCreateInfo query_info{};
+        query_info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+        query_info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        query_info.queryCount = 2;
+
+        VkQueryPool query_pool = VK_NULL_HANDLE;
+        const VkResult query_result = create_query_pool(device, &query_info, nullptr, &query_pool);
+
+        VkResult begin_result = VK_ERROR_INITIALIZATION_FAILED;
+        VkResult end_result = VK_ERROR_INITIALIZATION_FAILED;
+        if (allocate_result == VK_SUCCESS && query_result == VK_SUCCESS)
+        {
+            VkCommandBufferBeginInfo begin_info{};
+            begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            begin_result = begin_command_buffer(command_buffer, &begin_info);
+            if (begin_result == VK_SUCCESS)
+            {
+                write_timestamp2(command_buffer, VK_PIPELINE_STAGE_2_COPY_BIT, query_pool, 0);
+                write_timestamp2_khr(command_buffer, VK_PIPELINE_STAGE_2_RESOLVE_BIT, query_pool, 1);
+                end_result = end_command_buffer(command_buffer);
+            }
+        }
+
+        const bool ok =
+            allocate_result == VK_SUCCESS && query_result == VK_SUCCESS && begin_result == VK_SUCCESS && end_result == VK_SUCCESS;
+        std::printf("[shim-test] timestamp2 stage2-only recording -> %s\n", ok ? "PASS" : "FAIL");
+
+        if (query_pool != VK_NULL_HANDLE)
+        {
+            destroy_query_pool(device, query_pool, nullptr);
+        }
+        destroy_command_pool(device, pool, nullptr);
+        return ok;
+    }
+
+    bool test_calibrated_timestamps(PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR get_time_domains_khr,
+                                    PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT get_time_domains_ext,
+                                    PFN_vkGetCalibratedTimestampsKHR get_timestamps_khr,
+                                    PFN_vkGetCalibratedTimestampsEXT get_timestamps_ext, VkPhysicalDevice physical_device, VkDevice device)
+    {
+        uint32_t khr_count = 0;
+        uint32_t ext_count = 0;
+        const VkResult khr_count_result = get_time_domains_khr(physical_device, &khr_count, nullptr);
+        const VkResult ext_count_result = get_time_domains_ext(physical_device, &ext_count, nullptr);
+        if (khr_count_result != VK_SUCCESS || ext_count_result != VK_SUCCESS || khr_count == 0 || ext_count == 0)
+        {
+            std::printf("[shim-test] calibrated timestamp domains KHR=%d/%u EXT=%d/%u -> FAIL\n", khr_count_result, khr_count,
+                        ext_count_result, ext_count);
+            return false;
+        }
+
+        std::vector<VkTimeDomainKHR> khr_domains(khr_count);
+        std::vector<VkTimeDomainKHR> ext_domains(ext_count);
+        const VkResult khr_domains_result = get_time_domains_khr(physical_device, &khr_count, khr_domains.data());
+        const VkResult ext_domains_result = get_time_domains_ext(physical_device, &ext_count, ext_domains.data());
+
+        VkCalibratedTimestampInfoKHR timestamp_info{};
+        timestamp_info.sType = VK_STRUCTURE_TYPE_CALIBRATED_TIMESTAMP_INFO_KHR;
+        timestamp_info.timeDomain = khr_domains.front();
+        uint64_t khr_timestamp = 0;
+        uint64_t ext_timestamp = 0;
+        uint64_t khr_deviation = 0;
+        uint64_t ext_deviation = 0;
+        const VkResult khr_result = get_timestamps_khr(device, 1, &timestamp_info, &khr_timestamp, &khr_deviation);
+        const VkResult ext_result = get_timestamps_ext(device, 1, &timestamp_info, &ext_timestamp, &ext_deviation);
+        const bool ok =
+            khr_domains_result == VK_SUCCESS && ext_domains_result == VK_SUCCESS && khr_result == VK_SUCCESS && ext_result == VK_SUCCESS;
+        std::printf("[shim-test] calibrated timestamps KHR=%d/%llu EXT=%d/%llu -> %s\n", khr_result,
+                    static_cast<unsigned long long>(khr_deviation), ext_result, static_cast<unsigned long long>(ext_deviation),
+                    ok ? "PASS" : "FAIL");
+        return ok;
     }
 
     // Picks the first memory type that is set in `type_bits` and carries all of `required` property
@@ -492,11 +608,27 @@ int main(int argc, char** argv)
 
     const auto write_timestamp2 = reinterpret_cast<PFN_vkCmdWriteTimestamp2>(get_instance_proc(nullptr, "vkCmdWriteTimestamp2"));
     const auto write_timestamp2_khr = reinterpret_cast<PFN_vkCmdWriteTimestamp2KHR>(get_instance_proc(nullptr, "vkCmdWriteTimestamp2KHR"));
-    if (!write_timestamp2 || !write_timestamp2_khr)
+    const auto draw_indirect_count_khr =
+        reinterpret_cast<PFN_vkCmdDrawIndirectCountKHR>(get_instance_proc(nullptr, "vkCmdDrawIndirectCountKHR"));
+    const auto draw_indexed_indirect_count_khr =
+        reinterpret_cast<PFN_vkCmdDrawIndexedIndirectCountKHR>(get_instance_proc(nullptr, "vkCmdDrawIndexedIndirectCountKHR"));
+    const auto get_time_domains_khr = reinterpret_cast<PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR>(
+        get_instance_proc(nullptr, "vkGetPhysicalDeviceCalibrateableTimeDomainsKHR"));
+    const auto get_time_domains_ext = reinterpret_cast<PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsEXT>(
+        get_instance_proc(nullptr, "vkGetPhysicalDeviceCalibrateableTimeDomainsEXT"));
+    const auto get_calibrated_timestamps_khr =
+        reinterpret_cast<PFN_vkGetCalibratedTimestampsKHR>(get_instance_proc(nullptr, "vkGetCalibratedTimestampsKHR"));
+    const auto get_calibrated_timestamps_ext =
+        reinterpret_cast<PFN_vkGetCalibratedTimestampsEXT>(get_instance_proc(nullptr, "vkGetCalibratedTimestampsEXT"));
+    if (!write_timestamp2 || !write_timestamp2_khr || !draw_indirect_count_khr || !draw_indexed_indirect_count_khr ||
+        !get_time_domains_khr || !get_time_domains_ext || !get_calibrated_timestamps_khr || !get_calibrated_timestamps_ext)
     {
-        std::printf("[shim-test] no vkCmdWriteTimestamp2 entry point\n");
+        std::printf("[shim-test] promoted command alias missing\n");
         return 3;
     }
+
+    bool timestamp2_test_ok = true;
+    bool calibrated_timestamps_test_ok = true;
 
     const auto create_instance = reinterpret_cast<PFN_vkCreateInstance>(get_instance_proc(nullptr, "vkCreateInstance"));
     if (!create_instance)
@@ -547,9 +679,50 @@ int main(int argc, char** argv)
         // Create a logical device on the first physical device, using a graphics-capable queue family.
         const auto get_queue_families = reinterpret_cast<PFN_vkGetPhysicalDeviceQueueFamilyProperties>(
             get_instance_proc(instance, "vkGetPhysicalDeviceQueueFamilyProperties"));
+        const auto enumerate_device_extensions =
+            reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(get_instance_proc(instance, "vkEnumerateDeviceExtensionProperties"));
+        const auto get_features2 =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(get_instance_proc(instance, "vkGetPhysicalDeviceFeatures2"));
         const auto create_device = reinterpret_cast<PFN_vkCreateDevice>(get_instance_proc(instance, "vkCreateDevice"));
         const auto get_device_queue = reinterpret_cast<PFN_vkGetDeviceQueue>(get_instance_proc(instance, "vkGetDeviceQueue"));
         const auto destroy_device = reinterpret_cast<PFN_vkDestroyDevice>(get_instance_proc(instance, "vkDestroyDevice"));
+
+        const char* calibrated_timestamps_extension = nullptr;
+        if (enumerate_device_extensions)
+        {
+            uint32_t extension_count = 0;
+            if (enumerate_device_extensions(devices[0], nullptr, &extension_count, nullptr) == VK_SUCCESS)
+            {
+                std::vector<VkExtensionProperties> extensions(extension_count);
+                if (enumerate_device_extensions(devices[0], nullptr, &extension_count, extensions.data()) == VK_SUCCESS)
+                {
+                    for (const VkExtensionProperties& extension : extensions)
+                    {
+                        if (std::strcmp(extension.extensionName, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) == 0)
+                        {
+                            calibrated_timestamps_extension = VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME;
+                            break;
+                        }
+                        if (std::strcmp(extension.extensionName, VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) == 0)
+                        {
+                            calibrated_timestamps_extension = VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME;
+                        }
+                    }
+                }
+            }
+        }
+
+        bool synchronization2_supported = false;
+        if (get_features2)
+        {
+            VkPhysicalDeviceVulkan13Features vulkan13_features{};
+            vulkan13_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+            VkPhysicalDeviceFeatures2 features2{};
+            features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            features2.pNext = &vulkan13_features;
+            get_features2(devices[0], &features2);
+            synchronization2_supported = vulkan13_features.synchronization2 == VK_TRUE;
+        }
 
         uint32_t family_count = 0;
         get_queue_families(devices[0], &family_count, nullptr);
@@ -557,29 +730,56 @@ int main(int argc, char** argv)
         get_queue_families(devices[0], &family_count, families.data());
 
         uint32_t graphics_family = UINT32_MAX;
+        uint32_t timestamp_family = UINT32_MAX;
         for (uint32_t i = 0; i < family_count; ++i)
         {
-            if (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            if ((families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && graphics_family == UINT32_MAX)
             {
                 graphics_family = i;
-                break;
+            }
+            if ((families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && families[i].timestampValidBits != 0 && timestamp_family == UINT32_MAX)
+            {
+                timestamp_family = i;
             }
         }
-        std::printf("[shim-test] queue families=%u, graphics family=%u\n", family_count, graphics_family);
+        const bool timestamp2_test_supported = synchronization2_supported && timestamp_family != UINT32_MAX;
+        std::printf("[shim-test] queue families=%u, graphics family=%u, timestamp family=%u\n", family_count, graphics_family,
+                    timestamp_family);
 
         if (graphics_family != UINT32_MAX)
         {
             const float priority = 1.0f;
-            VkDeviceQueueCreateInfo queue_info{};
-            queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-            queue_info.queueFamilyIndex = graphics_family;
-            queue_info.queueCount = 1;
-            queue_info.pQueuePriorities = &priority;
+            std::array<VkDeviceQueueCreateInfo, 2> queue_infos{};
+            queue_infos[0].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+            queue_infos[0].queueFamilyIndex = graphics_family;
+            queue_infos[0].queueCount = 1;
+            queue_infos[0].pQueuePriorities = &priority;
+            uint32_t queue_info_count = 1;
+            if (timestamp2_test_supported && timestamp_family != graphics_family)
+            {
+                queue_infos[1].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+                queue_infos[1].queueFamilyIndex = timestamp_family;
+                queue_infos[1].queueCount = 1;
+                queue_infos[1].pQueuePriorities = &priority;
+                queue_info_count = 2;
+            }
+
+            VkPhysicalDeviceVulkan13Features enabled_vulkan13_features{};
+            enabled_vulkan13_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+            enabled_vulkan13_features.synchronization2 = timestamp2_test_supported ? VK_TRUE : VK_FALSE;
 
             VkDeviceCreateInfo device_info{};
             device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-            device_info.queueCreateInfoCount = 1;
-            device_info.pQueueCreateInfos = &queue_info;
+            device_info.queueCreateInfoCount = queue_info_count;
+            device_info.pQueueCreateInfos = queue_infos.data();
+            device_info.pNext = timestamp2_test_supported ? &enabled_vulkan13_features : nullptr;
+            std::vector<const char*> enabled_extensions;
+            if (calibrated_timestamps_extension)
+            {
+                enabled_extensions.push_back(calibrated_timestamps_extension);
+            }
+            device_info.enabledExtensionCount = static_cast<uint32_t>(enabled_extensions.size());
+            device_info.ppEnabledExtensionNames = enabled_extensions.data();
 
             VkDevice device = VK_NULL_HANDLE;
             const VkResult device_result = create_device(devices[0], &device_info, nullptr, &device);
@@ -590,6 +790,26 @@ int main(int argc, char** argv)
                 VkQueue queue = VK_NULL_HANDLE;
                 get_device_queue(device, graphics_family, 0, &queue);
                 std::printf("[shim-test] vkGetDeviceQueue -> queue=%p\n", static_cast<void*>(queue));
+
+                if (timestamp2_test_supported)
+                {
+                    timestamp2_test_ok = test_write_timestamp2(get_instance_proc, instance, device, timestamp_family, write_timestamp2,
+                                                               write_timestamp2_khr);
+                }
+                else
+                {
+                    std::printf("[shim-test] timestamp2 stage2-only recording -> SKIP (synchronization2 or timestamps unavailable)\n");
+                }
+                if (calibrated_timestamps_extension)
+                {
+                    calibrated_timestamps_test_ok =
+                        test_calibrated_timestamps(get_time_domains_khr, get_time_domains_ext, get_calibrated_timestamps_khr,
+                                                   get_calibrated_timestamps_ext, devices[0], device);
+                }
+                else
+                {
+                    std::printf("[shim-test] calibrated timestamps -> SKIP (extension unavailable)\n");
+                }
 
                 submit_and_wait(get_instance_proc, instance, device, queue, graphics_family);
                 fill_buffer_and_readback(get_instance_proc, instance, devices[0], device, queue, graphics_family);
@@ -605,6 +825,7 @@ int main(int argc, char** argv)
         destroy_instance(instance, nullptr);
     }
 
-    std::printf("[shim-test] ok\n");
-    return 0;
+    const bool all_ok = timestamp2_test_ok && calibrated_timestamps_test_ok;
+    std::printf("[shim-test] %s\n", all_ok ? "ok" : "FAILED");
+    return all_ok ? 0 : 6;
 }

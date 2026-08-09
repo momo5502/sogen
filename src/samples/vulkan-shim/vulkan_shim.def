@@ -47,8 +47,10 @@ EXPORTS
     vkCmdDrawIndexed
     vkCmdDrawIndexedIndirect
     vkCmdDrawIndexedIndirectCount
+    vkCmdDrawIndexedIndirectCountKHR
     vkCmdDrawIndirect
     vkCmdDrawIndirectCount
+    vkCmdDrawIndirectCountKHR
     vkCmdEndQuery
     vkCmdResetQueryPool
     vkCmdWriteTimestamp
@@ -99,7 +101,6 @@ EXPORTS
     vkCreateFence
     vkCreateFramebuffer
     vkCreateGraphicsPipelines
-    vkCreatePipelineCache
     vkCreateImage
     vkCreateImageView
     vkCreateInstance
@@ -123,7 +124,6 @@ EXPORTS
     vkDestroyImageView
     vkDestroyInstance
     vkDestroyPipeline
-    vkDestroyPipelineCache
     vkDestroyPipelineLayout
     vkDestroyRenderPass
     vkDestroySampler
@@ -156,17 +156,17 @@ EXPORTS
     vkGetImageSparseMemoryRequirements2
     vkGetImageSparseMemoryRequirements2KHR
     vkGetImageSubresourceLayout
-    vkGetPipelineCacheData
     vkGetInstanceProcAddr
     vkGetQueryPoolResults
-    vkGetShaderModuleIdentifierEXT
-    vkMergePipelineCaches
     vkGetPhysicalDeviceExternalSemaphoreProperties
     vkGetPhysicalDeviceFeatures
     vkGetPhysicalDeviceFeatures2
     vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR
     vkGetPhysicalDeviceFragmentShadingRatesKHR
     vkGetPhysicalDeviceCalibrateableTimeDomainsKHR
+    vkGetPhysicalDeviceCalibrateableTimeDomainsEXT
+    vkGetCalibratedTimestampsKHR
+    vkGetCalibratedTimestampsEXT
     vkGetPhysicalDeviceFormatProperties
     vkGetPhysicalDeviceFormatProperties2
     vkGetPhysicalDeviceImageFormatProperties
