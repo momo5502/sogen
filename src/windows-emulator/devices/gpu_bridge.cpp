@@ -2292,7 +2292,8 @@ namespace sogen
                     request.device, request.render_pass, request.pipeline_layout, request.vertex_shader, request.fragment_shader,
                     request.flags, request.width, request.height, bindings, attributes, divisors, depth, color_formats,
                     request.depth_format, request.stencil_format, request.rasterization_samples, request.primitive_topology,
-                    request.primitive_restart_enable, dynamic_states, vs_spec, fs_spec, blend_attachments, pipeline);
+                    request.primitive_restart_enable, request.rasterization_stream, request.rasterization_stream_flags, dynamic_states,
+                    vs_spec, fs_spec, blend_attachments, pipeline);
                 if (result != 0)
                 {
                     win_emu.log.error(
@@ -2866,6 +2867,93 @@ namespace sogen
                         return vk_error_initialization_failed;
                     }
                     return this->vulkan_.cmd_end_query(req.command_buffer, req.query_pool, req.query);
+                }
+                case gpu_bridge::command::cmd_begin_query_indexed: {
+                    gpu_bridge::cmd_begin_query_indexed_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_begin_query_indexed(req.command_buffer, req.query_pool, req.query, req.flags, req.index);
+                }
+                case gpu_bridge::command::cmd_end_query_indexed: {
+                    gpu_bridge::cmd_end_query_indexed_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_end_query_indexed(req.command_buffer, req.query_pool, req.query, req.index);
+                }
+                case gpu_bridge::command::cmd_bind_transform_feedback_buffers: {
+                    gpu_bridge::cmd_bind_transform_feedback_buffers_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const size_t bindings_bytes = size - sizeof(req);
+                    if (bindings_bytes % sizeof(gpu_bridge::transform_feedback_buffer_binding) != 0 ||
+                        req.binding_count != bindings_bytes / sizeof(gpu_bridge::transform_feedback_buffer_binding))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::vector<uint64_t> buffers(req.binding_count);
+                    std::vector<uint64_t> offsets(req.binding_count);
+                    std::vector<uint64_t> sizes(req.binding_count);
+                    size_t cursor = sizeof(req);
+                    for (uint32_t i = 0; i < req.binding_count; ++i)
+                    {
+                        gpu_bridge::transform_feedback_buffer_binding binding{};
+                        std::memcpy(&binding, payload + cursor, sizeof(binding));
+                        cursor += sizeof(binding);
+                        buffers[i] = binding.buffer;
+                        offsets[i] = binding.offset;
+                        sizes[i] = binding.size;
+                    }
+                    return this->vulkan_.cmd_bind_transform_feedback_buffers(req.command_buffer, req.first_binding, buffers, offsets,
+                                                                             sizes);
+                }
+                case gpu_bridge::command::cmd_begin_transform_feedback:
+                case gpu_bridge::command::cmd_end_transform_feedback: {
+                    gpu_bridge::cmd_transform_feedback_request req{};
+                    if (!read(req) || req.has_counter_buffers > 1 || req.has_counter_buffer_offsets > 1)
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    const size_t counters_bytes = size - sizeof(req);
+                    if (counters_bytes % sizeof(gpu_bridge::transform_feedback_counter_buffer) != 0 ||
+                        req.counter_buffer_count != counters_bytes / sizeof(gpu_bridge::transform_feedback_counter_buffer))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    std::vector<uint64_t> buffers(req.counter_buffer_count);
+                    std::vector<uint64_t> offsets(req.counter_buffer_count);
+                    size_t cursor = sizeof(req);
+                    for (uint32_t i = 0; i < req.counter_buffer_count; ++i)
+                    {
+                        gpu_bridge::transform_feedback_counter_buffer counter{};
+                        std::memcpy(&counter, payload + cursor, sizeof(counter));
+                        cursor += sizeof(counter);
+                        buffers[i] = counter.buffer;
+                        offsets[i] = counter.offset;
+                    }
+                    if (static_cast<gpu_bridge::command>(command) == gpu_bridge::command::cmd_begin_transform_feedback)
+                    {
+                        return this->vulkan_.cmd_begin_transform_feedback(req.command_buffer, req.first_counter_buffer, buffers, offsets,
+                                                                          req.has_counter_buffers != 0,
+                                                                          req.has_counter_buffer_offsets != 0);
+                    }
+                    return this->vulkan_.cmd_end_transform_feedback(req.command_buffer, req.first_counter_buffer, buffers, offsets,
+                                                                    req.has_counter_buffers != 0, req.has_counter_buffer_offsets != 0);
+                }
+                case gpu_bridge::command::cmd_draw_indirect_byte_count: {
+                    gpu_bridge::cmd_draw_indirect_byte_count_request req{};
+                    if (!read(req))
+                    {
+                        return vk_error_initialization_failed;
+                    }
+                    return this->vulkan_.cmd_draw_indirect_byte_count(req.command_buffer, req.instance_count, req.first_instance,
+                                                                      req.counter_buffer, req.counter_buffer_offset, req.counter_offset,
+                                                                      req.vertex_stride);
                 }
                 case gpu_bridge::command::cmd_write_timestamp: {
                     gpu_bridge::cmd_write_timestamp_request req{};

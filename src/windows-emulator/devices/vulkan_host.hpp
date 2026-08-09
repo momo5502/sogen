@@ -424,6 +424,19 @@ namespace sogen
         int32_t cmd_reset_query_pool(uint64_t command_buffer, uint64_t query_pool, uint32_t first_query, uint32_t query_count);
         int32_t cmd_begin_query(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t flags);
         int32_t cmd_end_query(uint64_t command_buffer, uint64_t query_pool, uint32_t query);
+        int32_t cmd_begin_query_indexed(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t flags, uint32_t index);
+        int32_t cmd_end_query_indexed(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t index);
+        int32_t cmd_bind_transform_feedback_buffers(uint64_t command_buffer, uint32_t first_binding, std::span<const uint64_t> buffers,
+                                                    std::span<const uint64_t> offsets, std::span<const uint64_t> sizes);
+        int32_t cmd_begin_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer,
+                                             std::span<const uint64_t> counter_buffers, std::span<const uint64_t> counter_buffer_offsets,
+                                             bool has_counter_buffers, bool has_counter_buffer_offsets);
+        int32_t cmd_end_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer,
+                                           std::span<const uint64_t> counter_buffers, std::span<const uint64_t> counter_buffer_offsets,
+                                           bool has_counter_buffers, bool has_counter_buffer_offsets);
+        int32_t cmd_draw_indirect_byte_count(uint64_t command_buffer, uint32_t instance_count, uint32_t first_instance,
+                                             uint64_t counter_buffer, uint64_t counter_buffer_offset, uint32_t counter_offset,
+                                             uint32_t vertex_stride);
         int32_t cmd_write_timestamp(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t pipeline_stage);
         int32_t cmd_write_timestamp2(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint64_t pipeline_stage);
         int32_t cmd_copy_query_pool_results(uint64_t command_buffer, uint64_t query_pool, uint32_t first_query, uint32_t query_count,
@@ -564,6 +577,7 @@ namespace sogen
                                          std::span<const vertex_divisor> divisors, const depth_state& depth,
                                          std::span<const uint32_t> color_formats, uint32_t depth_format, uint32_t stencil_format,
                                          uint32_t rasterization_samples, uint32_t primitive_topology, uint32_t primitive_restart_enable,
+                                         uint32_t rasterization_stream, uint32_t rasterization_stream_flags,
                                          std::span<const uint32_t> dynamic_states, const specialization& vs_spec,
                                          const specialization& fs_spec, std::span<const color_blend_attachment> blend_attachments,
                                          uint64_t& out_pipeline);
@@ -617,6 +631,10 @@ namespace sogen
         int32_t cmd_set_dynamic_u32(uint64_t command_buffer, uint32_t state, uint32_t value);
 
       private:
+        int32_t cmd_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer, std::span<const uint64_t> counter_buffers,
+                                       std::span<const uint64_t> counter_buffer_offsets, bool has_counter_buffers,
+                                       bool has_counter_buffer_offsets, bool begin);
+
         struct impl;
         std::unique_ptr<impl> impl_;
     };

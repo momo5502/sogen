@@ -216,6 +216,127 @@ namespace
         return UINT32_MAX;
     }
 
+    bool test_transform_feedback(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkPhysicalDevice physical_device,
+                                 VkDevice device, uint32_t queue_family)
+    {
+        const auto get_memory_properties =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceMemoryProperties>(get_instance_proc(instance, "vkGetPhysicalDeviceMemoryProperties"));
+        const auto create_buffer = reinterpret_cast<PFN_vkCreateBuffer>(get_instance_proc(instance, "vkCreateBuffer"));
+        const auto destroy_buffer = reinterpret_cast<PFN_vkDestroyBuffer>(get_instance_proc(instance, "vkDestroyBuffer"));
+        const auto get_buffer_requirements =
+            reinterpret_cast<PFN_vkGetBufferMemoryRequirements>(get_instance_proc(instance, "vkGetBufferMemoryRequirements"));
+        const auto allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(get_instance_proc(instance, "vkAllocateMemory"));
+        const auto free_memory = reinterpret_cast<PFN_vkFreeMemory>(get_instance_proc(instance, "vkFreeMemory"));
+        const auto bind_buffer_memory = reinterpret_cast<PFN_vkBindBufferMemory>(get_instance_proc(instance, "vkBindBufferMemory"));
+        const auto create_command_pool = reinterpret_cast<PFN_vkCreateCommandPool>(get_instance_proc(instance, "vkCreateCommandPool"));
+        const auto destroy_command_pool = reinterpret_cast<PFN_vkDestroyCommandPool>(get_instance_proc(instance, "vkDestroyCommandPool"));
+        const auto allocate_command_buffers =
+            reinterpret_cast<PFN_vkAllocateCommandBuffers>(get_instance_proc(instance, "vkAllocateCommandBuffers"));
+        const auto begin_command_buffer = reinterpret_cast<PFN_vkBeginCommandBuffer>(get_instance_proc(instance, "vkBeginCommandBuffer"));
+        const auto end_command_buffer = reinterpret_cast<PFN_vkEndCommandBuffer>(get_instance_proc(instance, "vkEndCommandBuffer"));
+        const auto bind_transform_feedback =
+            reinterpret_cast<PFN_vkCmdBindTransformFeedbackBuffersEXT>(get_instance_proc(instance, "vkCmdBindTransformFeedbackBuffersEXT"));
+        const auto begin_transform_feedback =
+            reinterpret_cast<PFN_vkCmdBeginTransformFeedbackEXT>(get_instance_proc(instance, "vkCmdBeginTransformFeedbackEXT"));
+        const auto end_transform_feedback =
+            reinterpret_cast<PFN_vkCmdEndTransformFeedbackEXT>(get_instance_proc(instance, "vkCmdEndTransformFeedbackEXT"));
+        if (!get_memory_properties || !create_buffer || !destroy_buffer || !get_buffer_requirements || !allocate_memory || !free_memory ||
+            !bind_buffer_memory || !create_command_pool || !destroy_command_pool || !allocate_command_buffers || !begin_command_buffer ||
+            !end_command_buffer || !bind_transform_feedback || !begin_transform_feedback || !end_transform_feedback)
+        {
+            std::printf("[shim-test] transform feedback entry point missing\n");
+            return false;
+        }
+
+        constexpr VkDeviceSize buffer_size = 256;
+        VkBufferCreateInfo buffer_info{};
+        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        buffer_info.size = buffer_size;
+        buffer_info.usage = VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT | VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT;
+        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        VkBuffer buffer = VK_NULL_HANDLE;
+        const VkResult create_result = create_buffer(device, &buffer_info, nullptr, &buffer);
+        VkDeviceMemory memory = VK_NULL_HANDLE;
+        VkResult memory_result = VK_ERROR_INITIALIZATION_FAILED;
+        VkResult bind_result = VK_ERROR_INITIALIZATION_FAILED;
+        if (create_result == VK_SUCCESS)
+        {
+            VkMemoryRequirements requirements{};
+            get_buffer_requirements(device, buffer, &requirements);
+            VkPhysicalDeviceMemoryProperties memory_properties{};
+            get_memory_properties(physical_device, &memory_properties);
+            const uint32_t memory_type = find_memory_type(memory_properties, requirements.memoryTypeBits, 0);
+            if (memory_type != UINT32_MAX)
+            {
+                VkMemoryAllocateInfo allocate_info{};
+                allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+                allocate_info.allocationSize = requirements.size;
+                allocate_info.memoryTypeIndex = memory_type;
+                memory_result = allocate_memory(device, &allocate_info, nullptr, &memory);
+                if (memory_result == VK_SUCCESS)
+                {
+                    bind_result = bind_buffer_memory(device, buffer, memory, 0);
+                }
+            }
+        }
+
+        VkCommandPool pool = VK_NULL_HANDLE;
+        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+        VkResult pool_result = VK_ERROR_INITIALIZATION_FAILED;
+        VkResult allocate_result = VK_ERROR_INITIALIZATION_FAILED;
+        VkResult begin_result = VK_ERROR_INITIALIZATION_FAILED;
+        VkResult end_result = VK_ERROR_INITIALIZATION_FAILED;
+        if (bind_result == VK_SUCCESS)
+        {
+            VkCommandPoolCreateInfo pool_info{};
+            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+            pool_info.queueFamilyIndex = queue_family;
+            pool_result = create_command_pool(device, &pool_info, nullptr, &pool);
+            if (pool_result == VK_SUCCESS)
+            {
+                VkCommandBufferAllocateInfo allocate_info{};
+                allocate_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+                allocate_info.commandPool = pool;
+                allocate_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                allocate_info.commandBufferCount = 1;
+                allocate_result = allocate_command_buffers(device, &allocate_info, &command_buffer);
+                if (allocate_result == VK_SUCCESS)
+                {
+                    VkCommandBufferBeginInfo begin_info{};
+                    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                    begin_result = begin_command_buffer(command_buffer, &begin_info);
+                    if (begin_result == VK_SUCCESS)
+                    {
+                        constexpr VkDeviceSize offset = 0;
+                        bind_transform_feedback(command_buffer, 0, 1, &buffer, &offset, &buffer_size);
+                        begin_transform_feedback(command_buffer, 0, 1, &buffer, &offset);
+                        end_transform_feedback(command_buffer, 0, 1, &buffer, &offset);
+                        end_result = end_command_buffer(command_buffer);
+                    }
+                }
+            }
+        }
+
+        const bool ok = create_result == VK_SUCCESS && memory_result == VK_SUCCESS && bind_result == VK_SUCCESS &&
+                        pool_result == VK_SUCCESS && allocate_result == VK_SUCCESS && begin_result == VK_SUCCESS &&
+                        end_result == VK_SUCCESS;
+        std::printf("[shim-test] transform feedback command recording -> %s\n", ok ? "PASS" : "FAIL");
+        if (pool != VK_NULL_HANDLE)
+        {
+            destroy_command_pool(device, pool, nullptr);
+        }
+        if (buffer != VK_NULL_HANDLE)
+        {
+            destroy_buffer(device, buffer, nullptr);
+        }
+        if (memory != VK_NULL_HANDLE)
+        {
+            free_memory(device, memory, nullptr);
+        }
+        return ok;
+    }
+
     // Allocates a host-visible buffer, has the GPU fill it with a known pattern via vkCmdFillBuffer,
     // then maps it back and verifies the bytes -- the first end-to-end "GPU produces data the guest
     // reads back" path across the bridge.
@@ -658,6 +779,8 @@ int main(int argc, char** argv)
         reinterpret_cast<PFN_vkGetPhysicalDeviceProperties>(get_instance_proc(instance, "vkGetPhysicalDeviceProperties"));
     const auto destroy_instance = reinterpret_cast<PFN_vkDestroyInstance>(get_instance_proc(instance, "vkDestroyInstance"));
 
+    bool transform_feedback_test_ok = true;
+    bool transform_feedback_capabilities_ok = true;
     uint32_t count = 0;
     result = enumerate(instance, &count, nullptr);
     std::printf("[shim-test] vkEnumeratePhysicalDevices -> %d, count=%u\n", result, count);
@@ -686,6 +809,62 @@ int main(int argc, char** argv)
         const auto create_device = reinterpret_cast<PFN_vkCreateDevice>(get_instance_proc(instance, "vkCreateDevice"));
         const auto get_device_queue = reinterpret_cast<PFN_vkGetDeviceQueue>(get_instance_proc(instance, "vkGetDeviceQueue"));
         const auto destroy_device = reinterpret_cast<PFN_vkDestroyDevice>(get_instance_proc(instance, "vkDestroyDevice"));
+        const auto enumerate_device_extensions =
+            reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(get_instance_proc(instance, "vkEnumerateDeviceExtensionProperties"));
+        const auto get_features2 =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceFeatures2>(get_instance_proc(instance, "vkGetPhysicalDeviceFeatures2"));
+        const auto get_properties2 =
+            reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(get_instance_proc(instance, "vkGetPhysicalDeviceProperties2"));
+
+        bool transform_feedback_extension_present = false;
+        if (enumerate_device_extensions)
+        {
+            uint32_t extension_count = 0;
+            enumerate_device_extensions(devices[0], nullptr, &extension_count, nullptr);
+            std::vector<VkExtensionProperties> extensions(extension_count);
+            enumerate_device_extensions(devices[0], nullptr, &extension_count, extensions.data());
+            for (const auto& extension : extensions)
+            {
+                if (std::strcmp(extension.extensionName, VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME) == 0)
+                {
+                    transform_feedback_extension_present = true;
+                    break;
+                }
+            }
+        }
+
+        VkPhysicalDeviceTransformFeedbackFeaturesEXT available_transform_feedback_features{};
+        available_transform_feedback_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
+        if (transform_feedback_extension_present && get_features2)
+        {
+            VkPhysicalDeviceFeatures2 features2{};
+            features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            features2.pNext = &available_transform_feedback_features;
+            get_features2(devices[0], &features2);
+        }
+
+        VkPhysicalDeviceTransformFeedbackPropertiesEXT available_transform_feedback_properties{};
+        available_transform_feedback_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT;
+        if (transform_feedback_extension_present && get_properties2)
+        {
+            VkPhysicalDeviceProperties2 properties2{};
+            properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            properties2.pNext = &available_transform_feedback_properties;
+            get_properties2(devices[0], &properties2);
+        }
+        if (transform_feedback_extension_present)
+        {
+            transform_feedback_capabilities_ok =
+                get_features2 && get_properties2 && available_transform_feedback_features.geometryStreams == VK_FALSE &&
+                available_transform_feedback_properties.maxTransformFeedbackStreams <= 1 &&
+                available_transform_feedback_properties.transformFeedbackStreamsLinesTriangles == VK_FALSE &&
+                available_transform_feedback_properties.transformFeedbackRasterizationStreamSelect == VK_FALSE;
+        }
+        const bool transform_feedback_supported =
+            transform_feedback_extension_present && available_transform_feedback_features.transformFeedback == VK_TRUE;
+        std::printf("[shim-test] %s advertised=%s feature=%u capability mask=%s\n", VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME,
+                    transform_feedback_extension_present ? "yes" : "no", available_transform_feedback_features.transformFeedback,
+                    transform_feedback_capabilities_ok ? "PASS" : "FAIL");
 
         const char* calibrated_timestamps_extension = nullptr;
         if (enumerate_device_extensions)
@@ -772,11 +951,30 @@ int main(int argc, char** argv)
             device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
             device_info.queueCreateInfoCount = queue_info_count;
             device_info.pQueueCreateInfos = queue_infos.data();
-            device_info.pNext = timestamp2_test_supported ? &enabled_vulkan13_features : nullptr;
+
+            VkPhysicalDeviceTransformFeedbackFeaturesEXT transform_feedback_features{};
+            void* enabled_feature_chain = nullptr;
+            if (transform_feedback_supported)
+            {
+                transform_feedback_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT;
+                transform_feedback_features.transformFeedback = VK_TRUE;
+                transform_feedback_features.pNext = enabled_feature_chain;
+                enabled_feature_chain = &transform_feedback_features;
+            }
+            if (timestamp2_test_supported)
+            {
+                enabled_vulkan13_features.pNext = enabled_feature_chain;
+                enabled_feature_chain = &enabled_vulkan13_features;
+            }
+            device_info.pNext = enabled_feature_chain;
             std::vector<const char*> enabled_extensions;
             if (calibrated_timestamps_extension)
             {
                 enabled_extensions.push_back(calibrated_timestamps_extension);
+            }
+            if (transform_feedback_supported)
+            {
+                enabled_extensions.push_back(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME);
             }
             device_info.enabledExtensionCount = static_cast<uint32_t>(enabled_extensions.size());
             device_info.ppEnabledExtensionNames = enabled_extensions.data();
@@ -811,6 +1009,14 @@ int main(int argc, char** argv)
                     std::printf("[shim-test] calibrated timestamps -> SKIP (extension unavailable)\n");
                 }
 
+                if (transform_feedback_supported)
+                {
+                    transform_feedback_test_ok = test_transform_feedback(get_instance_proc, instance, devices[0], device, graphics_family);
+                }
+                else
+                {
+                    std::printf("[shim-test] transform feedback command recording -> SKIP (feature unavailable)\n");
+                }
                 submit_and_wait(get_instance_proc, instance, device, queue, graphics_family);
                 fill_buffer_and_readback(get_instance_proc, instance, devices[0], device, queue, graphics_family);
                 clear_image_and_readback(get_instance_proc, instance, devices[0], device, queue, graphics_family);
@@ -825,7 +1031,8 @@ int main(int argc, char** argv)
         destroy_instance(instance, nullptr);
     }
 
-    const bool all_ok = timestamp2_test_ok && calibrated_timestamps_test_ok;
+    const bool all_ok =
+        timestamp2_test_ok && calibrated_timestamps_test_ok && transform_feedback_test_ok && transform_feedback_capabilities_ok;
     std::printf("[shim-test] %s\n", all_ok ? "ok" : "FAILED");
     return all_ok ? 0 : 6;
 }
