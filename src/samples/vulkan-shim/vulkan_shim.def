@@ -24,12 +24,14 @@ EXPORTS
     vkCmdBindVertexBuffers
     vkCmdBindVertexBuffers2
     vkCmdBlitImage2
+    vkCmdBlitImage
     vkCmdBlitImage2KHR
     vkCmdClearAttachments
     vkCmdClearColorImage
     vkCmdClearDepthStencilImage
     vkCmdBeginQuery
     vkCmdCopyBuffer
+    vkCmdCopyQueryPoolResults
     vkCmdCopyBufferToImage
     vkCmdCopyBufferToImage2
     vkCmdCopyImage
@@ -43,11 +45,20 @@ EXPORTS
     vkCmdDispatchIndirect
     vkCmdDraw
     vkCmdDrawIndexed
+    vkCmdDrawIndexedIndirect
+    vkCmdDrawIndexedIndirectCount
+    vkCmdDrawIndexedIndirectCountKHR
+    vkCmdDrawIndirect
+    vkCmdDrawIndirectCount
+    vkCmdDrawIndirectCountKHR
     vkCmdEndQuery
     vkCmdResetQueryPool
     vkCmdWriteTimestamp
+    vkCmdWriteTimestamp2
+    vkCmdWriteTimestamp2KHR
     vkCmdEndDebugUtilsLabelEXT
     vkCmdEndRenderPass
+    vkCmdNextSubpass
     vkCmdEndRendering
     vkCmdExecuteCommands
     vkCmdFillBuffer
@@ -122,6 +133,7 @@ EXPORTS
     vkDeviceWaitIdle
     vkEndCommandBuffer
     vkEnumerateDeviceExtensionProperties
+    vkEnumerateDeviceLayerProperties
     vkFlushMappedMemoryRanges
     vkInvalidateMappedMemoryRanges
     vkEnumerateInstanceExtensionProperties
@@ -129,18 +141,32 @@ EXPORTS
     vkEnumerateInstanceVersion
     vkEnumeratePhysicalDevices
     vkFreeCommandBuffers
+    vkFreeDescriptorSets
     vkFreeMemory
     vkGetBufferMemoryRequirements
     vkGetDeviceProcAddr
     vkGetDeviceQueue
+    vkGetDeviceImageSparseMemoryRequirements
+    vkGetDeviceMemoryCommitment
+    vkGetDescriptorSetLayoutSupport
+    vkGetDescriptorSetLayoutSupportKHR
     vkGetFenceStatus
     vkGetImageMemoryRequirements
+    vkGetImageSparseMemoryRequirements
+    vkGetImageSparseMemoryRequirements2
+    vkGetImageSparseMemoryRequirements2KHR
     vkGetImageSubresourceLayout
     vkGetInstanceProcAddr
     vkGetQueryPoolResults
     vkGetPhysicalDeviceExternalSemaphoreProperties
     vkGetPhysicalDeviceFeatures
     vkGetPhysicalDeviceFeatures2
+    vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR
+    vkGetPhysicalDeviceFragmentShadingRatesKHR
+    vkGetPhysicalDeviceCalibrateableTimeDomainsKHR
+    vkGetPhysicalDeviceCalibrateableTimeDomainsEXT
+    vkGetCalibratedTimestampsKHR
+    vkGetCalibratedTimestampsEXT
     vkGetPhysicalDeviceFormatProperties
     vkGetPhysicalDeviceFormatProperties2
     vkGetPhysicalDeviceImageFormatProperties
@@ -164,6 +190,7 @@ EXPORTS
     vkGetSwapchainImagesKHR
     vkMapMemory
     vkQueuePresentKHR
+    vkQueueBindSparse
     vkQueueSubmit
     vkQueueWaitIdle
     vkReleaseSwapchainImagesEXT

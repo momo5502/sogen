@@ -48,6 +48,8 @@ namespace sogen::gpu_bridge
             return sizeof(VkPhysicalDeviceMaintenance8FeaturesKHR);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_9_FEATURES_KHR:
             return sizeof(VkPhysicalDeviceMaintenance9FeaturesKHR);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES:
+            return sizeof(VkPhysicalDeviceVertexAttributeDivisorFeatures);
         default:
             return 0;
         }
@@ -89,6 +91,10 @@ namespace sogen::gpu_bridge
             return sizeof(VkPhysicalDeviceMaintenance7PropertiesKHR);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_9_PROPERTIES_KHR:
             return sizeof(VkPhysicalDeviceMaintenance9PropertiesKHR);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES:
+            return sizeof(VkPhysicalDeviceVertexAttributeDivisorProperties);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES_EXT:
+            return sizeof(VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT);
         default:
             return 0;
         }
