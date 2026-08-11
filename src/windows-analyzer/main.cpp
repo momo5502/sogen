@@ -7,6 +7,7 @@
 #include <win_x86_64_gdb_stub_handler.hpp>
 #include <minidump_loader.hpp>
 #include <scoped_hook.hpp>
+#include <registry/registry_file.hpp>
 
 #include "object_watching.hpp"
 #include "snapshot.hpp"
@@ -72,6 +73,7 @@ namespace sogen
             bool disable_instruction_precision{false};
             uint32_t vcpu_count{1};
             std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
+            std::vector<std::filesystem::path> registry_files{};
             std::filesystem::path emulation_root{};
             std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
             utils::unordered_insensitive_u16string_map<std::u16string> environment{};
@@ -548,6 +550,14 @@ namespace sogen
             return std::make_unique<windows_emulator>(create_configured_backend(options), std::move(app_settings), settings);
         }
 
+        void apply_registry_files(windows_emulator& win_emu, const analysis_options& options)
+        {
+            for (const auto& file : options.registry_files)
+            {
+                import_registry_file(win_emu.registry, file);
+            }
+        }
+
         std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options, const std::span<const std::string_view> args)
         {
             if (!options.dump.empty())
@@ -605,6 +615,7 @@ namespace sogen
 
             const auto concise_logging = options.concise_logging;
             const auto win_emu = setup_emulator(options, args);
+            apply_registry_files(*win_emu, options);
             context.win_emu = win_emu.get();
 
             std::vector<std::unique_ptr<analysis_reporter>> reporters{};
@@ -902,6 +913,10 @@ namespace sogen
                 ->capture_default_str()
                 ->check(CLI::IsMember({"auto", "int3"}));
             app.add_option("-r,--registry", options.registry_path, "Set registry path");
+            app.add_option("--reg-file", options.registry_files, "Import registry values from a .reg file")
+                ->type_name("FILE")
+                ->expected(1)
+                ->allow_extra_args(false);
 
             app.add_option("--vcpus", options.vcpu_count, "Number of virtual CPUs (requires a backend with multi-vCPU support)")
                 ->capture_default_str();

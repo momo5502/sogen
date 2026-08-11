@@ -118,11 +118,15 @@ namespace sogen
         registry_manager& operator=(const registry_manager&) = delete;
 
         std::optional<registry_key> get_key(const utils::path_key& key);
+        bool can_create_key(const std::filesystem::path& key) const;
+        std::optional<registry_key> create_key(const std::filesystem::path& key);
         std::optional<registry_value> get_value(const registry_key& key, std::string_view name);
         std::optional<registry_value> get_value(const registry_key& key, size_t index);
+        size_t get_value_count(const registry_key& key);
         void set_value(const registry_key& key, std::string name, uint32_t type, std::span<const std::byte> data);
 
         std::optional<std::string_view> get_sub_key_name(const registry_key& key, size_t index);
+        size_t get_sub_key_count(const registry_key& key);
 
         std::optional<exposed_hive_key> get_hive_key(const registry_key& key);
 
@@ -151,15 +155,18 @@ namespace sogen
 
         struct overlay_bucket
         {
+            utils::insensitive_string_map<bool> sub_keys{};
             utils::insensitive_string_map<overlay_value> values{};
 
             void serialize(utils::buffer_serializer& buffer) const
             {
+                buffer.write_map(this->sub_keys);
                 buffer.write_map(this->values);
             }
 
             void deserialize(utils::buffer_deserializer& buffer)
             {
+                buffer.read_map(this->sub_keys);
                 buffer.read_map(this->values);
             }
         };
@@ -174,6 +181,7 @@ namespace sogen
         void add_path_mapping(const utils::path_key& key, const utils::path_key& value);
 
         hive_map::iterator find_hive(const utils::path_key& key);
+        hive_map::const_iterator find_hive(const utils::path_key& key) const;
 
         void setup();
     };
