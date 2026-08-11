@@ -426,7 +426,7 @@ namespace sogen
         int32_t cmd_end_query(uint64_t command_buffer, uint64_t query_pool, uint32_t query);
         int32_t cmd_begin_query_indexed(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t flags, uint32_t index);
         int32_t cmd_end_query_indexed(uint64_t command_buffer, uint64_t query_pool, uint32_t query, uint32_t index);
-        int32_t cmd_bind_transform_feedback_buffers(uint64_t command_buffer, uint32_t first_binding, std::span<const uint64_t> buffers,
+        int32_t cmd_bind_transform_feedback_buffers(uint64_t command_buffer, uint32_t first_binding, std::span<const uint64_t> buffer_ids,
                                                     std::span<const uint64_t> offsets, std::span<const uint64_t> sizes);
         int32_t cmd_begin_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer,
                                              std::span<const uint64_t> counter_buffers, std::span<const uint64_t> counter_buffer_offsets,
@@ -631,7 +631,7 @@ namespace sogen
         int32_t cmd_set_dynamic_u32(uint64_t command_buffer, uint32_t state, uint32_t value);
 
       private:
-        int32_t cmd_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer, std::span<const uint64_t> counter_buffers,
+        int32_t cmd_transform_feedback(uint64_t command_buffer, uint32_t first_counter_buffer, std::span<const uint64_t> counter_buffer_ids,
                                        std::span<const uint64_t> counter_buffer_offsets, bool has_counter_buffers,
                                        bool has_counter_buffer_offsets, bool begin);
 
