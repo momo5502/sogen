@@ -345,8 +345,15 @@ namespace sogen
             }
         }
 
+        const auto normalized_component_count = static_cast<size_t>(std::ranges::count_if(
+            normal_key.get(), [&](const auto& component) { return !component.empty() && component != normal_key.get().root_directory(); }));
+        if (display_components.size() != normalized_component_count)
+        {
+            throw std::logic_error("Registry path normalization changed the component count");
+        }
+
         const auto component_count = static_cast<size_t>(std::ranges::distance(reg_key.path.get()));
-        const auto display_offset = display_components.size() >= component_count ? display_components.size() - component_count : 0;
+        const auto display_offset = display_components.size() - component_count;
 
         auto current_path = reg_key.hive.get();
         size_t component_index = 0;
@@ -356,8 +363,7 @@ namespace sogen
             current_path /= component;
 
             const auto display_component_index = display_offset + component_index;
-            const auto& display_component =
-                display_component_index < display_components.size() ? display_components[display_component_index] : component;
+            const auto& display_component = display_components[display_component_index];
             const utils::path_key current_key{current_path};
             if (!this->get_key(current_key))
             {
