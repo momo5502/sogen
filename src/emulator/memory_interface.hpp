@@ -15,6 +15,12 @@ namespace sogen
     using mmio_read_callback = std::function<void(uint64_t addr, void* data, size_t size)>;
     using mmio_write_callback = std::function<void(uint64_t addr, const void* data, size_t size)>;
 
+    struct host_reserved_range
+    {
+        uint64_t address;
+        size_t size;
+    };
+
     class memory_manager;
     class linux_memory_manager;
 
@@ -50,6 +56,38 @@ namespace sogen
         }
 
         virtual void flush_host_memory_cache(const void* /*host_pointer*/, size_t /*size*/)
+        {
+        }
+
+        // Ranges of the host process's own address space (its image, dyld, shared libraries) that the
+        // guest must avoid, for backends where guest VA == host VA. Best-effort snapshot: host
+        // allocations made after the query are not covered. Backends with an independent guest
+        // address space have nothing to report.
+        virtual std::vector<host_reserved_range> reserved_host_ranges() const
+        {
+            return {};
+        }
+
+        // reserved_host_ranges() restricted to [address, address + size), for callers checking one
+        // specific target instead of re-enumerating the whole address space.
+        virtual std::vector<host_reserved_range> reserved_host_ranges_in(uint64_t /*address*/, size_t /*size*/) const
+        {
+            return this->reserved_host_ranges();
+        }
+
+        // Called whenever the memory manager claims a guest range, including a bare MEM_RESERVE that is
+        // not backed by a real mapping yet. Backends sharing the address space with the guest (see
+        // reserved_host_ranges) must claim it at the host OS level here, otherwise an unconstrained
+        // host allocation (e.g. a JIT code buffer) can land inside a reserved-but-uncommitted range.
+        virtual void reserve_guest_address_range(uint64_t /*address*/, size_t /*size*/)
+        {
+        }
+
+        // Counterpart to reserve_guest_address_range, called once a guest range is genuinely freed -
+        // not on a decommit, where the range stays reserved and the host claim must persist. The
+        // caller expands the freed range to the surrounding unreserved gap, so the backend may drop
+        // any host claim wholly inside it.
+        virtual void release_guest_address_range(uint64_t /*address*/, size_t /*size*/)
         {
         }
 

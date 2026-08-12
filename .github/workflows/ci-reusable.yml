@@ -264,6 +264,7 @@ jobs:
           #- Linux x86_64 GCC
           - Linux x86_64 GCC Sanitizer
           - Linux x86_64 Clang
+          - Linux arm64 Clang
           - macOS arm64
           #- macOS x86_64
           #- iOS arm64
@@ -297,6 +298,9 @@ jobs:
           #  runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
+            clang-version: 21
+          - platform: Linux arm64 Clang
+            runner: ubuntu-24.04-arm
             clang-version: 21
           #- platform: iOS arm64
           #  runner: macos-latest
@@ -347,7 +351,7 @@ jobs:
 
       - name: Install Clang
         uses: nick-fields/retry@v4.0.0
-        if: "${{ matrix.platform == 'Linux x86_64 Clang' }}"
+        if: "${{ matrix.clang-version }}"
         with:
           max_attempts: 5
           timeout_minutes: 15
@@ -361,6 +365,19 @@ jobs:
             sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++-${{ matrix.clang-version }} 100
             sudo update-alternatives --set cc /usr/bin/clang-${{ matrix.clang-version }}
             sudo update-alternatives --set c++ /usr/bin/clang++-${{ matrix.clang-version }}
+
+      # ubuntu-24.04-arm doesn't ship ninja-build preinstalled the way ubuntu-24.04 (x86_64) does,
+      # and every preset here requires the Ninja generator.
+      - name: Install Ninja
+        if: "${{ matrix.platform == 'Linux arm64 Clang' }}"
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ninja-build
 
       - name: Set up MinGW
         uses: egor-tensin/setup-mingw@v3
@@ -389,7 +406,7 @@ jobs:
           echo "ANDROID_ABI=${{ matrix.abi }}" >> $GITHUB_ENV
 
       - name: Install Linux UI Dependencies
-        if: "${{ contains(matrix.platform, 'Linux x86_64') }}"
+        if: "${{ startsWith(matrix.platform, 'Linux') }}"
         uses: nick-fields/retry@v4.0.0
         with:
           max_attempts: 5
@@ -415,6 +432,14 @@ jobs:
 
       - name: Install libclang (Steam bridge codegen)
         run: python -m pip install --disable-pip-version-check libclang
+
+      # deps/FEX/CMakeLists.txt invokes aarch64_fit_native.py via execute_process(COMMAND python3 ...),
+      # which resolves through PATH - the interpreter Set up Python just configured, not a system one.
+      # Needed on every platform SOGEN_ENABLE_FEX can be true on (see the root CMakeLists' gate: ARM64 +
+      # Clang + Linux-or-Darwin).
+      - name: Install FEXCore Build Prerequisites (Python)
+        if: "${{ matrix.platform == 'Linux arm64 Clang' || matrix.platform == 'macOS arm64' }}"
+        run: python -m pip install --disable-pip-version-check packaging
 
       - name: CMake Build
         run: cmake --preset=${{matrix.preset}} ${{matrix.cmake-options}} && cmake --build --preset=${{matrix.preset}}
@@ -847,6 +872,50 @@ jobs:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
 
+  smoke-test-fex:
+    name: Smoke Test FEX (macOS arm64)
+    runs-on: macos-latest
+    needs: [create-emulation-root, build]
+    steps:
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: macOS arm64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Windows Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 2025 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      # FEX shares the guest address space directly with the host process (unlike Unicorn/Icicle's own
+      # simulated address space), so its free-region search competes with whatever the host's own ASLR
+      # layout happens to leave available this run - a pre-existing, known-flaky class of failure
+      # ("Memory range not allocatable" mapping a module, or an unrelated exit-133 crash under
+      # AddressSanitizer-adjacent conditions) that a fresh process retry, with its own fresh ASLR
+      # layout, reliably works around. Not a substitute for the underlying address-space-exhaustion
+      # investigation, which is tracked separately.
+      - name: CMake Test
+        uses: nick-fields/retry@v4.0.0
+        with:
+          max_attempts: 5
+          timeout_minutes: 10
+          command: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer -e root c:/test-sample.exe
+        env:
+          EMULATOR_FEX: "1"
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ inputs.verbose }}
+
   smoke-test-mingw:
     name: Smoke Test MinGW x86_64
     runs-on: windows-latest
@@ -1252,6 +1321,7 @@ jobs:
         build-root-tools,
         smoke-test-whp,
         smoke-test-kvm,
+        smoke-test-fex,
         smoke-test-node,
         smoke-test-mingw,
         smoke-test-win32,

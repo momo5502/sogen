@@ -15,6 +15,10 @@
 #include <kvm_x86_64_emulator.hpp>
 #endif
 
+#if defined(SOGEN_ENABLE_FEX)
+#include <fex_x86_64_emulator.hpp>
+#endif
+
 using namespace std::literals;
 
 namespace sogen
@@ -44,6 +48,11 @@ namespace sogen
 #if defined(__linux__) && !defined(__ANDROID__) && (defined(__x86_64__) || defined(__amd64__))
             case backend_type::kvm:
                 return kvm::create_x86_64_emulator();
+#endif
+
+#if defined(SOGEN_ENABLE_FEX)
+            case backend_type::fex:
+                return fex::create_x86_64_emulator();
 #endif
 
             default:
@@ -93,6 +102,14 @@ namespace sogen
             if (env && (env == "1"sv || env == "true"sv))
             {
                 backend = backend_type::kvm;
+            }
+        }
+
+        {
+            const auto* env = getenv("EMULATOR_FEX");
+            if (env && (env == "1"sv || env == "true"sv))
+            {
+                backend = backend_type::fex;
             }
         }
 

@@ -121,3 +121,7 @@ add_subdirectory(capstone)
 
 include(googletest.cmake)
 include(zstd.cmake)
+
+##########################################
+
+include("${PROJECT_SOURCE_DIR}/cmake/fex.cmake")
