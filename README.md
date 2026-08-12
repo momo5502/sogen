@@ -19,6 +19,7 @@ Built in C++ and powered by the CPU backend of your choice:
 - [icicle-emu](https://github.com/icicle-emu/icicle-emu)
 - [Hyper-V (WHP)](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/hypervisor-platform)
 - [KVM](https://www.kernel.org/doc/html/latest/virt/kvm/api.html)
+- [FEX](https://fex-emu.com)
 
 Try it out: <a href="https://sogen.dev">sogen.dev</a>  
 &nbsp;  
