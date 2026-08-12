@@ -1652,6 +1652,7 @@ namespace sogen
             if (base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT)
             {
                 auto* features = reinterpret_cast<VkPhysicalDeviceTransformFeedbackFeaturesEXT*>(buffer.data());
+                // TODO: Expose geometry-stream support after geometry shaders are bridged.
                 features->geometryStreams = VK_FALSE;
             }
         }
@@ -1753,6 +1754,7 @@ namespace sogen
             if (base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT)
             {
                 auto* properties = reinterpret_cast<VkPhysicalDeviceTransformFeedbackPropertiesEXT*>(buffer.data());
+                // TODO: Expose multiple transform-feedback streams after geometry shaders are bridged.
                 properties->maxTransformFeedbackStreams = std::min(properties->maxTransformFeedbackStreams, 1u);
                 properties->transformFeedbackStreamsLinesTriangles = VK_FALSE;
                 properties->transformFeedbackRasterizationStreamSelect = VK_FALSE;
@@ -1912,6 +1914,7 @@ namespace sogen
                         if (type == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT)
                         {
                             auto* transform_feedback = reinterpret_cast<VkPhysicalDeviceTransformFeedbackFeaturesEXT*>(buffer.data());
+                            // TODO: Enable geometryStreams after geometry shaders are bridged.
                             transform_feedback->geometryStreams = VK_FALSE;
                         }
                         feature_tail->pNext = base;
@@ -4749,7 +4752,7 @@ namespace sogen
         const auto buffer = this->impl_->buffers.find(counter_buffer);
         if (cb == this->impl_->command_buffers.end() || buffer == this->impl_->buffers.end() ||
             buffer->second.device_id != cb->second.device_id || counter_buffer_offset > buffer->second.size ||
-            buffer->second.size - counter_buffer_offset < 4 || vertex_stride == 0)
+            buffer->second.size - counter_buffer_offset < sizeof(uint32_t) || vertex_stride == 0)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
