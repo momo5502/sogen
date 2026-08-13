@@ -802,15 +802,22 @@ namespace sogen
             }
 
             // opnum 25: IMMDeviceEnumerator::GetDefaultAudioEndpoint backend.
-            //   [in]  DWORD data_flow (0 = eRender, 1 = eCapture)  [+ role]
+            //   [in]  EDataFlow data_flow (0 = eRender, 1 = eCapture)
+            //   [in]  ERole role
             //   [out] LPWSTR* device_id   (unique pointer + conformant-varying wstring)
             //   [out] DWORD*  state
             //   returns HRESULT
+            // NDR32 encodes these enums as adjacent 16-bit values, while NDR64 encodes each as a 32-bit value.
             static NTSTATUS handle_get_default_endpoint(windows_emulator& win_emu, const lpc_request_context& c,
                                                         utils::aligned_binary_writer& writer)
             {
                 uint32_t data_flow = 0;
-                if (c.send_buffer && c.send_buffer_length >= sizeof(uint32_t))
+                if (c.send_buffer && writer.pointer_size() == utils::aligned_binary_writer::pointer_size_32 &&
+                    c.send_buffer_length >= sizeof(uint16_t))
+                {
+                    data_flow = win_emu.emu().read_memory<uint16_t>(c.send_buffer);
+                }
+                else if (c.send_buffer && c.send_buffer_length >= sizeof(uint32_t))
                 {
                     data_flow = win_emu.emu().read_memory<uint32_t>(c.send_buffer);
                 }
