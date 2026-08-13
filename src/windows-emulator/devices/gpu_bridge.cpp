@@ -1399,7 +1399,8 @@ namespace sogen
                 }
 
                 uint64_t memory = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.allocate_memory(request.device, request.size, request.memory_type_index, memory);
+                const int32_t result = this->vulkan_.allocate_memory(request.device, request.size, request.memory_type_index, request.flags,
+                                                                     request.device_mask, memory);
                 return write_output(win_emu, context,
                                     gpu_bridge::allocate_memory_response{.vk_result = result, .reserved = 0, .memory = memory});
             }
@@ -1883,13 +1884,18 @@ namespace sogen
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
+                std::vector<gpu_bridge::object_id> wait_semaphores;
+                if (!read_trailing_array(win_emu, context, sizeof(request), request.wait_semaphore_count, wait_semaphores))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
 
                 std::vector<std::byte> pixels;
                 uint32_t width = 0;
                 uint32_t height = 0;
                 uint64_t hwnd_value = 0;
-                const int32_t result =
-                    this->vulkan_.queue_present(request.queue, request.swapchain, request.image_index, pixels, width, height, hwnd_value);
+                const int32_t result = this->vulkan_.queue_present(request.queue, request.swapchain, request.image_index, wait_semaphores,
+                                                                   pixels, width, height, hwnd_value);
 
                 // Hand the freshly read-back pixels to the guest window through the UI backend (the same
                 // seam GDI EndPaint uses). The swapchain is B8G8R8A8, matching bgra8, so no swizzle.
@@ -2338,12 +2344,13 @@ namespace sogen
                     *binding_out = {.binding = entry.binding,
                                     .descriptor_type = entry.descriptor_type,
                                     .descriptor_count = entry.descriptor_count,
-                                    .stage_flags = entry.stage_flags};
+                                    .stage_flags = entry.stage_flags,
+                                    .binding_flags = entry.binding_flags};
                     ++binding_out;
                 }
 
                 uint64_t layout = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_descriptor_set_layout(request.device, bindings, layout);
+                const int32_t result = this->vulkan_.create_descriptor_set_layout(request.device, request.flags, bindings, layout);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = layout});
             }
 
@@ -2370,12 +2377,14 @@ namespace sogen
                     *binding_out = {.binding = entry.binding,
                                     .descriptor_type = entry.descriptor_type,
                                     .descriptor_count = entry.descriptor_count,
-                                    .stage_flags = entry.stage_flags};
+                                    .stage_flags = entry.stage_flags,
+                                    .binding_flags = entry.binding_flags};
                     ++binding_out;
                 }
 
                 gpu_bridge::descriptor_set_layout_support_response response{};
-                response.vk_result = this->vulkan_.get_descriptor_set_layout_support(request.device, bindings, response.supported);
+                response.vk_result =
+                    this->vulkan_.get_descriptor_set_layout_support(request.device, request.flags, bindings, response.supported);
                 return write_output(win_emu, context, response);
             }
 
@@ -2415,7 +2424,8 @@ namespace sogen
                 }
 
                 uint64_t pool = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_descriptor_pool(request.device, request.max_sets, sizes, pool);
+                const int32_t result = this->vulkan_.create_descriptor_pool(request.device, request.max_sets, request.flags,
+                                                                            request.max_inline_uniform_block_bindings, sizes, pool);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = pool});
             }
 

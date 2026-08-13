@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 28;
+    inline constexpr uint32_t protocol_version = 30;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -872,6 +872,8 @@ namespace sogen::gpu_bridge
         object_id device;
         uint64_t size; // VkDeviceSize allocationSize
         uint32_t memory_type_index;
+        uint32_t flags;       // VkMemoryAllocateFlags
+        uint32_t device_mask; // VkMemoryAllocateFlagsInfo::deviceMask
         uint32_t reserved;
     };
 
@@ -1333,7 +1335,7 @@ namespace sogen::gpu_bridge
         object_id queue;
         object_id swapchain;
         uint32_t image_index;
-        uint32_t reserved;
+        uint32_t wait_semaphore_count;
     };
 
     // Shared output for the "create a device child" commands below (one new object id).
@@ -2001,6 +2003,7 @@ namespace sogen::gpu_bridge
         uint32_t descriptor_type;  // VkDescriptorType
         uint32_t descriptor_count; // array size (1 for a scalar binding)
         uint32_t stage_flags;      // VkShaderStageFlags
+        uint32_t binding_flags;    // VkDescriptorBindingFlags
     };
 
     // ioctl_create_descriptor_set_layout: in header immediately followed by `binding_count`
@@ -2009,18 +2012,15 @@ namespace sogen::gpu_bridge
     {
         object_id device;
         uint32_t binding_count;
-        uint32_t reserved;
+        uint32_t flags; // VkDescriptorSetLayoutCreateFlags
         // descriptor_set_layout_binding bindings[binding_count];
     };
 
-    // A separate query payload deliberately preserves the existing create-layout wire format. The bridge
-    // only evaluates the subset it can also create faithfully: flags == 0, no input pNext structures, and
-    // no immutable samplers. More advanced layouts are rejected conservatively by the guest shim.
     struct get_descriptor_set_layout_support_request
     {
         object_id device;
         uint32_t binding_count;
-        uint32_t reserved;
+        uint32_t flags; // VkDescriptorSetLayoutCreateFlags
         // descriptor_set_layout_binding bindings[binding_count];
     };
 
@@ -2044,7 +2044,8 @@ namespace sogen::gpu_bridge
         object_id device;
         uint32_t max_sets;
         uint32_t pool_size_count;
-        uint32_t reserved;
+        uint32_t flags; // VkDescriptorPoolCreateFlags
+        uint32_t max_inline_uniform_block_bindings;
         // descriptor_pool_size pool_sizes[pool_size_count];
     };
 
@@ -2157,7 +2158,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(object_id) == 8 && alignof(object_id) == 8, "object_id must be a portable 64-bit value");
     static_assert(sizeof(command_record_header) == 8, "wire layout drift");
     static_assert(sizeof(version_response) == 8, "wire layout drift");
-    static_assert(sizeof(allocate_memory_request) == 24, "wire layout drift");
+    static_assert(sizeof(allocate_memory_request) == 32, "wire layout drift");
     static_assert(sizeof(bind_buffer_memory_request) == 32, "wire layout drift");
     static_assert(sizeof(cmd_draw_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_bind_pipeline_request) == 24, "wire layout drift");
@@ -2210,7 +2211,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_set_stencil_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_set_stencil_op_request) == 32, "wire layout drift");
     static_assert(sizeof(cmd_set_dynamic_u32_request) == 16, "wire layout drift");
-    static_assert(sizeof(descriptor_set_layout_binding) == 16, "wire layout drift");
+    static_assert(sizeof(descriptor_set_layout_binding) == 20, "wire layout drift");
     static_assert(sizeof(get_descriptor_set_layout_support_request) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_support_response) == 8, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");

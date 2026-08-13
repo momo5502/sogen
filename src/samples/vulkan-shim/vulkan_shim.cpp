@@ -1373,6 +1373,16 @@ extern "C"
         request.device = to_object_id(device);
         request.size = pAllocateInfo->allocationSize;
         request.memory_type_index = pAllocateInfo->memoryTypeIndex;
+        for (auto* next = static_cast<const VkBaseInStructure*>(pAllocateInfo->pNext); next; next = next->pNext)
+        {
+            if (next->sType == VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO)
+            {
+                const auto* flags = reinterpret_cast<const VkMemoryAllocateFlagsInfo*>(next);
+                request.flags = flags->flags;
+                request.device_mask = flags->deviceMask;
+                break;
+            }
+        }
 
         gb::allocate_memory_response response{};
         if (!bridge_call(gb::ioctl_allocate_memory, &request, sizeof(request), &response, sizeof(response)))
@@ -3818,13 +3828,23 @@ extern "C"
         VkResult overall = VK_SUCCESS;
         for (uint32_t i = 0; i < pPresentInfo->swapchainCount; ++i)
         {
-            gb::queue_present_request request{};
-            request.queue = to_object_id(queue);
-            request.swapchain = to_object_id(pPresentInfo->pSwapchains[i]);
-            request.image_index = pPresentInfo->pImageIndices[i];
+            const uint32_t wait_count = i == 0 ? pPresentInfo->waitSemaphoreCount : 0;
+            std::vector<uint8_t> message(sizeof(gb::queue_present_request) + static_cast<size_t>(wait_count) * sizeof(gb::object_id));
+            auto* request = reinterpret_cast<gb::queue_present_request*>(message.data());
+            request->queue = to_object_id(queue);
+            request->swapchain = to_object_id(pPresentInfo->pSwapchains[i]);
+            request->image_index = pPresentInfo->pImageIndices[i];
+            request->wait_semaphore_count = wait_count;
+
+            auto* waits = reinterpret_cast<gb::object_id*>(message.data() + sizeof(*request));
+            for (uint32_t wait_index = 0; wait_index < wait_count; ++wait_index)
+            {
+                waits[wait_index] = to_object_id(pPresentInfo->pWaitSemaphores[wait_index]);
+            }
 
             gb::result_response response{};
-            const bool ok = bridge_call(gb::ioctl_queue_present, &request, sizeof(request), &response, sizeof(response));
+            const bool ok =
+                bridge_call(gb::ioctl_queue_present, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response));
             const VkResult result = ok ? static_cast<VkResult>(response.vk_result) : VK_ERROR_INITIALIZATION_FAILED;
             if (pPresentInfo->pResults)
             {
@@ -4028,6 +4048,17 @@ extern "C"
         gb::create_descriptor_set_layout_request header{};
         header.device = to_object_id(device);
         header.binding_count = pCreateInfo->bindingCount;
+        header.flags = pCreateInfo->flags;
+
+        const VkDescriptorSetLayoutBindingFlagsCreateInfo* binding_flags = nullptr;
+        for (auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
+        {
+            if (next->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO)
+            {
+                binding_flags = reinterpret_cast<const VkDescriptorSetLayoutBindingFlagsCreateInfo*>(next);
+                break;
+            }
+        }
 
         std::vector<uint8_t> message(sizeof(header) +
                                      static_cast<size_t>(header.binding_count) * sizeof(gb::descriptor_set_layout_binding));
@@ -4040,6 +4071,10 @@ extern "C"
             wire.descriptor_type = static_cast<uint32_t>(b.descriptorType);
             wire.descriptor_count = b.descriptorCount;
             wire.stage_flags = b.stageFlags;
+            if (binding_flags && i < binding_flags->bindingCount)
+            {
+                wire.binding_flags = binding_flags->pBindingFlags[i];
+            }
             std::memcpy(message.data() + sizeof(header) + i * sizeof(wire), &wire, sizeof(wire));
         }
 
@@ -4073,6 +4108,16 @@ extern "C"
         header.device = to_object_id(device);
         header.max_sets = pCreateInfo->maxSets;
         header.pool_size_count = pCreateInfo->poolSizeCount;
+        header.flags = pCreateInfo->flags;
+        for (auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
+        {
+            if (next->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_INLINE_UNIFORM_BLOCK_CREATE_INFO)
+            {
+                const auto* inline_uniform_blocks = reinterpret_cast<const VkDescriptorPoolInlineUniformBlockCreateInfo*>(next);
+                header.max_inline_uniform_block_bindings = inline_uniform_blocks->maxInlineUniformBlockBindings;
+                break;
+            }
+        }
 
         std::vector<uint8_t> message(sizeof(header) + static_cast<size_t>(header.pool_size_count) * sizeof(gb::descriptor_pool_size));
         std::memcpy(message.data(), &header, sizeof(header));
@@ -4426,10 +4471,17 @@ extern "C"
             return;
         }
 
-        // Keep this query aligned with what vkCreateDescriptorSetLayout currently marshals. Layout flags,
-        // input pNext structures (including binding flags), and immutable samplers are not represented by
-        // the create command, so claiming support for them would recreate the original false positive.
-        if (pCreateInfo->flags != 0 || pCreateInfo->pNext != nullptr)
+        const VkDescriptorSetLayoutBindingFlagsCreateInfo* binding_flags = nullptr;
+        for (auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
+        {
+            if (next->sType != VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO)
+            {
+                return;
+            }
+            binding_flags = reinterpret_cast<const VkDescriptorSetLayoutBindingFlagsCreateInfo*>(next);
+        }
+        if (binding_flags && (binding_flags->bindingCount != pCreateInfo->bindingCount ||
+                              (binding_flags->bindingCount != 0 && !binding_flags->pBindingFlags)))
         {
             return;
         }
@@ -4444,6 +4496,7 @@ extern "C"
         gb::get_descriptor_set_layout_support_request header{};
         header.device = to_object_id(device);
         header.binding_count = pCreateInfo->bindingCount;
+        header.flags = pCreateInfo->flags;
         if (header.binding_count > (static_cast<size_t>(UINT32_MAX) - sizeof(header)) / sizeof(gb::descriptor_set_layout_binding))
         {
             return;
@@ -4455,12 +4508,16 @@ extern "C"
         for (uint32_t i = 0; i < header.binding_count; ++i)
         {
             const VkDescriptorSetLayoutBinding& b = pCreateInfo->pBindings[i];
-            const gb::descriptor_set_layout_binding wire{
+            gb::descriptor_set_layout_binding wire{
                 .binding = b.binding,
                 .descriptor_type = static_cast<uint32_t>(b.descriptorType),
                 .descriptor_count = b.descriptorCount,
                 .stage_flags = b.stageFlags,
             };
+            if (binding_flags)
+            {
+                wire.binding_flags = binding_flags->pBindingFlags[i];
+            }
             std::memcpy(message.data() + sizeof(header) + static_cast<size_t>(i) * sizeof(wire), &wire, sizeof(wire));
         }
 
