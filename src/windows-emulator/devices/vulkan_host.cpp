@@ -4920,9 +4920,10 @@ namespace sogen
     }
 
     int32_t vulkan_host::get_descriptor_set_layout_support(uint64_t device, uint32_t flags, std::span<const descriptor_binding> bindings,
-                                                           uint32_t& supported)
+                                                           uint32_t& supported, uint32_t& max_variable_descriptor_count)
     {
         supported = VK_FALSE;
+        max_variable_descriptor_count = 0;
 
         const auto dev = this->impl_->devices.find(device);
         if (dev == this->impl_->devices.end() || !dev->second.get_descriptor_set_layout_support)
@@ -4959,8 +4960,12 @@ namespace sogen
 
         VkDescriptorSetLayoutSupport support{};
         support.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_SUPPORT;
+        VkDescriptorSetVariableDescriptorCountLayoutSupport variable_support{};
+        variable_support.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_LAYOUT_SUPPORT;
+        support.pNext = &variable_support;
         dev->second.get_descriptor_set_layout_support(dev->second.handle, &info, &support);
         supported = support.supported;
+        max_variable_descriptor_count = variable_support.maxVariableDescriptorCount;
         return VK_SUCCESS;
     }
 
@@ -5063,13 +5068,15 @@ namespace sogen
     }
 
     int32_t vulkan_host::allocate_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> set_layouts,
-                                                  std::span<uint64_t> out_sets, uint32_t& out_count)
+                                                  std::span<const uint32_t> variable_descriptor_counts, std::span<uint64_t> out_sets,
+                                                  uint32_t& out_count)
     {
         out_count = 0;
         const auto dev = this->impl_->devices.find(device);
         const auto pool_it = this->impl_->descriptor_pools.find(pool);
         if (dev == this->impl_->devices.end() || pool_it == this->impl_->descriptor_pools.end() || pool_it->second.device_id != device ||
-            !dev->second.allocate_descriptor_sets)
+            !dev->second.allocate_descriptor_sets ||
+            (!variable_descriptor_counts.empty() && variable_descriptor_counts.size() != set_layouts.size()))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -5091,6 +5098,15 @@ namespace sogen
         info.descriptorPool = pool_it->second.handle;
         info.descriptorSetCount = static_cast<uint32_t>(vk_layouts.size());
         info.pSetLayouts = vk_layouts.empty() ? nullptr : vk_layouts.data();
+
+        VkDescriptorSetVariableDescriptorCountAllocateInfo variable_counts{};
+        if (!variable_descriptor_counts.empty())
+        {
+            variable_counts.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO;
+            variable_counts.descriptorSetCount = static_cast<uint32_t>(variable_descriptor_counts.size());
+            variable_counts.pDescriptorCounts = variable_descriptor_counts.data();
+            info.pNext = &variable_counts;
+        }
 
         std::vector<VkDescriptorSet> sets(vk_layouts.size());
         const VkResult result = dev->second.allocate_descriptor_sets(dev->second.handle, &info, sets.data());
@@ -5155,18 +5171,20 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        // Each write carries exactly one descriptor. Buffer infos and image infos are kept in stable
-        // vectors so the VkWriteDescriptorSet pointers remain valid until the driver call below. This runs
-        // ~100k times/s in heavy scenes, so the buffers are reused (single emulator thread, no reentrancy)
-        // instead of allocated per call.
+        // Buffer infos, image infos and inline-uniform blocks are kept in stable vectors so the
+        // VkWriteDescriptorSet pointers remain valid until the driver call below. This runs ~100k times/s
+        // in heavy scenes, so the buffers are reused (single emulator thread, no reentrancy) instead of
+        // allocated per call.
         static thread_local std::vector<VkWriteDescriptorSet> vk_writes;
         static thread_local std::vector<VkDescriptorBufferInfo> buffer_infos;
         static thread_local std::vector<VkDescriptorImageInfo> image_infos;
         static thread_local std::vector<VkBufferView> texel_buffer_views;
+        static thread_local std::vector<VkWriteDescriptorSetInlineUniformBlock> inline_uniform_blocks;
         vk_writes.clear();
         buffer_infos.resize(writes.size());
         image_infos.resize(writes.size());
         texel_buffer_views.resize(writes.size());
+        inline_uniform_blocks.resize(writes.size());
         vk_writes.reserve(writes.size());
 
         // Consecutive writes usually target the same descriptor set; cache the last lookup to avoid a hash
@@ -5204,7 +5222,17 @@ namespace sogen
                  w.descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLER);
             const bool is_texel_buffer = (w.descriptor_type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER ||
                                           w.descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER);
-            if (is_texel_buffer)
+            if (w.descriptor_type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
+            {
+                VkWriteDescriptorSetInlineUniformBlock& inline_uniform_block = inline_uniform_blocks[i];
+                inline_uniform_block = {};
+                inline_uniform_block.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK;
+                inline_uniform_block.dataSize = static_cast<uint32_t>(w.inline_uniform_data.size());
+                inline_uniform_block.pData = w.inline_uniform_data.empty() ? nullptr : w.inline_uniform_data.data();
+                vw.pNext = &inline_uniform_block;
+                vw.descriptorCount = inline_uniform_block.dataSize;
+            }
+            else if (is_texel_buffer)
             {
                 VkBufferView& buffer_view = texel_buffer_views[i];
                 buffer_view = VK_NULL_HANDLE;

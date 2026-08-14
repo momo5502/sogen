@@ -460,8 +460,8 @@ namespace sogen
             uint32_t descriptor_count;
         };
 
-        // A single descriptor write (one descriptor). For buffer types buffer/offset/range apply; for
-        // image types (combined image sampler) sampler/image_view/image_layout apply.
+        // A single descriptor write. For buffer types buffer/offset/range apply; for image types
+        // sampler/image_view/image_layout apply; inline-uniform-block writes carry their raw bytes.
         struct descriptor_write
         {
             uint64_t dst_set;
@@ -474,12 +474,13 @@ namespace sogen
             uint64_t sampler;
             uint64_t image_view;
             uint32_t image_layout;
+            std::span<const std::byte> inline_uniform_data;
         };
 
         int32_t create_descriptor_set_layout(uint64_t device, uint32_t flags, std::span<const descriptor_binding> bindings,
                                              uint64_t& out_layout);
         int32_t get_descriptor_set_layout_support(uint64_t device, uint32_t flags, std::span<const descriptor_binding> bindings,
-                                                  uint32_t& supported);
+                                                  uint32_t& supported, uint32_t& max_variable_descriptor_count);
         void destroy_descriptor_set_layout(uint64_t device, uint64_t layout);
         int32_t create_descriptor_pool(uint64_t device, uint32_t max_sets, uint32_t flags, uint32_t max_inline_uniform_block_bindings,
                                        std::span<const descriptor_pool_size> sizes, uint64_t& out_pool);
@@ -488,7 +489,8 @@ namespace sogen
         // Allocates one set per layout id; writes the allocated set ids into out_sets, out_count gets the
         // true count.
         int32_t allocate_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> set_layouts,
-                                         std::span<uint64_t> out_sets, uint32_t& out_count);
+                                         std::span<const uint32_t> variable_descriptor_counts, std::span<uint64_t> out_sets,
+                                         uint32_t& out_count);
         int32_t free_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> sets);
         int32_t update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes);
 

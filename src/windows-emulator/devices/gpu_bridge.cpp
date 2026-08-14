@@ -2383,8 +2383,8 @@ namespace sogen
                 }
 
                 gpu_bridge::descriptor_set_layout_support_response response{};
-                response.vk_result =
-                    this->vulkan_.get_descriptor_set_layout_support(request.device, request.flags, bindings, response.supported);
+                response.vk_result = this->vulkan_.get_descriptor_set_layout_support(
+                    request.device, request.flags, bindings, response.supported, response.max_variable_descriptor_count);
                 return write_output(win_emu, context, response);
             }
 
@@ -2473,13 +2473,25 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                if (request.variable_descriptor_count_count != 0 && request.variable_descriptor_count_count != request.set_count)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                std::vector<uint32_t> variable_descriptor_counts;
+                const size_t variable_counts_offset = sizeof(request_t) + set_layouts.size() * sizeof(gpu_bridge::object_id);
+                if (!read_trailing_array(win_emu, context, variable_counts_offset, request.variable_descriptor_count_count,
+                                         variable_descriptor_counts))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 const auto array_capacity = static_cast<uint32_t>(
                     std::min<uint64_t>((context.output_buffer_length - sizeof(response_t)) / sizeof(gpu_bridge::object_id),
                                        max_array_readback_bytes / sizeof(gpu_bridge::object_id)));
                 std::vector<uint64_t> ids(std::min(request.set_count, array_capacity));
                 uint32_t count = 0;
-                const int32_t result =
-                    this->vulkan_.allocate_descriptor_sets(request.device, request.descriptor_pool, set_layouts, std::span{ids}, count);
+                const int32_t result = this->vulkan_.allocate_descriptor_sets(request.device, request.descriptor_pool, set_layouts,
+                                                                              variable_descriptor_counts, std::span{ids}, count);
 
                 emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response_t{.vk_result = result, .count = count});
 
@@ -2539,8 +2551,8 @@ namespace sogen
             static constexpr size_t max_memory_transfer_bytes = size_t{256} * 1024 * 1024;
 #endif
 
-            // Applies one update_descriptor_sets_request blob (header + write_count descriptor_write records) and
-            // advances `offset` past it. Shared by the single and coalesced-batch IOCTLs.
+            // Applies one update_descriptor_sets_request blob and advances `offset` past it. Shared by the
+            // single and coalesced-batch IOCTLs.
             int32_t apply_update_descriptor_sets(const std::byte* data, size_t size, size_t& offset)
             {
                 constexpr int32_t vk_error_initialization_failed = -3; // VK_ERROR_INITIALIZATION_FAILED (no vulkan.h here)
@@ -2555,8 +2567,13 @@ namespace sogen
                 std::memcpy(&request, data + offset, sizeof(request));
                 offset += sizeof(request);
 
+                if (request.write_count > (size - offset) / sizeof(gpu_bridge::descriptor_write))
+                {
+                    return vk_error_initialization_failed;
+                }
                 const size_t writes_bytes = static_cast<size_t>(request.write_count) * sizeof(gpu_bridge::descriptor_write);
-                if (size - offset < writes_bytes)
+                const size_t inline_uniform_data_offset = offset + writes_bytes;
+                if (request.inline_uniform_data_size > size - inline_uniform_data_offset)
                 {
                     return vk_error_initialization_failed;
                 }
@@ -2568,6 +2585,11 @@ namespace sogen
                     gpu_bridge::descriptor_write w{};
                     std::memcpy(&w, data + write_offset, sizeof(w));
                     write_offset += sizeof(w);
+                    if (w.inline_uniform_data_offset > request.inline_uniform_data_size ||
+                        w.inline_uniform_data_size > request.inline_uniform_data_size - w.inline_uniform_data_offset)
+                    {
+                        return vk_error_initialization_failed;
+                    }
                     write = {.dst_set = w.dst_set,
                              .dst_binding = w.dst_binding,
                              .dst_array_element = w.dst_array_element,
@@ -2577,9 +2599,11 @@ namespace sogen
                              .range = w.range,
                              .sampler = w.sampler,
                              .image_view = w.image_view,
-                             .image_layout = w.image_layout};
+                             .image_layout = w.image_layout,
+                             .inline_uniform_data = std::span<const std::byte>{
+                                 data + inline_uniform_data_offset + w.inline_uniform_data_offset, w.inline_uniform_data_size}};
                 }
-                offset += writes_bytes;
+                offset = inline_uniform_data_offset + request.inline_uniform_data_size;
                 return this->vulkan_.update_descriptor_sets(request.device, writes);
             }
 

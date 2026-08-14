@@ -1373,7 +1373,7 @@ extern "C"
         request.device = to_object_id(device);
         request.size = pAllocateInfo->allocationSize;
         request.memory_type_index = pAllocateInfo->memoryTypeIndex;
-        for (auto* next = static_cast<const VkBaseInStructure*>(pAllocateInfo->pNext); next; next = next->pNext)
+        for (const auto* next = static_cast<const VkBaseInStructure*>(pAllocateInfo->pNext); next; next = next->pNext)
         {
             if (next->sType == VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO)
             {
@@ -4051,7 +4051,7 @@ extern "C"
         header.flags = pCreateInfo->flags;
 
         const VkDescriptorSetLayoutBindingFlagsCreateInfo* binding_flags = nullptr;
-        for (auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
+        for (const auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
         {
             if (next->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO)
             {
@@ -4109,7 +4109,7 @@ extern "C"
         header.max_sets = pCreateInfo->maxSets;
         header.pool_size_count = pCreateInfo->poolSizeCount;
         header.flags = pCreateInfo->flags;
-        for (auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
+        for (const auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
         {
             if (next->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_INLINE_UNIFORM_BLOCK_CREATE_INFO)
             {
@@ -4170,17 +4170,41 @@ extern "C"
                                                                                   VkDescriptorSet* pDescriptorSets)
     {
         const uint32_t count = pAllocateInfo->descriptorSetCount;
+        const VkDescriptorSetVariableDescriptorCountAllocateInfo* variable_descriptor_counts = nullptr;
+        for (const auto* next = static_cast<const VkBaseInStructure*>(pAllocateInfo->pNext); next; next = next->pNext)
+        {
+            if (next->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO)
+            {
+                variable_descriptor_counts = reinterpret_cast<const VkDescriptorSetVariableDescriptorCountAllocateInfo*>(next);
+                break;
+            }
+        }
+        const uint32_t variable_descriptor_count_count = variable_descriptor_counts ? variable_descriptor_counts->descriptorSetCount : 0;
+        if (variable_descriptor_count_count != 0 &&
+            (variable_descriptor_count_count != count || !variable_descriptor_counts->pDescriptorCounts))
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
         gb::allocate_descriptor_sets_request header{};
         header.device = to_object_id(device);
         header.descriptor_pool = to_object_id(pAllocateInfo->descriptorPool);
         header.set_count = count;
+        header.variable_descriptor_count_count = variable_descriptor_count_count;
 
-        std::vector<uint8_t> message(sizeof(header) + static_cast<size_t>(count) * sizeof(gb::object_id));
+        const size_t layouts_size = static_cast<size_t>(count) * sizeof(gb::object_id);
+        const size_t variable_counts_size = static_cast<size_t>(header.variable_descriptor_count_count) * sizeof(uint32_t);
+        std::vector<uint8_t> message(sizeof(header) + layouts_size + variable_counts_size);
         std::memcpy(message.data(), &header, sizeof(header));
         for (uint32_t i = 0; i < count; ++i)
         {
             const gb::object_id id = to_object_id(pAllocateInfo->pSetLayouts[i]);
             std::memcpy(message.data() + sizeof(header) + i * sizeof(id), &id, sizeof(id));
+        }
+        if (variable_counts_size != 0)
+        {
+            std::memcpy(message.data() + sizeof(header) + layouts_size, variable_descriptor_counts->pDescriptorCounts,
+                        variable_counts_size);
         }
 
         std::vector<uint8_t> out(sizeof(gb::allocate_descriptor_sets_response) + static_cast<size_t>(count) * sizeof(gb::object_id));
@@ -4225,12 +4249,47 @@ extern "C"
                                                                             const VkWriteDescriptorSet* pDescriptorWrites, uint32_t,
                                                                             const VkCopyDescriptorSet*)
     {
-        // Descriptor copies are not modeled; only writes are forwarded. Each VkWriteDescriptorSet is
-        // flattened to `descriptorCount` single-descriptor wire writes.
+        // Descriptor copies are not modeled; only writes are forwarded. Non-inline writes are flattened
+        // to `descriptorCount` single-descriptor wire writes.
         std::vector<gb::descriptor_write> writes;
+        std::vector<uint8_t> inline_uniform_data;
         for (uint32_t w = 0; w < descriptorWriteCount; ++w)
         {
             const VkWriteDescriptorSet& src = pDescriptorWrites[w];
+            if (src.descriptorType == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
+            {
+                const VkWriteDescriptorSetInlineUniformBlock* inline_uniform_block = nullptr;
+                for (const auto* next = static_cast<const VkBaseInStructure*>(src.pNext); next; next = next->pNext)
+                {
+                    if (next->sType == VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK)
+                    {
+                        inline_uniform_block = reinterpret_cast<const VkWriteDescriptorSetInlineUniformBlock*>(next);
+                        break;
+                    }
+                }
+                if (!inline_uniform_block || inline_uniform_block->dataSize != src.descriptorCount ||
+                    (inline_uniform_block->dataSize != 0 && !inline_uniform_block->pData) ||
+                    inline_uniform_data.size() > UINT32_MAX - inline_uniform_block->dataSize)
+                {
+                    continue;
+                }
+
+                gb::descriptor_write wire{};
+                wire.dst_set = to_object_id(src.dstSet);
+                wire.dst_binding = src.dstBinding;
+                wire.dst_array_element = src.dstArrayElement;
+                wire.descriptor_type = static_cast<uint32_t>(src.descriptorType);
+                wire.inline_uniform_data_offset = static_cast<uint32_t>(inline_uniform_data.size());
+                wire.inline_uniform_data_size = inline_uniform_block->dataSize;
+                if (inline_uniform_block->dataSize != 0)
+                {
+                    const auto* data = static_cast<const uint8_t*>(inline_uniform_block->pData);
+                    inline_uniform_data.insert(inline_uniform_data.end(), data, data + inline_uniform_block->dataSize);
+                }
+                writes.push_back(wire);
+                continue;
+            }
+
             for (uint32_t e = 0; e < src.descriptorCount; ++e)
             {
                 gb::descriptor_write wire{};
@@ -4261,6 +4320,7 @@ extern "C"
         gb::update_descriptor_sets_request header{};
         header.device = to_object_id(device);
         header.write_count = static_cast<uint32_t>(writes.size());
+        header.inline_uniform_data_size = static_cast<uint32_t>(inline_uniform_data.size());
 
         // Append to the pending batch instead of issuing an IOCTL now (drained before the next bridge call).
         const auto* header_bytes = reinterpret_cast<const uint8_t*>(&header);
@@ -4272,6 +4332,7 @@ extern "C"
             g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), write_bytes,
                                                 write_bytes + writes.size() * sizeof(gb::descriptor_write));
         }
+        g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), inline_uniform_data.begin(), inline_uniform_data.end());
     }
 
     // Descriptor update templates are lowered entirely inside the shim: the template definition is kept
@@ -4327,10 +4388,12 @@ extern "C"
         std::vector<std::vector<VkDescriptorImageInfo>> image_infos;
         std::vector<std::vector<VkDescriptorBufferInfo>> buffer_infos;
         std::vector<std::vector<VkBufferView>> texel_views;
+        std::vector<VkWriteDescriptorSetInlineUniformBlock> inline_uniform_blocks;
         writes.reserve(tmpl->entries.size());
         image_infos.reserve(tmpl->entries.size());
         buffer_infos.reserve(tmpl->entries.size());
         texel_views.reserve(tmpl->entries.size());
+        inline_uniform_blocks.reserve(tmpl->entries.size());
 
         const auto* base = static_cast<const uint8_t*>(pData);
         for (const auto& entry : tmpl->entries)
@@ -4343,7 +4406,15 @@ extern "C"
             write.descriptorCount = entry.descriptorCount;
             write.descriptorType = entry.descriptorType;
 
-            if (is_image_descriptor(entry.descriptorType))
+            if (entry.descriptorType == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
+            {
+                auto& inline_uniform_block = inline_uniform_blocks.emplace_back();
+                inline_uniform_block.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK;
+                inline_uniform_block.dataSize = entry.descriptorCount;
+                inline_uniform_block.pData = base + entry.offset;
+                write.pNext = &inline_uniform_block;
+            }
+            else if (is_image_descriptor(entry.descriptorType))
             {
                 auto& arr = image_infos.emplace_back();
                 arr.reserve(entry.descriptorCount);
@@ -4453,12 +4524,13 @@ extern "C"
         // Initialize the one output-chain structure relevant to descriptor-layout support. Unknown output
         // structures make the query unsupported rather than leaving partially initialized data behind.
         bool unsupported_output_chain = false;
+        VkDescriptorSetVariableDescriptorCountLayoutSupport* variable_support = nullptr;
         for (auto* base = static_cast<VkBaseOutStructure*>(pSupport->pNext); base != nullptr; base = base->pNext)
         {
             if (base->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_LAYOUT_SUPPORT)
             {
-                auto* const variable = reinterpret_cast<VkDescriptorSetVariableDescriptorCountLayoutSupport*>(base);
-                variable->maxVariableDescriptorCount = 0;
+                variable_support = reinterpret_cast<VkDescriptorSetVariableDescriptorCountLayoutSupport*>(base);
+                variable_support->maxVariableDescriptorCount = 0;
             }
             else
             {
@@ -4472,7 +4544,7 @@ extern "C"
         }
 
         const VkDescriptorSetLayoutBindingFlagsCreateInfo* binding_flags = nullptr;
-        for (auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
+        for (const auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
         {
             if (next->sType != VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO)
             {
@@ -4480,8 +4552,8 @@ extern "C"
             }
             binding_flags = reinterpret_cast<const VkDescriptorSetLayoutBindingFlagsCreateInfo*>(next);
         }
-        if (binding_flags && (binding_flags->bindingCount != pCreateInfo->bindingCount ||
-                              (binding_flags->bindingCount != 0 && !binding_flags->pBindingFlags)))
+        if (binding_flags && binding_flags->bindingCount != 0 &&
+            (binding_flags->bindingCount != pCreateInfo->bindingCount || !binding_flags->pBindingFlags))
         {
             return;
         }
@@ -4513,8 +4585,9 @@ extern "C"
                 .descriptor_type = static_cast<uint32_t>(b.descriptorType),
                 .descriptor_count = b.descriptorCount,
                 .stage_flags = b.stageFlags,
+                .binding_flags = 0,
             };
-            if (binding_flags)
+            if (binding_flags && binding_flags->bindingCount != 0)
             {
                 wire.binding_flags = binding_flags->pBindingFlags[i];
             }
@@ -4530,6 +4603,10 @@ extern "C"
         }
 
         pSupport->supported = response.supported ? VK_TRUE : VK_FALSE;
+        if (variable_support)
+        {
+            variable_support->maxVariableDescriptorCount = response.max_variable_descriptor_count;
+        }
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkGetDescriptorSetLayoutSupportKHR(VkDevice device,

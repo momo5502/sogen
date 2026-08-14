@@ -169,7 +169,7 @@ namespace sogen::gpu_bridge
         cmd_copy_image = 0x884,
         get_physical_device_memory_budget = 0x885,
         // Coalesced vkUpdateDescriptorSets: payload is a concatenation of update_descriptor_sets_request blobs
-        // (each a header + its descriptor_write[]), applied in issue order.
+        // (each a header + its descriptor_write[] + inline-uniform data), applied in issue order.
         update_descriptor_sets_batch = 0x886,
         cmd_blit_image = 0x887,
         reset_descriptor_pool = 0x888,
@@ -2028,6 +2028,7 @@ namespace sogen::gpu_bridge
     {
         int32_t vk_result;
         uint32_t supported; // VkBool32
+        uint32_t max_variable_descriptor_count;
     };
 
     // One pool size (trailing-array element of create_descriptor_pool).
@@ -2059,14 +2060,16 @@ namespace sogen::gpu_bridge
     };
 
     // ioctl_allocate_descriptor_sets: in header immediately followed by `set_count` object_id set-layout
-    // ids; out = allocate_descriptor_sets_response header followed by `count` object_id set ids
+    // ids and `variable_descriptor_count_count` uint32_t descriptor counts; out =
+    // allocate_descriptor_sets_response header followed by `count` object_id set ids
     struct allocate_descriptor_sets_request
     {
         object_id device;
         object_id descriptor_pool;
         uint32_t set_count;
-        uint32_t reserved;
+        uint32_t variable_descriptor_count_count;
         // object_id set_layouts[set_count];
+        // uint32_t variable_descriptor_counts[variable_descriptor_count_count];
     };
 
     struct allocate_descriptor_sets_response
@@ -2085,32 +2088,32 @@ namespace sogen::gpu_bridge
     };
 
     // One descriptor write (trailing-array element of update_descriptor_sets). Models a single buffer or
-    // image descriptor per write (descriptor_count == 1). For buffer types the buffer/offset/range fields
-    // apply; for image types (combined image sampler) the sampler/image_view/image_layout fields apply.
+    // image descriptor per write. Inline-uniform-block writes instead reference bytes trailing the write array.
     struct descriptor_write
     {
         object_id dst_set;
         uint32_t dst_binding;
         uint32_t dst_array_element;
         uint32_t descriptor_type; // VkDescriptorType
-        uint32_t reserved;
+        uint32_t inline_uniform_data_offset;
         object_id buffer_or_view;
         uint64_t offset;       // buffer offset
         uint64_t range;        // buffer range (VK_WHOLE_SIZE allowed)
         object_id sampler;     // image types: the sampler (else null_object)
         object_id image_view;  // image types: the sampled image view (else null_object)
         uint32_t image_layout; // image types: VkImageLayout
-        uint32_t reserved2;
+        uint32_t inline_uniform_data_size;
     };
 
     // ioctl_update_descriptor_sets: in header immediately followed by `write_count` descriptor_write
-    // entries; out = result_response
+    // entries and `inline_uniform_data_size` bytes; out = result_response
     struct update_descriptor_sets_request
     {
         object_id device;
         uint32_t write_count;
-        uint32_t reserved;
+        uint32_t inline_uniform_data_size;
         // descriptor_write writes[write_count];
+        // uint8_t inline_uniform_data[inline_uniform_data_size];
     };
 
     // immediately followed by `set_count` object_id descriptor-set ids. Bind point is graphics.
@@ -2213,7 +2216,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_set_dynamic_u32_request) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_binding) == 20, "wire layout drift");
     static_assert(sizeof(get_descriptor_set_layout_support_request) == 16, "wire layout drift");
-    static_assert(sizeof(descriptor_set_layout_support_response) == 8, "wire layout drift");
+    static_assert(sizeof(descriptor_set_layout_support_response) == 12, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");
     static_assert(sizeof(create_sampler_request) == 64, "wire layout drift");
     static_assert(sizeof(enumerate_device_extension_properties_request) == 16, "wire layout drift");
