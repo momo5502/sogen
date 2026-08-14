@@ -94,10 +94,9 @@ const WS_SYSMENU = 0x00080000;
 const WS_MINIMIZEBOX = 0x00020000;
 const WS_MAXIMIZEBOX = 0x00010000;
 
-// The guest models windows without a non-client area (client rect == window
-// rect), so the presented surface fills win.rect exactly. We draw the caption
-// bar and frame *around* win.rect, mirroring how a native window manager (and
-// the SDL backend's OS windows) decorate the client area.
+// `rect` is the guest outer-window rectangle, while the presented surface is
+// client-sized and begins after the left/top client insets. The browser-drawn
+// caption and frame remain host chrome around that client box.
 const CAPTION_HEIGHT = 30;
 const FRAME_BORDER = 1;
 const CAPTION_BUTTON_WIDTH = 46;
@@ -122,6 +121,15 @@ function cloneRect(rect?: {
   bottom: number;
 }) {
   return rect ?? { left: 0, top: 0, right: 0, bottom: 0 };
+}
+
+function cloneClientInsets(insets?: {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}) {
+  return insets ? { ...insets } : { left: 0, top: 0, right: 0, bottom: 0 };
 }
 
 function convertSurfacePixels(
@@ -287,23 +295,56 @@ export function attachSogenUiHost(
     return hasCaption(window) ? CAPTION_HEIGHT : 0;
   }
 
-  function frameRect(window: HostWindowState): Rect {
-    const caption = captionHeight(window);
+  function clientRect(window: HostWindowState): Rect {
+    const outerWidth = Math.max(0, window.rect.right - window.rect.left);
+    const outerHeight = Math.max(0, window.rect.bottom - window.rect.top);
+    const clientLeft = Math.min(outerWidth, window.clientInsets.left);
+    const clientTop = Math.min(outerHeight, window.clientInsets.top);
+    const clientRight = Math.max(
+      clientLeft,
+      outerWidth - window.clientInsets.right,
+    );
+    const clientBottom = Math.max(
+      clientTop,
+      outerHeight - window.clientInsets.bottom,
+    );
+
     return {
-      left: window.rect.left - FRAME_BORDER,
-      top: window.rect.top - caption - FRAME_BORDER,
-      right: window.rect.right + FRAME_BORDER,
-      bottom: window.rect.bottom + FRAME_BORDER,
+      left: window.rect.left + clientLeft,
+      top: window.rect.top + clientTop,
+      right: window.rect.left + clientRight,
+      bottom: window.rect.top + clientBottom,
     };
   }
 
+  function frameRect(window: HostWindowState): Rect {
+    const client = clientRect(window);
+    const caption = captionHeight(window);
+    return {
+      left: Math.min(window.rect.left, client.left - FRAME_BORDER),
+      top: Math.min(window.rect.top, client.top - caption - FRAME_BORDER),
+      right: Math.max(window.rect.right, client.right + FRAME_BORDER),
+      bottom: Math.max(window.rect.bottom, client.bottom + FRAME_BORDER),
+    };
+  }
+
+  function hasNonClientInsets(window: HostWindowState) {
+    return (
+      window.clientInsets.left > 0 ||
+      window.clientInsets.top > 0 ||
+      window.clientInsets.right > 0 ||
+      window.clientInsets.bottom > 0
+    );
+  }
+
   function captionRect(window: HostWindowState): Rect {
+    const client = clientRect(window);
     const frame = frameRect(window);
     return {
       left: frame.left,
       top: frame.top,
       right: frame.right,
-      bottom: window.rect.top,
+      bottom: client.top,
     };
   }
 
@@ -464,12 +505,12 @@ export function attachSogenUiHost(
   }
 
   function drawChrome(window: HostWindowState) {
-    if (!hasCaption(window)) {
+    const captioned = hasCaption(window);
+    if (!captioned && !hasNonClientInsets(window)) {
       return;
     }
 
     const frame = frameRect(window);
-    const caption = captionRect(window);
     const focused = window.hwnd === focusedWindow;
 
     context2d.fillStyle = CHROME_COLORS.frame;
@@ -480,6 +521,11 @@ export function attachSogenUiHost(
       frame.bottom - frame.top,
     );
 
+    if (!captioned) {
+      return;
+    }
+
+    const caption = captionRect(window);
     context2d.fillStyle = focused
       ? CHROME_COLORS.captionFocused
       : CHROME_COLORS.captionUnfocused;
@@ -554,12 +600,23 @@ export function attachSogenUiHost(
 
     drawChrome(window);
 
-    if (window.surfaceCanvas) {
-      context2d.drawImage(
-        window.surfaceCanvas,
-        window.rect.left,
-        window.rect.top,
+    const client = clientRect(window);
+    if (
+      window.surfaceCanvas &&
+      client.right > client.left &&
+      client.bottom > client.top
+    ) {
+      context2d.save();
+      context2d.beginPath();
+      context2d.rect(
+        client.left,
+        client.top,
+        client.right - client.left,
+        client.bottom - client.top,
       );
+      context2d.clip();
+      context2d.drawImage(window.surfaceCanvas, client.left, client.top);
+      context2d.restore();
     }
   }
 
@@ -606,7 +663,7 @@ export function attachSogenUiHost(
         continue;
       }
 
-      if (pointInRect(window.rect, x, y)) {
+      if (pointInRect(clientRect(window), x, y)) {
         return { window, region: "client" };
       }
 
@@ -616,7 +673,7 @@ export function attachSogenUiHost(
         }
       }
 
-      if (pointInRect(captionRect(window), x, y)) {
+      if (hasCaption(window) && pointInRect(captionRect(window), x, y)) {
         return { window, region: "caption" };
       }
 
@@ -685,12 +742,7 @@ export function attachSogenUiHost(
         window.className = message.class_name ?? "";
         window.title = message.title ?? "";
         window.controlId = message.control_id ?? 0;
-        window.clientInsets = message.client_insets ?? {
-          left: 0,
-          top: 0,
-          right: 0,
-          bottom: 0,
-        };
+        window.clientInsets = cloneClientInsets(message.client_insets);
         window.style = message.style ?? 0;
         window.exStyle = message.ex_style ?? 0;
         window.visible = !!message.visible;
@@ -773,8 +825,9 @@ export function attachSogenUiHost(
       return;
     }
 
-    const localX = point.x - window.rect.left;
-    const localY = point.y - window.rect.top;
+    const client = clientRect(window);
+    const localX = point.x - client.left;
+    const localY = point.y - client.top;
     sendUiEvent(
       window.hwnd,
       event.button === 2 ? WM_RBUTTONDOWN : WM_LBUTTONDOWN,
@@ -808,8 +861,9 @@ export function attachSogenUiHost(
       return;
     }
 
-    const localX = point.x - target.rect.left;
-    const localY = point.y - target.rect.top;
+    const client = clientRect(target);
+    const localX = point.x - client.left;
+    const localY = point.y - client.top;
     sendUiEvent(
       target.hwnd,
       event.button === 2 ? WM_RBUTTONUP : WM_LBUTTONUP,
@@ -852,8 +906,9 @@ export function attachSogenUiHost(
     }
 
     if (hit && hit.region === "client") {
-      const localX = point.x - hit.window.rect.left;
-      const localY = point.y - hit.window.rect.top;
+      const client = clientRect(hit.window);
+      const localX = point.x - client.left;
+      const localY = point.y - client.top;
       sendUiEvent(hit.window.hwnd, WM_MOUSEMOVE, 0, packPoint(localX, localY));
     }
   }
