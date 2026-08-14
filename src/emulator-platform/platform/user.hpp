@@ -36,7 +36,8 @@ namespace sogen
     constexpr size_t USER_NUM_SYSCOLORS = 31;
     constexpr size_t USER_SERVERINFO_BRUSH_SLOT_COUNT = 32;
     constexpr size_t USER_SERVERINFO_BRUSH_TRAILING_BYTES = 0x78;
-    constexpr uint32_t USER_DEFAULT_DPI_CONTEXT = (96u << 8) | 0x12u;
+    constexpr uint32_t USER_DEFAULT_DPI_CONTEXT = 18;
+    constexpr uint32_t USER_DEFAULT_WINDOW_DPI_CONTEXT = (96u << 8) | USER_DEFAULT_DPI_CONTEXT;
 
     struct USER_SERVERINFO
     {

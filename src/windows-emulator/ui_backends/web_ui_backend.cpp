@@ -13,11 +13,6 @@ namespace sogen
             ui_event event{};
         };
 
-        // The guest models windows without a non-client area (client rect == window rect),
-        // so the presented surface fills the whole window rect. The host draws the caption
-        // bar and frame *around* that rect (see web_ui_host.js), exactly like the SDL backend
-        // relies on the OS window manager to decorate the client area. We therefore forward
-        // the guest's own (zero) insets unchanged rather than reserving title-bar space inside.
         ui_insets get_web_ui_client_insets(const ui_window_desc& desc)
         {
             return desc.client_insets;

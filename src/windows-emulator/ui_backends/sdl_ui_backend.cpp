@@ -1054,13 +1054,16 @@ namespace sogen
             void set_cursor_position(const hwnd window, const int32_t screen_x, const int32_t screen_y) override
             {
                 this->queue_or_run([this, window, screen_x, screen_y] {
-                    // Top-levels are positioned at their emulated rect (SDL_SetWindowPosition), so emulated screen
-                    // coordinates map to guest client pixels by subtracting that origin.
+                    // SDL exposes only the drawable client area, while emulated screen coordinates include the guest frame.
                     const auto top = this->get_top_level_ancestor(window);
                     if (auto* state = this->resolve_window(top); state && state->window)
                     {
-                        auto window_x = static_cast<float>(screen_x - state->desc.rect.left);
-                        auto window_y = static_cast<float>(screen_y - state->desc.rect.top);
+                        const auto outer_width = std::max<int32_t>(0, state->desc.rect.right - state->desc.rect.left);
+                        const auto outer_height = std::max<int32_t>(0, state->desc.rect.bottom - state->desc.rect.top);
+                        const auto client_x_offset = std::min<int32_t>(outer_width, state->desc.client_insets.left);
+                        const auto client_y_offset = std::min<int32_t>(outer_height, state->desc.client_insets.top);
+                        auto window_x = static_cast<float>(screen_x - state->desc.rect.left - client_x_offset);
+                        auto window_y = static_cast<float>(screen_y - state->desc.rect.top - client_y_offset);
                         // The frame is letterboxed into the window, so guest pixels are not at the same position in
                         // the host window; map through the same transform map_window_point inverts.
                         if (state->renderer)

@@ -49,7 +49,8 @@ namespace sogen
 
         if (emit_size_move)
         {
-            this->data_.message_queue.push_back({.message = WM_MOVE, .wParam = 0, .lParam = pack_message_lparam(win.x, win.y)});
+            this->data_.message_queue.push_back(
+                {.message = WM_MOVE, .wParam = 0, .lParam = pack_message_lparam(win.client_x(), win.client_y())});
             this->data_.message_queue.push_back(
                 {.message = WM_SIZE, .wParam = 0, .lParam = pack_message_lparam(win.client_width(), win.client_height())});
         }

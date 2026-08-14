@@ -215,6 +215,16 @@ namespace sogen
             return std::min<int>(outer_height, this->nonclient_insets().top);
         }
 
+        int32_t client_x() const
+        {
+            return this->x + this->client_x_offset();
+        }
+
+        int32_t client_y() const
+        {
+            return this->y + this->client_y_offset();
+        }
+
         int32_t client_width() const
         {
             const auto outer_width = std::max(0, this->width);

@@ -368,12 +368,12 @@ namespace sogen
         void sync_guest_window_rects(window& win)
         {
             const auto window_rect = get_window_rect(win);
-            const auto client_x = win.x + win.client_x_offset();
-            const auto client_y = win.y + win.client_y_offset();
-            const RECT client_rect{.left = client_x,
-                                   .top = client_y,
-                                   .right = client_x + win.client_width(),
-                                   .bottom = client_y + win.client_height()};
+            const RECT client_rect{
+                .left = win.client_x(),
+                .top = win.client_y(),
+                .right = win.client_x() + win.client_width(),
+                .bottom = win.client_y() + win.client_height(),
+            };
 
             win.guest.access([&](USER_WINDOW& guest_win) {
                 guest_win.rcWindow = window_rect;
@@ -448,14 +448,28 @@ namespace sogen
             return position;
         }
 
+        uint64_t pack_message_lparam(const int low, const int high)
+        {
+            return static_cast<uint64_t>(static_cast<uint16_t>(low)) | (static_cast<uint64_t>(static_cast<uint16_t>(high)) << 16);
+        }
+
         void apply_window_position_change(const syscall_context& c, window& win, const EMU_WINDOWPOS& position,
                                           emulator_stack_allocation& changed_window_pos_alloc, std::vector<qmsg>& message_queue,
-                                          const bool update_changed_window_position)
+                                          const bool update_changed_window_position = true)
         {
+            const auto old_client_x = win.client_x();
+            const auto old_client_y = win.client_y();
+            const auto old_client_width = win.client_width();
+            const auto old_client_height = win.client_height();
             const auto x = (position.flags & SWP_NOMOVE) != 0 ? win.x : position.x;
             const auto y = (position.flags & SWP_NOMOVE) != 0 ? win.y : position.y;
             const auto width = (position.flags & SWP_NOSIZE) != 0 ? win.width : position.cx;
             const auto height = (position.flags & SWP_NOSIZE) != 0 ? win.height : position.cy;
+
+            if ((position.flags & SWP_FRAMECHANGED) != 0)
+            {
+                // SWP_FRAMECHANGED is intentionally ignored until runtime style changes and non-client recalculation are implemented.
+            }
             update_window_geometry(c, win, x, y, width, height, false);
 
             EMU_WINDOWPOS changed_position{
@@ -465,13 +479,13 @@ namespace sogen
                 .y = win.y,
                 .cx = win.width,
                 .cy = win.height,
-                .flags = position.flags,
+                .flags = position.flags & ~(SWP_NOCLIENTMOVE | SWP_NOCLIENTSIZE),
             };
-            if ((position.flags & SWP_NOMOVE) != 0)
+            if (old_client_x == win.client_x() && old_client_y == win.client_y())
             {
                 changed_position.flags |= SWP_NOCLIENTMOVE;
             }
-            if ((position.flags & SWP_NOSIZE) != 0)
+            if (old_client_width == win.client_width() && old_client_height == win.client_height())
             {
                 changed_position.flags |= SWP_NOCLIENTSIZE;
             }
@@ -501,10 +515,10 @@ namespace sogen
                     message.lParam = changed_window_pos_alloc.address();
                     break;
                 case WM_MOVE:
-                    message.lParam = static_cast<uint64_t>(((win.y & 0xFFFF) << 16) | (win.x & 0xFFFF));
+                    message.lParam = pack_message_lparam(win.client_x(), win.client_y());
                     break;
                 case WM_SIZE:
-                    message.lParam = static_cast<uint64_t>(((win.client_height() & 0xFFFF) << 16) | (win.client_width() & 0xFFFF));
+                    message.lParam = pack_message_lparam(win.client_width(), win.client_height());
                     break;
                 default:
                     break;
@@ -525,6 +539,64 @@ namespace sogen
             }
 
             apply_window_position_change(c, win, position, changed_window_pos_alloc, message_queue, update_changed_window_position);
+        }
+
+        void release_window_position_allocations(const syscall_context& c, window_position_state& state)
+        {
+            if (state.changed_window_pos_alloc)
+            {
+                c.emu.pop_stack(state.changed_window_pos_alloc);
+            }
+            if (state.window_pos_alloc)
+            {
+                c.emu.pop_stack(state.window_pos_alloc);
+            }
+        }
+
+        void invalidate_window_tree(const syscall_context& c, window& win);
+
+        void finish_set_window_position(const syscall_context& c, window& win, window_position_state& state, const int old_x,
+                                        const int old_y, const int old_width, const int old_height)
+        {
+            EMU_WINDOWPOS position{};
+            c.emu.read_memory(state.window_pos_alloc.address(), &position, sizeof(position));
+            const bool showing_hidden_window = (position.flags & SWP_SHOWWINDOW) != 0 && (win.style & WS_VISIBLE) == 0;
+            const bool hiding_visible_window = (position.flags & SWP_HIDEWINDOW) != 0 && (win.style & WS_VISIBLE) != 0;
+
+            if ((position.flags & SWP_HIDEWINDOW) != 0)
+            {
+                win.style &= ~WS_VISIBLE;
+                win.guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win.style; });
+                if (win.host_surface_window)
+                {
+                    c.win_emu.ui().set_window_visible(win.handle, false);
+                }
+            }
+            else if (showing_hidden_window)
+            {
+                win.style |= WS_VISIBLE;
+                win.guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win.style; });
+                if (win.host_surface_window)
+                {
+                    c.win_emu.ui().set_window_visible(win.handle, true);
+                }
+                invalidate_window_tree(c, win);
+            }
+
+            const bool geometry_changed = old_x != win.x || old_y != win.y || old_width != win.width || old_height != win.height;
+            if ((position.flags & SWP_NOREDRAW) == 0 && !showing_hidden_window && geometry_changed)
+            {
+                invalidate_window(c, win, std::nullopt, false);
+            }
+
+            // TODO: Apply hwndInsertAfter once guest and host z-order mutation are implemented.
+
+            if (geometry_changed || showing_hidden_window || hiding_visible_window)
+            {
+                state.message_queue.push_back(
+                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.changed_window_pos_alloc.address()});
+            }
+            state.position_applied = true;
         }
 
         RECT union_update_rect(const RECT& a, const RECT& b)
@@ -1498,11 +1570,6 @@ namespace sogen
             {
                 item.text = read_menu_item_text(c, mi, item_text);
             }
-        }
-
-        uint64_t pack_message_lparam(const int low, const int high)
-        {
-            return static_cast<uint64_t>(static_cast<uint16_t>(low)) | (static_cast<uint64_t>(static_cast<uint16_t>(high)) << 16);
         }
 
     }
@@ -3065,12 +3132,12 @@ namespace sogen
                 // The client rect is the window minus its non-client frame (see window::nonclient_insets). The
                 // guest reads rcClient client-side to size its render target/backbuffer, so seeding it with the
                 // outer rect here makes a framed window render too large and rescale (softening the frame).
-                const auto client_x = x + win.client_x_offset();
-                const auto client_y = y + win.client_y_offset();
-                guest_win.rcClient = {.left = client_x,
-                                      .top = client_y,
-                                      .right = client_x + win.client_width(),
-                                      .bottom = client_y + win.client_height()};
+                guest_win.rcClient = {
+                    .left = win.client_x(),
+                    .top = win.client_y(),
+                    .right = win.client_x() + win.client_width(),
+                    .bottom = win.client_y() + win.client_height(),
+                };
                 if (parent_win && has_child_parent)
                 {
                     guest_win.spwndParent = parent_win->guest.value();
@@ -3096,7 +3163,7 @@ namespace sogen
                     guest_win.spmenu = menu;
                 }
                 guest_win.windowBand = 1; // ZBID_DESKTOP
-                guest_win.dpiContext = USER_DEFAULT_DPI_CONTEXT;
+                guest_win.dpiContext = USER_DEFAULT_WINDOW_DPI_CONTEXT;
                 guest_win.fnid = get_builtin_window_fnid(normalized_class);
                 guest_win.threadId = win.thread_id;
                 guest_win.processId = process_context::process_id;
@@ -3259,7 +3326,7 @@ namespace sogen
             const bool initially_visible = (style & WS_VISIBLE) != 0;
             if (has_child_parent)
             {
-                const auto move_lparam = pack_message_lparam(x, y);
+                const auto move_lparam = pack_message_lparam(win.client_x(), win.client_y());
                 const auto size_lparam = pack_message_lparam(win.client_width(), win.client_height());
                 std::vector<qmsg> child_messages{};
 
@@ -4446,50 +4513,6 @@ namespace sogen
             return old_parent;
         }
 
-        void finish_set_window_position(const syscall_context& c, window& win, window_position_state& state, const int old_x,
-                                        const int old_y, const int old_width, const int old_height)
-        {
-            EMU_WINDOWPOS position{};
-            c.emu.read_memory(state.window_pos_alloc.address(), &position, sizeof(position));
-            const bool showing_hidden_window = (position.flags & SWP_SHOWWINDOW) != 0 && (win.style & WS_VISIBLE) == 0;
-            const bool hiding_visible_window = (position.flags & SWP_HIDEWINDOW) != 0 && (win.style & WS_VISIBLE) != 0;
-
-            if ((position.flags & SWP_HIDEWINDOW) != 0)
-            {
-                win.style &= ~WS_VISIBLE;
-                win.guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win.style; });
-                if (win.host_surface_window)
-                {
-                    c.win_emu.ui().set_window_visible(win.handle, false);
-                }
-            }
-            else if (showing_hidden_window)
-            {
-                win.style |= WS_VISIBLE;
-                win.guest.access([&](USER_WINDOW& guest_win) { guest_win.dwStyle = win.style; });
-                if (win.host_surface_window)
-                {
-                    c.win_emu.ui().set_window_visible(win.handle, true);
-                }
-                invalidate_window_tree(c, win);
-            }
-
-            const bool geometry_changed = old_x != win.x || old_y != win.y || old_width != win.width || old_height != win.height;
-            if ((position.flags & SWP_NOREDRAW) == 0 && !showing_hidden_window && geometry_changed)
-            {
-                invalidate_window(c, win, std::nullopt, false);
-            }
-
-            const bool frame_changed = (position.flags & SWP_FRAMECHANGED) != 0;
-            const bool z_order_changed = (position.flags & SWP_NOZORDER) == 0;
-            if (geometry_changed || showing_hidden_window || hiding_visible_window || frame_changed || z_order_changed)
-            {
-                state.message_queue.push_back(
-                    {.message = WM_WINDOWPOSCHANGED, .wParam = 0, .lParam = state.changed_window_pos_alloc.address()});
-            }
-            state.position_applied = true;
-        }
-
         BOOL handle_NtUserSetWindowPos(const syscall_context& c, const hwnd hWnd, const hwnd hwnd_insert_after, const int x, const int y,
                                        const int cx, const int cy, const UINT flags)
         {
@@ -4525,13 +4548,12 @@ namespace sogen
                 const auto old_width = win->width;
                 const auto old_height = win->height;
 
-                apply_window_position_change(c, *win, position, state.changed_window_pos_alloc, state.message_queue, true);
+                apply_window_position_change(c, *win, position, state.changed_window_pos_alloc, state.message_queue);
                 finish_set_window_position(c, *win, state, old_x, old_y, old_width, old_height);
 
                 if (state.message_queue.empty())
                 {
-                    c.emu.pop_stack(state.changed_window_pos_alloc);
-                    c.emu.pop_stack(state.window_pos_alloc);
+                    release_window_position_allocations(c, state);
                     return TRUE;
                 }
 
@@ -4548,11 +4570,7 @@ namespace sogen
             auto* win = c.proc.windows.get(hWnd);
             if (!win)
             {
-                if (state.changed_window_pos_alloc)
-                {
-                    c.emu.pop_stack(state.changed_window_pos_alloc);
-                }
-                c.emu.pop_stack(state.window_pos_alloc);
+                release_window_position_allocations(c, state);
                 return FALSE;
             }
 
@@ -4574,8 +4592,7 @@ namespace sogen
                 return {};
             }
 
-            c.emu.pop_stack(state.changed_window_pos_alloc);
-            c.emu.pop_stack(state.window_pos_alloc);
+            release_window_position_allocations(c, state);
             return TRUE;
         }
 
@@ -4745,6 +4762,12 @@ namespace sogen
                         oldValue = guest_win.lpfnWndProc;
                         guest_win.lpfnWndProc = dwNewLong;
                         win->wnd_proc = dwNewLong;
+                        break;
+
+                    case GWL_STYLE:
+                    case GWL_EXSTYLE:
+                        // TODO: Support runtime GWL_STYLE/GWL_EXSTYLE changes together with
+                        // WM_STYLECHANGING/WM_STYLECHANGED and non-client frame recalculation.
                         break;
 
                     default:

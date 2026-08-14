@@ -222,8 +222,10 @@ namespace sogen
 #define SWP_NOZORDER                0x0004
 #define SWP_NOREDRAW                0x0008
 #define SWP_NOACTIVATE              0x0010
+#define SWP_FRAMECHANGED            0x0020
 #define SWP_SHOWWINDOW              0x0040
 #define SWP_HIDEWINDOW              0x0080
+#define SWP_NOSENDCHANGING          0x0400
 
 #define SW_SHOWNORMAL               1
 #define SW_SHOWMINIMIZED            2
@@ -474,6 +476,8 @@ namespace sogen
 #define GWLP_WNDPROC                (-4)
 #define GWLP_HINSTANCE              (-6)
 #define GWLP_HWNDPARENT             (-8)
+#define GWL_STYLE                   (-16)
+#define GWL_EXSTYLE                 (-20)
 #define GWLP_USERDATA               (-21)
 #define GWLP_ID                     (-12)
 
