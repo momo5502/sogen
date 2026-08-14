@@ -151,6 +151,11 @@ namespace sogen
     {
         this->assert_validity();
 
+        if (this->port_->disconnected)
+        {
+            return {.status = STATUS_PORT_DISCONNECTED};
+        }
+
         if (!c.receive_message)
         {
             return {.status = STATUS_INVALID_PARAMETER};
