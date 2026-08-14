@@ -555,6 +555,7 @@ namespace sogen
                 this->stream_format_ = read_stream_audio_format(win_emu, c, writer.pointer_size());
                 if (!this->stream_format_)
                 {
+                    win_emu.log.warn("[audio-service] Failed to read the RPC stream format or the requested format is unsupported\n");
                     return STATUS_INVALID_PARAMETER;
                 }
 
