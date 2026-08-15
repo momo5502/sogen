@@ -8,19 +8,6 @@ namespace sogen
 
     namespace syscalls
     {
-        ULONG read_alpc_port_flags(const syscall_context& c, const emulator_pointer port_attributes)
-        {
-            ULONG flags = ALPC_PORFLG_ALLOW_LPC_REQUESTS;
-            if (!port_attributes)
-            {
-                return flags;
-            }
-
-            flags |= emulator_object<ALPC_PORT_ATTRIBUTES<EmulatorTraits<Emu64>>>{c.emu, port_attributes}.read().Flags;
-
-            return flags;
-        }
-
         NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<handle> client_port_handle,
                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
                                       const emulator_object<SECURITY_QUALITY_OF_SERVICE> /*security_qos*/,
@@ -70,7 +57,7 @@ namespace sogen
 
         NTSTATUS handle_NtAlpcCreatePort(const syscall_context& c, const emulator_object<handle> port_handle,
                                          const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
-                                         const emulator_pointer port_attributes)
+                                         const emulator_object<ALPC_PORT_ATTRIBUTES<EmulatorTraits<Emu64>>> port_attributes)
         {
             if (!port_handle)
             {
@@ -93,7 +80,11 @@ namespace sogen
             c.win_emu.callbacks.on_generic_access("Creating ALPC port", port_name);
 
             port_creation_data data{};
-            data.flags = read_alpc_port_flags(c, port_attributes);
+            data.flags = ALPC_PORFLG_ALLOW_LPC_REQUESTS;
+            if (port_attributes)
+            {
+                data.flags |= port_attributes.read().Flags;
+            }
             port_container container{std::move(port_name), c.win_emu, data};
 
             const auto new_handle = c.proc.ports.store(std::move(container));
@@ -105,8 +96,9 @@ namespace sogen
         NTSTATUS handle_NtAlpcConnectPort(const syscall_context& c, const emulator_object<handle> port_handle,
                                           const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
                                           const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
-                                          const emulator_pointer port_attributes, const ULONG /*flags*/,
-                                          const emulator_pointer /*required_server_sid*/, const emulator_pointer /*connection_message*/,
+                                          const emulator_object<ALPC_PORT_ATTRIBUTES<EmulatorTraits<Emu64>>> port_attributes,
+                                          const ULONG /*flags*/, const emulator_pointer /*required_server_sid*/,
+                                          const emulator_pointer /*connection_message*/,
                                           const emulator_object<EmulatorTraits<Emu64>::SIZE_T> /*buffer_length*/,
                                           const emulator_pointer /*out_message_attributes*/,
                                           const emulator_pointer /*in_message_attributes*/,
@@ -116,7 +108,11 @@ namespace sogen
             c.win_emu.callbacks.on_generic_access("Connecting port", port_name);
 
             port_creation_data data{};
-            data.flags = read_alpc_port_flags(c, port_attributes);
+            data.flags = ALPC_PORFLG_ALLOW_LPC_REQUESTS;
+            if (port_attributes)
+            {
+                data.flags |= port_attributes.read().Flags;
+            }
             data.sequence_number = 1;
             port_container container{std::u16string(port_name), c.win_emu, data};
 
@@ -130,10 +126,10 @@ namespace sogen
             const syscall_context& c, const emulator_object<handle> port_handle,
             const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> connection_port_object_attributes,
             const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*client_port_object_attributes*/,
-            const emulator_pointer port_attributes, const ULONG flags, const emulator_pointer /*server_security_requirements*/,
-            const emulator_pointer connection_message, const emulator_object<EmulatorTraits<Emu64>::SIZE_T> buffer_length,
-            const emulator_pointer out_message_attributes, const emulator_pointer in_message_attributes,
-            const emulator_object<LARGE_INTEGER> timeout)
+            const emulator_object<ALPC_PORT_ATTRIBUTES<EmulatorTraits<Emu64>>> port_attributes, const ULONG flags,
+            const emulator_pointer /*server_security_requirements*/, const emulator_pointer connection_message,
+            const emulator_object<EmulatorTraits<Emu64>::SIZE_T> buffer_length, const emulator_pointer out_message_attributes,
+            const emulator_pointer in_message_attributes, const emulator_object<LARGE_INTEGER> timeout)
         {
             if (!connection_port_object_attributes)
             {
@@ -362,7 +358,7 @@ namespace sogen
             emulator_object<information_type>{c.emu, port_information}.write({
                 .Flags = internal_port->flags,
                 .SequenceNo = internal_port->sequence_number,
-                .PortContext = internal_port->port_context,
+                .PortContext = 0,
             });
             return STATUS_SUCCESS;
         }

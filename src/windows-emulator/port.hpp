@@ -307,7 +307,6 @@ namespace sogen
         int64_t view_size{};
         ULONG flags{ALPC_PORFLG_ALLOW_LPC_REQUESTS};
         ULONG sequence_number{};
-        uint64_t port_context{};
     };
 
     struct port : ref_counted_object
@@ -316,7 +315,6 @@ namespace sogen
         int64_t view_size{};
         ULONG flags{};
         ULONG sequence_number{};
-        uint64_t port_context{};
         bool disconnected{};
 
         port() = default;
@@ -334,7 +332,6 @@ namespace sogen
             buffer.write(this->view_size);
             buffer.write(this->flags);
             buffer.write(this->sequence_number);
-            buffer.write(this->port_context);
             buffer.write(this->disconnected);
         }
 
@@ -344,7 +341,6 @@ namespace sogen
             buffer.read(this->view_size);
             buffer.read(this->flags);
             buffer.read(this->sequence_number);
-            buffer.read(this->port_context);
             buffer.read(this->disconnected);
         }
 
@@ -355,7 +351,6 @@ namespace sogen
             view_size = data.view_size;
             flags = data.flags;
             sequence_number = data.sequence_number;
-            port_context = data.port_context;
         }
 
         bool disconnect()
