@@ -119,9 +119,6 @@ namespace sogen
         constexpr uint32_t k_write_cursor_offset = 0x18;
         constexpr uint32_t k_play_cursor_offset = 0x20;
 
-        // The shared-mode mix format reported by handle_get_mix_format: 44.1 kHz, 2 channels, 32-bit float.
-        constexpr uint32_t k_sample_rate = 44100;
-        constexpr uint32_t k_block_align = 8; // channels * bytes-per-sample
         constexpr uint64_t k_hns_per_second = 10000000;
         constexpr uint64_t k_default_buffer_duration = k_hns_per_second; // 1 s
 
@@ -129,14 +126,102 @@ namespace sogen
         // (the guest's own buffer is often only ~20 ms, far too thin a cushion on its own) while bounding total
         // latency to roughly this plus that buffer.
         constexpr uint64_t k_host_queue_cushion_ms = 60;
-        constexpr uint64_t k_host_queue_cushion = k_sample_rate * k_block_align * k_host_queue_cushion_ms / 1000;
 
         // The engine period reported by handle_get_device_period, and the same span expressed in bytes. An
         // event-driven client is woken once per period consumed, so this also paces how often we signal it.
         constexpr int64_t k_device_period_hns = 100000; // 10 ms
         constexpr int64_t k_device_minimum_period_hns = 30000;
         constexpr auto k_device_period = std::chrono::microseconds{k_device_period_hns / 10};
-        constexpr audio_format k_stream_format{.sample_rate = k_sample_rate, .channels = 2, .bits_per_sample = 32, .is_float = true};
+
+        struct wave_format_extensible
+        {
+            uint16_t tag{};
+            uint16_t channels{};
+            uint32_t sample_rate{};
+            uint32_t average_bytes_per_second{};
+            uint16_t block_align{};
+            uint16_t bits_per_sample{};
+            uint16_t extra_size{};
+            uint16_t valid_bits_per_sample{};
+            uint32_t channel_mask{};
+            uint32_t subtype{};
+            std::array<uint8_t, 12> subtype_tail{};
+        };
+
+        static_assert(sizeof(wave_format_extensible) == 40);
+
+        struct stream_audio_format
+        {
+            wave_format_extensible wave_format{};
+            audio_format host_format{};
+            uint32_t average_bytes_per_second{};
+            uint16_t block_align{};
+        };
+
+        std::optional<stream_audio_format> read_stream_audio_format(windows_emulator& win_emu, const lpc_request_context& c,
+                                                                    const size_t pointer_size)
+        {
+            // AudioClientRpc v2.8 opnum 4 places its deferred WAVEFORMATEXTENSIBLE at byte 136 in NDR32 and byte
+            // 152 in NDR64. These offsets and the 40-byte extent were confirmed against native audiosrv traffic.
+            constexpr size_t format_offset_32 = 136;
+            constexpr size_t format_offset_64 = 152;
+            const auto format_offset = pointer_size == utils::aligned_binary_writer::pointer_size_32 ? format_offset_32 : format_offset_64;
+            constexpr uint16_t wave_format_extensible_tag = 0xFFFE;
+            constexpr uint16_t extensible_size = 22;
+            constexpr uint32_t subtype_pcm = 1;
+            constexpr uint32_t subtype_ieee_float = 3;
+            constexpr std::array<uint8_t, 12> ksdataformat_subtype_tail = {0x00, 0x00, 0x10, 0x00, 0x80, 0x00,
+                                                                           0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71};
+
+            stream_audio_format result{};
+            if (!c.send_buffer || c.send_buffer_length < format_offset + sizeof(result.wave_format))
+            {
+                return std::nullopt;
+            }
+            win_emu.emu().read_memory(c.send_buffer + format_offset, &result.wave_format, sizeof(result.wave_format));
+
+            const auto& format = result.wave_format;
+
+            if (format.tag != wave_format_extensible_tag || format.extra_size != extensible_size)
+            {
+                return std::nullopt;
+            }
+
+            if (format.channels == 0 || format.channels > 32 || format.sample_rate == 0 || format.bits_per_sample % 8 != 0 ||
+                format.valid_bits_per_sample != format.bits_per_sample)
+            {
+                return std::nullopt;
+            }
+
+            if (format.subtype_tail != ksdataformat_subtype_tail)
+            {
+                return std::nullopt;
+            }
+
+            const bool supported_pcm = format.subtype == subtype_pcm &&
+                                       (format.bits_per_sample == 8 || format.bits_per_sample == 16 || format.bits_per_sample == 32);
+            const bool supported_float = format.subtype == subtype_ieee_float && format.bits_per_sample == 32;
+            if (!supported_pcm && !supported_float)
+            {
+                return std::nullopt;
+            }
+
+            const auto bytes_per_sample = format.bits_per_sample / 8;
+            const auto expected_block_align = static_cast<uint32_t>(format.channels) * bytes_per_sample;
+            const auto expected_average = static_cast<uint64_t>(format.sample_rate) * format.block_align;
+            if (expected_block_align != format.block_align || expected_average != format.average_bytes_per_second)
+            {
+                return std::nullopt;
+            }
+
+            result.host_format = {.sample_rate = format.sample_rate,
+                                  .channels = format.channels,
+                                  .bits_per_sample = format.bits_per_sample,
+                                  .is_float = supported_float};
+            result.average_bytes_per_second = format.average_bytes_per_second;
+            result.block_align = format.block_align;
+            return result;
+        }
 
         // Emulates the audio endpoint's hardware DMA. The render section handed to the guest is backed by a
         // host-owned buffer aliased into the guest address space (allocate_host_memory), so the guest and this
@@ -148,9 +233,11 @@ namespace sogen
         class render_stream
         {
           public:
-            render_stream(windows_emulator& win_emu, const uint32_t buffer_bytes, const uint64_t section_size,
-                          const uint8_t* control_header, const size_t control_header_size)
+            render_stream(windows_emulator& win_emu, const stream_audio_format& format, const uint32_t buffer_bytes,
+                          const uint64_t section_size, const uint8_t* control_header, const size_t control_header_size)
                 : win_emu_(win_emu),
+                  format_(format.host_format),
+                  average_bytes_per_second_(format.average_bytes_per_second),
                   buffer_bytes_(buffer_bytes),
                   section_size_(section_size),
                   host_storage_(static_cast<size_t>(section_size) + k_audio_page_size)
@@ -231,7 +318,7 @@ namespace sogen
 
                     if (!tried_start)
                     {
-                        has_device = this->win_emu_.audio().start(k_stream_format);
+                        has_device = this->win_emu_.audio().start(this->format_);
                         tried_start = true;
                         anchor = std::chrono::steady_clock::now();
                     }
@@ -258,14 +345,14 @@ namespace sogen
                         if (const auto queued = this->win_emu_.audio().queued_bytes())
                         {
                             const auto consumed = write > *queued ? write - *queued : 0;
-                            played = consumed + k_host_queue_cushion;
+                            const auto cushion = this->average_bytes_per_second_ * k_host_queue_cushion_ms / 1000;
+                            played = consumed + cushion;
                         }
                         else
                         {
                             const auto elapsed_ns =
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - anchor).count();
-                            played =
-                                static_cast<uint64_t>(k_sample_rate) * k_block_align * static_cast<uint64_t>(elapsed_ns) / k_ns_per_second;
+                            played = this->average_bytes_per_second_ * static_cast<uint64_t>(elapsed_ns) / k_ns_per_second;
                         }
                         play = std::min(played, write);
                     }
@@ -299,6 +386,8 @@ namespace sogen
             static constexpr uint64_t k_ns_per_second = 1'000'000'000ULL;
 
             windows_emulator& win_emu_;
+            audio_format format_{};
+            uint64_t average_bytes_per_second_{};
             uint32_t buffer_bytes_{};
             uint64_t section_size_{};
             uint64_t guest_address_{0};
@@ -326,9 +415,10 @@ namespace sogen
                         return handle_get_device_period(writer);
                     case k_audio_opnum_destroy_stream:
                         this->render_stream_.reset();
+                        this->stream_format_.reset();
                         return handle_post_create(writer);
                     case k_audio_opnum_open_stream:
-                        return handle_open_stream(writer);
+                        return handle_open_stream(win_emu, c, writer);
                     case k_audio_opnum_get_audio_session:
                         return handle_get_audio_session(writer);
                     case k_audio_opnum_get_session_state:
@@ -368,6 +458,7 @@ namespace sogen
 
           private:
             std::unique_ptr<render_stream> render_stream_{};
+            std::optional<stream_audio_format> stream_format_{};
 
             // {D574D111} opnum 0: AudioServerGetMixFormat(endpointId, VadServerSettings*, [out] WAVEFORMATEX**).
             // The [out] format is an FC_CSTRUCT (18-byte WAVEFORMATEX base + cbSize-conformant tail) behind a
@@ -459,8 +550,15 @@ namespace sogen
             //   [out] LPWSTR*       (unique pointer, optional)
             //   [out] context_handle (the stream handle, reused as the binding for follow-on RPCs)
             //   returns HRESULT
-            static NTSTATUS handle_open_stream(utils::aligned_binary_writer& writer)
+            NTSTATUS handle_open_stream(windows_emulator& win_emu, const lpc_request_context& c, utils::aligned_binary_writer& writer)
             {
+                this->stream_format_ = read_stream_audio_format(win_emu, c, writer.pointer_size());
+                if (!this->stream_format_)
+                {
+                    win_emu.log.warn("[audio-service] Failed to read the RPC stream format or the requested format is unsupported\n");
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 writer.write_ndr_pointer(true); // [out, string] p6: stream identifier
                 writer.write_ndr_u16string(u"SogenAudioStream", true);
                 writer.align_to(sizeof(uint32_t));
@@ -482,6 +580,12 @@ namespace sogen
             NTSTATUS handle_create_stream(windows_emulator& win_emu, const lpc_request_context& c, utils::aligned_binary_writer& writer,
                                           std::vector<alpc_reply_handle>& reply_handles)
             {
+                if (!this->stream_format_)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const auto& format = *this->stream_format_;
+
                 // The client negotiates the render-buffer duration; the reply must describe a buffer of exactly
                 // that size. The op7 [in] carries the requested duration (100-ns units) as a hyper right after the
                 // 20-byte context handle + the 4-byte share-mode enum, i.e. at request offset 24. A fixed
@@ -499,10 +603,28 @@ namespace sogen
                     }
                 }
 
-                const uint64_t buffer_frames = (k_sample_rate * duration_hns + k_hns_per_second - 1) / k_hns_per_second;
-                const auto buffer_bytes = static_cast<uint32_t>(buffer_frames * k_block_align);
+                const auto sample_rate = static_cast<uint64_t>(format.host_format.sample_rate);
+                constexpr auto duration_rounding = k_hns_per_second - 1;
+                const auto maximum_duration = (std::numeric_limits<uint64_t>::max() - duration_rounding) / sample_rate;
+                if (duration_hns > maximum_duration)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto buffer_frames = (sample_rate * duration_hns + duration_rounding) / k_hns_per_second;
+
+                constexpr auto section_alignment_mask = uint32_t{0xFFF};
+                constexpr auto maximum_buffer_extent = std::numeric_limits<uint32_t>::max() - section_alignment_mask;
+                constexpr auto maximum_buffer_bytes = maximum_buffer_extent - k_render_data_offset;
+                const auto maximum_buffer_frames = maximum_buffer_bytes / format.block_align;
+                if (buffer_frames == 0 || buffer_frames > maximum_buffer_frames)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto buffer_bytes = static_cast<uint32_t>(buffer_frames * format.block_align);
                 const uint32_t buffer_extent = k_render_data_offset + buffer_bytes; // control header + sample area
-                const uint64_t render_section_size = (buffer_extent + 0xFFF) & ~uint64_t{0xFFF};
+                const uint64_t render_section_size = (buffer_extent + section_alignment_mask) & ~uint64_t{section_alignment_mask};
 
                 section render_section{};
                 render_section.maximum_size = render_section_size;
@@ -547,11 +669,12 @@ namespace sogen
                 patch32(0x170, buffer_extent);
                 patch32(0x174, buffer_extent);
                 std::memcpy(&render_control_header[0x154], &duration_hns, sizeof(duration_hns));
+                std::memcpy(&render_control_header[0x180], &format.wave_format, sizeof(format.wave_format));
 
                 // Back the render section with a host-owned buffer aliased into the guest and drained by a host
                 // thread (see render_stream). The guest maps this same memory as the shared audio buffer, so the
                 // drain thread reads the committed PCM and advances the play cursor without any CPU-backend hooks.
-                this->render_stream_ = std::make_unique<render_stream>(win_emu, buffer_bytes, render_section_size,
+                this->render_stream_ = std::make_unique<render_stream>(win_emu, format, buffer_bytes, render_section_size,
                                                                        render_control_header.data(), render_control_header.size());
                 const auto backing = this->render_stream_->guest_address();
                 if (backing == 0)
@@ -680,15 +803,22 @@ namespace sogen
             }
 
             // opnum 25: IMMDeviceEnumerator::GetDefaultAudioEndpoint backend.
-            //   [in]  DWORD data_flow (0 = eRender, 1 = eCapture)  [+ role]
+            //   [in]  EDataFlow data_flow (0 = eRender, 1 = eCapture)
+            //   [in]  ERole role
             //   [out] LPWSTR* device_id   (unique pointer + conformant-varying wstring)
             //   [out] DWORD*  state
             //   returns HRESULT
+            // NDR32 encodes these enums as adjacent 16-bit values, while NDR64 encodes each as a 32-bit value.
             static NTSTATUS handle_get_default_endpoint(windows_emulator& win_emu, const lpc_request_context& c,
                                                         utils::aligned_binary_writer& writer)
             {
                 uint32_t data_flow = 0;
-                if (c.send_buffer && c.send_buffer_length >= sizeof(uint32_t))
+                if (c.send_buffer && writer.pointer_size() == utils::aligned_binary_writer::pointer_size_32 &&
+                    c.send_buffer_length >= sizeof(uint16_t))
+                {
+                    data_flow = win_emu.emu().read_memory<uint16_t>(c.send_buffer);
+                }
+                else if (c.send_buffer && c.send_buffer_length >= sizeof(uint32_t))
                 {
                     data_flow = win_emu.emu().read_memory<uint32_t>(c.send_buffer);
                 }

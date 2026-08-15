@@ -15,12 +15,14 @@ SET EMU_WINDIR=%EMU_FILESYS%\c\windows
 SET EMU_SYSDIR=%EMU_WINDIR%\system32
 SET EMU_SYSDIR_WOW64=%EMU_WINDIR%\syswow64
 SET EMU_CURSORDIR=%EMU_WINDIR%\cursors
+SET EMU_SORTDIR=%EMU_WINDIR%\globalization\sorting
 SET EMU_REGDIR=%EMU_ROOT%\registry
 SET EMU_STEAMDIR=%EMU_FILESYS%\c\steam
 
 MKDIR %EMU_SYSDIR%
 MKDIR %EMU_SYSDIR_WOW64%
 MKDIR %EMU_CURSORDIR%
+MKDIR %EMU_SORTDIR%
 MKDIR %EMU_REGDIR%
 MKDIR %EMU_STEAMDIR%
 
@@ -123,6 +125,7 @@ CALL :collect psapi.dll
 CALL :collect rasadhlp.dll
 CALL :collect resampledmo.dll
 CALL :collect rpcrt4.dll
+CALL :collect rpcss.dll
 CALL :collect rstrtmgr.dll
 CALL :collect rsaenh.dll
 CALL :collect sechost.dll
@@ -172,6 +175,7 @@ CALL :collect wsock32.dll
 CALL :collect wtsapi32.dll
 CALL :collect x3daudio1_7.dll
 CALL :collect xapofx1_5.dll
+CALL :collect xaudio2_9.dll
 CALL :collect xinput1_3.dll
 CALL :collect xinput1_4.dll
 CALL :collect xinput9_1_0.dll
@@ -180,6 +184,7 @@ CALL :collect locale.nls
 CALL :collect c_1252.nls
 CALL :collect c_437.nls
 CALL :collect c_850.nls
+CALL :collect_file "%WINDIR%\Globalization\Sorting", sortdefault.nls, %EMU_SORTDIR%
 
 CALL :collect wdmaud.drv
 
