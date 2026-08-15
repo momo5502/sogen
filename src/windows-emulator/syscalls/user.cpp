@@ -466,10 +466,7 @@ namespace sogen
             const auto width = (position.flags & SWP_NOSIZE) != 0 ? win.width : position.cx;
             const auto height = (position.flags & SWP_NOSIZE) != 0 ? win.height : position.cy;
 
-            if ((position.flags & SWP_FRAMECHANGED) != 0)
-            {
-                // SWP_FRAMECHANGED is intentionally ignored until runtime style changes and non-client recalculation are implemented.
-            }
+            // TODO: Handle SWP_FRAMECHANGED once runtime style changes and non-client recalculation are implemented.
             update_window_geometry(c, win, x, y, width, height, false);
 
             EMU_WINDOWPOS changed_position{
@@ -526,9 +523,7 @@ namespace sogen
             }
         }
 
-        void complete_window_position_change(const syscall_context& c, window& win, const uint64_t window_pos_address,
-                                             emulator_stack_allocation& changed_window_pos_alloc, std::vector<qmsg>& message_queue,
-                                             const bool update_changed_window_position)
+        EMU_WINDOWPOS resolve_window_position_callback(const syscall_context& c, const uint64_t window_pos_address)
         {
             EMU_WINDOWPOS position{};
             c.emu.read_memory(window_pos_address, &position, sizeof(position));
@@ -538,7 +533,7 @@ namespace sogen
                 c.emu.write_memory(window_pos_address, &position, sizeof(position));
             }
 
-            apply_window_position_change(c, win, position, changed_window_pos_alloc, message_queue, update_changed_window_position);
+            return position;
         }
 
         void release_window_position_allocations(const syscall_context& c, window_position_state& state)
@@ -555,11 +550,15 @@ namespace sogen
 
         void invalidate_window_tree(const syscall_context& c, window& win);
 
-        void finish_set_window_position(const syscall_context& c, window& win, window_position_state& state, const int old_x,
-                                        const int old_y, const int old_width, const int old_height)
+        void apply_set_window_position(const syscall_context& c, window& win, window_position_state& state, const EMU_WINDOWPOS& position)
         {
-            EMU_WINDOWPOS position{};
-            c.emu.read_memory(state.window_pos_alloc.address(), &position, sizeof(position));
+            const auto old_x = win.x;
+            const auto old_y = win.y;
+            const auto old_width = win.width;
+            const auto old_height = win.height;
+
+            apply_window_position_change(c, win, position, state.changed_window_pos_alloc, state.message_queue);
+
             const bool showing_hidden_window = (position.flags & SWP_SHOWWINDOW) != 0 && (win.style & WS_VISIBLE) == 0;
             const bool hiding_visible_window = (position.flags & SWP_HIDEWINDOW) != 0 && (win.style & WS_VISIBLE) != 0;
 
@@ -1143,8 +1142,8 @@ namespace sogen
 
             if (auto* win = c.proc.windows.get(frame.handle))
             {
-                complete_window_position_change(c, *win, frame.pending_window_pos_address, frame.changed_window_pos_alloc,
-                                                frame.message_queue, true);
+                const auto position = resolve_window_position_callback(c, frame.pending_window_pos_address);
+                apply_window_position_change(c, *win, position, frame.changed_window_pos_alloc, frame.message_queue, true);
             }
             frame.pending_window_pos_address = 0;
         }
@@ -3393,8 +3392,11 @@ namespace sogen
                 const bool activation_position =
                     s.show_data.activation_window_pos_alloc &&
                     s.show_data.pending_window_pos_address == s.show_data.activation_window_pos_alloc.address();
-                complete_window_position_change(c, *win, s.show_data.pending_window_pos_address, s.show_data.changed_window_pos_alloc,
-                                                s.show_data.message_queue, !activation_position);
+
+                const auto position = resolve_window_position_callback(c, s.show_data.pending_window_pos_address);
+                apply_window_position_change(c, *win, position, s.show_data.changed_window_pos_alloc, s.show_data.message_queue,
+                                             !activation_position);
+
                 s.show_data.pending_window_pos_address = 0;
                 show_orchestrator.window_position_completed(activation_position);
             }
@@ -3667,9 +3669,11 @@ namespace sogen
                     data.activation_window_pos_alloc && data.pending_window_pos_address == data.activation_window_pos_alloc.address();
                 if (auto* win = c.proc.windows.get(data.handle))
                 {
-                    complete_window_position_change(c, *win, data.pending_window_pos_address, data.changed_window_pos_alloc,
-                                                    data.message_queue, !activation_position);
+                    const auto position = resolve_window_position_callback(c, data.pending_window_pos_address);
+                    apply_window_position_change(c, *win, position, data.changed_window_pos_alloc, data.message_queue,
+                                                 !activation_position);
                 }
+
                 data.pending_window_pos_address = 0;
                 orchestrator.window_position_completed(activation_position);
             }
@@ -4543,13 +4547,7 @@ namespace sogen
             }
             else
             {
-                const auto old_x = win->x;
-                const auto old_y = win->y;
-                const auto old_width = win->width;
-                const auto old_height = win->height;
-
-                apply_window_position_change(c, *win, position, state.changed_window_pos_alloc, state.message_queue);
-                finish_set_window_position(c, *win, state, old_x, old_y, old_width, old_height);
+                apply_set_window_position(c, *win, state, position);
 
                 if (state.message_queue.empty())
                 {
@@ -4576,14 +4574,8 @@ namespace sogen
 
             if (!state.position_applied)
             {
-                const auto old_x = win->x;
-                const auto old_y = win->y;
-                const auto old_width = win->width;
-                const auto old_height = win->height;
-
-                complete_window_position_change(c, *win, state.window_pos_alloc.address(), state.changed_window_pos_alloc,
-                                                state.message_queue, true);
-                finish_set_window_position(c, *win, state, old_x, old_y, old_width, old_height);
+                const auto position = resolve_window_position_callback(c, state.window_pos_alloc.address());
+                apply_set_window_position(c, *win, state, position);
             }
 
             if (!state.message_queue.empty())

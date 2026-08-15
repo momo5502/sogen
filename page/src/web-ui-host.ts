@@ -94,9 +94,9 @@ const WS_SYSMENU = 0x00080000;
 const WS_MINIMIZEBOX = 0x00020000;
 const WS_MAXIMIZEBOX = 0x00010000;
 
-// `rect` is the guest outer-window rectangle, while the presented surface is
-// client-sized and begins after the left/top client insets. The browser-drawn
-// caption and frame remain host chrome around that client box.
+// The guest models `rect` as the outer window bounds, with the presented
+// surface occupying the inset client area. We draw the caption bar and frame
+// around that client area, mirroring how a native window manager decorates it.
 const CAPTION_HEIGHT = 30;
 const FRAME_BORDER = 1;
 const CAPTION_BUTTON_WIDTH = 46;
