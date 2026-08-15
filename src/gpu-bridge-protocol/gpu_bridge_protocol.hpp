@@ -182,6 +182,12 @@ namespace sogen::gpu_bridge
         cmd_next_subpass = 0x88F,
         free_descriptor_sets = 0x890,
         get_descriptor_set_layout_support = 0x893,
+        cmd_bind_transform_feedback_buffers = 0x894,
+        cmd_begin_transform_feedback = 0x895,
+        cmd_end_transform_feedback = 0x896,
+        cmd_begin_query_indexed = 0x897,
+        cmd_end_query_indexed = 0x898,
+        cmd_draw_indirect_byte_count = 0x899,
         cmd_write_timestamp2 = 0x89A,
         get_physical_device_cooperative_matrix_properties = 0x89B,
         get_physical_device_fragment_shading_rates = 0x89C,
@@ -1470,12 +1476,70 @@ namespace sogen::gpu_bridge
         uint32_t reserved;
     };
 
+    struct cmd_begin_query_indexed_request
+    {
+        object_id command_buffer;
+        object_id query_pool;
+        uint32_t query;
+        uint32_t flags;
+        uint32_t index;
+        uint32_t reserved;
+    };
+
+    struct cmd_end_query_indexed_request
+    {
+        object_id command_buffer;
+        object_id query_pool;
+        uint32_t query;
+        uint32_t index;
+    };
+
     struct cmd_write_timestamp_request
     {
         object_id command_buffer;
         object_id query_pool;
         uint32_t query;
         uint32_t pipeline_stage; // VkPipelineStageFlagBits
+    };
+
+    struct transform_feedback_buffer_binding
+    {
+        object_id buffer;
+        uint64_t offset;
+        uint64_t size;
+    };
+
+    struct cmd_bind_transform_feedback_buffers_request
+    {
+        object_id command_buffer;
+        uint32_t first_binding;
+        uint32_t binding_count;
+    };
+
+    struct transform_feedback_counter_buffer
+    {
+        object_id buffer;
+        uint64_t offset;
+    };
+
+    struct cmd_transform_feedback_request
+    {
+        object_id command_buffer;
+        uint32_t first_counter_buffer;
+        uint32_t counter_buffer_count;
+        uint32_t has_counter_buffers;
+        uint32_t has_counter_buffer_offsets;
+    };
+
+    struct cmd_draw_indirect_byte_count_request
+    {
+        object_id command_buffer;
+        object_id counter_buffer;
+        uint64_t counter_buffer_offset;
+        uint32_t counter_offset;
+        uint32_t vertex_stride;
+        uint32_t instance_count;
+        uint32_t first_instance;
     };
 
     struct cmd_write_timestamp2_request
@@ -1682,6 +1746,8 @@ namespace sogen::gpu_bridge
         uint32_t dynamic_state_count;                                // number of uint32 VkDynamicState values that follow the attributes
         uint32_t primitive_topology;
         uint32_t primitive_restart_enable;
+        uint32_t rasterization_stream;
+        uint32_t rasterization_stream_flags;
         // Per-stage specialization constants (DXVK bakes d3d9 render state into the shaders this way).
         uint32_t vs_spec_entry_count;
         uint32_t vs_spec_data_size;
@@ -2170,7 +2236,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(create_shader_module_request) == 16, "wire layout drift");
     static_assert(sizeof(vertex_input_divisor) == 8, "wire layout drift");
     static_assert(sizeof(create_compute_pipeline_request) == 32, "wire layout drift");
-    static_assert(sizeof(create_graphics_pipeline_request) == 416, "wire layout drift");
+    static_assert(sizeof(create_graphics_pipeline_request) == 424, "wire layout drift");
     static_assert(sizeof(buffer_copy_region) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_buffer_request) == 32, "wire layout drift");
     static_assert(sizeof(create_query_pool_request) == 24, "wire layout drift");
@@ -2179,6 +2245,13 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_reset_query_pool_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_begin_query_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_end_query_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_begin_query_indexed_request) == 32, "wire layout drift");
+    static_assert(sizeof(cmd_end_query_indexed_request) == 24, "wire layout drift");
+    static_assert(sizeof(transform_feedback_buffer_binding) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_bind_transform_feedback_buffers_request) == 16, "wire layout drift");
+    static_assert(sizeof(transform_feedback_counter_buffer) == 16, "wire layout drift");
+    static_assert(sizeof(cmd_transform_feedback_request) == 24, "wire layout drift");
+    static_assert(sizeof(cmd_draw_indirect_byte_count_request) == 40, "wire layout drift");
     static_assert(sizeof(cmd_write_timestamp2_request) == 32, "wire layout drift");
     static_assert(sizeof(cmd_write_timestamp_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_query_pool_results_request) == 56, "wire layout drift");

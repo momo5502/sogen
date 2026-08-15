@@ -34,6 +34,8 @@ namespace sogen::gpu_bridge
             return sizeof(VkPhysicalDeviceVulkan13Features);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT:
             return sizeof(VkPhysicalDeviceDepthClipEnableFeaturesEXT);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT:
+            return sizeof(VkPhysicalDeviceTransformFeedbackFeaturesEXT);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT:
             return sizeof(VkPhysicalDeviceExtendedDynamicState3FeaturesEXT);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT:
@@ -79,6 +81,8 @@ namespace sogen::gpu_bridge
             return sizeof(VkPhysicalDeviceVulkan13Properties);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_PROPERTIES_EXT:
             return sizeof(VkPhysicalDeviceRobustness2PropertiesEXT);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT:
+            return sizeof(VkPhysicalDeviceTransformFeedbackPropertiesEXT);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES:
             return sizeof(VkPhysicalDeviceDescriptorIndexingProperties);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES:
