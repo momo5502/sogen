@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 30;
+    inline constexpr uint32_t protocol_version = 29;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -2170,6 +2170,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_clear_depth_stencil_image_request) == 56, "wire layout drift");
     static_assert(sizeof(get_image_subresource_layout_request) == 32, "wire layout drift");
     static_assert(sizeof(get_image_subresource_layout_response) == 48, "wire layout drift");
+    static_assert(sizeof(queue_present_request) == 24, "wire layout drift");
     static_assert(sizeof(create_buffer_view_request) == 40, "wire layout drift");
     static_assert(sizeof(create_shader_module_request) == 16, "wire layout drift");
     static_assert(sizeof(vertex_input_divisor) == 8, "wire layout drift");
@@ -2186,6 +2187,8 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(cmd_write_timestamp2_request) == 32, "wire layout drift");
     static_assert(sizeof(cmd_write_timestamp_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_copy_query_pool_results_request) == 56, "wire layout drift");
+    static_assert(sizeof(create_descriptor_pool_request) == 24, "wire layout drift");
+    static_assert(sizeof(allocate_descriptor_sets_request) == 24, "wire layout drift");
     static_assert(sizeof(cmd_draw_indexed_indirect_request) == 32, "wire layout drift");
     static_assert(sizeof(cmd_draw_indexed_indirect_count_request) == 48, "wire layout drift");
     static_assert(sizeof(cmd_draw_indirect_request) == 32, "wire layout drift");
