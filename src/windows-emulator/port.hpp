@@ -303,14 +303,19 @@ namespace sogen
 
     struct port_creation_data
     {
-        uint64_t view_base;
-        int64_t view_size;
+        uint64_t view_base{};
+        int64_t view_size{};
+        ULONG flags{ALPC_PORFLG_ALLOW_LPC_REQUESTS};
+        ULONG sequence_number{};
     };
 
     struct port : ref_counted_object
     {
         uint64_t view_base{};
         int64_t view_size{};
+        ULONG flags{};
+        ULONG sequence_number{};
+        bool disconnected{};
 
         port() = default;
         ~port() override = default;
@@ -325,12 +330,18 @@ namespace sogen
         {
             buffer.write(this->view_base);
             buffer.write(this->view_size);
+            buffer.write(this->flags);
+            buffer.write(this->sequence_number);
+            buffer.write(this->disconnected);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read(this->view_base);
             buffer.read(this->view_size);
+            buffer.read(this->flags);
+            buffer.read(this->sequence_number);
+            buffer.read(this->disconnected);
         }
 
         virtual void create(windows_emulator& win_emu, const port_creation_data& data)
@@ -338,6 +349,19 @@ namespace sogen
             (void)win_emu;
             view_base = data.view_base;
             view_size = data.view_size;
+            flags = data.flags;
+            sequence_number = data.sequence_number;
+        }
+
+        bool disconnect()
+        {
+            if (this->disconnected)
+            {
+                return false;
+            }
+
+            this->disconnected = true;
+            return true;
         }
 
         virtual lpc_message_result handle_message(windows_emulator& win_emu, const lpc_message_context& c);
