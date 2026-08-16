@@ -1461,7 +1461,7 @@ namespace sogen::kvm
                 kvm_fpu fpu{};
                 fpu.fcw = 0x037Fu;
                 fpu.fsw = 0;
-                fpu.ftwx = 0xFF;
+                fpu.ftwx = 0x0;
                 fpu.mxcsr = 0x1F80u;
                 this->set_fpu(fpu);
 
