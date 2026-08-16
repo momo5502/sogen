@@ -2077,7 +2077,7 @@ namespace sogen::whp
                 values[12].Reg64 = 0;
                 values[13].FpControlStatus.FpControl = 0x037Full;
                 values[13].FpControlStatus.FpStatus = 0;
-                values[13].FpControlStatus.FpTag = 0xFF;
+                values[13].FpControlStatus.FpTag = 0x0;
                 values[14].XmmControlStatus.XmmStatusControl = 0x1F80u;
                 values[14].XmmControlStatus.XmmStatusControlMask = 0xFFFFFFFFu;
                 values[15].Reg64 = this->syscall_hook_page_;
