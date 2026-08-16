@@ -164,6 +164,8 @@ EXPORTS
     vkGetImageSubresourceLayout
     vkGetInstanceProcAddr
     vkGetQueryPoolResults
+    vkGetShaderModuleCreateInfoIdentifierEXT
+    vkGetShaderModuleIdentifierEXT
     vkGetPhysicalDeviceExternalSemaphoreProperties
     vkGetPhysicalDeviceFeatures
     vkGetPhysicalDeviceFeatures2

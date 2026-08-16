@@ -176,6 +176,10 @@ namespace sogen
                     return handle_create_shader_module(win_emu, context);
                 case gpu_bridge::ioctl_destroy_shader_module:
                     return handle_destroy_shader_module(win_emu, context);
+                case gpu_bridge::ioctl_get_shader_module_identifier:
+                    return handle_get_shader_module_identifier(win_emu, context);
+                case gpu_bridge::ioctl_get_shader_module_create_info_identifier:
+                    return handle_get_shader_module_create_info_identifier(win_emu, context);
                 case gpu_bridge::ioctl_create_image_view:
                     return handle_create_image_view(win_emu, context);
                 case gpu_bridge::ioctl_destroy_image_view:
@@ -1239,9 +1243,19 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                if (request.shader.identifier_size > gpu_bridge::max_shader_module_identifier_size)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const uint32_t identifier_size = request.shader.identifier_size;
+                const vulkan_host::shader_stage_source shader{
+                    .module = request.shader.module,
+                    .identifier = std::span<const uint8_t>{request.shader.identifier.data(), identifier_size},
+                };
+
                 uint64_t pipeline = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_compute_pipeline(request.device, request.pipeline_layout, request.shader_module,
-                                                                             request.flags, pipeline);
+                const int32_t result =
+                    this->vulkan_.create_compute_pipeline(request.device, request.pipeline_layout, shader, request.flags, pipeline);
                 return write_output(win_emu, context,
                                     gpu_bridge::create_compute_pipeline_response{.vk_result = result, .reserved = 0, .pipeline = pipeline});
             }
@@ -1930,7 +1944,7 @@ namespace sogen
                 }
 
                 uint64_t module = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_shader_module(request.device, code.data(), code.size(), module);
+                const int32_t result = this->vulkan_.create_shader_module(request.device, request.flags, code.data(), code.size(), module);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = module});
             }
 
@@ -1943,6 +1957,48 @@ namespace sogen
                 }
                 this->vulkan_.destroy_shader_module(request.device, request.object);
                 return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_shader_module_identifier(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::device_child_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                gpu_bridge::shader_module_identifier_response response{};
+                response.vk_result = this->vulkan_.get_shader_module_identifier(request.device, request.object, response.identifier,
+                                                                                response.identifier_size);
+                return write_output(win_emu, context, response);
+            }
+
+            NTSTATUS handle_get_shader_module_create_info_identifier(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using request_t = gpu_bridge::create_shader_module_request;
+
+                request_t request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const uint64_t available = context.input_buffer_length - sizeof(request_t);
+                if (request.code_size == 0 || request.code_size % sizeof(uint32_t) != 0 || request.code_size > available)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<std::byte> code(request.code_size);
+                if (!code.empty())
+                {
+                    win_emu.emu().read_memory(context.input_buffer + sizeof(request_t), code.data(), code.size());
+                }
+
+                gpu_bridge::shader_module_identifier_response response{};
+                response.vk_result = this->vulkan_.get_shader_module_create_info_identifier(
+                    request.device, request.flags, code.data(), code.size(), response.identifier, response.identifier_size);
+                return write_output(win_emu, context, response);
             }
 
             NTSTATUS handle_create_image_view(windows_emulator& win_emu, const io_device_context& context)
@@ -2293,20 +2349,36 @@ namespace sogen
                                                .color_write_mask = b.color_write_mask};
                 }
 
+                if (request.vertex_shader.identifier_size > gpu_bridge::max_shader_module_identifier_size ||
+                    request.fragment_shader.identifier_size > gpu_bridge::max_shader_module_identifier_size)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const uint32_t vertex_identifier_size = request.vertex_shader.identifier_size;
+                const uint32_t fragment_identifier_size = request.fragment_shader.identifier_size;
+                const vulkan_host::shader_stage_source vertex_shader{
+                    .module = request.vertex_shader.module,
+                    .identifier = std::span<const uint8_t>{request.vertex_shader.identifier.data(), vertex_identifier_size},
+                };
+                const vulkan_host::shader_stage_source fragment_shader{
+                    .module = request.fragment_shader.module,
+                    .identifier = std::span<const uint8_t>{request.fragment_shader.identifier.data(), fragment_identifier_size},
+                };
+
                 uint64_t pipeline = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_graphics_pipeline(
-                    request.device, request.render_pass, request.pipeline_layout, request.vertex_shader, request.fragment_shader,
-                    request.flags, request.width, request.height, bindings, attributes, divisors, depth, color_formats,
-                    request.depth_format, request.stencil_format, request.rasterization_samples, request.primitive_topology,
-                    request.primitive_restart_enable, request.rasterization_stream, request.rasterization_stream_flags, dynamic_states,
-                    vs_spec, fs_spec, blend_attachments, pipeline);
+                    request.device, request.render_pass, request.pipeline_layout, vertex_shader, fragment_shader, request.flags,
+                    request.width, request.height, bindings, attributes, divisors, depth, color_formats, request.depth_format,
+                    request.stencil_format, request.rasterization_samples, request.primitive_topology, request.primitive_restart_enable,
+                    request.rasterization_stream, request.rasterization_stream_flags, dynamic_states, vs_spec, fs_spec, blend_attachments,
+                    pipeline);
                 if (result != 0)
                 {
                     win_emu.log.error(
                         "GPU bridge: create_graphics_pipeline FAILED vk=%d (rp=0x%llx layout=0x%llx vs=0x%llx fs=0x%llx %ux%u)\n", result,
                         static_cast<unsigned long long>(request.render_pass), static_cast<unsigned long long>(request.pipeline_layout),
-                        static_cast<unsigned long long>(request.vertex_shader), static_cast<unsigned long long>(request.fragment_shader),
-                        request.width, request.height);
+                        static_cast<unsigned long long>(request.vertex_shader.module),
+                        static_cast<unsigned long long>(request.fragment_shader.module), request.width, request.height);
                 }
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = pipeline});
             }

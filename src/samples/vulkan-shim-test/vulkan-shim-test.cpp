@@ -705,6 +705,114 @@ namespace
         free_memory(device, image_memory, nullptr);
         return ok;
     }
+
+    bool test_shader_module_identifier(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkDevice device)
+    {
+        const auto get_device_proc = reinterpret_cast<PFN_vkGetDeviceProcAddr>(get_instance_proc(instance, "vkGetDeviceProcAddr"));
+        if (!get_device_proc)
+        {
+            std::printf("[shim-test] no vkGetDeviceProcAddr for shader identifier test\n");
+            return false;
+        }
+
+        const auto get_create_info_identifier = reinterpret_cast<PFN_vkGetShaderModuleCreateInfoIdentifierEXT>(
+            get_device_proc(device, "vkGetShaderModuleCreateInfoIdentifierEXT"));
+        const auto get_module_identifier =
+            reinterpret_cast<PFN_vkGetShaderModuleIdentifierEXT>(get_device_proc(device, "vkGetShaderModuleIdentifierEXT"));
+        const auto create_shader_module = reinterpret_cast<PFN_vkCreateShaderModule>(get_device_proc(device, "vkCreateShaderModule"));
+        const auto destroy_shader_module = reinterpret_cast<PFN_vkDestroyShaderModule>(get_device_proc(device, "vkDestroyShaderModule"));
+        const auto create_pipeline_layout = reinterpret_cast<PFN_vkCreatePipelineLayout>(get_device_proc(device, "vkCreatePipelineLayout"));
+        const auto destroy_pipeline_layout =
+            reinterpret_cast<PFN_vkDestroyPipelineLayout>(get_device_proc(device, "vkDestroyPipelineLayout"));
+        const auto create_compute_pipelines =
+            reinterpret_cast<PFN_vkCreateComputePipelines>(get_device_proc(device, "vkCreateComputePipelines"));
+        const auto destroy_pipeline = reinterpret_cast<PFN_vkDestroyPipeline>(get_device_proc(device, "vkDestroyPipeline"));
+        if (!get_create_info_identifier || !get_module_identifier || !create_shader_module || !destroy_shader_module ||
+            !create_pipeline_layout || !destroy_pipeline_layout || !create_compute_pipelines || !destroy_pipeline)
+        {
+            std::printf("[shim-test] shader module identifier entry point missing\n");
+            return false;
+        }
+
+        // Minimal SPIR-V 1.0 compute shader: layout(local_size_x=1, local_size_y=1, local_size_z=1) in; void main() {}
+        constexpr std::array<uint32_t, 42> compute_spirv{
+            0x07230203, 0x00010000, 0x00000000, 0x00000005, 0x00000000, 0x00020011, 0x00000001, 0x0003000e, 0x00000000,
+            0x00000001, 0x0005000f, 0x00000005, 0x00000003, 0x6e69616d, 0x00000000, 0x00060010, 0x00000003, 0x00000011,
+            0x00000001, 0x00000001, 0x00000001, 0x00030003, 0x00000002, 0x000001c2, 0x00040005, 0x00000003, 0x6e69616d,
+            0x00000000, 0x00020013, 0x00000001, 0x00030021, 0x00000002, 0x00000001, 0x00050036, 0x00000001, 0x00000003,
+            0x00000000, 0x00000002, 0x000200f8, 0x00000004, 0x000100fd, 0x00010038,
+        };
+
+        VkShaderModuleCreateInfo shader_info{};
+        shader_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        shader_info.codeSize = compute_spirv.size() * sizeof(uint32_t);
+        shader_info.pCode = compute_spirv.data();
+
+        VkShaderModuleIdentifierEXT from_create_info{};
+        from_create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_IDENTIFIER_EXT;
+        get_create_info_identifier(device, &shader_info, &from_create_info);
+
+        VkShaderModule shader = VK_NULL_HANDLE;
+        const VkResult shader_result = create_shader_module(device, &shader_info, nullptr, &shader);
+        if (shader_result != VK_SUCCESS)
+        {
+            std::printf("[shim-test] shader identifier vkCreateShaderModule -> %d -> FAIL\n", shader_result);
+            return false;
+        }
+
+        VkShaderModuleIdentifierEXT from_module{};
+        from_module.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_IDENTIFIER_EXT;
+        get_module_identifier(device, shader, &from_module);
+
+        const bool identifiers_match =
+            from_create_info.identifierSize > 0 && from_create_info.identifierSize <= VK_MAX_SHADER_MODULE_IDENTIFIER_SIZE_EXT &&
+            from_create_info.identifierSize == from_module.identifierSize &&
+            std::memcmp(from_create_info.identifier, from_module.identifier, from_create_info.identifierSize) == 0;
+
+        VkPipelineLayoutCreateInfo layout_info{};
+        layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        const VkResult layout_result = create_pipeline_layout(device, &layout_info, nullptr, &layout);
+
+        VkResult pipeline_result = VK_ERROR_INITIALIZATION_FAILED;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        if (layout_result == VK_SUCCESS && identifiers_match)
+        {
+            VkPipelineShaderStageModuleIdentifierCreateInfoEXT identifier_info{};
+            identifier_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_MODULE_IDENTIFIER_CREATE_INFO_EXT;
+            identifier_info.identifierSize = from_create_info.identifierSize;
+            identifier_info.pIdentifier = from_create_info.identifier;
+
+            VkPipelineShaderStageCreateInfo stage{};
+            stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+            stage.pNext = &identifier_info;
+            stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+            stage.module = VK_NULL_HANDLE;
+            stage.pName = "main";
+
+            VkComputePipelineCreateInfo pipeline_info{};
+            pipeline_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+            pipeline_info.flags = VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT;
+            pipeline_info.stage = stage;
+            pipeline_info.layout = layout;
+            pipeline_result = create_compute_pipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &pipeline);
+        }
+
+        const bool pipeline_ok = pipeline_result == VK_SUCCESS || pipeline_result == VK_PIPELINE_COMPILE_REQUIRED_EXT;
+        std::printf("[shim-test] shader identifiers size=%u match=%s, identifier pipeline=%d -> %s\n", from_create_info.identifierSize,
+                    identifiers_match ? "yes" : "no", pipeline_result, (identifiers_match && pipeline_ok) ? "PASS" : "FAIL");
+
+        if (pipeline != VK_NULL_HANDLE)
+        {
+            destroy_pipeline(device, pipeline, nullptr);
+        }
+        if (layout != VK_NULL_HANDLE)
+        {
+            destroy_pipeline_layout(device, layout, nullptr);
+        }
+        destroy_shader_module(device, shader, nullptr);
+        return identifiers_match && pipeline_ok;
+    }
 }
 
 int main(int argc, char** argv)
@@ -781,6 +889,7 @@ int main(int argc, char** argv)
 
     bool transform_feedback_test_ok = true;
     bool transform_feedback_capabilities_ok = true;
+    bool shader_identifier_test_ok = true;
     uint32_t count = 0;
     result = enumerate(instance, &count, nullptr);
     std::printf("[shim-test] vkEnumeratePhysicalDevices -> %d, count=%u\n", result, count);
@@ -813,6 +922,7 @@ int main(int argc, char** argv)
             reinterpret_cast<PFN_vkGetPhysicalDeviceProperties2>(get_instance_proc(instance, "vkGetPhysicalDeviceProperties2"));
 
         bool transform_feedback_extension_present = false;
+        bool shader_identifier_extension_present = false;
         if (enumerate_device_extensions)
         {
             uint32_t extension_count = 0;
@@ -824,7 +934,10 @@ int main(int argc, char** argv)
                 if (std::strcmp(extension.extensionName, VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME) == 0)
                 {
                     transform_feedback_extension_present = true;
-                    break;
+                }
+                else if (std::strcmp(extension.extensionName, VK_EXT_SHADER_MODULE_IDENTIFIER_EXTENSION_NAME) == 0)
+                {
+                    shader_identifier_extension_present = true;
                 }
             }
         }
@@ -899,6 +1012,32 @@ int main(int argc, char** argv)
             synchronization2_supported = vulkan13_features.synchronization2 == VK_TRUE;
         }
 
+        bool shader_identifier_supported = false;
+        if (shader_identifier_extension_present && get_features2 && get_properties2)
+        {
+            VkPhysicalDeviceShaderModuleIdentifierFeaturesEXT identifier_features{};
+            identifier_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MODULE_IDENTIFIER_FEATURES_EXT;
+            VkPhysicalDeviceFeatures2 features2{};
+            features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            features2.pNext = &identifier_features;
+            get_features2(devices[0], &features2);
+
+            VkPhysicalDeviceShaderModuleIdentifierPropertiesEXT identifier_properties{};
+            identifier_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MODULE_IDENTIFIER_PROPERTIES_EXT;
+            VkPhysicalDeviceProperties2 properties2{};
+            properties2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            properties2.pNext = &identifier_properties;
+            get_properties2(devices[0], &properties2);
+
+            shader_identifier_supported = identifier_features.shaderModuleIdentifier == VK_TRUE;
+            std::printf("[shim-test] %s advertised=%s feature=%u algorithm UUID=%02X%02X%02X%02X...\n",
+                        VK_EXT_SHADER_MODULE_IDENTIFIER_EXTENSION_NAME, shader_identifier_extension_present ? "yes" : "no",
+                        identifier_features.shaderModuleIdentifier, identifier_properties.shaderModuleIdentifierAlgorithmUUID[0],
+                        identifier_properties.shaderModuleIdentifierAlgorithmUUID[1],
+                        identifier_properties.shaderModuleIdentifierAlgorithmUUID[2],
+                        identifier_properties.shaderModuleIdentifierAlgorithmUUID[3]);
+        }
+
         uint32_t family_count = 0;
         get_queue_families(devices[0], &family_count, nullptr);
         std::vector<VkQueueFamilyProperties> families(family_count);
@@ -943,6 +1082,10 @@ int main(int argc, char** argv)
             enabled_vulkan13_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
             enabled_vulkan13_features.synchronization2 = timestamp2_test_supported ? VK_TRUE : VK_FALSE;
 
+            VkPhysicalDeviceShaderModuleIdentifierFeaturesEXT identifier_features{};
+            identifier_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MODULE_IDENTIFIER_FEATURES_EXT;
+            identifier_features.shaderModuleIdentifier = VK_TRUE;
+
             VkDeviceCreateInfo device_info{};
             device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
             device_info.queueCreateInfoCount = queue_info_count;
@@ -956,6 +1099,11 @@ int main(int argc, char** argv)
                 transform_feedback_features.transformFeedback = VK_TRUE;
                 transform_feedback_features.pNext = enabled_feature_chain;
                 enabled_feature_chain = &transform_feedback_features;
+            }
+            if (shader_identifier_supported)
+            {
+                identifier_features.pNext = enabled_feature_chain;
+                enabled_feature_chain = &identifier_features;
             }
             if (timestamp2_test_supported)
             {
@@ -971,6 +1119,10 @@ int main(int argc, char** argv)
             if (transform_feedback_supported)
             {
                 enabled_extensions.push_back(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME);
+            }
+            if (shader_identifier_supported)
+            {
+                enabled_extensions.push_back(VK_EXT_SHADER_MODULE_IDENTIFIER_EXTENSION_NAME);
             }
             device_info.enabledExtensionCount = static_cast<uint32_t>(enabled_extensions.size());
             device_info.ppEnabledExtensionNames = enabled_extensions.data();
@@ -1016,6 +1168,10 @@ int main(int argc, char** argv)
                 submit_and_wait(get_instance_proc, instance, device, queue, graphics_family);
                 fill_buffer_and_readback(get_instance_proc, instance, devices[0], device, queue, graphics_family);
                 clear_image_and_readback(get_instance_proc, instance, devices[0], device, queue, graphics_family);
+                if (shader_identifier_supported)
+                {
+                    shader_identifier_test_ok = test_shader_module_identifier(get_instance_proc, instance, device);
+                }
 
                 destroy_device(device, nullptr);
             }
@@ -1027,8 +1183,8 @@ int main(int argc, char** argv)
         destroy_instance(instance, nullptr);
     }
 
-    const bool all_ok =
-        timestamp2_test_ok && calibrated_timestamps_test_ok && transform_feedback_test_ok && transform_feedback_capabilities_ok;
+    const bool all_ok = timestamp2_test_ok && calibrated_timestamps_test_ok && transform_feedback_test_ok &&
+                        transform_feedback_capabilities_ok && shader_identifier_test_ok;
     std::printf("[shim-test] %s\n", all_ok ? "ok" : "FAILED");
     return all_ok ? 0 : 6;
 }
