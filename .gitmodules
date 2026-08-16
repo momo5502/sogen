@@ -56,5 +56,5 @@
 	shallow = true
 [submodule "deps/FEX"]
 	path = deps/FEX
-	url = https://github.com/JackTYM/FEX.git
+	url = https://github.com/momo5502/FEX.git
 	shallow = true
