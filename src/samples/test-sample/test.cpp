@@ -1181,6 +1181,90 @@ namespace
         return executions == 2;
     }
 
+    bool test_window_geometry()
+    {
+        WNDCLASSEXA wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpszClassName = "TestWindowNonclientClass";
+        wc.hInstance = GetModuleHandleA(nullptr);
+        wc.lpfnWndProc = DefWindowProcA;
+
+        if (!RegisterClassExA(&wc))
+        {
+            puts("Failed to register window class");
+            return false;
+        }
+
+        const auto unregister_class = sogen::utils::finally([&] { UnregisterClassA(wc.lpszClassName, wc.hInstance); });
+
+        struct window_case
+        {
+            DWORD style;
+            DWORD ex_style;
+        };
+
+        constexpr std::array cases = {
+            window_case{.style = WS_POPUP | WS_THICKFRAME, .ex_style = 0},
+            window_case{.style = WS_POPUP | WS_CAPTION, .ex_style = 0},
+            window_case{.style = WS_POPUP | WS_DLGFRAME, .ex_style = 0},
+            window_case{.style = WS_POPUP, .ex_style = WS_EX_CLIENTEDGE},
+        };
+
+        for (const auto& test : cases)
+        {
+            constexpr LONG expected_client_height = 123;
+            constexpr LONG expected_client_width = 321;
+
+            RECT adjusted_rect{0, 0, expected_client_width, expected_client_height};
+            const BOOL adjusted = test.ex_style ? AdjustWindowRectEx(&adjusted_rect, test.style, FALSE, test.ex_style)
+                                                : AdjustWindowRect(&adjusted_rect, test.style, FALSE);
+            if (!adjusted)
+            {
+                puts("Failed to calculate nonclient insets");
+                return false;
+            }
+
+            const auto adjusted_width = adjusted_rect.right - adjusted_rect.left;
+            const auto adjusted_height = adjusted_rect.bottom - adjusted_rect.top;
+
+            const HWND hwnd = CreateWindowExA(test.ex_style, wc.lpszClassName, nullptr, test.style, 0, 0, adjusted_width, adjusted_height,
+                                              nullptr, nullptr, wc.hInstance, nullptr);
+            if (!hwnd)
+            {
+                puts("Failed to create test window");
+                return false;
+            }
+
+            const auto destroy_window = sogen::utils::finally([&] { DestroyWindow(hwnd); });
+
+            RECT window_rect{};
+            RECT client_rect{};
+            if (!GetWindowRect(hwnd, &window_rect) || !GetClientRect(hwnd, &client_rect))
+            {
+                return false;
+            }
+
+            const auto window_width = window_rect.right - window_rect.left;
+            const auto window_height = window_rect.bottom - window_rect.top;
+            const auto client_width = client_rect.right - client_rect.left;
+            const auto client_height = client_rect.bottom - client_rect.top;
+
+            if (window_width != adjusted_width || window_height != adjusted_height)
+            {
+                puts("Window size does not match AdjustWindowRect result");
+                return false;
+            }
+
+            if (client_width != expected_client_width || client_height != expected_client_height)
+            {
+                puts("AdjustWindowRect round-trip failed");
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     bool test_message_queue()
     {
         thread_local UINT wnd_proc_num = 0;
@@ -1850,6 +1934,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
+    RUN_TEST(test_window_geometry, "Window Geometry")
     RUN_TEST(test_user_callback, "User Callback")
     RUN_TEST(test_mutable_callbacks, "Mutable User Callback")
     RUN_TEST(test_message_queue, "Message Queue (General)")

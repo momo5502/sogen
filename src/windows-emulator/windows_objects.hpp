@@ -173,25 +173,74 @@ namespace sogen
             return this->class_name == builtin_dialog_class_name;
         }
 
-        // The guest sizes its window via AdjustWindowRect, which inflates the client rect it wants to render
-        // into by the non-client frame. user32 always adds a 1px border for framed windows (SM_CXBORDER/
-        // SM_CYBORDER are hardcoded to 1) and our system metrics for the sizing frame and caption are zero, so
-        // the only inset is that 1px border. Mirror it so the client size we report (GetClientRect, the Vulkan
-        // surface extent, the presented surface) matches what the guest actually renders -- otherwise the
-        // layer (DXVK) renders its whole frame onto a 1px-larger surface and the upscaled image softens.
-        int32_t nonclient_border() const
+        RECT nonclient_insets() const
         {
-            return (this->style & (WS_BORDER | WS_DLGFRAME | WS_THICKFRAME)) != 0 ? 1 : 0;
+            int32_t border = 0;
+
+            const bool caption = (this->style & WS_CAPTION) == WS_CAPTION;
+            if ((this->style & WS_THICKFRAME) != 0)
+            {
+                border = caption ? 3 : 2;
+            }
+            else if (caption)
+            {
+                border = 1;
+            }
+            else if ((this->style & WS_DLGFRAME) != 0)
+            {
+                border = 3;
+            }
+            else if ((this->style & WS_BORDER) != 0)
+            {
+                border = 1;
+            }
+
+            if ((this->ex_style & WS_EX_CLIENTEDGE) != 0)
+            {
+                border += 2;
+            }
+
+            return {.left = border, .top = border, .right = border, .bottom = border};
+        }
+
+        int32_t client_x_offset() const
+        {
+            const auto outer_width = std::max(0, this->width);
+            return std::min<int>(outer_width, this->nonclient_insets().left);
+        }
+
+        int32_t client_y_offset() const
+        {
+            const auto outer_height = std::max(0, this->height);
+            return std::min<int>(outer_height, this->nonclient_insets().top);
+        }
+
+        int32_t client_x() const
+        {
+            return this->x + this->client_x_offset();
+        }
+
+        int32_t client_y() const
+        {
+            return this->y + this->client_y_offset();
         }
 
         int32_t client_width() const
         {
-            return std::max(0, this->width - 2 * this->nonclient_border());
+            const auto outer_width = std::max(0, this->width);
+            const auto insets = this->nonclient_insets();
+            const auto client_left = std::min<int>(outer_width, insets.left);
+            const auto client_right = std::max<int>(client_left, outer_width - insets.right);
+            return client_right - client_left;
         }
 
         int32_t client_height() const
         {
-            return std::max(0, this->height - 2 * this->nonclient_border());
+            const auto outer_height = std::max(0, this->height);
+            const auto insets = this->nonclient_insets();
+            const auto client_top = std::min<int>(outer_height, insets.top);
+            const auto client_bottom = std::max<int>(client_top, outer_height - insets.bottom);
+            return client_bottom - client_top;
         }
 
         void serialize_object(utils::buffer_serializer& buffer) const override

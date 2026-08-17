@@ -561,7 +561,7 @@ namespace sogen
             window.rcClient = window.rcWindow;
             window.fnid = 0x29D;   // FNID_DESKTOP
             window.windowBand = 1; // ZBID_DESKTOP
-            window.dpiContext = USER_DEFAULT_DPI_CONTEXT;
+            window.dpiContext = USER_DEFAULT_WINDOW_DPI_CONTEXT;
             window.processId = process_context::process_id;
         });
 
@@ -594,7 +594,7 @@ namespace sogen
                 window.rcWindow = {.left = x, .top = y, .right = x + width, .bottom = y + height};
                 window.rcClient = window.rcWindow;
                 window.windowBand = 1; // ZBID_DESKTOP
-                window.dpiContext = USER_DEFAULT_DPI_CONTEXT;
+                window.dpiContext = USER_DEFAULT_WINDOW_DPI_CONTEXT;
                 window.processId = process_context::process_id;
             });
             return handle;
