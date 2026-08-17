@@ -58,3 +58,4 @@
 	path = deps/FEX
 	url = https://github.com/momo5502/FEX.git
 	shallow = true
+    branch = macos-arm64
