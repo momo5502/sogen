@@ -31,6 +31,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# The project has no C++20 modules, but CMake+Ninja+Clang auto-enable module dependency scanning
+# once CMAKE_CXX_STANDARD is 20 regardless. Some toolchains (e.g. the Android NDK's bundled clang)
+# don't ship a matching clang-scan-deps binary, so find_program silently resolves the scan command
+# to *-NOTFOUND and every scanned translation unit fails to build.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
+
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set(CMAKE_OSX_DEPLOYMENT_TARGET 11.0)
 endif()
