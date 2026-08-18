@@ -575,31 +575,27 @@ namespace sogen
             // exhausted address space terminates rather than spins.
             constexpr int max_host_relocation_retries = 8;
             bool mapped = false;
-            // Only valid when the caller left the target address to us. A caller-specified
-            // relocation_base means a view must land on an already-loaded image's own base for its
-            // internal absolute pointers to stay correct, so re-picking would silently misplace it.
-            if (relocation_base == 0)
+            // Also applies when the caller passed a relocation_base: that only expresses a preferred
+            // target (e.g. mapping another view of an already-loaded image at its current base), not a
+            // hard requirement - real Windows itself falls back to relocating such a view elsewhere and
+            // reports STATUS_IMAGE_NOT_AT_BASE rather than failing the map outright.
+            for (int attempt = 0; attempt <= max_host_relocation_retries; ++attempt)
             {
-                for (int attempt = 0; attempt <= max_host_relocation_retries; ++attempt)
+                binary.image_base = memory.find_free_host_allocation_base(image_size, fallback_start, highest_address);
+                if (!binary.image_base)
                 {
-                    binary.image_base = memory.find_free_host_allocation_base(image_size, fallback_start, highest_address);
-                    if (!binary.image_base)
-                    {
-                        break;
-                    }
+                    break;
+                }
 
-                    if (try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
-                                                       binary.image_base))
-                    {
-                        mapped = true;
-                        break;
-                    }
+                if (try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
+                                                   binary.image_base))
+                {
+                    mapped = true;
+                    break;
                 }
             }
 
-            if (!mapped && (!binary.image_base ||
-                            !try_map_module_at_current_base(memory, binary, buffer, nt_headers, nt_headers_offset, optional_header,
-                                                            relocation_base ? relocation_base : binary.image_base)))
+            if (!mapped)
             {
                 throw std::runtime_error("Memory range not allocatable");
             }
