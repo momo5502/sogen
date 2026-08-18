@@ -42,7 +42,6 @@ namespace sogen::whp
         constexpr uint64_t internal_page_table_base = 0x0000007000000000ull;
         constexpr uint64_t syscall_hook_virtual_address = 0xFFFF800000001000ull;
         constexpr uint64_t unmapped_guest_page = (std::numeric_limits<uint64_t>::max)();
-        constexpr uint32_t xsave_state_capacity = 0xFFF;
 
         uint64_t align_down_to_page(const uint64_t value)
         {
@@ -1140,7 +1139,7 @@ namespace sogen::whp
                                                              static_cast<UINT32>(names.size()), values.data()));
 
                 const auto register_bytes = sizeof(WHV_REGISTER_VALUE) * values.size();
-                std::vector<std::byte> bytes(register_bytes + sizeof(UINT32) + (this->xsave_enabled_ ? xsave_state_capacity : 0));
+                std::vector<std::byte> bytes(register_bytes + sizeof(UINT32));
                 std::memcpy(bytes.data(), values.data(), register_bytes);
 
                 UINT32 xsave_size = 0;
@@ -1148,8 +1147,19 @@ namespace sogen::whp
                 {
                     // WHvGetVirtualProcessorRegisters exposes XMM0-XMM15 and legacy FP state, but not YMM_Hi128, AVX-512, AMX, or other
                     // XSAVE-managed components. Capture the VP XSAVE state to preserve all enabled extended processor state.
+                    // The required size depends on the XSAVE features the host CPU exposes to the partition, so it is queried
+                    // up front instead of assuming a fixed capacity.
+                    UINT32 required_size = 0;
+                    const auto size_hr = WHvGetVirtualProcessorState(this->partition_, this->vp_index_,
+                                                                     WHvVirtualProcessorStateTypeXsaveState, nullptr, 0, &required_size);
+                    if (size_hr != WHV_E_INSUFFICIENT_BUFFER)
+                    {
+                        WHP_CHECK_HR(size_hr);
+                    }
+
+                    bytes.resize(register_bytes + sizeof(xsave_size) + required_size);
                     WHP_CHECK_HR(WHvGetVirtualProcessorState(this->partition_, this->vp_index_, WHvVirtualProcessorStateTypeXsaveState,
-                                                             bytes.data() + register_bytes + sizeof(xsave_size), xsave_state_capacity,
+                                                             bytes.data() + register_bytes + sizeof(xsave_size), required_size,
                                                              &xsave_size));
                 }
 
