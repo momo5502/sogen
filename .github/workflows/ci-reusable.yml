@@ -57,6 +57,12 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Configure fast APT mirror
+        uses: vegardit/fast-apt-mirror.sh@1.4.5
+        if: "${{ matrix.platform == 'Linux' }}"
+        with:
+          exclude-current: true
+
       - name: Install LLVM
         uses: KyleMayes/install-llvm-action@v2
         with:
@@ -111,6 +117,11 @@ jobs:
     steps:
       - name: Checkout Source
         uses: actions/checkout@v7
+
+      - name: Configure fast APT mirror
+        uses: vegardit/fast-apt-mirror.sh@1.4.5
+        with:
+          exclude-current: true
 
       - name: Install Clang-format
         uses: nick-fields/retry@v4.0.0
@@ -337,7 +348,7 @@ jobs:
 
       - name: Configure fast APT mirror
         uses: vegardit/fast-apt-mirror.sh@1.4.5
-        if: "${{ startsWith(matrix.platform, 'MinGW') }}"
+        if: "${{ startsWith(matrix.platform, 'MinGW') || startsWith(matrix.platform, 'Linux') }}"
         with:
           exclude-current: true
 
@@ -1111,6 +1122,12 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+
+      - name: Configure fast APT mirror
+        uses: vegardit/fast-apt-mirror.sh@1.4.5
+        if: "${{ startsWith(matrix.runner, 'ubuntu') }}"
+        with:
+          exclude-current: true
 
       - name: Set up Python
         uses: actions/setup-python@v7
