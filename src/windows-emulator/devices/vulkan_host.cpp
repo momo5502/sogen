@@ -333,6 +333,10 @@ namespace sogen
             PFN_vkFreeDescriptorSets free_descriptor_sets{};
             PFN_vkUpdateDescriptorSets update_descriptor_sets{};
             PFN_vkCmdBindDescriptorSets cmd_bind_descriptor_sets{};
+            PFN_vkCreatePipelineCache create_pipeline_cache{};
+            PFN_vkDestroyPipelineCache destroy_pipeline_cache{};
+            PFN_vkGetPipelineCacheData get_pipeline_cache_data{};
+            PFN_vkMergePipelineCaches merge_pipeline_caches{};
             PFN_vkCreateGraphicsPipelines create_graphics_pipelines{};
             PFN_vkCreateComputePipelines create_compute_pipelines{};
             PFN_vkDestroyPipeline destroy_pipeline{};
@@ -549,6 +553,12 @@ namespace sogen
             uint64_t device_id{};
         };
 
+        struct pipeline_cache_data
+        {
+            VkPipelineCache handle{};
+            uint64_t device_id{};
+        };
+
         struct descriptor_set_layout_data
         {
             VkDescriptorSetLayout handle{};
@@ -585,6 +595,7 @@ namespace sogen
         std::unordered_map<uint64_t, framebuffer_data> framebuffers;
         std::unordered_map<uint64_t, pipeline_layout_data> pipeline_layouts;
         std::unordered_map<uint64_t, pipeline_data> pipelines;
+        std::unordered_map<uint64_t, pipeline_cache_data> pipeline_caches;
         std::unordered_map<uint64_t, descriptor_set_layout_data> descriptor_set_layouts;
         std::unordered_map<uint64_t, descriptor_pool_data> descriptor_pools;
         std::unordered_map<uint64_t, descriptor_set_data> descriptor_sets;
@@ -833,6 +844,13 @@ namespace sogen
                     it->second.destroy_pipeline(it->second.handle, pipe.handle, nullptr);
                 }
             }
+            for (auto& [id, cache] : this->pipeline_caches)
+            {
+                if (cache.device_id == device_id && cache.handle && it->second.destroy_pipeline_cache)
+                {
+                    it->second.destroy_pipeline_cache(it->second.handle, cache.handle, nullptr);
+                }
+            }
             for (auto& [id, layout] : this->pipeline_layouts)
             {
                 if (layout.device_id == device_id && layout.handle && it->second.destroy_pipeline_layout)
@@ -877,6 +895,7 @@ namespace sogen
             }
             this->erase_owned(this->framebuffers, [&](const framebuffer_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->pipelines, [&](const pipeline_data& d) { return d.device_id == device_id; });
+            this->erase_owned(this->pipeline_caches, [&](const pipeline_cache_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->pipeline_layouts, [&](const pipeline_layout_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->render_passes, [&](const render_pass_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->image_views, [&](const image_view_data& d) { return d.device_id == device_id; });
@@ -2081,6 +2100,10 @@ namespace sogen
             data.free_descriptor_sets = reinterpret_cast<PFN_vkFreeDescriptorSets>(resolve("vkFreeDescriptorSets"));
             data.update_descriptor_sets = reinterpret_cast<PFN_vkUpdateDescriptorSets>(resolve("vkUpdateDescriptorSets"));
             data.cmd_bind_descriptor_sets = reinterpret_cast<PFN_vkCmdBindDescriptorSets>(resolve("vkCmdBindDescriptorSets"));
+            data.create_pipeline_cache = reinterpret_cast<PFN_vkCreatePipelineCache>(resolve("vkCreatePipelineCache"));
+            data.destroy_pipeline_cache = reinterpret_cast<PFN_vkDestroyPipelineCache>(resolve("vkDestroyPipelineCache"));
+            data.get_pipeline_cache_data = reinterpret_cast<PFN_vkGetPipelineCacheData>(resolve("vkGetPipelineCacheData"));
+            data.merge_pipeline_caches = reinterpret_cast<PFN_vkMergePipelineCaches>(resolve("vkMergePipelineCaches"));
             data.create_graphics_pipelines = reinterpret_cast<PFN_vkCreateGraphicsPipelines>(resolve("vkCreateGraphicsPipelines"));
             data.create_compute_pipelines = reinterpret_cast<PFN_vkCreateComputePipelines>(resolve("vkCreateComputePipelines"));
             data.destroy_pipeline = reinterpret_cast<PFN_vkDestroyPipeline>(resolve("vkDestroyPipeline"));
@@ -5570,7 +5593,113 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t render_pass, uint64_t pipeline_layout,
+    int32_t vulkan_host::create_pipeline_cache(uint64_t device, uint32_t flags, std::span<const uint8_t> initial_data,
+                                               uint64_t& out_pipeline_cache)
+    {
+        out_pipeline_cache = 0;
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || !dev->second.create_pipeline_cache)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkPipelineCacheCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+        info.flags = static_cast<VkPipelineCacheCreateFlags>(flags);
+        info.initialDataSize = initial_data.size();
+        info.pInitialData = initial_data.empty() ? nullptr : initial_data.data();
+
+        VkPipelineCache cache = VK_NULL_HANDLE;
+        const VkResult result = dev->second.create_pipeline_cache(dev->second.handle, &info, nullptr, &cache);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->pipeline_caches.emplace(id, impl::pipeline_cache_data{.handle = cache, .device_id = device});
+        out_pipeline_cache = id;
+        return VK_SUCCESS;
+    }
+
+    void vulkan_host::destroy_pipeline_cache(uint64_t device, uint64_t pipeline_cache)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto cache = this->impl_->pipeline_caches.find(pipeline_cache);
+        if (cache == this->impl_->pipeline_caches.end() || cache->second.device_id != device)
+        {
+            return;
+        }
+
+        if (dev != this->impl_->devices.end() && cache->second.handle && dev->second.destroy_pipeline_cache)
+        {
+            dev->second.destroy_pipeline_cache(dev->second.handle, cache->second.handle, nullptr);
+        }
+        this->impl_->pipeline_caches.erase(cache);
+    }
+
+    int32_t vulkan_host::get_pipeline_cache_data(uint64_t device, uint64_t pipeline_cache, void* out, size_t out_size, bool has_data,
+                                                 size_t& data_size)
+    {
+        data_size = 0;
+        const auto dev = this->impl_->devices.find(device);
+        const auto cache = this->impl_->pipeline_caches.find(pipeline_cache);
+        if (dev == this->impl_->devices.end() || cache == this->impl_->pipeline_caches.end() || cache->second.device_id != device)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (!dev->second.get_pipeline_cache_data)
+        {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+
+        std::byte dummy{};
+        void* data = nullptr;
+        if (has_data)
+        {
+            data = out;
+            if (!data)
+            {
+                data = &dummy;
+            }
+        }
+        size_t size = has_data ? out_size : 0;
+        const VkResult result = dev->second.get_pipeline_cache_data(dev->second.handle, cache->second.handle, &size, data);
+        data_size = size;
+        return result;
+    }
+
+    int32_t vulkan_host::merge_pipeline_caches(uint64_t device, uint64_t destination_cache, std::span<const uint64_t> source_caches)
+    {
+        const auto dev = this->impl_->devices.find(device);
+        const auto destination = this->impl_->pipeline_caches.find(destination_cache);
+        if (dev == this->impl_->devices.end() || destination == this->impl_->pipeline_caches.end() ||
+            destination->second.device_id != device)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (!dev->second.merge_pipeline_caches)
+        {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+
+        std::vector<VkPipelineCache> sources;
+        sources.reserve(source_caches.size());
+        for (const uint64_t source_id : source_caches)
+        {
+            const auto source = this->impl_->pipeline_caches.find(source_id);
+            if (source == this->impl_->pipeline_caches.end() || source->second.device_id != device)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            sources.push_back(source->second.handle);
+        }
+
+        return dev->second.merge_pipeline_caches(dev->second.handle, destination->second.handle, static_cast<uint32_t>(sources.size()),
+                                                 sources.empty() ? nullptr : sources.data());
+    }
+
+    int32_t vulkan_host::create_graphics_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t render_pass, uint64_t pipeline_layout,
                                                   const shader_stage_source& vertex_shader, const shader_stage_source& fragment_shader,
                                                   uint32_t flags, uint32_t width, uint32_t height, std::span<const vertex_binding> bindings,
                                                   std::span<const vertex_attribute> attributes, std::span<const vertex_divisor> divisors,
@@ -5616,6 +5745,17 @@ namespace sogen
         if (!resolve_stage(vertex_shader, vertex_module) || !resolve_stage(fragment_shader, fragment_module))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        VkPipelineCache cache_handle = VK_NULL_HANDLE;
+        if (pipeline_cache != 0)
+        {
+            const auto cache = this->impl_->pipeline_caches.find(pipeline_cache);
+            if (cache == this->impl_->pipeline_caches.end() || cache->second.device_id != device)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            cache_handle = cache->second.handle;
         }
 
         // render_pass == 0 means the pipeline targets dynamic rendering (DXVK 2.x): there is no render-pass
@@ -5881,7 +6021,7 @@ namespace sogen
         info.subpass = 0;
 
         VkPipeline pipeline{};
-        const VkResult result = dev->second.create_graphics_pipelines(dev->second.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
+        const VkResult result = dev->second.create_graphics_pipelines(dev->second.handle, cache_handle, 1, &info, nullptr, &pipeline);
         if (result != VK_SUCCESS)
         {
             return result;
@@ -5893,8 +6033,8 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::create_compute_pipeline(uint64_t device, uint64_t pipeline_layout, const shader_stage_source& shader,
-                                                 uint32_t flags, uint64_t& out_pipeline)
+    int32_t vulkan_host::create_compute_pipeline(uint64_t device, uint64_t pipeline_cache, uint64_t pipeline_layout,
+                                                 const shader_stage_source& shader, uint32_t flags, uint64_t& out_pipeline)
     {
         out_pipeline = 0;
 
@@ -5932,6 +6072,17 @@ namespace sogen
             identifier.pIdentifier = shader.identifier.data();
         }
 
+        VkPipelineCache cache_handle = VK_NULL_HANDLE;
+        if (pipeline_cache != 0)
+        {
+            const auto cache = this->impl_->pipeline_caches.find(pipeline_cache);
+            if (cache == this->impl_->pipeline_caches.end() || cache->second.device_id != device)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            cache_handle = cache->second.handle;
+        }
+
         VkComputePipelineCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
         info.flags = static_cast<VkPipelineCreateFlags>(flags);
@@ -5943,7 +6094,7 @@ namespace sogen
         info.stage.pName = "main";
 
         VkPipeline pipeline{};
-        const VkResult result = dev->second.create_compute_pipelines(dev->second.handle, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline);
+        const VkResult result = dev->second.create_compute_pipelines(dev->second.handle, cache_handle, 1, &info, nullptr, &pipeline);
         if (result != VK_SUCCESS)
         {
             return result;

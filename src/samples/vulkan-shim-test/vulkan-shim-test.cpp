@@ -337,6 +337,74 @@ namespace
         return ok;
     }
 
+    bool test_pipeline_cache(PFN_vkGetInstanceProcAddr get_instance_proc, VkInstance instance, VkDevice device)
+    {
+        const auto get_device_proc = reinterpret_cast<PFN_vkGetDeviceProcAddr>(get_instance_proc(instance, "vkGetDeviceProcAddr"));
+        if (!get_device_proc)
+        {
+            std::printf("[shim-test] no vkGetDeviceProcAddr for pipeline cache test\n");
+            return false;
+        }
+
+        const auto create_pipeline_cache = reinterpret_cast<PFN_vkCreatePipelineCache>(get_device_proc(device, "vkCreatePipelineCache"));
+        const auto destroy_pipeline_cache = reinterpret_cast<PFN_vkDestroyPipelineCache>(get_device_proc(device, "vkDestroyPipelineCache"));
+        const auto get_pipeline_cache_data =
+            reinterpret_cast<PFN_vkGetPipelineCacheData>(get_device_proc(device, "vkGetPipelineCacheData"));
+        const auto merge_pipeline_caches = reinterpret_cast<PFN_vkMergePipelineCaches>(get_device_proc(device, "vkMergePipelineCaches"));
+        if (!create_pipeline_cache || !destroy_pipeline_cache || !get_pipeline_cache_data || !merge_pipeline_caches)
+        {
+            std::printf("[shim-test] pipeline cache entry point missing\n");
+            return false;
+        }
+
+        VkPipelineCacheCreateInfo create_info{};
+        create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+        VkPipelineCache cache = VK_NULL_HANDLE;
+        const VkResult create_result = create_pipeline_cache(device, &create_info, nullptr, &cache);
+
+        size_t data_size = 0;
+        VkResult size_result = VK_ERROR_INITIALIZATION_FAILED;
+        VkResult data_result = VK_ERROR_INITIALIZATION_FAILED;
+        VkResult seeded_result = VK_ERROR_INITIALIZATION_FAILED;
+        VkResult merge_result = VK_ERROR_INITIALIZATION_FAILED;
+        VkPipelineCache seeded_cache = VK_NULL_HANDLE;
+        if (create_result == VK_SUCCESS)
+        {
+            size_result = get_pipeline_cache_data(device, cache, &data_size, nullptr);
+            if (size_result == VK_SUCCESS)
+            {
+                std::vector<uint8_t> data(data_size);
+                data_result = get_pipeline_cache_data(device, cache, &data_size, data.data());
+                data.resize(data_size);
+                if (data_result == VK_SUCCESS)
+                {
+                    VkPipelineCacheCreateInfo seeded_info{};
+                    seeded_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+                    seeded_info.initialDataSize = data.size();
+                    seeded_info.pInitialData = data.empty() ? nullptr : data.data();
+                    seeded_result = create_pipeline_cache(device, &seeded_info, nullptr, &seeded_cache);
+                    if (seeded_result == VK_SUCCESS)
+                    {
+                        merge_result = merge_pipeline_caches(device, cache, 1, &seeded_cache);
+                    }
+                }
+            }
+        }
+
+        const bool ok = create_result == VK_SUCCESS && size_result == VK_SUCCESS && data_result == VK_SUCCESS &&
+                        seeded_result == VK_SUCCESS && merge_result == VK_SUCCESS;
+        std::printf("[shim-test] pipeline cache round trip -> %s\n", ok ? "PASS" : "FAIL");
+        if (seeded_cache != VK_NULL_HANDLE)
+        {
+            destroy_pipeline_cache(device, seeded_cache, nullptr);
+        }
+        if (cache != VK_NULL_HANDLE)
+        {
+            destroy_pipeline_cache(device, cache, nullptr);
+        }
+        return ok;
+    }
+
     // Allocates a host-visible buffer, has the GPU fill it with a known pattern via vkCmdFillBuffer,
     // then maps it back and verifies the bytes -- the first end-to-end "GPU produces data the guest
     // reads back" path across the bridge.
@@ -890,6 +958,7 @@ int main(int argc, char** argv)
     bool transform_feedback_test_ok = true;
     bool transform_feedback_capabilities_ok = true;
     bool shader_identifier_test_ok = true;
+    bool pipeline_cache_test_ok = true;
     uint32_t count = 0;
     result = enumerate(instance, &count, nullptr);
     std::printf("[shim-test] vkEnumeratePhysicalDevices -> %d, count=%u\n", result, count);
@@ -1172,6 +1241,7 @@ int main(int argc, char** argv)
                 {
                     shader_identifier_test_ok = test_shader_module_identifier(get_instance_proc, instance, device);
                 }
+                pipeline_cache_test_ok = test_pipeline_cache(get_instance_proc, instance, device);
 
                 destroy_device(device, nullptr);
             }
@@ -1184,7 +1254,7 @@ int main(int argc, char** argv)
     }
 
     const bool all_ok = timestamp2_test_ok && calibrated_timestamps_test_ok && transform_feedback_test_ok &&
-                        transform_feedback_capabilities_ok && shader_identifier_test_ok;
+                        transform_feedback_capabilities_ok && shader_identifier_test_ok && pipeline_cache_test_ok;
     std::printf("[shim-test] %s\n", all_ok ? "ok" : "FAILED");
     return all_ok ? 0 : 6;
 }
