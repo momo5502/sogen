@@ -5,6 +5,9 @@
 namespace sogen
 {
 
+#define REG_CREATED_NEW_KEY     0x00000001L
+#define REG_OPENED_EXISTING_KEY 0x00000002L
+
     typedef enum _KEY_INFORMATION_CLASS
     {
         KeyBasicInformation,          // KEY_BASIC_INFORMATION
