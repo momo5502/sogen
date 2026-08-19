@@ -790,9 +790,35 @@ namespace sogen
             return handle_NtWaitForSingleObject(c, wait_handle, alertable, timeout);
         }
 
-        NTSTATUS handle_NtSetInformationObject()
+        NTSTATUS handle_NtSetInformationObject(const syscall_context& c, const handle handle,
+                                               const OBJECT_INFORMATION_CLASS object_information_class,
+                                               const emulator_pointer object_information, const ULONG object_information_length)
         {
-            return STATUS_NOT_SUPPORTED;
+            if (object_information_class != ObjectHandleFlagInformation)
+            {
+                c.win_emu.log.error("Unsupported object info class: %X\n", object_information_class);
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            if (object_information_length < sizeof(OBJECT_HANDLE_FLAG_INFORMATION))
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            const auto effective_handle = c.proc.resolve_object_pseudo_handle(handle, c.vcpu.active_thread);
+            if (!c.proc.get_handle_store(effective_handle))
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            // Validate the buffer, then drop the flags: NtQueryObject reports both
+            // as 0 because neither is tracked per handle. Failing instead breaks
+            // callers that only set them defensively -- winhttp aborts session
+            // creation with ERROR_NOT_SUPPORTED and returns a NULL session.
+            const emulator_object<OBJECT_HANDLE_FLAG_INFORMATION> info{c.emu, object_information};
+            (void)info.read();
+
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, const handle /*h*/, const SECURITY_INFORMATION security_information,
