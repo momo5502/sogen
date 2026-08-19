@@ -9,7 +9,7 @@
 
 Sogen runs Windows and Linux programs without a real operating system, and lets you see and control everything they do.
 
-Instead of reimplementing thousands of OS APIs, Sogen emulates binaries at the CPU and syscall level and runs the **real system DLLs**, so behavior closely matches the real OS.
+Instead of reimplementing thousands of OS APIs, Sogen emulates binaries at CPU and syscall level and runs the **real system DLLs**, so behavior closely matches the real OS.
 
 Every instruction, memory access and API call can be hooked, inspected or rewritten, runs are fully deterministic, and the entire emulator state can be snapshotted and restored.
 
