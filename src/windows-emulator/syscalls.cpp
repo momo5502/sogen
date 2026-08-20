@@ -211,7 +211,8 @@ namespace sogen
                                               emulator_object<LARGE_INTEGER> timeout);
         NTSTATUS handle_NtSignalAndWaitForSingleObject(const syscall_context& c, handle signal_handle, handle wait_handle,
                                                        BOOLEAN alertable, emulator_object<LARGE_INTEGER> timeout);
-        NTSTATUS handle_NtSetInformationObject();
+        NTSTATUS handle_NtSetInformationObject(const syscall_context& c, handle handle, OBJECT_INFORMATION_CLASS object_information_class,
+                                               emulator_pointer object_information, ULONG object_information_length);
         NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, handle /*h*/, SECURITY_INFORMATION /*security_information*/,
                                               emulator_pointer security_descriptor, ULONG length, emulator_object<ULONG> length_needed);
         NTSTATUS handle_NtSetSecurityObject();
