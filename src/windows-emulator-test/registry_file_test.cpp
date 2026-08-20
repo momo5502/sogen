@@ -273,4 +273,43 @@ namespace sogen::test
         EXPECT_THROW(import_registry_file_contents(registry(), unterminated_type, "type.reg"), std::runtime_error);
         EXPECT_THROW(import_registry_file_contents(registry(), odd_utf16, "utf16.reg"), std::runtime_error);
     }
+
+    TEST_F(RegistryFileTest, CreatesMissingKeyInLoadedHive)
+    {
+        const std::filesystem::path path{uR"(\Registry\Machine\Software\Vendor\Product)"};
+        ASSERT_FALSE(registry().get_key(utils::path_key{path}).has_value());
+        ASSERT_TRUE(registry().can_create_key(path));
+
+        const auto created = registry().create_key(path);
+        ASSERT_TRUE(created.has_value());
+        EXPECT_TRUE(registry().get_key(utils::path_key{path}).has_value());
+
+        const std::vector data{std::byte{1}, std::byte{2}};
+        registry().set_value(*created, "Value", REG_BINARY, data);
+
+        const auto value = registry().get_value(*created, "Value");
+        ASSERT_TRUE(value.has_value());
+        EXPECT_EQ(value->type, REG_BINARY);
+        EXPECT_EQ(std::vector(value->data.begin(), value->data.end()), data);
+    }
+
+    TEST_F(RegistryFileTest, CreateKeyIsIdempotent)
+    {
+        const std::filesystem::path path{uR"(\Registry\Machine\Software\Vendor\Once)"};
+
+        const auto first = registry().create_key(path);
+        ASSERT_TRUE(first.has_value());
+        registry().set_value(*first, "Keep", REG_BINARY, std::vector{std::byte{7}});
+
+        const auto second = registry().create_key(path);
+        ASSERT_TRUE(second.has_value());
+        EXPECT_TRUE(registry().get_value(*second, "Keep").has_value());
+    }
+
+    TEST_F(RegistryFileTest, RejectsKeyOutsideAnyLoadedHive)
+    {
+        const std::filesystem::path path{uR"(\Registry\NoSuchHive\Key)"};
+        EXPECT_FALSE(registry().can_create_key(path));
+        EXPECT_FALSE(registry().create_key(path).has_value());
+    }
 } // namespace sogen::test
