@@ -1,62 +1,24 @@
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Cpu,
-  ExternalLink,
-  Play,
-  ArrowRight,
-  BookOpen,
   Bug,
   Lock,
-  Split,
-  Save,
-  Globe,
   Box,
-  Boxes,
-  Repeat,
-  Code,
+  ArrowRight,
+  ArrowUpRight,
+  BookOpen,
+  Play,
+  Sun,
+  Moon,
 } from "lucide-react";
+import { Github } from "react-bootstrap-icons";
+import type { ReactNode } from "react";
+import { useTheme } from "@/components/theme-provider";
 import { Highlight } from "prism-react-renderer";
 import type { PrismTheme } from "prism-react-renderer";
 
 import { Header } from "./Header";
 import { YoutubeVideo } from "@/components/youtube-video";
 
-function generateButtons(additionalClasses: string = "") {
-  return (
-    <div
-      className={`flex flex-col sm:flex-row gap-4 justify-center items-stretch sm:items-center px-4 min-[340px]:px-16 ${additionalClasses}`}
-    >
-      <a href="#/playground">
-        <Button
-          asChild
-          size="lg"
-          className="rounded-lg bg-linear-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100 w-full flex"
-        >
-          <span>
-            <Play className="mr-2 h-5 w-5 transition-transform" />
-            <span className="flex-1 text-center">Try Online</span>
-            <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
-          </span>
-        </Button>
-      </a>
-      <a href="https://github.com/momo5502/sogen" target="_blank">
-        <Button
-          asChild
-          size="lg"
-          variant="outline"
-          className="rounded-lg border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300 w-full flex"
-        >
-          <span>
-            <Code className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-            <span className="flex-1 text-center">Get Source</span>
-            <ExternalLink className="ml-2 h-4 w-4" />
-          </span>
-        </Button>
-      </a>
-    </div>
-  );
-}
+import "./landing.css";
 
 const pythonBindingsSample = `import ctypes
 import sogen
@@ -72,86 +34,180 @@ def on_sleep(call, params):
 app.hooks.apis["Sleep"] = on_sleep
 app.start()`;
 
-const landingPythonTheme: PrismTheme = {
+const pythonTheme: PrismTheme = {
   plain: {
     color: "#e6e6e6",
     backgroundColor: "transparent",
   },
   styles: [
-    {
-      types: ["comment"],
-      style: { color: "#8a8a8a", fontStyle: "italic" },
-    },
+    { types: ["comment"], style: { color: "#8a8a8a", fontStyle: "italic" } },
     {
       types: ["keyword", "builtin", "decorator", "important", "atrule"],
-      style: { color: "#F3A71F" },
+      style: { color: "#f4c04a" },
     },
     {
       types: ["function", "property", "namespace", "symbol"],
-      style: { color: "#2AA8F5" },
+      style: { color: "#5cb8f7" },
     },
-    {
-      types: ["string"],
-      style: { color: "#9ABB28" },
-    },
-    {
-      types: ["number", "boolean"],
-      style: { color: "#E25A48" },
-    },
-    {
-      types: ["operator", "punctuation"],
-      style: { color: "#9a9a9a" },
-    },
-    {
-      types: ["class-name", "constant"],
-      style: { color: "#2AA8F5" },
-    },
+    { types: ["string"], style: { color: "#9fd24a" } },
+    { types: ["number", "boolean"], style: { color: "#e25a48" } },
+    { types: ["operator", "punctuation"], style: { color: "#9a9a9a" } },
+    { types: ["class-name", "constant"], style: { color: "#45c2cf" } },
   ],
 };
 
+/* The color ramp used by Sogen's terminal output, reused as the
+   accent system across the page. */
+const ramp = ["#f4c04a", "#cdd24a", "#9fd24a", "#5ecb9a", "#45c2cf", "#5cb8f7"];
+
+function scrollTo(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+}
+
+function Eyebrow({
+  color,
+  index,
+  children,
+}: {
+  color: string;
+  index?: string;
+  children: ReactNode;
+}) {
+  return (
+    <span className="inline-flex items-center gap-2.5 font-mono text-[0.6875rem] font-medium uppercase tracking-[0.18em] text-[var(--lp-ink-soft)]">
+      <span
+        aria-hidden
+        className="inline-block h-2 w-2"
+        style={{ backgroundColor: color }}
+      />
+      {index && <span aria-hidden>{index} /</span>}
+      {children}
+    </span>
+  );
+}
+
+function ThemeToggle() {
+  const { theme, setTheme } = useTheme();
+  const isDark =
+    theme === "dark" ||
+    (theme === "system" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches);
+
+  return (
+    <button
+      onClick={() => setTheme(isDark ? "light" : "dark")}
+      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-md text-[var(--lp-ink-soft)] transition-colors duration-200 hover:bg-[var(--lp-hover)] hover:text-[var(--lp-ink)]"
+    >
+      {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+    </button>
+  );
+}
+
+function PillLink({
+  href,
+  variant = "primary",
+  external = false,
+  children,
+}: {
+  href: string;
+  variant?: "primary" | "ghost";
+  external?: boolean;
+  children: ReactNode;
+}) {
+  const base =
+    "group inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-lg px-6 py-3 text-[0.9375rem] font-semibold transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-accent)]";
+  const styles =
+    variant === "primary"
+      ? "bg-[var(--lp-ink)] text-[var(--lp-paper)] hover:bg-[var(--lp-ink-hover)]"
+      : "border border-[var(--lp-hairline)] text-[var(--lp-ink)] hover:border-[var(--lp-hairline-strong)] hover:bg-[var(--lp-hover)]";
+
+  return (
+    <a
+      href={href}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noreferrer" : undefined}
+      className={`${base} ${styles}`}
+    >
+      {children}
+    </a>
+  );
+}
+
+function WindowFrame({
+  title,
+  children,
+  className = "",
+}: {
+  title: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`overflow-hidden rounded-xl border border-[var(--lp-frame-border)] bg-neutral-950 shadow-[var(--lp-shadow)] ${className}`}
+    >
+      <div className="flex items-center gap-1.5 border-b border-white/10 px-4 py-3">
+        <span className="h-2.5 w-2.5 rounded-full bg-[#e25a48]/80" />
+        <span className="h-2.5 w-2.5 rounded-full bg-[#f4c04a]/80" />
+        <span className="h-2.5 w-2.5 rounded-full bg-[#9fd24a]/80" />
+        <span className="ml-3 truncate font-mono text-xs text-neutral-500">
+          {title}
+        </span>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 export function LandingPage() {
-  const features = [
+  const capabilities = [
     {
-      icon: <Cpu className="h-6 w-6" />,
-      color: "#f4c04a",
-      title: "Real System DLLs",
+      key: 'hooks.apis["Sleep"]',
+      title: "Hook & rewrite",
       description:
-        "Runs the actual ntdll, kernel32 and user32, not reimplemented stubs. Behavior matches real Windows, edge cases included.",
+        "Pause on anything the program does, log it, change its result, or block it entirely, from C++ or Python.",
     },
     {
-      icon: <Split className="h-6 w-6" />,
-      color: "#cdd24a",
-      title: "Hook & Rewrite",
+      key: "snapshot()",
+      title: "Snapshot & restore",
       description:
-        "Intercept and change memory, instructions, syscalls and API calls. Watch what a program does, or change how it behaves.",
+        "Serialize the full emulator state to disk, take fast in-memory snapshots, or load a Windows minidump and continue executing from the moment it captured.",
     },
     {
-      icon: <Save className="h-6 w-6" />,
-      color: "#9fd24a",
-      title: "Snapshot & Restore",
+      key: "replay",
+      title: "Deterministic execution",
       description:
-        "Save and restore full emulator state, or load a minidump. Jump back to any point instead of replaying from the start.",
+        "Every run is reproducible, down to the instruction. A bug that happened once happens every time you go looking for it.",
     },
+  ];
+
+  const useCases = [
     {
-      icon: <Globe className="h-6 w-6" />,
-      color: "#5ecb9a",
-      title: "Runs Everywhere",
-      description: "Sogen runs on Windows, Linux, macOS, Android, and more.",
-    },
-    {
-      icon: <Boxes className="h-6 w-6" />,
-      color: "#45c2cf",
-      title: "Pluggable Backends",
+      icon: Bug,
+      title: "Analyze malware",
       description:
-        "Switch between Unicorn, icicle, Hyper-V and KVM backends. Pick the right trade-off between speed and accuracy.",
+        "Run a sample and watch everything it does, with zero risk to your machine.",
     },
     {
-      icon: <Repeat className="h-6 w-6" />,
-      color: "#5cb8f7",
-      title: "Deterministic",
+      icon: Lock,
+      title: "Understand DRM",
       description:
-        "Every run is reproducible, down to the instruction. A bug that happens once happens every time.",
+        "Follow licensing and protection logic step by step, at your own pace.",
     },
+    {
+      icon: Box,
+      title: "Sandbox apps & games",
+      description:
+        "Run untrusted software in complete isolation from your real system.",
+    },
+  ];
+
+  const navLinks = [
+    { label: "How it works", id: "how" },
+    { label: "Capabilities", id: "capabilities" },
+    { label: "Debugger", id: "debugger" },
+    { label: "Python", id: "python" },
   ];
 
   return (
@@ -160,445 +216,654 @@ export function LandingPage() {
         title="Sogen - Windows & Linux Userspace Emulator"
         description="Sogen is a high-performance Windows & Linux userspace emulator. It runs binaries at the CPU and syscall level, letting you hook and inspect every instruction, memory access and API call. Ideal for security, malware and DRM research."
       />
-      <div className="flex flex-col min-h-screen bg-linear-to-br from-zinc-900 via-neutral-900 to-black overflow-x-hidden">
-        {/* Hero Section with Animated Background */}
-        <section className="relative overflow-visible">
-          <div className="relative container mx-auto px-4 min-[340px]:px-6 pt-28 pb-16 xl:pt-32 xl:pb-24">
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-center gap-8 lg:gap-12">
-              {/* Text column */}
-              <div className="text-center lg:text-left space-y-8 w-full max-w-lg mx-auto lg:mx-0">
-                <h1 className="text-4xl md:text-5xl lg:text-4xl font-bold text-white leading-[1.2] tracking-tight">
-                  Run any Windows binary.
-                  <br />
-                  <span className="text-neutral-300">Without Windows.</span>
-                </h1>
 
-                <p className="text-lg md:text-xl text-neutral-400 font-light leading-relaxed max-w-xl mx-auto lg:mx-0 text-balance">
-                  Sogen is a userspace emulator for Windows and Linux binaries.
-                  Hook, debug and snapshot any process, with control over every
-                  instruction, syscall and API call.
-                </p>
+      <div className="lp min-h-screen overflow-x-hidden font-sans">
+        {/* ── Navigation ─────────────────────────────────────────── */}
+        <nav className="sticky top-0 z-50 border-b border-[var(--lp-hairline)] bg-[var(--lp-nav-bg)] backdrop-blur-md">
+          <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 sm:px-8">
+            <a
+              href="#/"
+              className="text-lg font-bold tracking-tight text-[var(--lp-ink)]"
+            >
+              Sogen
+              <span className="ml-0.5 text-[var(--lp-accent)]">.</span>
+            </a>
 
-                {
-                  /* CTA Buttons */
-                  generateButtons("pt-2 lg:px-0 lg:justify-start")
-                }
-              </div>
-
-              {/* Product shot */}
-              <div className="relative w-full max-w-2xl lg:max-w-[680px] mx-auto lg:mx-0">
-                <div className="absolute -inset-4 bg-linear-to-r from-yellow-500/10 via-lime-500/10 to-cyan-500/10 rounded-3xl blur-2xl"></div>
-                <img
-                  src="https://momo5502.com/sogen/preview.svg"
-                  alt="The Sogen emulator tracing a program's execution"
-                  className="relative w-full"
-                />
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* What you can do */}
-        <section className="py-16">
-          <div className="container mx-auto px-6 max-w-4xl">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-8 gap-y-10 text-center">
-              <div>
-                <Bug className="h-6 w-6 mx-auto mb-3 text-neutral-300" />
-                <h3 className="text-white font-semibold mb-1.5">
-                  Analyze malware
-                </h3>
-                <p className="text-sm text-neutral-400 leading-relaxed">
-                  Run a sample and see what it does, without any risk.
-                </p>
-              </div>
-              <div>
-                <Lock className="h-6 w-6 mx-auto mb-3 text-neutral-300" />
-                <h3 className="text-white font-semibold mb-1.5">
-                  Understand DRM
-                </h3>
-                <p className="text-sm text-neutral-400 leading-relaxed">
-                  Follow licensing and protection logic step by step.
-                </p>
-              </div>
-              <div>
-                <Box className="h-6 w-6 mx-auto mb-3 text-neutral-300" />
-                <h3 className="text-white font-semibold mb-1.5">
-                  Sandbox apps &amp; games
-                </h3>
-                <p className="text-sm text-neutral-400 leading-relaxed">
-                  Run untrusted software, even games, in full isolation.
-                </p>
-              </div>
-            </div>
-            <p className="text-center text-lg text-neutral-400 mt-12 text-balance">
-              A safe, fully instrumented place to run code you don't trust or
-              understand.
-            </p>
-          </div>
-        </section>
-
-        {/* Features Section */}
-        <section className="py-24 relative">
-          <div className="container mx-auto px-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
-              {features.map((feature, index) => (
-                <Card
-                  key={index}
-                  className="bg-neutral-800/50 border-neutral-700 hover:border-neutral-600 hover:bg-neutral-800/80 cursor-default transition-all duration-150 group hover:shadow-2xl"
+            <div className="hidden items-center gap-1 md:flex">
+              {navLinks.map((link) => (
+                <button
+                  key={link.id}
+                  onClick={() => scrollTo(link.id)}
+                  className="cursor-pointer rounded-md px-4 py-2 text-sm font-medium text-[var(--lp-ink-soft)] transition-colors duration-200 hover:bg-[var(--lp-hover)] hover:text-[var(--lp-ink)]"
                 >
-                  <CardHeader>
-                    <div className="w-12 h-12 rounded-[0.625rem] bg-neutral-900/80 border border-neutral-700/50 p-3 mb-4 flex items-center justify-center">
-                      <div style={{ color: feature.color }}>{feature.icon}</div>
-                    </div>
-                    <CardTitle className="text-white text-xl font-semibold transition-colors">
-                      {feature.title}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-neutral-300 leading-relaxed">
-                      {feature.description}
-                    </p>
-                  </CardContent>
-                </Card>
+                  {link.label}
+                </button>
+              ))}
+              <a
+                href="https://github.com/momo5502/sogen/wiki"
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-md px-4 py-2 text-sm font-medium text-[var(--lp-ink-soft)] transition-colors duration-200 hover:bg-[var(--lp-hover)] hover:text-[var(--lp-ink)]"
+              >
+                Docs
+              </a>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <a
+                href="https://github.com/momo5502/sogen"
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Sogen on GitHub"
+                className="flex h-10 w-10 items-center justify-center rounded-md text-[var(--lp-ink-soft)] transition-colors duration-200 hover:bg-[var(--lp-hover)] hover:text-[var(--lp-ink)]"
+              >
+                <Github className="h-5 w-5" />
+              </a>
+              <a
+                href="#/playground"
+                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-[var(--lp-ink)] px-4 py-2 text-sm font-semibold text-[var(--lp-paper)] transition-colors duration-200 hover:bg-[var(--lp-ink-hover)] sm:px-5"
+              >
+                Try online
+                <ArrowRight className="h-4 w-4" />
+              </a>
+            </div>
+          </div>
+        </nav>
+
+        {/* ── Hero ───────────────────────────────────────────────── */}
+        <section className="relative">
+          <div className="lp-dots pointer-events-none absolute inset-x-0 top-0 h-[560px]" />
+          <div className="relative mx-auto max-w-6xl px-5 pt-20 pb-14 sm:px-8 sm:pt-28 sm:pb-20">
+            <div className="mx-auto max-w-3xl text-center">
+              <Eyebrow color="var(--lp-accent)">
+                Windows · Linux · Userspace emulator
+              </Eyebrow>
+
+              <h1 className="mt-6 text-[2.5rem] leading-[1.08] font-bold tracking-[-0.03em] text-balance sm:text-6xl md:text-[4.25rem]">
+                Run Windows binaries.
+                <br />
+                <span className="text-[var(--lp-ink-soft)]">
+                  Without Windows.
+                </span>
+              </h1>
+
+              <p className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-pretty text-[var(--lp-ink-soft)] sm:text-xl">
+                Sogen runs Windows and Linux programs without a real operating
+                system, and lets you see and control everything they do, down to
+                the instruction.
+              </p>
+
+              <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                <PillLink href="#/playground">
+                  <Play className="h-4 w-4" />
+                  Try it in your browser
+                  <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
+                </PillLink>
+                <PillLink
+                  href="https://github.com/momo5502/sogen"
+                  variant="ghost"
+                  external
+                >
+                  <Github className="h-4 w-4" />
+                  View source
+                </PillLink>
+              </div>
+            </div>
+
+            <div className="mx-auto mt-14 max-w-4xl sm:mt-20">
+              <img
+                src="https://momo5502.com/sogen/preview.svg"
+                alt="The Sogen emulator tracing a program's execution"
+                className="w-full"
+                width={1200}
+                height={680}
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* ── How it works ───────────────────────────────────────── */}
+        <section
+          id="how"
+          className="scroll-mt-20 border-y border-[var(--lp-hairline)] bg-[var(--lp-paper-2)]"
+        >
+          <div className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
+            <div className="max-w-2xl">
+              <Eyebrow index="01" color={ramp[4]}>
+                How it works
+              </Eyebrow>
+              <h2 className="mt-4 text-3xl font-bold tracking-tight text-balance sm:text-4xl">
+                Emulate the syscalls. Run everything else for real.
+              </h2>
+              <p className="mt-5 text-lg leading-relaxed text-[var(--lp-ink-soft)]">
+                Instead of reimplementing thousands of Windows APIs, Sogen loads
+                your binary together with the real system DLLs and runs them on
+                an emulated CPU. Only the thin syscall layer at the very bottom
+                is answered by Sogen itself.
+              </p>
+            </div>
+
+            <div className="mt-14">
+              <div className="grid grid-cols-1 items-stretch gap-3 lg:grid-cols-[1fr_auto_1.5fr_auto_1fr] lg:gap-4">
+                {/* Input */}
+                <div className="flex flex-col rounded-lg border border-[var(--lp-hairline)] bg-[var(--lp-paper)] p-5">
+                  <span className="font-mono text-[0.6875rem] tracking-[0.18em] text-[var(--lp-ink-soft)] uppercase">
+                    Input
+                  </span>
+                  <span className="mt-2 font-mono text-sm font-semibold">
+                    your-program.exe
+                  </span>
+                  <p className="mt-2 text-sm leading-relaxed text-[var(--lp-ink-soft)]">
+                    An unmodified Windows or Linux binary. Nothing recompiled,
+                    nothing patched.
+                  </p>
+                </div>
+
+                <div
+                  aria-hidden
+                  className="flex items-center justify-center font-mono text-lg text-[var(--lp-ink-soft)]"
+                >
+                  <span className="rotate-90 lg:rotate-0">→</span>
+                </div>
+
+                {/* Sogen stack */}
+                <div className="overflow-hidden rounded-lg border border-[var(--lp-hairline-strong)] bg-[var(--lp-paper)]">
+                  <div className="border-b border-[var(--lp-hairline)] px-5 py-3 font-mono text-[0.6875rem] font-semibold tracking-[0.18em] uppercase">
+                    Sogen
+                  </div>
+                  <div className="divide-y divide-[var(--lp-hairline)]">
+                    {[
+                      [
+                        ramp[0],
+                        "Real system DLLs",
+                        "ntdll · kernel32 · user32, the actual files, not stubs",
+                      ],
+                      [
+                        ramp[2],
+                        "Emulated CPU",
+                        "Unicorn · icicle · Hyper-V · KVM, on x86-64 and arm64",
+                      ],
+                      [
+                        ramp[5],
+                        "Syscall layer",
+                        "NT syscalls implemented by Sogen, the only reimplemented part",
+                      ],
+                    ].map(([color, title, sub]) => (
+                      <div key={title} className="px-5 py-3.5">
+                        <div className="flex items-center gap-2.5">
+                          <span
+                            aria-hidden
+                            className="inline-block h-2 w-2"
+                            style={{ backgroundColor: color }}
+                          />
+                          <span className="text-sm font-semibold">{title}</span>
+                        </div>
+                        <p className="mt-1 pl-[1.125rem] font-mono text-xs leading-relaxed text-[var(--lp-ink-soft)]">
+                          {sub}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="border-t border-dashed border-[var(--lp-hairline-strong)] px-5 py-3 font-mono text-xs leading-relaxed text-[var(--lp-ink-soft)]">
+                    ↳ your hooks attach to every instruction, memory access,
+                    syscall and API call
+                  </div>
+                </div>
+
+                <div
+                  aria-hidden
+                  className="flex items-center justify-center font-mono text-lg text-[var(--lp-ink-soft)]"
+                >
+                  <span className="rotate-90 lg:rotate-0">→</span>
+                </div>
+
+                {/* Output */}
+                <div className="flex flex-col rounded-lg border border-[var(--lp-hairline)] bg-[var(--lp-paper)] p-5">
+                  <span className="font-mono text-[0.6875rem] tracking-[0.18em] text-[var(--lp-ink-soft)] uppercase">
+                    Environment
+                  </span>
+                  <span className="mt-2 font-mono text-sm font-semibold">
+                    virtual filesystem · registry · network
+                  </span>
+                  <p className="mt-2 text-sm leading-relaxed text-[var(--lp-ink-soft)]">
+                    The program sees its own emulated environment and runs in
+                    full isolation. Nothing touches your machine.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Use cases ──────────────────────────────────────────── */}
+        <section className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
+          <div className="max-w-2xl">
+            <Eyebrow index="02" color={ramp[0]}>
+              What it's for
+            </Eyebrow>
+            <h2 className="mt-4 text-3xl font-bold tracking-tight text-balance sm:text-4xl">
+              A safe, fully instrumented place to run code you don't trust.
+            </h2>
+          </div>
+
+          <div className="mt-12 grid grid-cols-1 gap-x-10 gap-y-10 border-t border-[var(--lp-hairline)] pt-10 sm:grid-cols-3">
+            {useCases.map((useCase, i) => (
+              <div key={useCase.title}>
+                <div className="flex items-baseline gap-3 font-mono text-sm text-[var(--lp-ink-soft)]">
+                  <span>0{i + 1}</span>
+                  <useCase.icon
+                    className="h-4 w-4 translate-y-0.5"
+                    aria-hidden
+                  />
+                </div>
+                <h3 className="mt-3 text-lg font-semibold">{useCase.title}</h3>
+                <p className="mt-2 leading-relaxed text-[var(--lp-ink-soft)]">
+                  {useCase.description}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ── Capability sheet ───────────────────────────────────── */}
+        <section
+          id="capabilities"
+          className="scroll-mt-20 border-y border-[var(--lp-hairline)] bg-[var(--lp-paper-2)]"
+        >
+          <div className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
+            <div className="max-w-2xl">
+              <Eyebrow index="03" color={ramp[2]}>
+                Capabilities
+              </Eyebrow>
+              <h2 className="mt-4 text-3xl font-bold tracking-tight text-balance sm:text-4xl">
+                Full control over every run.
+              </h2>
+            </div>
+
+            <div className="mt-12 border-t border-[var(--lp-hairline)]">
+              {capabilities.map((cap, i) => (
+                <div
+                  key={cap.title}
+                  className="grid grid-cols-1 gap-2 border-b border-[var(--lp-hairline)] py-6 md:grid-cols-[16rem_1fr] md:gap-8"
+                >
+                  <div className="flex items-start gap-2.5 font-mono text-sm text-[var(--lp-ink)]">
+                    <span
+                      aria-hidden
+                      className="mt-1.5 inline-block h-2 w-2 shrink-0"
+                      style={{ backgroundColor: ramp[i % ramp.length] }}
+                    />
+                    <span className="break-all">{cap.key}</span>
+                  </div>
+                  <p className="leading-relaxed">
+                    <span className="font-semibold">{cap.title}.</span>{" "}
+                    <span className="text-[var(--lp-ink-soft)]">
+                      {cap.description}
+                    </span>
+                  </p>
+                </div>
               ))}
             </div>
           </div>
         </section>
 
-        {/* In the Browser */}
-        <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
-          <div className="container mx-auto px-6">
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-12 items-center max-w-6xl mx-auto">
-              <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-800/60 px-4 py-2 text-sm text-neutral-300 mb-6">
-                  <Globe className="h-4 w-4" />
-                  In your browser
-                </div>
-                <h2 className="text-4xl font-bold text-white mb-6">
-                  Run It in Your Browser
-                </h2>
-                <p className="text-xl text-neutral-400 leading-relaxed mb-8">
-                  The whole emulator compiles to WebAssembly and runs in the
-                  browser. Nothing is uploaded, everything runs locally, with
-                  nothing to install.
-                </p>
-                <a href="#/playground" className="inline-block">
-                  <Button
-                    asChild
-                    size="lg"
-                    className="rounded-lg bg-linear-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100"
-                  >
-                    <span>
-                      <Play className="mr-2 h-5 w-5 transition-transform" />
-                      Try Online
-                      <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
-                    </span>
-                  </Button>
-                </a>
-              </div>
-
-              <div className="relative w-full max-w-2xl mx-auto xl:order-first">
-                <div className="absolute -inset-4 bg-linear-to-r from-neutral-500/10 to-neutral-400/10 rounded-2xl blur-md"></div>
-                <img
-                  src="https://momo5502.com/sogen/browser.png"
-                  alt="The Sogen playground running in a web browser"
-                  width={1017}
-                  height={583}
-                  className="relative w-full rounded-xl border border-neutral-700 shadow-2xl"
-                />
+        {/* ── Browser showcase ───────────────────────────────────── */}
+        <section className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
+          <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
+            <div>
+              <Eyebrow index="04" color={ramp[4]}>
+                In your browser
+              </Eyebrow>
+              <h2 className="mt-4 text-3xl font-bold tracking-tight text-balance sm:text-4xl">
+                The whole emulator, compiled to WebAssembly.
+              </h2>
+              <p className="mt-5 text-lg leading-relaxed text-[var(--lp-ink-soft)]">
+                Sogen runs entirely in your browser. Nothing is uploaded,
+                everything runs locally. Drop in a binary and start tracing.
+              </p>
+              <div className="mt-8">
+                <PillLink href="#/playground">
+                  <Play className="h-4 w-4" />
+                  Open the playground
+                  <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
+                </PillLink>
               </div>
             </div>
+
+            <WindowFrame title="sogen.dev/playground">
+              <img
+                src="https://momo5502.com/sogen/browser.png"
+                alt="The Sogen playground running in a web browser"
+                width={1017}
+                height={583}
+                loading="lazy"
+                className="w-full"
+              />
+            </WindowFrame>
           </div>
         </section>
 
-        {/* Debugger Showcase */}
-        <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
-          <div className="container mx-auto px-6">
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-12 items-center max-w-6xl mx-auto">
-              <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-800/60 px-4 py-2 text-sm text-neutral-300 mb-6">
-                  <Bug className="h-4 w-4" />
-                  Debugging
-                </div>
-                <h2 className="text-4xl font-bold text-white mb-6">
-                  Undetectable Debugging
-                </h2>
-                <p className="text-xl text-neutral-400 leading-relaxed">
-                  Sogen implements the GDB protocol, so you can debug with tools
-                  you already know, like IDA Pro or GDB.
-                  <br />
-                  The debugger runs at the emulator level, outside the process,
-                  so it's invisible to anti-debug checks.
-                </p>
-              </div>
-
-              <div className="relative w-full max-w-2xl mx-auto">
-                <div className="absolute -inset-4 bg-linear-to-r from-neutral-500/10 to-neutral-400/10 rounded-2xl blur-md"></div>
+        {/* ── Debugger showcase ──────────────────────────────────── */}
+        <section
+          id="debugger"
+          className="scroll-mt-20 border-y border-[var(--lp-hairline)] bg-[var(--lp-paper-2)]"
+        >
+          <div className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
+            <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
+              <WindowFrame
+                title="IDA Pro - remote GDB session"
+                className="order-last lg:order-first"
+              >
                 <img
                   src="https://momo5502.com/sogen/debugger.png"
                   alt="An IDA Pro remote GDB session debugging a process running in Sogen"
                   width={1464}
                   height={902}
-                  className="relative w-full rounded-xl border border-neutral-700 shadow-2xl"
+                  loading="lazy"
+                  className="w-full"
                 />
+              </WindowFrame>
+
+              <div>
+                <Eyebrow index="05" color={ramp[5]}>
+                  Debugging
+                </Eyebrow>
+                <h2 className="mt-4 text-3xl font-bold tracking-tight text-balance sm:text-4xl">
+                  A debugger anti-debug checks can't see.
+                </h2>
+                <p className="mt-5 text-lg leading-relaxed text-[var(--lp-ink-soft)]">
+                  Sogen implements the GDB protocol, so you can debug with tools
+                  you already know, like IDA Pro or GDB, or use the built-in
+                  in-browser debugger.
+                </p>
+                <p className="mt-4 text-lg leading-relaxed text-[var(--lp-ink-soft)]">
+                  The debugger runs at the emulator level, outside the process,
+                  so it stays invisible to anti-debug checks.
+                </p>
               </div>
             </div>
           </div>
         </section>
 
-        {/* Frontier / Experimental Section */}
-        <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
-          <div className="container mx-auto px-6">
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-12 items-center max-w-6xl mx-auto">
+        {/* ── Games showcase ─────────────────────────────────────── */}
+        <section id="games" className="scroll-mt-20">
+          <div className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
+            <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
               <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-800/60 px-4 py-2 text-sm text-neutral-300 mb-6">
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-cyan-400 opacity-75"></span>
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-cyan-500"></span>
-                  </span>
-                  Experimental
-                </div>
-                <h2 className="text-4xl font-bold text-white mb-6">
-                  Safely Run Games
+                <Eyebrow index="06" color={ramp[3]}>
+                  Games · Experimental
+                </Eyebrow>
+                <h2 className="mt-4 text-3xl font-bold tracking-tight text-balance sm:text-4xl">
+                  Fast enough for games.
                 </h2>
-                <p className="text-xl text-neutral-400 leading-relaxed">
+                <p className="mt-5 text-lg leading-relaxed text-[var(--lp-ink-soft)]">
                   Native GUI apps run, with working windows, dialogs and
-                  controls.
-                  <br />
-                  GPU paravirtualization enables 3D acceleration on your real
-                  GPU, while the Hyper-V backend runs the code natively on your
-                  CPU. Fast enough for games.
+                  controls. GPU paravirtualization enables 3D acceleration on
+                  your real GPU, while the Hyper-V backend runs the code
+                  natively on your CPU.
+                </p>
+                <p className="mt-4 text-lg leading-relaxed text-[var(--lp-ink-soft)]">
+                  Direct3D 8–11 titles run through DXVK, which translates
+                  Direct3D to Vulkan on top of the GPU bridge.
                 </p>
               </div>
 
-              <div className="relative w-full max-w-2xl mx-auto xl:order-first">
-                <div className="absolute -inset-4 bg-linear-to-r from-neutral-500/10 to-neutral-400/10 rounded-2xl blur-md"></div>
+              <WindowFrame title="game.exe - sandboxed">
                 <img
                   src="https://momo5502.com/sogen/game.png"
                   alt="A game running inside the Sogen emulator"
                   width={1283}
                   height={754}
-                  className="relative w-full rounded-xl border border-neutral-700 shadow-2xl"
+                  loading="lazy"
+                  className="w-full"
                 />
-              </div>
+              </WindowFrame>
             </div>
           </div>
         </section>
 
-        {/* Python Bindings Section */}
-        <section className="py-24 bg-linear-to-b from-neutral-900/0 to-neutral-800/40">
-          <div className="container mx-auto px-6">
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-12 items-center max-w-6xl mx-auto">
+        {/* ── Python bindings ────────────────────────────────────── */}
+        <section
+          id="python"
+          className="scroll-mt-20 border-y border-[var(--lp-hairline)] bg-[var(--lp-paper-2)]"
+        >
+          <div className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
+            <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
               <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-neutral-700 bg-neutral-800/60 px-4 py-2 text-sm text-neutral-300 mb-6">
-                  <BookOpen className="h-4 w-4" />
+                <Eyebrow index="07" color={ramp[1]}>
                   Python bindings
-                </div>
-                <h2 className="text-4xl font-bold text-white mb-6">
-                  Script It in Python
+                </Eyebrow>
+                <h2 className="mt-4 text-3xl font-bold tracking-tight text-balance sm:text-4xl">
+                  Script the emulator in Python.
                 </h2>
-                <p className="text-xl text-neutral-400 leading-relaxed mb-6">
-                  Drive the emulator from Python: register callbacks, hook API
-                  calls, and read or write memory.
+                <p className="mt-5 text-lg leading-relaxed text-[var(--lp-ink-soft)]">
+                  Drive Sogen from Python: register callbacks, hook API calls,
+                  and read or write memory, all from a few lines of code.
                 </p>
 
-                <div className="mb-8 inline-flex items-center rounded-lg border border-neutral-700 bg-neutral-900/80 px-4 py-3 font-mono text-sm text-neutral-200">
-                  <span className="text-neutral-500 mr-3 select-none">$</span>
+                <div className="mt-7 inline-flex items-center rounded-lg border border-[var(--lp-hairline)] bg-[var(--lp-paper)] px-4 py-3 font-mono text-sm">
+                  <span className="mr-3 select-none text-[var(--lp-ink-soft)]">
+                    $
+                  </span>
                   <span className="select-all">pip install sogen</span>
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <a href="https://pypi.org/project/sogen/" target="_blank">
-                    <Button
-                      asChild
-                      size="lg"
-                      className="rounded-lg bg-linear-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100 w-full flex"
-                    >
-                      <span>
-                        <BookOpen className="mr-2 h-5 w-5 transition-transform" />
-                        <span className="flex-1 text-center">View on PyPI</span>
-                        <ExternalLink className="ml-2 h-4 w-4" />
-                      </span>
-                    </Button>
-                  </a>
-                  <a
+                <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+                  <PillLink href="https://pypi.org/project/sogen/" external>
+                    <BookOpen className="h-4 w-4" />
+                    View on PyPI
+                    <ArrowUpRight className="h-4 w-4" />
+                  </PillLink>
+                  <PillLink
                     href="https://github.com/momo5502/sogen/blob/main/docs/python/README.md"
-                    target="_blank"
+                    variant="ghost"
+                    external
                   >
-                    <Button
-                      asChild
-                      size="lg"
-                      variant="outline"
-                      className="rounded-lg border-neutral-600 text-neutral-300 hover:bg-neutral-800/50 px-8 py-6 text-lg font-semibold group transition-all duration-300 w-full flex"
+                    Read the docs
+                    <ArrowUpRight className="h-4 w-4" />
+                  </PillLink>
+                </div>
+              </div>
+
+              <WindowFrame title="api_hooks.py">
+                <Highlight
+                  theme={pythonTheme}
+                  code={pythonBindingsSample}
+                  language="python"
+                >
+                  {({
+                    className,
+                    style,
+                    tokens,
+                    getLineProps,
+                    getTokenProps,
+                  }) => (
+                    <pre
+                      className={`${className} overflow-x-auto p-5 text-sm leading-7`}
+                      style={{
+                        ...style,
+                        margin: 0,
+                        backgroundColor: "transparent",
+                      }}
                     >
-                      <span>
-                        <Code className="mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-                        <span className="flex-1 text-center">
-                          Read Python Docs
-                        </span>
-                        <ExternalLink className="ml-2 h-4 w-4" />
-                      </span>
-                    </Button>
-                  </a>
-                </div>
-              </div>
-
-              <div className="relative">
-                <div className="absolute -inset-4 bg-linear-to-r from-yellow-500/10 to-cyan-500/10 rounded-2xl blur-md"></div>
-                <div className="relative rounded-2xl border border-neutral-700 bg-neutral-900/90 overflow-hidden shadow-2xl">
-                  <div className="flex items-center gap-2 border-b border-neutral-800 px-5 py-4 text-sm text-neutral-500">
-                    <div className="h-3 w-3 rounded-full bg-red-400/80"></div>
-                    <div className="h-3 w-3 rounded-full bg-yellow-400/80"></div>
-                    <div className="h-3 w-3 rounded-full bg-green-400/80"></div>
-                    <span className="ml-3">api_hooks.py</span>
-                  </div>
-                  <Highlight
-                    theme={landingPythonTheme}
-                    code={pythonBindingsSample}
-                    language="python"
-                  >
-                    {({
-                      className,
-                      style,
-                      tokens,
-                      getLineProps,
-                      getTokenProps,
-                    }) => (
-                      <pre
-                        className={`${className} overflow-x-auto p-5 text-sm leading-7`}
-                        style={{
-                          ...style,
-                          margin: 0,
-                          backgroundColor: "transparent",
-                        }}
-                      >
-                        {tokens.map((line, i) => (
-                          <div key={i} {...getLineProps({ line })}>
-                            {line.map((token, key) => (
-                              <span key={key} {...getTokenProps({ token })} />
-                            ))}
-                          </div>
-                        ))}
-                      </pre>
-                    )}
-                  </Highlight>
-                </div>
-              </div>
+                      {tokens.map((line, i) => (
+                        <div key={i} {...getLineProps({ line })}>
+                          {line.map((token, key) => (
+                            <span key={key} {...getTokenProps({ token })} />
+                          ))}
+                        </div>
+                      ))}
+                    </pre>
+                  )}
+                </Highlight>
+              </WindowFrame>
             </div>
           </div>
         </section>
 
-        {/* Video Section */}
-        <section className="py-24">
-          <div className="container mx-auto px-6">
-            <div className="text-center mb-16">
-              <h2 className="text-4xl font-bold text-white mb-6">
-                See Sogen in Action
-              </h2>
-              <p className="text-xl text-neutral-400 max-w-3xl mx-auto">
-                Two walkthroughs of how Sogen works and what it can do.
-              </p>
-            </div>
-
-            <div className="mx-auto w-full gap-12 flex items-center justify-center flex-col lg:flex-row">
-              {["wY9Q0DhodOQ", "RkodCUEmiuA"].map((id) => {
-                return (
-                  <div
-                    key={`video-${id}`}
-                    className="flex-1 w-full max-w-xl relative group"
-                  >
-                    <div className="absolute -inset-4 bg-linear-to-r from-neutral-500/15 to-neutral-500/15 rounded-3xl blur-md group-hover:blur-lg transition-all duration-300"></div>
-                    <div className="relative aspect-video rounded-2xl overflow-hidden ">
-                      <YoutubeVideo id={id} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
-
-        {/* CTA Section */}
-        <section className="py-24 bg-linear-to-r from-neutral-800/40 to-neutral-900">
-          <div className="container mx-auto px-6 text-center">
-            <h2 className="text-4xl font-bold text-white mb-6">
-              Help Build Sogen
+        {/* ── Videos ─────────────────────────────────────────────── */}
+        <section className="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
+          <div className="mx-auto max-w-2xl text-center">
+            <Eyebrow index="08" color={ramp[5]}>
+              Watch
+            </Eyebrow>
+            <h2 className="mt-4 text-3xl font-bold tracking-tight text-balance sm:text-4xl">
+              See Sogen in action.
             </h2>
-            <p className="text-xl text-neutral-300 mb-8 max-w-2xl mx-auto">
-              Sogen is open source, and there's always more to build. Report a
-              bug, add a syscall, or open a pull request.
+            <p className="mt-4 text-lg text-[var(--lp-ink-soft)]">
+              Two walkthroughs of how Sogen works and what it can do.
             </p>
-            <a
-              href="https://github.com/momo5502/sogen"
-              target="_blank"
-              className="inline-block"
-            >
-              <Button
-                asChild
-                size="lg"
-                className="rounded-lg bg-linear-to-br from-white to-neutral-300 text-neutral-900 border-0 px-8 py-6 text-lg font-semibold group transition-all duration-100"
+          </div>
+
+          <div className="mt-12 grid grid-cols-1 gap-8 lg:grid-cols-2">
+            {["wY9Q0DhodOQ", "RkodCUEmiuA"].map((id) => (
+              <div
+                key={id}
+                className="aspect-video overflow-hidden rounded-xl border border-[var(--lp-frame-border)] bg-neutral-950 shadow-[var(--lp-shadow)]"
               >
-                <span>
-                  <Code className="mr-2 h-5 w-5 transition-transform" />
-                  Contribute on GitHub
-                  <ExternalLink className="ml-2 h-4 w-4" />
-                </span>
-              </Button>
-            </a>
+                <YoutubeVideo id={id} />
+              </div>
+            ))}
           </div>
         </section>
 
-        {/* Footer */}
-        <footer className="py-16 border-t border-neutral-800">
-          <div className="container mx-auto px-6">
-            <div className="flex flex-col md:flex-row justify-between items-center">
-              <div className="mb-8 md:mb-0 text-center md:text-left">
-                <h2 className="text-3xl font-bold">Sogen</h2>
-                <p className="mt-1 text-neutral-500 text-sm">
+        {/* ── CTA panel ──────────────────────────────────────────── */}
+        <section className="mx-auto max-w-6xl px-5 pb-20 sm:px-8 sm:pb-28">
+          <div className="rounded-2xl bg-[var(--lp-ink)] px-6 py-16 text-center sm:px-12 sm:py-20">
+            <span className="font-mono text-[0.6875rem] font-medium tracking-[0.18em] text-[var(--lp-panel-soft)] uppercase">
+              Open source
+            </span>
+            <h2 className="mx-auto mt-4 max-w-xl text-3xl font-bold tracking-tight text-balance text-[var(--lp-paper)] sm:text-4xl">
+              Help build Sogen.
+            </h2>
+            <p className="mx-auto mt-4 max-w-xl text-lg leading-relaxed text-[var(--lp-panel-soft)]">
+              There's always more to build. Report a bug, add a syscall, or open
+              a pull request.
+            </p>
+            <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+              <a
+                href="https://github.com/momo5502/sogen"
+                target="_blank"
+                rel="noreferrer"
+                className="group inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-lg bg-[var(--lp-paper)] px-6 py-3 text-[0.9375rem] font-semibold text-[var(--lp-ink)] transition-colors duration-200 hover:bg-[var(--lp-panel-btn-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-accent)]"
+              >
+                <Github className="h-4 w-4" />
+                Contribute on GitHub
+                <ArrowUpRight className="h-4 w-4" />
+              </a>
+              <a
+                href="https://github.com/momo5502/sogen/wiki"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-lg border border-[var(--lp-panel-border)] px-6 py-3 text-[0.9375rem] font-semibold text-[var(--lp-paper)] transition-colors duration-200 hover:border-[var(--lp-panel-border-hover)] hover:bg-[var(--lp-panel-hover)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-accent)]"
+              >
+                <BookOpen className="h-4 w-4" />
+                Read the wiki
+              </a>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Footer ─────────────────────────────────────────────── */}
+        <footer className="border-t border-[var(--lp-hairline)]">
+          <div className="mx-auto max-w-6xl px-5 py-14 sm:px-8">
+            <div className="flex flex-col justify-between gap-10 sm:flex-row">
+              <div className="max-w-xs">
+                <div className="text-lg font-bold tracking-tight">
+                  Sogen
+                  <span className="ml-0.5 text-[var(--lp-accent)]">.</span>
+                </div>
+                <p className="mt-3 text-sm leading-relaxed text-[var(--lp-ink-soft)]">
                   Built by{" "}
                   <a
                     href="https://momo5502.com"
-                    className="underline"
                     target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2 transition-colors duration-200 hover:text-[var(--lp-ink)]"
                   >
                     momo5502
                   </a>{" "}
                   with lots of help from{" "}
                   <a
                     href="https://github.com/momo5502/sogen/graphs/contributors?all=1"
-                    className="underline"
                     target="_blank"
+                    rel="noreferrer"
+                    className="underline underline-offset-2 transition-colors duration-200 hover:text-[var(--lp-ink)]"
                   >
                     the community
                   </a>
                   .
                 </p>
               </div>
-              <div className="flex items-center space-x-6">
-                <a
-                  href="https://github.com/momo5502/sogen"
-                  target="_blank"
-                  title="Source Code"
-                  className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
-                >
-                  <Code className="h-6 w-6" />
-                </a>
-                <a
-                  href="#/playground"
-                  title="Playground"
-                  className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
-                >
-                  <Play className="h-6 w-6" />
-                </a>
-                <a
-                  href="https://github.com/momo5502/sogen/wiki"
-                  target="_blank"
-                  title="Wiki"
-                  className="text-neutral-400 hover:text-blue-400 transition-colors p-2 rounded-lg hover:bg-neutral-800/50"
-                >
-                  <BookOpen className="h-6 w-6" />
-                </a>
+
+              <div className="grid grid-cols-2 gap-10 sm:gap-16">
+                <div>
+                  <div className="font-mono text-[0.6875rem] font-medium tracking-[0.18em] text-[var(--lp-ink-soft)] uppercase">
+                    Project
+                  </div>
+                  <ul className="mt-4 space-y-2.5 text-sm">
+                    {[
+                      ["Playground", "#/playground", false],
+                      ["GitHub", "https://github.com/momo5502/sogen", true],
+                      ["Wiki", "https://github.com/momo5502/sogen/wiki", true],
+                      [
+                        "Issues",
+                        "https://github.com/momo5502/sogen/issues",
+                        true,
+                      ],
+                    ].map(([label, href, external]) => (
+                      <li key={label as string}>
+                        <a
+                          href={href as string}
+                          target={external ? "_blank" : undefined}
+                          rel={external ? "noreferrer" : undefined}
+                          className="text-[var(--lp-ink-soft)] transition-colors duration-200 hover:text-[var(--lp-ink)]"
+                        >
+                          {label}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <div className="font-mono text-[0.6875rem] font-medium tracking-[0.18em] text-[var(--lp-ink-soft)] uppercase">
+                    Resources
+                  </div>
+                  <ul className="mt-4 space-y-2.5 text-sm">
+                    {[
+                      ["PyPI", "https://pypi.org/project/sogen/"],
+                      [
+                        "Python docs",
+                        "https://github.com/momo5502/sogen/blob/main/docs/python/README.md",
+                      ],
+                      [
+                        "Overview video",
+                        "https://www.youtube.com/watch?v=wY9Q0DhodOQ",
+                      ],
+                      [
+                        "Slides",
+                        "https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit",
+                      ],
+                    ].map(([label, href]) => (
+                      <li key={label}>
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[var(--lp-ink-soft)] transition-colors duration-200 hover:text-[var(--lp-ink)]"
+                        >
+                          {label}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
+            </div>
+
+            <div className="mt-12 flex flex-col items-start justify-between gap-3 border-t border-[var(--lp-hairline)] pt-6 font-mono text-xs text-[var(--lp-ink-soft)] sm:flex-row sm:items-center">
+              <span>GPL-2.0 licensed</span>
+              <span>Windows · Linux · macOS · Android · iOS · Web</span>
             </div>
           </div>
         </footer>
