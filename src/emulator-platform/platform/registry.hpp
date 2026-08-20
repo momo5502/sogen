@@ -5,8 +5,10 @@
 namespace sogen
 {
 
-#define REG_CREATED_NEW_KEY     0x00000001L
-#define REG_OPENED_EXISTING_KEY 0x00000002L
+#ifndef OS_WINDOWS
+#define REG_CREATED_NEW_KEY     0x00000001L // A new key was created
+#define REG_OPENED_EXISTING_KEY 0x00000002L // An existing key was opened
+#endif
 
     typedef enum _KEY_INFORMATION_CLASS
     {

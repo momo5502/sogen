@@ -276,7 +276,6 @@ namespace sogen::test
 
     TEST_F(RegistryFileTest, CreatesMissingKeyInLoadedHive)
     {
-        constexpr uint32_t reg_binary = 3;
         const std::filesystem::path path{uR"(\Registry\Machine\Software\Vendor\Product)"};
         ASSERT_FALSE(registry().get_key(utils::path_key{path}).has_value());
         ASSERT_TRUE(registry().can_create_key(path));
@@ -286,22 +285,21 @@ namespace sogen::test
         EXPECT_TRUE(registry().get_key(utils::path_key{path}).has_value());
 
         const std::vector data{std::byte{1}, std::byte{2}};
-        registry().set_value(*created, "Value", reg_binary, data);
+        registry().set_value(*created, "Value", REG_BINARY, data);
 
         const auto value = registry().get_value(*created, "Value");
         ASSERT_TRUE(value.has_value());
-        EXPECT_EQ(value->type, reg_binary);
-        EXPECT_EQ(value->data, data);
+        EXPECT_EQ(value->type, REG_BINARY);
+        EXPECT_EQ(std::vector(value->data.begin(), value->data.end()), data);
     }
 
     TEST_F(RegistryFileTest, CreateKeyIsIdempotent)
     {
-        constexpr uint32_t reg_binary = 3;
         const std::filesystem::path path{uR"(\Registry\Machine\Software\Vendor\Once)"};
 
         const auto first = registry().create_key(path);
         ASSERT_TRUE(first.has_value());
-        registry().set_value(*first, "Keep", reg_binary, std::vector{std::byte{7}});
+        registry().set_value(*first, "Keep", REG_BINARY, std::vector{std::byte{7}});
 
         const auto second = registry().create_key(path);
         ASSERT_TRUE(second.has_value());
