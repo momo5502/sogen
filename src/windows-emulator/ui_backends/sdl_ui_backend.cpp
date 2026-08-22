@@ -610,6 +610,16 @@ namespace sogen
                 bool has_surface{};
             };
 
+            struct pending_key_release
+            {
+                hwnd window{};
+                uint32_t message{};
+                uint64_t virtual_key{};
+                uint64_t scan_code{};
+                size_t scancode_index{};
+                std::chrono::steady_clock::time_point due{};
+            };
+
             ~sdl_ui_backend() override
             {
                 this->reset();
@@ -633,6 +643,7 @@ namespace sogen
                 this->active_window_ = 0;
                 this->mouse_button_state_ = 0;
                 this->key_down_.fill(false);
+                this->pending_key_releases_.clear();
 
                 if (this->initialized_)
                 {
@@ -662,6 +673,7 @@ namespace sogen
                 }
 
                 this->drain_commands();
+                this->deliver_pending_key_releases();
 
                 SDL_Event event{};
                 while (SDL_PollEvent(&event))
@@ -726,6 +738,7 @@ namespace sogen
 
                         if (scancode_index < key_down_.size())
                         {
+                            this->deliver_pending_key_releases(scancode_index);
                             was_down = was_down || key_down_[scancode_index];
                         }
 
@@ -743,6 +756,7 @@ namespace sogen
 
                         if (scancode_index < key_down_.size())
                         {
+                            this->record_key_press_start(scancode_index);
                             key_down_[scancode_index] = true;
                         }
 
@@ -776,13 +790,16 @@ namespace sogen
                             break;
                         }
 
+                        const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYUP : WM_KEYUP;
                         const auto scancode_index = static_cast<size_t>(event.key.scancode);
                         if (scancode_index < key_down_.size())
                         {
+                            if (this->enforce_minimum_key_press_duration(guest, message, vk, scan, scancode_index))
+                            {
+                                break;
+                            }
                             key_down_[scancode_index] = false;
                         }
-
-                        const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYUP : WM_KEYUP;
 
                         this->post_event(guest, message, vk, scan);
                         break;
@@ -940,6 +957,17 @@ namespace sogen
                 this->queue_or_run([this, window] {
                     if (const auto it = this->windows_.find(window); it != this->windows_.end())
                     {
+                        std::erase_if(this->pending_key_releases_, [this, window](const pending_key_release& release) {
+                            if (release.window != window)
+                            {
+                                return false;
+                            }
+                            if (release.scancode_index < this->key_down_.size())
+                            {
+                                this->key_down_[release.scancode_index] = false;
+                            }
+                            return true;
+                        });
                         // Child (non-top-level) windows have no SDL window; only top-level windows do.
                         if (it->second.window)
                         {
@@ -1123,6 +1151,75 @@ namespace sogen
                 {
                     task();
                 }
+            }
+
+            void deliver_pending_key_releases(const std::optional<size_t> forced_scancode = std::nullopt)
+            {
+                if (!minimum_key_press_duration_enabled())
+                {
+                    return;
+                }
+
+                const auto now = std::chrono::steady_clock::now();
+                std::erase_if(this->pending_key_releases_, [this, now, forced_scancode](const pending_key_release& release) {
+                    if (forced_scancode.has_value() ? release.scancode_index != *forced_scancode : release.due > now)
+                    {
+                        return false;
+                    }
+
+                    if (release.scancode_index < this->key_down_.size())
+                    {
+                        this->key_down_[release.scancode_index] = false;
+                    }
+                    this->post_event(release.window, release.message, release.virtual_key, release.scan_code);
+                    return true;
+                });
+            }
+
+            void record_key_press_start(const size_t scancode_index)
+            {
+                if (!minimum_key_press_duration_enabled())
+                {
+                    return;
+                }
+
+                if (!this->key_down_[scancode_index])
+                {
+                    this->key_down_since_[scancode_index] = std::chrono::steady_clock::now();
+                }
+            }
+
+            bool enforce_minimum_key_press_duration(const hwnd window, const uint32_t message, const uint64_t virtual_key,
+                                                    const uint64_t scan_code, const size_t scancode_index)
+            {
+                if (!minimum_key_press_duration_enabled())
+                {
+                    return false;
+                }
+
+                constexpr auto minimum_key_press_duration = std::chrono::milliseconds{50};
+                const auto due = this->key_down_since_[scancode_index] + minimum_key_press_duration;
+                if (std::chrono::steady_clock::now() >= due)
+                {
+                    return false;
+                }
+
+                this->pending_key_releases_.push_back({.window = window,
+                                                       .message = message,
+                                                       .virtual_key = virtual_key,
+                                                       .scan_code = scan_code,
+                                                       .scancode_index = scancode_index,
+                                                       .due = due});
+                return true;
+            }
+
+            static constexpr bool minimum_key_press_duration_enabled()
+            {
+#ifdef __ANDROID__
+                return true;
+#else
+                return false;
+#endif
             }
 
             bool ensure_initialized()
@@ -1370,6 +1467,8 @@ namespace sogen
             hwnd active_window_{};
             uint16_t mouse_button_state_{};
             std::array<bool, SDL_SCANCODE_COUNT> key_down_{};
+            std::array<std::chrono::steady_clock::time_point, SDL_SCANCODE_COUNT> key_down_since_{};
+            std::vector<pending_key_release> pending_key_releases_{};
             std::unordered_map<hwnd, window_state> windows_{};
             std::unordered_map<SDL_WindowID, hwnd> guest_by_window_id_{};
 
