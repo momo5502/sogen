@@ -4,6 +4,16 @@
 namespace sogen
 {
 
+    inline uint64_t get_untagged_pointer_address(const void* pointer)
+    {
+        const auto address = reinterpret_cast<uint64_t>(pointer);
+#ifdef __ANDROID__
+        return address & 0x00FFFFFFFFFFFFFFULL;
+#else
+        return address;
+#endif
+    }
+
     template <typename T>
     T* offset_pointer(void* data, const size_t offset)
     {

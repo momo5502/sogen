@@ -47,6 +47,11 @@ namespace sogen
             throw std::runtime_error("Host memory mapping is not supported by this backend");
         }
 
+        virtual bool host_memory_mapping_requires_identity() const
+        {
+            return false;
+        }
+
         virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
 
       public:

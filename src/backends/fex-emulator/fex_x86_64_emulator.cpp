@@ -1,4 +1,4 @@
-// _GNU_SOURCE is required for mremap() (used to alias host memory into the guest address space).
+// _GNU_SOURCE exposes the Linux host VM and signal definitions used by this backend.
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -6,6 +6,8 @@
 #define FEX_EMULATOR_IMPL
 #include "fex_x86_64_emulator.hpp"
 #include "fex_x86_64_common.hpp"
+
+#include "address_utils.hpp"
 
 // FEX (https://fex-emu.com) is an in-process x86-64 -> AArch64 binary translator. Unlike the
 // Unicorn/Icicle/KVM backends it does not manage a sandboxed guest address space: the translated
@@ -15,45 +17,49 @@
 // hooks are accepted for API compatibility but never fire. Guest `syscall` instructions come back
 // through a FEXCore::HLE::SyscallHandler that invokes the registered syscall instruction hook.
 //
-// The functional target is Darwin on Apple Silicon; the signal handlers, MMIO fault emulation and
-// 16KB/4KB page reconciliation below are all Darwin-only. The AArch64 Linux path only has build
-// coverage, and Android is excluded by the CMake gate.
+// The functional targets are Darwin on Apple Silicon and Android on AArch64; the signal handlers and
+// MMIO fault emulation below support both. Android currently requires a 4KB host page; the 16KB/4KB
+// page reconciliation and MAP_JIT handling are Darwin-only. Other AArch64 Linux hosts have build
+// coverage only.
 
 #include <cstdlib>
+#include <pthread.h>
+#include <signal.h>
 #include <sys/mman.h>
+#include <sys/ucontext.h>
 #include <unistd.h>
 
-// Used unconditionally by the std::terminate handler in initialize_context(). Both platforms
-// SOGEN_ENABLE_FEX gates this backend to provide it, so the include need not be Apple-only.
+#if !defined(__ANDROID__) || __ANDROID_API__ >= 33
 #include <execinfo.h>
+#endif
 
 #ifdef __APPLE__
 #include <sys/sysctl.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <mach/arm/thread_status.h>
-#include <signal.h>
-#include <pthread.h>
 #include <libkern/OSCacheControl.h>
 #include <libproc.h>
 #endif
 
 #include <atomic>
+#include <array>
 #include <bit>
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <exception>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include <utils/finally.hpp>
 #include <utils/object.hpp>
 
 // FEXCore embedding headers. These are only available when building against a FEX checkout/install;
@@ -77,6 +83,52 @@ namespace sogen::fex
     namespace
     {
         constexpr size_t page_size = 0x1000;
+
+#ifdef __ANDROID__
+        constexpr uint64_t guest_address_space_end = 0x00007ffffffeffffULL + 1;
+
+#ifndef MAP_FIXED_NOREPLACE
+        constexpr int MAP_FIXED_NOREPLACE = 0x100000;
+#endif
+
+        std::vector<host_reserved_range> read_host_mappings_android(const uint64_t window_start, const uint64_t window_end)
+        {
+            std::unique_ptr<FILE, decltype(&::fclose)> maps{::fopen("/proc/self/maps", "r"), &::fclose};
+            if (!maps)
+            {
+                throw std::runtime_error("FEX backend failed to enumerate Android host mappings");
+            }
+
+            std::vector<host_reserved_range> ranges;
+            char line[512];
+            while (::fgets(line, sizeof(line), maps.get()) != nullptr)
+            {
+                unsigned long long mapping_start = 0;
+                unsigned long long mapping_end = 0;
+                if (::sscanf(line, "%llx-%llx", &mapping_start, &mapping_end) != 2)
+                {
+                    continue;
+                }
+
+                const uint64_t hit_start = std::max<uint64_t>(mapping_start, window_start);
+                const uint64_t hit_end = std::min<uint64_t>(mapping_end, window_end);
+                if (hit_start < hit_end)
+                {
+                    ranges.push_back({.address = hit_start, .size = static_cast<size_t>(hit_end - hit_start)});
+                }
+            }
+
+            return ranges;
+        }
+
+        FEXCore::HostFeatures fetch_host_features_android()
+        {
+            FEXCore::HostFeatures features{};
+            const long logical_cpus = ::sysconf(_SC_NPROCESSORS_ONLN);
+            features.CPUMIDRs.assign(logical_cpus > 0 ? static_cast<size_t>(logical_cpus) : 1, 0u);
+            return features;
+        }
+#endif
 
 #ifdef __APPLE__
         // FEXCore's JITWriteScope (FEXCore/Utils/AllocatorHooks.h) toggles pthread_jit_write_protect_np
@@ -163,7 +215,9 @@ namespace sogen::fex
         {
             return (value + host_page_size_apple - 1) & ~(host_page_size_apple - 1);
         }
+#endif
 
+#if defined(__APPLE__) || defined(__ANDROID__)
         // Decodes only what an mmio_region fault needs: destination register, transfer size and
         // extension. The addressing mode is deliberately not decoded - the effective address is already
         // known, being the fault address itself under guest VA == host VA - so only the fields the
@@ -307,16 +361,16 @@ namespace sogen::fex
         // handling. Used only by handle_fault_signal's misaligned-atomic fallback; mmio_region's only
         // consumer here is read-only.
         //
-        // Deliberately narrow: broadening to plain STR/STUR for handle_general_memory_violation's
-        // Category-3 false-fault case causes a reproducible hang isolated to this table (root cause not
-        // yet understood; decode_arm64_load's equivalent plain-load coverage is safe).
+        // Deliberately narrow: adding plain STR/STUR causes a reproducible hang in false-fault
+        // emulation, isolated to this table (root cause not yet understood; decode_arm64_load's
+        // equivalent plain-load coverage is safe).
         //
-        // Known consequence: handle_general_memory_violation also uses this decoder to classify a fault
-        // as read vs. write on the protection-violation path, so a plain STR to read-only memory is
-        // misclassified as a read and surfaces as an unhandled host signal instead of a guest
-        // STATUS_ACCESS_VIOLATION - hit by any guest writing to read-only memory and catching the
-        // exception (packers, DRM). A plain store to unmapped memory does reach the guest, but with
-        // ExceptionInformation[0] wrongly saying read.
+        // Known consequence: handle_general_memory_violation also uses this decoder to classify
+        // protection faults as reads vs. writes. Android gets this from ESR, but Darwin therefore
+        // reports plain STR faults as reads. A plain store to read-only memory can thus surface as
+        // an unhandled host signal instead of a guest STATUS_ACCESS_VIOLATION (e.g. packers/DRM);
+        // a plain store to unmapped memory reaches the guest, but ExceptionInformation[0] wrongly
+        // identifies it as a read.
         struct decoded_arm64_store
         {
             uint32_t size = 0; // bytes: 1, 2, 4, 8
@@ -612,13 +666,19 @@ namespace sogen::fex
 
             return features;
         }
+#endif
 
+#if defined(__APPLE__) || defined(__ANDROID__)
         // sogen runs one FEX-backed guest thread per process, so a single active-instance pointer is
         // enough for the signal handler below to reach the emulator's hook tables and thread state.
         // Signal handlers cannot be non-static member functions, hence the indirection.
         fex_x86_64_emulator* g_active_emulator = nullptr;
 
         void fault_signal_handler(int sig, siginfo_t* info, void* raw_ucontext);
+
+        // FEXCore's Break stubs use SIGILL for HLT/UDF and SIGTRAP for BRK, including x86 INT3, so both
+        // must reach the same host-fault dispatcher as SIGSEGV/SIGBUS.
+        constexpr std::array<int, 4> fault_signals = {SIGSEGV, SIGBUS, SIGILL, SIGTRAP};
 
         void install_fault_signal_handlers(fex_x86_64_emulator& emulator)
         {
@@ -634,30 +694,30 @@ namespace sogen::fex
 
             // A dedicated alternate stack, so a second signal arriving while this handler is already
             // running does not nest on the faulting thread's potentially near-exhausted stack.
-            static std::byte alt_stack[64 * 1024];
-            stack_t ss{};
-            ss.ss_sp = alt_stack;
-            ss.ss_size = sizeof(alt_stack);
-            ss.ss_flags = 0;
-            ::sigaltstack(&ss, nullptr);
+            static std::array<std::byte, 64 * 1024> alt_stack{};
+            stack_t stack{};
+            stack.ss_sp = alt_stack.data();
+            stack.ss_size = alt_stack.size();
+            ::sigaltstack(&stack, nullptr);
 
-            struct sigaction action = {};
+            struct sigaction action{};
             action.sa_sigaction = fault_signal_handler;
             action.sa_flags = SA_SIGINFO | SA_ONSTACK;
             sigemptyset(&action.sa_mask);
-
-            ::sigaction(SIGSEGV, &action, nullptr);
-            ::sigaction(SIGBUS, &action, nullptr);
-            ::sigaction(SIGILL, &action, nullptr);
 
             // FEXCore's IR "Break" op models x86 HLT/UD2/INT3/INT1/INTO uniformly via distinct native
             // traps chosen per Dispatcher.cpp's GuestSignal_SIG* stubs: HLT/UDF raise SIGILL, BRK raises
             // SIGTRAP. INT3 (DebugBreak()) goes through the SIGTRAP stub, so without a handler here that
             // BRK is an unhandled hardware trap terminating the process, instead of reaching the vector
             // dispatch below, which handles vector 3 correctly.
-            ::sigaction(SIGTRAP, &action, nullptr);
+            for (const int signal : fault_signals)
+            {
+                ::sigaction(signal, &action, nullptr);
+            }
         }
+#endif
 
+#ifdef __APPLE__
         // Arm64JITCore::ExitFunctionLink (JIT.cpp) patches an already-compiled call site once its target
         // block is known, writing straight into a MAP_JIT code buffer without a JITWriteScope, because
         // it is written for Linux, which has no per-thread W^X state. Pointers.ExitFunctionLink is a
@@ -888,6 +948,25 @@ namespace sogen::fex
             }
         };
 #endif
+
+#ifdef __ANDROID__
+        template <typename Context>
+        Context* find_aarch64_context(ucontext_t* context, uint32_t magic)
+        {
+            auto* current = reinterpret_cast<_aarch64_ctx*>(context->uc_mcontext.__reserved);
+            const auto* end = context->uc_mcontext.__reserved + sizeof(context->uc_mcontext.__reserved);
+            while (reinterpret_cast<const uint8_t*>(current) + sizeof(*current) <= end && current->size >= sizeof(*current))
+            {
+                if (current->magic == magic && current->size >= sizeof(Context))
+                {
+                    return reinterpret_cast<Context*>(current);
+                }
+                current = reinterpret_cast<_aarch64_ctx*>(reinterpret_cast<uint8_t*>(current) + current->size);
+            }
+            return nullptr;
+        }
+#endif
+
     }
 
     class fex_x86_64_emulator;
@@ -916,9 +995,24 @@ namespace sogen::fex
 
     class fex_x86_64_emulator final : public x86_64_emulator
     {
+        struct callret_buffer_record
+        {
+            void* allocation_base = nullptr;
+            size_t allocation_size = 0;
+            uint64_t code_buffer_generation = 0;
+        };
+
       public:
         fex_x86_64_emulator()
         {
+#ifdef __ANDROID__
+            if (static_cast<size_t>(::getpagesize()) != page_size)
+            {
+                // The FEX backend is currently configured for 4KB host pages on Android.
+                // This is not an inherent requirement and may be relaxed with appropriate support.
+                throw std::runtime_error("FEX backend requires 4KB host pages on Android");
+            }
+#endif
             this->initialize_context();
         }
 
@@ -938,15 +1032,11 @@ namespace sogen::fex
                 this->thread_ = nullptr;
             }
 
-            // Release everything we mmap'd into the (host == guest) address space.
-#ifdef __APPLE__
-            // All host mappings this backend owns are tracked as 16KB host pages (see
-            // mapped_host_pages_apple_), including PROT_NONE reservation claims that no regions_
-            // entry covers; map_host_memory aliases (owned=false) are never in this set. Darwin's
-            // munmap also requires host-page alignment, which regions_ entries don't guarantee.
-            for (const auto host_page : this->mapped_host_pages_apple_)
+#if defined(__APPLE__) || defined(__ANDROID__)
+            // Release everything we claimed in the shared host == guest address space.
+            for (const auto& [address, size] : this->claimed_host_ranges_)
             {
-                ::munmap(reinterpret_cast<void*>(host_page), host_page_size_apple);
+                ::munmap(reinterpret_cast<void*>(address), size);
             }
 
             if (g_active_emulator == this)
@@ -966,9 +1056,9 @@ namespace sogen::fex
             // Per-logical-thread call-ret buffers (see ensure_callret_buffer) live in host allocator
             // space, not regions_, and are never freed as individual guest threads exit - release them
             // all here so they don't outlive this emulator instance.
-            for (const auto& [alloc_base, alloc_size] : this->callret_buffers_)
+            for (const auto& [_, buffer] : this->callret_buffers_)
             {
-                FEXCore::Allocator::munmap(alloc_base, alloc_size);
+                FEXCore::Allocator::munmap(buffer.allocation_base, buffer.allocation_size);
             }
         }
 
@@ -1009,7 +1099,7 @@ namespace sogen::fex
 
             // ExecuteThread runs the translated guest until the thread is asked to stop (which the
             // syscall bridge does when a hook calls stop()), or the guest faults/exits.
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__ANDROID__)
             // Here it can also return early because handle_fault_signal deferred a hook dispatch (see
             // pending_fault_dispatch_) rather than genuinely stopping - dispatch it in normal call
             // context, where that is safe, then resume by calling ExecuteThread again; it always
@@ -1194,6 +1284,15 @@ namespace sogen::fex
             state.L1Mask = l1_mask;
             this->ensure_callret_buffer(state);
             thread->CallRetStackBase = reinterpret_cast<void*>(state._pad1);
+
+            auto& buffer = this->callret_buffers_.at(state._pad1);
+            if (buffer.code_buffer_generation != thread->CodeBufferGeneration)
+            {
+                constexpr size_t callret_stack_size = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
+                FEXCore::Allocator::VirtualDontNeed(thread->CallRetStackBase, callret_stack_size);
+                state.callret_sp = state._pad1 + callret_stack_size / 4;
+                buffer.code_buffer_generation = thread->CodeBufferGeneration;
+            }
         }
 
         void restore_registers(const std::vector<std::byte>& register_data) override
@@ -1597,6 +1696,16 @@ namespace sogen::fex
 
             return ranges;
         }
+#elif defined(__ANDROID__)
+        std::vector<host_reserved_range> reserved_host_ranges() const override
+        {
+            return read_host_mappings_android(0, guest_address_space_end);
+        }
+
+        std::vector<host_reserved_range> reserved_host_ranges_in(const uint64_t address, const size_t size) const override
+        {
+            return read_host_mappings_android(address, address + size);
+        }
 #endif
 
       private:
@@ -1628,6 +1737,12 @@ namespace sogen::fex
             // syscalls actually get issued and at what alignment.
             this->set_shadow_range_apple(address, size, permissions);
             this->sync_host_pages_covering_apple(address, size);
+#elif defined(__ANDROID__)
+            if (!this->host_range_is_claimed(address, size))
+            {
+                this->claim_host_range(address, size);
+            }
+            this->remap_host_claim(address, size, to_prot(permissions));
 #else
             // Place the guest pages at their guest address in the host address space (guest VA == host VA).
             void* result = ::mmap(reinterpret_cast<void*>(address), size, to_prot(permissions),
@@ -1643,42 +1758,35 @@ namespace sogen::fex
             this->mark_executable_range(address, size, permissions);
         }
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__ANDROID__)
         void reserve_guest_address_range(uint64_t address, size_t size) override
         {
-            // Pages already ours (from this or an adjacent guest region sharing the host page) keep
-            // their mapping; sync_host_page_apple/map_memory applies the real permission on commit.
-            // Everything else is claimed one mmap per contiguous run: whole module image reservations
-            // come through here, and a per-page syscall makes process startup crawl.
+#ifdef __APPLE__
             const uint64_t start = host_page_align_down_apple(address);
             const uint64_t end = host_page_align_up_apple(address + size);
-            for (uint64_t host_page = start; host_page < end;)
+#else
+            const uint64_t start = address;
+            const uint64_t end = address + size;
+#endif
+
+            uint64_t cursor = start;
+            while (cursor < end)
             {
-                if (this->mapped_host_pages_apple_.contains(host_page))
+                auto next = this->claimed_host_ranges_.upper_bound(cursor);
+                if (next != this->claimed_host_ranges_.begin())
                 {
-                    host_page += host_page_size_apple;
-                    continue;
+                    const auto& previous = *std::prev(next);
+                    const uint64_t previous_end = previous.first + previous.second;
+                    if (previous_end > cursor)
+                    {
+                        cursor = std::min(previous_end, end);
+                        continue;
+                    }
                 }
 
-                uint64_t run_end = host_page + host_page_size_apple;
-                while (run_end < end && !this->mapped_host_pages_apple_.contains(run_end))
-                {
-                    run_end += host_page_size_apple;
-                }
-
-                void* result = ::mmap(reinterpret_cast<void*>(host_page), static_cast<size_t>(run_end - host_page), PROT_NONE,
-                                      MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-                if (result == MAP_FAILED || result != reinterpret_cast<void*>(host_page))
-                {
-                    throw std::runtime_error("FEX backend failed to reserve guest address range at the host level");
-                }
-
-                for (uint64_t claimed = host_page; claimed < run_end; claimed += host_page_size_apple)
-                {
-                    this->mapped_host_pages_apple_.insert(claimed);
-                }
-
-                host_page = run_end;
+                const uint64_t run_end = next == this->claimed_host_ranges_.end() ? end : std::min(next->first, end);
+                this->claim_host_range(cursor, static_cast<size_t>(run_end - cursor));
+                cursor = run_end;
             }
         }
 
@@ -1687,14 +1795,35 @@ namespace sogen::fex
             // The caller guarantees the range holds no reserved guest ranges (see memory_interface), so
             // every host page wholly inside it is a stale claim and can go back to the OS. Boundary
             // pages are kept: their outside part may belong to a neighboring, still-live reservation.
+#ifdef __APPLE__
             const uint64_t start = host_page_align_up_apple(address);
             const uint64_t end = host_page_align_down_apple(address + size);
+#else
+            const uint64_t start = address;
+            const uint64_t end = address + size;
+#endif
+            std::vector<host_reserved_range> released;
 
-            auto it = this->mapped_host_pages_apple_.lower_bound(start);
-            while (it != this->mapped_host_pages_apple_.end() && *it + host_page_size_apple <= end)
+            auto it = this->claimed_host_ranges_.upper_bound(start);
+            if (it != this->claimed_host_ranges_.begin())
             {
-                ::munmap(reinterpret_cast<void*>(*it), host_page_size_apple);
-                it = this->mapped_host_pages_apple_.erase(it);
+                --it;
+            }
+
+            for (; it != this->claimed_host_ranges_.end() && it->first < end; ++it)
+            {
+                const uint64_t hit_start = std::max(it->first, start);
+                const uint64_t hit_end = std::min<uint64_t>(it->first + it->second, end);
+                if (hit_start < hit_end)
+                {
+                    released.push_back({.address = hit_start, .size = static_cast<size_t>(hit_end - hit_start)});
+                }
+            }
+
+            for (const auto& range : released)
+            {
+                ::munmap(reinterpret_cast<void*>(range.address), range.size);
+                this->remove_host_claim(range.address, range.size);
             }
         }
 #endif
@@ -1709,9 +1838,15 @@ namespace sogen::fex
             const uint64_t host_address = address;
 
 #ifdef __APPLE__
-            // Darwin has no mremap(); mach_vm_remap() is the Mach equivalent. VM_FLAGS_OVERWRITE
-            // replaces whatever reservation the memory manager already put there, matching
-            // mmap(MAP_FIXED); copy=FALSE aliases rather than duplicates, matching MREMAP_MAYMOVE.
+            // VM_FLAGS_OVERWRITE replaces the reservation the memory manager put at the target;
+            // copy=FALSE creates a second mapping of the caller-owned pages rather than copying them.
+            const uint64_t claim_start = host_page_align_down_apple(host_address);
+            const size_t claim_size = static_cast<size_t>(host_page_align_up_apple(host_address + size) - claim_start);
+            if (!this->host_range_is_claimed(claim_start, claim_size))
+            {
+                this->claim_host_range(claim_start, claim_size);
+            }
+
             mach_vm_address_t target_address = host_address;
             vm_prot_t cur_protection = VM_PROT_NONE;
             vm_prot_t max_protection = VM_PROT_NONE;
@@ -1723,12 +1858,9 @@ namespace sogen::fex
                 throw std::runtime_error("FEX backend failed to alias host memory into the guest");
             }
 #else
-            // Move the existing host mapping so the guest sees it at `address` without a staging copy.
-            // mremap with MREMAP_FIXED relocates the VMA; the caller must treat host_pointer as moved.
-            void* result = ::mremap(host_pointer, size, size, MREMAP_MAYMOVE | MREMAP_FIXED, reinterpret_cast<void*>(host_address));
-            if (result == MAP_FAILED || reinterpret_cast<uint64_t>(result) != host_address)
+            if (host_address != get_untagged_pointer_address(host_pointer))
             {
-                throw std::runtime_error("FEX backend failed to alias host memory into the guest");
+                throw std::runtime_error("FEX host memory mappings must retain their host address on Linux");
             }
 #endif
 
@@ -1741,12 +1873,23 @@ namespace sogen::fex
 
         bool host_memory_aliasing_is_coherent() const override
         {
+#ifdef __ANDROID__
+            return true;
+#else
             // Apple Silicon's unified memory makes CPU/GPU coherency for the Metal buffers behind
             // MoltenVK's Vulkan buffers likely, but it is not guaranteed across every Metal storage
             // mode this bridge might use. An unnecessary flush is a harmless no-op, whereas wrongly
             // claiming coherence surfaces as rendering corruption.
             return false;
+#endif
         }
+
+#ifndef __APPLE__
+        bool host_memory_mapping_requires_identity() const override
+        {
+            return true;
+        }
+#endif
 
         void flush_host_memory_cache(const void* host_pointer, size_t size) override
         {
@@ -1785,8 +1928,20 @@ namespace sogen::fex
 #ifdef __APPLE__
             this->set_shadow_range_apple(address, size, std::nullopt);
             this->sync_host_pages_covering_apple(address, size);
+#elif defined(__ANDROID__)
+            const auto region = this->find_region_containing(address);
+            const bool unmap = region == this->regions_.end() || region->second.owned;
+            if (unmap)
+            {
+                this->remap_host_claim(address, size, PROT_NONE);
+            }
 #else
-            ::munmap(reinterpret_cast<void*>(address), size);
+            const auto region = this->find_region_containing(address);
+            const bool unmap = region == this->regions_.end() || region->second.owned;
+            if (unmap)
+            {
+                ::munmap(reinterpret_cast<void*>(address), size);
+            }
 #endif
             this->invalidate_code_range(address, size);
             this->erase_region_range(address, size);
@@ -1813,6 +1968,131 @@ namespace sogen::fex
 
         // region bookkeeping
 
+#if defined(__APPLE__) || defined(__ANDROID__)
+        bool host_range_is_claimed(const uint64_t address, const size_t size) const
+        {
+            auto it = this->claimed_host_ranges_.upper_bound(address);
+            if (it == this->claimed_host_ranges_.begin())
+            {
+                return false;
+            }
+
+            --it;
+            return address >= it->first && address + size <= it->first + it->second;
+        }
+
+        void add_host_claim(const uint64_t address, const size_t size)
+        {
+            uint64_t start = address;
+            uint64_t end = address + size;
+            auto it = this->claimed_host_ranges_.lower_bound(start);
+
+            if (it != this->claimed_host_ranges_.begin())
+            {
+                const auto previous = std::prev(it);
+                if (previous->first + previous->second >= start)
+                {
+                    start = previous->first;
+                    end = std::max(end, previous->first + previous->second);
+                    it = this->claimed_host_ranges_.erase(previous);
+                }
+            }
+
+            while (it != this->claimed_host_ranges_.end() && it->first <= end)
+            {
+                end = std::max(end, it->first + it->second);
+                it = this->claimed_host_ranges_.erase(it);
+            }
+
+            this->claimed_host_ranges_.emplace(start, static_cast<size_t>(end - start));
+        }
+
+        void remove_host_claim(const uint64_t address, const size_t size)
+        {
+            auto it = this->claimed_host_ranges_.upper_bound(address);
+            if (it == this->claimed_host_ranges_.begin())
+            {
+                return;
+            }
+
+            --it;
+            const uint64_t claim_start = it->first;
+            const uint64_t claim_end = claim_start + it->second;
+            const uint64_t end = address + size;
+            if (address < claim_start || end > claim_end)
+            {
+                return;
+            }
+
+            this->claimed_host_ranges_.erase(it);
+            if (claim_start < address)
+            {
+                this->claimed_host_ranges_.emplace(claim_start, static_cast<size_t>(address - claim_start));
+            }
+            if (end < claim_end)
+            {
+                this->claimed_host_ranges_.emplace(end, static_cast<size_t>(claim_end - end));
+            }
+        }
+
+        void claim_host_range(const uint64_t address, const size_t size)
+        {
+#ifdef __APPLE__
+            mach_vm_address_t target = address;
+            const kern_return_t result = ::mach_vm_allocate(mach_task_self(), &target, size, VM_FLAGS_FIXED);
+            if (result != KERN_SUCCESS || target != address)
+            {
+                throw std::runtime_error("FEX backend failed to reserve guest address range at the host level");
+            }
+            if (::mprotect(reinterpret_cast<void*>(address), size, PROT_NONE) != 0)
+            {
+                ::mach_vm_deallocate(mach_task_self(), target, size);
+                throw std::runtime_error("FEX backend failed to protect a guest address reservation");
+            }
+#else
+            void* result = ::mmap(reinterpret_cast<void*>(address), size, PROT_NONE,
+                                  MAP_FIXED_NOREPLACE | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+            if (result == MAP_FAILED || reinterpret_cast<uint64_t>(result) != address)
+            {
+                if (result != MAP_FAILED)
+                {
+                    ::munmap(result, size);
+                }
+                throw std::runtime_error("FEX backend failed to reserve guest address range at the host level");
+            }
+#endif
+            this->add_host_claim(address, size);
+        }
+
+        void remap_host_claim(const uint64_t address, const size_t size, const int protection)
+        {
+            if (!this->host_range_is_claimed(address, size))
+            {
+                throw std::logic_error("FEX backend cannot replace an unclaimed host range");
+            }
+
+            void* result =
+                ::mmap(reinterpret_cast<void*>(address), size, protection, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+            if (result == MAP_FAILED || reinterpret_cast<uint64_t>(result) != address)
+            {
+                throw std::runtime_error("FEX backend failed to replace a claimed host range");
+            }
+        }
+#endif
+
+        // Returns the region that contains address, not merely its predecessor in the ordered map.
+        std::map<uint64_t, mapped_region>::const_iterator find_region_containing(uint64_t address) const
+        {
+            auto it = this->regions_.upper_bound(address);
+            if (it == this->regions_.begin())
+            {
+                return this->regions_.end();
+            }
+
+            --it;
+            return address < it->first + it->second.size ? it : this->regions_.end();
+        }
+
         // Callers are expected to have checked is_range_mapped already.
         bool range_is_writable(uint64_t address, size_t size) const
         {
@@ -1821,20 +2101,13 @@ namespace sogen::fex
 
             while (cursor < end)
             {
-                auto it = this->regions_.upper_bound(cursor);
-                if (it == this->regions_.begin())
+                const auto it = this->find_region_containing(cursor);
+                if (it == this->regions_.end() || (it->second.permissions & memory_permission::write) == memory_permission::none)
                 {
                     return false;
                 }
-                --it;
 
-                const uint64_t region_end = it->first + it->second.size;
-                if (cursor < it->first || cursor >= region_end ||
-                    (it->second.permissions & memory_permission::write) == memory_permission::none)
-                {
-                    return false;
-                }
-                cursor = region_end;
+                cursor = it->first + it->second.size;
             }
 
             return true;
@@ -2012,19 +2285,12 @@ namespace sogen::fex
             // non-overlapping, so a simple forward walk suffices.
             while (cursor < end)
             {
-                auto it = this->regions_.upper_bound(cursor);
-                if (it == this->regions_.begin())
+                const auto it = this->find_region_containing(cursor);
+                if (it == this->regions_.end())
                 {
                     return false;
                 }
-                --it;
-
-                const uint64_t region_end = it->first + it->second.size;
-                if (cursor < it->first || cursor >= region_end)
-                {
-                    return false;
-                }
-                cursor = region_end;
+                cursor = it->first + it->second.size;
             }
 
             return true;
@@ -2071,7 +2337,7 @@ namespace sogen::fex
             }
 
             void* host_ptr = reinterpret_cast<void*>(host_page_addr);
-            const bool currently_mapped = this->mapped_host_pages_apple_.contains(host_page_addr);
+            const bool currently_mapped = this->host_range_is_claimed(host_page_addr, host_page_size_apple);
 
             if (!any_slot_present)
             {
@@ -2082,26 +2348,14 @@ namespace sogen::fex
                     // and be clobbered by a later recommit's MAP_FIXED. Replacing the mapping rather
                     // than mprotect'ing it discards the old contents, so a recommit sees the zeroed
                     // pages MEM_COMMIT requires. release_guest_address_range drops the claim for good.
-                    void* result =
-                        ::mmap(host_ptr, host_page_size_apple, PROT_NONE, MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-                    if (result != host_ptr)
-                    {
-                        throw std::runtime_error("FEX backend failed to re-reserve decommitted guest memory");
-                    }
+                    this->remap_host_claim(host_page_addr, host_page_size_apple, PROT_NONE);
                 }
                 return;
             }
 
             if (!currently_mapped)
             {
-                void* result = ::mmap(host_ptr, host_page_size_apple, to_prot_apple(effective),
-                                      MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-                if (result == MAP_FAILED || result != host_ptr)
-                {
-                    throw std::runtime_error("FEX backend failed to map guest memory at requested address");
-                }
-                this->mapped_host_pages_apple_.insert(host_page_addr);
-                return;
+                this->claim_host_range(host_page_addr, host_page_size_apple);
             }
 
             if (::mprotect(host_ptr, host_page_size_apple, to_prot_apple(effective)) != 0)
@@ -2159,6 +2413,7 @@ namespace sogen::fex
                     }
                 }
 
+#if !defined(__ANDROID__) || __ANDROID_API__ >= 33
                 void* frames[64]{};
                 const int frame_count = ::backtrace(frames, 64);
                 char** symbols = ::backtrace_symbols(frames, frame_count);
@@ -2168,6 +2423,7 @@ namespace sogen::fex
                     fprintf(stderr, "  %s\n", symbols ? symbols[i] : "?");
                 }
                 free(symbols);
+#endif
 
                 std::abort();
             });
@@ -2197,6 +2453,8 @@ namespace sogen::fex
 
 #ifdef __APPLE__
             const FEXCore::HostFeatures features = fetch_host_features_apple();
+#elif defined(__ANDROID__)
+            const FEXCore::HostFeatures features = fetch_host_features_android();
 #else
             const FEXCore::HostFeatures features{}; // TODO(fex): FEXCore::FetchHostFeatures() on real HW.
 #endif
@@ -2213,141 +2471,12 @@ namespace sogen::fex
 
             this->context_->InitCore();
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__ANDROID__)
             install_fault_signal_handlers(*this);
 #endif
         }
 
-#ifdef __APPLE__
-      public:
-        // Applies a decode_arm64_load result once its data has been fetched, writing the possibly
-        // extended value into the destination register and advancing PC past the decoded instruction.
-        void complete_decoded_load(ucontext_t* uctx, const decoded_arm64_load& decoded, const void* data, uint64_t pc)
-        {
-            if (decoded.is_vector)
-            {
-                __uint128_t value{};
-                std::memcpy(&value, data, sizeof(value));
-                auto* fprs = reinterpret_cast<__uint128_t*>(&uctx->uc_mcontext->__ns.__v[0]);
-                fprs[decoded.rt] = value;
-                arm_thread_state64_set_pc_fptr(uctx->uc_mcontext->__ss, reinterpret_cast<void*>(pc + 4));
-                return;
-            }
-
-            uint64_t raw_value = 0;
-            std::memcpy(&raw_value, data, decoded.size);
-
-            uint64_t result = 0;
-            switch (decoded.size)
-            {
-            case 1:
-                result = decoded.sign_extend ? static_cast<uint64_t>(static_cast<int64_t>(static_cast<int8_t>(raw_value)))
-                                             : (raw_value & 0xFFULL);
-                break;
-            case 2:
-                result = decoded.sign_extend ? static_cast<uint64_t>(static_cast<int64_t>(static_cast<int16_t>(raw_value)))
-                                             : (raw_value & 0xFFFFULL);
-                break;
-            case 4:
-                result = decoded.sign_extend ? static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(raw_value)))
-                                             : (raw_value & 0xFFFFFFFFULL);
-                break;
-            default:
-                result = raw_value;
-                break;
-            }
-
-            if (!decoded.dest_is_64bit)
-            {
-                // Writing Wt always zeroes bits 63:32 of the aliased Xt (AArch64 register semantics).
-                result &= 0xFFFFFFFFULL;
-            }
-
-            if (decoded.rt <= 28)
-            {
-                uctx->uc_mcontext->__ss.__x[decoded.rt] = result;
-            }
-            else if (decoded.rt == 29)
-            {
-                uctx->uc_mcontext->__ss.__fp = result;
-            }
-            else if (decoded.rt == 30)
-            {
-                uctx->uc_mcontext->__ss.__lr = result;
-            }
-            // rt == 31 is XZR/WZR: the load's result is discarded, nothing to write back.
-
-            arm_thread_state64_set_pc_fptr(uctx->uc_mcontext->__ss, reinterpret_cast<void*>(pc + 4));
-        }
-
-        bool handle_mmio_fault(ucontext_t* uctx, const mmio_region& region, uint64_t fault_addr)
-        {
-            const uint64_t pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
-            const auto insn = *reinterpret_cast<const uint32_t*>(pc);
-            const auto decoded = decode_arm64_load(insn);
-            if (!decoded)
-            {
-                // stdio is not async-signal-safe and this runs inside a real signal handler, hence
-                // snprintf into a fixed stack buffer followed by a single write(2).
-                char buf[128];
-                const int len = snprintf(buf, sizeof(buf), "[MMIO] unrecognized instruction 0x%08x at pc=%p for fault_addr=0x%llx\n", insn,
-                                         reinterpret_cast<void*>(pc), static_cast<unsigned long long>(fault_addr));
-                if (len > 0)
-                {
-                    const auto write_len = static_cast<size_t>(len) < sizeof(buf) ? static_cast<size_t>(len) : sizeof(buf);
-                    ::write(STDERR_FILENO, buf, write_len);
-                }
-                return false;
-            }
-
-            alignas(16) std::byte buffer[16]{};
-            region.read_cb(fault_addr - region.address, buffer, decoded->size);
-            this->complete_decoded_load(uctx, *decoded, buffer, pc);
-            return true;
-        }
-
-        // LDAR/LDAPR/STLR require natural alignment on real hardware, unlike plain LDR/STR, but x86
-        // permits unaligned accesses freely and FEX uses this family to model x86's stronger memory
-        // ordering, so an ordinary unaligned guest access to legitimately mapped memory faults here
-        // (Darwin reports SIGBUS/BUS_ADRALN). sogen runs every guest thread of a process cooperatively
-        // on one host thread, so there is no concurrent host-thread race for these instructions to
-        // order against, making the downgrade to a plain access correctness-preserving.
-        bool handle_misaligned_atomic_fault(ucontext_t* uctx, uint64_t fault_addr)
-        {
-            const uint64_t pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
-            const auto insn = *reinterpret_cast<const uint32_t*>(pc);
-
-            if (const auto load = decode_arm64_load(insn))
-            {
-                this->complete_decoded_load(uctx, *load, reinterpret_cast<const void*>(fault_addr), pc);
-                return true;
-            }
-
-            if (const auto store = decode_arm64_store(insn))
-            {
-                uint64_t value = 0;
-                if (store->rt <= 28)
-                {
-                    value = uctx->uc_mcontext->__ss.__x[store->rt];
-                }
-                else if (store->rt == 29)
-                {
-                    value = uctx->uc_mcontext->__ss.__fp;
-                }
-                else if (store->rt == 30)
-                {
-                    value = uctx->uc_mcontext->__ss.__lr;
-                }
-                // rt == 31 is XZR: stores zero, matching the default-initialized value above.
-
-                std::memcpy(reinterpret_cast<void*>(fault_addr), &value, store->size);
-                arm_thread_state64_set_pc_fptr(uctx->uc_mcontext->__ss, reinterpret_cast<void*>(pc + 4));
-                return true;
-            }
-
-            return false;
-        }
-
+#if defined(__APPLE__) || defined(__ANDROID__)
         // memory_violation_hooks_/interrupt_hooks_ callbacks are backend-agnostic windows-emulator code
         // that allocates, logs and mutates STL containers freely. That is fine from normal call context
         // (where KVM/Unicorn invoke them) but not from inside handle_fault_signal, which can interrupt
@@ -2402,80 +2531,263 @@ namespace sogen::fex
         }
 
         // Called only from signal-handler context; see pending_fault_kind for why hooks cannot run
-        // directly there.
-        //
-        // sra_already_spilled picks between the dispatcher's two unwind entry points
-        // (ThreadStopHandlerAddressSpillSRA falls through SpillStaticRegs into ThreadStopHandlerAddress).
-        // A fault taken via FEXCore's own synthetic-exception path (vector 14) has SRA already spilled to
-        // CpuStateFrame and passes true; a real hardware fault interrupting live translated code passes
-        // false, since SRA is still only in host registers there and skipping the spill would leave the
-        // next ExecuteThread entry reading stale state.
-        void defer_hook_dispatch(ucontext_t* uctx, const pending_fault_dispatch& dispatch, bool sra_already_spilled)
+        // directly there. state_already_spilled selects the dispatcher unwind entry that skips the SRA
+        // spill only for FEXCore's synthetic-exception path, where CpuStateFrame is already current.
+        void defer_hook_dispatch(ucontext_t* context, const pending_fault_dispatch& dispatch, bool state_already_spilled)
         {
             this->pending_fault_dispatch_ = dispatch;
-            const auto& cfg = this->signal_delegator_->GetConfig();
-            const auto target = sra_already_spilled ? cfg.ThreadStopHandlerAddress : cfg.ThreadStopHandlerAddressSpillSRA;
-            arm_thread_state64_set_pc_fptr(uctx->uc_mcontext->__ss, reinterpret_cast<void*>(target));
+            const auto& config = this->signal_delegator_->GetConfig();
+            const auto target = state_already_spilled ? config.ThreadStopHandlerAddress : config.ThreadStopHandlerAddressSpillSRA;
+            set_host_pc(context, target);
         }
 
-        // The dispatcher is host MAP_JIT code like a CodeBuffer, but IsAddressInCodeBuffer does not
-        // recognize it, so the CodeBuffer-gated W^X retries never fire for a dispatcher fault.
+        // The dispatcher is separate from FEXCore's CodeBuffer range, so IsAddressInCodeBuffer does
+        // not recognize faults taken there even though the same signal paths need to identify it.
         bool host_pc_in_dispatcher(uint64_t pc) const
         {
             if (this->signal_delegator_ == nullptr)
             {
                 return false;
             }
-            const auto& cfg = this->signal_delegator_->GetConfig();
-            return pc >= cfg.DispatcherBegin && pc < cfg.DispatcherEnd;
+            const auto& config = this->signal_delegator_->GetConfig();
+            return pc >= config.DispatcherBegin && pc < config.DispatcherEnd;
         }
 
-        // FEXCore's call-ret shadow stack (x25, see ensure_callret_buffer) is a return-address predictor
-        // bracketed by a guard page on each side. A deep guest call chain, or a stack pivot/longjmp
-        // abandoning already-pushed frames as steam_api.dll's RLD DRM does, legitimately runs past the
-        // committed region into a guard page. Upstream FEX treats that as expected and recovers by
-        // resetting the register to the buffer's default location (Linux
-        // SyscallHandler::HandleSegfault, Windows FEX::Windows::CallRetStack::HandleAccessViolation),
-        // which this mirrors: Base +- host_page guard, DefaultLocation = Base + CALLRET_STACK_SIZE/4,
-        // matching GetCallRetStackInfo. Classified by shape rather than si_code, since Darwin reports a
-        // PROT_NONE guard-page hit as SEGV_ACCERR/SEGV_MAPERR/BUS_ADRALN interchangeably.
-        bool handle_callret_stack_fault(ucontext_t* uctx, uint64_t fault_addr) const
+        static uint64_t get_host_pc(ucontext_t* context)
+        {
+#ifdef __APPLE__
+            return arm_thread_state64_get_pc(context->uc_mcontext->__ss);
+#else
+            return context->uc_mcontext.pc;
+#endif
+        }
+
+        static void set_host_pc(ucontext_t* context, uint64_t pc)
+        {
+#ifdef __APPLE__
+            arm_thread_state64_set_pc_fptr(context->uc_mcontext->__ss, reinterpret_cast<void*>(pc));
+#else
+            context->uc_mcontext.pc = pc;
+#endif
+        }
+
+        static uint64_t get_host_gpr(ucontext_t* context, uint32_t index)
+        {
+            if (index == 31)
+            {
+                return 0;
+            }
+
+#ifdef __APPLE__
+            if (index <= 28)
+            {
+                return context->uc_mcontext->__ss.__x[index];
+            }
+            return index == 29 ? context->uc_mcontext->__ss.__fp : context->uc_mcontext->__ss.__lr;
+#else
+            return context->uc_mcontext.regs[index];
+#endif
+        }
+
+        static void set_host_gpr(ucontext_t* context, uint32_t index, uint64_t value)
+        {
+            if (index == 31)
+            {
+                return;
+            }
+
+#ifdef __APPLE__
+            if (index <= 28)
+            {
+                context->uc_mcontext->__ss.__x[index] = value;
+            }
+            else if (index == 29)
+            {
+                context->uc_mcontext->__ss.__fp = value;
+            }
+            else
+            {
+                context->uc_mcontext->__ss.__lr = value;
+            }
+#else
+            context->uc_mcontext.regs[index] = value;
+#endif
+        }
+
+        static __uint128_t* get_host_vector_registers(ucontext_t* context)
+        {
+#ifdef __APPLE__
+            return reinterpret_cast<__uint128_t*>(&context->uc_mcontext->__ns.__v[0]);
+#else
+            auto* fpsimd = find_aarch64_context<fpsimd_context>(context, FPSIMD_MAGIC);
+            return fpsimd != nullptr ? fpsimd->vregs : nullptr;
+#endif
+        }
+
+        // FEXCore's call-ret shadow stack (x25, see ensure_callret_buffer) is bracketed by a guard page
+        // on each side. Upstream FEX treats hitting either guard as recoverable and resets x25 to the
+        // default location (Base + CALLRET_STACK_SIZE/4), which this mirrors.
+        bool handle_callret_stack_fault(ucontext_t* context, uint64_t fault_address) const
         {
             if (this->thread_ == nullptr || this->thread_->CallRetStackBase == nullptr)
             {
                 return false;
             }
+
             const auto base = reinterpret_cast<uint64_t>(this->thread_->CallRetStackBase);
             const auto host_page = static_cast<uint64_t>(::getpagesize());
             constexpr uint64_t callret_stack_size = FEXCore::Core::InternalThreadState::CALLRET_STACK_SIZE;
-            if (fault_addr < base - host_page || fault_addr >= base + callret_stack_size + host_page)
+            if (fault_address < base - host_page || fault_address >= base + callret_stack_size + host_page)
             {
                 return false;
             }
-            uctx->uc_mcontext->__ss.__x[25] = base + callret_stack_size / 4;
+
+            set_host_gpr(context, 25, base + callret_stack_size / 4);
             return true;
         }
 
-        // Real (non-synthetic) guest memory violations, which have no other path to
-        // memory_violation_hooks_: a Windows PAGE_GUARD page, genuinely unmapped memory, or a host page
-        // mprotect'd to PROT_NONE because one 4KB guest slot inside it is guard/unmapped while another
-        // is legitimately mapped. The shadow table for the specific 4KB page decides: an operation
-        // exceeding what is declared there is a real violation and gets deferred to the hooks, otherwise
-        // the access is a false fault from a stricter neighbor sharing the host page and is
-        // decode-and-emulated the same way handle_misaligned_atomic_fault does.
+      public:
+        // Applies a decode_arm64_load result once its data has been fetched, writing the possibly
+        // extended value into the destination register and advancing PC past the decoded instruction.
+        bool complete_decoded_load(ucontext_t* uctx, const decoded_arm64_load& decoded, const void* data, uint64_t pc)
+        {
+            if (decoded.is_vector)
+            {
+                auto* fprs = get_host_vector_registers(uctx);
+                if (fprs == nullptr)
+                {
+                    return false;
+                }
+
+                __uint128_t value{};
+                std::memcpy(&value, data, sizeof(value));
+                fprs[decoded.rt] = value;
+                set_host_pc(uctx, pc + 4);
+                return true;
+            }
+
+            uint64_t raw_value = 0;
+            std::memcpy(&raw_value, data, decoded.size);
+
+            uint64_t result = 0;
+            switch (decoded.size)
+            {
+            case 1:
+                result = decoded.sign_extend ? static_cast<uint64_t>(static_cast<int64_t>(static_cast<int8_t>(raw_value)))
+                                             : (raw_value & 0xFFULL);
+                break;
+            case 2:
+                result = decoded.sign_extend ? static_cast<uint64_t>(static_cast<int64_t>(static_cast<int16_t>(raw_value)))
+                                             : (raw_value & 0xFFFFULL);
+                break;
+            case 4:
+                result = decoded.sign_extend ? static_cast<uint64_t>(static_cast<int64_t>(static_cast<int32_t>(raw_value)))
+                                             : (raw_value & 0xFFFFFFFFULL);
+                break;
+            default:
+                result = raw_value;
+                break;
+            }
+
+            if (!decoded.dest_is_64bit)
+            {
+                // Writing Wt always zeroes bits 63:32 of the aliased Xt (AArch64 register semantics).
+                result &= 0xFFFFFFFFULL;
+            }
+
+            set_host_gpr(uctx, decoded.rt, result);
+            set_host_pc(uctx, pc + 4);
+            return true;
+        }
+
+        bool handle_mmio_fault(ucontext_t* uctx, const mmio_region& region, uint64_t fault_addr)
+        {
+            const uint64_t pc = get_host_pc(uctx);
+            const auto insn = *reinterpret_cast<const uint32_t*>(pc);
+            const auto decoded = decode_arm64_load(insn);
+            if (!decoded)
+            {
+#ifdef __APPLE__
+                // stdio is not async-signal-safe and this runs inside a real signal handler, hence
+                // snprintf into a fixed stack buffer followed by a single write(2).
+                char buf[128];
+                const int len = snprintf(buf, sizeof(buf), "[MMIO] unrecognized instruction 0x%08x at pc=%p for fault_addr=0x%llx\n", insn,
+                                         reinterpret_cast<void*>(pc), static_cast<unsigned long long>(fault_addr));
+                if (len > 0)
+                {
+                    const auto write_len = static_cast<size_t>(len) < sizeof(buf) ? static_cast<size_t>(len) : sizeof(buf);
+                    ::write(STDERR_FILENO, buf, write_len);
+                }
+#endif
+                return false;
+            }
+
+            alignas(16) std::array<std::byte, 16> buffer{};
+            region.read_cb(fault_addr - region.address, buffer.data(), decoded->size);
+            return this->complete_decoded_load(uctx, *decoded, buffer.data(), pc);
+        }
+
+        // LDAR/LDAPR/STLR require natural alignment on real hardware, unlike plain LDR/STR, but x86
+        // permits unaligned accesses freely and FEX uses this family to model x86's stronger memory
+        // ordering, so an ordinary unaligned guest access to legitimately mapped memory faults here
+        // (Darwin reports SIGBUS/BUS_ADRALN). sogen runs every guest thread of a process cooperatively
+        // on one host thread, so there is no concurrent host-thread race for these instructions to
+        // order against, making the downgrade to a plain access correctness-preserving.
+        bool handle_misaligned_atomic_fault(ucontext_t* uctx, uint64_t fault_addr)
+        {
+            const uint64_t pc = get_host_pc(uctx);
+            const auto insn = *reinterpret_cast<const uint32_t*>(pc);
+
+            if (const auto load = decode_arm64_load(insn))
+            {
+                return this->complete_decoded_load(uctx, *load, reinterpret_cast<const void*>(fault_addr), pc);
+            }
+
+            if (const auto store = decode_arm64_store(insn))
+            {
+                const uint64_t value = get_host_gpr(uctx, store->rt);
+                std::memcpy(reinterpret_cast<void*>(fault_addr), &value, store->size);
+                set_host_pc(uctx, pc + 4);
+                return true;
+            }
+
+            return false;
+        }
+
         bool handle_general_memory_violation(ucontext_t* uctx, uint64_t fault_addr)
         {
-            const uint64_t pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
+            const uint64_t pc = get_host_pc(uctx);
             const auto guest_fault_addr = fault_addr;
+#ifdef __APPLE__
+            // Apple Silicon host pages are 16KB, so the 4KB guest-page shadow is authoritative when
+            // neighboring guest pages require different permissions within one host page.
             const auto guest_page = guest_fault_addr & ~(page_size - 1);
             const auto shadow_it = this->page_shadow_apple_.find(guest_page);
             const auto declared = (shadow_it != this->page_shadow_apple_.end()) ? shadow_it->second : memory_permission::none;
+#else
+            const auto region_it = this->find_region_containing(guest_fault_addr);
+            const auto declared = region_it != this->regions_.end() ? region_it->second.permissions : memory_permission::none;
+#endif
 
             memory_operation operation = memory_operation::exec;
             if (fault_addr != pc)
             {
-                const auto insn = *reinterpret_cast<const uint32_t*>(pc);
-                operation = decode_arm64_store(insn) ? memory_operation::write : memory_operation::read;
+#ifdef __ANDROID__
+                // The emulation decoder below is intentionally limited to the ordered STLR-family
+                // instructions that can fault for alignment. Ordinary translated STR/STUR stores must
+                // still be reported as writes on real protection faults, so use the kernel-provided
+                // AArch64 ESR WnR bit for access classification instead of broadening that decoder.
+                constexpr uint64_t esr_write_not_read = 1ULL << 6;
+                if (const auto* esr = find_aarch64_context<esr_context>(uctx, ESR_MAGIC))
+                {
+                    operation = (esr->esr & esr_write_not_read) != 0 ? memory_operation::write : memory_operation::read;
+                }
+                else
+#endif
+                {
+                    const auto insn = *reinterpret_cast<const uint32_t*>(pc);
+                    operation = decode_arm64_store(insn) ? memory_operation::write : memory_operation::read;
+                }
             }
 
             if ((declared & operation) == operation)
@@ -2524,16 +2836,22 @@ namespace sogen::fex
             {
                 const auto fault_addr = reinterpret_cast<uint64_t>(info->si_addr);
 
+#ifdef __APPLE__
                 // Must run before any si_code-specific branch below, because Darwin can report this
                 // PROT_NONE violation as BUS_ADRALN instead of SEGV_ACCERR/SEGV_MAPERR. Since
                 // InterruptFaultPage is never inside the CodeBuffer, a misclassified fault would
                 // otherwise fall through to handle_general_memory_violation, which treats fault_addr as
                 // a guest address and would dispatch a synthetic guest exception built from this
                 // backend's own internal pointer.
+#endif
+#ifdef __ANDROID__
+                const auto interrupt_page_addr = get_untagged_pointer_address(this->thread_->InterruptFaultPage);
+#else
                 const auto interrupt_page_addr = reinterpret_cast<uint64_t>(this->thread_->InterruptFaultPage);
+#endif
                 if (fault_addr >= interrupt_page_addr && fault_addr < interrupt_page_addr + sizeof(this->thread_->InterruptFaultPage))
                 {
-                    const auto fault_pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
+                    const auto fault_pc = get_host_pc(uctx);
                     const bool is_dispatch_code = this->context_ && this->context_->IsAddressInCodeBuffer(this->thread_, fault_pc);
 
                     // ExitFunctionLinkerAddress's own epilogue (EmitSignalGuardedRegion's closing
@@ -2561,8 +2879,7 @@ namespace sogen::fex
                         this->thread_->CurrentFrame->State.rip = this->context_->RestoreRIPFromHostPC(this->thread_, fault_pc);
                         this->interrupt_page_unwind_ = true;
                         const auto& stop_cfg = this->signal_delegator_->GetConfig();
-                        arm_thread_state64_set_pc_fptr(uctx->uc_mcontext->__ss,
-                                                       reinterpret_cast<void*>(stop_cfg.ThreadStopHandlerAddressSpillSRA));
+                        set_host_pc(uctx, stop_cfg.ThreadStopHandlerAddressSpillSRA);
                         return true;
                     }
 
@@ -2573,10 +2890,11 @@ namespace sogen::fex
                     // corrupts the stack into a pc==lr==0 crash. Only the page's protection state drives
                     // the stop mechanism, not the stored value, so skip the faulting store; the next real
                     // block entry still sees the page protected and stops correctly.
-                    arm_thread_state64_set_pc_fptr(uctx->uc_mcontext->__ss, reinterpret_cast<void*>(fault_pc + 4));
+                    set_host_pc(uctx, fault_pc + 4);
                     return true;
                 }
 
+#ifdef __APPLE__
                 // A W^X instruction-fetch fault on FEXCore's dispatcher trampoline: it is host MAP_JIT
                 // code like a CodeBuffer, but IsAddressInCodeBuffer does not recognize it, so the
                 // CodeBuffer-gated retries below never fire for it, and this handler's other retry paths
@@ -2590,13 +2908,14 @@ namespace sogen::fex
                 // budget would instead drop the fault into handle_general_memory_violation, which would
                 // mis-read the host dispatcher address as a guest access violation.
                 {
-                    const auto host_pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
+                    const auto host_pc = get_host_pc(uctx);
                     if (fault_addr == host_pc && this->host_pc_in_dispatcher(host_pc))
                     {
                         ::pthread_jit_write_protect_np(1);
                         return true;
                     }
                 }
+#endif
 
                 // Checked early, before the general-violation routing that would otherwise mis-dispatch
                 // this host arena address as a guest access violation.
@@ -2610,7 +2929,7 @@ namespace sogen::fex
                 // to a garbage pc can land inside a registered mmio_region by chance; handle_mmio_fault
                 // would then try to decode the instruction at that same garbage address and crash there
                 // instead, masking the real bug behind a confusing secondary symptom.
-                const auto pc_for_mmio_check = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
+                const auto pc_for_mmio_check = get_host_pc(uctx);
                 if (fault_addr != pc_for_mmio_check)
                 {
                     for (const auto& region : this->mmio_regions_)
@@ -2622,6 +2941,7 @@ namespace sogen::fex
                     }
                 }
 
+#ifdef __APPLE__
                 // A BUS_ADRALN whose address is inside the live CodeBuffer but whose PC is FEXCore's own
                 // host C++ code (ExitFunctionLink's self-modifying write) is not a real alignment fault
                 // at all - it decodes to an ordinary aligned 32-bit `str`. It is the JIT W^X race, which
@@ -2656,29 +2976,37 @@ namespace sogen::fex
                 {
                     return true;
                 }
+#endif
             }
 
-            // FEXCore protects the last host page of each CodeBuffer and deliberately writes into it
-            // mid-compile to detect running out of space, so this is expected: resume via the jump
-            // buffer it set up beforehand, mirroring SignalDelegator.cpp's HandleFrontendSIGSEGV.
-            // Unlike Linux's single SIGSEGV, Darwin reports these as either SIGSEGV or SIGBUS, and
-            // sometimes as SEGV_MAPERR ("not mapped") rather than SEGV_ACCERR ("wrong permission") -
-            // confirmed by querying mach_vm_region from inside this handler and finding the address
-            // fully mapped RWX despite the si_code=1 report - so both si_codes are treated alike.
+#ifdef __APPLE__
             if ((sig == SIGSEGV || sig == SIGBUS) && (info->si_code == SEGV_ACCERR || info->si_code == SEGV_MAPERR))
+#else
+            if (sig == SIGSEGV || sig == SIGBUS)
+#endif
             {
                 const auto guard_page = this->thread_->JITGuardPage;
                 const auto fault_addr = reinterpret_cast<uintptr_t>(info->si_addr);
                 if (guard_page != 0 && fault_addr >= guard_page && fault_addr < guard_page + FEXCore::Utils::FEX_HOST_PAGE_SIZE)
                 {
+#ifdef __APPLE__
                     auto* gprs = reinterpret_cast<uint64_t*>(&uctx->uc_mcontext->__ss);
-                    auto* fprs = reinterpret_cast<__uint128_t*>(&uctx->uc_mcontext->__ns.__v[0]);
                     auto* pc_ptr = reinterpret_cast<uint64_t*>(&uctx->uc_mcontext->__ss.__pc);
+#else
+                    auto* gprs = reinterpret_cast<uint64_t*>(uctx->uc_mcontext.regs);
+                    auto* pc_ptr = reinterpret_cast<uint64_t*>(&uctx->uc_mcontext.pc);
+#endif
+                    auto* fprs = get_host_vector_registers(uctx);
+                    if (fprs == nullptr)
+                    {
+                        return false;
+                    }
                     FEXCore::UncheckedLongJump::ManuallyLoadJumpBuf(this->thread_->RestartJump, this->thread_->JITGuardOverflowArgument,
                                                                     gprs, fprs, pc_ptr);
                     return true;
                 }
 
+#ifdef __APPLE__
                 // FEXCore's code-patching paths (ExitFunctionLink, block delinkers) do not reliably
                 // leave this thread's JIT write-protect state correct across their self-modifying
                 // writes, so set whatever the faulting access needs and retry the same instruction.
@@ -2696,15 +3024,16 @@ namespace sogen::fex
                     if (retry_count < max_write_protect_retries)
                     {
                         ++retry_count;
-                        const uint64_t faulting_pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
+                        const uint64_t faulting_pc = get_host_pc(uctx);
                         const bool is_instruction_fetch = (faulting_pc == fault_addr_u64);
                         ::pthread_jit_write_protect_np(is_instruction_fetch ? 1 : 0);
                         return true;
                     }
                 }
+#endif
             }
 
-            const uint64_t pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
+            const uint64_t pc = get_host_pc(uctx);
 
             // FEXCore's guest-exception trampoline always re-enters within the dispatcher range.
             if (!this->host_pc_in_dispatcher(pc))
@@ -2848,7 +3177,11 @@ namespace sogen::fex
                 // ThreadManager::GetCallRetStackInfo's DefaultLocation (Base + size/4).
                 state.callret_sp = reinterpret_cast<uint64_t>(callret_stack_base) + callret_stack_size / 4;
 
-                this->callret_buffers_.emplace_back(alloc_base, callret_alloc_size);
+                this->callret_buffers_.emplace(state._pad1, callret_buffer_record{
+                                                                .allocation_base = alloc_base,
+                                                                .allocation_size = callret_alloc_size,
+                                                                .code_buffer_generation = this->thread_->CodeBufferGeneration,
+                                                            });
             }
         }
 
@@ -3035,7 +3368,7 @@ namespace sogen::fex
         std::atomic<bool> stop_requested_{false};
         uintptr_t next_hook_id_ = 1;
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__ANDROID__)
         pending_fault_dispatch pending_fault_dispatch_{};
         // Set by handle_fault_signal on an InterruptFaultPage unwind, consumed by start()'s loop to tell
         // it apart from any other clean return. Atomic even though both ends are the same thread: the
@@ -3050,17 +3383,18 @@ namespace sogen::fex
         // Every per-logical-thread call-ret buffer ever allocated by ensure_callret_buffer, so the
         // destructor can release them - these live outside regions_ (host allocator space, not the
         // guest address space) and outlive any individual CPUState snapshot they were allocated for.
-        std::vector<std::pair<void*, size_t>> callret_buffers_;
+        std::unordered_map<uint64_t, callret_buffer_record> callret_buffers_;
+
+#if defined(__APPLE__) || defined(__ANDROID__)
+        std::map<uint64_t, size_t> claimed_host_ranges_;
+#endif
 
 #ifdef __APPLE__
         // Apple Silicon's 16KB host page is coarser than the guest's 4KB architectural page, so one host
         // mprotect cannot always express what the guest requested per 4KB page - a PE image's .text (RX)
         // directly followed by .data (RW) share a host page. page_shadow_apple_ is the per-4KB source of
-        // truth (absent = never requested, which must still fault); mapped_host_pages_apple_ tracks
-        // which host pages have a live mmap, so sync_host_page_apple can tell a first-time mmap from a
-        // protection change.
+        // truth (absent = never requested, which must still fault).
         std::map<uint64_t, memory_permission> page_shadow_apple_;
-        std::set<uint64_t> mapped_host_pages_apple_;
 #endif
 
         hook_entry* syscall_hook_ = nullptr;
@@ -3073,9 +3407,107 @@ namespace sogen::fex
         std::unordered_map<emulator_hook*, basic_block_hook_callback> basic_block_hooks_;
     };
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(__ANDROID__)
     namespace
     {
+        // Keep this function async-signal-safe: it may run from a signal handler while
+        // libc or other runtime code is in an inconsistent/locked state. Avoid stdio,
+        // snprintf, allocation, locks, and other non-async-signal-safe operations.
+        // Formatting is therefore done manually into a fixed stack buffer, followed by
+        // a single write(2), which is async-signal-safe.
+        static void log_unhandled_signal(int sig, const siginfo_t* info, ucontext_t* uctx)
+        {
+            const int saved_errno = errno;
+
+            char buf[160];
+            char* out = buf;
+            const char* const end = buf + sizeof(buf);
+
+            const auto append_string = [&](const char* str) {
+                while (*str != '\0' && out < end)
+                {
+                    *out++ = *str++;
+                }
+            };
+
+            const auto append_decimal = [&](int64_t value) {
+                char digits[20];
+                size_t count = 0;
+
+                uint64_t magnitude;
+                if (value < 0)
+                {
+                    if (out < end)
+                    {
+                        *out++ = '-';
+                    }
+
+                    magnitude = static_cast<uint64_t>(-(value + 1)) + 1;
+                }
+                else
+                {
+                    magnitude = static_cast<uint64_t>(value);
+                }
+
+                do
+                {
+                    digits[count++] = static_cast<char>('0' + magnitude % 10);
+                    magnitude /= 10;
+                } while (magnitude != 0);
+
+                while (count != 0 && out < end)
+                {
+                    *out++ = digits[--count];
+                }
+            };
+
+            const auto append_hex = [&](uint64_t value) {
+                constexpr char hex_digits[] = "0123456789abcdef";
+
+                char digits[16];
+                size_t count = 0;
+
+                do
+                {
+                    digits[count++] = hex_digits[value & 0xf];
+                    value >>= 4;
+                } while (value != 0);
+
+                while (count != 0 && out < end)
+                {
+                    *out++ = digits[--count];
+                }
+            };
+
+            append_string("[FEX backend] unhandled signal ");
+            append_decimal(sig);
+
+            append_string(" si_code=");
+            append_decimal(info->si_code);
+
+            append_string(" at pc=0x");
+#ifdef __APPLE__
+            append_hex(arm_thread_state64_get_pc(uctx->uc_mcontext->__ss));
+#else
+            append_hex(uctx->uc_mcontext.pc);
+#endif
+
+            append_string(" fault_addr=0x");
+            append_hex(reinterpret_cast<uintptr_t>(info->si_addr));
+
+            if (out < end)
+            {
+                *out++ = '\n';
+            }
+
+            if (out != buf)
+            {
+                (void)::write(STDERR_FILENO, buf, static_cast<size_t>(out - buf));
+            }
+
+            errno = saved_errno;
+        }
+
         void fault_signal_handler(int sig, siginfo_t* info, void* raw_ucontext)
         {
             auto* uctx = static_cast<ucontext_t*>(raw_ucontext);
@@ -3086,18 +3518,9 @@ namespace sogen::fex
                 return;
             }
 
-            // stdio is not async-signal-safe; snprintf into a fixed stack buffer plus a single write(2).
-            char buf[160];
-            const uint64_t pc = arm_thread_state64_get_pc(uctx->uc_mcontext->__ss);
-            const int len = snprintf(buf, sizeof(buf), "[FEX backend] unhandled signal %d si_code=%d at pc=0x%llx fault_addr=%p\n", sig,
-                                     info->si_code, static_cast<unsigned long long>(pc), info->si_addr);
-            if (len > 0)
-            {
-                const auto write_len = static_cast<size_t>(len) < sizeof(buf) ? static_cast<size_t>(len) : sizeof(buf);
-                ::write(STDERR_FILENO, buf, write_len);
-            }
+            log_unhandled_signal(sig, info, uctx);
 
-            struct sigaction default_action = {};
+            struct sigaction default_action{};
             default_action.sa_handler = SIG_DFL;
             ::sigaction(sig, &default_action, nullptr);
             ::raise(sig);
