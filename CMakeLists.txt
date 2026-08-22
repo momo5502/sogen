@@ -9,11 +9,7 @@ option(SOGEN_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(SOGEN_ENABLE_LTO "Enable interprocedural optimization (LTO/IPO)" ON)
 option(SOGEN_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
 option(SOGEN_ENABLE_REFLECTION "Enable reflection using the reflect library" ON)
-# SDL3 provides the host UI backend on every non-Emscripten platform, so it is
-# required and enabled by default everywhere. Emscripten uses the web UI backend
-# instead and skips SDL in deps/CMakeLists.txt. project() runs after this block,
-# so EMSCRIPTEN is not known yet and cannot be branched on here.
-option(SOGEN_ENABLE_SDL3 "Enable SDL3 dependency and backend scaffolding when submodule exists" ON)
+option(SOGEN_ENABLE_SDL3 "Enable SDL3 host UI and audio backends" ON)
 # When ON, a system-installed SDL3 (find_package, e.g. libsdl3-dev on Ubuntu 25.04+,
 # Homebrew, vcpkg) is used if present, falling back to the vendored deps/SDL submodule.
 # Set OFF to always build the pinned submodule.

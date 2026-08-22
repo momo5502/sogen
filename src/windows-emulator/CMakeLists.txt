@@ -6,14 +6,14 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
 
 list(SORT SRC_FILES)
 
-if(SOGEN_USE_SYSTEM_SDL3 AND NOT EMSCRIPTEN AND NOT TARGET SDL3::SDL3)
+if(SOGEN_ENABLE_SDL3 AND SOGEN_USE_SYSTEM_SDL3 AND NOT EMSCRIPTEN AND NOT TARGET SDL3::SDL3)
   find_package(SDL3 CONFIG REQUIRED)
 endif()
 
 if(NOT TARGET SDL3::SDL3)
   list(REMOVE_ITEM SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/ui_backends/sdl_ui_backend.cpp")
   list(REMOVE_ITEM SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/audio_backends/sdl_audio_backend.cpp")
-  if(NOT EMSCRIPTEN)
+  if(SOGEN_ENABLE_SDL3 AND NOT EMSCRIPTEN)
     message(FATAL_ERROR "The SDL3 submodule (deps/SDL) is required for the host UI backend on this platform")
   endif()
 endif()
