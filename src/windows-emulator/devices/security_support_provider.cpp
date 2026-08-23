@@ -57,6 +57,78 @@ namespace sogen
                  0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x73, 0x00, 0x2E,
                  0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
+            // MD5 Microsoft Primitive Provider (shared layout for the MD family)
+            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+            std::uint8_t md5_output_data[216] = //
+                {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00,
+                 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x35, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
+                 0xFF, 0xFF, 0xFF, 0xFF, 0x98, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+                 0x4D, 0x00, 0x44, 0x00, 0x35, 0x00, 0x00, 0x00, 0x4D, 0x00, 0x69, 0x00, 0x63, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x73, 0x00,
+                 0x6F, 0x00, 0x66, 0x00, 0x74, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00,
+                 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x76, 0x00, 0x69, 0x00, 0x64, 0x00,
+                 0x65, 0x00, 0x72, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x00, 0x63, 0x00, 0x72, 0x00, 0x79, 0x00, 0x70, 0x00, 0x74, 0x00,
+                 0x70, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x73, 0x00,
+                 0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+            // Offsets into a provider response. The algorithm name is a fixed-width
+            // field rather than a packed string, and 0x34 holds a two-character
+            // abbreviation of it that BCrypt cross-checks.
+            static constexpr std::size_t response_name_offset = 0x50;
+            static constexpr std::size_t response_abbreviation_offset = 0x34;
+            static constexpr std::size_t response_abbreviation_size = 0x04;
+
+            struct hash_algorithm
+            {
+                std::u16string_view name;
+                // Third and fourth characters of the name: "SHA1" -> A1, "MD5" -> 5.
+                std::u16string_view abbreviation;
+                std::span<const std::uint8_t> response;
+                // The provider name follows the algorithm name directly, so the
+                // field is only as wide as the longest name sharing the template.
+                std::size_t name_size;
+            };
+
+            std::optional<hash_algorithm> find_hash_algorithm(const std::u16string_view name)
+            {
+                const std::array<hash_algorithm, 7> algorithms{{
+                    {.name = u"SHA1", .abbreviation = u"A1", .response = sha256_output_data, .name_size = 0x10},
+                    {.name = u"SHA256", .abbreviation = u"A2", .response = sha256_output_data, .name_size = 0x10},
+                    {.name = u"SHA384", .abbreviation = u"A3", .response = sha256_output_data, .name_size = 0x10},
+                    {.name = u"SHA512", .abbreviation = u"A5", .response = sha256_output_data, .name_size = 0x10},
+                    {.name = u"MD2", .abbreviation = u"2", .response = md5_output_data, .name_size = 0x08},
+                    {.name = u"MD4", .abbreviation = u"4", .response = md5_output_data, .name_size = 0x08},
+                    {.name = u"MD5", .abbreviation = u"5", .response = md5_output_data, .name_size = 0x08},
+                }};
+
+                for (const auto& algorithm : algorithms)
+                {
+                    if (algorithm.name == name)
+                    {
+                        return algorithm;
+                    }
+                }
+
+                return std::nullopt;
+            }
+
+            static void patch_algorithm_name(std::vector<std::uint8_t>& response, const hash_algorithm& algorithm)
+            {
+                const auto write_utf16 = [&](const std::size_t offset, const std::u16string_view text) {
+                    for (std::size_t i = 0; i < text.size(); ++i)
+                    {
+                        response[offset + (i * 2)] = static_cast<std::uint8_t>(text[i] & 0xFF);
+                        response[offset + (i * 2) + 1] = static_cast<std::uint8_t>(text[i] >> 8);
+                    }
+                };
+
+                std::fill_n(response.begin() + response_name_offset, algorithm.name_size, std::uint8_t{});
+                std::fill_n(response.begin() + response_abbreviation_offset, response_abbreviation_size, std::uint8_t{});
+                write_utf16(response_name_offset, algorithm.name);
+                write_utf16(response_abbreviation_offset, algorithm.abbreviation);
+            }
+
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
             {
                 if (c.io_control_code != 0x390400)
@@ -103,9 +175,32 @@ namespace sogen
                     return STATUS_SUCCESS;
                 };
 
-                if (algorithm_name == u"SHA256")
+                // Hash providers differ from their same-length sibling only in the
+                // algorithm name and a two-character abbreviation of it, so the two
+                // captured layouts cover the whole family. Falling through to the
+                // RNG response instead makes BCryptOpenAlgorithmProvider fail, which
+                // takes CryptCreateHash with it.
+                if (const auto hash = find_hash_algorithm(algorithm_name))
                 {
-                    return write_response(sha256_output_data);
+                    if (!c.output_buffer || c.output_buffer_length < hash->response.size())
+                    {
+                        return STATUS_BUFFER_TOO_SMALL;
+                    }
+
+                    // Copy: the template is shared between algorithms of the same size.
+                    std::vector<std::uint8_t> response{hash->response.begin(), hash->response.end()};
+                    patch_algorithm_name(response, *hash);
+
+                    win_emu.emu().write_memory(c.output_buffer, response.data(), response.size());
+
+                    if (c.io_status_block)
+                    {
+                        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                        block.Information = response.size();
+                        c.io_status_block.write(block);
+                    }
+
+                    return STATUS_SUCCESS;
                 }
 
                 return write_response(rng_output_data);
