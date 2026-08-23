@@ -16,3 +16,7 @@ endif()
 if (SOGEN_ENABLE_FEX)
   add_subdirectory(fex-emulator)
 endif()
+
+if (SOGEN_ENABLE_SEVEN)
+  add_subdirectory(seven-emulator)
+endif()

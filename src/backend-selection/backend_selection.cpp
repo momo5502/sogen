@@ -19,6 +19,10 @@
 #include <fex_x86_64_emulator.hpp>
 #endif
 
+#if defined(SOGEN_ENABLE_SEVEN)
+#include <seven_x86_64_emulator.hpp>
+#endif
+
 using namespace std::literals;
 
 namespace sogen
@@ -53,6 +57,11 @@ namespace sogen
 #if defined(SOGEN_ENABLE_FEX)
             case backend_type::fex:
                 return fex::create_x86_64_emulator();
+#endif
+
+#if defined(SOGEN_ENABLE_SEVEN)
+            case backend_type::seven:
+                return seven_backend::create_x86_64_emulator();
 #endif
 
             default:
@@ -110,6 +119,14 @@ namespace sogen
             if (env && (env == "1"sv || env == "true"sv))
             {
                 backend = backend_type::fex;
+            }
+        }
+
+        {
+            const auto* env = getenv("EMULATOR_SEVEN");
+            if (env && (env == "1"sv || env == "true"sv))
+            {
+                backend = backend_type::seven;
             }
         }
 

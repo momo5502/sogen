@@ -40,3 +40,10 @@ if (SOGEN_ENABLE_FEX)
     fex-emulator
   )
 endif()
+
+if (SOGEN_ENABLE_SEVEN)
+  target_compile_definitions(backend-selection PRIVATE SOGEN_ENABLE_SEVEN=1)
+  target_link_libraries(backend-selection PRIVATE
+    seven-emulator
+  )
+endif()
