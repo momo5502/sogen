@@ -29,7 +29,15 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 
-#if !defined(__ANDROID__) || __ANDROID_API__ >= 33
+#ifdef __ANDROID__
+#if __ANDROID_API__ >= 33
+#include <execinfo.h>
+#endif
+#include <asm/hwcap.h>
+#include <linux/prctl.h>
+#include <sys/auxv.h>
+#include <sys/prctl.h>
+#else
 #include <execinfo.h>
 #endif
 
@@ -58,9 +66,13 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include <algorithm>
+#include <charconv>
+#include <ranges>
+#include <string_view>
 
-#include <utils/finally.hpp>
 #include <utils/object.hpp>
+#include <utils/io.hpp>
 
 // FEXCore embedding headers. These are only available when building against a FEX checkout/install;
 // the CMake glue gates this whole target behind SOGEN_ENABLE_FEX so non-ARM builds never reach here.
@@ -93,28 +105,47 @@ namespace sogen::fex
 
         std::vector<host_reserved_range> read_host_mappings_android(const uint64_t window_start, const uint64_t window_end)
         {
-            std::unique_ptr<FILE, decltype(&::fclose)> maps{::fopen("/proc/self/maps", "r"), &::fclose};
-            if (!maps)
+            std::vector<std::byte> data;
+            if (!utils::io::read_file("/proc/self/maps", &data))
             {
                 throw std::runtime_error("FEX backend failed to enumerate Android host mappings");
             }
 
+            const std::string_view maps{reinterpret_cast<const char*>(data.data()), data.size()};
+
             std::vector<host_reserved_range> ranges;
-            char line[512];
-            while (::fgets(line, sizeof(line), maps.get()) != nullptr)
+
+            for (auto line : maps | std::views::split('\n'))
             {
-                unsigned long long mapping_start = 0;
-                unsigned long long mapping_end = 0;
-                if (::sscanf(line, "%llx-%llx", &mapping_start, &mapping_end) != 2)
+                const auto dash = std::ranges::find(line, '-');
+                if (dash == line.end())
                 {
                     continue;
                 }
 
-                const uint64_t hit_start = std::max<uint64_t>(mapping_start, window_start);
-                const uint64_t hit_end = std::min<uint64_t>(mapping_end, window_end);
+                uint64_t mapping_start, mapping_end;
+
+                const char* begin = std::to_address(line.begin());
+                const char* separator = std::to_address(dash);
+                const char* end = std::to_address(line.end());
+
+                const auto [p1, ec1] = std::from_chars(begin, separator, mapping_start, 16);
+                const auto [p2, ec2] = std::from_chars(separator + 1, end, mapping_end, 16);
+
+                if (ec1 != std::errc{} || ec2 != std::errc{})
+                {
+                    continue;
+                }
+
+                const auto hit_start = std::max(mapping_start, window_start);
+                const auto hit_end = std::min(mapping_end, window_end);
+
                 if (hit_start < hit_end)
                 {
-                    ranges.push_back({.address = hit_start, .size = static_cast<size_t>(hit_end - hit_start)});
+                    ranges.push_back({
+                        .address = hit_start,
+                        .size = static_cast<size_t>(hit_end - hit_start),
+                    });
                 }
             }
 
@@ -124,8 +155,68 @@ namespace sogen::fex
         FEXCore::HostFeatures fetch_host_features_android()
         {
             FEXCore::HostFeatures features{};
+
+            const unsigned long hwcap = ::getauxval(AT_HWCAP);
+            const unsigned long hwcap2 = ::getauxval(AT_HWCAP2);
+
+            const auto has = [hwcap](unsigned long flag) { return (hwcap & flag) != 0; };
+            const auto has2 = [hwcap2](unsigned long flag) { return (hwcap2 & flag) != 0; };
+
+            features.SupportsAES = has(HWCAP_AES);
+            features.SupportsCRC = has(HWCAP_CRC32);
+            features.SupportsAtomics = has(HWCAP_ATOMICS);
+            features.SupportsRCPC = has(HWCAP_LRCPC);
+            features.SupportsTSOImm9 = has(HWCAP_ILRCPC);
+            features.SupportsSHA = has(HWCAP_SHA1) && has(HWCAP_SHA2);
+            features.SupportsPMULL_128Bit = has(HWCAP_PMULL);
+            features.SupportsFCMA = has(HWCAP_FCMA);
+            features.SupportsFlagM = has(HWCAP_FLAGM);
+
+            features.SupportsRAND = has2(HWCAP2_RNG);
+            features.SupportsFlagM2 = has2(HWCAP2_FLAGM2);
+            features.SupportsFRINTTS = has2(HWCAP2_FRINT);
+            features.SupportsECV = has2(HWCAP2_ECV);
+            features.SupportsAFP = has2(HWCAP2_AFP);
+            features.SupportsRPRES = has2(HWCAP2_RPRES);
+            features.SupportsWFXT = has2(HWCAP2_WFXT);
+            features.SupportsSVEBitPerm = has2(HWCAP2_SVEBITPERM);
+
+#ifdef HWCAP2_CSSC
+            features.SupportsCSSC = has2(HWCAP2_CSSC);
+#endif
+
+#ifdef HWCAP2_MOPS
+            features.SupportsMOPS = has2(HWCAP2_MOPS);
+#endif
+
+            features.SupportsSVE128 = has2(HWCAP2_SVE2);
+            if (features.SupportsSVE128)
+            {
+                const int sve_vl = ::prctl(PR_SVE_GET_VL);
+                if (sve_vl >= 0)
+                {
+                    features.SupportsSVE256 = (sve_vl & PR_SVE_VL_LEN_MASK) >= 32;
+                }
+            }
+
+            features.SupportsAVX = true;
+            features.SupportsAES256 = features.SupportsAES;
+
+            const long dcache_line = ::sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
+            const long icache_line = ::sysconf(_SC_LEVEL1_ICACHE_LINESIZE);
+            features.DCacheLineSize = dcache_line > 0 ? static_cast<uint32_t>(dcache_line) : 64;
+            features.ICacheLineSize = icache_line > 0 ? static_cast<uint32_t>(icache_line) : 64;
+            features.SupportsCacheMaintenanceOps = true;
+
+            uint64_t dczid = 0;
+            __asm__ volatile("mrs %0, dczid_el0" : "=r"(dczid));
+            features.SupportsCLZERO = (dczid & (1ULL << 4)) == 0 && (4ULL << (dczid & 0xF)) == 64;
+
             const long logical_cpus = ::sysconf(_SC_NPROCESSORS_ONLN);
             features.CPUMIDRs.assign(logical_cpus > 0 ? static_cast<size_t>(logical_cpus) : 1, 0u);
+
+            features.SupportsCPUIndexInTPIDRRO = false;
+
             return features;
         }
 #endif
