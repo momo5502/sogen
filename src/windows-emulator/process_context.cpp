@@ -674,6 +674,7 @@ namespace sogen
         buffer.write(this->raw_keyboard_target);
         buffer.write_map(this->raw_inputs);
         buffer.write(this->next_raw_input_token);
+        buffer.write_atomic(this->audio_render_event);
 
         buffer.write(this->user_handles);
         buffer.write(this->default_monitor_handle);
@@ -768,6 +769,7 @@ namespace sogen
         buffer.read(this->raw_keyboard_target);
         buffer.read_map(this->raw_inputs);
         buffer.read(this->next_raw_input_token);
+        buffer.read_atomic(this->audio_render_event);
 
         buffer.read(this->user_handles);
         buffer.read(this->default_monitor_handle);
@@ -823,6 +825,128 @@ namespace sogen
         }
 
         active_thread = this->threads.get(buffer.read<uint64_t>());
+    }
+
+    void process_context::prepare_for_state_restore(windows_emulator& win_emu)
+    {
+        for (auto& port : this->ports | std::views::values)
+        {
+            port.prepare_for_state_restore(win_emu);
+        }
+    }
+
+    void process_context::restore_after_state_restore(windows_emulator& win_emu)
+    {
+        restore_windows_after_state_restore(win_emu);
+
+        for (auto& port : this->ports | std::views::values)
+        {
+            port.restore_after_state_restore(win_emu);
+        }
+    }
+
+    void process_context::restore_windows_after_state_restore(windows_emulator& win_emu)
+    {
+        std::vector<const window*> pending{};
+        pending.reserve(this->windows.size());
+        for (const auto& [index, win] : this->windows)
+        {
+            (void)index;
+            if (win.host_surface_window)
+            {
+                pending.push_back(&win);
+            }
+        }
+
+        std::unordered_set<hwnd> created{};
+        const auto dependency_ready = [&](const hwnd handle) {
+            if (handle == 0)
+            {
+                return true;
+            }
+
+            const auto* dependency = this->windows.get(handle);
+            return !dependency || !dependency->host_surface_window || created.contains(handle);
+        };
+
+        const auto create_window = [&](const window& win) {
+            const auto child = (win.style & WS_CHILD) != 0;
+            uint32_t control_id = 0;
+            if (child)
+            {
+                if (const auto guest_window = win.guest.try_read())
+                {
+                    control_id = static_cast<uint32_t>(guest_window->wID);
+                }
+            }
+
+            win_emu.ui().create_window(ui_window_desc{
+                .handle = win.handle,
+                .parent = child ? win.parent_handle : 0,
+                .owner = child ? 0 : win.owner_handle,
+                .rect = {.left = win.x, .top = win.y, .right = win.x + win.width, .bottom = win.y + win.height},
+                .client_insets = {},
+                .class_name = std::u16string{normalize_builtin_window_class_name(win.class_name)},
+                .title = win.name,
+                .style = win.style,
+                .ex_style = win.ex_style,
+                .control_id = control_id,
+                .visible = (win.style & WS_VISIBLE) != 0,
+                .enabled = (win.style & WS_DISABLED) == 0,
+                .top_level = !child,
+            });
+            created.insert(win.handle);
+        };
+
+        while (!pending.empty())
+        {
+            bool made_progress = false;
+            for (auto it = pending.begin(); it != pending.end();)
+            {
+                const auto& win = **it;
+                if (dependency_ready(win.parent_handle) && dependency_ready(win.owner_handle))
+                {
+                    create_window(win);
+                    it = pending.erase(it);
+                    made_progress = true;
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+
+            if (!made_progress)
+            {
+                create_window(*pending.front());
+                pending.erase(pending.begin());
+            }
+        }
+
+        for (const auto& [index, win] : this->windows)
+        {
+            (void)index;
+            if (!win.host_surface_window || (win.style & WS_CHILD) != 0)
+            {
+                continue;
+            }
+
+            const auto surface = this->gdi_window_surfaces.find(static_cast<uint32_t>(win.handle));
+            if (surface == this->gdi_window_surfaces.end() || surface->second.width == 0 || surface->second.height == 0 ||
+                surface->second.pixels.empty())
+            {
+                continue;
+            }
+
+            const auto& restored = surface->second;
+            win_emu.ui().present_surface(win.handle, ui_surface_desc{
+                                                         .width = static_cast<int>(restored.width),
+                                                         .height = static_cast<int>(restored.height),
+                                                         .stride = static_cast<int>(restored.width * sizeof(uint32_t)),
+                                                         .format = ui_surface_format::bgra8,
+                                                         .pixels = restored.pixels.data(),
+                                                     });
+        }
     }
 
     generic_handle_store* process_context::get_handle_store(const handle handle)
