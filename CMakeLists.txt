@@ -66,14 +66,11 @@ endif()
 # ARM64 hosts. See docs/fex-backend.md, including its security/address-space model - FEX shares the
 # guest and host address space, unlike this project's other backends.
 # FEX is vendored as a submodule (deps/FEX, pointed at github.com/JackTYM/FEX, a fork with Darwin
-# portability patches) and built in-tree. It requires Clang and only JITs to AArch64, and on Linux
-# its headers need a libstdc++ with std::atomic_ref (the Android NDK's libc++ lacks it), so Linux is
-# restricted to ARM64 + Clang, not Android/NDK. Apple Clang's libc++ has std::atomic_ref, so Darwin
-# has no equivalent NDK-style exclusion. Enabled automatically when those hold and the submodule is
-# checked out.
+# portability patches) and built in-tree. It requires Clang, an ARM64 host, and a supported POSIX
+# platform. Enabled automatically when those hold and the submodule is checked out.
 if((CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64") AND (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/FEX/CMakeLists.txt"
-   AND ((CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID) OR CMAKE_SYSTEM_NAME STREQUAL "Darwin"))
+   AND CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin|Android)$")
   set(SOGEN_ENABLE_FEX ON)
   message(STATUS "FEX backend: enabled (ARM64 ${CMAKE_SYSTEM_NAME} + Clang, deps/FEX present)")
 else()

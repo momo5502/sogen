@@ -1704,9 +1704,9 @@ namespace sogen
                 }
 
                 const uint64_t mapped_size = (host_size + page - 1) & ~(page - 1);
-                const uint64_t va = win_emu.memory.find_free_allocation_base(static_cast<size_t>(mapped_size));
-                if (va == 0 ||
-                    !win_emu.memory.allocate_host_memory(va, static_cast<size_t>(mapped_size), host_ptr, memory_permission::read_write))
+                const uint64_t va =
+                    win_emu.memory.allocate_host_memory(static_cast<size_t>(mapped_size), host_ptr, memory_permission::read_write);
+                if (va == 0)
                 {
                     this->vulkan_.unmap_memory(request.device, request.memory);
                     return write_output(win_emu, context, response);

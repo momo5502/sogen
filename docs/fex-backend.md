@@ -1,15 +1,14 @@
 # FEX backend — development notes
 
 The FEX-Emu emulator backend (`sogen::fex`). A standalone backend that mirrors the structure of the
-other backends, selected at runtime via `EMULATOR_FEX=1`. Its functional target is **macOS on Apple
-Silicon** — [FEX](https://fex-emu.com) only JITs x86/x86-64 to ARM64.
+other backends, selected at runtime via `EMULATOR_FEX=1`. Its functional targets are **macOS on Apple
+Silicon** and **Android on AArch64** — [FEX](https://fex-emu.com) only JITs x86/x86-64 to ARM64.
 
 ## Status
 
 Working on Darwin/Apple Silicon: `test-sample.exe` runs to completion, matching the Unicorn
-backend's behavior. ARM64 Linux compiles (CI build coverage, `smoke-test-fex`'s macOS ARM64 job is
-the one with real runtime coverage) but has none of the Darwin-only runtime support below and is not
-expected to run. Android is excluded outright by the CMake gate.
+backend's behavior. Android/AArch64 is now a functional target and currently requires a 4KB host
+page. Other AArch64 Linux hosts have build coverage only and are not expected to run.
 
 ## Security / address-space model
 
@@ -31,24 +30,21 @@ inside this process, treating guest virtual addresses as host virtual addresses 
   execution possible), not a gap specific to this port. See
   [`FEX-Emu/FEX`'s own `docs/ProgrammingConcerns.md`](https://github.com/FEX-Emu/FEX/blob/main/docs/ProgrammingConcerns.md)
   and `docs/allocator_usage.md`, which state this plainly from FEX's own side.
-- This backend's own memory-manager code (`host_reserved` region tracking in
-  `windows-emulator/memory_manager.cpp`, `GDT_ADDR`'s placement in `process_context.hpp`) is a
-  mitigation, not a sandbox: it keeps ordinary guest allocations from *landing on* addresses this
-  backend or the host process needs, reducing collision risk. It does not and cannot stop a guest
-  from computing an arbitrary pointer into any other valid host-mapped memory — there is no hard
-  fault boundary for that, by design.
+- This backend's own address-space protections (`host_reserved` region tracking in
+  `windows-emulator/memory_manager.cpp`, the Apple-only FEXCore internal arena, and `GDT_ADDR`'s
+  placement in `process_context.hpp`) are mitigations, not a sandbox: they keep ordinary guest
+  allocations from *landing on* addresses this backend or the host process needs, reducing collision
+  risk. They do not and cannot stop a guest from computing an arbitrary pointer into any other valid
+  host-mapped memory — there is no hard fault boundary for that, by design.
 - Practically, this means FEX is not an appropriate backend for running guest code you do not trust
   at all to stay within its own memory — the same class of workload Unicorn/Icicle's sandboxed model
   is suited for.
 - `deps/CMakeLists.txt` explicitly disables FEX's own internal allocator
-  (`-DENABLE_FEX_ALLOCATOR=OFF`, `-DENABLE_JEMALLOC_GLIBC_ALLOC=OFF`) — sogen's own memory manager
-  owns allocation instead, everywhere, not just on this platform. This is unrelated to the
-  address-space-sharing property above (it doesn't add or remove isolation); it just means the
-  "reserve everything above 4GB" mechanism FEX's own docs describe for 32-bit guests isn't in play
-  here, and any future 32-bit/WoW64 support on this backend needs its own equivalent (see
-  `feat/wow64-fex`'s `reserve_wow64_host_window()`, which solves a different, Apple-Silicon-specific
-  problem — the mandatory unshrinkable 4GB `__PAGEZERO` segment — via guest-address rebasing, not via
-  FEX's disabled allocator).
+  (`-DENABLE_FEX_ALLOCATOR=OFF`, `-DENABLE_JEMALLOC_GLIBC_ALLOC=OFF`) — guest allocation is owned by
+  sogen's memory manager. On Apple, the backend separately installs FEXCore allocator hooks that
+  steer FEXCore's own anonymous internal mappings into a dedicated 4GiB host-reserved arena, keeping
+  them out of guest allocation ranges. This is still only a collision mitigation, not isolation.
+  WoW64/32-bit processes remain unsupported by this backend.
 
 ## Architecture
 
@@ -74,16 +70,15 @@ inside this process, treating guest virtual addresses as host virtual addresses 
 No special setup needed, unlike the KVM backend (which requires a Docker-on-Windows workaround to
 build or run at all): from an ARM64 Clang host (Apple Silicon macOS or ARM64 Linux), the ordinary
 `cmake --preset=release` picks this backend up automatically once `deps/FEX` is checked out (see the
-root `CMakeLists.txt` gate). Run with `EMULATOR_FEX=1`.
+root `CMakeLists.txt` gate). Run with `EMULATOR_FEX=1`. Android currently requires a 4KB host page.
 
 ## Known limitations
 
-- **A guest write to read-only-mapped memory via a plain (non-atomic) `STR` instruction aborts the
-  emulator instead of raising an exception in the guest.** `decode_arm64_store` only recognizes the
-  `STLR` family (load-acquire/store-release, which FEX uses to model x86's stronger memory ordering);
-  a plain `STR` to memory that's mapped read-only gets misclassified and routed through a fault-
-  recovery path that fails. Affects any guest that deliberately writes to read-only memory and
-  catches the resulting exception (packers/DRM protections do this routinely).
+- **On Darwin, a protection fault from a plain `STR`/`STUR` store can be misclassified as a read.**
+  `decode_arm64_store` deliberately recognizes only the `STLR` family; a plain store to read-only
+  memory can therefore surface as an unhandled host signal instead of a guest
+  `STATUS_ACCESS_VIOLATION`, while an unmapped plain store reaches the guest with the operation marked
+  as a read. Android avoids this specific misclassification by using the kernel-provided ESR WnR bit.
 - **`sync_host_page_apple`'s permission union can strip `PROT_EXEC` or over-grant write access near
   PE section boundaries.** Guest permissions are tracked per-4KB shadow slot but applied per-16KB
   Apple host page (four slots share one host page); when slots sharing a host page disagree, the
@@ -98,11 +93,9 @@ root `CMakeLists.txt` gate). Run with `EMULATOR_FEX=1`.
   takes a mutex also used by `kusd_mmio::access()` from normal call context. No live self-deadlock
   path exists today under the current single-cooperative-thread-per-vCPU model, but this becomes a
   real hazard once multi-vCPU FEX support matures.
-- **Two smaller, same-bug-class gaps, not introduced by the fixes above:** a fixed-address
-  `NtAllocateVirtualMemory(MEM_RESERVE, explicit_base)` never claims at the host level (only the
-  size-only allocation path does), so a foreign host allocation could still land in that range; and
-  `commit_memory` guards against committing into `section_kind`/`host_reserved` regions but has no
-  equivalent guard for a guest probing directly into other backends' reserved ranges.
+- **A smaller, same-bug-class gap remains:** `commit_memory` guards against committing into
+  `section_kind`/`host_reserved` regions but has no equivalent guard for a guest probing directly into
+  other backends' reserved ranges.
 
 ## Fixes found during bring-up and review
 

@@ -246,12 +246,10 @@ namespace sogen
                     (reinterpret_cast<uintptr_t>(this->host_storage_.data()) + (k_audio_page_size - 1)) & ~(k_audio_page_size - 1));
                 std::memcpy(this->host_ptr_, control_header, control_header_size);
 
-                this->guest_address_ = win_emu.memory.find_free_allocation_base(static_cast<size_t>(section_size));
-                if (this->guest_address_ == 0 ||
-                    !win_emu.memory.allocate_host_memory(this->guest_address_, static_cast<size_t>(section_size), this->host_ptr_,
-                                                         memory_permission::read_write))
+                this->guest_address_ =
+                    win_emu.memory.allocate_host_memory(static_cast<size_t>(section_size), this->host_ptr_, memory_permission::read_write);
+                if (this->guest_address_ == 0)
                 {
-                    this->guest_address_ = 0;
                     return;
                 }
 

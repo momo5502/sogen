@@ -1,4 +1,4 @@
-# FEX-Emu (x86 -> AArch64 JIT). Built only when the FEX backend is enabled (ARM64 Linux/Darwin +
+# FEX-Emu (x86 -> AArch64 JIT). Built only when the FEX backend is enabled (ARM64 Linux/Darwin/Android +
 # Clang, resolved at the top level). FEX is not designed to be embedded via add_subdirectory: it
 # assumes it is the top-level project (~60 uses of CMAKE_SOURCE_DIR) and configures its whole
 # loader/tools tree. Instead build it standalone via ExternalProject and consume the resulting
@@ -15,6 +15,18 @@ if(SOGEN_ENABLE_FEX)
   else()
     set(_FEXCORE_SHARED_LIB "libFEXCore.so")
     set(_FEXCORE_OSX_ARGS "")
+  endif()
+
+  if(CMAKE_TOOLCHAIN_FILE)
+    set(_FEXCORE_TOOLCHAIN_ARGS -DCMAKE_TOOLCHAIN_FILE:FILEPATH=${CMAKE_TOOLCHAIN_FILE})
+  else()
+    set(_FEXCORE_TOOLCHAIN_ARGS "")
+  endif()
+  if(CMAKE_SYSTEM_NAME STREQUAL "Android")
+    list(APPEND _FEXCORE_TOOLCHAIN_ARGS
+      -DANDROID_ABI:STRING=${CMAKE_ANDROID_ARCH_ABI}
+      -DANDROID_PLATFORM:STRING=${CMAKE_SYSTEM_VERSION}
+    )
   endif()
 
   # Propagate AddressSanitizer into the FEXCore build so the whole chain is instrumented
@@ -52,6 +64,7 @@ if(SOGEN_ENABLE_FEX)
       -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
       -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
       ${_FEXCORE_OSX_ARGS}
+      ${_FEXCORE_TOOLCHAIN_ARGS}
       ${_FEXCORE_SANITIZER_ARGS}
       ${_FEXCORE_LTO_ARGS}
       -DENABLE_CCACHE=OFF

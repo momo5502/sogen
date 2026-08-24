@@ -324,8 +324,8 @@ namespace sogen
         return true;
     }
 
-    bool memory_manager::allocate_host_memory(const uint64_t address, const size_t size, void* host_pointer,
-                                              const nt_memory_permission permissions)
+    bool memory_manager::allocate_host_memory_at(const uint64_t address, const size_t size, void* host_pointer,
+                                                 const nt_memory_permission permissions)
     {
         if (this->overlaps_reserved_region(address, size))
         {
@@ -350,6 +350,48 @@ namespace sogen
         this->update_layout_version();
 
         return true;
+    }
+
+    uint64_t memory_manager::allocate_host_memory(const size_t size, void* host_pointer, const nt_memory_permission permissions)
+    {
+        if (size == 0 || host_pointer == nullptr)
+        {
+            return 0;
+        }
+
+        const bool uses_existing_host_mapping = this->memory_->host_memory_mapping_requires_identity();
+        const uint64_t address =
+            uses_existing_host_mapping ? get_untagged_pointer_address(host_pointer) : this->find_free_host_allocation_base(size, 0);
+
+        if (address < MIN_ALLOCATION_ADDRESS || address >= MAX_ALLOCATION_END_EXCL || size > MAX_ALLOCATION_END_EXCL - address)
+        {
+            return 0;
+        }
+
+        if (this->overlaps_reserved_region(address, size, uses_existing_host_mapping))
+        {
+            return 0;
+        }
+
+        if (uses_existing_host_mapping)
+        {
+            this->carve_host_reserved_hole(address, size);
+        }
+        else
+        {
+            this->memory_->reserve_guest_address_range(address, size);
+        }
+
+        if (!this->allocate_host_memory_at(address, size, host_pointer, permissions))
+        {
+            if (!uses_existing_host_mapping)
+            {
+                this->release_host_claims(address + size);
+            }
+            return 0;
+        }
+
+        return address;
     }
 
     void memory_manager::reserve_host_memory_ranges()
@@ -429,6 +471,7 @@ namespace sogen
             }
 
             assert(it->second.committed_regions.empty());
+            const bool was_tracked = std::erase(this->host_reserved_addresses_, region_start) != 0;
             it = this->reserved_regions_.erase(it);
 
             if (region_start < address)
@@ -437,6 +480,10 @@ namespace sogen
                                                                       .length = static_cast<size_t>(address - region_start),
                                                                       .kind = memory_region_kind::host_reserved,
                                                                   });
+                if (was_tracked)
+                {
+                    this->host_reserved_addresses_.push_back(region_start);
+                }
             }
 
             if (region_end > end)
@@ -448,6 +495,10 @@ namespace sogen
                                           .kind = memory_region_kind::host_reserved,
                                       })
                          .first;
+                if (was_tracked)
+                {
+                    this->host_reserved_addresses_.push_back(end);
+                }
                 ++it;
             }
         }

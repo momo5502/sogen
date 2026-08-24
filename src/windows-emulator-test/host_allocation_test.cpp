@@ -26,6 +26,9 @@ namespace sogen::test
 
             std::vector<host_reserved_range> claimed_ranges{};
             std::vector<host_reserved_range> released_ranges{};
+            bool requires_host_identity{};
+            std::optional<uint64_t> mapped_host_address{};
+            void* mapped_host_pointer{};
 
             void reserve_guest_address_range(const uint64_t address, const size_t size) override
             {
@@ -92,6 +95,17 @@ namespace sogen::test
             {
             }
 
+            void map_host_memory(const uint64_t address, size_t, void* host_pointer, memory_permission) override
+            {
+                this->mapped_host_address = address;
+                this->mapped_host_pointer = host_pointer;
+            }
+
+            bool host_memory_mapping_requires_identity() const override
+            {
+                return this->requires_host_identity;
+            }
+
             void unmap_memory(uint64_t, size_t) override
             {
             }
@@ -138,6 +152,61 @@ namespace sogen::test
         constexpr uint64_t start = DEFAULT_ALLOCATION_ADDRESS_64BIT;
 
         ASSERT_EQ(mm.find_free_host_allocation_base(size, start), mm.find_free_allocation_base(size, start));
+    }
+
+    TEST(HostAllocationTest, AllocateHostMemoryUsesSourceAddressWhenBackendRequiresIdentity)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr size_t size = 0x2000;
+        constexpr uint64_t address = DEFAULT_ALLOCATION_ADDRESS_64BIT;
+        host.foreign_ranges.push_back({.address = address, .size = size});
+        host.requires_host_identity = true;
+        mm.reserve_host_memory_ranges();
+
+        ASSERT_EQ(mm.allocate_host_memory(size, reinterpret_cast<void*>(address), memory_permission::read_write), address);
+        ASSERT_EQ(host.mapped_host_address, address);
+        ASSERT_EQ(mm.get_region_kind(address), memory_region_kind::mmio);
+
+        mm.reset_host_memory_ranges();
+        ASSERT_EQ(mm.get_region_kind(address), memory_region_kind::mmio);
+    }
+
+#ifdef __ANDROID__
+    TEST(HostAllocationTest, AllocateHostMemoryUntagsSourceAddressOnAndroid)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr size_t size = 0x2000;
+        constexpr uint64_t address = DEFAULT_ALLOCATION_ADDRESS_64BIT;
+        constexpr uint64_t tag = 0xAB00000000000000;
+        void* const tagged_pointer = reinterpret_cast<void*>(address | tag);
+        host.foreign_ranges.push_back({.address = address, .size = size});
+        host.requires_host_identity = true;
+        mm.reserve_host_memory_ranges();
+
+        ASSERT_EQ(mm.allocate_host_memory(size, tagged_pointer, memory_permission::read_write), address);
+        ASSERT_EQ(host.mapped_host_address, address);
+        ASSERT_EQ(host.mapped_host_pointer, tagged_pointer);
+        ASSERT_EQ(mm.get_region_kind(address), memory_region_kind::mmio);
+    }
+#endif
+
+    TEST(HostAllocationTest, AllocateHostMemoryClaimsBackendSelectedAddress)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr size_t size = 0x2000;
+        const uint64_t address = mm.allocate_host_memory(size, reinterpret_cast<void*>(0x70000000), memory_permission::read_write);
+
+        ASSERT_NE(address, 0u);
+        ASSERT_EQ(host.mapped_host_address, address);
+        ASSERT_EQ(host.claimed_ranges.size(), 1u);
+        ASSERT_EQ(host.claimed_ranges.front().address, address);
+        ASSERT_EQ(host.claimed_ranges.front().size, size);
     }
 
     // Pins the windowed half of find_free_host_allocation_base's rescan: for a range the full scan
