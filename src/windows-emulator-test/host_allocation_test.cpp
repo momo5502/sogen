@@ -154,6 +154,36 @@ namespace sogen::test
         ASSERT_EQ(mm.find_free_host_allocation_base(size, start), mm.find_free_allocation_base(size, start));
     }
 
+    TEST(HostAllocationTest, FindFreeBaseSkipsDenseReservedRegions)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr uint64_t start = DEFAULT_ALLOCATION_ADDRESS_32BIT;
+        constexpr size_t region_count = 800;
+        constexpr size_t size = 0x1000;
+
+        for (size_t i = 0; i < region_count; ++i)
+        {
+            const auto address = start + i * ALLOCATION_GRANULARITY;
+            ASSERT_TRUE(mm.allocate_memory(address, size, nt_memory_permission{memory_permission::read_write}, true));
+        }
+
+        ASSERT_EQ(mm.find_free_allocation_base(size, start), start + region_count * ALLOCATION_GRANULARITY);
+    }
+
+    TEST(HostAllocationTest, FindFreeBaseMovesPastRegionContainingStart)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr uint64_t base = 0x40000000;
+        constexpr size_t reserved_size = 2 * ALLOCATION_GRANULARITY;
+        ASSERT_TRUE(mm.allocate_memory(base, reserved_size, nt_memory_permission{memory_permission::read_write}, true));
+
+        ASSERT_EQ(mm.find_free_allocation_base(0x1000, base + ALLOCATION_GRANULARITY), base + reserved_size);
+    }
+
     TEST(HostAllocationTest, AllocateHostMemoryUsesSourceAddressWhenBackendRequiresIdentity)
     {
         fake_host_memory host{};
