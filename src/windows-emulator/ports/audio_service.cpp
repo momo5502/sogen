@@ -311,8 +311,8 @@ namespace sogen
                     throw std::runtime_error("[audio-service] Cannot restore render stream: saved guest buffer address is unavailable");
                 }
 
-                if (!win_emu.memory.allocate_host_memory(this->guest_address_, static_cast<size_t>(this->section_size_), this->host_ptr_,
-                                                         memory_permission::read_write))
+                if (!win_emu.memory.allocate_host_memory_at(this->guest_address_, static_cast<size_t>(this->section_size_), this->host_ptr_,
+                                                            memory_permission::read_write))
                 {
                     throw std::runtime_error("[audio-service] Cannot restore render stream: saved guest buffer address is unavailable");
                 }
