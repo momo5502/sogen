@@ -1014,8 +1014,14 @@ namespace sogen
 
         uint64_t start_address = *aligned_start;
 
-        // Since reserved_regions_ is a sorted map, we can iterate through it
-        // and find gaps between regions
+        // Since reserved_regions_ is a sorted map, start at the region immediately
+        // before or containing start_address and advance through it only once.
+        auto region = this->reserved_regions_.upper_bound(start_address);
+        if (region != this->reserved_regions_.begin())
+        {
+            --region;
+        }
+
         while (start_address <= highest_address)
         {
             const auto end_address = start_address + size;
@@ -1024,32 +1030,31 @@ namespace sogen
                 return 0;
             }
 
-            bool conflict = false;
-
-            // Check if the proposed range [start_address, start_address+size) conflicts with any existing region
-            for (const auto& region : this->reserved_regions_)
+            while (region != this->reserved_regions_.end())
             {
-                const auto region_end = region.first + region.second.length;
-                if (region_end < region.first)
+                const auto region_end = region->first + region->second.length;
+                if (region_end < region->first)
                 {
                     return 0;
                 }
 
-                // If this region ends before our start, skip it
+                // This region ends before our candidate, so it can never conflict
+                // with this or any later candidate.
                 if (region_end <= start_address)
                 {
+                    ++region;
                     continue;
                 }
 
-                // If this region starts after our end, we're done checking (map is sorted)
-                if (region.first >= end_address)
+                // The next reserved region starts after our candidate range, so
+                // the entire range [start_address, end_address) is free.
+                if (region->first >= end_address)
                 {
-                    break;
+                    return start_address;
                 }
 
-                // Otherwise, we have a conflict
-                conflict = true;
-                // Move start_address past this conflicting region
+                // Otherwise the candidate overlaps this region. Move the candidate
+                // past it and continue scanning from the following region.
                 aligned_start = checked_align_up(region_end, alignment);
                 if (!aligned_start.has_value())
                 {
@@ -1057,12 +1062,21 @@ namespace sogen
                 }
 
                 start_address = *aligned_start;
+                ++region;
                 break;
             }
 
-            // If no conflict was found, we have our address
-            if (!conflict)
+            // No reserved regions remain, so only the address-range bounds need
+            // to be checked for the candidate we may have just advanced to.
+            if (region == this->reserved_regions_.end())
             {
+                const auto final_end_address = start_address + size;
+                if (final_end_address < start_address || final_end_address > MAX_ALLOCATION_END_EXCL ||
+                    final_end_address - 1 > highest_address)
+                {
+                    return 0;
+                }
+
                 return start_address;
             }
         }
