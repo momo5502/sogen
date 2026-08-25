@@ -13,6 +13,25 @@ namespace sogen
         uint64_t address{};
     };
 
+    struct pdb_signature
+    {
+        std::string guid{};
+        uint32_t age{};
+        std::filesystem::path path{};
+
+        bool valid() const
+        {
+            return !this->guid.empty() && this->age != 0;
+        }
+    };
+
+    struct pe_section_symbol_mapping
+    {
+        uint32_t virtual_address{};
+        uint32_t virtual_size{};
+        uint32_t raw_size{};
+    };
+
     struct imported_symbol
     {
         std::string name{};
@@ -55,8 +74,12 @@ namespace sogen
         imported_symbols imports{};
         imported_module_list imported_modules{};
         address_name_mapping address_names{};
+        address_name_mapping pdb_address_names{};
+        std::optional<pdb_signature> pdb{};
+        bool has_pdb_symbols{};
 
         std::vector<mapped_section> sections{};
+        std::vector<pe_section_symbol_mapping> pe_sections{};
 
         bool is_static{false};
 

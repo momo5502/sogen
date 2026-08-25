@@ -29,8 +29,10 @@ namespace sogen
         uint32_t vcpu{};
         uint64_t rip{};
         std::string rip_module{"<N/A>"};
+        std::optional<std::string> rip_function{};
         std::optional<uint64_t> previous_ip{};
         std::optional<std::string> previous_ip_module{};
+        std::optional<std::string> previous_ip_function{};
     };
 
     struct observation_event
@@ -264,6 +266,7 @@ namespace sogen
         std::string syscall_name{};
         std::optional<uint64_t> caller_rip{};
         std::optional<std::string> caller_module{};
+        std::optional<std::string> caller_function{};
     };
 
     struct foreign_module_read_event : observation_event
