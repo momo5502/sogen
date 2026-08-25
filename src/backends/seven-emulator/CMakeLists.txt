@@ -1,13 +1,17 @@
 # seven-emulator SOGEN backend.
-# Builds binsnake/seven-emulator's libraries (iced_x86, softfloat, seven_core) from an
+# Builds binsnake/seven-jit's libraries (iced_x86, softfloat, seven_core, seven_jit) from an
 # out-of-tree source checkout and the glue that implements SOGEN's x86_64_emulator on top of
-# seven. seven is a from-scratch C++23 x86 semantic emulator that shares the iced-x86 decoder
-# with Mergen, which makes it the reference oracle for VM devirt divergence analysis.
+# seven_jit::JitExecutor. seven_core is a from-scratch C++23 x86 semantic emulator sharing the
+# iced-x86 decoder with Mergen; seven_jit adds an asmjit-backed native-codegen fast path on top
+# (JIT-compiled hot blocks, interpreter fallback for anything uncovered), which is what makes this
+# the reference oracle for VM devirt divergence analysis fast enough to use as the default trace
+# backend instead of unicorn.
 
-set(SEVEN_ROOT "C:/Users/vanilla/Desktop/alpha/claude/seven-emulator" CACHE PATH "seven-emulator source root")
+set(SEVEN_ROOT "C:/Users/vanilla/Desktop/alpha/binsnake/seven-jit" CACHE PATH "seven-jit source root")
+set(SEVEN_VENDOR "${SEVEN_ROOT}/vendor/seven-emulator")
 
-if(NOT EXISTS "${SEVEN_ROOT}/seven_core/include")
-  message(FATAL_ERROR "SEVEN_ROOT does not point at a seven-emulator checkout: ${SEVEN_ROOT}")
+if(NOT EXISTS "${SEVEN_VENDOR}/seven_core/include")
+  message(FATAL_ERROR "SEVEN_ROOT does not point at a seven-jit checkout: ${SEVEN_ROOT}")
 endif()
 
 # SIMD profile — match seven's AVX512 default (emulated in software via wide-integer).
@@ -16,9 +20,20 @@ set(_SEVEN_VBITS 512)
 set(_SEVEN_VBYTES 64)
 
 # ---- softfloat (C) ----
+# seven-jit no longer vendors this locally (it FetchContents the same upstream repo at build time,
+# see its top-level CMakeLists.txt) -- match that here instead of expecting a local third_party/ copy.
 if(NOT TARGET softfloat)
-  set(_SF "${SEVEN_ROOT}/third_party/softfloat")
-  file(GLOB _SF_SRCS "${_SF}/source/*.c" "${_SF}/source/8086/*.c")
+  include(FetchContent)
+  FetchContent_Declare(
+    softfloat
+    GIT_REPOSITORY https://github.com/ucb-bar/berkeley-softfloat-3.git
+    GIT_TAG        master
+  )
+  FetchContent_GetProperties(softfloat)
+  if(NOT softfloat_POPULATED)
+    FetchContent_Populate(softfloat)
+  endif()
+  file(GLOB _SF_SRCS "${softfloat_SOURCE_DIR}/source/*.c" "${softfloat_SOURCE_DIR}/source/8086/*.c")
   list(FILTER _SF_SRCS EXCLUDE REGEX "M\\.c$")
   list(FILTER _SF_SRCS EXCLUDE REGEX "M_")
   set(_SF_PLATDIR "${CMAKE_BINARY_DIR}/softfloat_platform")
@@ -29,7 +44,7 @@ if(NOT TARGET softfloat)
     file(WRITE "${_SF_PLATDIR}/platform.h" "#define LITTLEENDIAN 1\n#define INLINE static inline\n#define SOFTFLOAT_BUILTIN_CLZ 1\n")
   endif()
   add_library(softfloat STATIC ${_SF_SRCS})
-  target_include_directories(softfloat PUBLIC "${_SF}/source/include" "${_SF}/source/8086")
+  target_include_directories(softfloat PUBLIC "${softfloat_SOURCE_DIR}/source/include" "${softfloat_SOURCE_DIR}/source/8086")
   target_include_directories(softfloat PRIVATE "${_SF_PLATDIR}")
   target_compile_definitions(softfloat PUBLIC SOFTFLOAT_FAST_INT64)
   sogen_target_disable_warnings(softfloat)
@@ -42,7 +57,7 @@ endif()
 
 # ---- iced_x86 (C++) ----
 if(NOT TARGET iced_x86)
-  set(_ICED "${SEVEN_ROOT}/iced_x86/src/iced_x86/src")
+  set(_ICED "${SEVEN_VENDOR}/iced_x86/src/iced_x86/src")
   add_library(iced_x86 STATIC
     ${_ICED}/block_encoder.cpp ${_ICED}/decoder.cpp ${_ICED}/encoder.cpp
     ${_ICED}/encoder_handlers.cpp ${_ICED}/encoder_methods.cpp ${_ICED}/encoder_ops.cpp
@@ -51,7 +66,7 @@ if(NOT TARGET iced_x86)
     ${_ICED}/intel_formatter.cpp ${_ICED}/masm_formatter.cpp ${_ICED}/memory_size_info.cpp
     ${_ICED}/mvex_info_data.cpp ${_ICED}/nasm_formatter.cpp ${_ICED}/op_code_info.cpp
     ${_ICED}/register_info.cpp ${_ICED}/table_deserializer.cpp ${_ICED}/tables.cpp)
-  target_include_directories(iced_x86 PUBLIC "${SEVEN_ROOT}/iced_x86/include")
+  target_include_directories(iced_x86 PUBLIC "${SEVEN_VENDOR}/iced_x86/include")
   target_compile_definitions(iced_x86 PUBLIC _CRT_SECURE_NO_WARNINGS ICED_X86_CONSTEXPR_HANDLERS=0)
   target_compile_features(iced_x86 PUBLIC cxx_std_23)   # iced uses std::expected (C++23)
   sogen_target_disable_warnings(iced_x86)
@@ -63,9 +78,9 @@ endif()
 
 # ---- seven_core (C++23) ----
 if(NOT TARGET seven_core)
-  file(GLOB_RECURSE _SEVEN_SRCS CONFIGURE_DEPENDS "${SEVEN_ROOT}/seven_core/src/*.cpp")
+  file(GLOB_RECURSE _SEVEN_SRCS CONFIGURE_DEPENDS "${SEVEN_VENDOR}/seven_core/src/*.cpp")
   add_library(seven_core STATIC ${_SEVEN_SRCS})
-  target_include_directories(seven_core PUBLIC "${SEVEN_ROOT}/seven_core/include" "${SEVEN_ROOT}")
+  target_include_directories(seven_core PUBLIC "${SEVEN_VENDOR}/seven_core/include" "${SEVEN_VENDOR}")
   target_link_libraries(seven_core PUBLIC iced_x86 softfloat)
   target_compile_features(seven_core PUBLIC cxx_std_23)
   target_compile_definitions(seven_core PUBLIC
@@ -78,6 +93,43 @@ if(NOT TARGET seven_core)
     target_compile_options(seven_core PRIVATE /sdl- /WX-)
   endif()
   sogen_target_disable_warnings(seven_core)
+endif()
+
+# ---- asmjit (C++, Phase 2 native codegen backend for seven_jit) ----
+if(NOT TARGET asmjit::asmjit)
+  set(ASMJIT_STATIC ON CACHE BOOL "" FORCE)
+  set(ASMJIT_TEST OFF CACHE BOOL "" FORCE)
+  # Embedded inside SOGEN's bigger CMake tree (which has its own install()/export() rules), asmjit's
+  # own install() rules trip a CMake generate-time check ("INTERFACE_INCLUDE_DIRECTORIES ... which is
+  # prefixed in the build directory") over its FetchContent-fetched include path -- a problem
+  # seven-jit's own standalone build never hits since it has no install()/export() of its own. Not
+  # needed here anyway -- nothing in this build ever installs asmjit as a package.
+  set(ASMJIT_NO_INSTALL ON CACHE BOOL "" FORCE)
+  FetchContent_Declare(
+    asmjit
+    GIT_REPOSITORY https://github.com/asmjit/asmjit.git
+    GIT_TAG        master
+  )
+  FetchContent_MakeAvailable(asmjit)
+  if(MSVC)
+    target_compile_options(asmjit PRIVATE /sdl- /WX-)
+  endif()
+  sogen_target_disable_warnings(asmjit)
+endif()
+
+# ---- seven_jit (C++23): asmjit-backed native codegen on top of seven_core ----
+if(NOT TARGET seven_jit)
+  add_library(seven_jit STATIC
+    "${SEVEN_ROOT}/seven_jit/src/block_compiler.cpp"
+    "${SEVEN_ROOT}/seven_jit/src/jit_executor.cpp")
+  target_include_directories(seven_jit PUBLIC "${SEVEN_ROOT}/seven_jit/include")
+  target_link_libraries(seven_jit PUBLIC seven_core asmjit::asmjit)
+  target_compile_features(seven_jit PUBLIC cxx_std_23)
+  if(MSVC)
+    target_compile_options(seven_jit PUBLIC /Zc:__cplusplus /permissive- /EHsc)
+    target_compile_options(seven_jit PRIVATE /sdl- /WX-)
+  endif()
+  sogen_target_disable_warnings(seven_jit)
 endif()
 
 # ---- seven-emulator glue (implements SOGEN x86_64_emulator) ----
@@ -97,7 +149,7 @@ if(MSVC)
 endif()
 
 target_link_libraries(seven-emulator PUBLIC emulator)
-target_link_libraries(seven-emulator PRIVATE emulator-common seven_core)
+target_link_libraries(seven-emulator PRIVATE emulator-common seven_core seven_jit)
 
 # seven headers are third-party; keep SOGEN's /WX off this TU.
 sogen_target_disable_warnings(seven-emulator)

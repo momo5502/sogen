@@ -35,6 +35,7 @@
 #include <seven/compat.hpp>
 #include <seven/handler_helpers.hpp>
 #include <seven/x87_encoding.hpp>
+#include <seven_jit/jit_executor.hpp>
 #include <utils/object.hpp>
 
 namespace seven_backend {
@@ -448,7 +449,7 @@ class seven_x86_64_emulator final : public x86_64_emulator {
       return false;
     }();
     if (trace_testproject) {
-      testproject_trace_hook_id_ = executor_.add_instruction_hook([](seven::InstructionHookContext& ctx) {
+      testproject_trace_hook_id_ = executor_.interpreter().add_instruction_hook([](seven::InstructionHookContext& ctx) {
         constexpr std::uint64_t kStart = 0x1400058A0ull;
         constexpr std::uint64_t kEnd = 0x140006000ull;
         if (ctx.state.rip >= kStart && ctx.state.rip < kEnd) {
@@ -474,7 +475,7 @@ class seven_x86_64_emulator final : public x86_64_emulator {
     }();
     if (trace_unique_instructions) {
       unique_instruction_trace_enabled_ = true;
-      unique_instruction_trace_hook_id_ = executor_.add_instruction_hook([this](seven::InstructionHookContext& ctx) {
+      unique_instruction_trace_hook_id_ = executor_.interpreter().add_instruction_hook([this](seven::InstructionHookContext& ctx) {
         const auto code = static_cast<std::uint32_t>(ctx.instr.code());
         if (unique_instruction_ids_.find(code) == unique_instruction_ids_.end()) {
           const auto mnemonic = static_cast<std::uint32_t>(ctx.instr.mnemonic());
@@ -506,7 +507,7 @@ class seven_x86_64_emulator final : public x86_64_emulator {
                    count,
                    static_cast<unsigned long long>(state_.rip));
     }
-    executor_.clear_stop_request();
+    executor_.interpreter().clear_stop_request();
     if (count == 0) {
       // Run unbounded execution in slices so request_stop() can preempt
       // thread spins (windows_emulator uses stop() to yield on timeslice).
@@ -549,7 +550,7 @@ class seven_x86_64_emulator final : public x86_64_emulator {
     if (seven_backend_verbose_enabled()) {
       std::fprintf(stderr, "[seven-backend] stop() requested\n");
     }
-    executor_.request_stop();
+    executor_.interpreter().request_stop();
   }
 
   void load_gdt(pointer_type address, uint32_t limit) override {
@@ -850,7 +851,7 @@ class seven_x86_64_emulator final : public x86_64_emulator {
   emulator_hook* hook_instruction(int instruction_type, instruction_hook_callback callback) override {
     seven::TrapKind trap{};
     if (!map_instruction_trap(instruction_type, trap)) return make_local_hook();
-    const auto id = executor_.add_trap_hook(trap, [cb = std::move(callback), this](seven::TrapHookContext& ctx) {
+    const auto id = executor_.interpreter().add_trap_hook(trap, [cb = std::move(callback), this](seven::TrapHookContext& ctx) {
       const auto trap_rip = ctx.state.rip;
       uint64_t data{};
       if (ctx.kind == seven::TrapKind::cpuid) {
@@ -889,7 +890,7 @@ class seven_x86_64_emulator final : public x86_64_emulator {
 
   emulator_hook* hook_basic_block(basic_block_hook_callback callback) override {
     auto state = std::make_shared<basic_block_hook_state>();
-    const auto id = executor_.add_instruction_hook([cb = std::move(callback), state = std::move(state), this](seven::InstructionHookContext& ctx) {
+    const auto id = executor_.interpreter().add_instruction_hook([cb = std::move(callback), state = std::move(state), this](seven::InstructionHookContext& ctx) {
       const bool block_start = state->first || !state->fallthrough_valid || ctx.state.rip != state->fallthrough_rip;
       if (block_start) {
         cb(*this, summarize_basic_block(ctx.state, ctx.memory, ctx.state.rip));
@@ -905,7 +906,7 @@ class seven_x86_64_emulator final : public x86_64_emulator {
   }
 
   emulator_hook* hook_interrupt(interrupt_hook_callback callback) override {
-    const auto id = executor_.add_trap_hook(seven::TrapKind::interrupt, [cb = std::move(callback), this](seven::TrapHookContext& ctx) {
+    const auto id = executor_.interpreter().add_trap_hook(seven::TrapKind::interrupt, [cb = std::move(callback), this](seven::TrapHookContext& ctx) {
       const auto maybe_vector = interrupt_vector_from_instruction(ctx);
       if (!maybe_vector.has_value()) {
         return seven::TrapHookResult{};
@@ -924,7 +925,7 @@ class seven_x86_64_emulator final : public x86_64_emulator {
   }
 
   emulator_hook* hook_memory_violation(memory_violation_hook_callback callback) override {
-    const auto id = executor_.add_fault_hook([cb = std::move(callback), this](const seven::FaultHookEvent& event) {
+    const auto id = executor_.interpreter().add_fault_hook([cb = std::move(callback), this](const seven::FaultHookEvent& event) {
       if (event.result.reason != seven::StopReason::page_fault &&
           event.result.reason != seven::StopReason::general_protection) {
         return seven::FaultHookAction::stop;
@@ -969,15 +970,15 @@ class seven_x86_64_emulator final : public x86_64_emulator {
 
   emulator_hook* hook_memory_range_execution(uint64_t address, uint64_t size, memory_execution_hook_callback callback) override {
     if (address == 0 && size == std::numeric_limits<uint64_t>::max()) {
-      const auto id = executor_.add_execution_hook([cb = std::move(callback), this](std::uint64_t rip) { cb(*this, rip); });
+      const auto id = executor_.interpreter().add_execution_hook([cb = std::move(callback), this](std::uint64_t rip) { cb(*this, rip); });
       return make_executor_hook(id);
     }
     if (size == 1) {
-      const auto id = executor_.add_execution_hook(address, [cb = std::move(callback), this](std::uint64_t rip) { cb(*this, rip); });
+      const auto id = executor_.interpreter().add_execution_hook(address, [cb = std::move(callback), this](std::uint64_t rip) { cb(*this, rip); });
       return make_executor_hook(id);
     }
     const uint64_t end = address + size;
-    const auto id = executor_.add_execution_hook([cb = std::move(callback), address, end, this](std::uint64_t rip) {
+    const auto id = executor_.interpreter().add_execution_hook([cb = std::move(callback), address, end, this](std::uint64_t rip) {
       if (rip >= address && rip < end) cb(*this, rip);
     });
     return make_executor_hook(id);
@@ -1017,7 +1018,7 @@ class seven_x86_64_emulator final : public x86_64_emulator {
     const auto* target = reinterpret_cast<hook_object*>(hook);
     auto it = std::find_if(hooks_.begin(), hooks_.end(), [target](const auto& entry) { return entry.get() == target; });
     if (it == hooks_.end()) return;
-    if ((*it)->hook_kind == hook_object::kind::executor) (void)executor_.remove_hook((*it)->executor_id);
+    if ((*it)->hook_kind == hook_object::kind::executor) (void)executor_.interpreter().remove_hook((*it)->executor_id);
     if ((*it)->hook_kind == hook_object::kind::memory) (void)memory_.remove_access_hook((*it)->memory_id);
     hooks_.erase(it);
   }
@@ -1190,7 +1191,7 @@ class seven_x86_64_emulator final : public x86_64_emulator {
     }
   }
 
-  bool has_violation() const override { return executor_.has_violation(); }
+  bool has_violation() const override { return executor_.interpreter().has_violation(); }
   bool supports_instruction_counting() const override { return true; }
   // seven is an interpreter: stop() must be cooperative from the CPU thread (request_stop sets a
   // flag polled by the run loop), so cross-thread cancellation is not advertised as safe.
@@ -1233,7 +1234,14 @@ class seven_x86_64_emulator final : public x86_64_emulator {
 
   seven::CpuState state_{};
   seven::Memory memory_{};
-  seven::Executor executor_{};
+  // JIT-backed: seven_jit::JitExecutor wraps a plain seven::Executor (reachable via .interpreter())
+  // and adds a native-codegen fast path for spans BlockCompiler can cover, falling back to the
+  // interpreter one instruction at a time for everything else -- same hook/trap fidelity either way,
+  // only throughput on the covered subset changes. run()'s signature is identical to
+  // seven::Executor::run()'s, so start()'s executor_.run(...) call below needed no change; every
+  // hook-registration/state-query call does, since JitExecutor doesn't re-expose that surface itself
+  // (see seven_jit/jit_executor.hpp) -- it goes through executor_.interpreter() instead.
+  seven_jit::JitExecutor executor_{};
   seven::ExecutionResult last_result_{};
   std::vector<std::unique_ptr<hook_object>> hooks_{};
   std::vector<mmio_binding> mmio_bindings_{};
