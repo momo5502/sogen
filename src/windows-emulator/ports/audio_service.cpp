@@ -6,6 +6,7 @@
 #include "../registry/registry_utils.hpp"
 
 #include <platform/unicode.hpp>
+#include <utils/finally.hpp>
 
 namespace sogen
 {
@@ -232,18 +233,54 @@ namespace sogen
         // backend from a foreign thread (which is not thread-safe).
         class render_stream
         {
+            enum class worker_status
+            {
+                running,
+                pause_requested,
+                paused,
+                stopping,
+            };
+
           public:
+            struct state
+            {
+                stream_audio_format format{};
+                uint32_t buffer_bytes{};
+                uint64_t section_size{};
+                uint64_t guest_address{};
+                uint64_t submitted{};
+                std::vector<uint8_t> contents{};
+
+                void serialize(utils::buffer_serializer& buffer) const
+                {
+                    buffer.write(this->format);
+                    buffer.write(this->buffer_bytes);
+                    buffer.write(this->section_size);
+                    buffer.write(this->guest_address);
+                    buffer.write(this->submitted);
+                    buffer.write_vector(this->contents);
+                }
+
+                void deserialize(utils::buffer_deserializer& buffer)
+                {
+                    buffer.read(this->format);
+                    buffer.read(this->buffer_bytes);
+                    buffer.read(this->section_size);
+                    buffer.read(this->guest_address);
+                    buffer.read(this->submitted);
+                    buffer.read_vector(this->contents);
+                }
+            };
+
             render_stream(windows_emulator& win_emu, const stream_audio_format& format, const uint32_t buffer_bytes,
                           const uint64_t section_size, const uint8_t* control_header, const size_t control_header_size)
                 : win_emu_(win_emu),
-                  format_(format.host_format),
-                  average_bytes_per_second_(format.average_bytes_per_second),
+                  stream_format_(format),
                   buffer_bytes_(buffer_bytes),
                   section_size_(section_size),
                   host_storage_(static_cast<size_t>(section_size) + k_audio_page_size)
             {
-                this->host_ptr_ = reinterpret_cast<uint8_t*>(
-                    (reinterpret_cast<uintptr_t>(this->host_storage_.data()) + (k_audio_page_size - 1)) & ~(k_audio_page_size - 1));
+                this->initialize_host_storage();
                 std::memcpy(this->host_ptr_, control_header, control_header_size);
 
                 this->guest_address_ =
@@ -253,18 +290,48 @@ namespace sogen
                     return;
                 }
 
-                this->thread_ = std::thread(&render_stream::run, this);
+                this->mapped_ = true;
+                this->start();
+            }
+
+            render_stream(windows_emulator& win_emu, state restored)
+                : win_emu_(win_emu),
+                  stream_format_(restored.format),
+                  buffer_bytes_(restored.buffer_bytes),
+                  section_size_(restored.section_size),
+                  guest_address_(restored.guest_address),
+                  submitted_(restored.submitted),
+                  host_storage_(validated_storage_size(restored))
+            {
+                this->initialize_host_storage();
+                std::memcpy(this->host_ptr_, restored.contents.data(), restored.contents.size());
+
+                if (!win_emu.memory.host_window_is_free(this->guest_address_, static_cast<size_t>(this->section_size_)))
+                {
+                    throw std::runtime_error("[audio-service] Cannot restore render stream: saved guest buffer address is unavailable");
+                }
+
+                if (!win_emu.memory.allocate_host_memory_at(this->guest_address_, static_cast<size_t>(this->section_size_), this->host_ptr_,
+                                                            memory_permission::read_write))
+                {
+                    throw std::runtime_error("[audio-service] Cannot restore render stream: saved guest buffer address is unavailable");
+                }
+
+                this->mapped_ = true;
+                // The prior backend queue is opaque and no longer exists, so only samples not submitted before the snapshot remain pending.
+                this->write_play_cursor(std::max(this->read_cursor(k_play_cursor_offset), this->submitted_));
             }
 
             ~render_stream()
             {
-                this->stop_ = true;
+                this->worker_status_.store(worker_status::stopping, std::memory_order_release);
+                this->worker_status_.notify_all();
                 if (this->thread_.joinable())
                 {
                     this->thread_.join();
                 }
 
-                if (this->guest_address_)
+                if (this->mapped_)
                 {
                     this->win_emu_.audio().stop();
                     this->win_emu_.memory.release_memory(this->guest_address_, static_cast<size_t>(this->section_size_));
@@ -281,8 +348,75 @@ namespace sogen
                 return this->guest_address_;
             }
 
+            void start()
+            {
+                this->thread_ = std::thread(&render_stream::run, this);
+            }
+
+            state snapshot_state() const
+            {
+                auto status = worker_status::running;
+                while (!this->worker_status_.compare_exchange_strong(status, worker_status::pause_requested, std::memory_order_acq_rel,
+                                                                     std::memory_order_acquire))
+                {
+                    if (status == worker_status::stopping)
+                    {
+                        throw std::runtime_error("[audio-service] Cannot snapshot a stopping render stream");
+                    }
+
+                    this->worker_status_.wait(status, std::memory_order_acquire);
+                    status = worker_status::running;
+                }
+
+                status = this->worker_status_.load(std::memory_order_acquire);
+                while (status == worker_status::pause_requested)
+                {
+                    this->worker_status_.wait(status, std::memory_order_acquire);
+                    status = this->worker_status_.load(std::memory_order_acquire);
+                }
+
+                if (status != worker_status::paused)
+                {
+                    throw std::runtime_error("[audio-service] Render stream stopped while taking a snapshot");
+                }
+
+                const auto resume_worker = utils::finally([this] {
+                    auto expected = worker_status::paused;
+                    this->worker_status_.compare_exchange_strong(expected, worker_status::running, std::memory_order_release,
+                                                                 std::memory_order_relaxed);
+                    this->worker_status_.notify_all();
+                });
+
+                state result{};
+                result.format = this->stream_format_;
+                result.buffer_bytes = this->buffer_bytes_;
+                result.section_size = this->section_size_;
+                result.guest_address = this->guest_address_;
+                result.submitted = this->submitted_;
+                result.contents.assign(this->host_ptr_, this->host_ptr_ + this->section_size_);
+                return result;
+            }
+
           private:
             static constexpr size_t k_audio_page_size = 0x1000;
+
+            static size_t validated_storage_size(const state& restored)
+            {
+                if (restored.section_size > std::numeric_limits<size_t>::max() - k_audio_page_size ||
+                    restored.contents.size() != restored.section_size || restored.section_size < k_render_data_offset ||
+                    restored.buffer_bytes == 0 || restored.buffer_bytes > restored.section_size - k_render_data_offset)
+                {
+                    throw std::runtime_error("[audio-service] Cannot restore invalid render stream storage");
+                }
+
+                return static_cast<size_t>(restored.section_size) + k_audio_page_size;
+            }
+
+            void initialize_host_storage()
+            {
+                this->host_ptr_ = reinterpret_cast<uint8_t*>(
+                    (reinterpret_cast<uintptr_t>(this->host_storage_.data()) + (k_audio_page_size - 1)) & ~(k_audio_page_size - 1));
+            }
 
             uint64_t read_cursor(const uint32_t offset) const
             {
@@ -298,15 +432,36 @@ namespace sogen
 
             void run()
             {
-                uint64_t submitted = 0;
                 bool tried_start = false;
                 bool has_device = false;
+                uint64_t play_base{};
                 std::chrono::steady_clock::time_point anchor{};
                 std::chrono::steady_clock::time_point last_signal{};
 
-                while (!this->stop_)
+                while (true)
                 {
                     std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+                    auto status = this->worker_status_.load(std::memory_order_acquire);
+                    if (status == worker_status::stopping)
+                    {
+                        break;
+                    }
+                    if (status == worker_status::pause_requested)
+                    {
+                        if (this->worker_status_.compare_exchange_strong(status, worker_status::paused, std::memory_order_acq_rel,
+                                                                         std::memory_order_acquire))
+                        {
+                            this->worker_status_.notify_all();
+                            this->worker_status_.wait(worker_status::paused, std::memory_order_acquire);
+                        }
+
+                        if (this->worker_status_.load(std::memory_order_acquire) == worker_status::stopping)
+                        {
+                            break;
+                        }
+                        continue;
+                    }
 
                     const auto write = this->read_cursor(k_write_cursor_offset);
                     if (write == 0)
@@ -316,8 +471,9 @@ namespace sogen
 
                     if (!tried_start)
                     {
-                        has_device = this->win_emu_.audio().start(this->format_);
+                        has_device = this->win_emu_.audio().start(this->stream_format_.host_format);
                         tried_start = true;
+                        play_base = this->read_cursor(k_play_cursor_offset);
                         anchor = std::chrono::steady_clock::now();
                     }
 
@@ -325,7 +481,7 @@ namespace sogen
 
                     if (has_device)
                     {
-                        for (uint64_t pos = submitted; pos < write;)
+                        for (uint64_t pos = this->submitted_; pos < write;)
                         {
                             const uint64_t ring_offset = pos % this->buffer_bytes_;
                             const uint64_t chunk = std::min<uint64_t>(write - pos, this->buffer_bytes_ - ring_offset);
@@ -343,14 +499,15 @@ namespace sogen
                         if (const auto queued = this->win_emu_.audio().queued_bytes())
                         {
                             const auto consumed = write > *queued ? write - *queued : 0;
-                            const auto cushion = this->average_bytes_per_second_ * k_host_queue_cushion_ms / 1000;
+                            const auto cushion = this->stream_format_.average_bytes_per_second * k_host_queue_cushion_ms / 1000;
                             played = consumed + cushion;
                         }
                         else
                         {
                             const auto elapsed_ns =
                                 std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - anchor).count();
-                            played = this->average_bytes_per_second_ * static_cast<uint64_t>(elapsed_ns) / k_ns_per_second;
+                            played = play_base +
+                                     this->stream_format_.average_bytes_per_second * static_cast<uint64_t>(elapsed_ns) / k_ns_per_second;
                         }
                         play = std::min(played, write);
                     }
@@ -377,21 +534,22 @@ namespace sogen
                         last_signal = now;
                     }
 
-                    submitted = write;
+                    this->submitted_ = write;
                 }
             }
 
             static constexpr uint64_t k_ns_per_second = 1'000'000'000ULL;
 
             windows_emulator& win_emu_;
-            audio_format format_{};
-            uint64_t average_bytes_per_second_{};
+            stream_audio_format stream_format_{};
             uint32_t buffer_bytes_{};
             uint64_t section_size_{};
             uint64_t guest_address_{0};
+            uint64_t submitted_{};
             std::vector<uint8_t> host_storage_;
             uint8_t* host_ptr_{nullptr};
-            std::atomic<bool> stop_{false};
+            bool mapped_{};
+            mutable std::atomic<worker_status> worker_status_{worker_status::running};
             std::thread thread_;
         };
 
@@ -412,7 +570,7 @@ namespace sogen
                     case k_audio_opnum_get_device_period:
                         return handle_get_device_period(writer);
                     case k_audio_opnum_destroy_stream:
-                        this->render_stream_.reset();
+                        this->discard_render_stream(win_emu);
                         this->stream_format_.reset();
                         return handle_post_create(writer);
                     case k_audio_opnum_open_stream:
@@ -454,9 +612,90 @@ namespace sogen
                 }
             }
 
+            void serialize_object(utils::buffer_serializer& buffer) const override
+            {
+                rpc_port::serialize_object(buffer);
+                buffer.write_optional(this->stream_format_);
+                buffer.write(this->render_stream_ != nullptr);
+                if (this->render_stream_)
+                {
+                    buffer.write(this->render_stream_->snapshot_state());
+                }
+                buffer.write(this->render_section_handle_);
+            }
+
+            void deserialize_object(utils::buffer_deserializer& buffer) override
+            {
+                rpc_port::deserialize_object(buffer);
+                buffer.read_optional(this->stream_format_);
+                this->render_stream_.reset();
+                this->restored_stream_.reset();
+                if (buffer.read<bool>())
+                {
+                    this->restored_stream_.emplace(buffer.read<render_stream::state>());
+                }
+                buffer.read(this->render_section_handle_);
+            }
+
+            void prepare_for_state_restore(windows_emulator& win_emu) override
+            {
+                this->render_stream_.reset();
+                this->restored_stream_.reset();
+                if (auto* section = win_emu.process.sections.get(this->render_section_handle_))
+                {
+                    section->backing_address = 0;
+                }
+                this->render_section_handle_ = {};
+            }
+
+            void restore_after_state_restore(windows_emulator& win_emu) override
+            {
+                if (!this->restored_stream_)
+                {
+                    if (this->render_section_handle_.bits != 0)
+                    {
+                        throw std::runtime_error("[audio-service] Cannot restore render stream: section exists without stream state");
+                    }
+                    return;
+                }
+
+                if (!this->stream_format_)
+                {
+                    throw std::runtime_error("[audio-service] Cannot restore render stream: negotiated format is missing");
+                }
+
+                auto* section = win_emu.process.sections.get(this->render_section_handle_);
+                if (!section || section->backing_address != this->restored_stream_->guest_address)
+                {
+                    throw std::runtime_error("[audio-service] Cannot restore render stream: section metadata is inconsistent");
+                }
+
+                auto restored = std::make_unique<render_stream>(win_emu, std::move(*this->restored_stream_));
+
+                section->backing_address = restored->guest_address();
+
+                this->render_stream_ = std::move(restored);
+                this->restored_stream_.reset();
+
+                this->render_stream_->start();
+            }
+
           private:
             std::unique_ptr<render_stream> render_stream_{};
             std::optional<stream_audio_format> stream_format_{};
+            std::optional<render_stream::state> restored_stream_{};
+            handle render_section_handle_{};
+
+            void discard_render_stream(windows_emulator& win_emu)
+            {
+                this->render_stream_.reset();
+                this->restored_stream_.reset();
+                if (auto* section = win_emu.process.sections.get(this->render_section_handle_))
+                {
+                    section->backing_address = 0;
+                }
+                this->render_section_handle_ = {};
+            }
 
             // {D574D111} opnum 0: AudioServerGetMixFormat(endpointId, VadServerSettings*, [out] WAVEFORMATEX**).
             // The [out] format is an FC_CSTRUCT (18-byte WAVEFORMATEX base + cbSize-conformant tail) behind a
@@ -672,6 +911,7 @@ namespace sogen
                 // Back the render section with a host-owned buffer aliased into the guest and drained by a host
                 // thread (see render_stream). The guest maps this same memory as the shared audio buffer, so the
                 // drain thread reads the committed PCM and advances the play cursor without any CPU-backend hooks.
+                this->discard_render_stream(win_emu);
                 this->render_stream_ = std::make_unique<render_stream>(win_emu, format, buffer_bytes, render_section_size,
                                                                        render_control_header.data(), render_control_header.size());
                 const auto backing = this->render_stream_->guest_address();
@@ -683,6 +923,7 @@ namespace sogen
                 render_section.backing_address = backing;
 
                 const auto section_handle = win_emu.process.sections.store(std::move(render_section));
+                this->render_section_handle_ = section_handle;
 
                 // Deliver the render section. The op7 NDR references it as an sh_section handle (the _Struct_9
                 // union arm). rpcrt4!LRPC_SYSTEM_HANDLE_DATA::GetSystemHandle requires the handle's ObjectType
