@@ -1,4 +1,4 @@
-#include "pdb_symbol_loader.hpp"
+#include "pdb_symbol_source.hpp"
 
 #include <windows_emulator.hpp>
 #include <utils/buffer_accessor.hpp>
@@ -313,29 +313,6 @@ namespace sogen
             }
 
             return std::nullopt;
-        }
-
-        std::optional<uint32_t> section_offset_to_rva(const mapped_module& mod, const uint32_t section_index, const uint32_t offset)
-        {
-            if (section_index == 0 || section_index > mod.pe_sections.size())
-            {
-                return std::nullopt;
-            }
-
-            const auto& section = mod.pe_sections[section_index - 1];
-            const auto section_size = std::max(section.virtual_size, section.raw_size);
-            if (section_size != 0 && offset > section_size)
-            {
-                return std::nullopt;
-            }
-
-            const auto rva = section.virtual_address + offset;
-            if (rva >= mod.size_of_image)
-            {
-                return std::nullopt;
-            }
-
-            return rva;
         }
 
         std::optional<std::pair<uint32_t, uint32_t>> parse_section_offset(const std::string_view line)
@@ -1131,22 +1108,15 @@ namespace sogen
             return std::nullopt;
         }
 
-        bool merge_symbols(mapped_module& mod, const parsed_pdb& pdb)
+        void merge_symbols(loaded_symbols& result, const mapped_module& mod, const parsed_pdb& pdb)
         {
-            bool merged_any = false;
             for (const auto& [address, name] : pdb.symbols)
             {
-                const auto rva = section_offset_to_rva(mod, address.first, address.second);
-                if (!rva)
+                if (const auto rva = symbol_address_to_rva(mod, address.first, address.second))
                 {
-                    continue;
+                    result.address_names.try_emplace(*rva, name);
                 }
-
-                mod.pdb_address_names.try_emplace(mod.image_base + *rva, name);
-                merged_any = true;
             }
-
-            return merged_any;
         }
 
         bool matches_module(const mapped_module& mod, const parsed_pdb& pdb)
@@ -1154,20 +1124,9 @@ namespace sogen
             return mod.pdb && normalize_guid(mod.pdb->guid) == normalize_guid(pdb.signature.guid);
         }
 
-        bool should_load_symbols_for_module(const windows_emulator& win_emu, const mapped_module& mod, const pdb_symbol_options& options,
-                                            const bool for_callers)
-        {
-            if (for_callers)
-            {
-                return options.use_for_callers();
-            }
-
-            return options.use_for_trace() &&
-                   (options.verbose_logging || win_emu.mod_manager.executable == &mod || options.interesting_modules.contains(mod.name));
-        }
     }
 
-    pdb_symbol_loader::pdb_symbol_loader(windows_emulator& win_emu, pdb_symbol_options options)
+    pdb_symbol_source::pdb_symbol_source(windows_emulator& win_emu, pdb_symbol_options options)
         : win_emu_(&win_emu),
           options_(std::move(options))
     {
@@ -1176,74 +1135,15 @@ namespace sogen
             ensure_default_cache_marker();
         }
         prune_sogen_cache(win_emu.log, this->options_.symbol_cache);
-
-        this->module_load_callback_ =
-            this->win_emu_->callbacks.on_module_load.add([this](mapped_module& mod) { this->load_for_module(mod, false); });
-
-        this->load_existing_modules();
     }
 
-    pdb_symbol_loader::~pdb_symbol_loader()
+    loaded_symbols pdb_symbol_source::load(const mapped_module& mod) const
     {
-        if (this->win_emu_ && this->module_load_callback_)
+        loaded_symbols result{};
+        if (!this->options_.enabled())
         {
-            this->win_emu_->callbacks.on_module_load.remove(this->module_load_callback_);
+            return result;
         }
-    }
-
-    void pdb_symbol_loader::load_existing_modules()
-    {
-        if (!this->options_.use_for_trace())
-        {
-            return;
-        }
-
-        for (auto& mod : this->win_emu_->mod_manager.modules() | std::views::values)
-        {
-            this->load_for_module(mod, false);
-        }
-    }
-
-    void pdb_symbol_loader::ensure_caller_symbols(const uint64_t address)
-    {
-        if (!this->options_.use_for_callers())
-        {
-            return;
-        }
-
-        auto* mod = this->win_emu_->mod_manager.executable && this->win_emu_->mod_manager.executable->contains(address)
-                        ? this->win_emu_->mod_manager.executable
-                        : this->win_emu_->mod_manager.find_by_address(address);
-        if (!mod)
-        {
-            return;
-        }
-
-        this->load_for_module(*mod, true);
-    }
-
-    void pdb_symbol_loader::load_for_module(mapped_module& mod, const bool for_callers)
-    {
-        if (mod.pe_sections.empty())
-        {
-            if (this->options_.verbose_logging)
-            {
-                this->win_emu_->log.info("Skipping PDB symbols for %s: no PE section metadata\n", mod.name.c_str());
-            }
-            return;
-        }
-
-        if (!should_load_symbols_for_module(*this->win_emu_, mod, this->options_, for_callers))
-        {
-            return;
-        }
-
-        const auto attempt_key = std::to_string(mod.image_base) + (for_callers ? ":callers" : ":trace");
-        if (this->attempted_loads_.contains(attempt_key))
-        {
-            return;
-        }
-        this->attempted_loads_.insert(attempt_key);
 
         std::vector<resolved_pdb> candidates{};
 
@@ -1290,10 +1190,10 @@ namespace sogen
             this->win_emu_->log.info("No PDB candidates for %s\n", mod.name.c_str());
         }
 
+        std::set<std::filesystem::path> loaded_candidates{};
         for (const auto& candidate : candidates)
         {
-            const auto candidate_key = candidate.path.string() + "@" + std::to_string(mod.image_base);
-            if (this->loaded_signatures_.contains(candidate_key))
+            if (!loaded_candidates.insert(candidate.path).second)
             {
                 continue;
             }
@@ -1334,13 +1234,11 @@ namespace sogen
                 continue;
             }
 
-            if (merge_symbols(mod, pdb))
-            {
-                mod.has_pdb_symbols = true;
-            }
-            this->loaded_signatures_.insert(candidate_key);
+            merge_symbols(result, mod, pdb);
             this->win_emu_->log.info("Loaded PDB symbols for %s from %s\n", mod.name.c_str(), candidate.path.string().c_str());
         }
+
+        return result;
     }
 
 } // namespace sogen

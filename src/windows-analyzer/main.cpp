@@ -17,7 +17,7 @@
 #include "analysis_reporter.hpp"
 #include "jsonl_reporter.hpp"
 #include "stdout_file_reporter.hpp"
-#include "pdb_symbol_loader.hpp"
+#include "symbol_loader.hpp"
 #include "tenet_tracer.hpp"
 #include <subprocess_process_manager.hpp>
 
@@ -113,7 +113,7 @@ namespace sogen
             filesystem_mode root_mode{default_root_mode};
             std::vector<mount_spec> mounts{};
             utils::unordered_insensitive_u16string_map<std::u16string> environment{};
-            pdb_symbol_options pdb_symbols{};
+            symbol_options symbols{};
         };
 
 #ifndef OS_EMSCRIPTEN
@@ -1035,14 +1035,14 @@ namespace sogen
             register_analysis_callbacks(context);
             watch_system_objects(context, options.modules, options.verbose_logging, options.concise_logging);
 
-            std::optional<pdb_symbol_loader> pdb_loader{};
-            if (options.pdb_symbols.enabled())
+            std::optional<symbol_loader> symbols{};
+            if (options.symbols.enabled())
             {
-                auto pdb_options = options.pdb_symbols;
-                pdb_options.verbose_logging = options.verbose_logging;
-                pdb_options.interesting_modules = options.modules;
-                pdb_loader.emplace(*win_emu, std::move(pdb_options));
-                context.pdb_loader = &*pdb_loader;
+                auto symbol_options = options.symbols;
+                symbol_options.verbose_logging = options.verbose_logging;
+                symbol_options.interesting_modules = options.modules;
+                symbols.emplace(*win_emu, std::move(symbol_options));
+                context.symbols = &*symbols;
             }
 
             const auto& exe = *win_emu->mod_manager.executable;
@@ -1314,12 +1314,24 @@ namespace sogen
             app.add_option("--whp-exec-hook", options.whp_execution_hook_mode, "WHP memory execution hook mode")
                 ->capture_default_str()
                 ->check(CLI::IsMember({"auto", "int3"}));
+            std::string symbol_use_value{"callers"};
+            auto* const symbol_use_option =
+                app.add_option("--symbol-use", symbol_use_value, "Use loaded symbols for trace, callers, or all")
+                    ->expected(0, 1)
+                    ->default_val("callers")
+                    ->check(CLI::IsMember({"trace", "callers", "all"}));
 
-            std::string pdb_use_mode{"callers"};
-            auto* const pdb_use_option = app.add_option("--pdb-use", pdb_use_mode, "Enable PDB symbols for trace, callers, or all")
+            std::string pdb_use_value{"callers"};
+            auto* const pdb_use_option = app.add_option("--pdb-use", pdb_use_value, "Enable PDB symbols for trace, callers, or all")
                                              ->expected(0, 1)
                                              ->default_val("callers")
-                                             ->check(CLI::IsMember({"trace", "callers", "all"}));
+                                             ->check(CLI::IsMember({"trace", "callers", "all"}))
+                                             ->excludes(symbol_use_option);
+
+            std::vector<std::string> map_inputs{};
+            app.add_option("--map", map_inputs, "Load MSVC MAP symbols from [MODULE=]PATH (defaults to the main executable)")
+                ->expected(1)
+                ->allow_extra_args(false);
 
             std::vector<std::string> symbol_servers{};
             app.add_option("--symbol-server", symbol_servers, "Add a symbol server searched before Microsoft's public server")
@@ -1399,32 +1411,64 @@ namespace sogen
                     options.backend = get_backend_names().at(backend_name);
                 }
 
-                if (pdb_use_option->count() > 0)
-                {
-                    options.pdb_symbols.auto_lookup = true;
-
-                    if (pdb_use_mode == "trace")
+                const auto apply_symbol_use = [&](const std::string_view value) {
+                    if (value == "trace")
                     {
-                        options.pdb_symbols.use_mode = pdb_use_mode::trace;
+                        options.symbols.use_mode = symbol_use_mode::trace;
                     }
-                    else if (pdb_use_mode == "all")
+                    else if (value == "all")
                     {
-                        options.pdb_symbols.use_mode = pdb_use_mode::all;
+                        options.symbols.use_mode = symbol_use_mode::all;
                     }
                     else
                     {
-                        options.pdb_symbols.use_mode = pdb_use_mode::callers;
+                        options.symbols.use_mode = symbol_use_mode::callers;
+                    }
+                };
+
+                if (symbol_use_option->count() > 0)
+                {
+                    apply_symbol_use(symbol_use_value);
+                }
+
+                if (pdb_use_option->count() > 0)
+                {
+                    options.symbols.pdb.auto_lookup = true;
+                    apply_symbol_use(pdb_use_value);
+                }
+
+                for (auto& map_input : map_inputs)
+                {
+                    const auto separator = map_input.find('=');
+                    if (separator == std::string::npos)
+                    {
+                        if (map_input.empty())
+                        {
+                            throw std::runtime_error("--map requires a path");
+                        }
+                        options.symbols.maps.emplace_back(map_symbol_input{.path = std::move(map_input)});
+                    }
+                    else
+                    {
+                        if (separator == 0 || separator + 1 == map_input.size())
+                        {
+                            throw std::runtime_error("--map module association must use MODULE=PATH");
+                        }
+                        options.symbols.maps.emplace_back(map_symbol_input{
+                            .module = map_input.substr(0, separator),
+                            .path = map_input.substr(separator + 1),
+                        });
                     }
                 }
 
                 for (auto& symbol_server : symbol_servers)
                 {
-                    options.pdb_symbols.symbol_servers.emplace_back(std::move(symbol_server));
+                    options.symbols.pdb.symbol_servers.emplace_back(std::move(symbol_server));
                 }
 
                 if (!symbol_cache.empty())
                 {
-                    options.pdb_symbols.symbol_cache = std::filesystem::path(symbol_cache);
+                    options.symbols.pdb.symbol_cache = std::filesystem::path(symbol_cache);
                 }
 
                 for (auto& module_name : tracked_modules)

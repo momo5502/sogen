@@ -74,9 +74,9 @@ namespace sogen
         imported_symbols imports{};
         imported_module_list imported_modules{};
         address_name_mapping address_names{};
-        address_name_mapping pdb_address_names{};
+        address_name_mapping symbol_address_names{};
         std::optional<pdb_signature> pdb{};
-        bool has_pdb_symbols{};
+        bool has_symbols{};
 
         std::vector<mapped_section> sections{};
         std::vector<pe_section_symbol_mapping> pe_sections{};

@@ -3,7 +3,7 @@
 #include "analysis.hpp"
 #include "analysis_reporter.hpp"
 #include "disassembler.hpp"
-#include "pdb_symbol_loader.hpp"
+#include "symbol_loader.hpp"
 #include "windows_emulator.hpp"
 #include <utils/lazy_object.hpp>
 
@@ -126,7 +126,7 @@ namespace sogen
         }
 
         address_symbol_context describe_address(const analysis_context* analysis, module_manager& manager, const uint64_t address,
-                                                const bool allow_caller_pdb_load = false)
+                                                const bool allow_caller_symbol_load = false)
         {
             address_symbol_context context{};
             auto* mod = find_module_for_address(manager, address);
@@ -153,9 +153,9 @@ namespace sogen
                        (!analysis->settings->silent && analysis->win_emu && !analysis->win_emu->log.is_output_disabled());
             };
 
-            if (allow_caller_pdb_load && analysis && analysis->pdb_loader && mod->pdb_address_names.empty() && has_visible_output())
+            if (allow_caller_symbol_load && analysis && analysis->symbols && mod->symbol_address_names.empty() && has_visible_output())
             {
-                analysis->pdb_loader->ensure_caller_symbols(address);
+                analysis->symbols->ensure_caller_symbols(address);
                 mod = find_module_for_address(manager, address);
                 if (!mod)
                 {
@@ -170,19 +170,19 @@ namespace sogen
                 }
             }
 
-            if (mod->pdb_address_names.empty())
+            if (mod->symbol_address_names.empty())
             {
                 return context;
             }
 
-            if (const auto exact = mod->pdb_address_names.find(address); exact != mod->pdb_address_names.end())
+            if (const auto exact = mod->symbol_address_names.find(address); exact != mod->symbol_address_names.end())
             {
                 context.function = exact->second;
                 return context;
             }
 
-            auto symbol = mod->pdb_address_names.upper_bound(address);
-            if (symbol != mod->pdb_address_names.begin())
+            auto symbol = mod->symbol_address_names.upper_bound(address);
+            if (symbol != mod->symbol_address_names.begin())
             {
                 --symbol;
                 context.function = symbol->second;
@@ -663,11 +663,11 @@ namespace sogen
             }
 
             const auto export_entry = binary->address_names.find(address);
-            const auto pdb_entry =
-                c.pdb_loader && c.pdb_loader->use_for_trace() ? binary->pdb_address_names.find(address) : binary->pdb_address_names.end();
-            const auto* function_name = export_entry != binary->address_names.end()    ? &export_entry->second
-                                        : pdb_entry != binary->pdb_address_names.end() ? &pdb_entry->second
-                                                                                       : nullptr;
+            const auto symbol_entry =
+                c.symbols && c.symbols->use_for_trace() ? binary->symbol_address_names.find(address) : binary->symbol_address_names.end();
+            const auto* function_name = export_entry != binary->address_names.end()          ? &export_entry->second
+                                        : symbol_entry != binary->symbol_address_names.end() ? &symbol_entry->second
+                                                                                             : nullptr;
             if (function_name)
             {
                 if (!c.settings->ignored_functions.contains(*function_name))
@@ -690,9 +690,9 @@ namespace sogen
             else if (is_previous_main_exe && binary != previous_binary && !is_return(c.d, c.win_emu->active_cpu(), previous_ip))
             {
                 const auto* address_names = &binary->address_names;
-                if (c.pdb_loader && c.pdb_loader->use_for_trace() && binary->has_pdb_symbols)
+                if (c.symbols && c.symbols->use_for_trace() && binary->has_symbols)
                 {
-                    address_names = &binary->pdb_address_names;
+                    address_names = &binary->symbol_address_names;
                 }
 
                 auto nearest_entry = address_names->upper_bound(address);

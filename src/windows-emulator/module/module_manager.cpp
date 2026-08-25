@@ -134,9 +134,9 @@ namespace sogen
 
             buffer.write_vector(mod.exports);
             buffer.write_map(mod.address_names);
-            buffer.write_map(mod.pdb_address_names);
+            buffer.write_map(mod.symbol_address_names);
             buffer.write_optional(mod.pdb);
-            buffer.write(mod.has_pdb_symbols);
+            buffer.write(mod.has_symbols);
 
             buffer.write_vector(mod.sections);
             buffer.write_vector(mod.pe_sections);
@@ -165,9 +165,9 @@ namespace sogen
 
             buffer.read_vector(mod.exports);
             buffer.read_map(mod.address_names);
-            buffer.read_map(mod.pdb_address_names);
+            buffer.read_map(mod.symbol_address_names);
             buffer.read_optional(mod.pdb);
-            buffer.read(mod.has_pdb_symbols);
+            buffer.read(mod.has_symbols);
 
             buffer.read_vector(mod.sections);
             buffer.read_vector(mod.pe_sections);
