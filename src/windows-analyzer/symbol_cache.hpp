@@ -13,8 +13,9 @@ namespace sogen
 {
     class logger;
 
-    namespace symbol_cache
+    class symbol_cache
     {
+      public:
         class download_lock
         {
           public:
@@ -61,18 +62,22 @@ namespace sogen
             std::string reason{};
         };
 
-        std::filesystem::path default_root();
-        std::filesystem::path store_relative_path(const pdb_signature& sig, bool compressed = false);
-        std::filesystem::path store_path(const std::filesystem::path& root, const pdb_signature& sig);
+        static std::filesystem::path default_root();
+        static std::filesystem::path store_relative_path(const pdb_signature& sig, bool compressed = false);
+        static std::filesystem::path store_path(const std::filesystem::path& root, const pdb_signature& sig);
 
-        std::optional<std::filesystem::path> find(const pdb_signature& sig, const std::optional<std::filesystem::path>& explicit_cache,
-                                                  const logger& log, std::string_view module_name);
-        target_result prepare_target(const std::filesystem::path& root, const pdb_signature& sig, const logger& log,
-                                     std::string_view module_name);
-        std::optional<download_slot> acquire_download_slot(const std::filesystem::path& target, std::error_code& ec);
-        publish_result publish(const download_slot& slot, const std::filesystem::path& validated_path, const pdb_signature& expected);
-        void discard(const download_slot& slot);
-        void initialize(const logger& log, const std::optional<std::filesystem::path>& explicit_cache);
-    }
+        static std::optional<std::filesystem::path> find(const pdb_signature& sig,
+                                                         const std::optional<std::filesystem::path>& explicit_cache, const logger& log,
+                                                         std::string_view module_name);
+        static target_result prepare_target(const std::filesystem::path& root, const pdb_signature& sig, const logger& log,
+                                            std::string_view module_name);
+        static std::optional<download_slot> acquire_download_slot(const std::filesystem::path& target, std::error_code& ec);
+        static publish_result publish(const download_slot& slot, const std::filesystem::path& validated_path,
+                                      const pdb_signature& expected);
+        static void discard(const download_slot& slot);
+        static void initialize(const logger& log, const std::optional<std::filesystem::path>& explicit_cache);
+
+        symbol_cache() = delete;
+    };
 
 } // namespace sogen

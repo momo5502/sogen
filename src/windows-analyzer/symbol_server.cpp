@@ -34,7 +34,7 @@ namespace sogen
 
         struct server_attempt
         {
-            std::optional<symbol_server_result> result{};
+            std::optional<symbol_server::result> result{};
             bool stop{};
         };
 
@@ -186,7 +186,7 @@ namespace sogen
                                         const pdb_signature& sig, const std::string& server, const logger& log,
                                         const std::string_view module_name)
         {
-            const auto validation = pdb_file::validate(path, sig);
+            const auto validation = pdb_file{path}.validate(sig);
             if (validation.status != pdb_validation_status::match)
             {
                 if (validation.status == pdb_validation_status::mismatch)
@@ -210,9 +210,9 @@ namespace sogen
                 return {};
             }
 
-            return {.result = symbol_server_result{
+            return {.result = symbol_server::result{
                         .path = publication.path,
-                        .source = symbol_server_source::download,
+                        .origin = symbol_server::source::download,
                         .temporary = publication.temporary,
                     }};
         }
@@ -303,8 +303,8 @@ namespace sogen
             return result;
         }
 
-        std::optional<symbol_server_result> find_in_symbol_store(const std::string& server, const pdb_signature& sig, const logger& log,
-                                                                 const std::string_view module_name)
+        std::optional<symbol_server::result> find_in_symbol_store(const std::string& server, const pdb_signature& sig, const logger& log,
+                                                                  const std::string_view module_name)
         {
             const auto path = symbol_cache::store_path(server, sig);
             if (!utils::io::file_exists(path))
@@ -312,10 +312,10 @@ namespace sogen
                 return std::nullopt;
             }
 
-            const auto validation = pdb_file::validate(path, sig);
+            const auto validation = pdb_file{path}.validate(sig);
             if (validation.status == pdb_validation_status::match)
             {
-                return symbol_server_result{.path = path, .source = symbol_server_source::symbol_store};
+                return symbol_server::result{.path = path, .origin = symbol_server::source::symbol_store};
             }
             if (pdb_validation_failed(validation.status))
             {
@@ -326,14 +326,14 @@ namespace sogen
         }
     }
 
-    std::optional<symbol_server_result> find_on_symbol_servers(const pdb_signature& sig, const pdb_symbol_options& options,
-                                                               const logger& log, const std::string_view module_name)
+    std::optional<symbol_server::result> symbol_server::find(const pdb_signature& sig, const pdb_symbol_options& options, const logger& log,
+                                                             const std::string_view module_name)
     {
         const auto download_root = options.symbol_cache.value_or(symbol_cache::default_root());
         const auto target = symbol_cache::prepare_target(download_root, sig, log, module_name);
         if (target.status == symbol_cache::target_status::available)
         {
-            return symbol_server_result{.path = target.path, .source = symbol_server_source::cache};
+            return result{.path = target.path, .origin = source::cache};
         }
         if (target.status == symbol_cache::target_status::unavailable)
         {

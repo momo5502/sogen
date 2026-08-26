@@ -11,21 +11,27 @@ namespace sogen
     class logger;
     struct pdb_symbol_options;
 
-    enum class symbol_server_source
+    class symbol_server
     {
-        cache,
-        symbol_store,
-        download,
-    };
+      public:
+        enum class source
+        {
+            cache,
+            symbol_store,
+            download,
+        };
 
-    struct symbol_server_result
-    {
-        std::filesystem::path path{};
-        symbol_server_source source{};
-        bool temporary{};
-    };
+        struct result
+        {
+            std::filesystem::path path{};
+            source origin{};
+            bool temporary{};
+        };
 
-    std::optional<symbol_server_result> find_on_symbol_servers(const pdb_signature& sig, const pdb_symbol_options& options,
-                                                               const logger& log, std::string_view module_name);
+        static std::optional<result> find(const pdb_signature& sig, const pdb_symbol_options& options, const logger& log,
+                                          std::string_view module_name);
+
+        symbol_server() = delete;
+    };
 
 } // namespace sogen

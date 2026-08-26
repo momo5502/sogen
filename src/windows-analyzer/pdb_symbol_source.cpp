@@ -72,15 +72,15 @@ namespace sogen
             return "PDB";
         }
 
-        pdb_resolution_source resolution_source(const symbol_server_source source)
+        pdb_resolution_source resolution_source(const symbol_server::source source)
         {
             switch (source)
             {
-            case symbol_server_source::cache:
+            case symbol_server::source::cache:
                 return pdb_resolution_source::cache;
-            case symbol_server_source::symbol_store:
+            case symbol_server::source::symbol_store:
                 return pdb_resolution_source::symbol_store;
-            case symbol_server_source::download:
+            case symbol_server::source::download:
                 return pdb_resolution_source::download;
             }
 
@@ -99,7 +99,7 @@ namespace sogen
             const std::filesystem::path recorded_path{sig.path};
             if (recorded_path.is_absolute() && utils::io::file_exists(recorded_path))
             {
-                const auto validation = pdb_file::validate(recorded_path, sig);
+                const auto validation = pdb_file{recorded_path}.validate(sig);
                 if (validation.status == pdb_validation_status::match)
                 {
                     return resolved_pdb{
@@ -135,7 +135,7 @@ namespace sogen
                         continue;
                     }
 
-                    const auto validation = pdb_file::validate(candidate, sig);
+                    const auto validation = pdb_file{candidate}.validate(sig);
                     if (validation.status == pdb_validation_status::mismatch)
                     {
                         continue;
@@ -164,12 +164,12 @@ namespace sogen
                 };
             }
 
-            if (const auto resolved = find_on_symbol_servers(sig, options, log, module_name))
+            if (const auto resolved = symbol_server::find(sig, options, log, module_name))
             {
                 return resolved_pdb{
                     .path = resolved->path,
                     .explicit_input = false,
-                    .source = resolution_source(resolved->source),
+                    .source = resolution_source(resolved->origin),
                     .temporary = resolved->temporary,
                 };
             }
@@ -208,10 +208,14 @@ namespace sogen
                     continue;
                 }
 
-                const auto parsed = pdb_file::read(candidate);
-                if (!pdb_file::signatures_match(parsed.signature, *sig))
+                const auto validation = pdb_file{candidate}.validate(*sig);
+                if (validation.status == pdb_validation_status::mismatch)
                 {
                     throw std::runtime_error("PDB signature mismatch for " + candidate.string());
+                }
+                if (validation.status != pdb_validation_status::match)
+                {
+                    throw std::runtime_error("Failed to validate PDB " + candidate.string() + ": " + validation.error);
                 }
 
                 return resolved_pdb{
@@ -244,7 +248,7 @@ namespace sogen
 
         bool matches_module(const mapped_module& mod, const pdb_file& pdb)
         {
-            return mod.pdb && pdb_file::signatures_match(*mod.pdb, pdb.signature);
+            return mod.pdb && pdb.matches(*mod.pdb);
         }
 
     }
@@ -255,7 +259,10 @@ namespace sogen
     {
         if (this->options_.enabled())
         {
-            pdb_file::ensure_available();
+            if (!pdb_file::check_pdbutil_available())
+            {
+                throw std::runtime_error("PDB support requires llvm-pdbutil");
+            }
         }
         symbol_cache::initialize(win_emu.log, this->options_.symbol_cache);
     }
@@ -331,19 +338,16 @@ namespace sogen
             this->win_emu_->log.info("Loading PDB symbols for %s from %s: %s\n", mod.name.c_str(), source_label(candidate.source),
                                      candidate.path.string().c_str());
 
-            pdb_file pdb{};
-            try
-            {
-                pdb = pdb_file::read(candidate.path);
-            }
-            catch (const std::exception& e)
+            pdb_file pdb{candidate.path};
+            const auto read_result = pdb.read();
+            if (!read_result.success)
             {
                 if (candidate.explicit_input)
                 {
-                    throw;
+                    throw std::runtime_error("Failed to parse PDB " + candidate.path.string() + ": " + read_result.error);
                 }
 
-                this->win_emu_->log.warn("Failed to parse PDB %s: %s\n", candidate.path.string().c_str(), e.what());
+                this->win_emu_->log.warn("Failed to parse PDB %s: %s\n", candidate.path.string().c_str(), read_result.error.c_str());
                 continue;
             }
 

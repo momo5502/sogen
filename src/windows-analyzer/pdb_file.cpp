@@ -173,109 +173,132 @@ namespace sogen
             signature.path = path.string();
             return signature;
         }
+
+        bool signatures_match(const pdb_signature& lhs, const pdb_signature& rhs)
+        {
+            return winpe::detail::normalize_guid(lhs.guid) == winpe::detail::normalize_guid(rhs.guid) && lhs.age == rhs.age;
+        }
     }
 
-    pdb_file pdb_file::read(const std::filesystem::path& path)
+    pdb_file::pdb_file(std::filesystem::path path)
+        : path_(std::move(path))
     {
-        const auto output =
-            utils::exec::run_command_capture({pdbutil_command(), "dump", "-summary", "-publics", "-symbols", path.string()});
+    }
 
-        pdb_file pdb{};
-        std::optional<std::string> pending_public{};
-        std::optional<std::string> pending_proc{};
-        std::string pending_proc_text{};
+    pdb_read_result pdb_file::read()
+    {
+        this->signature = {};
+        this->symbols.clear();
 
-        std::istringstream stream{output};
-        std::string line{};
-        while (std::getline(stream, line))
+        try
         {
-            const auto trimmed = utils::string::trim(line);
+            const auto output =
+                utils::exec::run_command_capture({pdbutil_command(), "dump", "-summary", "-publics", "-symbols", this->path_.string()});
 
-            parse_pdb_guid_line(trimmed, pdb.signature);
+            pdb_signature parsed_signature{};
+            std::map<std::pair<uint32_t, uint32_t>, std::string> parsed_symbols{};
+            std::optional<std::string> pending_public{};
+            std::optional<std::string> pending_proc{};
+            std::string pending_proc_text{};
 
-            if (trimmed.find("S_PUB32") != std::string::npos)
+            std::istringstream stream{output};
+            std::string line{};
+            while (std::getline(stream, line))
             {
-                pending_public = extract_backtick_name(trimmed);
-                continue;
-            }
+                const auto trimmed = utils::string::trim(line);
 
-            if (pending_public)
-            {
-                if (trimmed.find("flags = function") != std::string::npos)
+                parse_pdb_guid_line(trimmed, parsed_signature);
+
+                if (trimmed.find("S_PUB32") != std::string::npos)
                 {
-                    if (const auto address = parse_section_offset(trimmed))
-                    {
-                        pdb.symbols.try_emplace(*address, *pending_public);
-                    }
+                    pending_public = extract_backtick_name(trimmed);
+                    continue;
                 }
 
-                pending_public.reset();
-                continue;
-            }
-
-            if (trimmed.find("S_GPROC32") != std::string::npos || trimmed.find("S_LPROC32") != std::string::npos)
-            {
-                pending_proc_text.assign(trimmed);
-                pending_proc = extract_backtick_name(pending_proc_text);
-                continue;
-            }
-
-            if (!pending_proc_text.empty())
-            {
-                pending_proc_text += ' ';
-                pending_proc_text.append(trimmed);
-                if (!pending_proc)
+                if (pending_public)
                 {
-                    pending_proc = extract_backtick_name(pending_proc_text);
-                }
-
-                if (trimmed.find("addr = ") != std::string::npos)
-                {
-                    if (pending_proc)
+                    if (trimmed.find("flags = function") != std::string::npos)
                     {
                         if (const auto address = parse_section_offset(trimmed))
                         {
-                            pdb.symbols[*address] = *pending_proc;
+                            parsed_symbols.try_emplace(*address, *pending_public);
                         }
                     }
 
-                    pending_proc.reset();
-                    pending_proc_text.clear();
+                    pending_public.reset();
+                    continue;
+                }
+
+                if (trimmed.find("S_GPROC32") != std::string::npos || trimmed.find("S_LPROC32") != std::string::npos)
+                {
+                    pending_proc_text.assign(trimmed);
+                    pending_proc = extract_backtick_name(pending_proc_text);
+                    continue;
+                }
+
+                if (!pending_proc_text.empty())
+                {
+                    pending_proc_text += ' ';
+                    pending_proc_text.append(trimmed);
+                    if (!pending_proc)
+                    {
+                        pending_proc = extract_backtick_name(pending_proc_text);
+                    }
+
+                    if (trimmed.find("addr = ") != std::string::npos)
+                    {
+                        if (pending_proc)
+                        {
+                            if (const auto address = parse_section_offset(trimmed))
+                            {
+                                parsed_symbols[*address] = *pending_proc;
+                            }
+                        }
+
+                        pending_proc.reset();
+                        pending_proc_text.clear();
+                    }
                 }
             }
-        }
 
-        pdb.signature.age = read_pdb_dbi_age(path).value_or(0);
-        if (!pdb.signature.valid())
+            parsed_signature.age = read_pdb_dbi_age(this->path_).value_or(0);
+            if (!parsed_signature.valid())
+            {
+                return {.error = "llvm-pdbutil did not report a valid PDB identity for " + this->path_.string()};
+            }
+
+            parsed_signature.path = this->path_.string();
+            this->signature = std::move(parsed_signature);
+            this->symbols = std::move(parsed_symbols);
+            return {.success = true};
+        }
+        catch (const std::exception& e)
         {
-            throw std::runtime_error("llvm-pdbutil did not report a valid PDB identity for " + path.string());
+            return {.error = std::string{e.what()}};
         }
-
-        pdb.signature.path = path.string();
-        return pdb;
     }
 
-    void pdb_file::ensure_available()
+    bool pdb_file::check_pdbutil_available()
     {
         static const bool available = [] {
             try
             {
                 (void)utils::exec::run_command_capture({pdbutil_command(), "--version"});
+                return true;
             }
-            catch (const std::exception& e)
+            catch (const std::exception&)
             {
-                throw std::runtime_error("PDB support requires llvm-pdbutil: " + std::string{e.what()});
+                return false;
             }
-            return true;
         }();
-        (void)available;
+        return available;
     }
 
-    pdb_validation_result pdb_file::validate(const std::filesystem::path& path, const pdb_signature& expected)
+    pdb_validation_result pdb_file::validate(const pdb_signature& expected) const
     {
         try
         {
-            const auto actual = read_pdb_signature(path);
+            const auto actual = read_pdb_signature(this->path_);
             if (!actual)
             {
                 return {.status = pdb_validation_status::invalid_artifact, .error = "llvm-pdbutil did not report a valid PDB identity"};
@@ -293,8 +316,8 @@ namespace sogen
         }
     }
 
-    bool pdb_file::signatures_match(const pdb_signature& lhs, const pdb_signature& rhs)
+    bool pdb_file::matches(const pdb_signature& expected) const
     {
-        return winpe::detail::normalize_guid(lhs.guid) == winpe::detail::normalize_guid(rhs.guid) && lhs.age == rhs.age;
+        return signatures_match(this->signature, expected);
     }
 }

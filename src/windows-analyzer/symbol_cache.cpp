@@ -31,7 +31,7 @@
 #include <unistd.h>
 #endif
 
-namespace sogen::symbol_cache
+namespace sogen
 {
     using namespace std::literals;
 
@@ -167,7 +167,7 @@ namespace sogen::symbol_cache
             add_unique_path(paths, "C:\\SymCache");
 #endif
 
-            add_unique_path(paths, default_root());
+            add_unique_path(paths, symbol_cache::default_root());
             return paths;
         }
 
@@ -197,7 +197,7 @@ namespace sogen::symbol_cache
         }
 #endif
 
-        std::optional<download_lock> acquire_lock(const std::filesystem::path& path, std::error_code& ec)
+        std::optional<symbol_cache::download_lock> acquire_lock(const std::filesystem::path& path, std::error_code& ec)
         {
 #ifdef _WIN32
             const auto mutex_name = make_download_mutex_name(path, ec);
@@ -222,7 +222,7 @@ namespace sogen::symbol_cache
                 return std::nullopt;
             }
 
-            download_lock lock{reinterpret_cast<std::intptr_t>(mutex)};
+            symbol_cache::download_lock lock{reinterpret_cast<std::intptr_t>(mutex)};
             auto* const file =
                 CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, nullptr);
             if (file == INVALID_HANDLE_VALUE)
@@ -251,7 +251,7 @@ namespace sogen::symbol_cache
                 return std::nullopt;
             }
 
-            return download_lock{descriptor};
+            return symbol_cache::download_lock{descriptor};
 #endif
         }
 
@@ -333,7 +333,7 @@ namespace sogen::symbol_cache
 
         void ensure_default_marker()
         {
-            const auto root = default_root();
+            const auto root = symbol_cache::default_root();
             std::error_code ec{};
             std::filesystem::create_directories(root, ec);
             if (ec)
@@ -355,7 +355,7 @@ namespace sogen::symbol_cache
                 return;
             }
 
-            const auto root = default_root();
+            const auto root = symbol_cache::default_root();
             if (!utils::io::file_exists(root / k_sogen_cache_marker))
             {
                 return;
@@ -412,22 +412,22 @@ namespace sogen::symbol_cache
         }
     }
 
-    download_lock::download_lock(const std::intptr_t native_handle)
+    symbol_cache::download_lock::download_lock(const std::intptr_t native_handle)
         : native_handle_(native_handle)
     {
     }
 
-    download_lock::~download_lock()
+    symbol_cache::download_lock::~download_lock()
     {
         release();
     }
 
-    download_lock::download_lock(download_lock&& other) noexcept
+    symbol_cache::download_lock::download_lock(download_lock&& other) noexcept
         : native_handle_(std::exchange(other.native_handle_, -1))
     {
     }
 
-    download_lock& download_lock::operator=(download_lock&& other) noexcept
+    symbol_cache::download_lock& symbol_cache::download_lock::operator=(download_lock&& other) noexcept
     {
         if (this != &other)
         {
@@ -437,7 +437,7 @@ namespace sogen::symbol_cache
         return *this;
     }
 
-    void download_lock::release()
+    void symbol_cache::download_lock::release()
     {
         if (native_handle_ == -1)
         {
@@ -456,7 +456,7 @@ namespace sogen::symbol_cache
         native_handle_ = -1;
     }
 
-    std::filesystem::path default_root()
+    std::filesystem::path symbol_cache::default_root()
     {
 #ifdef _WIN32
         if (const auto* local_app_data = std::getenv("LOCALAPPDATA"))
@@ -482,7 +482,7 @@ namespace sogen::symbol_cache
         return std::filesystem::current_path() / ".sogen-symbols";
     }
 
-    std::filesystem::path store_relative_path(const pdb_signature& sig, const bool compressed)
+    std::filesystem::path symbol_cache::store_relative_path(const pdb_signature& sig, const bool compressed)
     {
         const std::filesystem::path pdb_name{sig.filename()};
         auto stored_name = pdb_name;
@@ -499,13 +499,14 @@ namespace sogen::symbol_cache
         return pdb_name / make_signature_key(sig) / stored_name;
     }
 
-    std::filesystem::path store_path(const std::filesystem::path& root, const pdb_signature& sig)
+    std::filesystem::path symbol_cache::store_path(const std::filesystem::path& root, const pdb_signature& sig)
     {
         return root / store_relative_path(sig);
     }
 
-    std::optional<std::filesystem::path> find(const pdb_signature& sig, const std::optional<std::filesystem::path>& explicit_cache,
-                                              const logger& log, const std::string_view module_name)
+    std::optional<std::filesystem::path> symbol_cache::find(const pdb_signature& sig,
+                                                            const std::optional<std::filesystem::path>& explicit_cache, const logger& log,
+                                                            const std::string_view module_name)
     {
         for (const auto& root : existing_roots(explicit_cache))
         {
@@ -515,7 +516,7 @@ namespace sogen::symbol_cache
                 continue;
             }
 
-            const auto validation = pdb_file::validate(path, sig);
+            const auto validation = pdb_file{path}.validate(sig);
             if (validation.status == pdb_validation_status::match)
             {
                 return path;
@@ -531,8 +532,8 @@ namespace sogen::symbol_cache
         return std::nullopt;
     }
 
-    target_result prepare_target(const std::filesystem::path& root, const pdb_signature& sig, const logger& log,
-                                 const std::string_view module_name)
+    symbol_cache::target_result symbol_cache::prepare_target(const std::filesystem::path& root, const pdb_signature& sig, const logger& log,
+                                                             const std::string_view module_name)
     {
         const auto target = store_path(root, sig);
         if (!utils::io::file_exists(target))
@@ -540,7 +541,7 @@ namespace sogen::symbol_cache
             return {.path = target, .status = target_status::missing};
         }
 
-        const auto validation = pdb_file::validate(target, sig);
+        const auto validation = pdb_file{target}.validate(sig);
         if (validation.status == pdb_validation_status::match)
         {
             return {.path = target, .status = target_status::available};
@@ -569,7 +570,7 @@ namespace sogen::symbol_cache
         return {.path = target, .status = target_status::missing};
     }
 
-    std::optional<download_slot> acquire_download_slot(const std::filesystem::path& target, std::error_code& ec)
+    std::optional<symbol_cache::download_slot> symbol_cache::acquire_download_slot(const std::filesystem::path& target, std::error_code& ec)
     {
         std::filesystem::create_directories(target.parent_path(), ec);
         const auto cache_path = std::filesystem::path{target.string() + ".tmp"};
@@ -596,7 +597,8 @@ namespace sogen::symbol_cache
         };
     }
 
-    publish_result publish(const download_slot& slot, const std::filesystem::path& validated_path, const pdb_signature& expected)
+    symbol_cache::publish_result symbol_cache::publish(const download_slot& slot, const std::filesystem::path& validated_path,
+                                                       const pdb_signature& expected)
     {
         if (slot.temporary_directory)
         {
@@ -606,7 +608,7 @@ namespace sogen::symbol_cache
         std::error_code ec{};
         if (utils::io::file_exists(slot.target))
         {
-            const auto validation = pdb_file::validate(slot.target, expected);
+            const auto validation = pdb_file{slot.target}.validate(expected);
             if (validation.status == pdb_validation_status::match)
             {
                 if (validated_path != slot.path)
@@ -632,7 +634,7 @@ namespace sogen::symbol_cache
         return {.success = true, .path = slot.target};
     }
 
-    void discard(const download_slot& slot)
+    void symbol_cache::discard(const download_slot& slot)
     {
         std::error_code ec{};
         if (slot.temporary_directory)
@@ -644,7 +646,7 @@ namespace sogen::symbol_cache
         std::filesystem::remove(slot.path, ec);
     }
 
-    void initialize(const logger& log, const std::optional<std::filesystem::path>& explicit_cache)
+    void symbol_cache::initialize(const logger& log, const std::optional<std::filesystem::path>& explicit_cache)
     {
         if (!explicit_cache)
         {

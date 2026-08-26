@@ -23,15 +23,27 @@ namespace sogen
         std::string error{};
     };
 
+    struct pdb_read_result
+    {
+        bool success{};
+        std::string error{};
+    };
+
     class pdb_file
     {
       public:
+        explicit pdb_file(std::filesystem::path path);
+
         pdb_signature signature{};
         std::map<std::pair<uint32_t, uint32_t>, std::string> symbols{};
 
-        static pdb_file read(const std::filesystem::path& path);
-        static pdb_validation_result validate(const std::filesystem::path& path, const pdb_signature& expected);
-        static bool signatures_match(const pdb_signature& lhs, const pdb_signature& rhs);
-        static void ensure_available();
+        pdb_read_result read();
+        pdb_validation_result validate(const pdb_signature& expected) const;
+        bool matches(const pdb_signature& expected) const;
+
+        static bool check_pdbutil_available();
+
+      private:
+        std::filesystem::path path_{};
     };
 }
