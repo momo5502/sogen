@@ -10,7 +10,7 @@ if(SOGEN_ENABLE_SDL3 AND SOGEN_USE_SYSTEM_SDL3 AND NOT EMSCRIPTEN AND NOT TARGET
   find_package(SDL3 CONFIG REQUIRED)
 endif()
 
-if(NOT TARGET SDL3::SDL3)
+if(NOT SOGEN_ENABLE_SDL3 OR NOT TARGET SDL3::SDL3)
   list(REMOVE_ITEM SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/ui_backends/sdl_ui_backend.cpp")
   list(REMOVE_ITEM SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/audio_backends/sdl_audio_backend.cpp")
   if(SOGEN_ENABLE_SDL3 AND NOT EMSCRIPTEN)
@@ -36,7 +36,7 @@ if(TARGET steam-host-backend)
   target_compile_definitions(windows-emulator PRIVATE SOGEN_STEAM_REAL_BACKEND=1)
 endif()
 
-if(TARGET SDL3::SDL3)
+if(SOGEN_ENABLE_SDL3 AND TARGET SDL3::SDL3)
   target_link_libraries(windows-emulator PRIVATE SDL3::SDL3)
   target_compile_definitions(windows-emulator PRIVATE SOGEN_HAS_SDL3=1)
 endif()

@@ -71,6 +71,7 @@ namespace sogen
                 get_input_focus(display, &focused_window, &revert_to);
                 constexpr x_window no_focus = 0;
                 constexpr x_window pointer_root = 1;
+                constexpr int revert_to_pointer_root = 1;
 
                 auto* focused_sdl_window = SDL_GetKeyboardFocus();
                 const auto focused_sdl_properties = focused_sdl_window ? SDL_GetWindowProperties(focused_sdl_window) : 0;
@@ -82,7 +83,7 @@ namespace sogen
 
                 if (focused_window == no_focus || focused_window == pointer_root || own_window_has_focus)
                 {
-                    set_input_focus(display, xwindow, 2, 0);
+                    set_input_focus(display, xwindow, revert_to_pointer_root, 0);
                     flush(display);
                 }
             }
