@@ -2,6 +2,7 @@
 
 #include <platform/pdb_signature.hpp>
 
+#include <filesystem>
 #include <map>
 #include <string>
 #include <utility>

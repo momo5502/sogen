@@ -1,6 +1,6 @@
 #pragma once
 #include <memory_region.hpp>
-#include <platform/win_pe_debug.hpp>
+#include <platform/win_pefile_debug.hpp>
 #include "../windows_path.hpp"
 
 namespace sogen

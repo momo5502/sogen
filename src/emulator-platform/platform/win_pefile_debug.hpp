@@ -3,8 +3,8 @@
 #include "pdb_signature.hpp"
 #include "win_pefile.hpp"
 
-#include <utils/buffer_accessor.hpp>
-#include <utils/io.hpp>
+#include "common/utils/buffer_accessor.hpp"
+#include "common/utils/io.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -131,10 +131,13 @@ namespace sogen
                 for (size_t i = 0; i < nt_headers.FileHeader.NumberOfSections; ++i)
                 {
                     const auto section = sections.get(i);
-                    const auto section_size = std::max(section.Misc.VirtualSize, section.SizeOfRawData);
-                    if (rva >= section.VirtualAddress && rva < section.VirtualAddress + section_size)
+                    if (rva >= section.VirtualAddress)
                     {
-                        return section.PointerToRawData + (rva - section.VirtualAddress);
+                        const auto raw_offset = rva - section.VirtualAddress;
+                        if (raw_offset < section.SizeOfRawData)
+                        {
+                            return section.PointerToRawData + raw_offset;
+                        }
                     }
                 }
 

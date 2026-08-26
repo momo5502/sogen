@@ -2,7 +2,7 @@
 
 #include <utils/exec.hpp>
 #include <utils/string.hpp>
-#include <platform/win_pe_debug.hpp>
+#include <platform/win_pefile_debug.hpp>
 
 #include <charconv>
 #include <optional>
@@ -33,7 +33,7 @@ namespace sogen
                 {
                     try
                     {
-                        auto candidate = utils::string::trim(run_command_capture({"which", name}));
+                        auto candidate = utils::string::trim(utils::exec::run_command_capture({"which", name}));
                         if (!candidate.empty())
                         {
                             return candidate;

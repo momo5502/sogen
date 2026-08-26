@@ -111,7 +111,7 @@ namespace sogen
 
         struct address_symbol_context
         {
-            std::string module_name{"<N/A>"};
+            std::optional<std::string> module_name{};
             std::optional<std::string> function{};
         };
 
@@ -121,7 +121,7 @@ namespace sogen
             address_symbol_context context{};
             auto& manager = analysis.win_emu->mod_manager;
 
-            mapped_module* mod;
+            mapped_module* mod{};
             if (manager.executable && manager.executable->contains(address))
             {
                 mod = manager.executable;
@@ -954,7 +954,7 @@ namespace sogen
             .thread_id = 0,
             .vcpu = static_cast<uint32_t>(emu.index()),
             .rip = rip,
-            .rip_module = rip_context.module_name,
+            .rip_module = rip_context.module_name.value_or("<N/A>"),
             .rip_function = rip_context.function,
         };
 
@@ -965,7 +965,7 @@ namespace sogen
             const auto previous_context = previous_ip ? std::optional{describe_address(*this, previous_ip, true)} : std::nullopt;
             context.thread_id = thread.id;
             context.previous_ip = previous_ip ? std::optional<uint64_t>{previous_ip} : std::nullopt;
-            context.previous_ip_module = previous_context ? std::optional<std::string>{previous_context->module_name} : std::nullopt;
+            context.previous_ip_module = previous_context ? previous_context->module_name : std::nullopt;
             context.previous_ip_function = previous_context ? previous_context->function : std::nullopt;
         }
         catch (...)

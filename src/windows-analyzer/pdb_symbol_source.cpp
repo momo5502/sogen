@@ -5,16 +5,21 @@
 #include <utils/exec.hpp>
 #include <utils/io.hpp>
 #include <utils/string.hpp>
-#include <platform/win_pe_debug.hpp>
+#include <platform/win_pefile_debug.hpp>
 
 #include <cstdlib>
+#include <random>
 #include <iomanip>
+#include <span>
 #include <sstream>
 
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <cerrno>
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace sogen
@@ -45,8 +50,15 @@ namespace sogen
         struct download_result
         {
             bool success{};
+            std::filesystem::path path{};
             std::string reason{};
             bool not_found{};
+        };
+
+        struct symbol_store_candidate
+        {
+            bool two_tier{};
+            bool compressed{};
         };
 
         bool pdb_validation_failed(const pdb_validation_status status)
@@ -237,10 +249,32 @@ namespace sogen
             return paths;
         }
 
-        std::filesystem::path symbol_store_path(const std::filesystem::path& root, const pdb_signature& sig)
+        std::filesystem::path symbol_store_relative_path(const pdb_signature& sig, const symbol_store_candidate candidate = {})
         {
             const std::filesystem::path pdb_name{sig.filename()};
-            return root / pdb_name / make_signature_key(sig) / pdb_name;
+            auto stored_name = pdb_name;
+            if (candidate.compressed)
+            {
+                auto name = stored_name.string();
+                if (!name.empty())
+                {
+                    name.back() = '_';
+                }
+                stored_name = std::move(name);
+            }
+
+            auto path = pdb_name / make_signature_key(sig) / stored_name;
+            if (candidate.two_tier)
+            {
+                const auto name = pdb_name.string();
+                path = std::filesystem::path{name.substr(0, std::min<size_t>(2, name.size()))} / path;
+            }
+            return path;
+        }
+
+        std::filesystem::path symbol_store_path(const std::filesystem::path& root, const pdb_signature& sig)
+        {
+            return root / symbol_store_relative_path(sig, {.two_tier = utils::io::file_exists(root / "index2.txt")});
         }
 
         std::optional<resolved_pdb> find_in_caches(const pdb_signature& sig, const std::optional<std::filesystem::path>& explicit_cache,
@@ -273,7 +307,7 @@ namespace sogen
             return std::nullopt;
         }
 
-        std::string join_url(const std::string& server, const pdb_signature& sig)
+        std::string join_url(const std::string& server, const std::filesystem::path& path)
         {
             std::string result = server;
             while (!result.empty() && result.back() == '/')
@@ -281,24 +315,56 @@ namespace sogen
                 result.pop_back();
             }
 
-            const auto pdb_name = sig.filename();
             result += '/';
-            result.append(pdb_name);
-            result += '/';
-            result += make_signature_key(sig);
-            result += '/';
-            result.append(pdb_name);
+            result += path.generic_string();
             return result;
         }
 
-        std::filesystem::path temporary_download_path(const std::filesystem::path& target)
+        std::optional<std::filesystem::path> create_temporary_download_path(const std::filesystem::path& target, std::error_code& ec)
         {
-            return target.string() + ".tmp";
+            std::random_device random{};
+            for (size_t attempt = 0; attempt < 32; ++attempt)
+            {
+                std::ostringstream suffix{};
+                suffix << ".tmp." << std::hex << random() << random();
+                std::filesystem::path path = target.string() + suffix.str();
+
+#ifdef _WIN32
+                const auto handle = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_TEMPORARY, nullptr);
+                if (handle != INVALID_HANDLE_VALUE)
+                {
+                    CloseHandle(handle);
+                    return path;
+                }
+
+                const auto error = GetLastError();
+                if (error != ERROR_FILE_EXISTS && error != ERROR_ALREADY_EXISTS)
+                {
+                    ec = std::error_code{static_cast<int>(error), std::system_category()};
+                    return std::nullopt;
+                }
+#else
+                const auto descriptor = open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY, 0600);
+                if (descriptor >= 0)
+                {
+                    close(descriptor);
+                    return path;
+                }
+
+                if (errno != EEXIST)
+                {
+                    ec = std::error_code{errno, std::generic_category()};
+                    return std::nullopt;
+                }
+#endif
+            }
+
+            ec = std::make_error_code(std::errc::file_exists);
+            return std::nullopt;
         }
 
         download_result download_with_curl(const std::string& url, const std::filesystem::path& target)
         {
-            const auto temp = temporary_download_path(target);
             std::error_code ec{};
             std::filesystem::create_directories(target.parent_path(), ec);
             if (ec)
@@ -306,15 +372,20 @@ namespace sogen
                 return {.reason = "failed to create cache directory: " + ec.message()};
             }
 
-            std::filesystem::remove(temp, ec);
+            const auto temp = create_temporary_download_path(target, ec);
+            if (!temp)
+            {
+                return {.reason = "failed to create temporary download: " + ec.message()};
+            }
+
             try
             {
                 (void)utils::exec::run_command_capture(
-                    {"curl", "-fsSL", "--connect-timeout", "10", "--max-time", "120", "-o", temp.string(), url});
+                    {"curl", "-fsSL", "--connect-timeout", "10", "--max-time", "120", "-o", temp->string(), url});
             }
             catch (const std::exception& e)
             {
-                std::filesystem::remove(temp, ec);
+                std::filesystem::remove(*temp, ec);
                 auto reason = std::string_view{e.what()};
                 const auto not_found = reason.find("(22)") != std::string_view::npos && reason.find("404") != std::string_view::npos;
                 const auto timeout = reason.find("(28)") != std::string_view::npos || reason.find("timed out") != std::string_view::npos ||
@@ -330,32 +401,90 @@ namespace sogen
                 return {.reason = std::string{reason}, .not_found = not_found};
             }
 
-            if (!utils::io::file_exists(temp))
+            if (!utils::io::file_exists(*temp))
             {
                 return {.reason = "download finished but temporary file was not created"};
             }
 
-            return {.success = true};
+            return {.success = true, .path = *temp};
         }
 
-        download_result promote_download(const std::filesystem::path& temporary_path, const std::filesystem::path& target)
+        download_result decompress_pdb(const std::filesystem::path& compressed_path, const std::filesystem::path& target)
         {
             std::error_code ec{};
-            std::filesystem::rename(temporary_path, target, ec);
-            if (!ec)
-            {
-                return {.success = true};
-            }
-
-            ec.clear();
-            std::filesystem::copy_file(temporary_path, target, std::filesystem::copy_options::overwrite_existing, ec);
+            std::filesystem::create_directories(target.parent_path(), ec);
             if (ec)
             {
-                return {.reason = "failed to promote downloaded PDB into cache: " + ec.message()};
+                return {.reason = "failed to create cache directory: " + ec.message()};
             }
 
-            std::filesystem::remove(temporary_path, ec);
-            return {.success = true};
+            const auto output_path = create_temporary_download_path(target, ec);
+            if (!output_path)
+            {
+                return {.reason = "failed to create temporary decompression output: " + ec.message()};
+            }
+
+            try
+            {
+#ifdef _WIN32
+                std::filesystem::remove(*output_path, ec);
+                (void)utils::exec::run_command_capture({"expand", compressed_path.string(), output_path->string()});
+#else
+                const auto output = utils::exec::run_command_capture({"cabextract", "-q", "-p", compressed_path.string()});
+                const auto bytes = std::as_bytes(std::span{output.data(), output.size()});
+                if (!utils::io::write_file(*output_path, bytes))
+                {
+                    std::filesystem::remove(*output_path, ec);
+                    return {.reason = "failed to write decompressed PDB"};
+                }
+#endif
+            }
+            catch (const std::exception& e)
+            {
+                std::filesystem::remove(*output_path, ec);
+                return {.reason = "failed to decompress symbol-store artifact: " + std::string{e.what()}};
+            }
+
+            return {.success = true, .path = *output_path};
+        }
+
+        download_result promote_download(const std::filesystem::path& temporary_path, const std::filesystem::path& target,
+                                         const pdb_signature& expected)
+        {
+            for (size_t attempt = 0; attempt < 2; ++attempt)
+            {
+                std::error_code ec{};
+                std::filesystem::create_hard_link(temporary_path, target, ec);
+                if (!ec)
+                {
+                    std::filesystem::remove(temporary_path, ec);
+                    return {.success = true, .path = target};
+                }
+
+                if (!utils::io::file_exists(target))
+                {
+                    return {.reason = "failed to promote downloaded PDB into cache: " + ec.message()};
+                }
+
+                const auto validation = pdb_file::validate(target, expected);
+                if (validation.status == pdb_validation_status::match)
+                {
+                    std::filesystem::remove(temporary_path, ec);
+                    return {.success = true, .path = target};
+                }
+                if (validation.status == pdb_validation_status::validation_error)
+                {
+                    return {.reason = "failed to validate concurrently cached PDB: " + validation.error};
+                }
+
+                std::filesystem::remove(target, ec);
+                if (ec)
+                {
+                    return {.reason = "failed to remove invalid concurrently cached PDB: " + ec.message()};
+                }
+            }
+
+            return {.reason = "failed to promote downloaded PDB because the cache entry kept changing"};
         }
 
         std::optional<resolved_pdb> find_on_symbol_servers(const pdb_signature& sig, const pdb_symbol_options& options, const logger& log,
@@ -378,13 +507,22 @@ namespace sogen
                 {
                     log.warn("Failed to validate cached PDB for %.*s at %s: %s\n", static_cast<int>(module_name.size()), module_name.data(),
                              download_target.string().c_str(), validation.error.c_str());
-                    return std::nullopt;
+                    if (validation.status == pdb_validation_status::validation_error)
+                    {
+                        return std::nullopt;
+                    }
                 }
 
-                log.warn("Ignoring stale cached PDB for %.*s: %s\n", static_cast<int>(module_name.size()), module_name.data(),
+                log.warn("Removing unusable cached PDB for %.*s: %s\n", static_cast<int>(module_name.size()), module_name.data(),
                          download_target.string().c_str());
                 std::error_code ec{};
                 std::filesystem::remove(download_target, ec);
+                if (ec)
+                {
+                    log.warn("Failed to remove unusable cached PDB for %.*s at %s: %s\n", static_cast<int>(module_name.size()),
+                             module_name.data(), download_target.string().c_str(), ec.message().c_str());
+                    return std::nullopt;
+                }
             }
 
             std::vector<std::string> servers = options.symbol_servers;
@@ -394,17 +532,38 @@ namespace sogen
             {
                 if (is_http_server(server))
                 {
-                    const auto url = join_url(server, sig);
                     log.info("Downloading PDB symbols for %.*s from %s\n", static_cast<int>(module_name.size()), module_name.data(),
                              server.c_str());
-                    const auto download = download_with_curl(url, download_target);
+                    download_result download{};
+                    constexpr std::array candidates{
+                        symbol_store_candidate{},
+                        symbol_store_candidate{.compressed = true},
+                        symbol_store_candidate{.two_tier = true},
+                        symbol_store_candidate{.two_tier = true, .compressed = true},
+                    };
+                    for (const auto candidate : candidates)
+                    {
+                        download = download_with_curl(join_url(server, symbol_store_relative_path(sig, candidate)), download_target);
+                        if (download.success && candidate.compressed)
+                        {
+                            auto decompressed = decompress_pdb(download.path, download_target);
+                            std::error_code ec{};
+                            std::filesystem::remove(download.path, ec);
+                            download = std::move(decompressed);
+                        }
+
+                        if (download.success || !download.not_found)
+                        {
+                            break;
+                        }
+                    }
                     if (download.success)
                     {
-                        const auto temporary_path = temporary_download_path(download_target);
+                        const auto& temporary_path = download.path;
                         const auto validation = pdb_file::validate(temporary_path, sig);
                         if (validation.status == pdb_validation_status::match)
                         {
-                            const auto promotion = promote_download(temporary_path, download_target);
+                            const auto promotion = promote_download(temporary_path, download_target, sig);
                             if (promotion.success)
                             {
                                 return resolved_pdb{
@@ -457,20 +616,58 @@ namespace sogen
                     continue;
                 }
 
-                const auto path = symbol_store_path(server, sig);
+                const std::filesystem::path root{server};
+                auto path = symbol_store_path(root, sig);
+                bool temporary = false;
                 if (!utils::io::file_exists(path))
                 {
-                    continue;
+                    const auto compressed_path =
+                        root /
+                        symbol_store_relative_path(sig, {.two_tier = utils::io::file_exists(root / "index2.txt"), .compressed = true});
+                    if (!utils::io::file_exists(compressed_path))
+                    {
+                        continue;
+                    }
+
+                    const auto decompressed = decompress_pdb(compressed_path, download_target);
+                    if (!decompressed.success)
+                    {
+                        log.warn("Failed to decompress PDB for %.*s in symbol store %s: %s\n", static_cast<int>(module_name.size()),
+                                 module_name.data(), server.c_str(), decompressed.reason.c_str());
+                        continue;
+                    }
+                    path = decompressed.path;
+                    temporary = true;
                 }
 
                 const auto validation = pdb_file::validate(path, sig);
                 if (validation.status == pdb_validation_status::match)
                 {
+                    if (temporary)
+                    {
+                        const auto promotion = promote_download(path, download_target, sig);
+                        if (!promotion.success)
+                        {
+                            std::error_code ec{};
+                            std::filesystem::remove(path, ec);
+                            log.warn("Failed to cache decompressed PDB for %.*s from %s: %s\n", static_cast<int>(module_name.size()),
+                                     module_name.data(), server.c_str(), promotion.reason.c_str());
+                            continue;
+                        }
+                        path = promotion.path;
+                    }
+
                     return resolved_pdb{
                         .path = path,
                         .explicit_input = false,
                         .source = pdb_resolution_source::symbol_store,
                     };
+                }
+
+                if (temporary)
+                {
+                    std::error_code ec{};
+                    std::filesystem::remove(path, ec);
                 }
                 if (pdb_validation_failed(validation.status))
                 {

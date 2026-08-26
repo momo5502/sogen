@@ -7,7 +7,7 @@
 #include <utils/io.hpp>
 #include <utils/buffer_accessor.hpp>
 #include <utils/string.hpp>
-#include <platform/win_pe_debug.hpp>
+#include <platform/win_pefile_debug.hpp>
 
 #if defined(__clang__) || defined(__GNUC__)
 #pragma GCC diagnostic ignored "-Winvalid-offsetof"
