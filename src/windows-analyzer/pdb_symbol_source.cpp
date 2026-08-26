@@ -6,6 +6,7 @@
 #include <utils/string.hpp>
 #include <platform/win_pefile.hpp>
 
+#include <cerrno>
 #include <cstdlib>
 #include <iomanip>
 #include <regex>
@@ -14,8 +15,12 @@
 #ifdef _WIN32
 #include <Windows.h>
 #else
+#include <spawn.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+extern char** environ;
 #endif
 
 namespace sogen
@@ -69,6 +74,31 @@ namespace sogen
             std::string reason{};
             bool not_found{};
             bool timeout{};
+        };
+
+        enum class pdb_validation_status
+        {
+            match,
+            mismatch,
+            invalid_artifact,
+            validation_error,
+        };
+
+        struct pdb_validation_result
+        {
+            pdb_validation_status status{};
+            std::string error{};
+        };
+
+        bool pdb_validation_failed(const pdb_validation_status status)
+        {
+            return status == pdb_validation_status::invalid_artifact || status == pdb_validation_status::validation_error;
+        }
+
+        class external_command_exit_error : public std::runtime_error
+        {
+          public:
+            using std::runtime_error::runtime_error;
         };
 
         std::string trim(std::string value)
@@ -381,20 +411,39 @@ namespace sogen
             return age;
         }
 
-        std::string quote_command_arg(const std::string& arg)
+#ifdef _WIN32
+        std::string quote_windows_process_arg(const std::string_view arg)
         {
-            if (arg.find('"') != std::string::npos)
+            std::string quoted{};
+            quoted.push_back('"');
+
+            size_t backslashes = 0;
+            for (const auto ch : arg)
             {
-                throw std::runtime_error("External command arguments containing quotes are not supported: " + arg);
+                if (ch == '\\')
+                {
+                    ++backslashes;
+                    continue;
+                }
+
+                if (ch == '"')
+                {
+                    quoted.append(backslashes * 2 + 1, '\\');
+                    quoted.push_back(ch);
+                    backslashes = 0;
+                    continue;
+                }
+
+                quoted.append(backslashes, '\\');
+                backslashes = 0;
+                quoted.push_back(ch);
             }
 
-            if (arg.find_first_of(" \t&|<>^") == std::string::npos)
-            {
-                return arg;
-            }
-
-            return "\"" + arg + "\"";
+            quoted.append(backslashes * 2, '\\');
+            quoted.push_back('"');
+            return quoted;
         }
+#endif
 
         std::string run_command_capture(const std::vector<std::string>& args)
         {
@@ -403,64 +452,215 @@ namespace sogen
                 return {};
             }
 
-            std::string command{};
-            for (const auto& arg : args)
-            {
-                if (!command.empty())
-                {
-                    command.push_back(' ');
-                }
+#ifdef _WIN32
+            SECURITY_ATTRIBUTES security_attributes{};
+            security_attributes.nLength = sizeof(security_attributes);
+            security_attributes.bInheritHandle = TRUE;
 
-                command += quote_command_arg(arg);
+            HANDLE read_pipe{};
+            HANDLE write_pipe{};
+            if (!CreatePipe(&read_pipe, &write_pipe, &security_attributes, 0))
+            {
+                throw std::runtime_error("Failed to create output pipe for external command: " + args.front());
             }
 
-            command += " 2>&1";
-
-#ifdef _WIN32
-            auto* pipe = _popen(command.c_str(), "r");
-#else
-            auto* pipe = popen(command.c_str(), "r");
-#endif
-            if (!pipe)
+            if (!SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0))
             {
+                CloseHandle(read_pipe);
+                CloseHandle(write_pipe);
+                throw std::runtime_error("Failed to configure output pipe for external command: " + args.front());
+            }
+
+            std::string command_line{};
+            for (const auto& arg : args)
+            {
+                if (!command_line.empty())
+                {
+                    command_line.push_back(' ');
+                }
+                command_line += quote_windows_process_arg(arg);
+            }
+
+            STARTUPINFOA startup_info{};
+            startup_info.cb = sizeof(startup_info);
+            startup_info.dwFlags = STARTF_USESTDHANDLES;
+            startup_info.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+            startup_info.hStdOutput = write_pipe;
+            startup_info.hStdError = write_pipe;
+
+            PROCESS_INFORMATION process_info{};
+            const auto created = CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr,
+                                                &startup_info, &process_info);
+            CloseHandle(write_pipe);
+
+            if (!created)
+            {
+                CloseHandle(read_pipe);
                 throw std::runtime_error("Failed to execute external command: " + args.front());
             }
 
             std::string output{};
             std::array<char, 4096> buffer{};
-            while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe))
+            DWORD bytes_read{};
+            while (ReadFile(read_pipe, buffer.data(), static_cast<DWORD>(buffer.size()), &bytes_read, nullptr) && bytes_read != 0)
             {
-                output.append(buffer.data());
+                output.append(buffer.data(), bytes_read);
             }
 
-#ifdef _WIN32
-            const auto status = _pclose(pipe);
-#else
-            const auto status = pclose(pipe);
-#endif
-            if (status != 0)
+            CloseHandle(read_pipe);
+            WaitForSingleObject(process_info.hProcess, INFINITE);
+
+            DWORD exit_code{};
+            const auto got_exit_code = GetExitCodeProcess(process_info.hProcess, &exit_code);
+            CloseHandle(process_info.hThread);
+            CloseHandle(process_info.hProcess);
+
+            if (!got_exit_code)
             {
-                throw std::runtime_error("External command failed: " + args.front() + "\n" + output);
+                throw std::runtime_error("Failed to retrieve external command status: " + args.front());
+            }
+
+            if (exit_code != 0)
+            {
+                throw external_command_exit_error("External command failed: " + args.front() + "\n" + output);
             }
 
             return output;
+#else
+            std::vector<char*> argv{};
+            argv.reserve(args.size() + 1);
+            for (const auto& arg : args)
+            {
+                argv.push_back(const_cast<char*>(arg.c_str()));
+            }
+            argv.push_back(nullptr);
+
+            int output_pipe[2]{};
+            if (pipe(output_pipe) != 0)
+            {
+                throw std::runtime_error("Failed to create output pipe for external command: " + args.front());
+            }
+
+            posix_spawn_file_actions_t file_actions{};
+            if (posix_spawn_file_actions_init(&file_actions) != 0)
+            {
+                close(output_pipe[0]);
+                close(output_pipe[1]);
+                throw std::runtime_error("Failed to configure external command: " + args.front());
+            }
+
+            auto spawn_error = posix_spawn_file_actions_adddup2(&file_actions, output_pipe[1], STDOUT_FILENO);
+            if (spawn_error == 0)
+            {
+                spawn_error = posix_spawn_file_actions_adddup2(&file_actions, output_pipe[1], STDERR_FILENO);
+            }
+            if (spawn_error == 0 && output_pipe[0] != STDOUT_FILENO && output_pipe[0] != STDERR_FILENO)
+            {
+                spawn_error = posix_spawn_file_actions_addclose(&file_actions, output_pipe[0]);
+            }
+            if (spawn_error == 0 && output_pipe[1] != STDOUT_FILENO && output_pipe[1] != STDERR_FILENO)
+            {
+                spawn_error = posix_spawn_file_actions_addclose(&file_actions, output_pipe[1]);
+            }
+
+            if (spawn_error != 0)
+            {
+                posix_spawn_file_actions_destroy(&file_actions);
+                close(output_pipe[0]);
+                close(output_pipe[1]);
+                throw std::runtime_error("Failed to configure external command: " + args.front());
+            }
+
+            pid_t pid{};
+            spawn_error = posix_spawnp(&pid, argv.front(), &file_actions, nullptr, argv.data(), environ);
+            posix_spawn_file_actions_destroy(&file_actions);
+            close(output_pipe[1]);
+
+            if (spawn_error != 0)
+            {
+                close(output_pipe[0]);
+                throw std::runtime_error("Failed to execute external command: " + args.front());
+            }
+
+            std::string output{};
+            std::array<char, 4096> buffer{};
+            while (true)
+            {
+                const auto count = read(output_pipe[0], buffer.data(), buffer.size());
+                if (count > 0)
+                {
+                    output.append(buffer.data(), static_cast<size_t>(count));
+                    continue;
+                }
+                if (count == 0)
+                {
+                    break;
+                }
+                if (errno == EINTR)
+                {
+                    continue;
+                }
+
+                close(output_pipe[0]);
+                int ignored_status{};
+                while (waitpid(pid, &ignored_status, 0) < 0 && errno == EINTR)
+                {
+                }
+                throw std::runtime_error("Failed to read external command output: " + args.front());
+            }
+
+            close(output_pipe[0]);
+
+            int status{};
+            while (waitpid(pid, &status, 0) < 0)
+            {
+                if (errno == EINTR)
+                {
+                    continue;
+                }
+                throw std::runtime_error("Failed to retrieve external command status: " + args.front());
+            }
+
+            if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            {
+                throw external_command_exit_error("External command failed: " + args.front() + "\n" + output);
+            }
+
+            return output;
+#endif
         }
 
-        void parse_pdb_signature_line(const std::string_view trimmed, pdb_signature& signature)
+        void parse_pdb_guid_line(const std::string_view trimmed, pdb_signature& signature)
         {
             if (trimmed.starts_with("GUID:"))
             {
                 signature.guid = normalize_guid(trim(std::string(trimmed.substr(5))));
-                return;
             }
+        }
 
-            if (trimmed.starts_with("Age:"))
+        std::optional<uint32_t> read_pdb_dbi_age(const std::filesystem::path& pdb_path)
+        {
+            const auto output = run_command_capture({"llvm-pdbutil", "pdb2yaml", "-dbi-stream", pdb_path.string()});
+
+            std::istringstream stream{output};
+            std::string line{};
+            bool parsing_dbi_stream = false;
+            while (std::getline(stream, line))
             {
-                if (const auto age = parse_age(trimmed.substr(4)))
+                const auto trimmed = trim(line);
+                if (trimmed == "DbiStream:")
                 {
-                    signature.age = *age;
+                    parsing_dbi_stream = true;
+                    continue;
+                }
+
+                if (parsing_dbi_stream && trimmed.starts_with("Age:"))
+                {
+                    return parse_age(trimmed.substr(4));
                 }
             }
+
+            return std::nullopt;
         }
 
         std::optional<pdb_signature> read_pdb_signature(const std::filesystem::path& pdb_path)
@@ -472,28 +672,43 @@ namespace sogen
             std::string line{};
             while (std::getline(stream, line))
             {
-                parse_pdb_signature_line(trim(line), signature);
+                parse_pdb_guid_line(trim(line), signature);
             }
 
+            signature.age = read_pdb_dbi_age(pdb_path).value_or(0);
             if (!signature.valid())
             {
                 return std::nullopt;
             }
 
-            signature.path = pdb_path;
+            signature.path = pdb_path.string();
             return signature;
         }
 
-        bool pdb_matches_signature(const std::filesystem::path& pdb_path, const pdb_signature& expected)
+        bool pdb_signatures_match(const pdb_signature& lhs, const pdb_signature& rhs)
+        {
+            return normalize_guid(lhs.guid) == normalize_guid(rhs.guid) && lhs.age == rhs.age;
+        }
+
+        pdb_validation_result validate_pdb_signature(const std::filesystem::path& pdb_path, const pdb_signature& expected)
         {
             try
             {
                 const auto actual = read_pdb_signature(pdb_path);
-                return actual && normalize_guid(actual->guid) == normalize_guid(expected.guid);
+                if (!actual)
+                {
+                    return {.status = pdb_validation_status::invalid_artifact, .error = "llvm-pdbutil did not report a valid PDB identity"};
+                }
+
+                return {.status = pdb_signatures_match(*actual, expected) ? pdb_validation_status::match : pdb_validation_status::mismatch};
             }
-            catch (...)
+            catch (const external_command_exit_error& e)
             {
-                return false;
+                return {.status = pdb_validation_status::invalid_artifact, .error = single_line(e.what())};
+            }
+            catch (const std::exception& e)
+            {
+                return {.status = pdb_validation_status::validation_error, .error = single_line(e.what())};
             }
         }
 
@@ -512,7 +727,7 @@ namespace sogen
             {
                 const auto trimmed = trim(line);
 
-                parse_pdb_signature_line(trimmed, pdb.signature);
+                parse_pdb_guid_line(trimmed, pdb.signature);
 
                 if (trimmed.find("S_PUB32") != std::string::npos)
                 {
@@ -565,12 +780,13 @@ namespace sogen
                 }
             }
 
+            pdb.signature.age = read_pdb_dbi_age(pdb_path).value_or(0);
             if (!pdb.signature.valid())
             {
-                throw std::runtime_error("llvm-pdbutil did not report a valid PDB signature for " + pdb_path.string());
+                throw std::runtime_error("llvm-pdbutil did not report a valid PDB identity for " + pdb_path.string());
             }
 
-            pdb.signature.path = pdb_path;
+            pdb.signature.path = pdb_path.string();
             return pdb;
         }
 
@@ -720,16 +936,23 @@ namespace sogen
 
         std::filesystem::path symbol_store_path(const std::filesystem::path& root, const pdb_signature& sig)
         {
-            const auto pdb_name = sig.path.filename();
+            const std::filesystem::path pdb_name{sig.filename()};
             return root / pdb_name / make_signature_key(sig) / pdb_name;
         }
 
-        std::optional<resolved_pdb> find_in_caches(const pdb_signature& sig, const std::optional<std::filesystem::path>& explicit_cache)
+        std::optional<resolved_pdb> find_in_caches(const pdb_signature& sig, const std::optional<std::filesystem::path>& explicit_cache,
+                                                   const logger& log, const std::string_view module_name)
         {
             for (const auto& root : existing_cache_roots(explicit_cache))
             {
                 const auto path = symbol_store_path(root, sig);
-                if (utils::io::file_exists(path) && pdb_matches_signature(path, sig))
+                if (!utils::io::file_exists(path))
+                {
+                    continue;
+                }
+
+                const auto validation = validate_pdb_signature(path, sig);
+                if (validation.status == pdb_validation_status::match)
                 {
                     return resolved_pdb{
                         .path = path,
@@ -737,6 +960,11 @@ namespace sogen
                         .source = pdb_resolution_source::cache,
                         .source_detail = root.string(),
                     };
+                }
+                if (pdb_validation_failed(validation.status))
+                {
+                    log.warn("Failed to validate cached PDB for %.*s at %s: %s\n", static_cast<int>(module_name.size()), module_name.data(),
+                             path.string().c_str(), validation.error.c_str());
                 }
             }
 
@@ -751,13 +979,24 @@ namespace sogen
                 result.pop_back();
             }
 
-            const auto pdb_name = sig.path.filename().string();
-            return result + "/" + pdb_name + "/" + make_signature_key(sig) + "/" + pdb_name;
+            const auto pdb_name = sig.filename();
+            result += '/';
+            result.append(pdb_name);
+            result += '/';
+            result += make_signature_key(sig);
+            result += '/';
+            result.append(pdb_name);
+            return result;
+        }
+
+        std::filesystem::path temporary_download_path(const std::filesystem::path& target)
+        {
+            return target.string() + ".tmp";
         }
 
         download_result download_with_curl(const std::string& url, const std::filesystem::path& target)
         {
-            const auto temp = target.string() + ".tmp";
+            const auto temp = temporary_download_path(target);
             std::error_code ec{};
             std::filesystem::create_directories(target.parent_path(), ec);
             if (ec)
@@ -765,9 +1004,10 @@ namespace sogen
                 return {.reason = "failed to create cache directory: " + ec.message()};
             }
 
+            std::filesystem::remove(temp, ec);
             try
             {
-                (void)run_command_capture({"curl", "-fsSL", "--connect-timeout", "10", "--max-time", "120", "-o", temp, url});
+                (void)run_command_capture({"curl", "-fsSL", "--connect-timeout", "10", "--max-time", "120", "-o", temp.string(), url});
             }
             catch (const std::exception& e)
             {
@@ -787,18 +1027,31 @@ namespace sogen
                 return {.reason = std::move(reason), .not_found = not_found, .timeout = timeout};
             }
 
-            std::filesystem::rename(temp, target, ec);
+            if (!utils::io::file_exists(temp))
+            {
+                return {.reason = "download finished but temporary file was not created"};
+            }
+
+            return {.success = true};
+        }
+
+        download_result promote_download(const std::filesystem::path& temporary_path, const std::filesystem::path& target)
+        {
+            std::error_code ec{};
+            std::filesystem::rename(temporary_path, target, ec);
+            if (!ec)
+            {
+                return {.success = true};
+            }
+
+            ec.clear();
+            std::filesystem::copy_file(temporary_path, target, std::filesystem::copy_options::overwrite_existing, ec);
             if (ec)
             {
-                std::filesystem::copy_file(temp, target, std::filesystem::copy_options::overwrite_existing, ec);
-                std::filesystem::remove(temp, ec);
+                return {.reason = "failed to promote downloaded PDB into cache: " + ec.message()};
             }
 
-            if (!utils::io::file_exists(target))
-            {
-                return {.reason = "download finished but cache file was not created"};
-            }
-
+            std::filesystem::remove(temporary_path, ec);
             return {.success = true};
         }
 
@@ -809,7 +1062,8 @@ namespace sogen
             const auto download_target = symbol_store_path(download_root, sig);
             if (utils::io::file_exists(download_target))
             {
-                if (pdb_matches_signature(download_target, sig))
+                const auto validation = validate_pdb_signature(download_target, sig);
+                if (validation.status == pdb_validation_status::match)
                 {
                     return resolved_pdb{
                         .path = download_target,
@@ -817,6 +1071,12 @@ namespace sogen
                         .source = pdb_resolution_source::cache,
                         .source_detail = download_root.string(),
                     };
+                }
+                if (pdb_validation_failed(validation.status))
+                {
+                    log.warn("Failed to validate cached PDB for %.*s at %s: %s\n", static_cast<int>(module_name.size()), module_name.data(),
+                             download_target.string().c_str(), validation.error.c_str());
+                    return std::nullopt;
                 }
 
                 log.warn("Ignoring stale cached PDB for %.*s: %s\n", static_cast<int>(module_name.size()), module_name.data(),
@@ -838,20 +1098,48 @@ namespace sogen
                     const auto download = download_with_curl(url, download_target);
                     if (download.success)
                     {
-                        if (pdb_matches_signature(download_target, sig))
+                        const auto temporary_path = temporary_download_path(download_target);
+                        const auto validation = validate_pdb_signature(temporary_path, sig);
+                        if (validation.status == pdb_validation_status::match)
                         {
-                            return resolved_pdb{
-                                .path = download_target,
-                                .explicit_input = false,
-                                .source = pdb_resolution_source::download,
-                                .source_detail = server,
-                            };
+                            const auto promotion = promote_download(temporary_path, download_target);
+                            if (promotion.success)
+                            {
+                                return resolved_pdb{
+                                    .path = download_target,
+                                    .explicit_input = false,
+                                    .source = pdb_resolution_source::download,
+                                    .source_detail = server,
+                                };
+                            }
+
+                            log.warn("Failed to cache downloaded PDB for %.*s from %s: %s\n", static_cast<int>(module_name.size()),
+                                     module_name.data(), server.c_str(), promotion.reason.c_str());
+                            std::error_code ec{};
+                            std::filesystem::remove(temporary_path, ec);
+                            continue;
+                        }
+                        if (validation.status == pdb_validation_status::validation_error)
+                        {
+                            log.warn("Failed to validate downloaded PDB for %.*s from %s: %s\n", static_cast<int>(module_name.size()),
+                                     module_name.data(), server.c_str(), validation.error.c_str());
+                            std::error_code ec{};
+                            std::filesystem::remove(temporary_path, ec);
+                            return std::nullopt;
                         }
 
-                        log.warn("Downloaded PDB for %.*s did not match expected GUID: %s\n", static_cast<int>(module_name.size()),
-                                 module_name.data(), download_target.string().c_str());
+                        if (validation.status == pdb_validation_status::mismatch)
+                        {
+                            log.warn("Downloaded PDB for %.*s from %s did not match expected GUID and age\n",
+                                     static_cast<int>(module_name.size()), module_name.data(), server.c_str());
+                        }
+                        else
+                        {
+                            log.warn("Downloaded symbol artifact for %.*s from %s was not a usable PDB: %s\n",
+                                     static_cast<int>(module_name.size()), module_name.data(), server.c_str(), validation.error.c_str());
+                        }
                         std::error_code ec{};
-                        std::filesystem::remove(download_target, ec);
+                        std::filesystem::remove(temporary_path, ec);
                         continue;
                     }
 
@@ -869,7 +1157,13 @@ namespace sogen
                 }
 
                 const auto path = symbol_store_path(server, sig);
-                if (utils::io::file_exists(path) && pdb_matches_signature(path, sig))
+                if (!utils::io::file_exists(path))
+                {
+                    continue;
+                }
+
+                const auto validation = validate_pdb_signature(path, sig);
+                if (validation.status == pdb_validation_status::match)
                 {
                     return resolved_pdb{
                         .path = path,
@@ -877,6 +1171,11 @@ namespace sogen
                         .source = pdb_resolution_source::symbol_store,
                         .source_detail = server,
                     };
+                }
+                if (pdb_validation_failed(validation.status))
+                {
+                    log.warn("Failed to validate PDB for %.*s in symbol store %s: %s\n", static_cast<int>(module_name.size()),
+                             module_name.data(), server.c_str(), validation.error.c_str());
                 }
             }
 
@@ -1007,14 +1306,24 @@ namespace sogen
                 return std::nullopt;
             }
 
-            if (sig.path.is_absolute() && utils::io::file_exists(sig.path) && pdb_matches_signature(sig.path, sig))
+            const std::filesystem::path recorded_path{sig.path};
+            if (recorded_path.is_absolute() && utils::io::file_exists(recorded_path))
             {
-                return resolved_pdb{
-                    .path = sig.path,
-                    .explicit_input = false,
-                    .source = pdb_resolution_source::recorded_path,
-                    .source_detail = sig.path.parent_path().string(),
-                };
+                const auto validation = validate_pdb_signature(recorded_path, sig);
+                if (validation.status == pdb_validation_status::match)
+                {
+                    return resolved_pdb{
+                        .path = recorded_path,
+                        .explicit_input = false,
+                        .source = pdb_resolution_source::recorded_path,
+                        .source_detail = recorded_path.parent_path().string(),
+                    };
+                }
+                if (pdb_validation_failed(validation.status))
+                {
+                    log.warn("Failed to validate recorded PDB for %.*s at %s: %s\n", static_cast<int>(module_name.size()),
+                             module_name.data(), recorded_path.string().c_str(), validation.error.c_str());
+                }
             }
 
             if (module_pe_path && !module_pe_path->empty())
@@ -1025,15 +1334,27 @@ namespace sogen
                 sibling_pdb.replace_extension(".pdb");
                 sibling_candidates.push_back(std::move(sibling_pdb));
 
-                if (sig.path.has_filename())
+                if (!sig.filename().empty())
                 {
-                    sibling_candidates.push_back(module_pe_path->parent_path() / sig.path.filename());
+                    sibling_candidates.push_back(module_pe_path->parent_path() / sig.filename());
                 }
 
                 for (const auto& candidate : sibling_candidates)
                 {
-                    if (!utils::io::file_exists(candidate) || !pdb_matches_signature(candidate, sig))
+                    if (!utils::io::file_exists(candidate))
                     {
+                        continue;
+                    }
+
+                    const auto validation = validate_pdb_signature(candidate, sig);
+                    if (validation.status == pdb_validation_status::mismatch)
+                    {
+                        continue;
+                    }
+                    if (pdb_validation_failed(validation.status))
+                    {
+                        log.warn("Failed to validate sibling PDB for %.*s at %s: %s\n", static_cast<int>(module_name.size()),
+                                 module_name.data(), candidate.string().c_str(), validation.error.c_str());
                         continue;
                     }
 
@@ -1046,7 +1367,7 @@ namespace sogen
                 }
             }
 
-            if (const auto cached = find_in_caches(sig, options.symbol_cache))
+            if (const auto cached = find_in_caches(sig, options.symbol_cache, log, module_name))
             {
                 return cached;
             }
@@ -1064,17 +1385,18 @@ namespace sogen
             }
 
             std::vector<std::pair<std::filesystem::path, pdb_resolution_source>> direct_candidates{};
-            if (sig->path.is_absolute())
+            const std::filesystem::path recorded_path{sig->path};
+            if (recorded_path.is_absolute())
             {
-                direct_candidates.emplace_back(sig->path, pdb_resolution_source::recorded_path);
+                direct_candidates.emplace_back(recorded_path, pdb_resolution_source::recorded_path);
             }
 
             auto sibling_pdb = pe_path;
             sibling_pdb.replace_extension(".pdb");
             direct_candidates.emplace_back(std::move(sibling_pdb), pdb_resolution_source::sibling_path);
-            if (sig->path.has_filename())
+            if (!sig->filename().empty())
             {
-                direct_candidates.emplace_back(pe_path.parent_path() / sig->path.filename(), pdb_resolution_source::sibling_path);
+                direct_candidates.emplace_back(pe_path.parent_path() / sig->filename(), pdb_resolution_source::sibling_path);
             }
 
             for (const auto& [candidate, source] : direct_candidates)
@@ -1085,7 +1407,7 @@ namespace sogen
                 }
 
                 const auto parsed = parse_pdb(candidate);
-                if (normalize_guid(parsed.signature.guid) != normalize_guid(sig->guid))
+                if (!pdb_signatures_match(parsed.signature, *sig))
                 {
                     throw std::runtime_error("PDB signature mismatch for " + candidate.string());
                 }
@@ -1121,7 +1443,7 @@ namespace sogen
 
         bool matches_module(const mapped_module& mod, const parsed_pdb& pdb)
         {
-            return mod.pdb && normalize_guid(mod.pdb->guid) == normalize_guid(pdb.signature.guid);
+            return mod.pdb && pdb_signatures_match(*mod.pdb, pdb.signature);
         }
 
     }
@@ -1219,8 +1541,9 @@ namespace sogen
 
             if (!matches_module(mod, pdb))
             {
+                const auto candidate_filename = candidate.path.filename().string();
                 const auto same_pdb_name =
-                    mod.pdb && utils::string::equals_ignore_case(mod.pdb->path.filename().string(), candidate.path.filename().string());
+                    mod.pdb && utils::string::equals_ignore_case(mod.pdb->filename(), std::string_view{candidate_filename});
                 if (candidate.explicit_input && same_pdb_name)
                 {
                     throw std::runtime_error("PDB signature mismatch for " + candidate.path.string() + " and module " + mod.name);

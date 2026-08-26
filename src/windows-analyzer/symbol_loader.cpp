@@ -46,6 +46,8 @@ namespace sogen
 
         this->module_load_callback_ =
             this->win_emu_->callbacks.on_module_load.add([this](mapped_module& mod) { this->load_for_module(mod, false); });
+        this->module_unload_callback_ =
+            this->win_emu_->callbacks.on_module_unload.add([this](mapped_module& mod) { this->attempted_modules_.erase(mod.image_base); });
 
         this->load_existing_modules();
     }
@@ -55,6 +57,10 @@ namespace sogen
         if (this->win_emu_ && this->module_load_callback_)
         {
             this->win_emu_->callbacks.on_module_load.remove(this->module_load_callback_);
+        }
+        if (this->win_emu_ && this->module_unload_callback_)
+        {
+            this->win_emu_->callbacks.on_module_unload.remove(this->module_unload_callback_);
         }
     }
 
@@ -106,11 +112,25 @@ namespace sogen
 
         if (this->map_)
         {
-            merge_symbols(mod, this->map_->load(mod));
+            try
+            {
+                merge_symbols(mod, this->map_->load(mod));
+            }
+            catch (const std::exception& e)
+            {
+                this->win_emu_->log.warn("Failed to load MAP symbols for %s: %s\n", mod.name.c_str(), e.what());
+            }
         }
         if (this->pdb_)
         {
-            merge_symbols(mod, this->pdb_->load(mod));
+            try
+            {
+                merge_symbols(mod, this->pdb_->load(mod));
+            }
+            catch (const std::exception& e)
+            {
+                this->win_emu_->log.warn("Failed to load PDB symbols for %s: %s\n", mod.name.c_str(), e.what());
+            }
         }
 
         mod.has_symbols = !mod.symbol_address_names.empty();

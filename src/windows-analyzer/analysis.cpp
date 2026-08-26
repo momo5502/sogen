@@ -115,21 +115,22 @@ namespace sogen
             std::optional<std::string> function{};
         };
 
-        mapped_module* find_module_for_address(module_manager& manager, const uint64_t address)
-        {
-            if (manager.executable && manager.executable->contains(address))
-            {
-                return manager.executable;
-            }
-
-            return manager.find_by_address(address);
-        }
-
-        address_symbol_context describe_address(const analysis_context* analysis, module_manager& manager, const uint64_t address,
+        address_symbol_context describe_address(const analysis_context& analysis, const uint64_t address,
                                                 const bool allow_caller_symbol_load = false)
         {
             address_symbol_context context{};
-            auto* mod = find_module_for_address(manager, address);
+            auto& manager = analysis.win_emu->mod_manager;
+
+            mapped_module* mod;
+            if (manager.executable && manager.executable->contains(address))
+            {
+                mod = manager.executable;
+            }
+            else
+            {
+                mod = manager.find_by_address(address);
+            }
+
             if (!mod)
             {
                 return context;
@@ -143,31 +144,18 @@ namespace sogen
                 return context;
             }
 
-            const auto has_visible_output = [&] {
-                if (!analysis)
+            const auto should_load_caller_symbols = [](const analysis_context& analysis) {
+                if (analysis.settings->concise_logging && !analysis.has_reached_main)
                 {
                     return false;
                 }
 
-                return analysis->has_report_output ||
-                       (!analysis->settings->silent && analysis->win_emu && !analysis->win_emu->log.is_output_disabled());
+                return analysis.has_report_output || (!analysis.settings->silent && !analysis.win_emu->log.is_output_disabled());
             };
 
-            if (allow_caller_symbol_load && analysis && analysis->symbols && mod->symbol_address_names.empty() && has_visible_output())
+            if (allow_caller_symbol_load && analysis.symbols && mod->symbol_address_names.empty() && should_load_caller_symbols(analysis))
             {
-                analysis->symbols->ensure_caller_symbols(address);
-                mod = find_module_for_address(manager, address);
-                if (!mod)
-                {
-                    return context;
-                }
-
-                context.module_name = mod->name;
-                if (const auto exact = mod->address_names.find(address); exact != mod->address_names.end())
-                {
-                    context.function = exact->second;
-                    return context;
-                }
+                analysis.symbols->ensure_caller_symbols(address);
             }
 
             if (mod->symbol_address_names.empty())
@@ -580,10 +568,13 @@ namespace sogen
                                             const uint64_t address)
         {
             const auto is_main_exe = &binary == c.win_emu->mod_manager.executable;
-            if (!c.has_reached_main && c.settings->concise_logging && !c.settings->silent && is_main_exe)
+            if (!c.has_reached_main && c.settings->concise_logging && is_main_exe)
             {
                 c.has_reached_main = true;
-                c.win_emu->log.disable_output(false);
+                if (!c.settings->silent)
+                {
+                    c.win_emu->log.disable_output(false);
+                }
             }
 
             if (!c.settings->log_first_section_execution)
@@ -665,9 +656,15 @@ namespace sogen
             const auto export_entry = binary->address_names.find(address);
             const auto symbol_entry =
                 c.symbols && c.symbols->use_for_trace() ? binary->symbol_address_names.find(address) : binary->symbol_address_names.end();
-            const auto* function_name = export_entry != binary->address_names.end()          ? &export_entry->second
-                                        : symbol_entry != binary->symbol_address_names.end() ? &symbol_entry->second
-                                                                                             : nullptr;
+            std::optional<std::string_view> function_name{};
+            if (symbol_entry != binary->symbol_address_names.end())
+            {
+                function_name = symbol_entry->second;
+            }
+            else if (export_entry != binary->address_names.end())
+            {
+                function_name = export_entry->second;
+            }
             if (function_name)
             {
                 if (!c.settings->ignored_functions.contains(*function_name))
@@ -689,22 +686,27 @@ namespace sogen
             }
             else if (is_previous_main_exe && binary != previous_binary && !is_return(c.d, c.win_emu->active_cpu(), previous_ip))
             {
-                const auto* address_names = &binary->address_names;
-                if (c.symbols && c.symbols->use_for_trace() && binary->has_symbols)
-                {
-                    address_names = &binary->symbol_address_names;
-                }
+                const auto find_nearest_entry = [address](const address_name_mapping& address_names) {
+                    auto entry = address_names.upper_bound(address);
+                    return entry == address_names.begin() ? address_names.end() : std::prev(entry);
+                };
 
-                auto nearest_entry = address_names->upper_bound(address);
-                if (nearest_entry == address_names->begin())
+                const auto nearest_export = find_nearest_entry(binary->address_names);
+                const auto nearest_symbol = c.symbols && c.symbols->use_for_trace() ? find_nearest_entry(binary->symbol_address_names)
+                                                                                    : binary->symbol_address_names.end();
+
+                const auto prefer_symbol =
+                    nearest_symbol != binary->symbol_address_names.end() &&
+                    (nearest_export == binary->address_names.end() || nearest_symbol->first >= nearest_export->first);
+                if (!prefer_symbol && nearest_export == binary->address_names.end())
                 {
                     return;
                 }
 
-                --nearest_entry;
+                const auto& nearest_entry = prefer_symbol ? *nearest_symbol : *nearest_export;
                 c.emit_observation<foreign_code_transition_event>([&](auto& event) {
-                    event.function_name = nearest_entry->second;
-                    event.function_offset = address - nearest_entry->first;
+                    event.function_name = nearest_entry.second;
+                    event.function_offset = address - nearest_entry.first;
                     event.interesting = is_interesting_call;
                 });
             }
@@ -808,7 +810,7 @@ namespace sogen
                         emu.try_read_memory(emu.read_stack_pointer(), &return_address, sizeof(return_address));
                     }
 
-                    const auto caller_context = describe_address(&c, win_emu.mod_manager, return_address, true);
+                    const auto caller_context = describe_address(c, return_address, true);
                     const auto call_count = next_traced_call_count(c);
 
                     c.emit_observation<syscall_event>([&](auto& event) {
@@ -829,7 +831,7 @@ namespace sogen
             }
             else
             {
-                const auto caller_context = describe_address(&c, win_emu.mod_manager, previous_ip, true);
+                const auto caller_context = describe_address(c, previous_ip, true);
                 const auto call_count = next_traced_call_count(c);
 
                 c.emit_observation<syscall_event>([&](auto& event) {
@@ -946,7 +948,7 @@ namespace sogen
     {
         auto& emu = this->win_emu->active_cpu();
         const auto rip = emu.read_instruction_pointer();
-        const auto rip_context = describe_address(this, this->win_emu->mod_manager, rip, false);
+        const auto rip_context = describe_address(*this, rip, false);
 
         execution_context context{
             .thread_id = 0,
@@ -960,8 +962,7 @@ namespace sogen
         {
             const auto& thread = this->win_emu->current_thread();
             const auto previous_ip = thread.previous_ip;
-            const auto previous_context =
-                previous_ip ? std::optional{describe_address(this, this->win_emu->mod_manager, previous_ip, true)} : std::nullopt;
+            const auto previous_context = previous_ip ? std::optional{describe_address(*this, previous_ip, true)} : std::nullopt;
             context.thread_id = thread.id;
             context.previous_ip = previous_ip ? std::optional<uint64_t>{previous_ip} : std::nullopt;
             context.previous_ip_module = previous_context ? std::optional<std::string>{previous_context->module_name} : std::nullopt;

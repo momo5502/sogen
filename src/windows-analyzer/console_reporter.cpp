@@ -4,8 +4,8 @@
 #include "analysis_reporter_common.hpp"
 
 #include <cinttypes>
-#include <sstream>
 #include <logger.hpp>
+#include <utils/string.hpp>
 
 #include <algorithm>
 #include <array>
@@ -109,13 +109,6 @@ namespace sogen
                 return "[" + std::to_string(call_count) + "] ";
             }
 
-            static std::string to_hex(const uint64_t value)
-            {
-                std::ostringstream stream{};
-                stream << std::hex << value;
-                return stream.str();
-            }
-
             static std::string format_symbol_location(const std::optional<std::string>& function, const std::string& module,
                                                       const std::optional<uint64_t> raw_address = std::nullopt)
             {
@@ -123,7 +116,7 @@ namespace sogen
                 {
                     if (raw_address)
                     {
-                        return "0x" + to_hex(*raw_address) + " (" + module + ")";
+                        return "0x" + utils::string::to_hex_number(*raw_address) + " (" + module + ")";
                     }
 
                     return module;
@@ -131,7 +124,7 @@ namespace sogen
 
                 if (raw_address)
                 {
-                    return *function + " (" + module + ") (0x" + to_hex(*raw_address) + ")";
+                    return *function + " (" + module + ") (0x" + utils::string::to_hex_number(*raw_address) + ")";
                 }
 
                 return *function + " (" + module + ")";
