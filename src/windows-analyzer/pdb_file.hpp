@@ -32,5 +32,6 @@ namespace sogen
         static pdb_file read(const std::filesystem::path& path);
         static pdb_validation_result validate(const std::filesystem::path& path, const pdb_signature& expected);
         static bool signatures_match(const pdb_signature& lhs, const pdb_signature& rhs);
+        static void ensure_available();
     };
 }

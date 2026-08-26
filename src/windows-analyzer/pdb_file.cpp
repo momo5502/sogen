@@ -2,6 +2,7 @@
 
 #include <utils/exec.hpp>
 #include <utils/string.hpp>
+#include <platform/platform.hpp>
 #include <platform/win_pefile_debug.hpp>
 
 #include <charconv>
@@ -252,6 +253,22 @@ namespace sogen
 
         pdb.signature.path = path.string();
         return pdb;
+    }
+
+    void pdb_file::ensure_available()
+    {
+        static const bool available = [] {
+            try
+            {
+                (void)utils::exec::run_command_capture({pdbutil_command(), "--version"});
+            }
+            catch (const std::exception& e)
+            {
+                throw std::runtime_error("PDB support requires llvm-pdbutil: " + std::string{e.what()});
+            }
+            return true;
+        }();
+        (void)available;
     }
 
     pdb_validation_result pdb_file::validate(const std::filesystem::path& path, const pdb_signature& expected)
