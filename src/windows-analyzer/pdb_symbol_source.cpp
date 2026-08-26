@@ -124,6 +124,57 @@ namespace sogen
                    utils::string::starts_with_ignore_case(value, "https://"sv);
         }
 
+        const std::string& pdbutil_command()
+        {
+            static const std::string command = [] {
+#if defined(__linux__) || defined(__APPLE__)
+                std::vector<std::string> names{"llvm-pdbutil"};
+
+#if defined(__APPLE__)
+                // Homebrew LLVM is keg-only, so it may not be on PATH.
+                names.emplace_back("/opt/homebrew/opt/llvm/bin/llvm-pdbutil"); // Apple Silicon
+                names.emplace_back("/usr/local/opt/llvm/bin/llvm-pdbutil");    // Intel
+#endif
+
+                for (int version = 14; version <= 30; ++version)
+                {
+                    names.emplace_back("llvm-pdbutil-" + std::to_string(version));
+                }
+
+                for (const auto& name : names)
+                {
+                    const auto command_line = "command -v " + name;
+                    auto* const pipe = popen(command_line.c_str(), "r");
+                    if (!pipe)
+                    {
+                        continue;
+                    }
+
+                    std::array<char, 512> buffer{};
+                    std::string candidate{};
+                    if (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe))
+                    {
+                        candidate = buffer.data();
+                        while (!candidate.empty() && (candidate.back() == '\r' || candidate.back() == '\n'))
+                        {
+                            candidate.pop_back();
+                        }
+                    }
+
+                    const auto status = pclose(pipe);
+                    if (status == 0 && !candidate.empty())
+                    {
+                        return candidate;
+                    }
+                }
+#endif
+
+                return std::string{"llvm-pdbutil"};
+            }();
+
+            return command;
+        }
+
         std::string single_line(std::string value)
         {
             for (auto& ch : value)
@@ -640,7 +691,7 @@ namespace sogen
 
         std::optional<uint32_t> read_pdb_dbi_age(const std::filesystem::path& pdb_path)
         {
-            const auto output = run_command_capture({"llvm-pdbutil", "pdb2yaml", "-dbi-stream", pdb_path.string()});
+            const auto output = run_command_capture({pdbutil_command(), "pdb2yaml", "-dbi-stream", pdb_path.string()});
 
             std::istringstream stream{output};
             std::string line{};
@@ -665,7 +716,7 @@ namespace sogen
 
         std::optional<pdb_signature> read_pdb_signature(const std::filesystem::path& pdb_path)
         {
-            const auto output = run_command_capture({"llvm-pdbutil", "dump", "-summary", pdb_path.string()});
+            const auto output = run_command_capture({pdbutil_command(), "dump", "-summary", pdb_path.string()});
 
             pdb_signature signature{};
             std::istringstream stream{output};
@@ -714,7 +765,7 @@ namespace sogen
 
         parsed_pdb parse_pdb(const std::filesystem::path& pdb_path)
         {
-            const auto output = run_command_capture({"llvm-pdbutil", "dump", "-summary", "-publics", "-symbols", pdb_path.string()});
+            const auto output = run_command_capture({pdbutil_command(), "dump", "-summary", "-publics", "-symbols", pdb_path.string()});
 
             parsed_pdb pdb{};
             std::optional<std::string> pending_public{};
