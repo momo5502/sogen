@@ -12,18 +12,6 @@ namespace sogen
     {
         using section_symbol_mapping = std::map<std::pair<uint32_t, uint32_t>, std::string>;
 
-        std::string trim(std::string value)
-        {
-            const auto begin = value.find_first_not_of(" \t\r\n");
-            if (begin == std::string::npos)
-            {
-                return {};
-            }
-
-            const auto end = value.find_last_not_of(" \t\r\n");
-            return value.substr(begin, end - begin + 1);
-        }
-
         std::optional<std::pair<uint32_t, uint32_t>> parse_section_offset(const std::string_view value)
         {
             const auto colon = value.find(':');
@@ -65,7 +53,7 @@ namespace sogen
             std::string line{};
             while (std::getline(stream, line))
             {
-                const auto trimmed = trim(std::move(line));
+                const auto trimmed = utils::string::trim(std::move(line));
                 if (trimmed.starts_with("Address") && trimmed.find("Publics by Value") != std::string::npos)
                 {
                     parsing_symbols = true;

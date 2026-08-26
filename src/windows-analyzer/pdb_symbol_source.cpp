@@ -1,10 +1,9 @@
 #include "pdb_symbol_source.hpp"
 
 #include <windows_emulator.hpp>
-#include <utils/buffer_accessor.hpp>
 #include <utils/io.hpp>
 #include <utils/string.hpp>
-#include <platform/win_pefile.hpp>
+#include <platform/win_pe_debug.hpp>
 
 #include <cerrno>
 #include <cstdlib>
@@ -13,14 +12,16 @@
 #include <sstream>
 
 #ifdef _WIN32
-#include <Windows.h>
+#include <windows.h>
 #else
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
 #include <spawn.h>
+#endif
 #include <sys/stat.h>
+#ifndef __EMSCRIPTEN__
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern char** environ;
+#endif
 #endif
 
 namespace sogen
@@ -29,20 +30,7 @@ namespace sogen
     {
         constexpr auto k_default_symbol_server = "https://msdl.microsoft.com/download/symbols"sv;
         constexpr auto k_sogen_cache_marker = ".sogen-symbol-cache"sv;
-        constexpr uint32_t k_image_debug_type_codeview = 2;
         constexpr auto k_cache_max_age = std::chrono::hours{24 * 31};
-
-        struct image_debug_directory
-        {
-            uint32_t characteristics{};
-            uint32_t time_date_stamp{};
-            uint16_t major_version{};
-            uint16_t minor_version{};
-            uint32_t type{};
-            uint32_t size_of_data{};
-            uint32_t address_of_raw_data{};
-            uint32_t pointer_to_raw_data{};
-        };
 
         struct parsed_pdb
         {
@@ -101,18 +89,6 @@ namespace sogen
             using std::runtime_error::runtime_error;
         };
 
-        std::string trim(std::string value)
-        {
-            const auto begin = value.find_first_not_of(" \t\r\n");
-            if (begin == std::string::npos)
-            {
-                return {};
-            }
-
-            const auto end = value.find_last_not_of(" \t\r\n");
-            return value.substr(begin, end - begin + 1);
-        }
-
         bool is_pdb_path(const std::filesystem::path& path)
         {
             return utils::string::equals_ignore_case(path.extension().string(), ".pdb"s);
@@ -124,10 +100,12 @@ namespace sogen
                    utils::string::starts_with_ignore_case(value, "https://"sv);
         }
 
+        std::string run_command_capture(const std::vector<std::string>& args);
+
         const std::string& pdbutil_command()
         {
             static const std::string command = [] {
-#if defined(__linux__) || defined(__APPLE__)
+#if (defined(__linux__) || defined(__APPLE__)) && !defined(__EMSCRIPTEN__)
                 std::vector<std::string> names{"llvm-pdbutil"};
 
 #if defined(__APPLE__)
@@ -143,28 +121,17 @@ namespace sogen
 
                 for (const auto& name : names)
                 {
-                    const auto command_line = "command -v " + name;
-                    auto* const pipe = popen(command_line.c_str(), "r");
-                    if (!pipe)
+                    try
                     {
-                        continue;
-                    }
-
-                    std::array<char, 512> buffer{};
-                    std::string candidate{};
-                    if (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe))
-                    {
-                        candidate = buffer.data();
-                        while (!candidate.empty() && (candidate.back() == '\r' || candidate.back() == '\n'))
+                        auto candidate = utils::string::trim(run_command_capture({"which", name}));
+                        if (!candidate.empty())
                         {
-                            candidate.pop_back();
+                            return candidate;
                         }
                     }
-
-                    const auto status = pclose(pipe);
-                    if (status == 0 && !candidate.empty())
+                    catch (const std::exception&)
                     {
-                        return candidate;
+                        continue;
                     }
                 }
 #endif
@@ -185,7 +152,7 @@ namespace sogen
                 }
             }
 
-            value = trim(std::move(value));
+            value = utils::string::trim(std::move(value));
             constexpr size_t max_len = 300;
             if (value.size() > max_len)
             {
@@ -240,162 +207,6 @@ namespace sogen
             return stream.str();
         }
 
-        std::string format_guid(const std::span<const std::byte, 16> guid)
-        {
-            uint32_t data1{};
-            uint16_t data2{};
-            uint16_t data3{};
-            memcpy(&data1, guid.data(), sizeof(data1));
-            memcpy(&data2, guid.data() + 4, sizeof(data2));
-            memcpy(&data3, guid.data() + 6, sizeof(data3));
-
-            std::ostringstream stream{};
-            stream << std::uppercase << std::hex << std::setfill('0') << std::setw(8) << data1 << std::setw(4) << data2 << std::setw(4)
-                   << data3;
-
-            for (size_t i = 8; i < guid.size(); ++i)
-            {
-                stream << std::setw(2) << std::to_integer<unsigned>(guid[i]);
-            }
-
-            return stream.str();
-        }
-
-        std::optional<pdb_signature> parse_codeview_record(const utils::safe_buffer_accessor<const std::byte>& buffer, const size_t offset,
-                                                           const size_t size)
-        {
-            if (size < 24)
-            {
-                return std::nullopt;
-            }
-
-            const auto* data = buffer.get_pointer_for_range(offset, size);
-            if (memcmp(data, "RSDS", 4) != 0)
-            {
-                return std::nullopt;
-            }
-
-            std::span<const std::byte, 16> guid{data + 4, 16};
-            uint32_t age{};
-            memcpy(&age, data + 20, sizeof(age));
-
-            std::string path{};
-            for (size_t i = 24; i < size && data[i] != std::byte{}; ++i)
-            {
-                path.push_back(static_cast<char>(data[i]));
-            }
-
-            pdb_signature sig{};
-            sig.guid = format_guid(guid);
-            sig.age = age;
-            sig.path = std::move(path);
-            return sig;
-        }
-
-        template <typename T>
-        std::optional<size_t> rva_to_file_offset(const utils::safe_buffer_accessor<const std::byte>& buffer,
-                                                 const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset, const uint32_t rva)
-        {
-            if (rva < nt_headers.OptionalHeader.SizeOfHeaders)
-            {
-                return rva;
-            }
-
-            const auto section_offset = winpe::get_first_section_offset(nt_headers, nt_headers_offset);
-            const auto sections = buffer.as<IMAGE_SECTION_HEADER>(static_cast<size_t>(section_offset));
-
-            for (size_t i = 0; i < nt_headers.FileHeader.NumberOfSections; ++i)
-            {
-                const auto section = sections.get(i);
-                const auto size = std::max(section.Misc.VirtualSize, section.SizeOfRawData);
-                if (rva >= section.VirtualAddress && rva < section.VirtualAddress + size)
-                {
-                    return section.PointerToRawData + (rva - section.VirtualAddress);
-                }
-            }
-
-            return std::nullopt;
-        }
-
-        template <typename T>
-        std::optional<pdb_signature> read_pe_pdb_signature(const utils::safe_buffer_accessor<const std::byte>& buffer,
-                                                           const PENTHeaders_t<T>& nt_headers, const uint64_t nt_headers_offset)
-        {
-            const auto& debug_entry = nt_headers.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG];
-            if (debug_entry.VirtualAddress == 0 || debug_entry.Size < sizeof(image_debug_directory))
-            {
-                return std::nullopt;
-            }
-
-            const auto debug_offset = rva_to_file_offset(buffer, nt_headers, nt_headers_offset, debug_entry.VirtualAddress);
-            if (!debug_offset)
-            {
-                return std::nullopt;
-            }
-
-            const auto debug_directories = buffer.as<image_debug_directory>(*debug_offset);
-            const auto count = debug_entry.Size / sizeof(image_debug_directory);
-
-            for (size_t i = 0; i < count; ++i)
-            {
-                const auto debug = debug_directories.get(i);
-                if (debug.type != k_image_debug_type_codeview || debug.size_of_data == 0)
-                {
-                    continue;
-                }
-
-                auto sig = parse_codeview_record(buffer, debug.pointer_to_raw_data, debug.size_of_data);
-                if (sig)
-                {
-                    return sig;
-                }
-            }
-
-            return std::nullopt;
-        }
-
-        std::optional<pdb_signature> read_pe_pdb_signature(const std::filesystem::path& file)
-        {
-            const auto data = utils::io::read_file(file);
-            if (data.empty())
-            {
-                return std::nullopt;
-            }
-
-            utils::safe_buffer_accessor<const std::byte> buffer{data};
-
-            try
-            {
-                const auto dos_header = buffer.as<PEDosHeader_t>(0).get();
-                const auto nt_headers_offset = dos_header.e_lfanew;
-
-                const auto nt_signature = buffer.as<uint32_t>(nt_headers_offset).get();
-                if (dos_header.e_magic != PEDosHeader_t::k_Magic || nt_signature != PENTHeaders_t<uint32_t>::k_Signature)
-                {
-                    return std::nullopt;
-                }
-
-                const auto magic_offset = nt_headers_offset + sizeof(uint32_t) + sizeof(PEFileHeader_t);
-                const auto magic = buffer.as<uint16_t>(magic_offset).get();
-                if (magic == PEOptionalHeader_t<uint32_t>::k_Magic)
-                {
-                    const auto nt_headers = buffer.as<PENTHeaders_t<uint32_t>>(nt_headers_offset).get();
-                    return read_pe_pdb_signature(buffer, nt_headers, nt_headers_offset);
-                }
-
-                if (magic == PEOptionalHeader_t<uint64_t>::k_Magic)
-                {
-                    const auto nt_headers = buffer.as<PENTHeaders_t<uint64_t>>(nt_headers_offset).get();
-                    return read_pe_pdb_signature(buffer, nt_headers, nt_headers_offset);
-                }
-            }
-            catch (...)
-            {
-            }
-
-            return std::nullopt;
-        }
-
         std::optional<std::pair<uint32_t, uint32_t>> parse_section_offset(const std::string_view line)
         {
             const auto addr_pos = line.find("addr = ");
@@ -419,8 +230,8 @@ namespace sogen
 
             uint32_t section{};
             uint32_t offset{};
-            const auto section_text = trim(std::string(value.substr(0, colon)));
-            const auto offset_text = trim(std::string(value.substr(colon + 1)));
+            const auto section_text = utils::string::trim(value.substr(0, colon));
+            const auto offset_text = utils::string::trim(value.substr(colon + 1));
 
             auto result = std::from_chars(section_text.data(), section_text.data() + section_text.size(), section, 10);
             if (result.ec != std::errc{})
@@ -437,7 +248,7 @@ namespace sogen
             return std::pair{section, offset};
         }
 
-        std::optional<std::string> extract_backtick_name(const std::string& text)
+        std::optional<std::string> extract_backtick_name(const std::string_view text)
         {
             const auto first = text.find('`');
             const auto last = text.rfind('`');
@@ -446,13 +257,13 @@ namespace sogen
                 return std::nullopt;
             }
 
-            return text.substr(first + 1, last - first - 1);
+            return std::string{text.substr(first + 1, last - first - 1)};
         }
 
         std::optional<uint32_t> parse_age(const std::string_view value)
         {
             uint32_t age{};
-            auto text = trim(std::string(value));
+            const auto text = utils::string::trim(value);
             const auto result = std::from_chars(text.data(), text.data() + text.size(), age, 10);
             if (result.ec != std::errc{})
             {
@@ -503,7 +314,9 @@ namespace sogen
                 return {};
             }
 
-#ifdef _WIN32
+#ifdef __EMSCRIPTEN__
+            throw std::runtime_error("External commands are unavailable in WebAssembly: " + args.front());
+#elif defined(_WIN32)
             SECURITY_ATTRIBUTES security_attributes{};
             security_attributes.nLength = sizeof(security_attributes);
             security_attributes.bInheritHandle = TRUE;
@@ -586,12 +399,34 @@ namespace sogen
             }
             argv.push_back(nullptr);
 
-            int output_pipe[2]{};
-            if (pipe(output_pipe) != 0)
+            std::array<int, 2> output_pipe{};
+            if (pipe(output_pipe.data()) != 0)
             {
                 throw std::runtime_error("Failed to create output pipe for external command: " + args.front());
             }
 
+            pid_t pid{};
+#ifdef __ANDROID__
+            pid = fork();
+            if (pid < 0)
+            {
+                close(output_pipe[0]);
+                close(output_pipe[1]);
+                throw std::runtime_error("Failed to execute external command: " + args.front());
+            }
+
+            if (pid == 0)
+            {
+                close(output_pipe[0]);
+                if (dup2(output_pipe[1], STDOUT_FILENO) < 0 || dup2(output_pipe[1], STDERR_FILENO) < 0)
+                {
+                    _exit(127);
+                }
+                close(output_pipe[1]);
+                execvp(argv.front(), argv.data());
+                _exit(127);
+            }
+#else
             posix_spawn_file_actions_t file_actions{};
             if (posix_spawn_file_actions_init(&file_actions) != 0)
             {
@@ -622,16 +457,18 @@ namespace sogen
                 throw std::runtime_error("Failed to configure external command: " + args.front());
             }
 
-            pid_t pid{};
             spawn_error = posix_spawnp(&pid, argv.front(), &file_actions, nullptr, argv.data(), environ);
             posix_spawn_file_actions_destroy(&file_actions);
-            close(output_pipe[1]);
 
             if (spawn_error != 0)
             {
+                close(output_pipe[1]);
                 close(output_pipe[0]);
                 throw std::runtime_error("Failed to execute external command: " + args.front());
             }
+#endif
+
+            close(output_pipe[1]);
 
             std::string output{};
             std::array<char, 4096> buffer{};
@@ -685,7 +522,7 @@ namespace sogen
         {
             if (trimmed.starts_with("GUID:"))
             {
-                signature.guid = normalize_guid(trim(std::string(trimmed.substr(5))));
+                signature.guid = normalize_guid(utils::string::trim(trimmed.substr(5)));
             }
         }
 
@@ -698,7 +535,7 @@ namespace sogen
             bool parsing_dbi_stream = false;
             while (std::getline(stream, line))
             {
-                const auto trimmed = trim(line);
+                const auto trimmed = utils::string::trim(line);
                 if (trimmed == "DbiStream:")
                 {
                     parsing_dbi_stream = true;
@@ -723,7 +560,7 @@ namespace sogen
             std::string line{};
             while (std::getline(stream, line))
             {
-                parse_pdb_guid_line(trim(line), signature);
+                parse_pdb_guid_line(utils::string::trim(line), signature);
             }
 
             signature.age = read_pdb_dbi_age(pdb_path).value_or(0);
@@ -776,7 +613,7 @@ namespace sogen
             std::string line{};
             while (std::getline(stream, line))
             {
-                const auto trimmed = trim(line);
+                const auto trimmed = utils::string::trim(line);
 
                 parse_pdb_guid_line(trimmed, pdb.signature);
 
@@ -802,14 +639,15 @@ namespace sogen
 
                 if (trimmed.find("S_GPROC32") != std::string::npos || trimmed.find("S_LPROC32") != std::string::npos)
                 {
-                    pending_proc_text = trimmed;
+                    pending_proc_text.assign(trimmed);
                     pending_proc = extract_backtick_name(pending_proc_text);
                     continue;
                 }
 
                 if (!pending_proc_text.empty())
                 {
-                    pending_proc_text += " " + trimmed;
+                    pending_proc_text += ' ';
+                    pending_proc_text.append(trimmed);
                     if (!pending_proc)
                     {
                         pending_proc = extract_backtick_name(pending_proc_text);
@@ -879,10 +717,10 @@ namespace sogen
                     continue;
                 }
 
-                auto entry = trim(std::string(value.substr(start, i - start)));
+                const auto entry = utils::string::trim(value.substr(start, i - start));
                 if (!entry.empty())
                 {
-                    entries.push_back(std::move(entry));
+                    entries.emplace_back(entry);
                 }
                 start = i + 1;
             }
@@ -1429,7 +1267,7 @@ namespace sogen
         std::optional<resolved_pdb> resolve_pe_input(const std::filesystem::path& pe_path, const pdb_symbol_options& options,
                                                      const logger& log)
         {
-            auto sig = read_pe_pdb_signature(pe_path);
+            auto sig = winpe::read_pdb_signature(pe_path);
             if (!sig)
             {
                 throw std::runtime_error("No RSDS PDB reference found in " + pe_path.string());

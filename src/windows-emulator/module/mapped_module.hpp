@@ -1,5 +1,6 @@
 #pragma once
 #include <memory_region.hpp>
+#include <platform/win_pe_debug.hpp>
 #include "../windows_path.hpp"
 
 namespace sogen
@@ -11,24 +12,6 @@ namespace sogen
         uint64_t ordinal{};
         uint64_t rva{};
         uint64_t address{};
-    };
-
-    struct pdb_signature
-    {
-        std::string guid{};
-        uint32_t age{};
-        std::string path{};
-
-        bool valid() const
-        {
-            return !this->guid.empty() && this->age != 0;
-        }
-
-        std::string_view filename() const
-        {
-            const auto separator = this->path.find_last_of("/\\");
-            return std::string_view{this->path}.substr(separator == std::string::npos ? 0 : separator + 1);
-        }
     };
 
     struct pe_section_symbol_mapping

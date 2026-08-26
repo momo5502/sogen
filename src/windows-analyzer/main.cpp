@@ -1450,7 +1450,7 @@ namespace sogen
                         {
                             throw std::runtime_error("--map requires a path");
                         }
-                        input.path = std::move(map_input);
+                        input.path = map_input;
                     }
                     else
                     {
