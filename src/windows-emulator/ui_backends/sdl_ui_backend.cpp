@@ -2,6 +2,7 @@
 #include <platform/ui_backend.hpp>
 
 #include <SDL3/SDL.h>
+
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -29,6 +30,64 @@ namespace sogen
             SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
         }
 #endif
+
+        // X11 can run without a window manager to process SDL's SetKeyboardFocus request. Use XSetInputFocus
+        // instead, but only when no external X11 client owns the focus.
+        void apply_x11_focus_fallback(SDL_Window* window)
+        {
+            const auto* driver = SDL_GetCurrentVideoDriver();
+            if (!driver || std::string_view{driver} != "x11")
+            {
+                return;
+            }
+
+            using x_window = uintptr_t;
+            using x_get_input_focus = int (*)(void*, x_window*, int*);
+            using x_set_input_focus = int (*)(void*, x_window, int, x_window);
+            using x_flush = int (*)(void*);
+
+            static auto* x11 = [] {
+                if (auto* library = SDL_LoadObject("libX11.so.6"))
+                {
+                    return library;
+                }
+                return SDL_LoadObject("libX11.so");
+            }();
+            static auto get_input_focus = x11 ? reinterpret_cast<x_get_input_focus>(SDL_LoadFunction(x11, "XGetInputFocus")) : nullptr;
+            static auto set_input_focus = x11 ? reinterpret_cast<x_set_input_focus>(SDL_LoadFunction(x11, "XSetInputFocus")) : nullptr;
+            static auto flush = x11 ? reinterpret_cast<x_flush>(SDL_LoadFunction(x11, "XFlush")) : nullptr;
+            if (!get_input_focus || !set_input_focus || !flush)
+            {
+                return;
+            }
+
+            const auto properties = SDL_GetWindowProperties(window);
+            auto* display = SDL_GetPointerProperty(properties, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
+            const auto xwindow = static_cast<x_window>(SDL_GetNumberProperty(properties, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0));
+            if (display && xwindow != 0)
+            {
+                x_window focused_window{};
+                int revert_to{};
+                get_input_focus(display, &focused_window, &revert_to);
+                constexpr x_window no_focus = 0;
+                constexpr x_window pointer_root = 1;
+                constexpr int revert_to_pointer_root = 1;
+
+                auto* focused_sdl_window = SDL_GetKeyboardFocus();
+                const auto focused_sdl_properties = focused_sdl_window ? SDL_GetWindowProperties(focused_sdl_window) : 0;
+                const bool own_window_has_focus =
+                    focused_sdl_properties &&
+                    SDL_GetPointerProperty(focused_sdl_properties, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr) == display &&
+                    static_cast<x_window>(SDL_GetNumberProperty(focused_sdl_properties, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0)) ==
+                        focused_window;
+
+                if (focused_window == no_focus || focused_window == pointer_root || own_window_has_focus)
+                {
+                    set_input_focus(display, xwindow, revert_to_pointer_root, 0);
+                    flush(display);
+                }
+            }
+        }
 
         std::string make_host_window_title(const std::u16string_view title)
         {
@@ -610,6 +669,16 @@ namespace sogen
                 bool has_surface{};
             };
 
+            struct pending_key_release
+            {
+                hwnd window{};
+                uint32_t message{};
+                uint64_t virtual_key{};
+                uint64_t scan_code{};
+                size_t scancode_index{};
+                std::chrono::steady_clock::time_point due{};
+            };
+
             ~sdl_ui_backend() override
             {
                 this->reset();
@@ -633,6 +702,7 @@ namespace sogen
                 this->active_window_ = 0;
                 this->mouse_button_state_ = 0;
                 this->key_down_.fill(false);
+                this->pending_key_releases_.clear();
 
                 if (this->initialized_)
                 {
@@ -662,6 +732,7 @@ namespace sogen
                 }
 
                 this->drain_commands();
+                this->deliver_pending_key_releases();
 
                 SDL_Event event{};
                 while (SDL_PollEvent(&event))
@@ -726,6 +797,7 @@ namespace sogen
 
                         if (scancode_index < key_down_.size())
                         {
+                            this->deliver_pending_key_releases(scancode_index);
                             was_down = was_down || key_down_[scancode_index];
                         }
 
@@ -743,6 +815,7 @@ namespace sogen
 
                         if (scancode_index < key_down_.size())
                         {
+                            this->record_key_press_start(scancode_index);
                             key_down_[scancode_index] = true;
                         }
 
@@ -776,13 +849,16 @@ namespace sogen
                             break;
                         }
 
+                        const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYUP : WM_KEYUP;
                         const auto scancode_index = static_cast<size_t>(event.key.scancode);
                         if (scancode_index < key_down_.size())
                         {
+                            if (this->enforce_minimum_key_press_duration(guest, message, vk, scan, scancode_index))
+                            {
+                                break;
+                            }
                             key_down_[scancode_index] = false;
                         }
-
-                        const uint32_t message = (is_alt || vk == VK_F10 || alt_context) ? WM_SYSKEYUP : WM_KEYUP;
 
                         this->post_event(guest, message, vk, scan);
                         break;
@@ -804,6 +880,10 @@ namespace sogen
                         {
                             if (const auto guest = this->resolve_guest(event.button.windowID); guest != 0)
                             {
+                                if (auto* state = this->resolve_window(guest); state && state->window)
+                                {
+                                    apply_x11_focus_fallback(state->window);
+                                }
                                 this->set_window_active(guest, true);
                                 this->mouse_button_state_ |= sdl_mouse_button_to_mk(event.button.button);
                                 this->post_event(guest, message, mouse_button_wparam(this->mouse_button_state_, event.button.button),
@@ -926,6 +1006,10 @@ namespace sogen
 
                 SDL_SetWindowPosition(window, desc.rect.left, desc.rect.top);
                 SDL_StartTextInput(window);
+                if ((flags & SDL_WINDOW_HIDDEN) == 0)
+                {
+                    apply_x11_focus_fallback(window);
+                }
 
                 auto& state = this->windows_[desc.handle];
                 state.desc = desc;
@@ -940,6 +1024,19 @@ namespace sogen
                 this->queue_or_run([this, window] {
                     if (const auto it = this->windows_.find(window); it != this->windows_.end())
                     {
+                        std::erase_if(this->pending_key_releases_, [this, window](const pending_key_release& release) {
+                            if (release.window != window)
+                            {
+                                return false;
+                            }
+                            if (release.scancode_index < this->key_down_.size())
+                            {
+                                this->key_down_[release.scancode_index] = false;
+                            }
+                            return true;
+                        });
+
+                        auto* focus_fallback = this->find_focus_fallback(it->second);
                         // Child (non-top-level) windows have no SDL window; only top-level windows do.
                         if (it->second.window)
                         {
@@ -948,6 +1045,10 @@ namespace sogen
                         }
                         destroy_window_resources(it->second);
                         this->windows_.erase(it);
+                        if (focus_fallback)
+                        {
+                            apply_x11_focus_fallback(focus_fallback);
+                        }
                     }
                 });
             }
@@ -981,10 +1082,16 @@ namespace sogen
                             if (visible)
                             {
                                 SDL_ShowWindow(state->window);
+                                apply_x11_focus_fallback(state->window);
                             }
                             else
                             {
+                                auto* focus_fallback = this->find_focus_fallback(*state);
                                 SDL_HideWindow(state->window);
+                                if (focus_fallback)
+                                {
+                                    apply_x11_focus_fallback(focus_fallback);
+                                }
                             }
                         }
                         this->redraw_related(window);
@@ -1125,6 +1232,75 @@ namespace sogen
                 }
             }
 
+            void deliver_pending_key_releases(const std::optional<size_t> forced_scancode = std::nullopt)
+            {
+                if (!minimum_key_press_duration_enabled())
+                {
+                    return;
+                }
+
+                const auto now = std::chrono::steady_clock::now();
+                std::erase_if(this->pending_key_releases_, [this, now, forced_scancode](const pending_key_release& release) {
+                    if (forced_scancode.has_value() ? release.scancode_index != *forced_scancode : release.due > now)
+                    {
+                        return false;
+                    }
+
+                    if (release.scancode_index < this->key_down_.size())
+                    {
+                        this->key_down_[release.scancode_index] = false;
+                    }
+                    this->post_event(release.window, release.message, release.virtual_key, release.scan_code);
+                    return true;
+                });
+            }
+
+            void record_key_press_start(const size_t scancode_index)
+            {
+                if (!minimum_key_press_duration_enabled())
+                {
+                    return;
+                }
+
+                if (!this->key_down_[scancode_index])
+                {
+                    this->key_down_since_[scancode_index] = std::chrono::steady_clock::now();
+                }
+            }
+
+            bool enforce_minimum_key_press_duration(const hwnd window, const uint32_t message, const uint64_t virtual_key,
+                                                    const uint64_t scan_code, const size_t scancode_index)
+            {
+                if (!minimum_key_press_duration_enabled())
+                {
+                    return false;
+                }
+
+                constexpr auto minimum_key_press_duration = std::chrono::milliseconds{50};
+                const auto due = this->key_down_since_[scancode_index] + minimum_key_press_duration;
+                if (std::chrono::steady_clock::now() >= due)
+                {
+                    return false;
+                }
+
+                this->pending_key_releases_.push_back({.window = window,
+                                                       .message = message,
+                                                       .virtual_key = virtual_key,
+                                                       .scan_code = scan_code,
+                                                       .scancode_index = scancode_index,
+                                                       .due = due});
+                return true;
+            }
+
+            static constexpr bool minimum_key_press_duration_enabled()
+            {
+#ifdef __ANDROID__
+                return true;
+#else
+                return false;
+#endif
+            }
+
             bool ensure_initialized()
             {
                 if (!this->initialized_)
@@ -1146,6 +1322,20 @@ namespace sogen
             {
                 const auto it = this->windows_.find(window);
                 return it == this->windows_.end() ? nullptr : &it->second;
+            }
+
+            SDL_Window* find_focus_fallback(const window_state& state)
+            {
+                if (state.desc.owner != 0)
+                {
+                    const auto owner = this->get_top_level_ancestor(state.desc.owner);
+                    if (auto* owner_state = this->resolve_window(owner); owner_state && owner_state->window && owner_state->desc.visible)
+                    {
+                        return owner_state->window;
+                    }
+                }
+
+                return nullptr;
             }
 
             hwnd get_top_level_ancestor(hwnd window) const
@@ -1370,6 +1560,8 @@ namespace sogen
             hwnd active_window_{};
             uint16_t mouse_button_state_{};
             std::array<bool, SDL_SCANCODE_COUNT> key_down_{};
+            std::array<std::chrono::steady_clock::time_point, SDL_SCANCODE_COUNT> key_down_since_{};
+            std::vector<pending_key_release> pending_key_releases_{};
             std::unordered_map<hwnd, window_state> windows_{};
             std::unordered_map<SDL_WindowID, hwnd> guest_by_window_id_{};
 

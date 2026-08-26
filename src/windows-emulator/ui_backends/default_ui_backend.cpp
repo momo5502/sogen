@@ -10,7 +10,7 @@ namespace sogen
 #elif defined(SOGEN_HAS_SDL3)
         return create_sdl_ui_backend();
 #else
-#error "No host UI backend available: build with the SDL3 submodule (deps/SDL)"
+        return std::make_unique<null_ui_backend>();
 #endif
     }
 }
