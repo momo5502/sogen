@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pdb_signature.hpp"
 #include "win_pefile.hpp"
 
 #include <utils/buffer_accessor.hpp>
@@ -20,24 +21,6 @@
 
 namespace sogen
 {
-    struct pdb_signature
-    {
-        std::string guid{};
-        uint32_t age{};
-        std::string path{};
-
-        bool valid() const
-        {
-            return !this->guid.empty() && this->age != 0;
-        }
-
-        std::string_view filename() const
-        {
-            const auto separator = this->path.find_last_of("/\\");
-            return std::string_view{this->path}.substr(separator == std::string::npos ? 0 : separator + 1);
-        }
-    };
-
     namespace winpe
     {
         enum class image_layout
@@ -83,6 +66,22 @@ namespace sogen
                 }
 
                 return stream.str();
+            }
+
+            inline std::string normalize_guid(const std::string_view value)
+            {
+                std::string normalized{};
+                normalized.reserve(32);
+
+                for (const auto ch : value)
+                {
+                    if (std::isxdigit(static_cast<unsigned char>(ch)))
+                    {
+                        normalized.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch))));
+                    }
+                }
+
+                return normalized;
             }
 
             inline std::optional<pdb_signature> parse_rsds_record(const utils::safe_buffer_accessor<const std::byte>& buffer,

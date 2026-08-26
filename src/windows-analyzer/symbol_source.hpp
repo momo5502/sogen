@@ -21,7 +21,6 @@ namespace sogen
     struct pdb_symbol_options
     {
         bool auto_lookup{};
-        bool verbose_logging{};
         std::vector<std::filesystem::path> inputs{};
         std::vector<std::string> symbol_servers{};
         std::optional<std::filesystem::path> symbol_cache{};

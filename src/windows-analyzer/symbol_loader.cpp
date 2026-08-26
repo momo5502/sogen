@@ -34,7 +34,6 @@ namespace sogen
         : win_emu_(&win_emu),
           options_(std::move(options))
     {
-        this->options_.pdb.verbose_logging = this->options_.verbose_logging;
         if (this->options_.pdb.enabled())
         {
             this->pdb_ = std::make_unique<pdb_symbol_source>(win_emu, this->options_.pdb);
@@ -97,10 +96,7 @@ namespace sogen
     {
         if (mod.pe_sections.empty())
         {
-            if (this->options_.verbose_logging)
-            {
-                this->win_emu_->log.info("Skipping symbols for %s: no PE section metadata\n", mod.name.c_str());
-            }
+            this->win_emu_->log.info("Skipping symbols for %s: no PE section metadata\n", mod.name.c_str());
             return;
         }
 
