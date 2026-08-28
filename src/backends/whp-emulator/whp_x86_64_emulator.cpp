@@ -1149,18 +1149,24 @@ namespace sogen::whp
                     // XSAVE-managed components. Capture the VP XSAVE state to preserve all enabled extended processor state.
                     // The required size depends on the XSAVE features the host CPU exposes to the partition, so it is queried
                     // up front instead of assuming a fixed capacity.
+                    //
+                    // The generic WHvGetVirtualProcessorState(..., WHvVirtualProcessorStateTypeXsaveState, ...) is only exported
+                    // starting with Windows 11 / Server 2022; using it would make the module fail to load on Windows 10 with
+                    // ERROR_PROC_NOT_FOUND. WHvGetVirtualProcessorXsaveState is the pre-Windows-11 equivalent and is still exported
+                    // on current systems, just marked deprecated.
                     UINT32 required_size = 0;
-                    const auto size_hr = WHvGetVirtualProcessorState(this->partition_, this->vp_index_,
-                                                                     WHvVirtualProcessorStateTypeXsaveState, nullptr, 0, &required_size);
+#pragma warning(push)
+#pragma warning(disable : 4995)
+                    const auto size_hr = WHvGetVirtualProcessorXsaveState(this->partition_, this->vp_index_, nullptr, 0, &required_size);
                     if (size_hr != WHV_E_INSUFFICIENT_BUFFER)
                     {
                         WHP_CHECK_HR(size_hr);
                     }
 
                     bytes.resize(register_bytes + sizeof(xsave_size) + required_size);
-                    WHP_CHECK_HR(WHvGetVirtualProcessorState(this->partition_, this->vp_index_, WHvVirtualProcessorStateTypeXsaveState,
-                                                             bytes.data() + register_bytes + sizeof(xsave_size), required_size,
-                                                             &xsave_size));
+                    WHP_CHECK_HR(WHvGetVirtualProcessorXsaveState(
+                        this->partition_, this->vp_index_, bytes.data() + register_bytes + sizeof(xsave_size), required_size, &xsave_size));
+#pragma warning(pop)
                 }
 
                 std::memcpy(bytes.data() + register_bytes, &xsave_size, sizeof(xsave_size));
@@ -1191,8 +1197,11 @@ namespace sogen::whp
                                                              static_cast<UINT32>(names.size()), values.data()));
                 if (xsave_size != 0)
                 {
-                    WHP_CHECK_HR(WHvSetVirtualProcessorState(this->partition_, this->vp_index_, WHvVirtualProcessorStateTypeXsaveState,
-                                                             register_data.data() + register_bytes + sizeof(xsave_size), xsave_size));
+#pragma warning(push)
+#pragma warning(disable : 4995)
+                    WHP_CHECK_HR(WHvSetVirtualProcessorXsaveState(this->partition_, this->vp_index_,
+                                                                  register_data.data() + register_bytes + sizeof(xsave_size), xsave_size));
+#pragma warning(pop)
                 }
             }
 
