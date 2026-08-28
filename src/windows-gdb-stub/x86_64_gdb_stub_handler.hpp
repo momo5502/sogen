@@ -295,19 +295,11 @@ namespace sogen
 
         std::vector<emulator_hook*> create_execute_hook(const uint64_t addr, const size_t size)
         {
-            std::vector<emulator_hook*> hooks{};
-            hooks.reserve(size);
+            auto* hook = this->emu_->hook_memory_range_execution(addr, size, [this](cpu_interface&, const uint64_t) {
+                this->on_interrupt(); //
+            });
 
-            for (size_t i = 0; i < size; ++i)
-            {
-                auto* hook = this->emu_->hook_memory_execution(addr + i, [this](cpu_interface&, const uint64_t) {
-                    this->on_interrupt(); //
-                });
-
-                hooks.push_back(hook);
-            }
-
-            return hooks;
+            return {hook};
         }
 
         std::vector<emulator_hook*> create_read_hook(const uint64_t addr, const size_t size)
