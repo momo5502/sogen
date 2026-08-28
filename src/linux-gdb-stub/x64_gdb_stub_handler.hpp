@@ -187,10 +187,7 @@ namespace sogen
             try
             {
                 return this->hooks_.access<bool>([&](hook_map& hooks) {
-                    auto hook_vector = this->create_hook(type, addr, size);
-
-                    hooks[{addr, size, type}] = scoped_hook(*this->emu_, std::move(hook_vector));
-
+                    hooks[{addr, size, type}] = this->create_hook(type, addr, size);
                     return true;
                 });
             }
@@ -254,34 +251,28 @@ namespace sogen
         using hook_map = std::unordered_map<breakpoint_key, scoped_hook>;
         utils::concurrency::container<hook_map> hooks_{};
 
-        std::vector<emulator_hook*> create_execute_hook(const uint64_t addr, const size_t size)
+        emulator_hook* create_execute_hook(const uint64_t addr, const size_t size)
         {
-            auto* hook = this->emu_->hook_memory_range_execution(addr, size, [this](cpu_interface&, const uint64_t) {
+            return this->emu_->hook_memory_range_execution(addr, size, [this](cpu_interface&, const uint64_t) {
                 this->on_interrupt(); //
             });
-
-            return {hook};
         }
 
-        std::vector<emulator_hook*> create_read_hook(const uint64_t addr, const size_t size)
+        emulator_hook* create_read_hook(const uint64_t addr, const size_t size)
         {
-            auto* hook = this->emu_->hook_memory_read(addr, size, [this](cpu_interface&, const uint64_t, const void*, const size_t) {
+            return this->emu_->hook_memory_read(addr, size, [this](cpu_interface&, const uint64_t, const void*, const size_t) {
                 this->on_interrupt(); //
             });
-
-            return {hook};
         }
 
-        std::vector<emulator_hook*> create_write_hook(const uint64_t addr, const size_t size)
+        emulator_hook* create_write_hook(const uint64_t addr, const size_t size)
         {
-            auto* hook = this->emu_->hook_memory_write(addr, size, [this](cpu_interface&, const uint64_t, const void*, const size_t) {
+            return this->emu_->hook_memory_write(addr, size, [this](cpu_interface&, const uint64_t, const void*, const size_t) {
                 this->on_interrupt(); //
             });
-
-            return {hook};
         }
 
-        std::vector<emulator_hook*> create_hook(const gdb_stub::breakpoint_type type, const uint64_t addr, const size_t size)
+        scoped_hook create_hook(const gdb_stub::breakpoint_type type, const uint64_t addr, const size_t size)
         {
             using enum gdb_stub::breakpoint_type;
 
@@ -289,17 +280,13 @@ namespace sogen
             {
             case software:
             case hardware_exec:
-                return this->create_execute_hook(addr, size);
+                return {*this->emu_, this->create_execute_hook(addr, size)};
             case hardware_read:
-                return this->create_read_hook(addr, size);
+                return {*this->emu_, this->create_read_hook(addr, size)};
             case hardware_write:
-                return this->create_write_hook(addr, size);
-            case hardware_read_write: {
-                auto hooks1 = this->create_hook(hardware_read, addr, size);
-                auto hooks2 = this->create_hook(hardware_write, addr, size);
-                hooks1.insert(hooks1.end(), hooks2.begin(), hooks2.end());
-                return hooks1;
-            }
+                return {*this->emu_, this->create_write_hook(addr, size)};
+            case hardware_read_write:
+                return {*this->emu_, {this->create_read_hook(addr, size), this->create_write_hook(addr, size)}};
             default:
                 throw std::runtime_error("Bad bp type");
             }
