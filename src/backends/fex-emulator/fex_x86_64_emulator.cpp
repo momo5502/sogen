@@ -199,8 +199,9 @@ namespace sogen::fex
                 }
             }
 
-            features.SupportsAVX = true;
-            features.SupportsAES256 = features.SupportsAES;
+            // AVX can make FEX emit paired SIMD loads, which MMIO emulation doesn't support yet.
+            features.SupportsAVX = false;
+            features.SupportsAES256 = features.SupportsAES && features.SupportsAVX;
 
             const long dcache_line = ::sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
             const long icache_line = ::sysconf(_SC_LEVEL1_ICACHE_LINESIZE);
@@ -361,9 +362,9 @@ namespace sogen::fex
                 {0xF8600800U, 8, false, true},  // LDR Xt (register)
             };
 
-            // "Load register (unscaled immediate, LDUR)" - same top22+low-bits mask width as the
-            // register-offset form above, but bit21=0 (vs. 1) and bits[11:10]="00" (vs. "10"); the
-            // 9-bit signed immediate at bits[20:12] is variable/unchecked, same as Rn/Rt.
+            // "Load register (unscaled immediate)" - LDUR plus FEAT_LRCPC2's LDAPUR family. Both
+            // use a signed imm9 in bits[20:12], so the same top22+low-bits mask handles them while
+            // ignoring the immediate, Rn and Rt.
             static constexpr encoding unscaled_loads[] = {
                 {0x38400000U, 1, false, false},        // LDURB
                 {0x38800000U, 1, true, true},          // LDURSB, 64-bit dest
@@ -375,6 +376,16 @@ namespace sogen::fex
                 {0xB8800000U, 4, true, true},          // LDURSW
                 {0xF8400000U, 8, false, true},         // LDUR Xt
                 {0x3CC00000U, 16, false, false, true}, // LDUR Qt
+
+                {0x19400000U, 1, false, false}, // LDAPURB
+                {0x19800000U, 1, true, true},   // LDAPURSB, 64-bit dest
+                {0x19C00000U, 1, true, false},  // LDAPURSB, 32-bit dest
+                {0x59400000U, 2, false, false}, // LDAPURH
+                {0x59800000U, 2, true, true},   // LDAPURSH, 64-bit dest
+                {0x59C00000U, 2, true, false},  // LDAPURSH, 32-bit dest
+                {0x99400000U, 4, false, false}, // LDAPUR Wt
+                {0x99800000U, 4, true, true},   // LDAPURSW
+                {0xD9400000U, 8, false, true},  // LDAPUR Xt
             };
 
             // "Load-acquire register (LDAPR/LDAPRB/LDAPRH, and the older base LDAR/LDARB/LDARH from
@@ -448,8 +459,9 @@ namespace sogen::fex
             return std::nullopt;
         }
 
-        // Store-release forms (STLR/STLRB/STLRH), the counterpart to decode_arm64_load's LDAR/LDAPR
-        // handling. Used only by handle_fault_signal's misaligned-atomic fallback; mmio_region's only
+        // Store-release forms (STLR/STLRB/STLRH and STLUR/STLURB/STLURH), the counterpart to
+        // decode_arm64_load's LDAR/LDAPR/LDAPUR handling. Used only by handle_fault_signal's
+        // misaligned-atomic fallback; mmio_region's only
         // consumer here is read-only.
         //
         // Deliberately narrow: adding plain STR/STUR causes a reproducible hang in false-fault
@@ -483,12 +495,30 @@ namespace sogen::fex
                 {0xC89FFC00U, 8}, // STLR Xt
             };
 
+            // FEAT_LRCPC2 store-release with signed imm9. FEX emits these when SupportsTSOImm9 is
+            // enabled; unlike ordinary STUR, they retain release ordering and require natural alignment.
+            static constexpr encoding unscaled_stores[] = {
+                {0x19000000U, 1}, // STLURB
+                {0x59000000U, 2}, // STLURH
+                {0x99000000U, 4}, // STLUR Wt
+                {0xD9000000U, 8}, // STLUR Xt
+            };
+
             const uint32_t rt = insn & 0x1FU;
             const uint32_t fixed = insn & 0xFFFFFC00U;
+            const uint32_t unscaled_fixed = insn & 0xFFE00C00U;
 
             for (const auto& enc : stores)
             {
                 if (fixed == enc.value)
+                {
+                    return decoded_arm64_store{enc.size, rt};
+                }
+            }
+
+            for (const auto& enc : unscaled_stores)
+            {
+                if (unscaled_fixed == enc.value)
                 {
                     return decoded_arm64_store{enc.size, rt};
                 }
@@ -733,7 +763,9 @@ namespace sogen::fex
             // No Apple Silicon hardware supports SVE/SVE2 as of this writing.
             features.SupportsSVE128 = false;
             features.SupportsSVE256 = false;
+            // AVX can make FEX emit paired SIMD loads, which MMIO emulation doesn't support yet.
             features.SupportsAVX = false;
+            features.SupportsAES256 = features.SupportsAES && features.SupportsAVX;
             features.SupportsSVEBitPerm = false;
 
             // TPIDRRO_EL0 is not confirmed to carry a CPU index on Darwin, and DEF_OP(ProcessorID)
