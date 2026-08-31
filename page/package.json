@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:root-cache": "node test/root-cache-adversarial.mjs",
+    "test:worker-stream": "node test/macos-worker-stream.mjs"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
@@ -58,6 +60,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.8.0",
+    "playwright-core": "^1.62.1",
     "prettier": "3.9.6",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.65.0",

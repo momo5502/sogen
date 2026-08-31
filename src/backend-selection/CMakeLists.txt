@@ -40,3 +40,9 @@ if (SOGEN_ENABLE_FEX)
     fex-emulator
   )
 endif()
+
+if (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+  target_link_libraries(backend-selection PRIVATE
+    hvf-emulator
+  )
+endif()

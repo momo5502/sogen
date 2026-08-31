@@ -11,11 +11,7 @@ if(SOGEN_ENABLE_SDL3 AND SOGEN_USE_SYSTEM_SDL3 AND NOT EMSCRIPTEN AND NOT TARGET
 endif()
 
 if(NOT SOGEN_ENABLE_SDL3 OR NOT TARGET SDL3::SDL3)
-  list(REMOVE_ITEM SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/ui_backends/sdl_ui_backend.cpp")
   list(REMOVE_ITEM SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/audio_backends/sdl_audio_backend.cpp")
-  if(SOGEN_ENABLE_SDL3 AND NOT EMSCRIPTEN)
-    message(FATAL_ERROR "The SDL3 submodule (deps/SDL) is required for the host UI backend on this platform")
-  endif()
 endif()
 
 add_library(windows-emulator ${SRC_FILES})
@@ -26,7 +22,7 @@ if(NOT SOGEN_ENABLE_CLANG_TIDY)
   target_precompile_headers(windows-emulator PRIVATE std_include.hpp)
 endif()
 
-target_link_libraries(windows-emulator PUBLIC emulator minidump)
+target_link_libraries(windows-emulator PUBLIC emulator minidump ui-backends)
 target_link_libraries(windows-emulator PRIVATE gpu-bridge-protocol vulkan-headers steam-bridge-protocol)
 
 # When the Steamworks SDK was provided, link the real Steam host backend (owns the SDK headers + the
