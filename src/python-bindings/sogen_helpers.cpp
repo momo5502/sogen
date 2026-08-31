@@ -221,11 +221,95 @@ namespace sogen::py
         {
             return get_kwarg<backend_type>(kwargs, "backend", backend_type::unicorn);
         }
+
+        class python_dns_lookup : public network::dns_lookup
+        {
+          public:
+            explicit python_dns_lookup(nb::object callback)
+                : callback_(std::move(callback))
+            {
+            }
+
+            std::vector<network::address> resolve_host(const std::string_view hostname, const std::optional<int> family) override
+            {
+                const std::string host_str(hostname);
+                std::vector<network::address> results{};
+                bool fall_back = false;
+
+                {
+                    nb::gil_scoped_acquire gil{};
+                    try
+                    {
+                        nb::object fam = family ? nb::cast(*family) : nb::none();
+                        nb::object ret = callback_(nb::str(host_str.c_str()), fam);
+                        if (ret.is_none())
+                        {
+                            fall_back = true;
+                        }
+                        else
+                        {
+                            for (auto item : ret)
+                            {
+                                const auto ip = nb::cast<std::string>(item);
+                                // Set the bytes via inet_pton; the address(string_view)
+                                // ctor re-resolves through the host getaddrinfo, which
+                                // would defeat the override.
+                                network::address addr{};
+                                in_addr v4{};
+                                in6_addr v6{};
+                                if (inet_pton(AF_INET, ip.c_str(), &v4) == 1)
+                                {
+                                    addr.set_ipv4(v4);
+                                    results.push_back(addr);
+                                }
+                                else if (inet_pton(AF_INET6, ip.c_str(), &v6) == 1)
+                                {
+                                    addr.set_ipv6(v6);
+                                    results.push_back(addr);
+                                }
+                            }
+                        }
+                    }
+                    catch (const std::exception& e)
+                    {
+                        std::fprintf(stderr, "[sogen] dns_resolver failed for %s: %s\n", host_str.c_str(), e.what());
+                        fall_back = true;
+                    }
+                }
+
+                // Outside the GIL: the base resolver blocks on the host
+                // getaddrinfo, and start() runs with the GIL released so a
+                // Python watchdog thread keeps moving during a slow lookup.
+                if (fall_back)
+                {
+                    return network::dns_lookup::resolve_host(hostname, family);
+                }
+                return results;
+            }
+
+          private:
+            nb::object callback_;
+        };
+
+        emulator_interfaces make_emulator_interfaces(const nb::kwargs& kwargs)
+        {
+            emulator_interfaces interfaces{};
+            if (kwargs.contains("dns_resolver"))
+            {
+                nb::object resolver = kwargs["dns_resolver"];
+                if (!resolver.is_none())
+                {
+                    interfaces.dns_lookup = std::make_unique<python_dns_lookup>(std::move(resolver));
+                }
+            }
+            return interfaces;
+        }
     }
 
     std::unique_ptr<windows_emulator> create_empty_emulator(const nb::kwargs& kwargs)
     {
-        return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), make_emulator_settings(kwargs));
+        return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), make_emulator_settings(kwargs),
+                                                  emulator_callbacks{}, make_emulator_interfaces(kwargs));
     }
 
     std::unique_ptr<windows_emulator> create_application_emulator(const nb::object& application, const nb::object& args,
@@ -233,6 +317,6 @@ namespace sogen::py
     {
         auto app_settings = make_application_settings(application, args, kwargs);
         return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), std::move(app_settings),
-                                                  make_emulator_settings(kwargs));
+                                                  make_emulator_settings(kwargs), emulator_callbacks{}, make_emulator_interfaces(kwargs));
     }
 }

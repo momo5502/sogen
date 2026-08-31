@@ -220,6 +220,41 @@ if hook_sample.exists():
 else:
     print(f"[test.py] hook-sample not found at {hook_sample}; skipping intercept smoke", flush=True)
 
+# dns_resolver kwarg: a Python callable that pins what the guest's DNS resolves
+# to. Assert the kwarg is accepted and that returning None (defer) vs a literal
+# IP both behave. We can't easily drive a guest DNS query in this smoke test, so
+# the callable is exercised directly is not possible from Python; instead verify
+# the wiring is accepted and does not perturb a normal run.
+dns_calls = {"count": 0}
+
+
+def on_resolve(hostname, family):
+    dns_calls["count"] += 1
+    # Pin one host, defer everything else to the default resolver.
+    if hostname.lower() == "sogen.test":
+        return ["127.0.0.1"]
+    return None
+
+
+dns_app = win.create_application(
+    r"C:\test-sample.exe",
+    emulation_root=emulator_root,
+    dns_resolver=on_resolve,
+)
+dns_app.callbacks.on_stdout = lambda text: None
+dns_app.start()
+print(
+    f"[test.py:dns] exit_status={dns_app.process.exit_status}"
+    f" resolver_calls={dns_calls['count']}"
+    f" stop_reason={dns_app.last_stop_reason}",
+    flush=True,
+)
+assert dns_app.process.exit_status == 0, (
+    f"dns_resolver run exited {dns_app.process.exit_status}; the kwarg must not perturb a normal run"
+)
+dns_app = None
+gc.collect()
+
 emu = None
 mod = None
 
