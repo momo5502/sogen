@@ -5817,6 +5817,43 @@ namespace sogen
             return static_cast<int32_t>(previous_state);
         }
 
+        int32_t handle_NtUserCheckMenuItem(const syscall_context& c, const hmenu menu, const UINT item, const UINT check)
+        {
+            auto* menu_object = c.proc.menus.get(menu);
+            if (!menu_object)
+            {
+                return -1;
+            }
+
+            size_t index{};
+            if ((check & MF_BYPOSITION) != 0)
+            {
+                if (item >= menu_object->items.size())
+                {
+                    return -1;
+                }
+
+                index = item;
+            }
+            else
+            {
+                const auto entry =
+                    std::ranges::find_if(menu_object->items, [&](const menu_item& candidate) { return candidate.id == item; });
+                if (entry == menu_object->items.end())
+                {
+                    return -1;
+                }
+
+                index = static_cast<size_t>(std::distance(menu_object->items.begin(), entry));
+            }
+
+            auto& menu_item = menu_object->items[index];
+            const UINT previous_state = menu_item.state & MF_CHECKED;
+            menu_item.state = (menu_item.state & ~MF_CHECKED) | (check & MF_CHECKED);
+            menu_object->sync_guest_item(c.win_emu.memory, index);
+            return static_cast<int32_t>(previous_state);
+        }
+
         BOOL handle_NtUserCreateCaret()
         {
             return TRUE;
