@@ -744,6 +744,7 @@ namespace sogen
         buffer.write(this->windows);
         buffer.write(this->timers);
         buffer.write(this->accelerator_tables);
+        buffer.write(this->deferred_window_position_batches);
         buffer.write(this->registry_keys);
         buffer.write(this->private_namespaces);
         buffer.write(this->processes);
@@ -843,6 +844,7 @@ namespace sogen
         buffer.read(this->windows);
         buffer.read(this->timers);
         buffer.read(this->accelerator_tables);
+        buffer.read(this->deferred_window_position_batches);
         buffer.read(this->registry_keys);
         buffer.read(this->private_namespaces);
         buffer.read(this->processes);
@@ -1043,6 +1045,8 @@ namespace sogen
             return &sections;
         case handle_types::private_namespace:
             return &private_namespaces;
+        case handle_types::deferred_window_positions:
+            return &deferred_window_position_batches;
         default:
             return nullptr;
         }

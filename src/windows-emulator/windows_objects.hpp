@@ -50,6 +50,21 @@ namespace sogen
         }
     };
 
+    struct deferred_window_positions : ref_counted_object
+    {
+        std::vector<EMU_WINDOWPOS> positions{};
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write_vector(this->positions);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read_vector(this->positions);
+        }
+    };
+
     struct accelerator_table_entry
     {
         uint8_t flags{};

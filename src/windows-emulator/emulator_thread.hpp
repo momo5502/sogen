@@ -191,6 +191,7 @@ namespace sogen
         NtUserUpdateWindow,
         NtUserEnumDisplayMonitors,
         NtUserSetWindowPos,
+        NtUserEndDeferWindowPosEx,
     };
 
     struct callback_frame

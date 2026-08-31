@@ -4649,6 +4649,120 @@ namespace sogen
             return TRUE;
         }
 
+        uint64_t handle_NtUserBeginDeferWindowPos(const syscall_context& c, const int count)
+        {
+            if (count < 0)
+            {
+                set_guest_last_error(c, 87);
+                return 0;
+            }
+
+            deferred_window_positions batch{};
+            batch.positions.reserve(static_cast<size_t>(count));
+            return c.proc.deferred_window_position_batches.store(std::move(batch)).bits;
+        }
+
+        uint64_t handle_NtUserDeferWindowPosAndBand(const syscall_context& c, const uint64_t batch_handle, const hwnd window,
+                                                    const hwnd window_insert_after, const int x, const int y, const int width,
+                                                    const int height, const UINT flags, const uint32_t /*band*/, const BOOL /*use_band*/)
+        {
+            auto* batch = c.proc.deferred_window_position_batches.get(batch_handle);
+            if (!batch || !c.proc.windows.get(window))
+            {
+                set_guest_last_error(c, 1400);
+                return 0;
+            }
+
+            batch->positions.push_back({
+                .hwnd = window,
+                .hwndInsertAfter = window_insert_after,
+                .x = x,
+                .y = y,
+                .cx = width,
+                .cy = height,
+                .flags = flags,
+            });
+            return batch_handle;
+        }
+
+        BOOL advance_deferred_window_positions(const syscall_context& c, deferred_window_position_state& state)
+        {
+            while (state.next_position < state.positions.size())
+            {
+                const auto& position = state.positions[state.next_position++];
+                auto* win = c.proc.windows.get(position.hwnd);
+                if (!win)
+                {
+                    continue;
+                }
+
+                state.current_window = position.hwnd;
+                state.window_pos_alloc = c.emu.push_stack(position);
+                state.changed_window_pos_alloc = {};
+                state.message_queue.clear();
+                state.position_applied = false;
+
+                if ((position.flags & SWP_NOSENDCHANGING) == 0)
+                {
+                    dispatch_window_message(c, callback_id::NtUserEndDeferWindowPosEx, std::move(state), *win, WM_WINDOWPOSCHANGING, 0,
+                                            state.window_pos_alloc.address());
+                    return {};
+                }
+
+                apply_set_window_position(c, *win, state, position);
+                if (!state.message_queue.empty())
+                {
+                    dispatch_next_message(c, callback_id::NtUserEndDeferWindowPosEx, std::move(state), *win, state.message_queue);
+                    return {};
+                }
+
+                release_window_position_allocations(c, state);
+            }
+
+            return TRUE;
+        }
+
+        BOOL handle_NtUserEndDeferWindowPosEx(const syscall_context& c, const uint64_t batch_handle, const BOOL /*async*/)
+        {
+            auto* batch = c.proc.deferred_window_position_batches.get(batch_handle);
+            if (!batch)
+            {
+                set_guest_last_error(c, 1400);
+                return FALSE;
+            }
+
+            deferred_window_position_state state{};
+            state.positions = std::move(batch->positions);
+            c.proc.deferred_window_position_batches.erase(batch_handle);
+            return advance_deferred_window_positions(c, state);
+        }
+
+        BOOL completion_NtUserEndDeferWindowPosEx(const syscall_context& c, const uint64_t /*batch_handle*/, const BOOL /*async*/)
+        {
+            auto& state = c.get_completion_state<deferred_window_position_state>();
+            auto* win = c.proc.windows.get(state.current_window);
+            if (!win)
+            {
+                release_window_position_allocations(c, state);
+                return advance_deferred_window_positions(c, state);
+            }
+
+            if (!state.position_applied)
+            {
+                const auto position = resolve_window_position_callback(c, state.window_pos_alloc.address());
+                apply_set_window_position(c, *win, state, position);
+            }
+
+            if (!state.message_queue.empty())
+            {
+                dispatch_next_message(c, callback_id::NtUserEndDeferWindowPosEx, std::move(state), *win, state.message_queue);
+                return {};
+            }
+
+            release_window_position_allocations(c, state);
+            return advance_deferred_window_positions(c, state);
+        }
+
         NTSTATUS handle_NtUserSetForegroundWindow()
         {
             return STATUS_SUCCESS;

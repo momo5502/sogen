@@ -640,6 +640,11 @@ namespace sogen
                                        UINT flags);
         BOOL completion_NtUserSetWindowPos(const syscall_context& c, hwnd hWnd, hwnd hwnd_insert_after, int x, int y, int cx, int cy,
                                            UINT flags);
+        uint64_t handle_NtUserBeginDeferWindowPos(const syscall_context& c, int count);
+        uint64_t handle_NtUserDeferWindowPosAndBand(const syscall_context& c, uint64_t batch_handle, hwnd window, hwnd window_insert_after,
+                                                    int x, int y, int width, int height, UINT flags, uint32_t band, BOOL use_band);
+        BOOL handle_NtUserEndDeferWindowPosEx(const syscall_context& c, uint64_t batch_handle, BOOL async);
+        BOOL completion_NtUserEndDeferWindowPosEx(const syscall_context& c, uint64_t batch_handle, BOOL async);
         NTSTATUS handle_NtUserSetForegroundWindow();
         hwnd handle_NtUserGetForegroundWindow(const syscall_context& c);
         hwnd handle_NtUserSetFocus(const syscall_context& c, hwnd hwnd);
@@ -1671,6 +1676,9 @@ namespace sogen
         add_handler(NtUserTransformRect);
         add_handler(NtUserSetParent);
         add_handler(NtUserSetWindowPos);
+        add_handler(NtUserBeginDeferWindowPos);
+        add_handler(NtUserDeferWindowPosAndBand);
+        add_handler(NtUserEndDeferWindowPosEx);
         add_handler(NtUserSetForegroundWindow);
         add_handler(NtUserGetForegroundWindow);
         add_handler(NtUserSetFocus);
@@ -1843,6 +1851,7 @@ namespace sogen
         add_callback(NtUserDestroyWindow, window_destroy_state);
         add_callback(NtUserShowWindow, window_show_state);
         add_callback(NtUserSetWindowPos, window_position_state);
+        add_callback(NtUserEndDeferWindowPosEx, deferred_window_position_state);
         add_callback(NtUserMessageCall, message_call_state);
         add_callback(NtUserUpdateWindow, window_update_state);
         add_stateless_callback(NtUserEnumDisplayMonitors);
