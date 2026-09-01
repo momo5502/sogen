@@ -16,6 +16,8 @@ SET EMU_SYSDIR=%EMU_WINDIR%\system32
 SET EMU_SYSDIR_WOW64=%EMU_WINDIR%\syswow64
 SET EMU_CURSORDIR=%EMU_WINDIR%\cursors
 SET EMU_SORTDIR=%EMU_WINDIR%\globalization\sorting
+SET EMU_WINSXSDIR=%EMU_WINDIR%\winsxs
+SET EMU_WINSXSMANIFESTDIR=%EMU_WINSXSDIR%\manifests
 SET EMU_REGDIR=%EMU_ROOT%\registry
 SET EMU_STEAMDIR=%EMU_FILESYS%\c\steam
 
@@ -23,6 +25,8 @@ MKDIR %EMU_SYSDIR%
 MKDIR %EMU_SYSDIR_WOW64%
 MKDIR %EMU_CURSORDIR%
 MKDIR %EMU_SORTDIR%
+MKDIR %EMU_WINSXSDIR%
+MKDIR %EMU_WINSXSMANIFESTDIR%
 MKDIR %EMU_REGDIR%
 MKDIR %EMU_STEAMDIR%
 
@@ -194,6 +198,15 @@ CALL :collect wdmaud.drv
 
 CALL :collect_file "%WINDIR%\Cursors", aero_arrow.cur, %EMU_CURSORDIR%
 
+CALL :collect_winsxs_directories amd64_microsoft.windows.common-controls_*
+CALL :collect_winsxs_directories x86_microsoft.windows.common-controls_*
+CALL :collect_winsxs_directories amd64_policy.*.microsoft.windows.common-controls_*
+CALL :collect_winsxs_directories x86_policy.*.microsoft.windows.common-controls_*
+CALL :collect_winsxs_manifests amd64_microsoft.windows.common-controls_*
+CALL :collect_winsxs_manifests x86_microsoft.windows.common-controls_*
+CALL :collect_winsxs_manifests amd64_policy.*.microsoft.windows.common-controls_*
+CALL :collect_winsxs_manifests x86_policy.*.microsoft.windows.common-controls_*
+
 EXIT /B 0
 
 :normpath
@@ -213,5 +226,19 @@ EXIT /B
 :collect
 CALL :collect_file %SYSDIR%, %~1, %EMU_SYSDIR%
 CALL :collect_file %SYSDIR_WOW64%, %~1, %EMU_SYSDIR_WOW64%
+EXIT /B
+
+:collect_winsxs_directories
+FOR /D %%D IN ("%WINDIR%\WinSxS\%~1") DO (
+	ECHO %%~fD -^> %EMU_WINSXSDIR%\%%~nxD
+	XCOPY /E /I /Y "%%~fD" "%EMU_WINSXSDIR%\%%~nxD" >NUL
+)
+EXIT /B
+
+:collect_winsxs_manifests
+FOR %%F IN ("%WINDIR%\WinSxS\Manifests\%~1") DO IF EXIST "%%~fF" (
+	ECHO %%~fF -^> %EMU_WINSXSMANIFESTDIR%\%%~nxF
+	COPY /B /Y "%%~fF" "%EMU_WINSXSMANIFESTDIR%\%%~nxF" >NUL
+)
 EXIT /B
 
