@@ -1083,6 +1083,12 @@ namespace sogen
 
             void seed_user_system_color_brushes(const syscall_context& c)
             {
+                c.proc.user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) {
+                    for (size_t i = 0; i < USER_NUM_SYSCOLORS; ++i)
+                    {
+                        server_info.systemColors[i] = k_default_system_colors[i];
+                    }
+                });
                 constexpr size_t k_brush_seed_count =
                     USER_NUM_SYSCOLORS < USER_SERVERINFO_BRUSH_SLOT_COUNT ? USER_NUM_SYSCOLORS : USER_SERVERINFO_BRUSH_SLOT_COUNT;
 
