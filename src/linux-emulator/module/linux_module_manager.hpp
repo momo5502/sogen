@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../std_include.hpp"
+#include "../linux_file_system.hpp"
 #include "../linux_memory_manager.hpp"
 #include "elf_mapping.hpp"
 
@@ -10,8 +11,6 @@
 
 namespace sogen
 {
-
-    class linux_file_system;
 
     class linux_module_manager
     {

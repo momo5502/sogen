@@ -1,4 +1,49 @@
-set(UNICORN_ARCH "x86" CACHE STRING "")
+find_package(Git REQUIRED)
+
+set(_unicorn_patches
+  "0001-enable-aarch64-build.patch"
+  "0002-per-target-adapter-helper-names.patch"
+  "0003-ldra-zero-modifier.patch"
+)
+set(_unicorn_dir "${CMAKE_CURRENT_SOURCE_DIR}/unicorn")
+
+foreach(_unicorn_patch_name IN LISTS _unicorn_patches)
+  set(_unicorn_patch "${PROJECT_SOURCE_DIR}/cmake/unicorn-patches/${_unicorn_patch_name}")
+
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" apply --reverse --check "${_unicorn_patch}"
+    WORKING_DIRECTORY "${_unicorn_dir}"
+    RESULT_VARIABLE _unicorn_patch_already_applied
+    OUTPUT_QUIET ERROR_QUIET
+  )
+
+  if(NOT _unicorn_patch_already_applied EQUAL 0)
+    execute_process(
+      COMMAND "${GIT_EXECUTABLE}" apply "${_unicorn_patch}"
+      WORKING_DIRECTORY "${_unicorn_dir}"
+      RESULT_VARIABLE _unicorn_patch_apply_result
+      ERROR_VARIABLE _unicorn_patch_apply_error
+    )
+
+    if(NOT _unicorn_patch_apply_result EQUAL 0)
+      execute_process(
+        COMMAND "${GIT_EXECUTABLE}" rev-parse HEAD
+        WORKING_DIRECTORY "${_unicorn_dir}"
+        OUTPUT_VARIABLE _unicorn_current_commit
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+      )
+
+      message(FATAL_ERROR
+        "Failed to apply '${_unicorn_patch}' to deps/unicorn (pinned at "
+        "d23810735f792db1977327f3609fa3fa0446ede1, checked out at "
+        "${_unicorn_current_commit}). The patch neither applies nor is already "
+        "applied; see docs/unicorn-aarch64-patch.md.\n${_unicorn_patch_apply_error}")
+    endif()
+  endif()
+endforeach()
+
+set(UNICORN_ARCH "x86;aarch64" CACHE STRING "")
 add_subdirectory(unicorn)
 
 ##########################################

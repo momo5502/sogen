@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sogen &mdash; macOS arm64 in the browser</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header>
+  <h1>Sogen <span>&mdash; macOS arm64 emulator, running in WebAssembly</span></h1>
+  <div class="spacer"></div>
+  <span id="status">loading module&hellip;</span>
+  <button id="run" class="primary" disabled>Run</button>
+  <button id="stop" class="danger" disabled>Stop</button>
+  <button id="clear">Clear output</button>
+</header>
+
+<main>
+
+  <section id="fs-panel">
+    <h2>Guest filesystem <span class="count" id="fs-count"></span></h2>
+
+    <div class="fs-actions">
+      <button id="pick-files">Add files</button>
+      <button id="pick-dir">Add folder</button>
+      <button id="pick-bundle">Add .app bundle</button>
+      <button id="pick-dyld">Load macOS root</button>
+      <button id="pick-root">Add root folder</button>
+      <button id="add-demo">Add demo binary</button>
+      <button id="add-gui-demo">Add GUI demo</button>
+      <button id="add-paint-demo">Add paint demo</button>
+      <button id="load-calculator">Load Calculator</button>
+      <button id="wipe" class="danger">Remove all</button>
+    </div>
+
+    <!-- A visitor should not re-download a multi-gigabyte root every time. What is held locally, and a
+         way to fill it before running anything, are the two things that are otherwise invisible. -->
+    <div id="cache-bar">
+      <div class="cache-line">
+        <span class="cache-dot" id="cache-dot"></span>
+        <span id="cache-state">local root cache: checking&hellip;</span>
+      </div>
+      <div class="cache-line">
+        <label><input type="checkbox" id="opt-root-cache" checked> Cache the root locally</label>
+        <button id="cache-warm">Prepare root</button>
+        <button id="cache-cancel" hidden>Cancel</button>
+        <button id="cache-clear" class="danger">Clear cache</button>
+        <span id="cache-detail"></span>
+      </div>
+      <div class="cache-track" id="cache-track" hidden><div class="cache-fill" id="cache-fill"></div></div>
+      <div id="cache-warning" hidden></div>
+    </div>
+
+    <input type="file" id="file-input" multiple hidden>
+    <input type="file" id="dir-input" webkitdirectory multiple hidden>
+    <input type="file" id="root-input" webkitdirectory multiple hidden>
+    <input type="file" id="bundle-input" webkitdirectory multiple hidden>
+
+    <div class="field wide bundle-mount">
+      <span>Mount a bundle under</span>
+      <input type="text" id="opt-bundle-mount" value="/Applications">
+    </div>
+
+    <div id="drop">Drop files, an .app bundle or a whole macOS root here.<br><span style="color:#5c6979">Nothing is uploaded or copied &mdash; only the parts the guest reads are ever touched.</span></div>
+
+    <div class="scroll"><div class="tree" id="tree"></div></div>
+  </section>
+
+  <section id="trace-panel">
+    <h2>Trace <span class="count" id="trace-count"></span></h2>
+    <div style="padding:8px;border-bottom:1px solid var(--line)">
+      <input id="filter" placeholder="Filter lines (substring, case-insensitive)">
+      <div class="kinds" id="kinds">
+        <label><input type="checkbox" data-kind="file" checked><span class="sw file"></span>file</label>
+        <label><input type="checkbox" data-kind="memory" checked><span class="sw memory"></span>memory</label>
+        <label><input type="checkbox" data-kind="mach" checked><span class="sw mach"></span>mach</label>
+        <label><input type="checkbox" data-kind="process" checked><span class="sw process"></span>process</label>
+        <label><input type="checkbox" data-kind="signal" checked><span class="sw signal"></span>signal</label>
+        <label><input type="checkbox" data-kind="other" checked><span class="sw other"></span>other</label>
+        <label><input type="checkbox" id="only-failed"><span class="sw bad"></span>failed only</label>
+      </div>
+    </div>
+    <div class="scroll"><div id="trace"></div></div>
+  </section>
+
+  <section id="screen-panel" hidden>
+    <h2>Guest screen <span class="count" id="screen-size"></span>
+      <span class="spacer"></span>
+      <label class="screen-toggle"><input type="checkbox" id="opt-input" checked> Send input</label>
+    </h2>
+    <div class="scroll" id="screen-scroll">
+      <div id="screen-stage" tabindex="0">
+        <canvas id="screen-canvas" width="1" height="1"></canvas>
+        <div id="screen-overlay"></div>
+      </div>
+      <div class="stream" id="screen-stream"></div>
+      <div class="windows" id="screen-windows"><div class="empty">No windows yet.</div></div>
+    </div>
+  </section>
+
+  <section id="side-panel">
+    <h2>Debug settings</h2>
+    <div class="scroll" style="padding:0">
+
+      <div class="group">
+        <label>Executable</label>
+        <table class="kv"><tbody id="sel-info">
+          <tr><td>selected</td><td id="sel-path">&mdash;</td></tr>
+        </tbody></table>
+        <div class="field wide">
+          <span>Guest argv (space separated, after argv[0])</span>
+          <input type="text" id="opt-argv" placeholder="hello world">
+        </div>
+        <div class="field wide">
+          <span>Environment (KEY=VALUE, one per line ok)</span>
+          <input type="text" id="opt-env" placeholder="TMPDIR=/tmp">
+        </div>
+      </div>
+
+      <div class="group">
+        <label>Tracing</label>
+        <div class="field"><label><input type="checkbox" id="opt-syscalls" checked> Trace syscalls</label></div>
+        <div class="field"><label><input type="checkbox" id="opt-decode" checked> Decode arguments</label></div>
+        <div class="field"><label><input type="checkbox" id="opt-modules" checked> Report module loads</label></div>
+        <div class="field"><label><input type="checkbox" id="opt-memory" checked> Memory report</label></div>
+        <div class="field"><label><input type="checkbox" id="opt-log"> Emulator log</label></div>
+        <div class="field"><span>String limit</span><input type="number" id="opt-strlimit" value="256" min="0" max="65536"></div>
+        <div class="field"><span>Buffer preview</span><input type="number" id="opt-buflimit" value="32" min="0" max="4096"></div>
+        <div class="field wide">
+          <span>Ignore syscalls (comma separated)</span>
+          <input type="text" id="opt-ignore" placeholder="mach_absolute_time,getpid">
+        </div>
+      </div>
+
+      <div class="group">
+        <label>App UI</label>
+        <div class="field"><label><input type="checkbox" id="opt-gui"> Emulate the window server</label></div>
+        <div class="field"><span>Desktop size</span><input type="text" id="opt-desktop" value="1024x640"></div>
+        <div class="field"><span>Frame interval (ms)</span><input type="number" id="opt-frame-interval" value="100" min="0" max="10000"></div>
+        <div class="hint">Intercepts the SkyLight calls a program makes to put a window on screen and
+          composes them here instead of on a display. Frames arrive while the guest runs, sampled at
+          syscall boundaries &mdash; a guest that makes no calls sends none.</div>
+      </div>
+
+      <div class="group">
+        <label>Live</label>
+        <table class="kv"><tbody id="live-info">
+          <tr><td colspan="2" class="empty">No run yet.</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="group">
+        <label>Limits</label>
+        <div class="field"><span>Max instructions</span><input type="number" id="opt-maxinsn" value="0" min="0"></div>
+        <div class="hint">0 runs until the guest exits. A GUI process never exits, and that is no longer a
+          reason to bound it: frames and the counters under Live keep arriving while it runs, and Stop
+          ends the run.</div>
+      </div>
+
+      <div class="group">
+        <label>Image</label>
+        <table class="kv"><tbody id="image-info">
+          <tr><td colspan="2" class="empty">Run to inspect the selected image.</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="group">
+        <label>Result</label>
+        <table class="kv"><tbody id="result-info">
+          <tr><td colspan="2" class="empty">No run yet.</td></tr>
+        </tbody></table>
+      </div>
+
+      <div class="group">
+        <label>Syscalls <span class="count" id="sys-total"></span></label>
+        <div class="bars" id="syscalls"><div class="empty">&mdash;</div></div>
+      </div>
+
+      <div class="group">
+        <label>Failures <span class="count" id="fail-total"></span></label>
+        <div class="bars" id="failures"><div class="empty">none</div></div>
+      </div>
+
+      <div class="group">
+        <label>Modules <span class="count" id="mod-count"></span></label>
+        <div class="mods" id="modules"><div class="empty">&mdash;</div></div>
+      </div>
+
+    </div>
+  </section>
+
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

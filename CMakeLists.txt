@@ -6,6 +6,7 @@ option(SOGEN_ENABLE_AVX2 "Enable AVX2 support" ON)
 option(SOGEN_ENABLE_SANITIZER "Enable sanitizer" OFF)
 option(SOGEN_ENABLE_FUZZING "Build the host-side handler fuzzers (libFuzzer); instruments all code with coverage. Pair with SOGEN_ENABLE_SANITIZER=On. Requires clang." OFF)
 option(SOGEN_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
+option(SOGEN_ENABLE_LIBCPP_HARDENING "Enable libc++ hardened mode; makes container and span out-of-bounds access abort instead of reading past the end. Costs runtime speed." OFF)
 option(SOGEN_ENABLE_LTO "Enable interprocedural optimization (LTO/IPO)" ON)
 option(SOGEN_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
 option(SOGEN_ENABLE_REFLECTION "Enable reflection using the reflect library" ON)
@@ -111,6 +112,7 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 include(cmake/utils.cmake)
 include(cmake/compiler-env.cmake)
+include(cmake/hypervisor-entitlement.cmake)
 
 ##########################################
 

@@ -14,6 +14,8 @@ Instead of reimplementing thousands of OS APIs, Sogen emulates binaries at CPU a
 
 Every instruction, memory access and API call can be hooked, inspected or rewritten, runs are fully deterministic, and the entire emulator state can be snapshotted and restored.
 
+Sogen also runs macOS arm64 binaries, including real, unmodified GUI applications: `dyld` links the guest itself against the real shared cache, and the emulated BSD/Mach kernel, WindowServer and AppKit surface take it all the way to a composed window. It is younger and narrower than the Windows and Linux support above — no networking beyond `AF_UNIX`, no hardware-accelerated rendering, and a few open bugs on the way to a fully clickable app. See [`docs/macos-emulation.md`](docs/macos-emulation.md) for what runs today and what does not.
+
 Built in C++ and powered by the CPU backend of your choice:
 
 - [Unicorn Engine](https://github.com/unicorn-engine/unicorn)

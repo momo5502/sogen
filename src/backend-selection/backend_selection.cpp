@@ -2,6 +2,11 @@
 
 #include <string_view>
 #include <unicorn_x86_64_emulator.hpp>
+#include <unicorn_arm64_emulator.hpp>
+
+#if defined(__APPLE__) && defined(__aarch64__)
+#include <hvf_arm64_emulator.hpp>
+#endif
 
 #if SOGEN_ENABLE_RUST_CODE
 #include <icicle_x86_64_emulator.hpp>
@@ -114,5 +119,37 @@ namespace sogen
         }
 
         return create_x86_64_emulator(backend, vcpu_count);
+    }
+
+    std::unique_ptr<arm64_mappable_emulator> create_arm64_emulator(const backend_type backend)
+    {
+        switch (backend)
+        {
+        case backend_type::unicorn:
+            return unicorn::create_arm64_emulator();
+
+#if defined(__APPLE__) && defined(__aarch64__)
+        case backend_type::hvf:
+            return hvf::create_arm64_emulator();
+#endif
+
+        default:
+            break;
+        }
+
+        throw std::runtime_error("Requested backend is not available for arm64 guests");
+    }
+
+    std::unique_ptr<arm64_mappable_emulator> create_arm64_emulator_from_environment()
+    {
+        auto backend = backend_type::unicorn;
+
+        const auto* env = getenv("EMULATOR_HVF");
+        if (env && (env == "1"sv || env == "true"sv))
+        {
+            backend = backend_type::hvf;
+        }
+
+        return create_arm64_emulator(backend);
     }
 } // namespace sogen
