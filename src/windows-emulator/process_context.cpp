@@ -286,6 +286,10 @@ namespace sogen
 
             return env_map;
         }
+
+        // RtlpWaitOnCriticalSection waits PEB->CriticalSectionTimeout; zero times out immediately instead of blocking. Windows seeds it
+        // from MmCritsectTimeout (30 days).
+        constexpr auto critical_section_timeout = static_cast<uint64_t>(-25920000000000LL);
     }
 
     void process_context::setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
@@ -398,6 +402,7 @@ namespace sogen
             p.NumberOfHeaps = 0x00000000;
             p.MaximumNumberOfHeaps = 0x00000010;
             p.NumberOfProcessors = fake_env.number_of_processors;
+            p.CriticalSectionTimeout.QuadPart = critical_section_timeout;
             p.ImageSubsystemMajorVersion = 6;
 
             // TODO: p.SessionId = 1;
@@ -494,6 +499,7 @@ namespace sogen
                 p32.NumberOfHeaps = 0;
                 p32.MaximumNumberOfHeaps = 0x10;
                 p32.NumberOfProcessors = fake_env.number_of_processors;
+                p32.CriticalSectionTimeout.QuadPart = critical_section_timeout;
                 p32.ImageSubsystemMajorVersion = 6;
 
                 // TODO: p32.SessionId = 1;
