@@ -41,6 +41,7 @@ namespace sogen
         constexpr uint32_t k_color_btnface = 15;
         constexpr auto k_user_timer_minimum = std::chrono::milliseconds{10};
         constexpr uint64_t k_hrgn_window = 1;
+        constexpr UINT k_cb_getcomboboxinfo = 0x0164;
 
         struct send_message_callback_info
         {
@@ -3904,6 +3905,97 @@ namespace sogen
             }
 
             return c.get_callback_result<uint64_t>();
+        }
+
+        bool write_native_combo_box_info(const syscall_context& c, const window& combo_box, const emulator_pointer combo_box_info)
+        {
+            const uint32_t required_size = c.proc.is_wow64_process ? 52 : 64;
+            uint32_t cb_size{};
+            if (!c.win_emu.memory.try_read_memory(combo_box_info, &cb_size, sizeof(cb_size)) || cb_size < required_size)
+            {
+                set_guest_last_error(c, 87);
+                return false;
+            }
+
+            const window* item = nullptr;
+            const window* list = nullptr;
+            for (const auto& [index, child] : c.proc.windows)
+            {
+                (void)index;
+                if (child.parent_handle != combo_box.handle)
+                {
+                    continue;
+                }
+
+                if (utils::string::equals_ignore_case(std::u16string_view{child.class_name}, std::u16string_view{u"ComboLBox"}))
+                {
+                    list = &child;
+                }
+                else if (utils::string::equals_ignore_case(std::u16string_view{child.class_name}, std::u16string_view{u"Edit"}) ||
+                         utils::string::equals_ignore_case(std::u16string_view{child.class_name}, std::u16string_view{u"Static"}))
+                {
+                    item = &child;
+                }
+            }
+
+            const auto client = get_client_rect(combo_box);
+            const RECT item_rect = item ? RECT{item->x, item->y, item->x + item->width, item->y + item->height} : client;
+            const RECT button_rect{
+                .left = std::max<LONG>(0, client.right - 17),
+                .top = client.top,
+                .right = client.right,
+                .bottom = client.bottom,
+            };
+            const uint32_t state_button = 0;
+            const uint64_t hwnd_item = item ? item->handle : 0;
+            const uint64_t hwnd_list = list ? list->handle : 0;
+
+            if (!c.win_emu.memory.try_write_memory(combo_box_info + 4, &item_rect, sizeof(item_rect)) ||
+                !c.win_emu.memory.try_write_memory(combo_box_info + 20, &button_rect, sizeof(button_rect)) ||
+                !c.win_emu.memory.try_write_memory(combo_box_info + 36, &state_button, sizeof(state_button)))
+            {
+                return false;
+            }
+
+            if (c.proc.is_wow64_process)
+            {
+                const auto combo_handle = static_cast<uint32_t>(combo_box.handle);
+                const auto item_handle = static_cast<uint32_t>(hwnd_item);
+                const auto list_handle = static_cast<uint32_t>(hwnd_list);
+                return c.win_emu.memory.try_write_memory(combo_box_info + 40, &combo_handle, sizeof(combo_handle)) &&
+                       c.win_emu.memory.try_write_memory(combo_box_info + 44, &item_handle, sizeof(item_handle)) &&
+                       c.win_emu.memory.try_write_memory(combo_box_info + 48, &list_handle, sizeof(list_handle));
+            }
+
+            return c.win_emu.memory.try_write_memory(combo_box_info + 40, &combo_box.handle, sizeof(combo_box.handle)) &&
+                   c.win_emu.memory.try_write_memory(combo_box_info + 48, &hwnd_item, sizeof(hwnd_item)) &&
+                   c.win_emu.memory.try_write_memory(combo_box_info + 56, &hwnd_list, sizeof(hwnd_list));
+        }
+
+        BOOL handle_NtUserGetComboBoxInfo(const syscall_context& c, const hwnd combo_box, const emulator_pointer combo_box_info)
+        {
+            auto* win = c.proc.windows.get(combo_box);
+            if (!win || combo_box_info == 0)
+            {
+                return FALSE;
+            }
+
+            const auto normalized_class = normalize_builtin_window_class_name(win->class_name);
+            if (utils::string::equals_ignore_case(normalized_class, std::u16string_view{u"ComboBox"}))
+            {
+                return write_native_combo_box_info(c, *win, combo_box_info) ? TRUE : FALSE;
+            }
+
+            message_call_state state{};
+            state.window = combo_box;
+            state.message = k_cb_getcomboboxinfo;
+            dispatch_window_message(c, callback_id::NtUserGetComboBoxInfo, std::move(state), *win, k_cb_getcomboboxinfo, 0, combo_box_info);
+            return {};
+        }
+
+        BOOL completion_NtUserGetComboBoxInfo(const syscall_context& c, const hwnd /*combo_box*/, const emulator_pointer /*combo_box_info*/)
+        {
+            return c.get_callback_result<uint64_t>() != 0 ? TRUE : FALSE;
         }
 
         uint64_t handle_NtUserDispatchMessage(const syscall_context& c, const emulator_object<msg> message)
