@@ -5038,6 +5038,35 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserSetSysMenu(const syscall_context& c, const hwnd hwnd, const hmenu menu)
+        {
+            auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400);
+                return FALSE;
+            }
+
+            if (menu == 0 || !c.proc.menus.get(menu))
+            {
+                set_guest_last_error(c, 1401);
+                return FALSE;
+            }
+
+            if ((win->style & WS_SYSMENU) == 0)
+            {
+                return FALSE;
+            }
+
+            win->system_menu_handle = menu;
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetSystemMenu(const syscall_context& c, const hwnd hwnd, const hmenu menu)
+        {
+            return handle_NtUserSetSysMenu(c, hwnd, menu);
+        }
+
         BOOL handle_NtUserSetMsgBox(const syscall_context& c, const hwnd hwnd)
         {
             auto* win = c.proc.windows.get(hwnd);
