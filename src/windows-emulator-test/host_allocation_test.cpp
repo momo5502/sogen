@@ -184,6 +184,22 @@ namespace sogen::test
         ASSERT_EQ(mm.find_free_allocation_base(0x1000, base + ALLOCATION_GRANULARITY), base + reserved_size);
     }
 
+    // The contract the wow64cpu.dll pre-search in map_module_from_data relies on: the start address is
+    // only a hint, so a pick for a 32-bit-reachable module must carry the ceiling explicitly.
+    TEST(HostAllocationTest, FindFreeHostBaseWithBelow4GbCeilingReturnsZeroWhenLowArenaIsFull)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr uint64_t four_gb = 0x100000000ULL;
+        constexpr size_t size = 0x9000;
+        ASSERT_TRUE(mm.allocate_memory(MIN_ALLOCATION_ADDRESS, static_cast<size_t>(four_gb - MIN_ALLOCATION_ADDRESS),
+                                       nt_memory_permission{memory_permission::read_write}, true));
+
+        ASSERT_EQ(mm.find_free_allocation_base(size, DEFAULT_ALLOCATION_ADDRESS_32BIT), four_gb);
+        ASSERT_EQ(mm.find_free_host_allocation_base(size, DEFAULT_ALLOCATION_ADDRESS_32BIT, four_gb - 1), 0u);
+    }
+
     TEST(HostAllocationTest, AllocateHostMemoryUsesSourceAddressWhenBackendRequiresIdentity)
     {
         fake_host_memory host{};
