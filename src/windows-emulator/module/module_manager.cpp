@@ -421,7 +421,7 @@ namespace sogen
                 code_initialized = true;
             }
 
-            if (code_initialized && this->modules_.contains(kCodeBase))
+            if (code_initialized && !this->modules_.contains(kCodeBase))
             {
                 mapped_module module{};
                 module.name = "wow64_heaven_gate";
