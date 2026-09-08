@@ -153,6 +153,7 @@ CALL :collect vcruntime140d.dll
 CALL :collect version.dll
 CALL :collect wer.dll
 CALL :collect win32u.dll
+CALL :collect windows.internal.graphics.display.displaycolormanagement.dll
 CALL :collect windows.storage.dll
 CALL :collect windowscodecs.dll
 CALL :collect winhttp.dll
