@@ -311,6 +311,13 @@ namespace sogen
         NTSTATUS handle_NtDeleteValueKey(const syscall_context& c, handle key_handle,
                                          emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> value_name);
         NTSTATUS handle_NtNotifyChangeKey();
+        NTSTATUS handle_NtCreateRegistryTransaction(const syscall_context& c, emulator_object<handle> transaction_handle,
+                                                    ACCESS_MASK desired_access,
+                                                    emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
+                                                    ULONG create_options);
+        NTSTATUS handle_NtOpenRegistryTransaction(const syscall_context& c, emulator_object<handle> transaction_handle,
+                                                  ACCESS_MASK desired_access,
+                                                  emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
         NTSTATUS handle_NtSetInformationKey(const syscall_context& c, handle key_handle, KEY_SET_INFORMATION_CLASS key_information_class,
                                             uint64_t key_information, ULONG length);
         NTSTATUS handle_NtEnumerateKey(const syscall_context& c, handle key_handle, ULONG index,
@@ -1459,6 +1466,8 @@ namespace sogen
         add_handler(NtSetValueKey);
         add_handler(NtDeleteValueKey);
         add_handler(NtNotifyChangeKey);
+        add_handler(NtCreateRegistryTransaction);
+        add_handler(NtOpenRegistryTransaction);
         add_handler(NtGetCurrentProcessorNumberEx);
         add_handler(NtGetCurrentProcessorNumber);
         add_handler(NtQueryObject);
