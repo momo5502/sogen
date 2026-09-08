@@ -530,11 +530,12 @@ namespace sogen
         binary.size_of_image = page_align_up(optional_header.SizeOfImage); // TODO: Sanitize
 
         const bool force_wow64cpu_32bit_va = must_map_module_below_4gb(binary.name, nt_headers.FileHeader.Machine, binary.image_base);
+        constexpr uint64_t below_4gb_ceiling = 0xFFFFFFFFULL;
 
         if (force_wow64cpu_32bit_va)
         {
-            binary.image_base =
-                memory.find_free_allocation_base(static_cast<size_t>(binary.size_of_image), DEFAULT_ALLOCATION_ADDRESS_32BIT);
+            binary.image_base = memory.find_free_host_allocation_base(static_cast<size_t>(binary.size_of_image),
+                                                                      DEFAULT_ALLOCATION_ADDRESS_32BIT, below_4gb_ceiling);
         }
 
         // Store PE header fields
@@ -563,7 +564,6 @@ namespace sogen
             // bits, aliasing the module onto whatever unrelated allocation sits at the truncated address.
             const bool needs_below_4gb = force_wow64cpu_32bit_va || is_32bit;
             const uint64_t fallback_start = needs_below_4gb ? DEFAULT_ALLOCATION_ADDRESS_32BIT : DEFAULT_ALLOCATION_ADDRESS_64BIT;
-            constexpr uint64_t below_4gb_ceiling = 0xFFFFFFFFULL;
             const uint64_t highest_address = needs_below_4gb ? below_4gb_ceiling : MAX_ALLOCATION_ADDRESS;
             const auto image_size = static_cast<size_t>(binary.size_of_image);
 
