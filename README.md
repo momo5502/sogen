@@ -8,7 +8,7 @@
 	<a href="https://inspect.software/software/momo5502/sogen"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Finspect.software%2Fbadge%2Fv1%2Fmomo5502%2Fsogen.json" alt="inspect.software score badge for momo5502/sogen" /></a>
 </h1>
 
-Sogen runs Windows and Linux programs without a real operating system, and lets you see and control everything they do.
+Sogen runs Windows and Linux programs without a real operating system: It lets you see and control everything they do.
 
 Instead of reimplementing thousands of OS APIs, Sogen emulates binaries at CPU and syscall level and runs the **real system DLLs**, so behavior closely matches the real OS.
 
