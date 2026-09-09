@@ -28,6 +28,7 @@
 #include <combaseapi.h>
 #include <knownfolders.h>
 #include <sddl.h>
+#include <bcrypt.h>
 
 using namespace std::literals;
 
@@ -1885,6 +1886,49 @@ namespace
         DestroyCursor(cursor);
         return true;
     }
+
+    bool test_bcrypt_hash()
+    {
+        struct hash_vector
+        {
+            const wchar_t* algorithm;
+            std::vector<UCHAR> digest;
+        };
+
+        const std::array<hash_vector, 2> vectors{{
+            {.algorithm = BCRYPT_MD5_ALGORITHM,
+             .digest = {0x90, 0x01, 0x50, 0x98, 0x3c, 0xd2, 0x4f, 0xb0, 0xd6, 0x96, 0x3f, 0x7d, 0x28, 0xe1, 0x7f, 0x72}},
+            {.algorithm = BCRYPT_SHA256_ALGORITHM,
+             .digest = {0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+                        0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad}},
+        }};
+
+        std::array<UCHAR, 3> input{'a', 'b', 'c'};
+
+        for (const auto& vector : vectors)
+        {
+            BCRYPT_ALG_HANDLE algorithm{};
+            const auto open_status = BCryptOpenAlgorithmProvider(&algorithm, vector.algorithm, nullptr, 0);
+            if (!BCRYPT_SUCCESS(open_status))
+            {
+                printf("BCryptOpenAlgorithmProvider(%ls) failed: 0x%08lX\n", vector.algorithm, open_status);
+                return false;
+            }
+
+            const auto close_algorithm = sogen::utils::finally([&] { BCryptCloseAlgorithmProvider(algorithm, 0); });
+
+            std::vector<UCHAR> digest(vector.digest.size());
+            const auto hash_status = BCryptHash(algorithm, nullptr, 0, input.data(), static_cast<ULONG>(input.size()), digest.data(),
+                                                static_cast<ULONG>(digest.size()));
+            if (!BCRYPT_SUCCESS(hash_status) || digest != vector.digest)
+            {
+                printf("BCryptHash(%ls) failed: 0x%08lX\n", vector.algorithm, hash_status);
+                return false;
+            }
+        }
+
+        return true;
+    }
 }
 
 #define RUN_TEST(func, name)                 \
@@ -1944,6 +1988,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_actctx, "Activation Context")
     RUN_TEST(test_mmio, "MMIO")
     RUN_TEST(test_gdi, "GDI")
+    RUN_TEST(test_bcrypt_hash, "BCrypt Hash")
 
     return valid ? 0 : 1;
 }

@@ -149,13 +149,9 @@ namespace sogen
                     return STATUS_SUCCESS;
                 }
 
-                std::u16string_view algorithm_name{};
-
-                if (c.input_buffer_length >= sizeof(ksec_algorithm_request))
-                {
-                    // The field is guest-controlled and may not be NUL-terminated.
-                    algorithm_name = utils::string::to_string_view<char16_t>(request.algorithm_name);
-                }
+                // bcrypt sizes the request to the name it carries (0x38 bytes for "MD5"), so it can be shorter than
+                // the struct. The field is guest-controlled and may not be NUL-terminated.
+                const auto algorithm_name = utils::string::to_string_view<char16_t>(request.algorithm_name);
 
                 const auto write_response = [&](const auto& output_data) -> NTSTATUS {
                     if (!c.output_buffer || c.output_buffer_length < sizeof(output_data))
