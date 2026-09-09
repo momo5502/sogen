@@ -1903,6 +1903,13 @@ int main(const int argc, const char* argv[])
         return 0;
     }
 
+    if (argc == 2 && argv[1] == "-fail-fast"sv)
+    {
+        EXCEPTION_RECORD record{};
+        record.ExceptionCode = 0xE0001234;
+        RaiseFailFastException(&record, nullptr, 0);
+    }
+
     bool valid = true;
 
 #ifdef _WIN64
