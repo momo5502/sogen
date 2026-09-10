@@ -29,11 +29,12 @@ namespace sogen
         win_sockaddr RemoteAddress;
     };
 
+    template <typename Traits>
     struct AFD_ACCEPT_INFO
     {
         BOOLEAN SanActive;
         LONG Sequence;
-        handle AcceptHandle;
+        Traits::HANDLE AcceptHandle;
     };
 
     template <typename Traits>

@@ -777,12 +777,12 @@ namespace sogen
                     throw std::runtime_error("Invalid AFD endpoint socket!");
                 }
 
-                if (c.input_buffer_length < sizeof(AFD_ACCEPT_INFO))
+                if (c.input_buffer_length < sizeof(AFD_ACCEPT_INFO<Traits>))
                 {
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                const auto accept_info = win_emu.emu().read_memory<AFD_ACCEPT_INFO>(c.input_buffer);
+                const auto accept_info = win_emu.emu().read_memory<AFD_ACCEPT_INFO<Traits>>(c.input_buffer);
 
                 const auto it = pending_connections_.find(accept_info.Sequence);
                 if (it == pending_connections_.end())
@@ -798,7 +798,7 @@ namespace sogen
                     return STATUS_INVALID_HANDLE;
                 }
 
-                auto* target_endpoint = target_device->get_internal_device<afd_endpoint>();
+                auto* target_endpoint = target_device->template get_internal_device<afd_endpoint>();
                 if (!target_endpoint)
                 {
                     return STATUS_INVALID_HANDLE;
