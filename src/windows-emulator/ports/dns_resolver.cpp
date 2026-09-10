@@ -68,7 +68,9 @@ namespace sogen
                     writer.write(record->reserved);
 
                     writer.write(record->type);
-                    writer.write(record->data.data(), record->data_length, writer.pointer_size());
+                    // The DNS RPC AAAA union arm is 8-byte aligned even in the x86 wire format.
+                    const auto data_alignment = record->type == DNS_TYPE_AAAA ? alignof(uint64_t) : writer.pointer_size();
+                    writer.write(record->data.data(), record->data_length, data_alignment);
 
                     writer.write_ndr_u16string(record->name);
                 }
