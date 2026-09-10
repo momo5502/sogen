@@ -534,7 +534,7 @@ namespace sogen
                             return;
                         }
 
-                        write_io_status(this->delayed_ioctl_->io_status_block, STATUS_TIMEOUT);
+                        write_io_status(*this->delayed_ioctl_, STATUS_TIMEOUT);
 
                         if (this->timeout_callback_)
                         {

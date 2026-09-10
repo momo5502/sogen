@@ -995,6 +995,15 @@ namespace sogen
             context.output_buffer_length = output_buffer_length;
             context.vcpu = &c.vcpu;
 
+            if (c.proc.is_wow64_process && io_status_block)
+            {
+                const auto native_iosb = io_status_block.read();
+                if (native_iosb.Pointer != 0)
+                {
+                    context.wow64_io_status_block.set_address(static_cast<emulator_pointer>(native_iosb.Pointer));
+                }
+            }
+
             try
             {
                 return device->execute_ioctl(c.win_emu, context);
