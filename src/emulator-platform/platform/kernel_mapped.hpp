@@ -389,9 +389,10 @@ namespace sogen
         ULONG DefaultThreadpoolCpuSetMaskCount;
         ULONG DefaultThreadpoolThreadMaximum;
         ULONG HeapMemoryTypeMask; // WIN11
+        std::uint64_t AttributeList;
     } RTL_USER_PROCESS_PARAMETERS64, *PRTL_USER_PROCESS_PARAMETERS64;
 
-    static_assert(sizeof(RTL_USER_PROCESS_PARAMETERS64) == 0x448);
+    static_assert(sizeof(RTL_USER_PROCESS_PARAMETERS64) == 0x450);
 
     union PEB_CROSS_PROCESS_FLAGS_UNION
     {
@@ -552,9 +553,10 @@ namespace sogen
         ULONG DefaultThreadpoolCpuSetMaskCount;
         ULONG DefaultThreadpoolThreadMaximum;
         ULONG HeapMemoryTypeMask; // WIN11
+        std::uint32_t AttributeList;
     } RTL_USER_PROCESS_PARAMETERS32, *PRTL_USER_PROCESS_PARAMETERS32;
 
-    static_assert(sizeof(RTL_USER_PROCESS_PARAMETERS32) == 708);
+    static_assert(sizeof(RTL_USER_PROCESS_PARAMETERS32) == 0x2C8);
 
     typedef struct _PEB64
     {
