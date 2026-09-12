@@ -50,6 +50,7 @@ namespace sogen::test
     struct sample_configuration
     {
         bool print_time{false};
+        bool fail_fast{false};
     };
 
     namespace
@@ -106,6 +107,11 @@ namespace sogen::test
         if (config.print_time)
         {
             settings.arguments.emplace_back(u"-time");
+        }
+
+        if (config.fail_fast)
+        {
+            settings.arguments.emplace_back(u"-fail-fast");
         }
 
         return settings;
