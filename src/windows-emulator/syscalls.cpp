@@ -626,6 +626,7 @@ namespace sogen
                                                       BOOL Ansi);
         uint32_t handle_NtUserSetWindowLong(const syscall_context& c, handle hWnd, int nIndex, uint32_t dwNewLong, BOOL Ansi);
         uint64_t handle_NtUserGetAncestor(const syscall_context& c, hwnd child_hwnd, UINT flags);
+        BOOL handle_NtUserIsTopLevelWindow(const syscall_context& c, hwnd window);
         BOOL handle_NtUserRedrawWindow(const syscall_context& c, hwnd hwnd, emulator_object<RECT> update_rect, uint64_t update_rgn,
                                        UINT flags);
         NTSTATUS handle_NtUserGetCPD();
@@ -1636,6 +1637,7 @@ namespace sogen
         add_handler(NtUserSetClassLongPtr);
         add_handler(NtUserSetWindowLong);
         add_handler(NtUserGetAncestor);
+        add_handler(NtUserIsTopLevelWindow);
         add_handler(NtUserPostMessage);
         add_handler(NtUserPostThreadMessage);
         add_handler(NtUserRedrawWindow);
