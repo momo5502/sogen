@@ -18,7 +18,6 @@ namespace sogen
 {
     namespace
     {
-        constexpr uint32_t k_cryptprotect_ui_forbidden = 0x1;
         constexpr uint32_t k_error_invalid_parameter = 87;
         [[maybe_unused]] constexpr uint32_t k_error_not_supported = 50;
         constexpr size_t k_max_protect_blob = 16u * 1024u * 1024u;
@@ -99,8 +98,11 @@ namespace sogen
             return win_emu.memory.try_read_memory(blob.pb_data, out.data(), out.size());
         }
 
+#ifdef OS_WINDOWS
+        constexpr uint32_t k_cryptprotect_ui_forbidden = 0x1;
+
         bool write_guest_blob(windows_emulator& win_emu, host_crypt_protect_state& state, const uint64_t blob_ptr,
-                               const std::span<const uint8_t> data)
+                              const std::span<const uint8_t> data)
         {
             if (!blob_ptr)
             {
@@ -138,7 +140,6 @@ namespace sogen
             return true;
         }
 
-#ifdef OS_WINDOWS
         struct host_protect_result
         {
             bool ok{};
@@ -165,7 +166,7 @@ namespace sogen
             DATA_BLOB output{};
             const DWORD host_flags = flags | k_cryptprotect_ui_forbidden;
             const BOOL ok = unprotect ? CryptUnprotectData(&input, nullptr, entropy_ptr, nullptr, nullptr, host_flags, &output)
-                                        : CryptProtectData(&input, nullptr, entropy_ptr, nullptr, nullptr, host_flags, &output);
+                                      : CryptProtectData(&input, nullptr, entropy_ptr, nullptr, nullptr, host_flags, &output);
 
             host_protect_result result{};
             result.ok = ok == TRUE;
@@ -249,7 +250,7 @@ namespace sogen
         }
 
         void hook_export_once(windows_emulator& win_emu, host_crypt_protect_state& state, const mapped_module& mod,
-                               const std::string_view export_name, memory_execution_hook_callback callback)
+                              const std::string_view export_name, memory_execution_hook_callback callback)
         {
             const auto address = mod.find_export(export_name);
             if (!address || !state.hooked_addresses.insert(address).second)
@@ -261,7 +262,7 @@ namespace sogen
         }
 
         void install_module_hooks(windows_emulator& win_emu, const mapped_module& mod,
-                                   const std::shared_ptr<host_crypt_protect_state>& state)
+                                  const std::shared_ptr<host_crypt_protect_state>& state)
         {
             if (win_emu.process.is_wow64_process)
             {
@@ -270,19 +271,16 @@ namespace sogen
 
             if (module_name_is(mod, "crypt32.dll") || module_name_is(mod, "dpapi.dll"))
             {
-                hook_export_once(win_emu, *state, mod, "CryptUnprotectData", [&win_emu, state](cpu_interface&, uint64_t) {
-                    handle_crypt_protect(win_emu, *state, true);
-                });
-                hook_export_once(win_emu, *state, mod, "CryptProtectData", [&win_emu, state](cpu_interface&, uint64_t) {
-                    handle_crypt_protect(win_emu, *state, false);
-                });
+                hook_export_once(win_emu, *state, mod, "CryptUnprotectData",
+                                 [&win_emu, state](cpu_interface&, uint64_t) { handle_crypt_protect(win_emu, *state, true); });
+                hook_export_once(win_emu, *state, mod, "CryptProtectData",
+                                 [&win_emu, state](cpu_interface&, uint64_t) { handle_crypt_protect(win_emu, *state, false); });
             }
 
             if (module_name_is(mod, "kernel32.dll") || module_name_is(mod, "kernelbase.dll"))
             {
-                hook_export_once(win_emu, *state, mod, "LocalFree", [&win_emu, state](cpu_interface&, uint64_t) {
-                    handle_local_free(win_emu, *state);
-                });
+                hook_export_once(win_emu, *state, mod, "LocalFree",
+                                 [&win_emu, state](cpu_interface&, uint64_t) { handle_local_free(win_emu, *state); });
             }
         }
     }
