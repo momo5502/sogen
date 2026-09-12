@@ -858,6 +858,13 @@ namespace sogen
         NTSTATUS handle_NtGdiDdDDIOpenAdapterFromLuid(const syscall_context& c,
                                                       emulator_object<EMU_D3DKMT_OPENADAPTERFROMLUID> open_adapter);
         NTSTATUS handle_NtGdiDdDDIOpenAdapterFromHdc(const syscall_context& c, emulator_object<EMU_D3DKMT_OPENADAPTERFROMHDC> open_adapter);
+        NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromGpu();
+        NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromCpu();
+        NTSTATUS handle_NtGdiDdDDISignalSynchronizationObjectFromGpu();
+        NTSTATUS handle_NtGdiDdDDISignalSynchronizationObjectFromCpu();
+
+        // syscalls/composition.cpp:
+        NTSTATUS handle_NtUnBindCompositionSurface();
 
         // syscalls/trace.cpp:
         NTSTATUS handle_NtTraceControl(const syscall_context& c, ULONG function_code, uint64_t input_buffer, ULONG input_buffer_length,
@@ -1689,6 +1696,11 @@ namespace sogen
         add_handler(NtGdiOpenDCW);
         add_handler(NtGdiDdDDIOpenAdapterFromLuid);
         add_handler(NtGdiDdDDIOpenAdapterFromHdc);
+        add_handler(NtGdiDdDDIWaitForSynchronizationObjectFromGpu);
+        add_handler(NtGdiDdDDIWaitForSynchronizationObjectFromCpu);
+        add_handler(NtGdiDdDDISignalSynchronizationObjectFromGpu);
+        add_handler(NtGdiDdDDISignalSynchronizationObjectFromCpu);
+        add_handler(NtUnBindCompositionSurface);
         add_handler(NtGdiSelectFont);
         add_handler(NtUserInitThreadCoreMessagingIocp2);
         add_handler(NtUserDrainThreadCoreMessagingCompletions2);

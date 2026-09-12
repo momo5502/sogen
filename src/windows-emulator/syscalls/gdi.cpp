@@ -5029,6 +5029,26 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromGpu()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromCpu()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDISignalSynchronizationObjectFromGpu()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDISignalSynchronizationObjectFromCpu()
+        {
+            return STATUS_SUCCESS;
+        }
+
         COLORREF handle_NtGdiSetPixel(const syscall_context& c, const hdc dc, const int x, const int y, const COLORREF color)
         {
             constexpr uint64_t clr_invalid = 0xFFFFFFFF;
