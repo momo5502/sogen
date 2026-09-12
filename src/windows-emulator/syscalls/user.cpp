@@ -4859,6 +4859,18 @@ namespace sogen
             }
         }
 
+        BOOL handle_NtUserIsTopLevelWindow(const syscall_context& c, const hwnd window)
+        {
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                return FALSE;
+            }
+
+            // Owned popups still parent to the desktop; do not consult owner_handle.
+            return win->parent_handle == c.proc.default_desktop_window_handle.bits ? TRUE : FALSE;
+        }
+
         BOOL handle_NtUserRedrawWindow(const syscall_context& c, const hwnd hwnd, const emulator_object<RECT> update_rect,
                                        const uint64_t /*update_rgn*/, const UINT flags)
         {
