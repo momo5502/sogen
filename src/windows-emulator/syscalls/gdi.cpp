@@ -198,7 +198,9 @@ namespace sogen
             constexpr uint32_t k_dxgk_device_handle = 0x5000;
             constexpr uint32_t k_dxgk_context_handle = 0x6000;
             constexpr uint32_t k_dxgk_shared_primary_handle = 0x7000;
-            constexpr LUID k_dxgk_adapter_luid = emulated_display::adapter_luid;
+            constexpr LUID k_dxgk_adapter_luid = {0x1000, 0};
+            // Stable emulator-only unique adapter id. Sequential, not a host device.
+            constexpr GUID k_dxgk_adapter_unique_id = {0x00000001, 0x0002, 0x0003, {0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
             constexpr uint32_t k_dxgk_adapter_source_count = 1;
             constexpr uint32_t k_dxgk_command_buffer_size = 0x1000;
             constexpr uint32_t k_dxgk_allocation_list_entry_size = 8;
@@ -4126,7 +4128,7 @@ namespace sogen
             }
 
             case KMTQAITYPE::KMTQAITYPE_ADAPTERGUID: {
-                GUID adapter_guid = emulated_display::unique_id;
+                GUID adapter_guid = k_dxgk_adapter_unique_id;
                 return write_query_adapter_info(c, query, adapter_guid);
             }
 
@@ -4214,7 +4216,7 @@ namespace sogen
             }
 
             case KMTQAITYPE::KMTQAITYPE_QUERY_ADAPTER_UNIQUE_GUID: {
-                GUID unique_guid = emulated_display::unique_id;
+                GUID unique_guid = k_dxgk_adapter_unique_id;
                 return write_query_adapter_info(c, query, unique_guid);
             }
 

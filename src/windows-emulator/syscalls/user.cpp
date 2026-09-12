@@ -4148,7 +4148,7 @@ namespace sogen
                     dev.StateFlags = 0x5; // DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_ATTACHED_TO_DESKTOP
                     utils::string::copy(dev.DeviceName, u"\\\\.\\DISPLAY1");
                     utils::string::copy(dev.DeviceString, emulated_display::description);
-                    utils::string::copy(dev.DeviceID, emulated_display::hardware_id().c_str());
+                    utils::string::copy(dev.DeviceID, emulated_display::hardware_id);
                     utils::string::copy(dev.DeviceKey, u"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{00000001-"
                                                        u"0002-0003-0004-000000000005}\\0000");
                 });
@@ -5225,7 +5225,7 @@ namespace sogen
 
                 adapter_name.access([&](EMU_DISPLAYCONFIG_ADAPTER_NAME& adapterName) {
                     adapterName.header = header;
-                    utils::string::copy(adapterName.adapterDevicePath, emulated_display::interface_path().c_str());
+                    utils::string::copy(adapterName.adapterDevicePath, emulated_display::interface_path);
                 });
 
                 return STATUS_SUCCESS;
@@ -5282,7 +5282,7 @@ namespace sogen
                         block.WddmVersion = 3200;
 
                         utils::string::copy(block.AdapterDesc, emulated_display::description);
-                        utils::string::copy(block.AdapterDevicePath, emulated_display::interface_path().c_str());
+                        utils::string::copy(block.AdapterDevicePath, emulated_display::interface_path);
                     };
 
                     fill_block(info.DisplayAdapter);
