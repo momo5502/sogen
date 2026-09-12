@@ -1,5 +1,6 @@
 #include "../std_include.hpp"
 #include "../debug_font.hpp"
+#include "../emulated_display_adapter.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
@@ -197,7 +198,7 @@ namespace sogen
             constexpr uint32_t k_dxgk_device_handle = 0x5000;
             constexpr uint32_t k_dxgk_context_handle = 0x6000;
             constexpr uint32_t k_dxgk_shared_primary_handle = 0x7000;
-            constexpr LUID k_dxgk_adapter_luid = {0x1000, 0};
+            constexpr LUID k_dxgk_adapter_luid = emulated_display::adapter_luid;
             constexpr uint32_t k_dxgk_adapter_source_count = 1;
             constexpr uint32_t k_dxgk_command_buffer_size = 0x1000;
             constexpr uint32_t k_dxgk_allocation_list_entry_size = 8;
@@ -212,15 +213,11 @@ namespace sogen
             constexpr uint32_t k_dxgk_max_list_count = 0x10000;            // 64k entries (<= 1.5 MiB of list bytes)
             constexpr uint64_t k_dxgk_dedicated_video_memory_size = 4ull * 1024 * 1024 * 1024;
             constexpr uint64_t k_dxgk_shared_system_memory_size = 8ull * 1024 * 1024 * 1024;
-            constexpr uint32_t k_dxgk_fake_vendor_id = 0x10DE;
-            constexpr uint32_t k_dxgk_fake_device_id = 0x1C03;
-            constexpr uint32_t k_dxgk_fake_revision_id = 0xA1;
             constexpr uint32_t k_dxgk_open_resource_resource_private_size = 0x18;
             constexpr uint32_t k_dxgk_open_resource_allocation_private_size = 0x18;
             constexpr uint32_t k_dxgk_open_resource_descriptor_size = 0x80;
             constexpr uint32_t k_dxgk_open_resource_total_private_size =
                 k_dxgk_open_resource_allocation_private_size + k_dxgk_open_resource_descriptor_size;
-            constexpr GUID k_dxgk_adapter_guid = {0x5b45201d, 0xf2f2, 0x4f3b, {0x85, 0xbb, 0x30, 0xff, 0x1f, 0x95, 0x35, 0x99}};
 
             uint64_t ensure_gdi_shared_table(const syscall_context& c)
             {
@@ -4129,7 +4126,7 @@ namespace sogen
             }
 
             case KMTQAITYPE::KMTQAITYPE_ADAPTERGUID: {
-                GUID adapter_guid = k_dxgk_adapter_guid;
+                GUID adapter_guid = emulated_display::unique_id;
                 return write_query_adapter_info(c, query, adapter_guid);
             }
 
@@ -4201,10 +4198,10 @@ namespace sogen
                     UINT32 FunctionNumber;
                 } ids{};
 
-                ids.VendorID = k_dxgk_fake_vendor_id;
-                ids.DeviceID = k_dxgk_fake_device_id;
+                ids.VendorID = emulated_display::vendor_id;
+                ids.DeviceID = emulated_display::device_id;
                 ids.SubSystemID = 0;
-                ids.RevisionID = k_dxgk_fake_revision_id;
+                ids.RevisionID = emulated_display::revision_id;
                 ids.BusNumber = 0;
                 ids.DeviceNumber = 0;
                 ids.FunctionNumber = 0;
@@ -4217,7 +4214,7 @@ namespace sogen
             }
 
             case KMTQAITYPE::KMTQAITYPE_QUERY_ADAPTER_UNIQUE_GUID: {
-                GUID unique_guid = k_dxgk_adapter_guid;
+                GUID unique_guid = emulated_display::unique_id;
                 return write_query_adapter_info(c, query, unique_guid);
             }
 

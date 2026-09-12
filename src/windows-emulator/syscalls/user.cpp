@@ -1,4 +1,5 @@
 #include "../std_include.hpp"
+#include "../emulated_display_adapter.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 #include "../win32k_userconnect.hpp"
@@ -4146,8 +4147,8 @@ namespace sogen
                 display_device.access([&](EMU_DISPLAY_DEVICEW& dev) {
                     dev.StateFlags = 0x5; // DISPLAY_DEVICE_PRIMARY_DEVICE | DISPLAY_DEVICE_ATTACHED_TO_DESKTOP
                     utils::string::copy(dev.DeviceName, u"\\\\.\\DISPLAY1");
-                    utils::string::copy(dev.DeviceString, u"Emulated Virtual Adapter");
-                    utils::string::copy(dev.DeviceID, u"PCI\\VEN_10DE&DEV_0000&SUBSYS_00000000&REV_A1");
+                    utils::string::copy(dev.DeviceString, emulated_display::description);
+                    utils::string::copy(dev.DeviceID, emulated_display::hardware_id().c_str());
                     utils::string::copy(dev.DeviceKey, u"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{00000001-"
                                                        u"0002-0003-0004-000000000005}\\0000");
                 });
@@ -5224,9 +5225,7 @@ namespace sogen
 
                 adapter_name.access([&](EMU_DISPLAYCONFIG_ADAPTER_NAME& adapterName) {
                     adapterName.header = header;
-                    utils::string::copy(
-                        adapterName.adapterDevicePath,
-                        u"\\\\?\\PCI#VEN_10DE&DEV_1C03&SUBSYS_00000000&REV_A1#4&1234567&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}");
+                    utils::string::copy(adapterName.adapterDevicePath, emulated_display::interface_path().c_str());
                 });
 
                 return STATUS_SUCCESS;
@@ -5275,17 +5274,15 @@ namespace sogen
 
                     const auto fill_block = [](EMU_DISPLAY_INFO_DEVICE_BLOCK& block) {
                         block.Valid = 1;
-                        block.VendorID = 0x10DE;
-                        block.DeviceID = 0x1C03;
-                        block.SubSystemVendorID = 0x10DE;
+                        block.VendorID = emulated_display::vendor_id;
+                        block.DeviceID = emulated_display::device_id;
+                        block.SubSystemVendorID = emulated_display::vendor_id;
                         block.SubSystemID = 0;
-                        block.RevisionID = 0xA1;
+                        block.RevisionID = emulated_display::revision_id;
                         block.WddmVersion = 3200;
 
-                        utils::string::copy(block.AdapterDesc, u"NVIDIA GeForce GTX 1060 6GB");
-                        utils::string::copy(
-                            block.AdapterDevicePath,
-                            u"\\\\?\\PCI#VEN_10DE&DEV_1C03&SUBSYS_00000000&REV_A1#4&1234567&0&0008#{5b45201d-f2f2-4f3b-85bb-30ff1f953599}");
+                        utils::string::copy(block.AdapterDesc, emulated_display::description);
+                        utils::string::copy(block.AdapterDevicePath, emulated_display::interface_path().c_str());
                     };
 
                     fill_block(info.DisplayAdapter);
@@ -5315,14 +5312,14 @@ namespace sogen
                         return;
                     }
 
-                    info.VendorID = 0x10DE;
-                    info.DeviceID = 0x1C03;
+                    info.VendorID = emulated_display::vendor_id;
+                    info.DeviceID = emulated_display::device_id;
                     info.SubSysID0 = 0;
                     info.SubSysID1 = 0;
-                    info.RevisionID = 0xA1;
+                    info.RevisionID = emulated_display::revision_id;
                     info.WddmVersion = 2700;
 
-                    utils::string::copy(info.AdapterDesc, u"NVIDIA GeForce GTX 1060 6GB");
+                    utils::string::copy(info.AdapterDesc, emulated_display::description);
 
                     info.DisplayLeft = 0;
                     info.DisplayTop = 0;
