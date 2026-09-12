@@ -4348,6 +4348,35 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        void complete_warp_sync_command(const syscall_context& c, const uint64_t command_ptr, const UINT32 command_length)
+        {
+            constexpr uint32_t k_sync_magic = 0x434E5953;
+            constexpr uint32_t k_ack_magic = 0x4B415953;
+            constexpr uint32_t k_ack_length = 8;
+            if (command_ptr == 0 || command_length < 24)
+            {
+                return;
+            }
+
+            const auto magic = c.emu.read_memory<uint32_t>(command_ptr);
+            if (magic != k_sync_magic)
+            {
+                return;
+            }
+
+            // SYNC carries a UM completion event at +8 and an error event at +16. After the KM
+            // consumes the DMA buffer it overwrites the header with a sync-ack (magic + length 8).
+            // Leaving SYNC in place is treated as E_OUTOFMEMORY and the D3D11 device is removed.
+            // Signal only the completion event; the error event is DXGI_ERROR_DEVICE_REMOVED.
+            const auto completion = c.emu.read_memory<uint64_t>(command_ptr + 8);
+            c.emu.write_memory<uint32_t>(command_ptr, k_ack_magic);
+            c.emu.write_memory<uint32_t>(command_ptr + 4, k_ack_length);
+            if (auto* entry = c.proc.events.get(completion))
+            {
+                entry->signaled = true;
+            }
+        }
+
         void reserve_dxgk_submission_buffers(const syscall_context& c, const uint32_t command_buffer_size,
                                              const uint32_t allocation_list_count, const uint32_t patch_location_list_count)
         {
@@ -4408,6 +4437,8 @@ namespace sogen
                 {
                     dxgk_warn(c, "NtGdiDdDDIRender: Unknown context 0x%X", render.hContext);
                 }
+
+                complete_warp_sync_command(c, c.proc.dxgk.command_buffer.address + render.CommandOffset, render.CommandLength);
 
                 // Clamp the guest-controlled sizes: at least the defaults, but never above the caps above.
                 reserve_dxgk_submission_buffers(
