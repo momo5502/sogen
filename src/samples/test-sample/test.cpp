@@ -20,6 +20,7 @@
 #include <intrin.h>
 
 #include <windows.h>
+#include <winternl.h>
 #include <timeapi.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -612,6 +613,41 @@ namespace
         }
 
         return true;
+    }
+
+    bool test_registry_transaction()
+    {
+        using nt_create_registry_transaction = NTSTATUS(NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, ULONG);
+        using nt_open_registry_transaction = NTSTATUS(NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES);
+
+        auto* const ntdll = GetModuleHandleW(L"ntdll.dll");
+        const auto create_transaction =
+            reinterpret_cast<nt_create_registry_transaction>(reinterpret_cast<void*>(GetProcAddress(ntdll, "NtCreateRegistryTransaction")));
+        const auto open_transaction =
+            reinterpret_cast<nt_open_registry_transaction>(reinterpret_cast<void*>(GetProcAddress(ntdll, "NtOpenRegistryTransaction")));
+        if (!create_transaction || !open_transaction)
+        {
+            return false;
+        }
+
+        constexpr auto status_not_supported = static_cast<NTSTATUS>(0xC00000BB);
+
+        OBJECT_ATTRIBUTES attributes{};
+        InitializeObjectAttributes(&attributes, nullptr, 0, nullptr, nullptr);
+
+        HANDLE transaction{};
+        const auto create_status = create_transaction(&transaction, TRANSACTION_ALL_ACCESS, &attributes, 0);
+        if (create_status >= 0)
+        {
+            CloseHandle(transaction);
+        }
+        else if (create_status != status_not_supported)
+        {
+            return false;
+        }
+
+        const auto open_status = open_transaction(&transaction, TRANSACTION_ALL_ACCESS, &attributes);
+        return open_status < 0;
     }
 
     bool test_system_info()
@@ -1967,6 +2003,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_working_directory, "Working Directory")
 #endif
     RUN_TEST(test_registry, "Registry")
+    RUN_TEST(test_registry_transaction, "Registry Transaction")
     RUN_TEST(test_system_info, "System Info")
     RUN_TEST(test_monitor_info, "Monitor Info")
     RUN_TEST(test_time_zone, "Time Zone")
