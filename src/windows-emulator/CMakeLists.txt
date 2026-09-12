@@ -29,6 +29,10 @@ endif()
 target_link_libraries(windows-emulator PUBLIC emulator minidump)
 target_link_libraries(windows-emulator PRIVATE gpu-bridge-protocol vulkan-headers steam-bridge-protocol)
 
+if(WIN32)
+  target_link_libraries(windows-emulator PRIVATE crypt32)
+endif()
+
 # When the Steamworks SDK was provided, link the real Steam host backend (owns the SDK headers + the
 # real steamclient64.dll connection behind a clean C ABI) and let the device use it.
 if(TARGET steam-host-backend)

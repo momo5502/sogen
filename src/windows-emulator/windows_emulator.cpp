@@ -14,6 +14,7 @@
 
 #include "network/static_socket_factory.hpp"
 #include "memory_permission_ext.hpp"
+#include "host_crypt_protect.hpp"
 
 namespace sogen
 {
@@ -1065,6 +1066,8 @@ namespace sogen
                 this->install_section_first_execution_hook(mod, i);
             }
         });
+
+        setup_host_crypt_protect_hooks(*this);
 
         this->callbacks.on_module_unload.add([this](mapped_module& mod) {
             const auto hooks = this->section_first_execution_hooks_.extract(mod.image_base);
