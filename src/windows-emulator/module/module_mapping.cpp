@@ -56,7 +56,24 @@ namespace sogen
             const auto export_directory = buffer.as<IMAGE_EXPORT_DIRECTORY>(export_directory_entry.VirtualAddress).get();
 
             const auto names_count = export_directory.NumberOfNames;
-            // const auto function_count = export_directory.NumberOfFunctions;
+            const auto function_count = export_directory.NumberOfFunctions;
+
+            // Ignore a malformed export table rather than let its garbage RVAs/count
+            // walk off the image (see the memory-based collect_exports overload). The
+            // Windows loader validates the table against the image bounds and skips
+            // it when it does not fit; a main EXE is loaded as a process regardless.
+            // Every parallel array must lie fully within the image, including the
+            // whole function-address table (an ordinal indexes into it below).
+            const auto size_of_image = binary.size_of_image;
+            const auto fits = [&](uint64_t rva, uint64_t count, uint64_t stride) {
+                return count == 0 || (rva < size_of_image && count <= (size_of_image - rva) / stride);
+            };
+            if (!fits(export_directory.AddressOfNames, names_count, sizeof(DWORD)) ||
+                !fits(export_directory.AddressOfNameOrdinals, names_count, sizeof(WORD)) ||
+                !fits(export_directory.AddressOfFunctions, function_count, sizeof(DWORD)))
+            {
+                return;
+            }
 
             const auto names = buffer.as<DWORD>(export_directory.AddressOfNames);
             const auto ordinals = buffer.as<WORD>(export_directory.AddressOfNameOrdinals);
@@ -67,6 +84,14 @@ namespace sogen
             for (DWORD i = 0; i < names_count; i++)
             {
                 const auto ordinal = ordinals.get(i);
+
+                // An ordinal past the function table would index out of bounds; a
+                // malformed table can carry one, so skip that name rather than read
+                // off the end.
+                if (ordinal >= function_count)
+                {
+                    continue;
+                }
 
                 exported_symbol symbol{};
                 symbol.ordinal = export_directory.Base + ordinal;
@@ -198,12 +223,41 @@ namespace sogen
                 read_mapped_object<IMAGE_EXPORT_DIRECTORY>(memory, binary.image_base + export_directory_entry.VirtualAddress);
 
             const auto names_count = export_directory.NumberOfNames;
+            const auto function_count = export_directory.NumberOfFunctions;
+
+            // A corrupt or non-export image (e.g. an EXE whose export data-directory
+            // points at junk) can carry a garbage NumberOfNames and out-of-bounds
+            // Address* RVAs. Reading those unchecked walks off the mapped image and
+            // aborts the whole module map. The Windows loader validates the table
+            // against the image bounds and ignores it when it does not fit, so do
+            // the same: require every parallel array to lie fully within the image,
+            // including the whole function-address table (an ordinal indexes it).
+            const auto size_of_image = binary.size_of_image;
+            const auto fits = [&](uint64_t rva, uint64_t count, uint64_t stride) {
+                return count == 0 || (rva < size_of_image && count <= (size_of_image - rva) / stride);
+            };
+            if (!fits(export_directory.AddressOfNames, names_count, sizeof(DWORD)) ||
+                !fits(export_directory.AddressOfNameOrdinals, names_count, sizeof(WORD)) ||
+                !fits(export_directory.AddressOfFunctions, function_count, sizeof(DWORD)))
+            {
+                return;
+            }
+
             binary.exports.reserve(names_count);
 
             for (DWORD i = 0; i < names_count; i++)
             {
                 const auto ordinal =
                     read_mapped_object<WORD>(memory, binary.image_base + export_directory.AddressOfNameOrdinals + i * sizeof(WORD));
+
+                // An ordinal past the function table would index out of bounds; a
+                // malformed table can carry one, so skip that name rather than read
+                // off the end.
+                if (ordinal >= function_count)
+                {
+                    continue;
+                }
+
                 const auto function_rva =
                     read_mapped_object<DWORD>(memory, binary.image_base + export_directory.AddressOfFunctions + ordinal * sizeof(DWORD));
                 const auto name_rva =
