@@ -408,6 +408,19 @@ namespace sogen
 
     static_assert(sizeof(EMU_D3DKMT_RENDER) == 368);
 
+    struct EMU_D3DKMT_WAITFORSYNCHRONIZATIONOBJECTFROMCPU
+    {
+        UINT32 hDevice;
+        UINT32 ObjectCount;
+        UINT64 ObjectHandleArray;
+        UINT64 FenceValueArray;
+        UINT64 hAsyncEvent;
+        UINT32 Flags;
+        UINT32 Padding;
+    };
+
+    static_assert(sizeof(EMU_D3DKMT_WAITFORSYNCHRONIZATIONOBJECTFROMCPU) == 40);
+
     struct EMU_D3DDDI_ALLOCATIONINFO
     {
         UINT32 hAllocation;

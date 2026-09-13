@@ -859,7 +859,8 @@ namespace sogen
                                                       emulator_object<EMU_D3DKMT_OPENADAPTERFROMLUID> open_adapter);
         NTSTATUS handle_NtGdiDdDDIOpenAdapterFromHdc(const syscall_context& c, emulator_object<EMU_D3DKMT_OPENADAPTERFROMHDC> open_adapter);
         NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromGpu();
-        NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromCpu();
+        NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromCpu(
+            const syscall_context& c, emulator_object<EMU_D3DKMT_WAITFORSYNCHRONIZATIONOBJECTFROMCPU> wait_desc);
         NTSTATUS handle_NtGdiDdDDISignalSynchronizationObjectFromGpu();
         NTSTATUS handle_NtGdiDdDDISignalSynchronizationObjectFromCpu();
 

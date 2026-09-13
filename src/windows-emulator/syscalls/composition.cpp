@@ -12,5 +12,4 @@ namespace sogen
             return STATUS_SUCCESS;
         }
     }
-
-} // namespace sogen
+}
