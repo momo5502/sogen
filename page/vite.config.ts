@@ -40,13 +40,25 @@ export default defineConfig({
         background_color: "#141416",
       },
       workbox: {
+        // Only one registration can exist per scope, so a second worker at "/" does not coexist with
+        // this one -- it replaces it. page/public/macos-root-sw.js therefore ships as part of this
+        // worker rather than as its own registration; it must stay a standalone service worker script
+        // (its own skipWaiting/clients.claim included) because page/test/root-cache-adversarial.mjs
+        // drives it directly.
+        importScripts: ["macos-root-sw.js"],
         skipWaiting: true,
         clientsClaim: true,
         maximumFileSizeToCacheInBytes: 100 * mb,
         cleanupOutdatedCaches: true,
         globPatterns: ["**/*.{js,css,html,woff,woff2,wasm}"],
-        globIgnores: ["root.zip"],
-        navigateFallbackDenylist: [/^\/root\.zip$/],
+        // The capability probe is a diagnostic page almost no visitor opens, and precaching its
+        // worker script would be actively wrong: the probe range-requests that very file to measure
+        // whether the origin honours Range headers, but the precache route Workbox installs for a
+        // precached URL answers from Cache Storage with a full 200 regardless of the request's Range
+        // header, which would make the probe misreport the server's caching as the browser's Range
+        // support. Excluding it keeps the request on the network path the probe is meant to measure.
+        globIgnores: ["root.zip", "capability-probe.html", "capability-probe-worker.js", "app.css"],
+        navigateFallbackDenylist: [/^\/root\.zip$/, /^\/capability-probe\.html$/],
         runtimeCaching: [
           generateExternalCache(
             /^https:\/\/momo5502\.com\/.*/i,

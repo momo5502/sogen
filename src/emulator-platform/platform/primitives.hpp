@@ -1,4 +1,14 @@
 #pragma once
+// Windows unions such as LARGE_INTEGER and the PEB bitfields put an unnamed struct inside a union so a
+// member reads as value.LowPart. Naming it would change every use site and is not what the ABI these
+// headers mirror does. The idiom is a GNU and MSVC extension that -pedantic rejects, so it is allowed
+// here and nowhere else -- these headers only ever compiled clean before because every consumer reached
+// them through a precompiled header, where the diagnostic is not raised.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wgnu-anonymous-struct"
+#pragma clang diagnostic ignored "-Wnested-anon-types"
+#endif
 
 #include <cstdint>
 #include "compiler.hpp"
@@ -101,4 +111,8 @@ static_assert(sizeof(BOOLEAN) == 1);
 // NOLINTEND(modernize-use-using,cppcoreguidelines-use-enum-class,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 #ifndef OS_WINDOWS
 } // namespace sogen
+#endif
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
 #endif

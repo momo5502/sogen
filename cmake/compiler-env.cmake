@@ -123,6 +123,13 @@ if(LINUX OR APPLE)
     _THREAD_SAFE
   )
 
+  # Applied globally on purpose: libc++ hardening changes inline function bodies in headers, so mixing
+  # modes across translation units is an ODR violation. Setting it only on a test or fuzz target would
+  # also miss the point -- the code under test lives in the library, not the driver.
+  if(SOGEN_ENABLE_LIBCPP_HARDENING)
+    add_compile_definitions(_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG)
+  endif()
+
   if(NOT SOGEN_ENABLE_SANITIZER)
     # Hardened toolchains (e.g. Gentoo hardened) predefine _FORTIFY_SOURCE via
     # their spec files. Redefining it triggers a -Werror "redefined" failure, so
@@ -187,13 +194,20 @@ if(CMAKE_SYSTEM_NAME MATCHES "Emscripten")
     -sASYNCIFY
   )
 
+  # Measured, not guessed: src/macos-web/capability-probe.html reports the largest maximum the engine
+  # accepts. Note it probes the maximum declared *inside a module*, which is not the same limit as
+  # new WebAssembly.Memory({index:"i64"}) -- V8 caps that constructor at 4 GiB while accepting 16 GiB
+  # from a module, so probing the constructor would cap this at half of what already works.
+  set(SOGEN_EMSCRIPTEN_MEMORY64_MAX "8gb" CACHE STRING
+      "MAXIMUM_MEMORY for the wasm64 build. Do not raise above what src/macos-web/capability-probe.html measured the target engines to accept.")
+
   if(SOGEN_EMSCRIPTEN_MEMORY64)
     sogen_add_c_and_cxx_compile_options(
       -sMEMORY64
     )
 
     add_link_options(
-      -sMAXIMUM_MEMORY=8gb
+      -sMAXIMUM_MEMORY=${SOGEN_EMSCRIPTEN_MEMORY64_MAX}
       -sMEMORY64
     )
   else()

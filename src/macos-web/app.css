@@ -1,0 +1,381 @@
+:root {
+  --bg: #0e1116;
+  --panel: #151a21;
+  --panel-2: #1b212a;
+  --line: #262d38;
+  --text: #d6dde7;
+  --muted: #8794a5;
+  --accent: #5aa9ff;
+  --ok: #4ec98a;
+  --warn: #e2b341;
+  --bad: #f2685f;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  flex: 0 0 auto;
+}
+
+header h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: .2px; }
+header h1 span { color: var(--muted); font-weight: 400; }
+
+.spacer { flex: 1; }
+
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 11px;
+  font: inherit;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: #3a4757; background: #212936; }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: #1d4e86; border-color: #2b6bb0; color: #eaf3ff; }
+button.primary:hover:not(:disabled) { background: #235c9d; }
+button.danger { border-color: #5d2d2b; }
+
+#status { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+#status.running { color: var(--accent); }
+#status.ok { color: var(--ok); }
+#status.bad { color: var(--bad); }
+
+main {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 320px;
+  min-height: 0;
+}
+
+/* The screen panel takes a column of its own only while it has something to show, so a run with no
+   windows keeps the trace as wide as it was. */
+main:has(#screen-panel:not([hidden])) {
+  grid-template-columns: 260px minmax(0, 1fr) minmax(320px, 0.9fr) 300px;
+}
+
+section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-right: 1px solid var(--line);
+}
+section:last-child { border-right: 0; }
+
+/* An author display beats the UA sheet's [hidden] { display: none } whatever the specificity says, so
+   the rule above was showing #screen-panel with nothing in it. */
+section[hidden] { display: none; }
+
+h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--muted);
+  margin: 0;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+h2 .count { color: #5c6979; font-variant-numeric: tabular-nums; }
+
+.scroll { overflow: auto; flex: 1 1 auto; padding: 8px; }
+
+/* ---------- filesystem ---------- */
+
+.fs-actions { display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.fs-actions button { font-size: 12px; padding: 5px 9px; }
+.bundle-mount { padding: 0 8px 8px; }
+
+#drop {
+  margin: 8px;
+  padding: 14px;
+  border: 1px dashed #333d4b;
+  border-radius: 8px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+#drop.over { border-color: var(--accent); color: var(--accent); background: #12243a; }
+
+.tree { font-family: var(--mono); font-size: 12px; }
+.node { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; white-space: nowrap; }
+.node.dir { color: var(--muted); }
+.node.file { cursor: pointer; }
+.node.file:hover { background: #1c232d; }
+.node.file.selected { background: #1d3555; color: #eaf3ff; }
+.node .nm { overflow: hidden; text-overflow: ellipsis; }
+.node .sz { color: #5c6979; font-size: 11px; margin-left: auto; padding-left: 8px; }
+.badge {
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.badge.macho { color: var(--ok); border-color: #2b5c44; }
+.badge.dyn { color: var(--warn); border-color: #5c4c22; }
+.badge.no { color: #6b7686; }
+.rm { color: #5c6979; padding: 0 4px; border: 0; background: none; cursor: pointer; font-size: 13px; }
+.rm:hover { color: var(--bad); }
+
+/* ---------- trace ---------- */
+
+#filter {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 5px 8px;
+  font: 12px var(--mono);
+}
+
+#trace { font-family: var(--mono); font-size: 12px; line-height: 1.55; }
+.row { padding: 0 4px; white-space: pre-wrap; word-break: break-word; }
+.row.sys { color: var(--text); margin-top: 4px; }
+.row.sys .nm { color: var(--accent); }
+.row.sys .pc { color: #5c6979; }
+.row.det { color: var(--muted); padding-left: 20px; }
+.row.det .k { color: #7f8ea3; }
+.row.fail { color: var(--bad); padding-left: 20px; }
+.row.out { color: var(--ok); }
+.row.err { color: var(--warn); }
+.row.sysinfo { color: var(--muted); font-style: italic; }
+.row.fatal { color: var(--bad); font-weight: 600; }
+.row.hidden { display: none; }
+
+/* ---------- details ---------- */
+
+.group { border-bottom: 1px solid var(--line); padding: 10px 12px; }
+.group > label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 7px; }
+.field { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 5px 0; }
+.field span { font-size: 12px; }
+.field input[type=number], .field input[type=text] {
+  width: 108px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text);
+  padding: 3px 6px;
+  font: 12px var(--mono);
+}
+.field.wide { display: block; }
+.field.wide input { width: 100%; margin-top: 4px; }
+.field label { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12px; }
+.hint { color: #6b7686; font-size: 11px; margin-top: 5px; }
+
+table.kv { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+table.kv td { padding: 2px 0; vertical-align: top; }
+table.kv td:first-child { color: var(--muted); padding-right: 10px; white-space: nowrap; }
+table.kv td:last-child { text-align: right; word-break: break-all; }
+
+.mods { font-family: var(--mono); font-size: 11px; }
+.mods div { display: flex; justify-content: space-between; gap: 8px; padding: 1px 0; }
+.mods span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mods span:last-child { color: var(--muted); flex: 0 0 auto; }
+
+.empty { color: #5c6979; font-size: 12px; padding: 6px 4px; }
+
+/* ---------- syscall categories ----------
+   Colour carries the kind of call so a long trace can be read by shape rather than by reading every
+   line. The categories are the ones a reader actually separates: what touched files, what moved memory,
+   what talked to the kernel through Mach, and what failed. */
+
+.row.sys { display: flex; align-items: baseline; gap: 8px; cursor: pointer; }
+.row.sys:hover { background: #171d26; }
+.row.sys .kind { flex: 0 0 3px; align-self: stretch; border-radius: 2px; background: #3a4757; }
+.row.sys.k-file .kind { background: #4ec98a; }
+.row.sys.k-memory .kind { background: #5aa9ff; }
+.row.sys.k-mach .kind { background: #b98cff; }
+.row.sys.k-process .kind { background: #e2b341; }
+.row.sys.k-signal .kind { background: #f2685f; }
+.row.sys .idx { color: #55606f; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+.row.sys .nm { color: var(--accent); font-weight: 600; }
+.row.sys.failed .nm { color: var(--bad); }
+.row.sys .mod { color: #5c6979; margin-left: auto; padding-left: 10px; flex: 0 0 auto; }
+.row.sys .caret { color: #55606f; flex: 0 0 auto; }
+
+.row.det, .row.fail { padding-left: 34px; }
+.row.det.collapsed, .row.fail.collapsed { display: none; }
+
+/* ---------- histograms ---------- */
+
+.bars div { display: grid; grid-template-columns: 1fr 46px; gap: 8px; align-items: center; padding: 2px 0;
+            font-family: var(--mono); font-size: 11px; }
+.bars .track { position: relative; height: 14px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+.bars .fill { position: absolute; inset: 0 auto 0 0; background: #23486f; }
+.bars .label { position: absolute; left: 6px; top: 0; line-height: 14px; color: var(--text); white-space: nowrap; }
+.bars .n { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bars .fill.bad { background: #5d2d2b; }
+
+.kinds { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; font-size: 11px; color: var(--muted); }
+.kinds label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.kinds .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.kinds .sw.file { background: #4ec98a; }
+.kinds .sw.memory { background: #5aa9ff; }
+.kinds .sw.mach { background: #b98cff; }
+.kinds .sw.process { background: #e2b341; }
+.kinds .sw.signal { background: #f2685f; }
+.kinds .sw.other { background: #3a4757; }
+.kinds .sw.bad { background: var(--bad); }
+
+
+#screen-panel #screen-scroll { padding: 12px; }
+
+#screen-stage {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  background: #0b0d11;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+#screen-stage:focus { outline: 1px solid var(--accent); outline-offset: 2px; }
+#screen-stage.live { cursor: crosshair; }
+
+/* Nearest-neighbour so a small guest desktop scaled up shows the pixels the compositor produced rather
+   than the browser's idea of them. */
+#screen-canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
+
+.screen-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.stream {
+  margin-top: 8px;
+  font: 11px var(--mono);
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.stream b { color: var(--text); font-weight: 500; }
+.stream .warn { color: var(--warn); }
+
+#screen-overlay { position: absolute; inset: 0; pointer-events: none; }
+
+#screen-overlay .box {
+  position: absolute;
+  border: 1px solid rgba(120, 190, 255, 0.85);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5) inset;
+}
+
+#screen-overlay .box.hidden-window { border-style: dashed; border-color: rgba(150, 160, 175, 0.7); }
+
+#screen-overlay .box span {
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  font: 10px ui-monospace, monospace;
+  background: rgba(120, 190, 255, 0.85);
+  color: #06121f;
+  padding: 0 3px;
+  white-space: nowrap;
+}
+
+.windows { margin-top: 12px; display: flex; flex-direction: column; gap: 4px; }
+
+.windows .row {
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  gap: 8px;
+  font: 12px ui-monospace, monospace;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.windows .row.off { opacity: 0.55; }
+.windows .row .tag { color: var(--muted); }
+
+/* ------------------------------------------------------------------- cache */
+
+#cache-bar {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.cache-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cache-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #5c6979;
+  flex: none;
+}
+
+.cache-dot.ready { background: #35c759; }
+.cache-dot.partial { background: #ffb02e; }
+.cache-dot.off { background: #ff3b30; }
+
+#cache-detail { color: #8b96a5; }
+
+.cache-track {
+  height: 4px;
+  background: #23262d;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.cache-fill {
+  height: 100%;
+  width: 0;
+  background: #0279e8;
+  transition: width .2s linear;
+}
+
+#cache-warning {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #3a2416;
+  border: 1px solid #a35b1f;
+  color: #ffb02e;
+  line-height: 1.4;
+}

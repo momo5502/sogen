@@ -7,6 +7,7 @@
 
 #include "unicorn_memory_regions.hpp"
 #include "unicorn_hook.hpp"
+#include "unicorn_common.hpp"
 
 #include "function_wrapper.hpp"
 
@@ -45,153 +46,6 @@ namespace sogen::unicorn
                 return UC_X86_INS_RDTSCP;
             default:
                 throw std::runtime_error("Bad instruction for mapping");
-            }
-        }
-
-        memory_violation_type map_memory_violation_type(const uc_mem_type mem_type)
-        {
-            switch (mem_type)
-            {
-            case UC_MEM_READ_PROT:
-            case UC_MEM_WRITE_PROT:
-            case UC_MEM_FETCH_PROT:
-                return memory_violation_type::protection;
-            case UC_MEM_READ_UNMAPPED:
-            case UC_MEM_WRITE_UNMAPPED:
-            case UC_MEM_FETCH_UNMAPPED:
-                return memory_violation_type::unmapped;
-            default:
-                throw std::runtime_error("Memory type does not constitute a violation");
-            }
-        }
-
-        memory_operation map_memory_operation(const uc_mem_type mem_type)
-        {
-            switch (mem_type)
-            {
-            case UC_MEM_READ:
-            case UC_MEM_READ_PROT:
-            case UC_MEM_READ_AFTER:
-            case UC_MEM_READ_UNMAPPED:
-                return memory_operation::read;
-            case UC_MEM_WRITE:
-            case UC_MEM_WRITE_PROT:
-            case UC_MEM_WRITE_UNMAPPED:
-                return memory_operation::write;
-            case UC_MEM_FETCH:
-            case UC_MEM_FETCH_PROT:
-            case UC_MEM_FETCH_UNMAPPED:
-                return memory_operation::exec;
-            default:
-                return memory_operation::none;
-            }
-        }
-
-        struct hook_object : utils::object
-        {
-            emulator_hook* as_opaque_hook()
-            {
-                return reinterpret_cast<emulator_hook*>(this);
-            }
-        };
-
-        class hook_container : public hook_object
-        {
-          public:
-            template <typename T>
-                requires(std::is_base_of_v<utils::object, T> && std::is_move_constructible_v<T>)
-            void add(T data, unicorn_hook hook)
-            {
-                hook_entry entry{};
-
-                entry.data = std::make_unique<T>(std::move(data));
-                entry.hook = std::move(hook);
-
-                this->hooks_.emplace_back(std::move(entry));
-            }
-
-          private:
-            struct hook_entry
-            {
-                std::unique_ptr<utils::object> data{};
-                unicorn_hook hook{};
-            };
-
-            std::vector<hook_entry> hooks_;
-        };
-
-        struct mmio_callbacks
-        {
-            using read_wrapper = function_wrapper<uint64_t, uc_engine*, uint64_t, unsigned>;
-            using write_wrapper = function_wrapper<void, uc_engine*, uint64_t, unsigned, uint64_t>;
-
-            read_wrapper read{};
-            write_wrapper write{};
-        };
-
-        class uc_context_serializer
-        {
-          public:
-            uc_context_serializer(uc_engine* uc, const bool in_place)
-                : uc_(uc)
-            {
-                if (in_place)
-                {
-                    // Unicorn stores pointers in the struct. The serialization here is broken
-                    throw std::runtime_error("Memory saving not supported atm");
-                }
-
-#ifndef OS_WINDOWS
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wconversion"
-#endif
-
-                uc_ctl_context_mode(uc, UC_CTL_CONTEXT_CPU | (in_place ? UC_CTL_CONTEXT_MEMORY : 0));
-
-#ifndef OS_WINDOWS
-#pragma GCC diagnostic pop
-#endif
-
-                this->size_ = uc_context_size(uc);
-                uce(uc_context_alloc(uc, &this->context_));
-            }
-
-            ~uc_context_serializer()
-            {
-                if (this->context_)
-                {
-                    (void)uc_context_free(this->context_);
-                }
-            }
-
-            void serialize(utils::buffer_serializer& buffer) const
-            {
-                uce(uc_context_save(this->uc_, this->context_));
-                buffer.write(this->context_, this->size_);
-            }
-
-            void deserialize(utils::buffer_deserializer& buffer) const
-            {
-                buffer.read(this->context_, this->size_);
-                uce(uc_context_restore(this->uc_, this->context_));
-            }
-
-            uc_context_serializer(uc_context_serializer&&) = delete;
-            uc_context_serializer(const uc_context_serializer&) = delete;
-            uc_context_serializer& operator=(uc_context_serializer&&) = delete;
-            uc_context_serializer& operator=(const uc_context_serializer&) = delete;
-
-          private:
-            uc_engine* uc_{};
-            uc_context* context_{};
-            size_t size_{};
-        };
-
-        void assert_64bit_limit(const size_t size)
-        {
-            if (size > sizeof(uint64_t))
-            {
-                throw std::runtime_error("Exceeded uint64_t size limit");
             }
         }
 
@@ -478,8 +332,11 @@ namespace sogen::unicorn
 
             emulator_hook* hook_basic_block(basic_block_hook_callback callback) override
             {
-                function_wrapper<void, uc_engine*, uint64_t, size_t> wrapper(
-                    [c = std::move(callback), this](uc_engine*, const uint64_t address, const size_t size) {
+                // uc_cb_hookcode_t takes the size as uint32_t. Declaring it size_t here happens to work on
+                // 64-bit native ABIs but is a hard function-signature trap under wasm64, where the wrapper
+                // is emitted as (i64,i64,i64,i64) and unicorn calls it through (i64,i64,i32,i64).
+                function_wrapper<void, uc_engine*, uint64_t, uint32_t> wrapper(
+                    [c = std::move(callback), this](uc_engine*, const uint64_t address, const uint32_t size) {
                         basic_block block{};
                         block.address = address;
                         block.size = size;
