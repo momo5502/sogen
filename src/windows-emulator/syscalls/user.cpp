@@ -1307,6 +1307,9 @@ namespace sogen
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
         void draw_system_button_glyph(const syscall_context& c, hdc dc, int x, int y, uint32_t index);
         BOOL handle_NtUserRemoveMenu(const syscall_context& c, hmenu menu, UINT position, UINT flags);
+        BOOL handle_NtUserSetDialogPointer(const syscall_context& c, hwnd hwnd, emulator_pointer ptr);
+        BOOL handle_NtUserSetDialogSystemMenu(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserSetMsgBox(const syscall_context& c, hwnd hwnd);
 
         NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
         {
@@ -2507,13 +2510,78 @@ namespace sogen
             return 1;
         }
 
+        // Routine numbers for the Win10 19041-19045 user-call table. Other Windows
+        // versions use different numbers; unknown routines return 0 below.
+        enum nt_user_call_routine : uint32_t
+        {
+            user_call_set_dialog_pointer = 99,
+            user_call_set_dialog_system_menu = 111,
+            user_call_update_window = 115,
+            user_call_set_msg_box = 89,
+            user_call_release_dc = 0x39,
+        };
+
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t code)
         {
-            (void)hwnd;
-            (void)param;
+            if (code == user_call_set_dialog_pointer)
+            {
+                return handle_NtUserSetDialogPointer(c, hwnd, param);
+            }
+
             if (c.win_emu.callbacks.on_generic_activity)
             {
                 c.win_emu.callbacks.on_generic_activity("NtUserCallHwndParam code=" + std::to_string(code));
+            }
+
+            return 0;
+        }
+
+        BOOL handle_NtUserCallHwndLock(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
+        {
+            if (routine == user_call_set_dialog_system_menu)
+            {
+                return handle_NtUserSetDialogSystemMenu(c, hwnd);
+            }
+
+            if (routine == user_call_update_window)
+            {
+                // Queue the paint synchronously. The dedicated UpdateWindow completion
+                // path must not run under an active CallHwndLock dispatch.
+                auto* win = c.proc.windows.get(hwnd);
+                if (!win)
+                {
+                    return FALSE;
+                }
+
+                if (win->update_pending)
+                {
+                    queue_window_paint(c, *win);
+                }
+
+                return TRUE;
+            }
+
+            return FALSE;
+        }
+
+        uint64_t handle_NtUserCallHwnd(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
+        {
+            if (routine == user_call_set_msg_box)
+            {
+                return handle_NtUserSetMsgBox(c, hwnd);
+            }
+
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallOneParam(const syscall_context& c, const uint64_t param, const uint32_t routine)
+        {
+            (void)c;
+            (void)param;
+
+            if (routine == user_call_release_dc)
+            {
+                return handle_NtUserReleaseDC();
             }
 
             return 0;
