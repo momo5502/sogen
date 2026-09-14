@@ -188,6 +188,7 @@ namespace sogen
       public:
         using index_type = uint32_t;
         using value_map = std::map<index_type, T>;
+        using iterator = typename value_map::iterator;
 
         bool block_mutation(bool blocked)
         {
@@ -270,7 +271,7 @@ namespace sogen
             return h;
         }
 
-        std::pair<typename value_map::iterator, bool> erase(const value_map::iterator& entry)
+        std::pair<iterator, bool> erase(const iterator& entry)
         {
             if (this->block_mutation_)
             {
@@ -390,7 +391,7 @@ namespace sogen
             return this->store_.begin();
         }
 
-        value_map::iterator end()
+        iterator end()
         {
             return this->store_.end();
         }
