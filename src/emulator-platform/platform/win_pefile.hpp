@@ -137,6 +137,7 @@ namespace sogen
         CEF = 0x0CEF,
         EBC = 0x0EBC,   // EFI Byte Code
         AMD64 = 0x8664, // AMD64 (K8)
+        ARM64EC = 0xA641, // ARM64EC hybrid image with x64-compatible code ranges
         M32R = 0x9041,  // M32R little-endian
         CEE = 0xC0EE,
     };

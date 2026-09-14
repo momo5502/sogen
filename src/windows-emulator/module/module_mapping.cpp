@@ -316,7 +316,14 @@ namespace sogen
 
                 auto permissions = memory_permission::none;
 
-                if (section.Characteristics & IMAGE_SCN_MEM_EXECUTE)
+                // ARM64EC images can mark the hybrid x64 entry/bootstrap
+                // range as CNT_CODE without setting MEM_EXECUTE.  Windows
+                // applies the CHPE code map when it creates the image VAD;
+                // Sogen's x64 backend needs the same treatment for file-backed
+                // mappings, otherwise a hybrid image entry remains
+                // non-executable and is never reached.
+                if ((section.Characteristics & IMAGE_SCN_MEM_EXECUTE) ||
+                    (nt_headers.FileHeader.Machine == PEMachineType::ARM64EC && (section.Characteristics & IMAGE_SCN_CNT_CODE)))
                 {
                     permissions |= memory_permission::exec;
                 }
@@ -450,7 +457,8 @@ namespace sogen
         const auto nt_headers = buffer.as<PENTHeaders_t<T>>(nt_headers_offset).get();
         const auto& optional_header = nt_headers.OptionalHeader;
 
-        if (nt_headers.FileHeader.Machine != PEMachineType::I386 && nt_headers.FileHeader.Machine != PEMachineType::AMD64)
+        if (nt_headers.FileHeader.Machine != PEMachineType::I386 && nt_headers.FileHeader.Machine != PEMachineType::AMD64 &&
+            nt_headers.FileHeader.Machine != PEMachineType::ARM64EC)
         {
             throw std::runtime_error("Unsupported architecture!");
         }
@@ -575,10 +583,17 @@ namespace sogen
                 section_info.region.length = static_cast<size_t>(page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize)));
 
                 auto permissions = memory_permission::none;
-                if (section.Characteristics & IMAGE_SCN_MEM_EXECUTE)
+                // ARM64EC images can place the x64 exception/bootstrap range in
+                // a code section whose raw PE flags omit MEM_EXECUTE. Windows
+                // applies the hybrid code-map permissions at load time; treating
+                // CNT_CODE as executable for ARM64EC preserves that behavior on
+                // Sogen's x64 backend without enabling data sections.
+                if ((section.Characteristics & IMAGE_SCN_MEM_EXECUTE) ||
+                    (nt_headers.FileHeader.Machine == PEMachineType::ARM64EC && (section.Characteristics & IMAGE_SCN_CNT_CODE)))
                 {
                     permissions |= memory_permission::exec;
                 }
+
                 if (section.Characteristics & IMAGE_SCN_MEM_READ)
                 {
                     permissions |= memory_permission::read;
