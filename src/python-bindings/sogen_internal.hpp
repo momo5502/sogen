@@ -160,6 +160,7 @@ namespace sogen::py
 
         hook_handle memory_execution(nb::object callback);
         hook_handle memory_execution_at(uint64_t address, nb::object callback);
+        hook_handle memory_execution_range(uint64_t address, uint64_t size, nb::object callback);
         hook_handle memory_read(uint64_t address, uint64_t size, nb::object callback);
         hook_handle memory_write(uint64_t address, uint64_t size, nb::object callback);
         hook_handle instruction(x86_hookable_instructions instruction_type, nb::object callback);
@@ -254,11 +255,17 @@ namespace sogen::py
         bool perform_thread_switch() const;
         bool activate_thread(uint32_t id) const;
 
+        // Seed the Steam bridge values in the guest registry overlay. This is
+        // useful for disposable roots whose NTUSER.DAT cannot be rewritten by
+        // the host process (for example, when reg load is unavailable).
+        void seed_steam_registry(const std::string& steam_path, uint32_t fake_pid, uint32_t active_user) const;
+
         sogen_process_context process();
 
         memory_manager& memory() const;
         emulator_thread* current_thread() const;
         std::optional<uint32_t> current_thread_id() const;
+        void post_quit_message(int32_t exit_code = 0) const;
 
         nb::bytes read_memory(uint64_t address, size_t size) const;
         void write_memory(uint64_t address, const nb::bytes& buffer) const;

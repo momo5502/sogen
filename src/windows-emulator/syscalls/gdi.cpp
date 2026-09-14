@@ -293,10 +293,16 @@ namespace sogen
                     return std::rotl(decoded, rotate);
                 }
 
-                // x64 gdi32full decodes UserPointer: ror.q(encoded, 64 - (cookie & 0x3f)) ^ cookie
-                const uint64_t decoded = pointer ^ cookie;
-                const auto rotate = static_cast<int>(64 - (cookie & 0x3F));
-                return std::rotl(decoded, rotate);
+                // The x64 gdi32full shipped with the host Windows image
+                // consumes the UserPointer returned by its shared-handle
+                // lookup directly.  In this path it does not undo the
+                // encoding that older Sogen code applied here; the encoded
+                // value reaches SelectObjectImpl as a bogus DC_ATTR pointer
+                // and produces a null/invalid GDI fault before a window can
+                // be created.  Keep the 32-bit/WOW64 transform, but expose
+                // the native x64 pointer to the x64 guest DLL.
+                (void)cookie;
+                return pointer;
             }
 
             uint64_t read_gdi_shared_value(const syscall_context& c, const uint64_t offset)
@@ -429,6 +435,17 @@ namespace sogen
                         writable.Flags = 0;
                         writable.UserPointer = encoded_user_ptr;
                     });
+
+                    if (type == k_gdi_dc_type && c.win_emu.callbacks.on_generic_activity)
+                    {
+                        c.win_emu.callbacks.on_generic_activity(
+                            "SogenGdiDcState handle=" + std::to_string(handle_value) +
+                            " table=" + std::to_string(table) +
+                            " attr=" + std::to_string(user_ptr) +
+                            " encoded=" + std::to_string(encoded_user_ptr) +
+                            " cookie=" + std::to_string(cookie) +
+                            " object=" + std::to_string(object_ptr));
+                    }
 
                     return handle_value;
                 }

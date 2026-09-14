@@ -10,12 +10,16 @@ namespace sogen::py
         template <typename... Args>
         void invoke_callback(const nb::object& cb, Args&&... args)
         {
+            // Emulator.start() releases the GIL.  The callback can therefore
+            // be entered from the native emulator thread with no Python
+            // thread state.  Even is_none() is a Python C-API operation and
+            // must happen after acquiring the GIL.
+            nb::gil_scoped_acquire gil{};
             if (cb.is_none())
             {
                 return;
             }
 
-            nb::gil_scoped_acquire gil{};
             cb(std::forward<Args>(args)...);
         }
 
@@ -72,12 +76,12 @@ namespace sogen::py
         this->emu->callbacks.on_module_unload.add([this](mapped_module& mod) { invoke_callback(this->module_unload_cb, mod); });
         this->emu->callbacks.on_stdout = [this](std::string_view data) { invoke_callback(this->stdout_cb, std::string(data)); };
         this->emu->callbacks.on_syscall = [this](const uint32_t syscall_id, const std::string_view syscall_name) {
+            nb::gil_scoped_acquire gil{};
             if (this->syscall_cb.is_none())
             {
                 return instruction_hook_continuation::run_instruction;
             }
 
-            nb::gil_scoped_acquire gil{};
             const auto result = this->syscall_cb(syscall_id, std::string(syscall_name));
             return coerce_instruction_continuation(result);
         };
@@ -100,12 +104,12 @@ namespace sogen::py
         };
         this->emu->callbacks.on_memory_violate = [this](uint64_t address, uint64_t length, memory_operation operation,
                                                         memory_violation_type type) {
+            nb::gil_scoped_acquire gil{};
             if (this->memory_violate_cb.is_none())
             {
                 return memory_violation_continuation::resume;
             }
 
-            nb::gil_scoped_acquire gil{};
             const auto result = this->memory_violate_cb(address, length, operation, type);
             return coerce_memory_violation_continuation(result);
         };

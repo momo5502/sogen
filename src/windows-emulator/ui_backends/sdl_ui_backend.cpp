@@ -1,6 +1,8 @@
 #include "../std_include.hpp"
 #include <platform/ui_backend.hpp>
 
+#include <cstdlib>
+
 #include <SDL3/SDL.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -881,7 +883,16 @@ namespace sogen
                 }
 
                 Uint64 flags = 0;
-                if (!desc.visible)
+                // This is an explicit host-only inspection override.  It is
+                // useful when a guest creates a hidden dialog and then exits
+                // before NtUserShowWindow; it must never mutate the guest
+                // WS_VISIBLE state or be treated as native GUI execution.
+                const auto* force_visible_env = std::getenv("SOGEN_FORCE_VISIBLE_WINDOWS");
+                const bool force_visible = force_visible_env &&
+                                            (std::string_view{force_visible_env} == "1" ||
+                                             std::string_view{force_visible_env} == "true" ||
+                                             std::string_view{force_visible_env} == "yes");
+                if (!desc.visible && !force_visible)
                 {
                     flags |= SDL_WINDOW_HIDDEN;
                 }

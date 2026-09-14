@@ -53,6 +53,7 @@ namespace sogen::py
         nb::class_<hook_registry>(m, "Hooks")
             .def("memory_execution", &hook_registry::memory_execution)
             .def("memory_execution_at", &hook_registry::memory_execution_at)
+            .def("memory_execution_range", &hook_registry::memory_execution_range)
             .def("memory_read", &hook_registry::memory_read)
             .def("memory_write", &hook_registry::memory_write)
             .def("instruction", &hook_registry::instruction)
@@ -159,6 +160,8 @@ namespace sogen::py
                  nb::call_guard<nb::gil_scoped_release>())
             .def("perform_thread_switch", &sogen_windows_emulator::perform_thread_switch, nb::call_guard<nb::gil_scoped_release>())
             .def("activate_thread", &sogen_windows_emulator::activate_thread)
+            .def("seed_steam_registry", &sogen_windows_emulator::seed_steam_registry, nb::arg("steam_path"),
+                 nb::arg("fake_pid") = 0x8B0, nb::arg("active_user") = 100691295)
             .def_prop_ro("executed_instructions",
                          [](const sogen_windows_emulator& self) { return self.native().get_executed_instructions(); })
             .def_prop_ro("last_stop_reason",
@@ -186,6 +189,7 @@ namespace sogen::py
                 nb::rv_policy::reference_internal)
             .def_prop_ro(
                 "hooks", [](sogen_windows_emulator& self) -> hook_registry& { return *self.hooks; }, nb::rv_policy::reference_internal)
+            .def("post_quit_message", &sogen_windows_emulator::post_quit_message, nb::arg("exit_code") = 0)
             .def("read_memory", &sogen_windows_emulator::read_memory)
             .def("write_memory", &sogen_windows_emulator::write_memory)
             .def("read_register", &sogen_windows_emulator::read_register)
