@@ -303,10 +303,28 @@ namespace sogen
 
         if (!entry)
         {
-            return std::nullopt;
+            if (this->overlay_values_.find(registry_manager::get_full_key_path(reg_key)) == this->overlay_values_.end())
+            {
+                return std::nullopt;
+            }
         }
 
         return {std::move(reg_key)};
+    }
+
+    void registry_manager::ensure_key(const utils::path_key& key)
+    {
+        const auto normal_key = this->normalize_path(key);
+        const auto iterator = this->find_hive(normal_key);
+        if (iterator == this->hives_.end())
+        {
+            throw std::runtime_error("Cannot create registry overlay outside a loaded hive");
+        }
+
+        registry_key reg_key{};
+        reg_key.hive = iterator->first.get();
+        reg_key.path = normal_key.get().lexically_relative(reg_key.hive.get());
+        this->overlay_values_.try_emplace(registry_manager::get_full_key_path(reg_key));
     }
 
     std::optional<registry_value> registry_manager::get_value(const registry_key& key, const std::string_view name)

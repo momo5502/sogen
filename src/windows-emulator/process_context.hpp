@@ -419,6 +419,8 @@ namespace sogen
         // WOW64 support flag - set during process setup based on executable architecture
         bool is_wow64_process{false};
 
+        uint32_t hard_error_mode{0};
+
         callbacks* callbacks_{};
 
         std::vector<uint8_t> sid{};

@@ -118,6 +118,7 @@ namespace sogen
         registry_manager& operator=(const registry_manager&) = delete;
 
         std::optional<registry_key> get_key(const utils::path_key& key);
+        void ensure_key(const utils::path_key& key);
         std::optional<registry_value> get_value(const registry_key& key, std::string_view name);
         std::optional<registry_value> get_value(const registry_key& key, size_t index);
         void set_value(const registry_key& key, std::string name, uint32_t type, std::span<const std::byte> data);
