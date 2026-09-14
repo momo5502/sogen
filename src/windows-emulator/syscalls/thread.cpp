@@ -688,11 +688,35 @@ namespace sogen
             }
 
             const auto context = thread_context.read();
+            if (c.win_emu.callbacks.on_generic_activity)
+            {
+                auto description =
+                    "NtContinue context flags=0x" + utils::string::to_hex_number(context.ContextFlags) +
+                    " rip=0x" + utils::string::to_hex_number(context.Rip) +
+                    " rsp=0x" + utils::string::to_hex_number(context.Rsp) +
+                    " cs=0x" + utils::string::to_hex_number(context.SegCs) +
+                    " ss=0x" + utils::string::to_hex_number(context.SegSs) +
+                    " eflags=0x" + utils::string::to_hex_number(context.EFlags) +
+                    " continue_arg=0x" + utils::string::to_hex_number(continue_argument);
+                c.win_emu.callbacks.on_generic_activity(std::move(description));
+            }
             cpu_context::restore(c.emu, context);
+
+            // NtContinue replaces the live execution context without executing a guest
+            // instruction. Keep the scheduler's precise-instruction cache in sync with
+            // the restored RIP so a subsequent exception is reported against the
+            // restored context rather than the syscall that issued NtContinue.
+            c.thread().previous_ip = c.thread().current_ip;
+            c.thread().current_ip = context.Rip;
+            c.mark_instruction_pointer_finalized();
+            c.win_emu.callbacks.on_generic_activity(
+                "NtContinue restored rip=0x" + utils::string::to_hex_number(context.Rip));
 
             if (argument.ContinueFlags & KCONTINUE_FLAG_TEST_ALERT)
             {
                 c.win_emu.yield_thread(c.vcpu, true);
+                c.win_emu.callbacks.on_generic_activity(
+                    "NtContinue yielded rip=0x" + utils::string::to_hex_number(c.emu.read_instruction_pointer()));
             }
 
             return STATUS_SUCCESS;
@@ -1018,6 +1042,18 @@ namespace sogen
                 // Move past syscall instruction
                 const auto new_ip = c.emu.read_instruction_pointer();
                 c.emu.reg(x86_register::rip, new_ip + 2);
+                // NtCallbackReturn has restored and finalized the guest
+                // return context. Prevent syscall completion from applying
+                // its generic two-byte RIP adjustment a second time.
+                c.mark_instruction_pointer_finalized();
+            }
+            else
+            {
+                // The completion handler dispatched another user callback
+                // and installed its dispatcher RIP explicitly. The outer
+                // NtCallbackReturn syscall must not subtract two bytes from
+                // that new callback target.
+                c.mark_instruction_pointer_finalized();
             }
 
             c.write_status = false;

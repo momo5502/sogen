@@ -22,6 +22,10 @@ namespace sogen
         mutable bool retrigger_syscall{false};
 
         mutable bool run_callback{false};
+        // A syscall such as NtContinue may replace RIP with an explicit guest
+        // context. In that case the normal syscall-result adjustment must not
+        // subtract the synthetic syscall length from the restored address.
+        mutable bool instruction_pointer_finalized{false};
         bool is_callback_completion{false};
         completion_state* current_completion_state{};
         uint64_t previous_callback_result{};
@@ -29,6 +33,11 @@ namespace sogen
         emulator_thread& thread() const
         {
             return this->vcpu.thread();
+        }
+
+        void mark_instruction_pointer_finalized() const
+        {
+            this->instruction_pointer_finalized = true;
         }
 
         template <typename T>
@@ -183,7 +192,8 @@ namespace sogen
         }
 
         const auto new_ip = c.emu.read_instruction_pointer();
-        if ((initial_ip != new_ip || c.retrigger_syscall || c.run_callback) && !c.is_callback_completion)
+        if ((initial_ip != new_ip || c.retrigger_syscall || c.run_callback) && !c.is_callback_completion &&
+            !c.instruction_pointer_finalized)
         {
             c.emu.reg(x86_register::rip, new_ip - 2);
         }

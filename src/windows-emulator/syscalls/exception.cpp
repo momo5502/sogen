@@ -2,6 +2,9 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+#include <unordered_map>
+#include <cstdlib>
+
 namespace sogen
 {
 
@@ -38,24 +41,56 @@ namespace sogen
 
             c.proc.exit_status = error_status;
             c.win_emu.callbacks.on_exception();
-            c.emu.stop();
+            // A hard error terminates the Windows-emulated process. Stopping
+            // only the backend CPU lets the syscall completion path resume at
+            // KiUserExceptionDispatcher and fall through into its INT3
+            // padding, which turns the original guest error into a misleading
+            // near-null memory violation.
+            c.win_emu.stop();
 
             return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtRaiseException(const syscall_context& c,
-                                         const emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> /*exception_record*/,
+                                         const emulator_object<EMU_EXCEPTION_RECORD<EmulatorTraits<Emu64>>> exception_record,
                                          const emulator_object<CONTEXT64> /*thread_context*/, const BOOLEAN handle_exception)
         {
             if (handle_exception)
             {
                 c.win_emu.log.error("Unhandled exceptions not supported yet!\n");
-                c.emu.stop();
+                c.win_emu.stop();
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            static std::unordered_map<DWORD, int> exception_counts;
+
+            static const int raise_limit = [] {
+                const auto* env = std::getenv("SOGEN_RAISE_EXCEPTION_LIMIT");
+                return env ? std::atoi(env) : 3;
+            }();
+
+            DWORD exception_code = 0;
+            if (exception_record)
+            {
+                const auto record = exception_record.read();
+                exception_code = record.ExceptionCode;
+            }
+
+            auto& count = exception_counts[exception_code];
+            ++count;
+
+            if (raise_limit > 0 && count > raise_limit)
+            {
+                c.win_emu.log.error("NtRaiseException limit exceeded for code 0x%08X (%d > %d)\n", exception_code, count, raise_limit);
+                c.win_emu.stop();
                 return STATUS_NOT_SUPPORTED;
             }
 
             c.win_emu.callbacks.on_exception();
-            c.emu.stop();
+            // NtRaiseException does not return to the guest on this bounded
+            // emulation path. Stop the whole Windows emulator so execution
+            // cannot continue through the exception-dispatcher padding.
+            c.win_emu.stop();
 
             return STATUS_SUCCESS;
         }

@@ -2131,13 +2131,14 @@ namespace sogen::whp
                 auto post_hook_rip_value = vcpu.get_registers(post_hook_rip_name);
                 if (continuation != instruction_hook_continuation::finalized_instruction_pointer)
                 {
-                    if (continuation == instruction_hook_continuation::skip_instruction && post_hook_rip_value[0].Reg64 == pre_syscall_rip)
+                    // A syscall handler such as NtContinue may restore an
+                    // entirely new instruction pointer.  Only advance the
+                    // synthetic syscall instruction when the callback left
+                    // RIP at the original trap address; otherwise the
+                    // explicitly restored context must be preserved.
+                    if (post_hook_rip_value[0].Reg64 == pre_syscall_rip)
                     {
                         post_hook_rip_value[0].Reg64 = post_syscall_rcx;
-                    }
-                    else
-                    {
-                        post_hook_rip_value[0].Reg64 += syscall_instruction_size;
                     }
                 }
 

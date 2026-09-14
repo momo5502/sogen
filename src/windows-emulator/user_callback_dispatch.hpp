@@ -87,6 +87,11 @@ namespace sogen
         prepare_call_stack(c.emu, callback_index, args...);
 
         c.emu.reg(x86_register::rip, c.proc.ki_user_callback_dispatcher);
+        // The callback dispatcher is an explicit guest control-flow target.
+        // Do not let syscall completion apply its normal two-byte syscall
+        // instruction adjustment to this already-finalized RIP; that would
+        // enter the INT3 padding immediately before KiUserCallbackDispatcher.
+        c.mark_instruction_pointer_finalized();
         c.run_callback = true;
     }
 

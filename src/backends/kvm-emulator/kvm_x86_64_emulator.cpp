@@ -2245,13 +2245,13 @@ namespace sogen::kvm
                 regs = this->get_regs();
                 if (continuation != instruction_hook_continuation::finalized_instruction_pointer)
                 {
-                    if (continuation == instruction_hook_continuation::skip_instruction && regs.rip == pre_syscall_rip)
+                    // Preserve an instruction pointer explicitly restored by
+                    // a syscall handler such as NtContinue.  The synthetic
+                    // syscall instruction is advanced only when the callback
+                    // left RIP at the original trap address.
+                    if (regs.rip == pre_syscall_rip)
                     {
                         regs.rip = post_syscall_rcx;
-                    }
-                    else
-                    {
-                        regs.rip += syscall_instruction_size;
                     }
                 }
 
