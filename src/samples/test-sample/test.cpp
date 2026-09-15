@@ -29,6 +29,7 @@
 #include <knownfolders.h>
 #include <sddl.h>
 #include <bcrypt.h>
+#include <wincrypt.h>
 
 using namespace std::literals;
 
@@ -1929,6 +1930,92 @@ namespace
 
         return true;
     }
+
+    bool test_crypt_protect()
+    {
+        auto roundtrip = [](const std::vector<BYTE>& plain, const std::vector<BYTE>& entropy, const LPCWSTR descr) {
+            DATA_BLOB input{};
+            BYTE empty{};
+            input.cbData = static_cast<DWORD>(plain.size());
+            // crypt32 returns ERROR_INVALID_PARAMETER when pbData is NULL, including cbData == 0.
+            input.pbData = plain.empty() ? &empty : const_cast<BYTE*>(plain.data());
+
+            DATA_BLOB entropy_blob{};
+            DATA_BLOB* entropy_ptr = nullptr;
+            if (!entropy.empty())
+            {
+                entropy_blob.cbData = static_cast<DWORD>(entropy.size());
+                entropy_blob.pbData = const_cast<BYTE*>(entropy.data());
+                entropy_ptr = &entropy_blob;
+            }
+
+            DATA_BLOB protected_blob{};
+            if (!CryptProtectData(&input, descr, entropy_ptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &protected_blob))
+            {
+                printf("CryptProtectData failed: %lu\n", GetLastError());
+                return false;
+            }
+
+            const auto free_protected = sogen::utils::finally([&] { LocalFree(protected_blob.pbData); });
+
+            LPWSTR out_descr = nullptr;
+            DATA_BLOB unprotected{};
+            if (!CryptUnprotectData(&protected_blob, descr ? &out_descr : nullptr, entropy_ptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN,
+                                    &unprotected))
+            {
+                printf("CryptUnprotectData failed: %lu\n", GetLastError());
+                return false;
+            }
+
+            const auto free_unprotected = sogen::utils::finally([&] { LocalFree(unprotected.pbData); });
+            const auto free_descr = sogen::utils::finally([&] { LocalFree(out_descr); });
+
+            if (unprotected.cbData != input.cbData)
+            {
+                puts("CryptUnprotectData length mismatch");
+                return false;
+            }
+
+            if (input.cbData != 0 && memcmp(unprotected.pbData, input.pbData, input.cbData) != 0)
+            {
+                puts("CryptUnprotectData data mismatch");
+                return false;
+            }
+
+            if (descr)
+            {
+                if (!out_descr || wcscmp(out_descr, descr) != 0)
+                {
+                    puts("CryptUnprotectData description mismatch");
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
+        if (!roundtrip({}, {}, nullptr))
+        {
+            return false;
+        }
+
+        if (!roundtrip({0x61, 0x62, 0x63}, {}, nullptr))
+        {
+            return false;
+        }
+
+        if (!roundtrip({0x61, 0x62, 0x63}, {0x01, 0x02, 0x03, 0x04}, nullptr))
+        {
+            return false;
+        }
+
+        if (!roundtrip({0x61, 0x62, 0x63}, {}, L"sogen-test"))
+        {
+            return false;
+        }
+
+        return true;
+    }
 }
 
 #define RUN_TEST(func, name)                 \
@@ -1996,6 +2083,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_mmio, "MMIO")
     RUN_TEST(test_gdi, "GDI")
     RUN_TEST(test_bcrypt_hash, "BCrypt Hash")
+    RUN_TEST(test_crypt_protect, "CryptProtect")
 
     return valid ? 0 : 1;
 }

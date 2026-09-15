@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "security_support_provider.hpp"
 
+#include "../ksec_memory_crypt.hpp"
 #include "../windows_emulator.hpp"
 
 #include <utils/string.hpp>
@@ -129,16 +130,92 @@ namespace sogen
                 write_utf16(response_abbreviation_offset, algorithm.abbreviation);
             }
 
+            NTSTATUS complete_status_ioctl(windows_emulator& win_emu, const io_device_context& c, const NTSTATUS payload)
+            {
+                ULONG info = 0;
+                if (c.output_buffer && c.output_buffer_length >= sizeof(payload))
+                {
+                    win_emu.emu().write_memory(c.output_buffer, &payload, sizeof(payload));
+                    info = sizeof(payload);
+                }
+
+                if (c.io_status_block)
+                {
+                    IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                    block.Information = info;
+                    c.io_status_block.write(block);
+                }
+
+                return STATUS_SUCCESS;
+            }
+
+            static constexpr ULONG k_ioctl_encrypt_same_process = 0x39000E;
+            static constexpr ULONG k_ioctl_decrypt_same_process = 0x390012;
+            static constexpr ULONG k_ioctl_encrypt_cross_process = 0x390016;
+            static constexpr ULONG k_ioctl_decrypt_cross_process = 0x39001A;
+            static constexpr ULONG k_ioctl_encrypt_same_logon = 0x39001E;
+            static constexpr ULONG k_ioctl_decrypt_same_logon = 0x390022;
+
+            static bool is_memory_crypt_ioctl(const ULONG code)
+            {
+                switch (code)
+                {
+                case k_ioctl_encrypt_same_process:
+                case k_ioctl_decrypt_same_process:
+                case k_ioctl_encrypt_cross_process:
+                case k_ioctl_decrypt_cross_process:
+                case k_ioctl_encrypt_same_logon:
+                case k_ioctl_decrypt_same_logon:
+                    return true;
+                default:
+                    return false;
+                }
+            }
+
+            static NTSTATUS handle_memory_crypt(windows_emulator& win_emu, const io_device_context& c)
+            {
+                const auto source = c.input_buffer ? c.input_buffer : c.output_buffer;
+                const auto dest = c.output_buffer ? c.output_buffer : c.input_buffer;
+                const auto length = c.input_buffer_length ? c.input_buffer_length : c.output_buffer_length;
+                if (!source || !dest || length == 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                std::vector<uint8_t> data(length);
+                win_emu.emu().read_memory(source, data.data(), data.size());
+                xor_ksec_memory(data);
+                win_emu.emu().write_memory(dest, data.data(), data.size());
+                if (c.io_status_block)
+                {
+                    IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                    block.Information = data.size();
+                    c.io_status_block.write(block);
+                }
+
+                return STATUS_SUCCESS;
+            }
+
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
             {
+                if (is_memory_crypt_ioctl(c.io_control_code))
+                {
+                    return handle_memory_crypt(win_emu, c);
+                }
+
                 if (c.io_control_code != 0x390400)
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
 
-                if (!c.input_buffer || c.input_buffer_length < ksec_algorithm_request_min_size)
+                // BCryptOpenAlgorithmProvider uses a dedicated output buffer sized for the provider blob.
+                // Other KsecDD clients issue 0x390400 in-place (same input/output pointer) with a small
+                // buffer and expect DeviceIoControl to succeed with a NTSTATUS in the first dword.
+                const bool in_place = c.input_buffer != 0 && c.input_buffer == c.output_buffer;
+                if (!c.input_buffer || c.input_buffer_length < ksec_algorithm_request_min_size ||
+                    (in_place && c.output_buffer_length < sizeof(rng_output_data)))
                 {
-                    return STATUS_INVALID_PARAMETER;
+                    return complete_status_ioctl(win_emu, c, STATUS_SUCCESS);
                 }
 
                 const auto request =
