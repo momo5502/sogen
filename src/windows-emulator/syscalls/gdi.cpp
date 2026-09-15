@@ -5029,6 +5029,45 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromGpu()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromCpu(
+            const syscall_context& c, const emulator_object<EMU_D3DKMT_WAITFORSYNCHRONIZATIONOBJECTFROMCPU> wait_desc)
+        {
+            if (!wait_desc)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto wait = wait_desc.read();
+            if (wait.hAsyncEvent == 0)
+            {
+                return STATUS_SUCCESS;
+            }
+
+            auto* entry = c.proc.events.get(wait.hAsyncEvent);
+            if (!entry)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            entry->signaled = true;
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDISignalSynchronizationObjectFromGpu()
+        {
+            return STATUS_SUCCESS;
+        }
+
+        NTSTATUS handle_NtGdiDdDDISignalSynchronizationObjectFromCpu()
+        {
+            return STATUS_SUCCESS;
+        }
+
         COLORREF handle_NtGdiSetPixel(const syscall_context& c, const hdc dc, const int x, const int y, const COLORREF color)
         {
             constexpr uint64_t clr_invalid = 0xFFFFFFFF;
