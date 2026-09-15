@@ -2561,6 +2561,7 @@ namespace sogen
                 return TRUE;
             }
 
+            c.win_emu.log.error("Unimplemented NtUserCallHwndLock routine: 0x%X\n", routine);
             return FALSE;
         }
 
@@ -2571,12 +2572,12 @@ namespace sogen
                 return handle_NtUserSetMsgBox(c, hwnd);
             }
 
+            c.win_emu.log.error("Unimplemented NtUserCallHwnd routine: 0x%X\n", routine);
             return 0;
         }
 
         uint64_t handle_NtUserCallOneParam(const syscall_context& c, const uint64_t param, const uint32_t routine)
         {
-            (void)c;
             (void)param;
 
             if (routine == user_call_release_dc)
@@ -2584,6 +2585,7 @@ namespace sogen
                 return handle_NtUserReleaseDC();
             }
 
+            c.win_emu.log.error("Unimplemented NtUserCallOneParam routine: 0x%X\n", routine);
             return 0;
         }
 
