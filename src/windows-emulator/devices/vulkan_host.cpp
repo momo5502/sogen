@@ -237,15 +237,20 @@ namespace sogen
             }
 
             uint32_t count = 0;
-            if (instance.enumerate_device_extension_properties(device, nullptr, &count, nullptr) != VK_SUCCESS)
+            VkResult result = instance.enumerate_device_extension_properties(device, nullptr, &count, nullptr);
+            if (result != VK_SUCCESS && result != VK_INCOMPLETE)
             {
                 return false;
             }
 
             std::vector<VkExtensionProperties> extensions(count);
-            if (count > 0 && instance.enumerate_device_extension_properties(device, nullptr, &count, extensions.data()) != VK_SUCCESS)
+            if (count > 0)
             {
-                return false;
+                result = instance.enumerate_device_extension_properties(device, nullptr, &count, extensions.data());
+                if (result != VK_SUCCESS && result != VK_INCOMPLETE)
+                {
+                    return false;
+                }
             }
 
             return std::ranges::any_of(extensions, [&](const VkExtensionProperties& extension) {
@@ -1132,10 +1137,12 @@ namespace sogen
         {
             uint32_t ext_count = 0;
             std::vector<VkExtensionProperties> available;
-            if (enumerate_instance_extensions(nullptr, &ext_count, nullptr) == VK_SUCCESS && ext_count > 0)
+            VkResult enumerate_result = enumerate_instance_extensions(nullptr, &ext_count, nullptr);
+            if ((enumerate_result == VK_SUCCESS || enumerate_result == VK_INCOMPLETE) && ext_count > 0)
             {
                 available.resize(ext_count);
-                if (enumerate_instance_extensions(nullptr, &ext_count, available.data()) != VK_SUCCESS)
+                enumerate_result = enumerate_instance_extensions(nullptr, &ext_count, available.data());
+                if (enumerate_result != VK_SUCCESS && enumerate_result != VK_INCOMPLETE)
                 {
                     available.clear();
                 }
