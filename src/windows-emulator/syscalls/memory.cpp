@@ -8,7 +8,6 @@
 
 namespace sogen
 {
-
     namespace syscalls
     {
         namespace
@@ -26,6 +25,10 @@ namespace sogen
             {
                 return value != 0 && (value & (value - 1)) == 0;
             }
+
+            // Backstop only: every non-settling iteration of the pick/confirm loop below rescans, which
+            // is guaranteed to make the next pick skip the offending range.
+            constexpr int max_host_reserved_retries = 8;
 
             std::optional<uint64_t> checked_add(const uint64_t lhs, const uint64_t rhs)
             {
@@ -481,9 +484,33 @@ namespace sogen
             auto potential_base = requested_base;
             if (!potential_base)
             {
-                potential_base =
-                    c.win_emu.memory.find_free_allocation_base(static_cast<size_t>(allocation_bytes), 0, address_requirements.alignment,
-                                                               address_requirements.lowest_address, address_requirements.highest_address);
+                // Steers the pick away from addresses a foreign host mapping already occupies: on
+                // backends running guest VA == host VA (FEX on Apple), find_free_allocation_base's
+                // bookkeeping-only view can hand back an address the host process itself claimed since
+                // the last scan. Heuristic only - nothing holds the window until allocate_memory below
+                // re-checks it and takes the binding host-level claim, so a mapping landing in between
+                // makes that call fail cleanly instead of clobbering. Both rescan forms are needed; see
+                // memory_manager::find_free_host_allocation_base.
+                for (int attempt = 0;; ++attempt)
+                {
+                    potential_base = c.win_emu.memory.find_free_allocation_base(
+                        static_cast<size_t>(allocation_bytes), 0, address_requirements.alignment, address_requirements.lowest_address,
+                        address_requirements.highest_address);
+
+                    if (!potential_base || c.win_emu.memory.host_window_is_free(potential_base, static_cast<size_t>(allocation_bytes)))
+                    {
+                        break;
+                    }
+
+                    if (attempt >= max_host_reserved_retries)
+                    {
+                        potential_base = 0;
+                        break;
+                    }
+
+                    c.win_emu.memory.reserve_host_memory_ranges();
+                    c.win_emu.memory.reserve_host_memory_ranges_in(potential_base, static_cast<size_t>(allocation_bytes));
+                }
             }
             else
             {

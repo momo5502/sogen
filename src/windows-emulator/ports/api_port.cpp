@@ -15,6 +15,22 @@ namespace sogen
                    static_cast<uint32_t>(server_dll_index) == win32k_userconnect::k_user_server_dll_index;
         }
 
+        constexpr uint32_t k_base_srv_nls_get_user_info_api = 0x0001001b;
+
+        bool is_nls_get_user_info_request(windows_emulator& win_emu, const lpc_request_context& c)
+        {
+            const ULONG api_number_offset = 0x08u;
+
+            if (c.send_buffer_length < api_number_offset + sizeof(uint32_t))
+            {
+                return false;
+            }
+
+            uint32_t api_number{};
+            return win_emu.memory.try_read_memory(c.send_buffer + api_number_offset, &api_number, sizeof(api_number)) &&
+                   api_number == k_base_srv_nls_get_user_info_api;
+        }
+
         struct wow64_userconnect_payload
         {
             uint64_t request_capture_handle{};
@@ -122,6 +138,16 @@ namespace sogen
 
             lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) override
             {
+                if (is_nls_get_user_info_request(win_emu, c))
+                {
+                    // BASESRV BaseSrvNlsGetUserInfo, called by kernelbase's GetCurrentNlsCache.
+                    // Sogen does not emulate the private 0x67c-byte NLS server cache. Returning
+                    // a failing status here intentionally selects GetCurrentNlsCache's native
+                    // registry-backed fallback (Control Panel\International / NlsUpdateCacheInfo)
+                    // instead of reporting success with an uninitialized capture buffer.
+                    return {STATUS_NOT_SUPPORTED, lpc_request_result::reply_in_place};
+                }
+
                 wow64_userconnect_payload payload{};
                 if (try_read_wow64_payload(win_emu, c, payload))
                 {

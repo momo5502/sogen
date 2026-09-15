@@ -7,6 +7,7 @@ namespace sogen
 #ifndef OS_WINDOWS
 #define ANSI_CHARSET       0
 #define DEFAULT_CHARSET    1
+#define SHIFTJIS_CHARSET   128
 #define GREEK_CHARSET      161
 #define TURKISH_CHARSET    162
 #define VIETNAMESE_CHARSET 163
@@ -406,6 +407,19 @@ namespace sogen
     };
 
     static_assert(sizeof(EMU_D3DKMT_RENDER) == 368);
+
+    struct EMU_D3DKMT_WAITFORSYNCHRONIZATIONOBJECTFROMCPU
+    {
+        UINT32 hDevice;
+        UINT32 ObjectCount;
+        UINT64 ObjectHandleArray;
+        UINT64 FenceValueArray;
+        UINT64 hAsyncEvent;
+        UINT32 Flags;
+        UINT32 Padding;
+    };
+
+    static_assert(sizeof(EMU_D3DKMT_WAITFORSYNCHRONIZATIONOBJECTFROMCPU) == 40);
 
     struct EMU_D3DDDI_ALLOCATIONINFO
     {

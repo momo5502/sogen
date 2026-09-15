@@ -467,7 +467,29 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            c.win_emu.log.error("Unsupported thread query info class: %X\n", info_class);
+            if (info_class == ThreadGroupInformation)
+            {
+                if (return_length)
+                {
+                    return_length.write(sizeof(GROUP_AFFINITY));
+                }
+
+                if (thread_information_length != sizeof(GROUP_AFFINITY))
+                {
+                    return STATUS_BUFFER_OVERFLOW;
+                }
+
+                const emulator_object<GROUP_AFFINITY> info{c.emu, thread_information};
+                info.access([&](GROUP_AFFINITY& ga) {
+                    const auto processor_count =
+                        c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
+                    ga.Mask = processor_count >= 64 ? ~0ull : ((1ull << processor_count) - 1);
+                });
+
+                return STATUS_SUCCESS;
+            }
+
+            c.win_emu.log.error("Unsupported thread query info class: 0x%X\n", info_class);
             c.emu.stop();
 
             return STATUS_NOT_SUPPORTED;
@@ -985,16 +1007,24 @@ namespace sogen
                 throw std::runtime_error("Unexpected callback return");
             }
 
-            uint64_t callback_result = t.callback_return_rax.value_or(c.emu.reg<uint64_t>(x86_register::rax));
+            user_callback_result callback_result{
+                .value = t.callback_return_rax.value_or(c.emu.reg<uint64_t>(x86_register::rax)),
+            };
             t.callback_return_rax.reset();
 
-            if (callback_result_ptr != 0 && callback_result_length != 0 && callback_result_length <= sizeof(callback_result))
+            if (callback_result_ptr != 0 && callback_result_length != 0)
             {
-                std::array<std::byte, sizeof(callback_result)> result_bytes{};
-                if (c.win_emu.memory.try_read_memory(callback_result_ptr, result_bytes.data(), callback_result_length))
+                // When present, the callback result pointer always contains the actual callback result value!
+                user_callback_result result_data{};
+                const auto read_length = std::min<ULONG>(callback_result_length, sizeof(result_data));
+                if (c.win_emu.memory.try_read_memory(callback_result_ptr, &result_data, read_length))
                 {
-                    callback_result = 0;
-                    memcpy(&callback_result, result_bytes.data(), callback_result_length);
+                    callback_result.value = result_data.value;
+                    if (callback_result_length >= sizeof(result_data))
+                    {
+                        callback_result.output_size = result_data.output_size;
+                        callback_result.output = result_data.output;
+                    }
                 }
             }
 

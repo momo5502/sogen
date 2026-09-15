@@ -15,6 +15,12 @@ namespace sogen
     using mmio_read_callback = std::function<void(uint64_t addr, void* data, size_t size)>;
     using mmio_write_callback = std::function<void(uint64_t addr, const void* data, size_t size)>;
 
+    struct host_reserved_range
+    {
+        uint64_t address;
+        size_t size;
+    };
+
     class memory_manager;
     class linux_memory_manager;
 
@@ -41,6 +47,11 @@ namespace sogen
             throw std::runtime_error("Host memory mapping is not supported by this backend");
         }
 
+        virtual bool host_memory_mapping_requires_identity() const
+        {
+            return false;
+        }
+
         virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
 
       public:
@@ -53,17 +64,60 @@ namespace sogen
         {
         }
 
+        // Ranges of the host process's own address space (its image, dyld, shared libraries) that the
+        // guest must avoid, for backends where guest VA == host VA. Best-effort snapshot: host
+        // allocations made after the query are not covered. Backends with an independent guest
+        // address space have nothing to report.
+        virtual std::vector<host_reserved_range> reserved_host_ranges() const
+        {
+            return {};
+        }
+
+        // reserved_host_ranges() restricted to [address, address + size), for callers checking one
+        // specific target instead of re-enumerating the whole address space.
+        virtual std::vector<host_reserved_range> reserved_host_ranges_in(uint64_t /*address*/, size_t /*size*/) const
+        {
+            return this->reserved_host_ranges();
+        }
+
+        // Called whenever the memory manager claims a guest range, including a bare MEM_RESERVE that is
+        // not backed by a real mapping yet. Backends sharing the address space with the guest (see
+        // reserved_host_ranges) must claim it at the host OS level here, otherwise an unconstrained
+        // host allocation (e.g. a JIT code buffer) can land inside a reserved-but-uncommitted range.
+        virtual void reserve_guest_address_range(uint64_t /*address*/, size_t /*size*/)
+        {
+        }
+
+        // Counterpart to reserve_guest_address_range, called once a guest range is genuinely freed -
+        // not on a decommit, where the range stays reserved and the host claim must persist. The
+        // caller expands the freed range to the surrounding unreserved gap, so the backend may drop
+        // any host claim wholly inside it.
+        virtual void release_guest_address_range(uint64_t /*address*/, size_t /*size*/)
+        {
+        }
+
         template <typename T>
         T read_memory(const uint64_t address) const
         {
+            static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable!");
             T value{};
             this->read_memory(address, &value, sizeof(value));
             return value;
         }
 
         template <typename T>
+        T read_memory(const uint64_t address, const size_t size) const
+        {
+            static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable!");
+            T value{};
+            this->read_memory(address, &value, std::min(size, sizeof(T)));
+            return value;
+        }
+
+        template <typename T>
         T read_memory(const void* address) const
         {
+            static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable!");
             return this->read_memory<T>(reinterpret_cast<uint64_t>(address));
         }
 
@@ -85,12 +139,14 @@ namespace sogen
         template <typename T>
         void write_memory(const uint64_t address, const T& value)
         {
+            static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable!");
             this->write_memory(address, &value, sizeof(value));
         }
 
         template <typename T>
         void write_memory(void* address, const T& value)
         {
+            static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable!");
             this->write_memory(reinterpret_cast<uint64_t>(address), &value, sizeof(value));
         }
 

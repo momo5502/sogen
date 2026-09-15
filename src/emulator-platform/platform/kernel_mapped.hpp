@@ -389,9 +389,10 @@ namespace sogen
         ULONG DefaultThreadpoolCpuSetMaskCount;
         ULONG DefaultThreadpoolThreadMaximum;
         ULONG HeapMemoryTypeMask; // WIN11
+        std::uint64_t AttributeList;
     } RTL_USER_PROCESS_PARAMETERS64, *PRTL_USER_PROCESS_PARAMETERS64;
 
-    static_assert(sizeof(RTL_USER_PROCESS_PARAMETERS64) == 0x448);
+    static_assert(sizeof(RTL_USER_PROCESS_PARAMETERS64) == 0x450);
 
     union PEB_CROSS_PROCESS_FLAGS_UNION
     {
@@ -552,9 +553,10 @@ namespace sogen
         ULONG DefaultThreadpoolCpuSetMaskCount;
         ULONG DefaultThreadpoolThreadMaximum;
         ULONG HeapMemoryTypeMask; // WIN11
+        std::uint32_t AttributeList;
     } RTL_USER_PROCESS_PARAMETERS32, *PRTL_USER_PROCESS_PARAMETERS32;
 
-    static_assert(sizeof(RTL_USER_PROCESS_PARAMETERS32) == 708);
+    static_assert(sizeof(RTL_USER_PROCESS_PARAMETERS32) == 0x2C8);
 
     typedef struct _PEB64
     {
@@ -1700,6 +1702,15 @@ namespace sogen
         LARGE_INTEGER KernelTime;
         LARGE_INTEGER UserTime;
     } KERNEL_USER_TIMES, *PKERNEL_USER_TIMES;
+
+    typedef struct _GROUP_AFFINITY
+    {
+        EMULATOR_CAST(EmulatorTraits<Emu64>::ULONG_PTR, KAFFINITY) Mask;
+        WORD Group;
+        WORD Reserved[3];
+    } GROUP_AFFINITY, *PGROUP_AFFINITY;
+
+    static_assert(sizeof(GROUP_AFFINITY) == 0x10);
 
     struct THREAD_TLS_INFORMATION
     {

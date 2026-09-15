@@ -189,6 +189,7 @@ namespace sogen
         NtUserMessageCall,
         NtUserUpdateWindow,
         NtUserEnumDisplayMonitors,
+        NtUserSetWindowPos,
     };
 
     struct callback_frame
@@ -371,6 +372,7 @@ namespace sogen
         std::optional<msg> peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter = 0, UINT filter_min = 0, UINT filter_max = 0,
                                                 bool remove = false);
         void post_message(windows_emulator& win_emu, msg msg, bool try_coalesce = false);
+        void remove_window_messages(hwnd window);
 
         bool is_terminated() const;
 
@@ -552,6 +554,8 @@ namespace sogen
 
       private:
         bool can_coalesce_message(const msg& msg) const;
+        std::optional<msg> peek_queued_message(const process_context& process, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
+                                               bool remove);
 
         void setup_registers(x86_64_cpu& emu, const process_context& context) const;
         void refresh_execution_context(x86_64_cpu& emu) const;

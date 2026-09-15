@@ -18,6 +18,8 @@
 
 #include "apiset/apiset.hpp"
 
+#include <array>
+
 namespace sogen
 {
 
@@ -28,9 +30,20 @@ namespace sogen
 
 #define STACK_SIZE       0x40000ULL // 256KB
 
-#define GDT_ADDR         0x35000
-#define GDT_LIMIT        0x1000
-#define GDT_ENTRY_SIZE   0x8
+#ifdef __APPLE__
+// Darwin refuses MAP_FIXED anywhere in the low ~4GB regardless of ASLR (the 64-bit Mach-O
+// __PAGEZERO convention, enforced at the mmap syscall level), so a backend sharing the address
+// space with the guest (guest VA == host VA, e.g. FEX - see docs/fex-backend.md's "Security /
+// address-space model") can never place anything there. GDT_ADDR is
+// hardcoded rather than picked via find_free_allocation_base, so the reserved-host-ranges mechanism
+// cannot route around it: it has to sit above that floor, and far from typical host dyld/heap/stack
+// placement (a few GB above 4GB) to dodge the dynamic ASLR collisions handled elsewhere.
+#define GDT_ADDR 0x7ffff0000000ULL
+#else
+#define GDT_ADDR 0x35000
+#endif
+#define GDT_LIMIT      0x1000
+#define GDT_ENTRY_SIZE 0x8
 
     // Each vCPU gets its own GDT page. Most descriptors are identical, but the WOW64 FS descriptor
     // (selector 0x53) holds a per-thread 32-bit TEB base that the guest reloads on every 64<->32
@@ -405,10 +418,14 @@ namespace sogen
 
         void serialize(utils::buffer_serializer& buffer, const emulator_thread* active_thread) const;
         void deserialize(utils::buffer_deserializer& buffer, emulator_thread*& active_thread);
+        void prepare_for_state_restore(windows_emulator& win_emu);
+        void restore_after_state_restore(windows_emulator& win_emu);
+        void restore_windows_after_state_restore(windows_emulator& win_emu);
 
         generic_handle_store* get_handle_store(handle handle);
         emulator_thread* find_thread_by_id(uint32_t thread_id);
         const emulator_thread* find_thread_by_id(uint32_t thread_id) const;
+        bool is_window_effectively_visible(hwnd window) const;
         bool is_current_process_handle(handle handle) const;
         bool is_current_thread_handle(handle handle, const emulator_thread* active_thread) const;
         bool is_object_pseudo_handle(handle handle) const;
@@ -514,7 +531,7 @@ namespace sogen
         handle_store<handle_types::event, event> events{};
         handle_store<handle_types::file, file> files{};
         utils::insensitive_u16string_map<file_lock_ranges> file_locks{};
-        handle_store<handle_types::section, section> sections{};
+        handle_store<handle_types::section, section, 2> sections{};
         handle_store<handle_types::device, io_device_container> devices{};
         handle console_handle{};
         handle_store<handle_types::semaphore, semaphore> semaphores{};
@@ -548,6 +565,18 @@ namespace sogen
         uint32_t spawned_thread_count{0};
         handle_store<handle_types::thread, emulator_thread> threads{};
 
+        // Handles delivered with the most recent ALPC reply message (NtAlpcSendWaitReceivePort). rpcrt4's
+        // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)
+        // rather than reading the handle attribute directly. Transient (valid only until the next reply).
+        std::vector<alpc_reply_handle> pending_alpc_message_handles{};
+
+        // The guest event a WASAPI EVENTCALLBACK client registered via SetEventHandle on its render endpoint.
+        // The audio render thread signals it at the device rate so the client's render loop wakes and refills the
+        // shared buffer. Stored as a handle rather than a pointer: the render thread is host-owned, so it resolves
+        // this through windows_emulator::try_signal_guest_event under the kernel lock instead of racing a close on
+        // an emulator thread.
+        std::atomic<uint64_t> audio_render_event{};
+
         // Extended parameters from last NtMapViewOfSectionEx call
         // These can be used by other syscalls like NtAllocateVirtualMemoryEx
         uint64_t last_extended_params_numa_node{0};
@@ -555,6 +584,9 @@ namespace sogen
         uint16_t last_extended_params_image_machine{IMAGE_FILE_MACHINE_UNKNOWN};
 
         uint64_t next_luid{0x1001};
+        std::array<uint8_t, 6> uuid_seed{};
+        uint64_t next_uuid_time{};
+        uint32_t uuid_sequence{};
     };
 
 } // namespace sogen

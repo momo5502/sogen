@@ -50,6 +50,7 @@ namespace sogen::test
     struct sample_configuration
     {
         bool print_time{false};
+        bool fail_fast{false};
     };
 
     namespace
@@ -108,6 +109,11 @@ namespace sogen::test
             settings.arguments.emplace_back(u"-time");
         }
 
+        if (config.fail_fast)
+        {
+            settings.arguments.emplace_back(u"-fail-fast");
+        }
+
         return settings;
     }
 
@@ -131,6 +137,15 @@ namespace sogen::test
         if (!interfaces.socket_factory)
         {
             interfaces.socket_factory = network::create_static_socket_factory();
+        }
+
+        if (!interfaces.ui)
+        {
+            // A real UI backend (SDL) shows an actual host window and pumps host-originated events (mouse
+            // motion, focus, ...) on a wall-clock-dependent schedule. Under a deterministic clock that races
+            // with guest completion and makes cursor/focus state non-reproducible between runs. Tests don't
+            // need a real window, so use the no-op backend unless one is explicitly injected.
+            interfaces.ui = std::make_unique<null_ui_backend>();
         }
 
         return windows_emulator{
@@ -166,6 +181,13 @@ namespace sogen::test
         if (!interfaces.dns_lookup)
         {
             interfaces.dns_lookup = create_sample_dns_lookup();
+        }
+
+        if (!interfaces.ui)
+        {
+            // See create_emulator() above: tests don't need a real (SDL) window, and a real UI backend's
+            // host-originated events would otherwise race with deterministic guest execution.
+            interfaces.ui = std::make_unique<null_ui_backend>();
         }
 
         return windows_emulator{

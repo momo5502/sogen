@@ -5,11 +5,12 @@
 	<a href="https://github.com/momo5502/sogen/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/sogen/build.yml?branch=main&label=build"/></a>
 	<a href="https://github.com/momo5502/sogen/issues"><img src="https://img.shields.io/github/issues/momo5502/sogen?color=F8B000"/></a>
 	<img src="https://img.shields.io/github/commit-activity/m/momo5502/sogen?color=FF3131"/>
+	<a href="https://inspect.software/software/momo5502/sogen"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Finspect.software%2Fbadge%2Fv1%2Fmomo5502%2Fsogen.json" alt="inspect.software score badge for momo5502/sogen" /></a>
 </h1>
 
-Sogen runs Windows and Linux programs without a real operating system, and lets you see and control everything they do.
+Sogen runs Windows and Linux programs without a real operating system: It lets you see and control everything they do.
 
-Instead of reimplementing thousands of OS APIs, Sogen emulates binaries at the CPU and syscall level and runs the **real system DLLs**, so behavior closely matches the real OS.
+Instead of reimplementing thousands of OS APIs, Sogen emulates binaries at CPU and syscall level and runs the **real system DLLs**, so behavior closely matches the real OS.
 
 Every instruction, memory access and API call can be hooked, inspected or rewritten, runs are fully deterministic, and the entire emulator state can be snapshotted and restored.
 
@@ -19,8 +20,10 @@ Built in C++ and powered by the CPU backend of your choice:
 - [icicle-emu](https://github.com/icicle-emu/icicle-emu)
 - [Hyper-V (WHP)](https://learn.microsoft.com/en-us/virtualization/api/hypervisor-platform/hypervisor-platform)
 - [KVM](https://www.kernel.org/doc/html/latest/virt/kvm/api.html)
+- [FEX](https://fex-emu.com)
 
-Try it out: <a href="https://sogen.dev">sogen.dev</a>
+Try it out: <a href="https://sogen.dev">sogen.dev</a>  
+&nbsp;  
 
 ## Key Features
 
@@ -29,7 +32,8 @@ Try it out: <a href="https://sogen.dev">sogen.dev</a>
 - **Faithful Windows internals**: PE loading (relocations, TLS), Windows memory types, SEH, threading, the registry, filesystem and networking
 - **Snapshot & restore**: full state serialization, fast in-memory snapshots and minidump loading
 - **Runs everywhere**: Windows, Linux, macOS, Android, iOS and the browser, on x86-64 and arm64
-- **Deterministic**: every run is reproducible, down to the instruction
+- **Deterministic**: every run is reproducible, down to the instruction  
+&nbsp;  
 
 ## Preview
 
@@ -58,7 +62,7 @@ Direct3D 8/9/10/11 titles run through [DXVK](https://github.com/doitsujin/dxvk),
   <img src="https://momo5502.com/sogen/video.png" alt="YouTube Video" width="600" />
 </a>
 
-Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.
+Click <a href="https://docs.google.com/presentation/d/1pha4tFfDMpVzJ_ehJJ21SA_HAWkufQBVYQvh1IFhVls/edit">here</a> for the slides.  
 &nbsp;  
 
 ## Python Bindings
@@ -88,7 +92,13 @@ emu.start()
 print(emu.process.exit_status)
 ```
 
-See `examples/python/README.md` for setup details and a larger example.
+See `examples/python/README.md` for setup details and a larger example.  
+&nbsp;  
+
+## Unofficial Bindings
+
+[Dart bindings](https://github.com/Wdestroier/sogen_dart) are available in a separate repository.  
+&nbsp;  
 
 ## Quick Start (Windows + Visual Studio)
 

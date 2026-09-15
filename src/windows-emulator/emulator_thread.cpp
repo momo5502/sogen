@@ -426,6 +426,7 @@ namespace sogen
                     if (const auto* wnd = context.windows.get(context.default_desktop_window_handle))
                     {
                         info.spwndDesktop = wnd->guest.value();
+                        info.flags = 0x1;
                     }
                 });
                 teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
@@ -514,6 +515,7 @@ namespace sogen
                 if (const auto* wnd = context.windows.get(context.default_desktop_window_handle))
                 {
                     info.spwndDesktop = wnd->guest.value();
+                    info.flags = 0x1;
                 }
             });
             teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
@@ -805,13 +807,22 @@ namespace sogen
             (void)this->synthesize_due_user_timer(win_emu);
         }
 
-        return this->message_queue_status_bits;
+        auto status = this->message_queue_status_bits;
+        const auto has_pending_paint = std::ranges::any_of(win_emu.process.windows, [this, &win_emu](const auto& entry) {
+            const auto& win = entry.second;
+            return win.thread_id == this->id && (win.update_pending || win.internal_paint_pending) &&
+                   win_emu.process.is_window_effectively_visible(win.handle);
+        });
+        if (has_pending_paint)
+        {
+            status |= QS_PAINT;
+        }
+
+        return status;
     }
 
     namespace
     {
-        // GetMessage(hWnd) retrieves messages for hWnd and all of its children (IsChild semantics),
-        // so a message targeted at a child control must match a filter naming any of its ancestors.
         bool window_matches_filter(const process_context& process, const hwnd target, const hwnd filter)
         {
             auto current = target;
@@ -835,11 +846,9 @@ namespace sogen
         }
     }
 
-    std::optional<msg> emulator_thread::peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
-                                                             bool remove)
+    std::optional<msg> emulator_thread::peek_queued_message(const process_context& process, const hwnd hwnd_filter, const UINT filter_min,
+                                                            const UINT filter_max, const bool remove)
     {
-        (void)this->synthesize_due_user_timer(win_emu, hwnd_filter, filter_min, filter_max);
-
         for (auto it = message_queue.begin(); it != message_queue.end(); ++it)
         {
             if (hwnd_filter == static_cast<hwnd>(-1))
@@ -849,7 +858,7 @@ namespace sogen
                     continue;
                 }
             }
-            else if (hwnd_filter != 0 && !window_matches_filter(win_emu.process, it->window, hwnd_filter))
+            else if (hwnd_filter != 0 && !window_matches_filter(process, it->window, hwnd_filter))
             {
                 continue;
             }
@@ -879,6 +888,54 @@ namespace sogen
                 message_queue.erase(it);
             }
             return msg;
+        }
+
+        return std::nullopt;
+    }
+
+    std::optional<msg> emulator_thread::peek_pending_message(windows_emulator& win_emu, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
+                                                             bool remove)
+    {
+        if (auto queued_message = this->peek_queued_message(win_emu.process, hwnd_filter, filter_min, filter_max, remove))
+        {
+            return queued_message;
+        }
+
+        if ((filter_min == 0 && filter_max == 0) || (filter_min <= WM_PAINT && WM_PAINT <= filter_max))
+        {
+            for (auto& [index, win] : win_emu.process.windows)
+            {
+                (void)index;
+                if (win.thread_id != this->id || (!win.update_pending && !win.internal_paint_pending) ||
+                    !win_emu.process.is_window_effectively_visible(win.handle))
+                {
+                    continue;
+                }
+
+                if (hwnd_filter == static_cast<hwnd>(-1))
+                {
+                    continue;
+                }
+                if (hwnd_filter != 0 && !window_matches_filter(win_emu.process, win.handle, hwnd_filter))
+                {
+                    continue;
+                }
+
+                win.internal_paint_pending = false;
+                return msg{
+                    .window = win.handle,
+                    .message = WM_PAINT,
+                    .wParam = 0,
+                    .lParam = 0,
+                    .time = get_current_message_time(win_emu.clock()),
+                    .pt = {.x = win_emu.process.cursor_x, .y = win_emu.process.cursor_y},
+                };
+            }
+        }
+
+        if (this->synthesize_due_user_timer(win_emu, hwnd_filter, filter_min, filter_max))
+        {
+            return this->peek_queued_message(win_emu.process, hwnd_filter, filter_min, filter_max, remove);
         }
 
         return std::nullopt;
@@ -932,6 +989,33 @@ namespace sogen
         this->message_queue_status_bits |= bits;
         this->queue_status_changed_bits |= bits;
         message_queue.push_back(msg);
+    }
+
+    void emulator_thread::remove_window_messages(const hwnd window)
+    {
+        for (auto it = this->message_queue.begin(); it != this->message_queue.end();)
+        {
+            if (it->window != window)
+            {
+                ++it;
+                continue;
+            }
+
+            const auto removed_bits = get_message_queue_status_bits(*it);
+            for_each_queue_status_bit(removed_bits, [this](const uint32_t bit, const size_t index) {
+                if (this->message_queue_status_bit_counts[index] <= 1)
+                {
+                    this->message_queue_status_bit_counts[index] = 0;
+                    this->message_queue_status_bits &= ~bit;
+                }
+                else
+                {
+                    --this->message_queue_status_bit_counts[index];
+                }
+            });
+
+            it = this->message_queue.erase(it);
+        }
     }
 
     bool emulator_thread::is_terminated() const
@@ -1210,6 +1294,13 @@ namespace sogen
         // Native 64-bit process setup
         setup_stack(emu, context, this->stack_base, static_cast<size_t>(this->stack_size));
         emu.set_segment_base(x86_register::gs, this->gs_segment->get_base());
+
+        // x86 power-on defaults: all exceptions masked, round-to-nearest. Some backends initialise these
+        // registers to 0, leaving every floating-point exception unmasked - including the near-ubiquitous
+        // inexact/precision condition - so guest code reading the live control word via fnstcw (e.g. the
+        // CRT's pow/_except1 path) raises a STATUS_FLOAT_INEXACT_RESULT that never occurs on real Windows.
+        emu.reg<uint16_t>(x86_register::fpcw, 0x037F);
+        emu.reg<uint32_t>(x86_register::mxcsr, 0x1F80);
 
         CONTEXT64 ctx{};
         ctx.ContextFlags = CONTEXT64_ALL;

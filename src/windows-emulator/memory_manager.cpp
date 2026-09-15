@@ -298,11 +298,12 @@ namespace sogen
 
     bool memory_manager::allocate_mmio(const uint64_t address, const size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb)
     {
-        if (this->overlaps_reserved_region(address, size))
+        if (this->overlaps_reserved_region(address, size, true))
         {
             return false;
         }
 
+        this->carve_host_reserved_hole(address, size);
         this->map_mmio(address, size, std::move(read_cb), std::move(write_cb));
 
         const auto entry = this->reserved_regions_
@@ -323,8 +324,8 @@ namespace sogen
         return true;
     }
 
-    bool memory_manager::allocate_host_memory(const uint64_t address, const size_t size, void* host_pointer,
-                                              const nt_memory_permission permissions)
+    bool memory_manager::allocate_host_memory_at(const uint64_t address, const size_t size, void* host_pointer,
+                                                 const nt_memory_permission permissions)
     {
         if (this->overlaps_reserved_region(address, size))
         {
@@ -351,8 +352,206 @@ namespace sogen
         return true;
     }
 
+    uint64_t memory_manager::allocate_host_memory(const size_t size, void* host_pointer, const nt_memory_permission permissions)
+    {
+        if (size == 0 || host_pointer == nullptr)
+        {
+            return 0;
+        }
+
+        const bool uses_existing_host_mapping = this->memory_->host_memory_mapping_requires_identity();
+        const uint64_t address =
+            uses_existing_host_mapping ? get_untagged_pointer_address(host_pointer) : this->find_free_host_allocation_base(size, 0);
+
+        if (address < MIN_ALLOCATION_ADDRESS || address >= MAX_ALLOCATION_END_EXCL || size > MAX_ALLOCATION_END_EXCL - address)
+        {
+            return 0;
+        }
+
+        if (this->overlaps_reserved_region(address, size, uses_existing_host_mapping))
+        {
+            return 0;
+        }
+
+        if (uses_existing_host_mapping)
+        {
+            this->carve_host_reserved_hole(address, size);
+        }
+        else
+        {
+            this->memory_->reserve_guest_address_range(address, size);
+        }
+
+        if (!this->allocate_host_memory_at(address, size, host_pointer, permissions))
+        {
+            if (!uses_existing_host_mapping)
+            {
+                this->release_host_claims(address + size);
+            }
+            return 0;
+        }
+
+        return address;
+    }
+
+    void memory_manager::reserve_host_memory_ranges()
+    {
+        for (const auto& range : this->memory_->reserved_host_ranges())
+        {
+            this->reserve_host_range_gaps(range.address, range.size);
+        }
+    }
+
+    void memory_manager::reserve_host_memory_ranges_in(const uint64_t address, const size_t size)
+    {
+        for (const auto& range : this->memory_->reserved_host_ranges_in(address, size))
+        {
+            this->reserve_host_range_gaps(range.address, range.size);
+        }
+    }
+
+    void memory_manager::reserve_host_range_gaps(const uint64_t address, const size_t size)
+    {
+        // A backend-reported range can partially overlap existing entries - its own earlier records,
+        // guest allocations made since, or an MMIO hole carved by allocate_mmio - so each still
+        // uncovered gap is recorded individually instead of failing the whole range. Tagged
+        // host_reserved rather than private_allocation so allocate_mmio can still claim addresses in
+        // here.
+        const uint64_t end = address + size;
+        uint64_t cursor = address;
+
+        while (cursor < end)
+        {
+            const auto next = this->reserved_regions_.upper_bound(cursor);
+            if (next != this->reserved_regions_.begin())
+            {
+                const auto& prev = *std::prev(next);
+                const auto prev_end = prev.first + prev.second.length;
+                if (prev_end > cursor)
+                {
+                    cursor = prev_end;
+                    continue;
+                }
+            }
+
+            const auto gap_end = next == this->reserved_regions_.end() ? end : std::min<uint64_t>(end, next->first);
+            if (gap_end > cursor && this->allocate_memory_raw(cursor, static_cast<size_t>(gap_end - cursor), nt_memory_permission{}, true,
+                                                              memory_region_kind::host_reserved))
+            {
+                this->host_reserved_addresses_.push_back(cursor);
+            }
+
+            cursor = gap_end;
+        }
+    }
+
+    void memory_manager::carve_host_reserved_hole(const uint64_t address, const size_t size)
+    {
+        // allocate_mmio may claim addresses inside a host_reserved range (see
+        // overlaps_reserved_region's ignore_host_reserved). Nesting the MMIO entry inside it would
+        // break the pairwise-non-overlap invariant overlaps_reserved_region's fast path depends on,
+        // so the surrounding host_reserved coverage is split around the hole instead.
+        const uint64_t end = address + size;
+
+        auto it = this->reserved_regions_.upper_bound(address);
+        if (it != this->reserved_regions_.begin())
+        {
+            --it;
+        }
+
+        while (it != this->reserved_regions_.end() && it->first < end)
+        {
+            const auto region_start = it->first;
+            const auto region_end = region_start + it->second.length;
+
+            if (region_end <= address || it->second.kind != memory_region_kind::host_reserved)
+            {
+                ++it;
+                continue;
+            }
+
+            assert(it->second.committed_regions.empty());
+            const bool was_tracked = std::erase(this->host_reserved_addresses_, region_start) != 0;
+            it = this->reserved_regions_.erase(it);
+
+            if (region_start < address)
+            {
+                this->reserved_regions_.try_emplace(region_start, reserved_region{
+                                                                      .length = static_cast<size_t>(address - region_start),
+                                                                      .kind = memory_region_kind::host_reserved,
+                                                                  });
+                if (was_tracked)
+                {
+                    this->host_reserved_addresses_.push_back(region_start);
+                }
+            }
+
+            if (region_end > end)
+            {
+                it = this->reserved_regions_
+                         .try_emplace(end,
+                                      reserved_region{
+                                          .length = static_cast<size_t>(region_end - end),
+                                          .kind = memory_region_kind::host_reserved,
+                                      })
+                         .first;
+                if (was_tracked)
+                {
+                    this->host_reserved_addresses_.push_back(end);
+                }
+                ++it;
+            }
+        }
+    }
+
+    bool memory_manager::host_window_is_free(const uint64_t address, const size_t size) const
+    {
+        return this->memory_->reserved_host_ranges_in(address, size).empty();
+    }
+
+    void memory_manager::reset_host_memory_ranges()
+    {
+        for (const auto addr : this->host_reserved_addresses_)
+        {
+            this->release_memory(addr, 0);
+        }
+        this->host_reserved_addresses_.clear();
+
+        this->reserve_host_memory_ranges();
+    }
+
     bool memory_manager::allocate_memory(const uint64_t address, const size_t size, const nt_memory_permission permissions,
                                          const bool reserve_only, const memory_region_kind kind)
+    {
+        // On a backend sharing the address space with the guest (FEX on Apple), a host framework can
+        // claim a guest-visible VA at any time - e.g. AppKit/SkyLight lazily vm_allocate'ing a
+        // window-tag shared page into a gap freed by an earlier guest DLL unload - and a fixed-address
+        // mmap over it would silently destroy that mapping, so the target window is confirmed against
+        // the live host layout, not sogen's bookkeeping as of the last rescan. Module preferred-base
+        // loads hit this on every DLL map/remap; a collision surfaces as an overlaps_reserved_region
+        // hit, routing relocatable modules through the existing find_free_allocation_base fallback.
+        // Only [address, size) is rescanned - the sole window this call could clobber - since a
+        // full-address-space rescan grows costlier as the host map does, for no added safety.
+        this->reserve_host_memory_ranges_in(address, size);
+
+        if (!this->allocate_memory_raw(address, size, permissions, reserve_only, kind))
+        {
+            return false;
+        }
+
+        // A reserve-only range never reaches map_memory, so nothing else claims it at the host level:
+        // the host allocator would stay free to hand the address out until the guest commits, and the
+        // commit's MAP_FIXED would then clobber whatever landed there.
+        if (reserve_only)
+        {
+            this->memory_->reserve_guest_address_range(address, size);
+        }
+
+        return true;
+    }
+
+    bool memory_manager::allocate_memory_raw(const uint64_t address, const size_t size, const nt_memory_permission permissions,
+                                             const bool reserve_only, const memory_region_kind kind)
     {
         if (this->overlaps_reserved_region(address, size))
         {
@@ -403,6 +602,11 @@ namespace sogen
     {
         const auto entry = this->find_reserved_region(address);
         if (entry == this->reserved_regions_.end())
+        {
+            return false;
+        }
+
+        if (entry->second.kind == memory_region_kind::host_reserved)
         {
             return false;
         }
@@ -527,6 +731,35 @@ namespace sogen
         return true;
     }
 
+    void memory_manager::release_host_claims(const uint64_t released_end)
+    {
+        // Since reserved_regions_ entries are pairwise non-overlapping, the space between the last
+        // region starting below released_end and the first starting at or above it holds no
+        // reservations. That whole gap is handed back rather than just the released range, so the
+        // backend can also drop claim pages straddling the released range's unaligned edges.
+        uint64_t gap_start = 0;
+        uint64_t gap_end = MAX_ALLOCATION_END_EXCL;
+
+        const auto next = this->reserved_regions_.lower_bound(released_end);
+        if (next != this->reserved_regions_.end())
+        {
+            gap_end = next->first;
+        }
+
+        if (next != this->reserved_regions_.begin())
+        {
+            const auto& prev = *std::prev(next);
+            gap_start = prev.first + prev.second.length;
+        }
+
+        if (gap_start >= gap_end)
+        {
+            return;
+        }
+
+        this->memory_->release_guest_address_range(gap_start, static_cast<size_t>(gap_end - gap_start));
+    }
+
     bool memory_manager::release_memory(const uint64_t address, size_t size)
     {
         if (!size)
@@ -537,6 +770,8 @@ namespace sogen
                 return false;
             }
 
+            const auto entry_length = entry->second.length;
+
             auto& committed_regions = entry->second.committed_regions;
             for (auto i = committed_regions.begin(); i != committed_regions.end();)
             {
@@ -545,6 +780,7 @@ namespace sogen
             }
 
             this->reserved_regions_.erase(entry);
+            this->release_host_claims(address + entry_length);
             this->update_layout_version();
             return true;
         }
@@ -629,6 +865,7 @@ namespace sogen
             this->reserved_regions_.try_emplace(aligned_end, std::move(right_region));
         }
 
+        this->release_host_claims(aligned_end);
         this->update_layout_version();
         return true;
     }
@@ -646,16 +883,83 @@ namespace sogen
         this->reserved_regions_.clear();
     }
 
+    namespace
+    {
+        // Backstop only: every non-settling iteration of the pick/confirm loop below records at least
+        // one more foreign range, so find_free_allocation_base is guaranteed to make progress.
+        constexpr int max_host_reserved_retries = 8;
+    }
+
     uint64_t memory_manager::allocate_memory(const size_t size, const nt_memory_permission permissions, const bool reserve_only,
                                              uint64_t start, const memory_region_kind kind)
     {
-        const auto allocation_base = this->find_free_allocation_base(size, start);
-        if (!allocate_memory(allocation_base, size, permissions, reserve_only, kind))
+        // Backends sharing the address space with the guest (e.g. FEX) allocate their own host memory
+        // (JIT code buffers, thread and GCD worker stacks, a framework's lazy vm_allocate) at any point
+        // during execution, so a base picked purely from sogen's bookkeeping may already be claimed and
+        // the reserve_guest_address_range below would mmap(MAP_FIXED) over it. find_free_host_allocation_base
+        // confirms the pick against the host instead of paying for an unconditional full rescan, which
+        // costs O(host VM regions) Mach IPC syscalls and grows without bound over a session.
+        const uint64_t allocation_base = this->find_free_host_allocation_base(size, start);
+        if (!allocation_base)
         {
             return 0;
         }
 
+        // Claimed at the host level immediately, even when the guest range is only reserved and not yet
+        // backed by map_memory - see reserve_guest_address_range's doc comment.
+        this->memory_->reserve_guest_address_range(allocation_base, size);
+
+        // Not the public allocate_memory(address, ...): its rescan would re-discover the
+        // reserve_guest_address_range mmap just made as a foreign host allocation - reserved_regions_
+        // does not know about it yet - and mark allocation_base host_reserved, making the call below
+        // self-conflict. The confirm inside find_free_host_allocation_base already covers this window.
+        if (!this->allocate_memory_raw(allocation_base, size, permissions, reserve_only, kind))
+        {
+            this->release_host_claims(allocation_base + size);
+            return 0;
+        }
+
         return allocation_base;
+    }
+
+    uint64_t memory_manager::find_free_host_allocation_base(const size_t size, const uint64_t start)
+    {
+        return this->find_free_host_allocation_base(size, start, MAX_ALLOCATION_END_EXCL - 1);
+    }
+
+    uint64_t memory_manager::find_free_host_allocation_base(const size_t size, const uint64_t start, const uint64_t highest_address)
+    {
+        // The confirm uses the pure host_window_is_free probe rather than reserve_host_memory_ranges_in,
+        // which would record a clamped window slice and stop the rescan below from recording an
+        // intruder's full extent.
+        //
+        // Both rescan forms are needed on collision: the full scan records every visible foreign range
+        // at once, so a pick at the low edge of a large occupied region skips the whole region in one
+        // step; the windowed record retires exactly the flagged window, covering backends whose full
+        // reserved_host_ranges() omits ranges their windowed query still reports occupied - otherwise
+        // the same pick would be rejected every iteration while the full rescan recorded nothing new.
+        for (int attempt = 0;; ++attempt)
+        {
+            const uint64_t allocation_base =
+                this->find_free_allocation_base(size, start, ALLOCATION_GRANULARITY, MIN_ALLOCATION_ADDRESS, highest_address);
+            if (!allocation_base)
+            {
+                return 0;
+            }
+
+            if (this->host_window_is_free(allocation_base, size))
+            {
+                return allocation_base;
+            }
+
+            if (attempt >= max_host_reserved_retries)
+            {
+                return 0;
+            }
+
+            this->reserve_host_memory_ranges();
+            this->reserve_host_memory_ranges_in(allocation_base, size);
+        }
     }
 
     uint64_t memory_manager::find_free_allocation_base(const size_t size, const uint64_t start) const
@@ -710,8 +1014,14 @@ namespace sogen
 
         uint64_t start_address = *aligned_start;
 
-        // Since reserved_regions_ is a sorted map, we can iterate through it
-        // and find gaps between regions
+        // Since reserved_regions_ is a sorted map, start at the region immediately
+        // before or containing start_address and advance through it only once.
+        auto region = this->reserved_regions_.upper_bound(start_address);
+        if (region != this->reserved_regions_.begin())
+        {
+            --region;
+        }
+
         while (start_address <= highest_address)
         {
             const auto end_address = start_address + size;
@@ -720,32 +1030,31 @@ namespace sogen
                 return 0;
             }
 
-            bool conflict = false;
-
-            // Check if the proposed range [start_address, start_address+size) conflicts with any existing region
-            for (const auto& region : this->reserved_regions_)
+            while (region != this->reserved_regions_.end())
             {
-                const auto region_end = region.first + region.second.length;
-                if (region_end < region.first)
+                const auto region_end = region->first + region->second.length;
+                if (region_end < region->first)
                 {
                     return 0;
                 }
 
-                // If this region ends before our start, skip it
+                // This region ends before our candidate, so it can never conflict
+                // with this or any later candidate.
                 if (region_end <= start_address)
                 {
+                    ++region;
                     continue;
                 }
 
-                // If this region starts after our end, we're done checking (map is sorted)
-                if (region.first >= end_address)
+                // The next reserved region starts after our candidate range, so
+                // the entire range [start_address, end_address) is free.
+                if (region->first >= end_address)
                 {
-                    break;
+                    return start_address;
                 }
 
-                // Otherwise, we have a conflict
-                conflict = true;
-                // Move start_address past this conflicting region
+                // Otherwise the candidate overlaps this region. Move the candidate
+                // past it and continue scanning from the following region.
                 aligned_start = checked_align_up(region_end, alignment);
                 if (!aligned_start.has_value())
                 {
@@ -753,12 +1062,21 @@ namespace sogen
                 }
 
                 start_address = *aligned_start;
+                ++region;
                 break;
             }
 
-            // If no conflict was found, we have our address
-            if (!conflict)
+            // No reserved regions remain, so only the address-range bounds need
+            // to be checked for the candidate we may have just advanced to.
+            if (region == this->reserved_regions_.end())
             {
+                const auto final_end_address = start_address + size;
+                if (final_end_address < start_address || final_end_address > MAX_ALLOCATION_END_EXCL ||
+                    final_end_address - 1 > highest_address)
+                {
+                    return 0;
+                }
+
                 return start_address;
             }
         }
@@ -902,11 +1220,34 @@ namespace sogen
         return entry;
     }
 
-    bool memory_manager::overlaps_reserved_region(const uint64_t address, const size_t size) const
+    bool memory_manager::overlaps_reserved_region(const uint64_t address, const size_t size, const bool ignore_host_reserved) const
     {
-        for (const auto& region : this->reserved_regions_)
+        // reserved_regions_ entries are pairwise non-overlapping - every insertion path checks this
+        // function first, and allocate_mmio splits host_reserved coverage around its claim (see
+        // carve_host_reserved_hole) - so only the region starting immediately before `address` and
+        // those starting within [address, address + size) can intersect. The full scan this replaces
+        // mattered: reserve_host_memory_ranges calls this once per host-reported range on every
+        // fixed-address module map, so module remap churn cost O(n) per remap as reserved_regions_ grew.
+        auto it = this->reserved_regions_.upper_bound(address);
+
+        if (it != this->reserved_regions_.begin())
         {
-            if (regions_with_length_intersect(address, size, region.first, region.second.length))
+            const auto& prev = *std::prev(it);
+            if (!(ignore_host_reserved && prev.second.kind == memory_region_kind::host_reserved) &&
+                regions_with_length_intersect(address, size, prev.first, prev.second.length))
+            {
+                return true;
+            }
+        }
+
+        for (; it != this->reserved_regions_.end() && it->first < address + size; ++it)
+        {
+            if (ignore_host_reserved && it->second.kind == memory_region_kind::host_reserved)
+            {
+                continue;
+            }
+
+            if (regions_with_length_intersect(address, size, it->first, it->second.length))
             {
                 return true;
             }

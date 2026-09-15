@@ -37,6 +37,7 @@ namespace sogen
     constexpr size_t USER_SERVERINFO_BRUSH_SLOT_COUNT = 32;
     constexpr size_t USER_SERVERINFO_BRUSH_TRAILING_BYTES = 0x78;
     constexpr uint32_t USER_DEFAULT_DPI_CONTEXT = 18;
+    constexpr uint32_t USER_DEFAULT_WINDOW_DPI_CONTEXT = (96u << 8) | USER_DEFAULT_DPI_CONTEXT;
 
     struct USER_SERVERINFO
     {
@@ -53,7 +54,12 @@ namespace sogen
         uint8_t pad_1358[0x34];
         int32_t defaultFontHeightScale;
         int32_t defaultFontWidthScale;
-        uint8_t pad_1394[0x7C2];
+        uint8_t pad_1394[0x74];
+        uint32_t dpi96DialogBaseUnitWidth;
+        uint32_t dpi96DialogBaseUnitHeight;
+        uint8_t pad_1410[0x73C];
+        uint32_t asyncKeyStateGeneration;
+        uint8_t pad_1b50[0x6];
         uint16_t systemDpi;
         uint8_t pad_1b58[0x286];
         uint64_t foregroundWindow;
@@ -64,6 +70,9 @@ namespace sogen
     static_assert(offsetof(USER_SERVERINFO, ahbrSystem) == 0x1258);
     static_assert(offsetof(USER_SERVERINFO, defaultFontHeightScale) == 0x138C);
     static_assert(offsetof(USER_SERVERINFO, defaultFontWidthScale) == 0x1390);
+    static_assert(offsetof(USER_SERVERINFO, dpi96DialogBaseUnitWidth) == 0x1408);
+    static_assert(offsetof(USER_SERVERINFO, dpi96DialogBaseUnitHeight) == 0x140C);
+    static_assert(offsetof(USER_SERVERINFO, asyncKeyStateGeneration) == 0x1B4C);
     static_assert(offsetof(USER_SERVERINFO, systemDpi) == 0x1B56);
     static_assert(offsetof(USER_SERVERINFO, foregroundWindow) == 0x1DE0);
     static_assert(sizeof(USER_SERVERINFO) == 0x1de8);
@@ -382,6 +391,7 @@ namespace sogen
     enum USER_WINDOWCOMPOSITIONATTRIB : uint32_t
     {
         WCA_NCRENDERING_ENABLED = 1,
+        WCA_NCRENDERING_POLICY = 2,
         WCA_EXTENDED_FRAME_BOUNDS = 8,
         WCA_CLOAKED = 18,
     };
@@ -399,7 +409,9 @@ namespace sogen
     {
         uint8_t unknown0[0x8];
         uint64_t spwndDesktop;
-        uint8_t unknown10[0xEF];
+        uint8_t unknown10[0x30];
+        uint32_t flags;
+        uint8_t unknown44[0xFF];
     };
 
     // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)

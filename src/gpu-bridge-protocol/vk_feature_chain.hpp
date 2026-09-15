@@ -34,10 +34,14 @@ namespace sogen::gpu_bridge
             return sizeof(VkPhysicalDeviceVulkan13Features);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT:
             return sizeof(VkPhysicalDeviceDepthClipEnableFeaturesEXT);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT:
+            return sizeof(VkPhysicalDeviceTransformFeedbackFeaturesEXT);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT:
             return sizeof(VkPhysicalDeviceExtendedDynamicState3FeaturesEXT);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT:
             return sizeof(VkPhysicalDeviceRobustness2FeaturesEXT);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MODULE_IDENTIFIER_FEATURES_EXT:
+            return sizeof(VkPhysicalDeviceShaderModuleIdentifierFeaturesEXT);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR:
             return sizeof(VkPhysicalDeviceMaintenance5FeaturesKHR);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES_KHR:
@@ -48,6 +52,8 @@ namespace sogen::gpu_bridge
             return sizeof(VkPhysicalDeviceMaintenance8FeaturesKHR);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_9_FEATURES_KHR:
             return sizeof(VkPhysicalDeviceMaintenance9FeaturesKHR);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES:
+            return sizeof(VkPhysicalDeviceVertexAttributeDivisorFeatures);
         default:
             return 0;
         }
@@ -77,6 +83,10 @@ namespace sogen::gpu_bridge
             return sizeof(VkPhysicalDeviceVulkan13Properties);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_PROPERTIES_EXT:
             return sizeof(VkPhysicalDeviceRobustness2PropertiesEXT);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT:
+            return sizeof(VkPhysicalDeviceTransformFeedbackPropertiesEXT);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MODULE_IDENTIFIER_PROPERTIES_EXT:
+            return sizeof(VkPhysicalDeviceShaderModuleIdentifierPropertiesEXT);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_PROPERTIES:
             return sizeof(VkPhysicalDeviceDescriptorIndexingProperties);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES:
@@ -89,6 +99,10 @@ namespace sogen::gpu_bridge
             return sizeof(VkPhysicalDeviceMaintenance7PropertiesKHR);
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_9_PROPERTIES_KHR:
             return sizeof(VkPhysicalDeviceMaintenance9PropertiesKHR);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES:
+            return sizeof(VkPhysicalDeviceVertexAttributeDivisorProperties);
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_PROPERTIES_EXT:
+            return sizeof(VkPhysicalDeviceVertexAttributeDivisorPropertiesEXT);
         default:
             return 0;
         }
