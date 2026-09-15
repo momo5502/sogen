@@ -4347,6 +4347,46 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        void complete_warp_sync_command(const syscall_context& c, const uint64_t command_ptr, const UINT32 command_length)
+        {
+            constexpr uint32_t k_sync_magic = 0x434E5953;
+            constexpr uint32_t k_ack_magic = 0x4B415953;
+            constexpr uint32_t k_ack_length = 8;
+            if (command_ptr == 0 || command_length < 24)
+            {
+                return;
+            }
+
+            uint32_t magic{};
+            if (!c.emu.try_read_memory(command_ptr, &magic, sizeof(magic)) || magic != k_sync_magic)
+            {
+                return;
+            }
+
+            // SYNC carries a UM completion event at +8 and an error event at +16. After the KM
+            // consumes the DMA buffer it overwrites the header with a sync-ack (magic + length 8).
+            // Leaving SYNC in place is treated as E_OUTOFMEMORY and the D3D11 device is removed.
+            // Signal only the completion event; the error event is DXGI_ERROR_DEVICE_REMOVED.
+            uint64_t completion{};
+            if (!c.emu.try_read_memory(command_ptr + 8, &completion, sizeof(completion)))
+            {
+                return;
+            }
+
+            uint32_t ack_magic = k_ack_magic;
+            uint32_t ack_length = k_ack_length;
+            if (!c.emu.try_write_memory(command_ptr, &ack_magic, sizeof(ack_magic)))
+            {
+                return;
+            }
+
+            c.emu.try_write_memory(command_ptr + 4, &ack_length, sizeof(ack_length));
+            if (auto* entry = c.proc.events.get(completion))
+            {
+                entry->signaled = true;
+            }
+        }
+
         void reserve_dxgk_submission_buffers(const syscall_context& c, const uint32_t command_buffer_size,
                                              const uint32_t allocation_list_count, const uint32_t patch_location_list_count)
         {
@@ -4406,6 +4446,15 @@ namespace sogen
                 if (render.hContext != k_dxgk_context_handle && render.hContext != k_dxgk_device_handle)
                 {
                     dxgk_warn(c, "NtGdiDdDDIRender: Unknown context 0x%X", render.hContext);
+                }
+
+                const auto& command_buffer = c.proc.dxgk.command_buffer;
+                const auto command_offset = static_cast<uint64_t>(render.CommandOffset);
+                const auto command_length = static_cast<uint64_t>(render.CommandLength);
+                if (command_buffer.address != 0 && command_offset <= command_buffer.size &&
+                    command_length <= static_cast<uint64_t>(command_buffer.size) - command_offset)
+                {
+                    complete_warp_sync_command(c, command_buffer.address + command_offset, render.CommandLength);
                 }
 
                 // Clamp the guest-controlled sizes: at least the defaults, but never above the caps above.
