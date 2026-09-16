@@ -168,3 +168,8 @@ page/public/64/linux-analyzer.wasm
 __pycache__/
 devdocs/
 dist_local/
+# Agent working directory: task briefs, reports and ledgers. Never part of a change.
+.superpowers/
+
+# Ad-hoc browser verification scripts, machine-specific paths.
+src/tools/browser-poc/*.local.mjs

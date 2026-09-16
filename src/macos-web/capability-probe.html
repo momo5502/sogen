@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sogen &mdash; browser capability probe</title>
+<link rel="stylesheet" href="app.css">
+<style>
+  .wrap { max-width: 900px; margin: 0 auto; padding: 24px 20px 60px; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  p.lede { color: var(--muted); margin: 0 0 20px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .card h3 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+  .res { font-family: var(--mono); font-size: 12px; }
+  .res .r { padding: 6px 0; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: baseline; }
+  .res .r:last-child { border-bottom: 0; }
+  .res .v { flex: 0 0 52px; font-weight: 600; }
+  .res .v.ok { color: var(--ok); } .res .v.bad { color: var(--bad); } .res .v.na { color: var(--warn); }
+  .res .n { flex: 0 0 210px; color: var(--accent); }
+  .res .d { color: var(--muted); word-break: break-word; }
+  textarea { width: 100%; height: 190px; background: #0b0e13; color: var(--text); border: 1px solid var(--line);
+             border-radius: 8px; font: 11px var(--mono); padding: 10px; resize: vertical; }
+  ol { color: var(--muted); padding-left: 20px; } ol li { margin: 5px 0; }
+  code { font-family: var(--mono); color: var(--text); background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Browser capability probe</h1>
+  <p class="lede">Four measurements the shared-cache range bridge and the wasm memory ceiling depend on.
+    Nothing here runs the emulator.</p>
+
+  <div class="card">
+    <h3>How to run</h3>
+    <ol>
+      <li>Pick a file larger than 4&nbsp;GiB below. Probe&nbsp;3 reads its <em>last</em> 2&nbsp;MiB, so the
+        offset only lands past the 4&nbsp;GiB mark if the file is bigger than that &mdash; a smaller one
+        reports <em>inconclusive</em> rather than a false pass.</li>
+      <li>A sparse file works and costs no disk:
+        <code>dd if=/dev/zero of=/tmp/sogen-big.bin bs=1 count=0 seek=5400m</code></li>
+      <li>Copy the block at the bottom and paste it back.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3>Input</h3>
+    <input type="file" id="file">
+    <div class="res" style="margin-top:10px" id="picked"></div>
+  </div>
+
+  <div class="card">
+    <h3>Results</h3>
+    <div class="res" id="out"><div class="r"><span class="d">Pick a file to start. Probes 1, 2 and 4 do not need one and run immediately.</span></div></div>
+  </div>
+
+  <div class="card">
+    <h3>Paste this back <button id="copy" style="float:right;margin-top:-4px">Copy</button></h3>
+    <textarea id="report" readonly placeholder="Results appear here once the probe has run."></textarea>
+  </div>
+
+</div>
+
+<script>
+const out = document.getElementById('out');
+const report = document.getElementById('report');
+const picked = document.getElementById('picked');
+const worker = new Worker('./capability-probe-worker.js');
+
+function render(payload) {
+  out.textContent = '';
+  for (const r of payload.results) {
+    const inconclusive = /inconclusive/.test(r.detail);
+    const row = document.createElement('div');
+    row.className = 'r';
+    const v = document.createElement('span');
+    v.className = 'v ' + (inconclusive ? 'na' : (r.ok ? 'ok' : 'bad'));
+    v.textContent = inconclusive ? 'N/A' : (r.ok ? 'OK' : 'FAIL');
+    const n = document.createElement('span'); n.className = 'n'; n.textContent = r.name;
+    const d = document.createElement('span'); d.className = 'd'; d.textContent = r.detail;
+    row.append(v, n, d);
+    out.appendChild(row);
+  }
+
+  const lines = [
+    '--- sogen browser capability probe ---',
+    'agent:  ' + payload.agent,
+    'origin: ' + location.origin,
+    'when:   ' + new Date().toISOString(),
+    '',
+    ...payload.results.map((r) => `${r.ok ? 'OK  ' : 'FAIL'}  ${r.name}\n        ${r.detail}`),
+  ];
+  report.value = lines.join('\n');
+}
+
+worker.onmessage = (e) => render(e.data);
+
+document.getElementById('file').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) {
+    const gib = (file.size / 1073741824).toFixed(2);
+    picked.innerHTML = '';
+    const row = document.createElement('div');
+    row.className = 'r';
+    const d = document.createElement('span');
+    d.className = 'd';
+    d.textContent = `${file.name} — ${file.size.toLocaleString()} bytes (${gib} GiB)` +
+      (file.size > 4 * 1024 * 1024 * 1024 + 2 * 1024 * 1024 ? '' : '  ← too small to test past 4 GiB');
+    row.appendChild(d);
+    picked.appendChild(row);
+  }
+  worker.postMessage({ file, origin: location.origin });
+});
+
+document.getElementById('copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(report.value); } catch { report.select(); }
+});
+
+// Probes 1, 2 and 4 need no input, so they run on load rather than waiting for a file that only probe 3 uses.
+worker.postMessage({ file: null, origin: location.origin });
+</script>
+</body>
+</html>

@@ -23,12 +23,16 @@ namespace sogen
 
     class memory_manager;
     class linux_memory_manager;
+    class macos_memory_manager;
 
     class memory_interface
     {
       public:
+        // The address space virtuals below are private so that only a memory manager can reshape the
+        // guest. Every entry here is one personality's manager; nothing else belongs in this list.
         friend memory_manager;
         friend linux_memory_manager;
+        friend macos_memory_manager;
 
         virtual ~memory_interface() = default;
 

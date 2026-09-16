@@ -38,6 +38,7 @@ function synchronizeIDBFS(idbfs: MainModule, populate: boolean) {
 export const runtimeRoots = {
   windows: "/root-windows",
   linux: "/root-linux",
+  macos: "/root-macos",
 } as const;
 
 const windowsFilesystemPrefix = `${runtimeRoots.windows}/filesys/`;
@@ -152,6 +153,21 @@ async function initializeIDBFS(mode: FilesystemMode) {
   return { idbfs, runtimeRoot };
 }
 
+// A macOS root is served or attached (page/src/macos/root-cache.ts, page/src/macos/guest-screen.tsx),
+// never copied here: upstream's whole Windows filesystem.zip is ~204 MB and IDBFS populating that into
+// memory already does not transfer, and a macOS root's dyld shared cache alone is multiple gigabytes.
+// This mounts nothing against IndexedDB -- picking a small file through the filesystem explorer still
+// works against the module's own in-memory FS, it simply is not persisted across a reload the way
+// windows and linux are.
+async function initializeMemFS(mode: FilesystemMode) {
+  const idbfs = await idbfsModule();
+  const runtimeRoot = runtimeRoots[mode];
+
+  ensureDirectory(idbfs, runtimeRoot);
+
+  return { idbfs, runtimeRoot };
+}
+
 export interface FileWithData {
   name: string;
   data: ArrayBuffer;
@@ -231,6 +247,11 @@ export class Filesystem {
     clearDirectory(this.idbfs, this.runtimeRoot);
     await synchronizeIDBFS(this.idbfs, false);
   }
+}
+
+export async function setupMacosFilesystem() {
+  const { idbfs, runtimeRoot } = await initializeMemFS("macos");
+  return new Filesystem(idbfs, runtimeRoot);
 }
 
 export async function setupLinuxFilesystem() {

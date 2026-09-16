@@ -142,6 +142,11 @@ jobs:
       - name: Verify Page Formatting
         run: cd page && npx --yes prettier . --check
 
+      - name: Verify Generated Syscall Tables
+        run: |
+          python3 src/tools/gen-bsd-syscall-table/gen_bsd_syscall_table.py
+          git diff --exit-code src/macos-emulator/trace/bsd_syscall_table.generated.cpp src/macos-emulator/trace/mach_trap_table.generated.cpp
+
   build-root-tools:
     name: Build Root Tools
     runs-on: windows-latest
@@ -604,6 +609,14 @@ jobs:
           name: ${{ matrix.platform }} ${{matrix.configuration}} Artifacts
           path: build/${{matrix.preset}}/artifacts
 
+      # The arm64 backend test drives Unicorn's AArch64 target directly, and the macOS loader test
+      # runs against committed self-built Mach-O fixtures - no emulation root, no sample, no
+      # downloaded artifact. Running them before the root download keeps a regression in either
+      # distinguishable from a failure in the (much heavier) root setup below.
+      - name: ARM64 Backend, macOS Loader and Trace Tests
+        if: ${{ matrix.emulator != 'Icicle' || matrix.platform != 'Windows x86' }}
+        run: cd build/${{matrix.preset}} && ctest --verbose --no-tests=error -R "arm64-backend-test|macos-emulator-test|macos-analyzer-test|macos-trace-test"
+
       - name: Download Windows Artifacts
         uses: pyTooling/download-artifact@v8
         if: "${{ matrix.platform != 'Windows x86_64' }}"
@@ -693,6 +706,16 @@ jobs:
         with:
           name: Temp Isolate Windows x86_64 ${{ matrix.configuration}} Artifacts
           path: build/${{ matrix.preset }}/artifacts
+
+      - name: Print Hypervisor.framework Diagnostics
+        if: "${{ matrix.platform == 'macOS arm64' }}"
+        run: |
+          echo "Hypervisor.framework diagnostics"
+          sysctl kern.hv_support || true
+          codesign -d --entitlements - build/${{ matrix.preset }}/artifacts/arm64-backend-test || true
+
+      - name: ARM64 Backend, macOS Loader and Trace Tests
+        run: cd build/${{ matrix.preset }} && ctest --verbose --no-tests=error -R "arm64-backend-test|macos-emulator-test|macos-analyzer-test|macos-trace-test"
 
       - name: Download Emulation Root
         uses: pyTooling/download-artifact@v8

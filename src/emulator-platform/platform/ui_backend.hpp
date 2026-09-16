@@ -69,6 +69,15 @@ namespace sogen
         virtual void set_event_sink(event_sink sink) = 0;
         virtual void pump_events() = 0;
 
+        // Whether input can still arrive from outside the guest. A guest with nothing runnable left has
+        // deadlocked only if nothing can ever wake it, and an application parked on its run loop waiting
+        // for a click is in that same state without having hung. False by default, so a front-end with
+        // nobody behind it keeps reporting the deadlock.
+        virtual bool can_deliver_input() const
+        {
+            return false;
+        }
+
         virtual void reset()
         {
         }
@@ -136,8 +145,19 @@ namespace sogen
         }
     };
 
-    std::unique_ptr<ui_backend> create_default_ui_backend();
-    std::unique_ptr<ui_backend> create_sdl_ui_backend();
+    struct ui_backend_options
+    {
+        // Bring a newly created visible top-level window to the front of the host's window stack, which
+        // on macOS also activates the process. Off by default, which is what the Windows and Linux
+        // front-ends have always had: a guest that opens a window mid-run must not take the host's focus
+        // away from whatever the analyst was doing. A front-end asks for it when the run exists to be
+        // driven by hand -- macOS delivers pointer and key events only to the active application, and a
+        // process launched from a shell that stays in front never becomes one on its own.
+        bool raise_new_windows{false};
+    };
+
+    std::unique_ptr<ui_backend> create_default_ui_backend(const ui_backend_options& options = {});
+    std::unique_ptr<ui_backend> create_sdl_ui_backend(const ui_backend_options& options = {});
     std::unique_ptr<ui_backend> create_web_ui_backend();
 
 } // namespace sogen
