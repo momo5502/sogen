@@ -4,7 +4,7 @@
 #include <platform/crypt_protect_backend.hpp>
 #include <utils/io.hpp>
 
-#include <random>
+#include <string_view>
 
 namespace sogen
 {
@@ -18,6 +18,14 @@ namespace sogen
         constexpr uint32_t k_crypt_bits = 256;
         constexpr uint32_t k_hash_bits = 512;
         constexpr std::array<char, 8> k_master_key_magic{'S', 'O', 'G', 'E', 'N', 'M', 'K', '1'};
+        // SHA-512("sogen-emulator-dpapi-master-key-v1"). Host RNG would make test-sample
+        // CryptProtect blobs differ across runs and break SerializationTest.
+        constexpr std::array<uint8_t, k_dpapi_master_key_size> k_default_master_key{
+            0x6e, 0xea, 0xbd, 0x2e, 0x7b, 0x9c, 0x70, 0x3d, 0x86, 0xa4, 0x2c, 0x75, 0x71, 0x8f, 0x10, 0x93,
+            0xa7, 0xf2, 0x02, 0xc8, 0xf5, 0xe3, 0x6a, 0x99, 0x45, 0xf5, 0x3e, 0xe6, 0x47, 0x06, 0x26, 0xf4,
+            0xef, 0x40, 0xf2, 0x9b, 0x39, 0xe4, 0x9f, 0x18, 0xf7, 0x60, 0x96, 0x21, 0x44, 0xe2, 0x86, 0x2a,
+            0x86, 0x47, 0x85, 0xe1, 0x11, 0x6e, 0xd1, 0xfa, 0x42, 0xf5, 0x27, 0xea, 0x89, 0x70, 0xd3, 0xe1,
+        };
 
         void append_u32(std::vector<uint8_t>& out, const uint32_t value)
         {
@@ -68,15 +76,6 @@ namespace sogen
 
             offset += count;
             return true;
-        }
-
-        void fill_system_random(const std::span<uint8_t> out)
-        {
-            std::random_device device;
-            for (uint8_t& byte : out)
-            {
-                byte = static_cast<uint8_t>(device());
-            }
         }
 
         std::filesystem::path master_key_path(const std::filesystem::path& emulation_root)
@@ -252,6 +251,32 @@ namespace sogen
             return dpapi_primitives::hmac_sha512(mk_sha1, hmac_data);
         }
 
+        void derive_request_salts(const std::array<uint8_t, k_dpapi_master_key_size>& master_key, const crypt_protect_request& request,
+                                  std::array<uint8_t, k_salt_len>& salt, std::array<uint8_t, k_salt_len>& mac_salt)
+        {
+            constexpr std::string_view label{"sogen-dpapi-salt-v1"};
+            std::vector<uint8_t> material;
+            material.reserve(label.size() + 12 + request.data.size() + request.entropy.size() + request.description.size() * 2);
+            const auto* label_bytes = reinterpret_cast<const uint8_t*>(label.data());
+            material.insert(material.end(), label_bytes, label_bytes + label.size());
+            append_u32(material, request.flags);
+            append_u32(material, static_cast<uint32_t>(request.data.size()));
+            material.insert(material.end(), request.data.begin(), request.data.end());
+            append_u32(material, static_cast<uint32_t>(request.entropy.size()));
+            material.insert(material.end(), request.entropy.begin(), request.entropy.end());
+            append_u32(material, static_cast<uint32_t>(request.description.size()));
+            if (!request.description.empty())
+            {
+                const auto* descr = reinterpret_cast<const uint8_t*>(request.description.data());
+                material.insert(material.end(), descr, descr + request.description.size() * sizeof(char16_t));
+            }
+
+            const auto digest = dpapi_primitives::hmac_sha512(master_key, material);
+            const auto* bytes = digest.data();
+            std::memcpy(salt.data(), bytes, k_salt_len);
+            std::memcpy(mac_salt.data(), bytes + k_salt_len, k_salt_len);
+        }
+
         class windows_dpapi_backend final : public crypt_protect_backend
         {
           public:
@@ -274,7 +299,7 @@ namespace sogen
                     return;
                 }
 
-                this->fill_random(this->master_key_);
+                this->master_key_ = k_default_master_key;
                 if (!this->emulation_root_.empty())
                 {
                     save_master_key_file(master_key_path(this->emulation_root_), this->master_key_);
@@ -286,8 +311,7 @@ namespace sogen
                 crypt_protect_result result{};
                 std::array<uint8_t, k_salt_len> salt{};
                 std::array<uint8_t, k_salt_len> mac_salt{};
-                this->fill_random(salt);
-                this->fill_random(mac_salt);
+                this->fill_salts(request, salt, mac_salt);
 
                 const auto mk_sha1 = dpapi_primitives::sha1(this->master_key_);
                 const auto aes_key = derive_aes_key(mk_sha1, salt, request.entropy);
@@ -385,15 +409,17 @@ namespace sogen
             }
 
           private:
-            void fill_random(const std::span<uint8_t> out)
+            void fill_salts(const crypt_protect_request& request, std::array<uint8_t, k_salt_len>& salt,
+                            std::array<uint8_t, k_salt_len>& mac_salt)
             {
                 if (this->rng_)
                 {
-                    this->rng_(out);
+                    this->rng_(salt);
+                    this->rng_(mac_salt);
                     return;
                 }
 
-                fill_system_random(out);
+                derive_request_salts(this->master_key_, request, salt, mac_salt);
             }
 
             std::filesystem::path emulation_root_{};

@@ -20,10 +20,11 @@ namespace sogen
         }
 
         uint8_t* const data = bytes.data();
+        const auto* const key = k_ksec_memory_crypt_key.data();
         const auto key_size = k_ksec_memory_crypt_key.size();
         for (size_t i = 0; i < bytes.size(); ++i)
         {
-            data[i] = static_cast<uint8_t>(data[i] ^ k_ksec_memory_crypt_key[i % key_size]);
+            data[i] = static_cast<uint8_t>(data[i] ^ key[i % key_size]);
         }
     }
 } // namespace sogen

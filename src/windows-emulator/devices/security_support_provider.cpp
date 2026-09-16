@@ -130,7 +130,7 @@ namespace sogen
                 write_utf16(response_abbreviation_offset, algorithm.abbreviation);
             }
 
-            NTSTATUS complete_status_ioctl(windows_emulator& win_emu, const io_device_context& c, const NTSTATUS payload)
+            static NTSTATUS complete_status_ioctl(windows_emulator& win_emu, const io_device_context& c, const NTSTATUS payload)
             {
                 ULONG info = 0;
                 if (c.output_buffer && c.output_buffer_length >= sizeof(payload))

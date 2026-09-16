@@ -144,6 +144,20 @@ namespace sogen::test
         EXPECT_EQ(first.data, second.data);
     }
 
+    TEST(CryptProtectBackend, DefaultProtectIsDeterministic)
+    {
+        const std::vector<uint8_t> plain{0x61, 0x62, 0x63};
+        crypt_protect_request request{};
+        request.data = plain;
+        request.description = u"sogen-test";
+
+        const auto first = create_windows_dpapi_backend({})->protect(request);
+        const auto second = create_windows_dpapi_backend({})->protect(request);
+        ASSERT_TRUE(first.ok);
+        ASSERT_TRUE(second.ok);
+        EXPECT_EQ(first.data, second.data);
+    }
+
     TEST(CryptProtectBackend, PersistsEmulatorMasterKey)
     {
         const auto root = std::filesystem::temp_directory_path() / "sogen-dpapi-test" / std::to_string(std::random_device{}());
