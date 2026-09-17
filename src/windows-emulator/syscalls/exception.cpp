@@ -86,6 +86,7 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
+            c.proc.exit_status = exception_record.read().ExceptionCode;
             c.win_emu.callbacks.on_exception();
             // NtRaiseException does not return to the guest on this bounded
             // emulation path. Stop the whole Windows emulator so execution

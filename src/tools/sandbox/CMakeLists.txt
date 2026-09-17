@@ -1,5 +1,5 @@
 # Windows uses the WHP backend, Linux x64 uses the KVM backend. Both are 64-bit only.
-if((NOT WIN AND NOT LINUX) OR MINGW OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+if((NOT WIN AND NOT (LINUX AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64|AMD64")) OR MINGW OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   return()
 endif()
 

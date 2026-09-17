@@ -9,11 +9,7 @@ option(SOGEN_ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(SOGEN_ENABLE_LTO "Enable interprocedural optimization (LTO/IPO)" ON)
 option(SOGEN_ENABLE_RUST_CODE "Enable code parts written in rust" ON)
 option(SOGEN_ENABLE_REFLECTION "Enable reflection using the reflect library" ON)
-# SDL3 provides the host UI backend on every non-Emscripten platform, so it is
-# required and enabled by default everywhere. Emscripten uses the web UI backend
-# instead and skips SDL in deps/CMakeLists.txt. project() runs after this block,
-# so EMSCRIPTEN is not known yet and cannot be branched on here.
-option(SOGEN_ENABLE_SDL3 "Enable SDL3 dependency and backend scaffolding when submodule exists" ON)
+option(SOGEN_ENABLE_SDL3 "Enable SDL3 host UI and audio backends" ON)
 # When ON, a system-installed SDL3 (find_package, e.g. libsdl3-dev on Ubuntu 25.04+,
 # Homebrew, vcpkg) is used if present, falling back to the vendored deps/SDL submodule.
 # Set OFF to always build the pinned submodule.
@@ -30,6 +26,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# The project has no C++20 modules, but CMake+Ninja+Clang auto-enable module dependency scanning
+# once CMAKE_CXX_STANDARD is 20 regardless. Some toolchains (e.g. the Android NDK's bundled clang)
+# don't ship a matching clang-scan-deps binary, so find_program silently resolves the scan command
+# to *-NOTFOUND and every scanned translation unit fails to build.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
   set(CMAKE_OSX_DEPLOYMENT_TARGET 11.0)
@@ -52,6 +54,23 @@ add_compile_definitions(SOGEN_REFLECTION_LEVEL=${SOGEN_REFLECTION_LEVEL})
 
 if(SOGEN_ENABLE_REFLECTION)
   add_compile_definitions(SOGEN_ENABLE_REFLECTION=1)
+endif()
+
+##########################################
+
+# FEX-Emu backend (x86/x86-64 -> AArch64). FEX only JITs to ARM64, so the backend is restricted to
+# ARM64 hosts. See docs/fex-backend.md, including its security/address-space model - FEX shares the
+# guest and host address space, unlike this project's other backends.
+# FEX is vendored as a submodule (deps/FEX, pointed at github.com/JackTYM/FEX, a fork with Darwin
+# portability patches) and built in-tree. It requires Clang, an ARM64 host, and a supported POSIX
+# platform. Enabled automatically when those hold and the submodule is checked out.
+if((CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64") AND (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/deps/FEX/CMakeLists.txt"
+   AND CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin|Android)$")
+  set(SOGEN_ENABLE_FEX ON)
+  message(STATUS "FEX backend: enabled (ARM64 ${CMAKE_SYSTEM_NAME} + Clang, deps/FEX present)")
+else()
+  set(SOGEN_ENABLE_FEX OFF)
 endif()
 
 ##########################################

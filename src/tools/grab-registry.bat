@@ -47,4 +47,29 @@ REG ADD HKLM\SogenSeed\Software\Valve\Steam               /v SteamPath        /t
 REG ADD HKLM\SogenSeed\Software\Valve\Steam               /v SteamExe         /t REG_SZ    /d "%STEAM_PATH%\steam.exe" /f
 REG UNLOAD HKLM\SogenSeed
 
+REM --- Audio endpoint seed. On a headless/RDP host the redirected playback/recording device lives under
+REM --- MMDevices\Audio\RemoteRender / RemoteCapture, but mmdevapi (WASAPI) resolves the default endpoint by
+REM --- opening Render\{id} / Capture\{id}, and the legacy DirectSound path ENUMERATES the subkeys of Render.
+REM --- Copy the remote endpoints into the local folders (real, enumerable keys) and mark them active + local
+REM --- (DeviceState=ACTIVE, Protocol=0) so they enumerate as the default device.
+REG UNLOAD HKLM\SogenSwSeed >NUL 2>&1
+REG LOAD HKLM\SogenSwSeed "%REGDIR%\SOFTWARE"
+SET MMDEV=HKLM\SogenSwSeed\Microsoft\Windows\CurrentVersion\MMDevices\Audio
+CALL :seed_audio Render RemoteRender
+CALL :seed_audio Capture RemoteCapture
+REG UNLOAD HKLM\SogenSwSeed
+
 ECHO Done. Guest registry written to "%REGDIR%". Use it with: analyzer -r "%REGDIR%"
+EXIT /B 0
+
+REM --- %1 = local folder (Render/Capture), %2 = remote folder (RemoteRender/RemoteCapture). No-op if the
+REM --- host has no remote endpoints (i.e. this isn't an RDP capture).
+:seed_audio
+REG QUERY "%MMDEV%\%~2" >NUL 2>&1
+IF ERRORLEVEL 1 EXIT /B 0
+REG COPY "%MMDEV%\%~2" "%MMDEV%\%~1" /s /f >NUL
+FOR /F "delims=" %%K IN ('REG QUERY "%MMDEV%\%~1" 2^>NUL ^| FINDSTR /I /C:"\MMDevices\Audio\%~1\"') DO (
+	REG QUERY "%%K" /v DeviceState >NUL 2>&1 || REG ADD "%%K" /v DeviceState /t REG_DWORD /d 1 /f >NUL
+	REG ADD "%%K" /v Protocol /t REG_DWORD /d 0 /f >NUL
+)
+EXIT /B 0

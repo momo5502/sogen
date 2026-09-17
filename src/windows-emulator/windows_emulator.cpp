@@ -660,6 +660,16 @@ namespace sogen
             return create_default_ui_backend();
         }
 
+        std::unique_ptr<audio_backend> get_audio_backend(emulator_interfaces& interfaces)
+        {
+            if (interfaces.audio)
+            {
+                return std::move(interfaces.audio);
+            }
+
+            return create_default_audio_backend();
+        }
+
         // The guest must see at least as many logical processors as there are vCPUs, otherwise a
         // thread running on a higher-indexed vCPU would report a processor number the guest
         // considers out of range. The configured fake value still wins when it is larger (e.g. the
@@ -687,6 +697,7 @@ namespace sogen
           dns_lookup_(get_dns_lookup(interfaces)),
           socket_factory_(get_socket_factory(interfaces)),
           ui_backend_(get_ui_backend(interfaces)),
+          audio_backend_(get_audio_backend(interfaces)),
           emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
           fake_env(effective_fake_env(settings, static_cast<uint32_t>(this->emu_->vcpu_count()))),
           callbacks(std::move(callbacks)),
@@ -773,7 +784,7 @@ namespace sogen
 
         this->version.load_from_registry(this->registry, this->log);
 
-        this->mod_manager.map_main_modules(this->application_settings_.application, this->version, context, this->log);
+        this->mod_manager.map_main_modules(this->emu(), this->application_settings_.application, this->version, context, this->log);
         this->install_section_first_execution_hooks();
 
         const auto* executable = this->mod_manager.executable;
@@ -1331,6 +1342,15 @@ namespace sogen
 
                     if (!this->should_stop)
                     {
+                        // Under the kernel lock so this switch_thread/stop() pair can't straddle a vCPU's
+                        // own scheduling step: perform_thread_switch consumes switch_thread (exchange to
+                        // false) under the lock, and a preemption whose switch request lands before that
+                        // consume while its stop() only lands inside the next quantum surfaces there as a
+                        // stop with no pending switch - the exact shape of a fatal wind-down, tearing the
+                        // whole run off at a random parked rip. Serialized against the scheduler, the pair
+                        // lands either fully before the consume (plain early switch) or fully inside the
+                        // running quantum (ordinary preemption), never split across it.
+                        const std::scoped_lock kernel_lock(this->kernel_lock_);
                         for (uint32_t i = 0; i < this->vcpu_count_; ++i)
                         {
                             auto& v = this->vcpu(i);
@@ -1553,8 +1573,14 @@ namespace sogen
 
         // Mirror the foreground window into the shared SERVERINFO so the guest's client-side
         // GetForegroundWindow (which reads gpsi directly, never syscalling) returns the active window.
-        this->process.user_handles.get_server_info().access(
-            [&](USER_SERVERINFO& server_info) { server_info.foregroundWindow = this->process.foreground_window; });
+        // Fall back to the desktop window when no app window is active: real Windows always has a
+        // foreground window, and code that needs a valid HWND (e.g. DirectSound's SetCooperativeLevel,
+        // which Miles feeds from GetForegroundWindow) breaks on a null one.
+        const auto foreground =
+            this->process.foreground_window != 0 ? this->process.foreground_window : this->process.default_desktop_window_handle.bits;
+        this->process.user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) {
+            server_info.foregroundWindow = foreground; //
+        });
 
         // Maintain the polled key state from key and mouse-button transitions. GetKeyState reports the high
         // down bit; GetAsyncKeyState also reports a low edge bit that is set once when a key transitions from
@@ -1661,6 +1687,25 @@ namespace sogen
         }
     }
 
+    bool windows_emulator::try_signal_guest_event(const handle event_handle)
+    {
+        if (!this->kernel_lock_.try_lock())
+        {
+            return false;
+        }
+
+        const std::lock_guard<kernel_lock> lock{this->kernel_lock_, std::adopt_lock};
+
+        auto* entry = this->process.events.get(event_handle);
+        if (!entry)
+        {
+            return false;
+        }
+
+        entry->signaled = true;
+        return true;
+    }
+
     void windows_emulator::dump_lock_profile()
     {
         if (!kernel_lock::profiling_enabled())
@@ -1764,8 +1809,11 @@ namespace sogen
         this->version.deserialize(buffer);
         this->registry.deserialize_runtime_state(buffer);
 
+        this->process.prepare_for_state_restore(*this);
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
+        this->ui().reset();
+        this->audio().stop();
 
         // Match raw serialize() above; do not use backend snapshot mode here.
         this->emu().deserialize_state(buffer, false);
@@ -1774,113 +1822,7 @@ namespace sogen
         this->install_section_first_execution_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
-        this->restore_ui_backend();
-    }
-
-    void windows_emulator::restore_ui_backend()
-    {
-        this->ui().reset();
-
-        std::vector<const window*> pending{};
-        pending.reserve(this->process.windows.size());
-        for (const auto& [index, win] : this->process.windows)
-        {
-            (void)index;
-            if (win.host_surface_window)
-            {
-                pending.push_back(&win);
-            }
-        }
-
-        std::unordered_set<hwnd> created{};
-        const auto dependency_ready = [&](const hwnd handle) {
-            if (handle == 0)
-            {
-                return true;
-            }
-
-            const auto* dependency = this->process.windows.get(handle);
-            return !dependency || !dependency->host_surface_window || created.contains(handle);
-        };
-
-        const auto create_window = [&](const window& win) {
-            const auto child = (win.style & WS_CHILD) != 0;
-            uint32_t control_id = 0;
-            if (child)
-            {
-                if (const auto guest_window = win.guest.try_read())
-                {
-                    control_id = static_cast<uint32_t>(guest_window->wID);
-                }
-            }
-
-            this->ui().create_window(ui_window_desc{
-                .handle = win.handle,
-                .parent = child ? win.parent_handle : 0,
-                .owner = child ? 0 : win.owner_handle,
-                .rect = {.left = win.x, .top = win.y, .right = win.x + win.width, .bottom = win.y + win.height},
-                .client_insets = {},
-                .class_name = std::u16string{normalize_builtin_window_class_name(win.class_name)},
-                .title = win.name,
-                .style = win.style,
-                .ex_style = win.ex_style,
-                .control_id = control_id,
-                .visible = (win.style & WS_VISIBLE) != 0,
-                .enabled = (win.style & WS_DISABLED) == 0,
-                .top_level = !child,
-            });
-            created.insert(win.handle);
-        };
-
-        while (!pending.empty())
-        {
-            bool made_progress = false;
-            for (auto it = pending.begin(); it != pending.end();)
-            {
-                const auto& win = **it;
-                if (dependency_ready(win.parent_handle) && dependency_ready(win.owner_handle))
-                {
-                    create_window(win);
-                    it = pending.erase(it);
-                    made_progress = true;
-                }
-                else
-                {
-                    ++it;
-                }
-            }
-
-            if (!made_progress)
-            {
-                create_window(*pending.front());
-                pending.erase(pending.begin());
-            }
-        }
-
-        for (const auto& [index, win] : this->process.windows)
-        {
-            (void)index;
-            if (!win.host_surface_window || (win.style & WS_CHILD) != 0)
-            {
-                continue;
-            }
-
-            const auto surface = this->process.gdi_window_surfaces.find(static_cast<uint32_t>(win.handle));
-            if (surface == this->process.gdi_window_surfaces.end() || surface->second.width == 0 || surface->second.height == 0 ||
-                surface->second.pixels.empty())
-            {
-                continue;
-            }
-
-            const auto& restored = surface->second;
-            this->ui().present_surface(win.handle, ui_surface_desc{
-                                                       .width = static_cast<int>(restored.width),
-                                                       .height = static_cast<int>(restored.height),
-                                                       .stride = static_cast<int>(restored.width * sizeof(uint32_t)),
-                                                       .format = ui_surface_format::bgra8,
-                                                       .pixels = restored.pixels.data(),
-                                                   });
-        }
+        this->process.restore_after_state_restore(*this);
     }
 
     void windows_emulator::save_snapshot()
@@ -1923,8 +1865,11 @@ namespace sogen
         this->version.deserialize(buffer);
         this->registry.deserialize_runtime_state(buffer);
 
+        this->process.prepare_for_state_restore(*this);
         this->memory.unmap_all_memory();
         this->clear_section_first_execution_hooks();
+        this->ui().reset();
+        this->audio().stop();
 
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);
@@ -1932,7 +1877,7 @@ namespace sogen
         this->install_section_first_execution_hooks();
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
-        this->restore_ui_backend();
+        this->process.restore_after_state_restore(*this);
     }
 
 } // namespace sogen

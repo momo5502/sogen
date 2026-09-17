@@ -93,7 +93,7 @@ namespace sogen
                 win_emu.log.error("Unknown syscall: 0x%X (raw: 0x%X)\n", syscall_id, raw_syscall_id);
                 win_emu.record_stop(stop_reason::unknown_syscall, "0x" + utils::string::to_hex_number(syscall_id));
                 c.emu.reg<uint64_t>(x86_register::rax, STATUS_NOT_SUPPORTED);
-                c.emu.stop();
+                win_emu.stop();
                 return;
             }
 
@@ -108,7 +108,7 @@ namespace sogen
                 win_emu.log.error("Unimplemented syscall: %s - 0x%X (raw: 0x%X)\n", entry->second.name.c_str(), syscall_id, raw_syscall_id);
                 win_emu.record_stop(stop_reason::unimplemented_syscall, entry->second.name);
                 c.emu.reg<uint64_t>(x86_register::rax, STATUS_NOT_SUPPORTED);
-                c.emu.stop();
+                win_emu.stop();
                 return;
             }
 
@@ -155,7 +155,7 @@ namespace sogen
     }
 
     dispatch_result syscall_dispatcher::dispatch_completion(windows_emulator& win_emu, vcpu_context& vcpu, callback_id callback_id,
-                                                            completion_state* completion_state, uint64_t callback_result)
+                                                            completion_state* completion_state, const user_callback_result& callback_result)
     {
         auto& emu = vcpu.cpu;
 
@@ -173,7 +173,7 @@ namespace sogen
         if (entry == this->completion_handlers_.end())
         {
             win_emu.log.error("Unknown callback: 0x%X\n", static_cast<uint32_t>(callback_id));
-            c.emu.stop();
+            win_emu.stop();
             return dispatch_result::error;
         }
 
@@ -185,13 +185,13 @@ namespace sogen
         catch (std::exception& e)
         {
             win_emu.log.error("Completion for callback 0x%X threw an exception - %s\n", static_cast<int>(callback_id), e.what());
-            emu.stop();
+            win_emu.stop();
             return dispatch_result::error;
         }
         catch (...)
         {
             win_emu.log.error("Completion for callback 0x%X threw an unknown exception\n", static_cast<int>(callback_id));
-            emu.stop();
+            win_emu.stop();
             return dispatch_result::error;
         }
     }
