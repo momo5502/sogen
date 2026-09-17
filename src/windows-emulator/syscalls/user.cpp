@@ -2840,15 +2840,12 @@ namespace sogen
 
         // Routine numbers for the Win10 19041-19045 user-call table. Other Windows
         // versions use different numbers; unknown routines return 0 below.
-        enum nt_user_call_routine : uint32_t
-        {
-            user_call_set_dialog_pointer = 99,
-            user_call_set_dialog_system_menu = 111,
-            user_call_update_window = 115,
-            user_call_set_msg_box = 89,
-            user_call_release_dc = 0x39,
-            user_call_post_quit_message = 0x3B,
-        };
+        constexpr uint32_t user_call_set_dialog_pointer = 99;
+        constexpr uint32_t user_call_set_dialog_system_menu = 111;
+        constexpr uint32_t user_call_update_window = 115;
+        constexpr uint32_t user_call_set_msg_box = 89;
+        constexpr uint32_t user_call_release_dc = 0x39;
+        constexpr uint32_t user_call_post_quit_message = 0x3B;
 
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t code)
         {
