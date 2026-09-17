@@ -128,10 +128,10 @@ namespace sogen
                     cookie = 0x01234567; //
                 });
 
-            case ProcessDebugObjectHandle:
-            {
+            case ProcessDebugObjectHandle: {
                 const auto& proc_name = c.win_emu.mod_manager.executable->name;
-                c.win_emu.callbacks.on_suspicious_activity(std::string("Anti-debug check with ProcessDebugObjectHandle [") + proc_name + "]");
+                c.win_emu.callbacks.on_suspicious_activity(std::string("Anti-debug check with ProcessDebugObjectHandle [") + proc_name +
+                                                           "]");
 
                 if ((process_information & 3) != 0)
                 {
@@ -161,19 +161,17 @@ namespace sogen
                 });
 
             case ProcessDefaultHardErrorMode:
-                return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length, [&](ULONG& res) {
-                    res = c.proc.hard_error_mode;
-                });
+                return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length,
+                                           [&](ULONG& res) { res = c.proc.hard_error_mode; });
 
-            case ProcessDebugPort:
-            {
+            case ProcessDebugPort: {
                 const auto& proc_name = c.win_emu.mod_manager.executable->name;
                 c.win_emu.callbacks.on_suspicious_activity(std::string("Anti-debug check with ProcessDebugPort [") + proc_name + "]");
 
                 return handle_query<EmulatorTraits<Emu64>::PVOID>(c.emu, process_information, process_information_length, return_length,
-                                                                   [](EmulatorTraits<Emu64>::PVOID& ptr) {
-                                                                       ptr = 0; //
-                                                                   });
+                                                                  [](EmulatorTraits<Emu64>::PVOID& ptr) {
+                                                                      ptr = 0; //
+                                                                  });
             }
 
             case ProcessDeviceMap:
