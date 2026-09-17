@@ -1588,6 +1588,8 @@ namespace sogen
         BOOL handle_NtUserSetDialogPointer(const syscall_context& c, hwnd hwnd, emulator_pointer ptr);
         BOOL handle_NtUserSetDialogSystemMenu(const syscall_context& c, hwnd hwnd);
         BOOL handle_NtUserSetMsgBox(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserUpdateWindow(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserPostQuitMessage(const syscall_context& c, int exit_code);
 
         NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
         {
@@ -2845,6 +2847,7 @@ namespace sogen
             user_call_update_window = 115,
             user_call_set_msg_box = 89,
             user_call_release_dc = 0x39,
+            user_call_post_quit_message = 0x3B,
         };
 
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t code)
@@ -2871,20 +2874,8 @@ namespace sogen
 
             if (routine == user_call_update_window)
             {
-                // Queue the paint synchronously. The dedicated UpdateWindow completion
-                // path must not run under an active CallHwndLock dispatch.
-                auto* win = c.proc.windows.get(hwnd);
-                if (!win)
-                {
-                    return FALSE;
-                }
-
-                if (win->update_pending)
-                {
-                    queue_window_paint(c, *win);
-                }
-
-                return TRUE;
+                // user32!UpdateWindow is dispatched through NtUserCallHwndLock(115) on Win10.
+                return handle_NtUserUpdateWindow(c, hwnd);
             }
 
             c.win_emu.log.error("Unimplemented NtUserCallHwndLock routine: 0x%X\n", routine);
@@ -2904,11 +2895,14 @@ namespace sogen
 
         uint64_t handle_NtUserCallOneParam(const syscall_context& c, const uint64_t param, const uint32_t routine)
         {
-            (void)param;
-
             if (routine == user_call_release_dc)
             {
                 return handle_NtUserReleaseDC();
+            }
+
+            if (routine == user_call_post_quit_message)
+            {
+                return handle_NtUserPostQuitMessage(c, static_cast<int>(param));
             }
 
             c.win_emu.log.error("Unimplemented NtUserCallOneParam routine: 0x%X\n", routine);
