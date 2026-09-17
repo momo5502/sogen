@@ -39,6 +39,9 @@ namespace sogen
                 srv.cHandleEntries = MAX_HANDLES - 1; //
                 srv.defaultFontHeightScale = -11;
                 srv.defaultFontWidthScale = 0;
+                srv.dpi96DialogBaseUnitWidth = 8;
+                srv.dpi96DialogBaseUnitHeight = 16;
+                srv.asyncKeyStateGeneration = 1;
                 srv.systemDpi = 96;
                 srv.systemMetrics[0] = 1920;  // SM_CXSCREEN
                 srv.systemMetrics[1] = 1080;  // SM_CYSCREEN
@@ -130,6 +133,15 @@ namespace sogen
             used_indices_.at(index) = true;
 
             return {make_handle(index, type, false), alloc_obj};
+        }
+
+        // The handle entry's pOwner holds the owning thread. user32's client-side GetWindowThreadProcessId
+        // returns 0 outright when pOwner is 0, and short-circuits to the current thread id when pOwner equals
+        // it, so windows must record their owning thread here for that API (DirectSound relies on it).
+        void set_owner(const uint32_t index, const uint64_t owner)
+        {
+            const emulator_object<USER_HANDLEENTRY> handle_table_obj(*memory_, handle_table_addr_);
+            handle_table_obj.access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, index);
         }
 
         void free_index(uint32_t index)

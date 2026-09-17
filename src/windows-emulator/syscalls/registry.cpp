@@ -120,8 +120,24 @@ namespace sogen
 
             if (key_information_class == KeyFullInformation)
             {
-                c.win_emu.log.warn("Unsupported registry class: %X\n", key_information_class);
-                return STATUS_NOT_SUPPORTED;
+                constexpr auto required_size = offsetof(KEY_FULL_INFORMATION, Class);
+                result_length.write(static_cast<ULONG>(required_size));
+
+                if (required_size > length)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                KEY_FULL_INFORMATION info{};
+                info.ClassOffset = 0xFFFFFFFFu;
+                info.SubKeys = static_cast<ULONG>(c.win_emu.registry.get_sub_key_count(*key));
+                info.Values = static_cast<ULONG>(c.win_emu.registry.get_value_count(*key));
+                info.MaxNameLength = 0x1000;
+                info.MaxValueNameLength = 0x1000;
+                info.MaxValueDataLength = 0x1000;
+
+                c.emu.write_memory(key_information, &info, required_size);
+                return STATUS_SUCCESS;
             }
 
             if (key_information_class == KeyCachedInformation)
@@ -134,12 +150,6 @@ namespace sogen
                     key_name.pop_back();
                 }
 
-                const auto hive_key = c.win_emu.registry.get_hive_key(*key);
-                if (!hive_key.has_value())
-                {
-                    return STATUS_OBJECT_NAME_NOT_FOUND;
-                }
-
                 constexpr auto required_size = sizeof(KEY_CACHED_INFORMATION);
                 result_length.write(required_size);
 
@@ -149,8 +159,8 @@ namespace sogen
                 }
 
                 KEY_CACHED_INFORMATION info{};
-                info.SubKeys = static_cast<ULONG>(hive_key->key.get_sub_key_count(hive_key->file));
-                info.Values = static_cast<ULONG>(hive_key->key.get_value_count(hive_key->file));
+                info.SubKeys = static_cast<ULONG>(c.win_emu.registry.get_sub_key_count(*key));
+                info.Values = static_cast<ULONG>(c.win_emu.registry.get_value_count(*key));
                 info.NameLength = static_cast<ULONG>(key_name.size() * 2);
                 info.MaxValueDataLen = 0x1000;
                 info.MaxValueNameLen = 0x1000;
@@ -209,7 +219,7 @@ namespace sogen
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
 
-            const std::u16string original_name(value->name.begin(), value->name.end());
+            const auto original_name = u8_to_u16(value->name);
 
             if (key_value_information_class == KeyValueBasicInformation)
             {
@@ -268,12 +278,13 @@ namespace sogen
                 constexpr auto base_size = offsetof(KEY_VALUE_FULL_INFORMATION, Name);
                 const auto name_size = original_name.size() * 2;
                 const auto value_size = value->data.size();
-                const auto required_size = base_size + name_size + value_size + -1;
+                const auto required_size = base_size + name_size + value_size;
                 result_length.write(static_cast<ULONG>(required_size));
 
                 KEY_VALUE_FULL_INFORMATION info{};
                 info.TitleIndex = 0;
                 info.Type = value->type;
+                info.DataOffset = static_cast<ULONG>(base_size + name_size);
                 info.DataLength = static_cast<ULONG>(value->data.size());
                 info.NameLength = static_cast<ULONG>(original_name.size() * 2);
 
@@ -382,16 +393,55 @@ namespace sogen
         NTSTATUS handle_NtCreateKey(const syscall_context& c, const emulator_object<handle> key_handle, const ACCESS_MASK desired_access,
                                     const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                     const ULONG /*title_index*/, const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*class*/,
-                                    const ULONG /*create_options*/, const emulator_object<ULONG> /*disposition*/)
+                                    const ULONG /*create_options*/, const emulator_object<ULONG> disposition)
         {
             const auto result = handle_NtOpenKey(c, key_handle, desired_access, object_attributes);
 
-            if (result == STATUS_OBJECT_NAME_NOT_FOUND)
+            if (result == STATUS_SUCCESS)
             {
-                return STATUS_NOT_SUPPORTED;
+                if (disposition.value())
+                {
+                    disposition.write(REG_OPENED_EXISTING_KEY);
+                }
+
+                return result;
             }
 
-            return result;
+            if (result != STATUS_OBJECT_NAME_NOT_FOUND)
+            {
+                return result;
+            }
+
+            const auto attributes = object_attributes.read();
+            auto key = read_unicode_string(c.emu, attributes.ObjectName);
+
+            if (attributes.RootDirectory)
+            {
+                const auto* parent_handle = c.proc.registry_keys.get(attributes.RootDirectory);
+                if (!parent_handle)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                const std::filesystem::path full_path = parent_handle->hive.get() / parent_handle->path.get() / key;
+                key = full_path.u16string();
+            }
+
+            auto entry = c.win_emu.registry.create_key({key});
+            if (!entry.has_value())
+            {
+                return STATUS_OBJECT_PATH_NOT_FOUND;
+            }
+
+            const auto new_handle = c.proc.registry_keys.store(std::move(entry.value()));
+            key_handle.write(new_handle);
+
+            if (disposition.value())
+            {
+                disposition.write(REG_CREATED_NEW_KEY);
+            }
+
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtSetValueKey(const syscall_context& c, const handle key_handle,
@@ -445,6 +495,21 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtCreateRegistryTransaction(const syscall_context&, const emulator_object<handle> /*transaction_handle*/,
+                                                    const ACCESS_MASK /*desired_access*/,
+                                                    const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                                    const ULONG /*create_options*/)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        NTSTATUS handle_NtOpenRegistryTransaction(const syscall_context&, const emulator_object<handle> /*transaction_handle*/,
+                                                  const ACCESS_MASK /*desired_access*/,
+                                                  const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
         NTSTATUS handle_NtSetInformationKey(const syscall_context& c, const handle key_handle,
                                             const KEY_SET_INFORMATION_CLASS key_information_class, const uint64_t key_information,
                                             const ULONG length)
@@ -491,7 +556,7 @@ namespace sogen
                 return STATUS_NO_MORE_ENTRIES;
             }
 
-            const std::u16string subkey_name_u16(subkey_name->begin(), subkey_name->end());
+            const auto subkey_name_u16 = u8_to_u16(*subkey_name);
 
             if (key_information_class == KeyBasicInformation)
             {
@@ -572,7 +637,7 @@ namespace sogen
                 return STATUS_NO_MORE_ENTRIES;
             }
 
-            const std::u16string value_name_u16(value->name.begin(), value->name.end());
+            const auto value_name_u16 = u8_to_u16(value->name);
 
             if (key_value_information_class == KeyValueBasicInformation)
             {

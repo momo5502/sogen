@@ -54,3 +54,8 @@
 	path = deps/CLI11
 	url = https://github.com/CLIUtils/CLI11.git
 	shallow = true
+[submodule "deps/FEX"]
+	path = deps/FEX
+	url = https://github.com/momo5502/FEX.git
+	shallow = true
+    branch = macos-arm64

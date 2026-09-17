@@ -69,6 +69,47 @@ namespace sogen
         ULONG ValidAttributes;
     };
 
+#define ALPC_MESSAGE_SECURITY_ATTRIBUTE 0x80000000
+#define ALPC_MESSAGE_VIEW_ATTRIBUTE     0x40000000
+#define ALPC_MESSAGE_CONTEXT_ATTRIBUTE  0x20000000
+#define ALPC_MESSAGE_HANDLE_ATTRIBUTE   0x10000000
+#define ALPC_MESSAGE_TOKEN_ATTRIBUTE    0x08000000
+#define ALPC_MESSAGE_DIRECT_ATTRIBUTE   0x04000000
+
+#define ALPC_PORFLG_ALLOW_LPC_REQUESTS  0x00020000
+
+    template <typename Traits>
+    struct ALPC_PORT_ATTRIBUTES
+    {
+        ULONG Flags;
+        SECURITY_QUALITY_OF_SERVICE SecurityQos;
+        Traits::SIZE_T MaxMessageLength;
+        Traits::SIZE_T MemoryBandwidth;
+        Traits::SIZE_T MaxPoolUsage;
+        Traits::SIZE_T MaxSectionSize;
+        Traits::SIZE_T MaxViewSize;
+        Traits::SIZE_T MaxTotalSectionSize;
+        ULONG DupObjectTypes;
+        ULONG Reserved;
+    };
+
+    template <typename Traits>
+    struct ALPC_BASIC_INFORMATION
+    {
+        ULONG Flags;
+        ULONG SequenceNo;
+        Traits::PVOID PortContext;
+    };
+
+    template <typename Traits>
+    struct ALPC_HANDLE_ATTR
+    {
+        ULONG Flags;
+        typename Traits::HANDLE Handle;
+        ULONG ObjectType;
+        ULONG DesiredAccess; // GrantedAccess on receive
+    };
+
     template <typename Traits>
     struct PORT_DATA_ENTRY
     {

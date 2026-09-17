@@ -39,7 +39,7 @@ namespace sogen::test
 
         try
         {
-            if (!mm.allocate_host_memory(src, page, host_ptr, memory_permission::read_write))
+            if (!mm.allocate_host_memory_at(src, page, host_ptr, memory_permission::read_write))
             {
                 GTEST_SKIP() << "allocate_host_memory failed";
             }
