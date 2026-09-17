@@ -713,13 +713,10 @@ namespace sogen
             if (c.win_emu.callbacks.on_generic_activity)
             {
                 auto description =
-                    "NtContinue context flags=0x" + utils::string::to_hex_number(context.ContextFlags) +
-                    " rip=0x" + utils::string::to_hex_number(context.Rip) +
-                    " rsp=0x" + utils::string::to_hex_number(context.Rsp) +
-                    " cs=0x" + utils::string::to_hex_number(context.SegCs) +
-                    " ss=0x" + utils::string::to_hex_number(context.SegSs) +
-                    " eflags=0x" + utils::string::to_hex_number(context.EFlags) +
-                    " continue_arg=0x" + utils::string::to_hex_number(continue_argument);
+                    "NtContinue context flags=0x" + utils::string::to_hex_number(context.ContextFlags) + " rip=0x" +
+                    utils::string::to_hex_number(context.Rip) + " rsp=0x" + utils::string::to_hex_number(context.Rsp) + " cs=0x" +
+                    utils::string::to_hex_number(context.SegCs) + " ss=0x" + utils::string::to_hex_number(context.SegSs) + " eflags=0x" +
+                    utils::string::to_hex_number(context.EFlags) + " continue_arg=0x" + utils::string::to_hex_number(continue_argument);
                 c.win_emu.callbacks.on_generic_activity(std::move(description));
             }
             cpu_context::restore(c.emu, context);
@@ -731,14 +728,13 @@ namespace sogen
             c.thread().previous_ip = c.thread().current_ip;
             c.thread().current_ip = context.Rip;
             c.mark_instruction_pointer_finalized();
-            c.win_emu.callbacks.on_generic_activity(
-                "NtContinue restored rip=0x" + utils::string::to_hex_number(context.Rip));
+            c.win_emu.callbacks.on_generic_activity("NtContinue restored rip=0x" + utils::string::to_hex_number(context.Rip));
 
             if (argument.ContinueFlags & KCONTINUE_FLAG_TEST_ALERT)
             {
                 c.win_emu.yield_thread(c.vcpu, true);
-                c.win_emu.callbacks.on_generic_activity(
-                    "NtContinue yielded rip=0x" + utils::string::to_hex_number(c.emu.read_instruction_pointer()));
+                c.win_emu.callbacks.on_generic_activity("NtContinue yielded rip=0x" +
+                                                        utils::string::to_hex_number(c.emu.read_instruction_pointer()));
             }
 
             return STATUS_SUCCESS;

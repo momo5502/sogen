@@ -81,7 +81,8 @@ namespace sogen
 
             if (raise_limit > 0 && count > raise_limit)
             {
-                c.win_emu.log.error("NtRaiseException limit exceeded for code 0x%08X (%d > %d)\n", exception_code, count, raise_limit);
+                c.win_emu.log.error("NtRaiseException limit exceeded for code 0x%08X (%d > %d)\n",
+                                    static_cast<unsigned int>(exception_code), count, raise_limit);
                 c.win_emu.stop();
                 return STATUS_NOT_SUPPORTED;
             }
