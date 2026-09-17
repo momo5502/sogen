@@ -1901,12 +1901,12 @@ namespace
 
     bool test_dialog_table()
     {
-        alignas(DWORD) static const uint8_t template_bytes[] = {
+        alignas(DWORD) static const std::array<uint8_t, 28> template_bytes = {
             0x00, 0x00, 0xC8, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x64, 0x00, 0x3C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         };
 
-        const HWND hwnd = CreateDialogIndirectParamW(GetModuleHandleW(nullptr), reinterpret_cast<const DLGTEMPLATE*>(template_bytes),
+        const HWND hwnd = CreateDialogIndirectParamW(GetModuleHandleW(nullptr), reinterpret_cast<const DLGTEMPLATE*>(template_bytes.data()),
                                                      nullptr, dialog_table_proc, 0);
         if (!hwnd)
         {
