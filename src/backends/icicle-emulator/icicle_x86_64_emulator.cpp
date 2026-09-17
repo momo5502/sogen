@@ -339,7 +339,7 @@ namespace sogen::icicle
                 return nullptr;
             }
 
-            const auto bound = this->bind_cpu(std::move(callback));
+            auto bound = this->bind_cpu(std::move(callback));
             std::function<instruction_hook_continuation(uint64_t)> wrapped =
                 [this, cb = std::move(bound)](const uint64_t data) -> instruction_hook_continuation {
                 const auto continuation = cb(data);
