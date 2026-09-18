@@ -642,6 +642,7 @@ namespace sogen
         buffer.write(this->kusd);
 
         buffer.write(this->is_wow64_process);
+        buffer.write(this->hard_error_mode);
         buffer.write(this->ntdll_image_base);
         buffer.write(this->ldr_initialize_thunk);
         buffer.write(this->rtl_user_thread_start);
@@ -737,6 +738,7 @@ namespace sogen
         buffer.read(this->kusd);
 
         buffer.read(this->is_wow64_process);
+        buffer.read(this->hard_error_mode);
         buffer.read(this->ntdll_image_base);
         buffer.read(this->ldr_initialize_thunk);
         buffer.read(this->rtl_user_thread_start);
