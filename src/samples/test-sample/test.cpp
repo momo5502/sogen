@@ -1859,6 +1859,58 @@ namespace
         return true;
     }
 
+    bool test_handle_tag_bits()
+    {
+        using nt_close_t = LONG(NTAPI*)(HANDLE);
+        const auto nt_close =
+            reinterpret_cast<nt_close_t>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtClose")));
+        if (!nt_close)
+        {
+            puts("ntdll!NtClose not found");
+            return false;
+        }
+
+        const auto open_file = [](const char* path) {
+            return CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        };
+
+        const auto is_open = [](const HANDLE file) {
+            char byte{};
+            DWORD read{};
+            return ReadFile(file, &byte, sizeof(byte), &read, nullptr) != FALSE;
+        };
+
+        bool valid = true;
+
+        for (uint32_t tag = 0; tag < 4; ++tag)
+        {
+            const HANDLE before = open_file(R"(C:\Windows\System32\ntdll.dll)");
+            const HANDLE target = open_file(R"(C:\Windows\System32\kernel32.dll)");
+            const HANDLE after = open_file(R"(C:\Windows\System32\kernelbase.dll)");
+
+            if (before == INVALID_HANDLE_VALUE || target == INVALID_HANDLE_VALUE || after == INVALID_HANDLE_VALUE)
+            {
+                puts("Failed to open the probe files");
+                return false;
+            }
+
+            auto* const tagged = reinterpret_cast<HANDLE>((reinterpret_cast<ULONG_PTR>(target) & ~ULONG_PTR{3}) | tag);
+            const auto status = nt_close(tagged);
+
+            if (status != 0 || !is_open(before) || is_open(target) || !is_open(after))
+            {
+                printf("NtClose(%p) with tag %u did not close exactly %p (status 0x%08lX)\n", tagged, tag, target, status);
+                valid = false;
+                CloseHandle(target);
+            }
+
+            CloseHandle(before);
+            CloseHandle(after);
+        }
+
+        return valid;
+    }
+
     bool test_gdi()
     {
         const wchar_t* cursor_path = L"C:\\Windows\\Cursors\\aero_arrow.cur";
@@ -1992,6 +2044,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_paint_message_queue, "Message Queue (Paint)")
     RUN_TEST(test_settimer, "User Timer")
     RUN_TEST(test_private_namespace, "Private Namespace")
+    RUN_TEST(test_handle_tag_bits, "Handle Tag Bits")
     RUN_TEST(test_actctx, "Activation Context")
     RUN_TEST(test_mmio, "MMIO")
     RUN_TEST(test_gdi, "GDI")

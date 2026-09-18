@@ -340,12 +340,12 @@ namespace sogen
             }
 
             const auto index = static_cast<uint32_t>(h.value.id);
-            if (index == 0 || index >= user_handle_table::MAX_HANDLES)
+            if (index == 0 || index >= user_handle_table::MAX_HANDLE_INDICES)
             {
                 return;
             }
 
-            c.proc.user_handles.get_handle_table().access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, index);
+            c.proc.user_handles.set_owner(index, owner);
         }
 
         void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, bool erase);
@@ -4359,14 +4359,14 @@ namespace sogen
                 return desktop->mapped_object;
             }
 
-            const auto index = handle.value.id;
+            const auto index = static_cast<uint32_t>(handle.value.id);
 
-            if (index == 0 || index >= user_handle_table::MAX_HANDLES)
+            if (index == 0 || index >= user_handle_table::MAX_HANDLE_INDICES)
             {
                 return 0;
             }
 
-            const auto handle_entry = c.proc.user_handles.get_handle_table().read(static_cast<size_t>(index));
+            const auto handle_entry = c.proc.user_handles.get_handle_table().read(user_handle_table::handle_index_to_ahe_slot(index));
             return handle_entry.pHead;
         }
 
