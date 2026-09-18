@@ -29,11 +29,12 @@ namespace sogen
         win_sockaddr RemoteAddress;
     };
 
+    template <typename Traits>
     struct AFD_ACCEPT_INFO
     {
         BOOLEAN SanActive;
         LONG Sequence;
-        handle AcceptHandle;
+        Traits::HANDLE AcceptHandle;
     };
 
     template <typename Traits>
@@ -115,6 +116,23 @@ namespace sogen
         ULONG PollEvents;
         NTSTATUS Status;
     };
+
+    struct AFD_INFORMATION
+    {
+        ULONG InformationClass;
+
+        alignas(8) union
+        {
+            ULONG Ulong;
+            LARGE_INTEGER LargeInteger;
+            BOOLEAN Boolean;
+        } Information;
+    };
+
+    static_assert(offsetof(AFD_INFORMATION, Information) == 8);
+    static_assert(sizeof(AFD_INFORMATION) == 16);
+
+#define AFD_INFO_BLOCKING_MODE 0x02L
 
     template <typename Traits>
     struct AFD_POLL_INFO

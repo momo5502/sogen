@@ -151,7 +151,7 @@ namespace sogen
         }
 
         const auto result = this->io_control(win_emu, c);
-        write_io_status(c.io_status_block, result);
+        write_io_status(c, result);
 
         // A synchronously-completing IOCTL must signal the optional completion event the caller passed, so a
         // thread that issues the request and then waits on the event is released. Asynchronous devices return
