@@ -1887,6 +1887,37 @@ namespace
         return true;
     }
 
+    namespace
+    {
+        INT_PTR CALLBACK dialog_table_proc(const HWND hwnd, const UINT msg, const WPARAM wp, const LPARAM lp)
+        {
+            (void)hwnd;
+            (void)msg;
+            (void)wp;
+            (void)lp;
+            return FALSE;
+        }
+    }
+
+    bool test_dialog_table()
+    {
+        alignas(DWORD) static const std::array<uint8_t, 28> template_bytes = {
+            0x00, 0x00, 0xC8, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x64, 0x00, 0x3C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        };
+
+        const HWND hwnd = CreateDialogIndirectParamW(GetModuleHandleW(nullptr), reinterpret_cast<const DLGTEMPLATE*>(template_bytes.data()),
+                                                     nullptr, dialog_table_proc, 0);
+        if (!hwnd)
+        {
+            puts("CreateDialogIndirectParamW failed");
+            return false;
+        }
+
+        DestroyWindow(hwnd);
+        return true;
+    }
+
     bool test_bcrypt_hash()
     {
         struct hash_vector
@@ -1995,6 +2026,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_actctx, "Activation Context")
     RUN_TEST(test_mmio, "MMIO")
     RUN_TEST(test_gdi, "GDI")
+    RUN_TEST(test_dialog_table, "Dialog Table")
     RUN_TEST(test_bcrypt_hash, "BCrypt Hash")
 
     return valid ? 0 : 1;
