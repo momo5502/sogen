@@ -1084,8 +1084,7 @@ namespace sogen
             const std::scoped_lock lock(this->kernel_lock_);
             auto& vcpu = this->vcpu(cpu.index());
             const scoped_dispatch dispatch(*this, vcpu);
-            this->dispatcher.dispatch(*this, vcpu);
-            return instruction_hook_continuation::skip_instruction;
+            return this->dispatcher.dispatch(*this, vcpu);
         });
 
         this->emu().hook_instruction(x86_hookable_instructions::rdtscp, [&](cpu_interface& cpu, uint64_t) {

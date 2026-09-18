@@ -3661,14 +3661,20 @@ namespace sogen::fex
         // unconditional advance below the JIT falls through and either re-executes the syscall on block
         // re-entry or, for a redirect, branches into the middle of an instruction at target - 2.
         auto* hook = this->emulator_.syscall_hook_;
+        auto continuation = instruction_hook_continuation::run_instruction;
         if (hook != nullptr && hook->callback)
         {
             // The Windows syscall layer reads/writes guest registers itself through the emulator, so the
             // hook needs no data argument here. It places the NT status in RAX before returning.
-            hook->callback(this->emulator_, 0);
+            continuation = hook->callback(this->emulator_, 0);
         }
 
-        this->emulator_.cpu_state().rip += 2;
+        // A handler that finalized RIP (NtContinue, NtCallbackReturn, user callbacks) installed the
+        // exact guest target itself, so it must not be advanced past the syscall instruction.
+        if (continuation != instruction_hook_continuation::finalized_instruction_pointer)
+        {
+            this->emulator_.cpu_state().rip += 2;
+        }
 
         if (this->emulator_.stop_requested_)
         {

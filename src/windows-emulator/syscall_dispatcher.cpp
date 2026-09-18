@@ -66,7 +66,7 @@ namespace sogen
         }
     }
 
-    void syscall_dispatcher::dispatch(windows_emulator& win_emu, vcpu_context& vcpu)
+    instruction_hook_continuation syscall_dispatcher::dispatch(windows_emulator& win_emu, vcpu_context& vcpu)
     {
         auto& emu = vcpu.cpu;
         auto& context = win_emu.process;
@@ -94,13 +94,13 @@ namespace sogen
                 win_emu.record_stop(stop_reason::unknown_syscall, "0x" + utils::string::to_hex_number(syscall_id));
                 c.emu.reg<uint64_t>(x86_register::rax, STATUS_NOT_SUPPORTED);
                 win_emu.stop();
-                return;
+                return instruction_hook_continuation::skip_instruction;
             }
 
             const auto res = win_emu.callbacks.on_syscall(syscall_id, entry->second.name);
             if (res == instruction_hook_continuation::skip_instruction)
             {
-                return;
+                return instruction_hook_continuation::skip_instruction;
             }
 
             if (!entry->second.handler)
@@ -109,12 +109,15 @@ namespace sogen
                 win_emu.record_stop(stop_reason::unimplemented_syscall, entry->second.name);
                 c.emu.reg<uint64_t>(x86_register::rax, STATUS_NOT_SUPPORTED);
                 win_emu.stop();
-                return;
+                return instruction_hook_continuation::skip_instruction;
             }
 
             entry->second.handler(c);
 
             dispatch_callback(win_emu, entry->second.name);
+
+            return c.instruction_pointer_finalized ? instruction_hook_continuation::finalized_instruction_pointer
+                                                   : instruction_hook_continuation::skip_instruction;
         }
         catch (std::exception& e)
         {
@@ -132,6 +135,8 @@ namespace sogen
             emu.reg<uint64_t>(x86_register::rax, STATUS_UNSUCCESSFUL);
             win_emu.stop();
         }
+
+        return instruction_hook_continuation::skip_instruction;
     }
 
     void syscall_dispatcher::dispatch_callback(windows_emulator& win_emu, std::string& syscall_name)

@@ -132,6 +132,8 @@ namespace sogen::icicle
             unhandled_exception = 2,
             other = 3,
         };
+
+        constexpr uint64_t syscall_instruction_size = 2;
     }
 
     class icicle_x86_64_emulator : public x86_64_emulator
@@ -337,7 +339,18 @@ namespace sogen::icicle
                 return nullptr;
             }
 
-            auto obj = make_function_object(this->bind_cpu(std::move(callback)), this->is_in_hook_);
+            auto bound = this->bind_cpu(std::move(callback));
+            std::function<instruction_hook_continuation(uint64_t)> wrapped =
+                [this, cb = std::move(bound)](const uint64_t data) -> instruction_hook_continuation {
+                const auto continuation = cb(data);
+                if (continuation == instruction_hook_continuation::finalized_instruction_pointer)
+                {
+                    this->reg(x86_register::rip, this->read_instruction_pointer() - syscall_instruction_size);
+                }
+                return continuation;
+            };
+
+            auto obj = make_function_object(std::move(wrapped), this->is_in_hook_);
             auto* ptr = obj.get();
 
             const auto invoker = +[](void* cb) {
