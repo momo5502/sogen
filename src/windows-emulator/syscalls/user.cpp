@@ -2839,7 +2839,7 @@ namespace sogen
         }
 
         // Routine numbers for the Win10 19041-19045 user-call table. Other Windows
-        // versions use different numbers; unknown routines return 0 below.
+        // versions use different numbers, so the table is gated by guest build below.
         constexpr uint32_t user_call_set_dialog_pointer = 99;
         constexpr uint32_t user_call_set_dialog_system_menu = 111;
         constexpr uint32_t user_call_update_window = 115;
@@ -2849,7 +2849,7 @@ namespace sogen
 
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t code)
         {
-            if (code == user_call_set_dialog_pointer)
+            if (c.win_emu.version.is_build_within(19041, 19046) && code == user_call_set_dialog_pointer)
             {
                 return handle_NtUserSetDialogPointer(c, hwnd, param);
             }
@@ -2864,15 +2864,18 @@ namespace sogen
 
         BOOL handle_NtUserCallHwndLock(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
         {
-            if (routine == user_call_set_dialog_system_menu)
+            if (c.win_emu.version.is_build_within(19041, 19046))
             {
-                return handle_NtUserSetDialogSystemMenu(c, hwnd);
-            }
+                if (routine == user_call_set_dialog_system_menu)
+                {
+                    return handle_NtUserSetDialogSystemMenu(c, hwnd);
+                }
 
-            if (routine == user_call_update_window)
-            {
-                // user32!UpdateWindow is dispatched through NtUserCallHwndLock(115) on Win10.
-                return handle_NtUserUpdateWindow(c, hwnd);
+                if (routine == user_call_update_window)
+                {
+                    // user32!UpdateWindow is dispatched through NtUserCallHwndLock(115) on Win10.
+                    return handle_NtUserUpdateWindow(c, hwnd);
+                }
             }
 
             c.win_emu.log.error("Unimplemented NtUserCallHwndLock routine: 0x%X\n", routine);
@@ -2881,7 +2884,7 @@ namespace sogen
 
         uint64_t handle_NtUserCallHwnd(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
         {
-            if (routine == user_call_set_msg_box)
+            if (c.win_emu.version.is_build_within(19041, 19046) && routine == user_call_set_msg_box)
             {
                 return handle_NtUserSetMsgBox(c, hwnd);
             }
@@ -2892,14 +2895,17 @@ namespace sogen
 
         uint64_t handle_NtUserCallOneParam(const syscall_context& c, const uint64_t param, const uint32_t routine)
         {
-            if (routine == user_call_release_dc)
+            if (c.win_emu.version.is_build_within(19041, 19046))
             {
-                return handle_NtUserReleaseDC();
-            }
+                if (routine == user_call_release_dc)
+                {
+                    return handle_NtUserReleaseDC();
+                }
 
-            if (routine == user_call_post_quit_message)
-            {
-                return handle_NtUserPostQuitMessage(c, static_cast<int>(param));
+                if (routine == user_call_post_quit_message)
+                {
+                    return handle_NtUserPostQuitMessage(c, static_cast<int>(param));
+                }
             }
 
             c.win_emu.log.error("Unimplemented NtUserCallOneParam routine: 0x%X\n", routine);
