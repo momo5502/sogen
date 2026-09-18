@@ -670,6 +670,17 @@ namespace sogen
             return create_default_audio_backend();
         }
 
+        std::unique_ptr<crypt_protect_backend> get_crypt_protect_backend(emulator_interfaces& interfaces,
+                                                                         const std::filesystem::path& emulation_root)
+        {
+            if (interfaces.crypt_protect)
+            {
+                return std::move(interfaces.crypt_protect);
+            }
+
+            return create_default_crypt_protect_backend(emulation_root);
+        }
+
         // The guest must see at least as many logical processors as there are vCPUs, otherwise a
         // thread running on a higher-indexed vCPU would report a processor number the guest
         // considers out of range. The configured fake value still wins when it is larger (e.g. the
@@ -698,6 +709,8 @@ namespace sogen
           socket_factory_(get_socket_factory(interfaces)),
           ui_backend_(get_ui_backend(interfaces)),
           audio_backend_(get_audio_backend(interfaces)),
+          crypt_protect_backend_(get_crypt_protect_backend(
+              interfaces, settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root))),
           emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
           fake_env(effective_fake_env(settings, static_cast<uint32_t>(this->emu_->vcpu_count()))),
           callbacks(std::move(callbacks)),

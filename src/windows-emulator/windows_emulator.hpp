@@ -18,6 +18,7 @@
 #include "version/windows_version_manager.hpp"
 #include <platform/ui_backend.hpp>
 #include <platform/audio_backend.hpp>
+#include <platform/crypt_protect_backend.hpp>
 
 namespace sogen
 {
@@ -116,6 +117,7 @@ namespace sogen
         std::unique_ptr<network::socket_factory> socket_factory{};
         std::unique_ptr<ui_backend> ui{};
         std::unique_ptr<audio_backend> audio{};
+        std::unique_ptr<crypt_protect_backend> crypt_protect{};
     };
 
     // Per-vCPU scheduler state: the guest thread a virtual CPU is currently executing
@@ -149,6 +151,7 @@ namespace sogen
         std::unique_ptr<network::socket_factory> socket_factory_{};
         std::unique_ptr<ui_backend> ui_backend_{};
         std::unique_ptr<audio_backend> audio_backend_{};
+        std::unique_ptr<crypt_protect_backend> crypt_protect_backend_{};
         bool setup_completed_{false};
 
       public:
@@ -234,6 +237,16 @@ namespace sogen
         const audio_backend& audio() const
         {
             return *this->audio_backend_;
+        }
+
+        crypt_protect_backend& crypt_protect()
+        {
+            return *this->crypt_protect_backend_;
+        }
+
+        const crypt_protect_backend& crypt_protect() const
+        {
+            return *this->crypt_protect_backend_;
         }
 
         void handle_ui_event(const ui_event& event);

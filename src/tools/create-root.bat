@@ -63,6 +63,7 @@ CALL :collect devobj.dll
 CALL :collect diagnosticdatasettings.dll
 CALL :collect dinput8.dll
 CALL :collect dnsapi.dll
+CALL :collect dpapi.dll
 CALL :collect dsound.dll
 CALL :collect dwmapi.dll
 CALL :collect dxcore.dll
@@ -128,6 +129,7 @@ CALL :collect rpcrt4.dll
 CALL :collect rpcss.dll
 CALL :collect rstrtmgr.dll
 CALL :collect rsaenh.dll
+CALL :collect samlib.dll
 CALL :collect sechost.dll
 CALL :collect setupapi.dll
 CALL :collect shcore.dll
