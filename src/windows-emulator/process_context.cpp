@@ -300,9 +300,7 @@ namespace sogen
         }
 
         this->process_params64.access([&](RTL_USER_PROCESS_PARAMETERS64& proc_params) {
-            // Let user32 perform its normal CSRSS/ApiPort client initialization.
-            // Sogen provides the ApiPort and USER connect reply in-process.
-            proc_params.Flags = 0x6001;
+            proc_params.Flags = 0x6001; //| 0x80000000; // Prevent CsrClientConnectToServer
 
             proc_params.ConsoleHandle = CONSOLE_HANDLE.h;
             proc_params.StandardOutput = STDOUT_HANDLE.h;
