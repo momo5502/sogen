@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <optional>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -225,7 +226,50 @@ namespace sogen
         {
             VkPhysicalDevice handle{};
             uint64_t instance_id{};
+            std::optional<bool> portability{};
         };
+
+        static bool has_device_extension(const instance_data& instance, VkPhysicalDevice device, const std::string_view name)
+        {
+            if (!instance.enumerate_device_extension_properties)
+            {
+                return false;
+            }
+
+            uint32_t count = 0;
+            VkResult result = instance.enumerate_device_extension_properties(device, nullptr, &count, nullptr);
+            if (result != VK_SUCCESS && result != VK_INCOMPLETE)
+            {
+                return false;
+            }
+
+            std::vector<VkExtensionProperties> extensions(count);
+            if (count > 0)
+            {
+                result = instance.enumerate_device_extension_properties(device, nullptr, &count, extensions.data());
+                if (result != VK_SUCCESS && result != VK_INCOMPLETE)
+                {
+                    return false;
+                }
+            }
+
+            return std::ranges::any_of(extensions, [&](const VkExtensionProperties& extension) {
+                return std::string_view{static_cast<const char*>(extension.extensionName)} == name;
+            });
+        }
+
+        // VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME lives in vulkan_beta.h behind VK_ENABLE_BETA_EXTENSIONS.
+        static constexpr std::string_view portability_subset_extension_name = "VK_KHR_portability_subset";
+
+        static bool is_portability_device(const instance_data& instance, physical_device_data& device)
+        {
+            if (!device.portability)
+            {
+                device.portability = has_device_extension(instance, device.handle, portability_subset_extension_name);
+            }
+
+            return *device.portability;
+        }
 
         struct device_data
         {
@@ -1084,6 +1128,41 @@ namespace sogen
         create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         create_info.pApplicationInfo = &app_info;
 
+        // With a portability driver installed (MoltenVK on macOS) the loader fails vkCreateInstance with
+        // VK_ERROR_INCOMPATIBLE_DRIVER unless the caller enables VK_KHR_portability_enumeration and sets
+        // VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR.
+        std::vector<const char*> instance_extensions;
+        if (const auto enumerate_instance_extensions = reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
+                this->impl_->get_instance_proc_addr(nullptr, "vkEnumerateInstanceExtensionProperties")))
+        {
+            uint32_t ext_count = 0;
+            std::vector<VkExtensionProperties> available;
+            VkResult enumerate_result = enumerate_instance_extensions(nullptr, &ext_count, nullptr);
+            if ((enumerate_result == VK_SUCCESS || enumerate_result == VK_INCOMPLETE) && ext_count > 0)
+            {
+                available.resize(ext_count);
+                enumerate_result = enumerate_instance_extensions(nullptr, &ext_count, available.data());
+                if (enumerate_result != VK_SUCCESS && enumerate_result != VK_INCOMPLETE)
+                {
+                    available.clear();
+                }
+            }
+
+            const bool has_portability_enumeration = std::ranges::any_of(available, [](const VkExtensionProperties& ext) {
+                return std::string_view{static_cast<const char*>(ext.extensionName)} == VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+            });
+            if (has_portability_enumeration)
+            {
+                instance_extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+                create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            }
+        }
+        if (!instance_extensions.empty())
+        {
+            create_info.enabledExtensionCount = static_cast<uint32_t>(instance_extensions.size());
+            create_info.ppEnabledExtensionNames = instance_extensions.data();
+        }
+
         VkInstance instance{};
         const VkResult result = this->impl_->create_instance(&create_info, nullptr, &instance);
         if (result != VK_SUCCESS)
@@ -1888,6 +1967,15 @@ namespace sogen
                 }
                 cursor = terminator + 1;
             }
+        }
+
+        // Vulkan requires VK_KHR_portability_subset to be enabled whenever the device advertises it, and
+        // the guest never asks for it.
+        const bool requests_portability_subset = std::ranges::any_of(
+            extensions, [](const char* name) { return std::string_view{name} == impl::portability_subset_extension_name; });
+        if (!requests_portability_subset && impl::is_portability_device(instance->second, pd->second))
+        {
+            extensions.push_back(impl::portability_subset_extension_name.data());
         }
 
         // Rebuild the pNext feature chain to enable (same record format as get_physical_device_features2);
