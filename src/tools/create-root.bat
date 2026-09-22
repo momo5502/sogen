@@ -43,6 +43,8 @@ REM (which writes SYSTEM/SECURITY/SOFTWARE/HARDWARE/SAM + NTUSER.DAT into the gi
 CALL "%~dp0grab-registry.bat" "%EMU_REGDIR%"
 
 CALL :collect advapi32.dll
+CALL :collect audioeng.dll
+CALL :collect audiokse.dll
 CALL :collect bcrypt.dll
 CALL :collect bcryptprimitives.dll
 CALL :collect cabinet.dll
@@ -114,6 +116,7 @@ CALL :collect mscoree.dll
 CALL :collect msdmo.dll
 CALL :collect mskeyprotect.dll
 CALL :collect msvcp140.dll
+CALL :collect msvcp140_atomic_wait.dll
 CALL :collect msvcp140d.dll
 CALL :collect msvcp60.dll
 CALL :collect msvcp_win.dll
@@ -162,6 +165,7 @@ CALL :collect slwga.dll
 CALL :collect sppc.dll
 CALL :collect srvcli.dll
 CALL :collect sspicli.dll
+CALL :collect twinapi.appcore.dll
 CALL :collect ucrtbase.dll
 CALL :collect ucrtbased.dll
 CALL :collect uiautomationcore.dll
