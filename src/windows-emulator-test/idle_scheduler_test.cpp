@@ -156,4 +156,36 @@ namespace sogen::test
         EXPECT_FALSE(result.get());
 #endif
     }
+
+    TEST_F(IdleSchedulerTest, IdleScanPollsEachThreadOnceStartingAfterActive)
+    {
+        this->create();
+
+        auto& threads = this->emu->process.threads;
+        auto* second = threads.get(threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true}));
+        auto* third = threads.get(threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true}));
+        this->emu->vcpu(0).active_thread = second;
+
+        std::string polls{};
+        this->thread->await_host_condition = [&polls] {
+            polls += 'a';
+            return false;
+        };
+        second->await_host_condition = [&polls] {
+            polls += 'b';
+            return false;
+        };
+        third->await_host_condition = [&polls] {
+            polls += 'c';
+            return false;
+        };
+        this->ui->on_pump = [&polls, second] {
+            polls += '|';
+            second->await_host_condition = [] { return true; };
+        };
+
+        EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+        EXPECT_EQ(polls, "cab|ca");
+        EXPECT_EQ(this->emu->vcpu(0).active_thread, second);
+    }
 }

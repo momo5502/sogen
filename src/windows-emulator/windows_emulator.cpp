@@ -560,31 +560,25 @@ namespace sogen
         {
             perform_context_switch_work(win_emu, vcpu);
 
-            auto& context = win_emu.process;
+            auto& threads = win_emu.process.threads;
 
-            bool next_thread = false;
-
-            for (auto& t : context.threads | std::views::values)
+            auto resume_at = vcpu.active_thread ? threads.find(*vcpu.active_thread) : threads.end();
+            if (resume_at != threads.end())
             {
-                if (next_thread)
-                {
-                    if (switch_to_thread(win_emu, vcpu, t))
-                    {
-                        return true;
-                    }
+                ++resume_at;
+            }
 
-                    continue;
-                }
-
-                if (&t == vcpu.active_thread)
+            for (auto it = resume_at; it != threads.end(); ++it)
+            {
+                if (switch_to_thread(win_emu, vcpu, it->second))
                 {
-                    next_thread = true;
+                    return true;
                 }
             }
 
-            for (auto& t : context.threads | std::views::values)
+            for (auto it = threads.begin(); it != resume_at; ++it)
             {
-                if (switch_to_thread(win_emu, vcpu, t))
+                if (switch_to_thread(win_emu, vcpu, it->second))
                 {
                     return true;
                 }
