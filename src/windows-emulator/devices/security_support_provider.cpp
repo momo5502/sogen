@@ -176,7 +176,16 @@ namespace sogen
             {
                 const auto source = c.input_buffer ? c.input_buffer : c.output_buffer;
                 const auto dest = c.output_buffer ? c.output_buffer : c.input_buffer;
-                const auto length = c.input_buffer_length ? c.input_buffer_length : c.output_buffer_length;
+                const auto in_len = static_cast<size_t>(c.input_buffer_length);
+                const auto out_len = static_cast<size_t>(c.output_buffer_length);
+                // Cross-process and same-logon ioctls can pass distinct buffers. Writing the
+                // input length into a shorter output buffer overwrites adjacent guest memory.
+                if (in_len != 0 && out_len != 0 && out_len < in_len)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                const auto length = in_len != 0 ? in_len : out_len;
                 if (!source || !dest || length == 0)
                 {
                     return STATUS_INVALID_PARAMETER;

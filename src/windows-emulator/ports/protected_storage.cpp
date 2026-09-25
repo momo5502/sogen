@@ -167,11 +167,14 @@ namespace sogen
 
                 (void)max_chars;
                 (void)first;
-                const auto bytes_count = actual * sizeof(char16_t);
-                if (!remaining(bytes_count))
+                // Bound the element count before scaling. actual is guest-controlled, and
+                // actual * sizeof(char16_t) can wrap size_t so remaining() would pass.
+                if (offset > bytes.size() || actual > (bytes.size() - offset) / sizeof(char16_t))
                 {
                     return false;
                 }
+
+                const auto bytes_count = actual * sizeof(char16_t);
 
                 out.assign(reinterpret_cast<const char16_t*>(bytes.data() + offset), actual);
                 offset += bytes_count;
