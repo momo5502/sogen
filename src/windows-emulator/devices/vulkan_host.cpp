@@ -1513,6 +1513,22 @@ namespace sogen
         const auto removed = std::ranges::remove_if(extensions, is_unsupported_device_extension);
         extensions.erase(removed.begin(), removed.end());
 
+        // DXVK's adapter filter requires VK_EXT_depth_clip_enable, which MoltenVK lacks; advertised here
+        // and stripped again in create_device (limitations: docs/gpu-paravirtualization.md).
+        if (impl::is_portability_device(instance->second, pd->second))
+        {
+            const bool has_depth_clip = std::ranges::any_of(extensions, [](const VkExtensionProperties& ext) {
+                return std::strcmp(ext.extensionName, VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME) == 0;
+            });
+            if (!has_depth_clip)
+            {
+                VkExtensionProperties synthetic{};
+                std::strncpy(synthetic.extensionName, VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME, sizeof(synthetic.extensionName) - 1);
+                synthetic.specVersion = VK_EXT_DEPTH_CLIP_ENABLE_SPEC_VERSION;
+                extensions.push_back(synthetic);
+            }
+        }
+
         out_count = static_cast<uint32_t>(extensions.size());
 
         const size_t copy_bytes = std::min(out_size, extensions.size() * sizeof(VkExtensionProperties));
@@ -1757,6 +1773,32 @@ namespace sogen
             }
         }
 
+        // DXVK's shared D3D8-11 adapter filter requires these five features, which MoltenVK lacks and
+        // D3D9 never uses; create_device masks them back out before they reach the driver.
+        if (impl::is_portability_device(instance->second, pd->second))
+        {
+            features2.features.geometryShader = VK_TRUE;
+            features2.features.shaderCullDistance = VK_TRUE;
+
+            for (auto& buffer : chained)
+            {
+                switch (reinterpret_cast<const VkBaseOutStructure*>(buffer.data())->sType)
+                {
+                case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT:
+                    reinterpret_cast<VkPhysicalDeviceDepthClipEnableFeaturesEXT*>(buffer.data())->depthClipEnable = VK_TRUE;
+                    break;
+                case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT: {
+                    auto* robustness2 = reinterpret_cast<VkPhysicalDeviceRobustness2FeaturesEXT*>(buffer.data());
+                    robustness2->robustBufferAccess2 = VK_TRUE;
+                    robustness2->nullDescriptor = VK_TRUE;
+                    break;
+                }
+                default:
+                    break;
+                }
+            }
+        }
+
         // Serialize one record + body per requested struct, in request order. The body is the guest's
         // pad-free VkBool32 run copied from after the (ABI-specific) header.
         for (uint32_t i = 0; i < struct_count; ++i)
@@ -1969,13 +2011,22 @@ namespace sogen
             }
         }
 
+        const bool portability = impl::is_portability_device(instance->second, pd->second);
+
         // Vulkan requires VK_KHR_portability_subset to be enabled whenever the device advertises it, and
         // the guest never asks for it.
         const bool requests_portability_subset = std::ranges::any_of(
             extensions, [](const char* name) { return std::string_view{name} == impl::portability_subset_extension_name; });
-        if (!requests_portability_subset && impl::is_portability_device(instance->second, pd->second))
+        if (portability && !requests_portability_subset)
         {
             extensions.push_back(impl::portability_subset_extension_name.data());
+        }
+
+        // vkCreateDevice rejects an enabled extension the driver does not implement, so undo the
+        // enumerate-time VK_EXT_depth_clip_enable spoof.
+        if (portability && !impl::has_device_extension(instance->second, pd->second.handle, VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME))
+        {
+            std::erase_if(extensions, [](const char* name) { return std::strcmp(name, VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME) == 0; });
         }
 
         // Rebuild the pNext feature chain to enable (same record format as get_physical_device_features2);
@@ -2034,6 +2085,46 @@ namespace sogen
             }
         }
 
+        const bool has_feature_chain = has_features || !chained.empty();
+
+        // Undo the query-time feature spoof: vkCreateDevice fails on a feature the device lacks.
+        if (portability && has_feature_chain && instance->second.get_physical_device_features2)
+        {
+            VkPhysicalDeviceFeatures2 supported{};
+            supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            std::vector<std::vector<std::byte>> supported_chained;
+            supported_chained.reserve(chained.size());
+            auto* supported_tail = reinterpret_cast<VkBaseOutStructure*>(&supported);
+            for (const auto& buffer : chained)
+            {
+                auto& mirror = supported_chained.emplace_back(buffer.size(), std::byte{});
+                auto* base = reinterpret_cast<VkBaseOutStructure*>(mirror.data());
+                base->sType = reinterpret_cast<const VkBaseOutStructure*>(buffer.data())->sType;
+                base->pNext = nullptr;
+                supported_tail->pNext = base;
+                supported_tail = base;
+            }
+            instance->second.get_physical_device_features2(pd->second.handle, &supported);
+
+            auto* enabled = reinterpret_cast<VkBool32*>(&features2.features);
+            const auto* real = reinterpret_cast<const VkBool32*>(&supported.features);
+            for (size_t i = 0; i < sizeof(features2.features) / sizeof(VkBool32); ++i)
+            {
+                enabled[i] &= real[i];
+            }
+            for (size_t c = 0; c < chained.size(); ++c)
+            {
+                const size_t body_bytes = chained[c].size() - gpu_bridge::feature_chain_header_size;
+                auto* enabled_body = reinterpret_cast<VkBool32*>(chained[c].data() + gpu_bridge::feature_chain_header_size);
+                const auto* real_body =
+                    reinterpret_cast<const VkBool32*>(supported_chained[c].data() + gpu_bridge::feature_chain_header_size);
+                for (size_t i = 0; i < body_bytes / sizeof(VkBool32); ++i)
+                {
+                    enabled_body[i] &= real_body[i];
+                }
+            }
+        }
+
         VkDeviceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_infos.size());
@@ -2042,7 +2133,7 @@ namespace sogen
         create_info.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
         // Enabled features ride the pNext chain (VkPhysicalDeviceFeatures2 + the chained structs); a
         // chain present means pEnabledFeatures must stay null.
-        if (has_features || feature_tail != reinterpret_cast<VkBaseOutStructure*>(&features2))
+        if (has_feature_chain)
         {
             create_info.pNext = &features2;
         }
