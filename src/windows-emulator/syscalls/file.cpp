@@ -1125,16 +1125,17 @@ namespace sogen
                     return ret(STATUS_BUFFER_OVERFLOW);
                 }
 
-                auto [native_file_handle, status] = open_file(c.win_emu.file_sys, filename, u"r");
-                if (status != STATUS_SUCCESS)
+                const auto filepath = windows_path(filename);
+                if (filepath.is_relative())
                 {
-                    return ret(status);
+                    return ret(STATUS_OBJECT_NAME_NOT_FOUND);
                 }
 
+                const auto local_filename = c.win_emu.file_sys.translate(filepath);
                 struct compat_stat file_stat{};
-                if (!compat_fstat(native_file_handle.file_descriptor(), &file_stat))
+                if (!compat_stat(local_filename, &file_stat))
                 {
-                    return STATUS_INVALID_HANDLE;
+                    return ret(STATUS_OBJECT_NAME_NOT_FOUND);
                 }
 
                 const auto is_directory = (file_stat.st_mode & S_IFDIR) != 0;
