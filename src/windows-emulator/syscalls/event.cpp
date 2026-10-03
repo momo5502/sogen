@@ -88,13 +88,15 @@ namespace sogen
             }
 
             EVENT_TYPE type = NotificationEvent;
-            bool is_signaled = event_handle == LSA_AUTHENTICATION_INITIALIZED;
+            bool is_signaled = false;
 
             if (auto* entry = c.proc.events.get(event_handle))
             {
                 type = entry->type;
                 is_signaled = entry->signaled;
             }
+
+            is_signaled = is_signaled || event_handle == LSA_AUTHENTICATION_INITIALIZED;
 
             event_information.access([&](EVENT_BASIC_INFORMATION& info) {
                 info.EventType = type;
