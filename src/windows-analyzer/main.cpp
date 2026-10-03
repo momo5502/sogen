@@ -75,6 +75,7 @@ namespace sogen
             std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
             std::vector<std::filesystem::path> registry_files{};
             std::filesystem::path emulation_root{};
+            std::filesystem::path working_directory{};
             std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
             utils::unordered_insensitive_u16string_map<std::u16string> environment{};
         };
@@ -545,6 +546,10 @@ namespace sogen
                 .arguments = parse_arguments(args),
                 .environment = options.environment,
             };
+            if (!options.working_directory.empty())
+            {
+                app_settings.working_directory = windows_path(options.working_directory);
+            }
 
             const auto settings = create_emulator_settings(options);
             return std::make_unique<windows_emulator>(create_configured_backend(options), std::move(app_settings), settings);
@@ -904,6 +909,7 @@ namespace sogen
 #endif
 
             app.add_option("-e,--emulation", options.emulation_root, "Set emulation root path");
+            app.add_option("--working-directory", options.working_directory, "Set the working directory for the analyzed application");
             app.add_option("-a,--snapshot", options.dump, "Load snapshot dump from path");
             app.add_option("--minidump", options.minidump_path, "Load minidump from path");
             app.add_option("--report", options.report_path, "Write machine-readable analysis events to a file");
