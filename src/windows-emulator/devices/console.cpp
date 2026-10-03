@@ -12,6 +12,7 @@ namespace sogen
 
         enum class console_api : uint32_t
         {
+            get_console_mode = 0x01000001,
             fill_console_output = 0x02000000,
             set_console_cursor_position = 0x0200000A,
             set_console_text_attribute = 0x0200000D,
@@ -132,6 +133,17 @@ namespace sogen
 
                 switch (static_cast<console_api>(message.api_number))
                 {
+                case console_api::get_console_mode: {
+                    if (message.data_size != sizeof(DWORD))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    constexpr DWORD mode = 0x0007;
+                    win_emu.emu().write_memory(header.data, &mode, sizeof(mode));
+                    return STATUS_SUCCESS;
+                }
+
                 case console_api::fill_console_output: {
                     if (message.data_size != sizeof(fill_console_output_request))
                     {

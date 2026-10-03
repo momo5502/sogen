@@ -298,7 +298,7 @@ namespace sogen
             case FileFsDeviceInformation:
                 return handle_query<FILE_FS_DEVICE_INFORMATION>(c.emu, fs_information, length, io_status_block,
                                                                 [&](FILE_FS_DEVICE_INFORMATION& info) {
-                                                                    if (file_handle == STDOUT_HANDLE)
+                                                                    if (file_handle == STDOUT_HANDLE || file_handle == STDIN_HANDLE)
                                                                     {
                                                                         info.DeviceType = FILE_DEVICE_CONSOLE;
                                                                         info.Characteristics = 0x20000;
