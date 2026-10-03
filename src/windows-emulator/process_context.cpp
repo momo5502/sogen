@@ -229,8 +229,8 @@ namespace sogen
             env_map[u"SystemDrive"] = system_drive;
             env_map[u"SystemRoot"] = system_root;
             env_map[u"SystemTemp"] = system_temp;
-            env_map[u"TMP"] = user_profile + u"\\AppData\\Temp";
-            env_map[u"TEMP"] = user_profile + u"\\AppData\\Temp";
+            env_map[u"TMP"] = user_profile + u"\\AppData\\Local\\Temp";
+            env_map[u"TEMP"] = user_profile + u"\\AppData\\Local\\Temp";
             env_map[u"USERPROFILE"] = user_profile;
 
             for (const auto& [key, value] : app_settings.environment)

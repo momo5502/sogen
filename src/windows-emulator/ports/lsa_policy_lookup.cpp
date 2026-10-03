@@ -18,6 +18,7 @@ namespace sogen
         constexpr ULONG k_lookup_sids_min_success_reply_size_64 = 0x10C;
         constexpr ULONG k_close_policy_reply_size_32 = 0x40;
         constexpr ULONG k_close_policy_reply_size_64 = 0x44;
+        constexpr ULONG k_lookup_account_reply_size = 0xDC;
 
         constexpr uint32_t k_lsa_max_referenced_domains = 0x20;
         constexpr uint32_t k_sid_type_user = 1;
@@ -152,6 +153,10 @@ namespace sogen
                     return handle_close_policy(win_emu, writer);
                 case 2:
                     return handle_lookup_sids(win_emu, c, writer);
+                case 3:
+                    return handle_lookup_account(win_emu, writer);
+                case 15:
+                    return handle_get_user_name(win_emu, writer);
                 case 5:
                     // The shell's account-lookup path (e.g. SHGetKnownFolderPath, used while the engine sets
                     // up its crash-report queue) issues this additional lookup. We don't resolve it, but we
@@ -165,6 +170,68 @@ namespace sogen
             }
 
           private:
+            static NTSTATUS handle_lookup_account(windows_emulator& win_emu, utils::aligned_binary_writer& writer)
+            {
+                const auto domain = utils::string::to_lower(registry_utils::get_account_domain(win_emu.registry));
+                const auto domain_sid = derive_account_domain_sid(win_emu.process.sid);
+
+                writer.write_ndr_pointer(true);
+                writer.write<uint32_t>(1);
+                writer.write_ndr_pointer(true);
+                writer.write(k_lsa_max_referenced_domains);
+
+                writer.write<uint32_t>(1);
+                write_lsa_unicode_string_header(writer, domain);
+                writer.write_ndr_pointer(true);
+                writer.write(static_cast<uint32_t>(domain.size() + 1));
+                writer.write<uint32_t>(0);
+                writer.write(static_cast<uint32_t>(domain.size()));
+                writer.write(domain.data(), domain.size() * sizeof(char16_t), alignof(char16_t));
+
+                writer.write(static_cast<uint32_t>(domain_sid[1]));
+                writer.write(domain_sid.data(), domain_sid.size(), alignof(uint32_t));
+
+                writer.write<uint32_t>(1);
+                writer.write_ndr_pointer(true);
+                writer.write<uint32_t>(1);
+                writer.write(k_sid_type_user);
+                writer.write_ndr_pointer(true);
+                writer.write<uint32_t>(0);
+                writer.write<uint32_t>(0);
+                writer.write(static_cast<uint32_t>(win_emu.process.sid[1]));
+                writer.write(win_emu.process.sid.data(), win_emu.process.sid.size(), alignof(uint32_t));
+                writer.write<uint32_t>(1);
+
+                if (writer.offset() < k_lookup_account_reply_size)
+                {
+                    writer.pad(k_lookup_account_reply_size - writer.offset());
+                }
+
+                return STATUS_SUCCESS;
+            }
+
+            static NTSTATUS handle_get_user_name(windows_emulator& win_emu, utils::aligned_binary_writer& writer)
+            {
+                const auto domain = registry_utils::get_account_domain(win_emu.registry);
+                const auto user = registry_utils::get_user_name(win_emu.registry);
+                const auto name = domain + u"\\" + user;
+                const auto length = static_cast<uint16_t>(name.size() * sizeof(char16_t));
+
+                writer.write(length);
+                writer.write(static_cast<uint16_t>(length + sizeof(char16_t)));
+                writer.write_ndr_pointer(true);
+                writer.write(static_cast<uint32_t>(name.size() + 1));
+                writer.write(STATUS_SUCCESS);
+                writer.write(static_cast<uint32_t>(name.size()));
+                writer.write(name.data(), name.size() * sizeof(char16_t), alignof(char16_t));
+                constexpr size_t reply_size = 0x78;
+                if (writer.offset() < reply_size)
+                {
+                    writer.pad(reply_size - writer.offset());
+                }
+                return STATUS_SUCCESS;
+            }
+
             static NTSTATUS handle_open_policy(windows_emulator& win_emu, utils::aligned_binary_writer& writer)
             {
                 (void)win_emu;

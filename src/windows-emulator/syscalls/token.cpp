@@ -365,10 +365,14 @@ namespace sogen
                 }
 
                 TOKEN_STATISTICS stats{};
+                stats.TokenId.LowPart = 0x1001;
+                stats.AuthenticationId.LowPart = 0x1000;
+                stats.ExpirationTime.QuadPart = std::numeric_limits<LONGLONG>::max();
                 stats.TokenType = get_token_type(token_handle);
                 stats.ImpersonationLevel = stats.TokenType == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
                 stats.GroupCount = 2;
                 stats.PrivilegeCount = 0;
+                stats.ModifiedId.LowPart = 0x1002;
 
                 c.emu.write_memory(token_information, stats);
 
