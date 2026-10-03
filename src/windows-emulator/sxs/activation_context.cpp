@@ -700,7 +700,7 @@ namespace sogen::sxs
             {
                 offset = 3;
             }
-            return std::string(reinterpret_cast<const char*>(data.data() + offset), data.size() - offset);
+            return {reinterpret_cast<const char*>(data.data() + offset), data.size() - offset};
         }
 
         manifest_document parse_manifest(const std::string& xml)
@@ -810,7 +810,7 @@ namespace sogen::sxs
                 }
                 if (!id || (!(*name & 0x80000000) && static_cast<uint16_t>(*name) == *id))
                 {
-                    return *target;
+                    return target;
                 }
             }
             return std::nullopt;
@@ -882,7 +882,9 @@ namespace sogen::sxs
             {
                 return std::nullopt;
             }
-            std::vector<std::byte> manifest(image.begin() + *data_offset, image.begin() + *data_offset + *data_size);
+            const auto manifest_begin = std::next(image.begin(), static_cast<std::ptrdiff_t>(*data_offset));
+            const auto manifest_end = std::next(manifest_begin, static_cast<std::ptrdiff_t>(*data_size));
+            std::vector<std::byte> manifest(manifest_begin, manifest_end);
             return decode_manifest_text(manifest);
         }
 
