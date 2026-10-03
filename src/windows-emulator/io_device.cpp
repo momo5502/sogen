@@ -165,6 +165,13 @@ namespace sogen
             }
         }
 
+        constexpr ULONG file_skip_completion_port_on_success = 0x1;
+        if (result != STATUS_PENDING &&
+            (result != STATUS_SUCCESS || !(this->completion_notification_flags_ & file_skip_completion_port_on_success)))
+        {
+            this->queue_io_completion(win_emu, c);
+        }
+
         return result;
     }
 
@@ -204,7 +211,15 @@ namespace sogen
     void io_device_container::set_completion_information(const handle completion_port, const uint64_t completion_key)
     {
         this->assert_validity();
+        io_device::set_completion_information(completion_port, completion_key);
         this->device_->set_completion_information(completion_port, completion_key);
+    }
+
+    void io_device_container::set_completion_notification_flags(const ULONG flags)
+    {
+        this->assert_validity();
+        io_device::set_completion_notification_flags(flags);
+        this->device_->set_completion_notification_flags(flags);
     }
 
     void io_device_container::work(windows_emulator& win_emu)
@@ -219,6 +234,9 @@ namespace sogen
 
         buffer.write(this->is_32_bit_);
         buffer.write_string(this->device_name_);
+        buffer.write_optional(this->completion_port_);
+        buffer.write(this->completion_key_);
+        buffer.write(this->completion_notification_flags_);
         this->device_->serialize(buffer);
     }
 
@@ -226,6 +244,9 @@ namespace sogen
     {
         buffer.read(this->is_32_bit_);
         buffer.read_string(this->device_name_);
+        buffer.read_optional(this->completion_port_);
+        buffer.read(this->completion_key_);
+        buffer.read(this->completion_notification_flags_);
 
         this->setup();
         this->device_->deserialize(buffer);

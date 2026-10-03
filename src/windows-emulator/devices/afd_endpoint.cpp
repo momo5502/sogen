@@ -605,6 +605,7 @@ namespace sogen
                 buffer.read(this->non_blocking_);
                 buffer.read_optional(this->completion_port_);
                 buffer.read(this->completion_key_);
+                buffer.read(this->completion_notification_flags_);
             }
 
             void serialize_object(utils::buffer_serializer& buffer) const override
@@ -616,6 +617,7 @@ namespace sogen
                 buffer.write(this->non_blocking_);
                 buffer.write_optional(this->completion_port_);
                 buffer.write(this->completion_key_);
+                buffer.write(this->completion_notification_flags_);
             }
 
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
@@ -852,7 +854,6 @@ namespace sogen
                 }
 
                 target_endpoint->set_socket(std::move(accepted_socket));
-
                 pending_connections_.erase(it);
 
                 return STATUS_SUCCESS;
@@ -879,24 +880,40 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                if (receive_info.BufferCount > 1)
-                {
-                    // TODO: Scatter/Gather
-                    return STATUS_NOT_SUPPORTED;
-                }
-
-                const auto wsabuf = emu.read_memory<EMU_WSABUF<Traits>>(receive_info.BufferArray);
-                if (!wsabuf.buf || wsabuf.len == 0)
+                constexpr ULONG max_buffer_count = 1024;
+                if (receive_info.BufferCount > max_buffer_count)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                // Cap the staging buffer: a guest can declare a ~4 GiB WSABUF without backing it, so allocating
-                // its full length before any data arrives is an asymmetric memory-exhaustion vector. Stream
-                // recv has partial-read semantics, so the guest simply reads the rest on the next call.
+                std::vector<EMU_WSABUF<Traits>> buffers{};
+                buffers.reserve(receive_info.BufferCount);
+
                 constexpr size_t max_stream_transfer_bytes = 64u << 20;
+                size_t transfer_size = 0;
+                for (ULONG i = 0; i < receive_info.BufferCount; ++i)
+                {
+                    const auto wsabuf = emu.read_memory<EMU_WSABUF<Traits>>(receive_info.BufferArray + (i * sizeof(EMU_WSABUF<Traits>)));
+                    if (!wsabuf.buf && wsabuf.len != 0)
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    buffers.push_back(wsabuf);
+                    transfer_size += std::min<size_t>(wsabuf.len, max_stream_transfer_bytes - transfer_size);
+                    if (transfer_size == max_stream_transfer_bytes)
+                    {
+                        break;
+                    }
+                }
+
+                if (transfer_size == 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 std::vector<std::byte> host_buffer;
-                host_buffer.resize(std::min<size_t>(wsabuf.len, max_stream_transfer_bytes));
+                host_buffer.resize(transfer_size);
 
                 const auto bytes_received = this->s_->recv(host_buffer);
 
@@ -916,7 +933,18 @@ namespace sogen
                     return STATUS_UNSUCCESSFUL;
                 }
 
-                emu.write_memory(wsabuf.buf, host_buffer.data(), static_cast<size_t>(bytes_received));
+                size_t source_offset = 0;
+                for (const auto& wsabuf : buffers)
+                {
+                    const auto copy_size = std::min<size_t>(wsabuf.len, static_cast<size_t>(bytes_received) - source_offset);
+                    if (copy_size == 0)
+                    {
+                        break;
+                    }
+
+                    emu.write_memory(wsabuf.buf, host_buffer.data() + source_offset, copy_size);
+                    source_offset += copy_size;
+                }
 
                 if (c.io_status_block)
                 {
@@ -949,25 +977,41 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                if (send_info.BufferCount > 1)
-                {
-                    // TODO: Scatter/Gather
-                    return STATUS_NOT_SUPPORTED;
-                }
-
-                const auto wsabuf = emu.read_memory<EMU_WSABUF<Traits>>(send_info.BufferArray);
-                if (!wsabuf.buf || wsabuf.len == 0)
+                constexpr ULONG max_buffer_count = 1024;
+                if (send_info.BufferCount > max_buffer_count)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                // Cap as in receive; stream send has partial-write semantics, so a larger request is simply
-                // sent across multiple calls rather than staged in one oversized host allocation.
                 constexpr size_t max_stream_transfer_bytes = 64u << 20;
-                std::vector<std::byte> host_buffer;
-                host_buffer.resize(std::min<size_t>(wsabuf.len, max_stream_transfer_bytes));
+                std::vector<std::byte> host_buffer{};
+                host_buffer.reserve(0x1000);
 
-                emu.read_memory(wsabuf.buf, host_buffer.data(), host_buffer.size());
+                for (ULONG i = 0; i < send_info.BufferCount && host_buffer.size() < max_stream_transfer_bytes; ++i)
+                {
+                    const auto wsabuf = emu.read_memory<EMU_WSABUF<Traits>>(send_info.BufferArray + (i * sizeof(EMU_WSABUF<Traits>)));
+                    if (!wsabuf.buf && wsabuf.len != 0)
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    const auto copy_size = std::min<size_t>(wsabuf.len, max_stream_transfer_bytes - host_buffer.size());
+                    const auto offset = host_buffer.size();
+                    host_buffer.resize(offset + copy_size);
+                    if (copy_size != 0)
+                    {
+                        emu.read_memory(wsabuf.buf, host_buffer.data() + offset, copy_size);
+                    }
+                }
+
+                if (host_buffer.empty())
+                {
+                    if (c.io_status_block)
+                    {
+                        c.io_status_block.write({});
+                    }
+                    return STATUS_SUCCESS;
+                }
 
                 const auto bytes_sent = this->s_->send(host_buffer);
 
@@ -1364,8 +1408,146 @@ namespace sogen
         template <typename Traits>
         struct afd_mio_endpoint final : afd_endpoint<Traits>
         {
+            struct pending_poll
+            {
+                io_device_context context;
+                std::optional<std::chrono::steady_clock::time_point> timeout{};
+
+                pending_poll(memory_interface& emu)
+                    : context(emu)
+                {
+                }
+
+                pending_poll(const io_device_context& context, const std::optional<std::chrono::steady_clock::time_point> timeout)
+                    : context(context),
+                      timeout(timeout)
+                {
+                }
+
+                pending_poll(utils::buffer_deserializer& buffer)
+                    : context(buffer)
+                {
+                }
+
+                void serialize(utils::buffer_serializer& buffer) const
+                {
+                    this->context.serialize(buffer);
+                    buffer.write_optional(this->timeout);
+                }
+
+                void deserialize(utils::buffer_deserializer& buffer)
+                {
+                    this->context.deserialize(buffer);
+                    buffer.read_optional(this->timeout);
+                }
+            };
+
+            std::vector<pending_poll> pending_polls_{};
+
             void create(windows_emulator&, const io_device_creation_data&) override
             {
+            }
+
+            static void complete_timeout(windows_emulator& win_emu, const io_device_context& c)
+            {
+                const emulator_object<AFD_POLL_INFO<Traits>> info_obj{win_emu.emu(), c.input_buffer};
+                info_obj.access([&](AFD_POLL_INFO<Traits>& poll_info) {
+                    poll_info.NumberOfHandles = 0; //
+                });
+            }
+
+            NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
+            {
+                if (_AFD_BASE(c.io_control_code) != FSCTL_AFD_BASE || _AFD_REQUEST(c.io_control_code) != AFD_POLL)
+                {
+                    return afd_endpoint<Traits>::io_control(win_emu, c);
+                }
+
+                const auto [info, handles] = get_poll_info<Traits>(win_emu, c);
+                const auto endpoints = this->resolve_endpoints(win_emu, handles);
+                const auto status = this->perform_poll(win_emu, c, endpoints, handles);
+                if (status != STATUS_PENDING)
+                {
+                    return status;
+                }
+
+                if (!info.Timeout.QuadPart)
+                {
+                    complete_timeout(win_emu, c);
+                    return STATUS_TIMEOUT;
+                }
+
+                std::optional<std::chrono::steady_clock::time_point> timeout{};
+                if (info.Timeout.QuadPart != std::numeric_limits<int64_t>::max())
+                {
+                    timeout = utils::convert_delay_interval_to_time_point(win_emu.clock(), info.Timeout,
+                                                                          {.QuadPart = std::numeric_limits<int64_t>::max()});
+                }
+
+                this->pending_polls_.emplace_back(c, timeout);
+                return STATUS_PENDING;
+            }
+
+            void work(windows_emulator& win_emu) override
+            {
+                for (auto it = this->pending_polls_.begin(); it != this->pending_polls_.end();)
+                {
+                    const auto [info, handles] = get_poll_info<Traits>(win_emu, it->context);
+                    const auto endpoints = this->resolve_endpoints(win_emu, handles);
+                    auto status = this->perform_poll(win_emu, it->context, endpoints, handles);
+
+                    if (status == STATUS_PENDING)
+                    {
+                        if (!it->timeout || *it->timeout > win_emu.clock().steady_now())
+                        {
+                            ++it;
+                            continue;
+                        }
+
+                        complete_timeout(win_emu, it->context);
+                        status = STATUS_TIMEOUT;
+                    }
+
+                    write_io_status(it->context, status);
+                    if (auto* event = win_emu.process.events.get(it->context.event))
+                    {
+                        event->signaled = true;
+                    }
+                    this->queue_io_completion(win_emu, it->context);
+                    it = this->pending_polls_.erase(it);
+                }
+            }
+
+            bool cancel_io(windows_emulator& win_emu, const uint64_t io_status_block) override
+            {
+                const auto it = std::ranges::find_if(this->pending_polls_, [io_status_block](const pending_poll& poll) {
+                    return poll.context.io_status_block.value() == io_status_block;
+                });
+                if (it == this->pending_polls_.end())
+                {
+                    return false;
+                }
+
+                write_io_status(it->context, STATUS_CANCELLED);
+                if (auto* event = win_emu.process.events.get(it->context.event))
+                {
+                    event->signaled = true;
+                }
+                this->queue_io_completion(win_emu, it->context);
+                this->pending_polls_.erase(it);
+                return true;
+            }
+
+            void serialize_object(utils::buffer_serializer& buffer) const override
+            {
+                afd_endpoint<Traits>::serialize_object(buffer);
+                buffer.write_vector(this->pending_polls_);
+            }
+
+            void deserialize_object(utils::buffer_deserializer& buffer) override
+            {
+                afd_endpoint<Traits>::deserialize_object(buffer);
+                buffer.read_vector(this->pending_polls_);
             }
         };
 

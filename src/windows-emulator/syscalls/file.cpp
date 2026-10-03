@@ -156,6 +156,16 @@ namespace sogen
                         device->set_completion_information(completion_port, info.completion_key);
                     }
 
+                    if (info_class == FileIoCompletionNotificationInformation)
+                    {
+                        if (length < sizeof(ULONG))
+                        {
+                            return STATUS_INFO_LENGTH_MISMATCH;
+                        }
+
+                        device->set_completion_notification_flags(c.emu.read_memory<ULONG>(file_information));
+                    }
+
                     return STATUS_SUCCESS;
                 }
 
