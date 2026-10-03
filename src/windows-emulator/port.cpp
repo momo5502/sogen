@@ -103,7 +103,7 @@ namespace sogen
             return create_dns_resolver();
         }
 
-        if (port == u"\\RPC Control\\LSARPC_ENDPOINT" || port == u"\\RPC Control\\lsapolicylookup")
+        if (port == u"\\RPC Control\\LSARPC_ENDPOINT" || port == u"\\RPC Control\\lsapolicylookup" || port == u"\\RPC Control\\lsasspirpc")
         {
             return create_lsa_policy_lookup_port();
         }
