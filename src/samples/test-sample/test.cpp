@@ -2012,6 +2012,85 @@ namespace
 
         return true;
     }
+
+    bool test_set_dib_bits_to_device()
+    {
+        constexpr int width = 4;
+        constexpr int height = 1;
+
+        struct
+        {
+            BITMAPINFOHEADER header;
+            std::array<RGBQUAD, 4> colors;
+        } info{};
+
+        info.header.biSize = sizeof(BITMAPINFOHEADER);
+        info.header.biWidth = width;
+        info.header.biHeight = -height;
+        info.header.biPlanes = 1;
+        info.header.biCompression = BI_RGB;
+        info.header.biClrUsed = 4;
+        info.colors[0] = {.rgbBlue = 0, .rgbGreen = 0, .rgbRed = 255, .rgbReserved = 0};
+        info.colors[1] = {.rgbBlue = 0, .rgbGreen = 255, .rgbRed = 0, .rgbReserved = 0};
+        info.colors[2] = {.rgbBlue = 255, .rgbGreen = 0, .rgbRed = 0, .rgbReserved = 0};
+        info.colors[3] = {.rgbBlue = 255, .rgbGreen = 255, .rgbRed = 255, .rgbReserved = 0};
+
+        const std::array<COLORREF, 4> palette = {RGB(255, 0, 0), RGB(0, 255, 0), RGB(0, 0, 255), RGB(255, 255, 255)};
+
+        struct dib
+        {
+            WORD bpp;
+            std::array<uint8_t, 8> bits;
+            std::array<uint8_t, width> expected_index;
+        };
+
+        const std::array<dib, 4> dibs = {
+            dib{.bpp = 1, .bits = {0x50}, .expected_index = {0, 1, 0, 1}},
+            dib{.bpp = 4, .bits = {0x01, 0x23}, .expected_index = {0, 1, 2, 3}},
+            dib{.bpp = 8, .bits = {0, 1, 2, 3}, .expected_index = {0, 1, 2, 3}},
+            dib{.bpp = 16, .bits = {0x00, 0x7C, 0xE0, 0x03, 0x1F, 0x00, 0xFF, 0x7F}, .expected_index = {0, 1, 2, 3}},
+        };
+
+        const HDC dc = CreateCompatibleDC(nullptr);
+        const HBITMAP bitmap = CreateBitmap(width, height, 1, 32, nullptr);
+        const HGDIOBJ previous = SelectObject(dc, bitmap);
+        const auto cleanup = sogen::utils::finally([&] {
+            SelectObject(dc, previous);
+            DeleteObject(bitmap);
+            DeleteDC(dc);
+        });
+
+        for (const auto& d : dibs)
+        {
+            info.header.biBitCount = d.bpp;
+            for (int x = 0; x < width; ++x)
+            {
+                SetPixel(dc, x, 0, RGB(0, 0, 0));
+            }
+
+            const int copied = SetDIBitsToDevice(dc, 0, 0, width, height, 0, 0, 0, height, d.bits.data(),
+                                                 reinterpret_cast<const BITMAPINFO*>(&info), DIB_RGB_COLORS);
+            if (copied != height)
+            {
+                printf("SetDIBitsToDevice(%ubpp) copied %d scanlines\n", d.bpp, copied);
+                return false;
+            }
+
+            for (int x = 0; x < width; ++x)
+            {
+                const COLORREF actual = GetPixel(dc, x, 0);
+                const COLORREF expected = palette[d.expected_index[x]];
+                if (actual != expected)
+                {
+                    printf("SetDIBitsToDevice(%ubpp) pixel %d is %06lX, expected %06lX\n", d.bpp, x, static_cast<unsigned long>(actual),
+                           static_cast<unsigned long>(expected));
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
 }
 
 #define RUN_TEST(func, name)                 \
@@ -2081,6 +2160,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_gdi, "GDI")
     RUN_TEST(test_dialog_table, "Dialog Table")
     RUN_TEST(test_bcrypt_hash, "BCrypt Hash")
+    RUN_TEST(test_set_dib_bits_to_device, "GDI DIB")
 
     return valid ? 0 : 1;
 }
