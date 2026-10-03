@@ -181,17 +181,17 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            if (user_connect_length < sizeof(WIN32K_USERCONNECT32))
+            if (user_connect_length < sizeof(USER_SHAREDINFO))
             {
                 return STATUS_BUFFER_TOO_SMALL;
             }
 
             uint64_t offset = 0;
-            if (user_connect_length == sizeof(WIN32K_USERCONNECT32))
+            if (user_connect_length == sizeof(USER_SHAREDINFO))
             {
                 offset = 0;
             }
-            else if (user_connect_length == (sizeof(WIN32K_USERCONNECT32) + k_wow64_userconnect_header_size))
+            else if (user_connect_length == (sizeof(USER_SHAREDINFO) + k_wow64_userconnect_header_size))
             {
                 offset = k_wow64_userconnect_header_size;
             }
@@ -207,65 +207,6 @@ namespace sogen
             }
 
             return narrow_wow64_address(destination64, destination);
-        }
-
-        NTSTATUS build_wow64_userconnect(const process_context& process, WIN32K_USERCONNECT32& connect)
-        {
-            connect = {};
-
-            uint32_t psi{};
-            uint32_t disp_info{};
-            uint32_t ahe_list{};
-            uint32_t monitor_info{};
-
-            auto status = narrow_wow64_address(process.user_handles.get_server_info().value(), psi);
-            if (status != STATUS_SUCCESS)
-            {
-                return status;
-            }
-
-            status = narrow_wow64_address(process.user_handles.get_display_info().value(), disp_info);
-            if (status != STATUS_SUCCESS)
-            {
-                return status;
-            }
-
-            status = narrow_wow64_address(process.user_handles.get_handle_table().value(), ahe_list);
-            if (status != STATUS_SUCCESS)
-            {
-                return status;
-            }
-
-            status = narrow_wow64_address(process.user_handles.get_display_info().value(), monitor_info);
-            if (status != STATUS_SUCCESS)
-            {
-                return status;
-            }
-
-            connect.psi = psi;
-            connect.ahe_list = ahe_list;
-            connect.he_entry_size = sizeof(USER_HANDLEENTRY);
-            connect.disp_info_low = disp_info;
-            connect.monitor_info_low = monitor_info;
-            std::ranges::fill(connect.wndmsg_table, uint8_t{0xFF});
-            connect.wndmsg_count = k_wow64_wndmsg_count;
-            connect.ime_msg_count = k_wow64_ime_msg_count;
-
-            return STATUS_SUCCESS;
-        }
-
-        bool try_write_wow64_userconnect(memory_interface& memory, const uint64_t destination, const WIN32K_USERCONNECT32& connect)
-        {
-            try
-            {
-                const emulator_object<WIN32K_USERCONNECT32> connect_obj{memory, destination};
-                connect_obj.write(connect);
-                return true;
-            }
-            catch (...)
-            {
-                return false;
-            }
         }
 
         void populate_user_shared_info(USER_SHAREDINFO& shared, const process_context& process)

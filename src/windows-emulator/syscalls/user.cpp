@@ -1263,8 +1263,8 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            user_shared_info_ptr = c.proc.base_allocator.reserve(sizeof(WIN32K_USERCONNECT32), alignof(WIN32K_USERCONNECT32));
-            std::array<std::byte, sizeof(WIN32K_USERCONNECT32)> zeros{};
+            user_shared_info_ptr = c.proc.base_allocator.reserve(sizeof(USER_SHAREDINFO), alignof(USER_SHAREDINFO));
+            std::array<std::byte, sizeof(USER_SHAREDINFO)> zeros{};
             c.emu.write_memory(user_shared_info_ptr, zeros.data(), zeros.size());
 
             uint32_t user_shared_info_ptr32{};
@@ -1703,14 +1703,7 @@ namespace sogen
                 return destination_status;
             }
 
-            WIN32K_USERCONNECT32 connect_info{};
-            const auto connect_status = win32k_userconnect::build_wow64_userconnect(c.proc, connect_info);
-            if (connect_status != STATUS_SUCCESS)
-            {
-                return connect_status;
-            }
-
-            if (!win32k_userconnect::try_write_wow64_userconnect(c.emu, connect_destination, connect_info))
+            if (!win32k_userconnect::try_write_user_shared_info(c.emu, connect_destination, c.proc))
             {
                 return STATUS_INVALID_PARAMETER;
             }
@@ -1724,7 +1717,7 @@ namespace sogen
 
             if (user_shared_info_ptr != 0)
             {
-                if (!win32k_userconnect::try_write_wow64_userconnect(c.emu, user_shared_info_ptr, connect_info))
+                if (!win32k_userconnect::try_write_user_shared_info(c.emu, user_shared_info_ptr, c.proc))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
