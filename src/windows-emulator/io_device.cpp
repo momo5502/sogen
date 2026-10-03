@@ -166,8 +166,8 @@ namespace sogen
         }
 
         constexpr ULONG file_skip_completion_port_on_success = 0x1;
-        if (result != STATUS_PENDING &&
-            (result != STATUS_SUCCESS || !(this->completion_notification_flags_ & file_skip_completion_port_on_success)))
+        if (result != STATUS_PENDING && NT_SUCCESS(result) &&
+            !(this->completion_notification_flags_ & file_skip_completion_port_on_success))
         {
             this->queue_io_completion(win_emu, c);
         }

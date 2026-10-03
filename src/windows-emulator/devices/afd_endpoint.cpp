@@ -368,6 +368,11 @@ namespace sogen
             std::unordered_map<LONG, pending_connection> pending_connections_{};
             LONG next_sequence_{0};
 
+            static constexpr ULONG max_stream_buffer_count = 1024;
+
+            // Stream operations may complete partially, so cap staging allocations instead of trusting guest-provided WSABUF lengths.
+            static constexpr size_t max_stream_transfer_bytes = 64u << 20;
+
             std::optional<handle> event_select_event_{};
             ULONG event_select_mask_{0};
             ULONG triggered_events_{0};
@@ -412,14 +417,19 @@ namespace sogen
                     return false;
                 }
 
-                write_io_status(*this->delayed_ioctl_, STATUS_CANCELLED);
-                if (auto* event = win_emu.process.events.get(this->delayed_ioctl_->event))
+                this->complete_io(win_emu, *this->delayed_ioctl_, STATUS_CANCELLED);
+                this->clear_pending_state();
+                return true;
+            }
+
+            void complete_io(windows_emulator& win_emu, const io_device_context& context, const NTSTATUS status)
+            {
+                write_io_status(context, status);
+                if (auto* event = win_emu.process.events.get(context.event))
                 {
                     event->signaled = true;
                 }
-                this->queue_io_completion(win_emu, *this->delayed_ioctl_);
-                this->clear_pending_state();
-                return true;
+                this->queue_io_completion(win_emu, context);
             }
 
             void setup(network::socket_factory& factory)
@@ -510,8 +520,9 @@ namespace sogen
 
             void work(windows_emulator& win_emu) override
             {
-                const bool delayed_poll = this->delayed_ioctl_ && _AFD_REQUEST(this->delayed_ioctl_->io_control_code) == AFD_POLL;
-                if ((!this->s_ && !delayed_poll) || (!this->delayed_ioctl_ && !this->event_select_mask_))
+                const bool cross_endpoint_poll = this->delayed_ioctl_ && _AFD_REQUEST(this->delayed_ioctl_->io_control_code) == AFD_POLL;
+                const bool has_pending_work = this->delayed_ioctl_ || this->event_select_mask_;
+                if ((!this->s_ && !cross_endpoint_poll) || !has_pending_work)
                 {
                     return;
                 }
@@ -567,7 +578,7 @@ namespace sogen
                         }
                     }
 
-                    const auto status = this->execute_ioctl(win_emu, *this->delayed_ioctl_);
+                    auto status = this->io_control(win_emu, *this->delayed_ioctl_);
                     if (status == STATUS_PENDING)
                     {
                         if (!this->timeout_ || this->timeout_ > win_emu.clock().steady_now())
@@ -575,21 +586,14 @@ namespace sogen
                             return;
                         }
 
-                        write_io_status(*this->delayed_ioctl_, STATUS_TIMEOUT);
-
                         if (this->timeout_callback_)
                         {
                             (*this->timeout_callback_)(win_emu, *this->delayed_ioctl_);
                         }
+                        status = STATUS_TIMEOUT;
                     }
 
-                    auto* e = win_emu.process.events.get(this->delayed_ioctl_->event);
-                    if (e)
-                    {
-                        e->signaled = true;
-                    }
-
-                    this->queue_io_completion(win_emu, *this->delayed_ioctl_);
+                    this->complete_io(win_emu, *this->delayed_ioctl_, status);
                     this->clear_pending_state();
                 }
             }
@@ -854,6 +858,7 @@ namespace sogen
                 }
 
                 target_endpoint->set_socket(std::move(accepted_socket));
+
                 pending_connections_.erase(it);
 
                 return STATUS_SUCCESS;
@@ -880,8 +885,7 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                constexpr ULONG max_buffer_count = 1024;
-                if (receive_info.BufferCount > max_buffer_count)
+                if (receive_info.BufferCount > max_stream_buffer_count)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -889,7 +893,6 @@ namespace sogen
                 std::vector<EMU_WSABUF<Traits>> buffers{};
                 buffers.reserve(receive_info.BufferCount);
 
-                constexpr size_t max_stream_transfer_bytes = 64u << 20;
                 size_t transfer_size = 0;
                 for (ULONG i = 0; i < receive_info.BufferCount; ++i)
                 {
@@ -977,13 +980,11 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                constexpr ULONG max_buffer_count = 1024;
-                if (send_info.BufferCount > max_buffer_count)
+                if (send_info.BufferCount > max_stream_buffer_count)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                constexpr size_t max_stream_transfer_bytes = 64u << 20;
                 std::vector<std::byte> host_buffer{};
                 host_buffer.reserve(0x1000);
 
@@ -1508,12 +1509,7 @@ namespace sogen
                         status = STATUS_TIMEOUT;
                     }
 
-                    write_io_status(it->context, status);
-                    if (auto* event = win_emu.process.events.get(it->context.event))
-                    {
-                        event->signaled = true;
-                    }
-                    this->queue_io_completion(win_emu, it->context);
+                    this->complete_io(win_emu, it->context, status);
                     it = this->pending_polls_.erase(it);
                 }
             }
@@ -1528,12 +1524,7 @@ namespace sogen
                     return false;
                 }
 
-                write_io_status(it->context, STATUS_CANCELLED);
-                if (auto* event = win_emu.process.events.get(it->context.event))
-                {
-                    event->signaled = true;
-                }
-                this->queue_io_completion(win_emu, it->context);
+                this->complete_io(win_emu, it->context, STATUS_CANCELLED);
                 this->pending_polls_.erase(it);
                 return true;
             }
