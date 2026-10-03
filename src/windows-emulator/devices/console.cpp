@@ -117,8 +117,8 @@ namespace sogen
 
                 console_ioctl_header header{};
                 win_emu.emu().read_memory(context.input_buffer, &header, sizeof(header));
-                if (header.target_handle != STDOUT_HANDLE.h || header.input_count != 1 || header.output_count != 1 ||
-                    header.message_buffer_size != sizeof(console_message_header) + header.data_size ||
+                if ((header.target_handle != STDOUT_HANDLE.h && header.target_handle != STDIN_HANDLE.h) || header.input_count != 1 ||
+                    header.output_count != 1 || header.message_buffer_size != sizeof(console_message_header) + header.data_size ||
                     header.data != header.message + sizeof(console_message_header) || !header.message || !header.data)
                 {
                     return STATUS_INVALID_PARAMETER;

@@ -405,6 +405,23 @@ namespace sogen
                 }
             }
 
+            bool cancel_io(windows_emulator& win_emu, const uint64_t io_status_block) override
+            {
+                if (!this->delayed_ioctl_ || this->delayed_ioctl_->io_status_block.value() != io_status_block)
+                {
+                    return false;
+                }
+
+                write_io_status(*this->delayed_ioctl_, STATUS_CANCELLED);
+                if (auto* event = win_emu.process.events.get(this->delayed_ioctl_->event))
+                {
+                    event->signaled = true;
+                }
+                this->queue_io_completion(win_emu, *this->delayed_ioctl_);
+                this->clear_pending_state();
+                return true;
+            }
+
             void setup(network::socket_factory& factory)
             {
                 if (!this->creation_data)
@@ -493,7 +510,8 @@ namespace sogen
 
             void work(windows_emulator& win_emu) override
             {
-                if (!this->s_ || (!this->delayed_ioctl_ && !this->event_select_mask_))
+                const bool delayed_poll = this->delayed_ioctl_ && _AFD_REQUEST(this->delayed_ioctl_->io_control_code) == AFD_POLL;
+                if ((!this->s_ && !delayed_poll) || (!this->delayed_ioctl_ && !this->event_select_mask_))
                 {
                     return;
                 }
@@ -571,6 +589,7 @@ namespace sogen
                         e->signaled = true;
                     }
 
+                    this->queue_io_completion(win_emu, *this->delayed_ioctl_);
                     this->clear_pending_state();
                 }
             }
@@ -584,6 +603,8 @@ namespace sogen
                 buffer.read_optional(this->delayed_ioctl_);
                 buffer.read_optional(this->timeout_);
                 buffer.read(this->non_blocking_);
+                buffer.read_optional(this->completion_port_);
+                buffer.read(this->completion_key_);
             }
 
             void serialize_object(utils::buffer_serializer& buffer) const override
@@ -593,6 +614,8 @@ namespace sogen
                 buffer.write_optional(this->delayed_ioctl_);
                 buffer.write_optional(this->timeout_);
                 buffer.write(this->non_blocking_);
+                buffer.write_optional(this->completion_port_);
+                buffer.write(this->completion_key_);
             }
 
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
@@ -1339,6 +1362,14 @@ namespace sogen
         };
 
         template <typename Traits>
+        struct afd_mio_endpoint final : afd_endpoint<Traits>
+        {
+            void create(windows_emulator&, const io_device_creation_data&) override
+            {
+            }
+        };
+
+        template <typename Traits>
         struct afd_async_connect_hlp : stateless_device
         {
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
@@ -1380,6 +1411,16 @@ namespace sogen
         }
 
         return std::make_unique<afd_endpoint<EmulatorTraits<Emu64>>>();
+    }
+
+    std::unique_ptr<io_device> create_afd_mio_endpoint(const device_creation_context& context)
+    {
+        if (context.is_32_bit)
+        {
+            return std::make_unique<afd_mio_endpoint<EmulatorTraits<Emu32>>>();
+        }
+
+        return std::make_unique<afd_mio_endpoint<EmulatorTraits<Emu64>>>();
     }
 
     std::unique_ptr<io_device> create_afd_async_connect_hlp(const device_creation_context& context)

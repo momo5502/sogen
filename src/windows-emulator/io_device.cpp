@@ -106,6 +106,7 @@ namespace sogen
             {u"SogenSteam"sv, create_steam_bridge},
             // AFD
             {u"Afd\\Endpoint"sv, create_afd_endpoint},
+            {u"Afd\\Mio"sv, create_afd_mio_endpoint},
             {u"Afd\\AsyncConnectHlp"sv, create_afd_async_connect_hlp},
             // Transport
             {u"Tcp"sv, create_transport_stub_device},
@@ -167,11 +168,43 @@ namespace sogen
         return result;
     }
 
+    void io_device::queue_io_completion(windows_emulator& win_emu, const io_device_context& context) const
+    {
+        if (!this->completion_port_ || !context.io_status_block)
+        {
+            return;
+        }
+
+        auto* completion = win_emu.process.io_completions.get(*this->completion_port_);
+        if (!completion)
+        {
+            return;
+        }
+
+        io_completion_message message{};
+        message.key_context = this->completion_key_;
+        message.apc_context = context.apc_context;
+        message.io_status_block = context.io_status_block.read();
+        completion->enqueue(message);
+    }
+
     NTSTATUS io_device_container::io_control(windows_emulator& win_emu, const io_device_context& context)
     {
         this->assert_validity();
         win_emu.callbacks.on_ioctrl(*this->device_, this->device_name_, context.io_control_code);
         return this->device_->io_control(win_emu, context);
+    }
+
+    bool io_device_container::cancel_io(windows_emulator& win_emu, const uint64_t io_status_block)
+    {
+        this->assert_validity();
+        return this->device_->cancel_io(win_emu, io_status_block);
+    }
+
+    void io_device_container::set_completion_information(const handle completion_port, const uint64_t completion_key)
+    {
+        this->assert_validity();
+        this->device_->set_completion_information(completion_port, completion_key);
     }
 
     void io_device_container::work(windows_emulator& win_emu)

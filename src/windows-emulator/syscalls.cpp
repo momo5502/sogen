@@ -71,6 +71,9 @@ namespace sogen
                                     uint64_t /*apc_context*/, emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                     uint64_t buffer, ULONG length, emulator_object<LARGE_INTEGER> /*byte_offset*/,
                                     emulator_object<ULONG> /*key*/);
+        NTSTATUS handle_NtCancelIoFileEx(const syscall_context& c, handle file_handle,
+                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_request_to_cancel,
+                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block);
         NTSTATUS handle_NtCopyFileChunk(const syscall_context& c, handle source_handle, handle destination_handle, handle event_handle,
                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, ULONG length,
                                         emulator_object<LARGE_INTEGER> source_offset, emulator_object<LARGE_INTEGER> destination_offset,
@@ -1360,6 +1363,7 @@ namespace sogen
         add_handler(NtTerminateProcess);
         add_handler(NtFlushProcessWriteBuffers);
         add_handler(NtWriteFile);
+        add_handler(NtCancelIoFileEx);
         add_handler(NtCopyFileChunk);
         add_handler(NtLockFile);
         add_handler(NtUnlockFile);
