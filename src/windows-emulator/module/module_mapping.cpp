@@ -43,6 +43,11 @@ namespace sogen
             return mem;
         }
 
+        bool image_range_fits(const uint64_t image_size, const uint64_t rva, const uint64_t count, const uint64_t stride)
+        {
+            return count == 0 || (rva < image_size && count <= (image_size - rva) / stride);
+        }
+
         template <typename T>
         void collect_exports(mapped_module& binary, const utils::safe_buffer_accessor<const std::byte> buffer,
                              const PEOptionalHeader_t<T>& optional_header)
@@ -56,23 +61,61 @@ namespace sogen
             const auto export_directory = buffer.as<IMAGE_EXPORT_DIRECTORY>(export_directory_entry.VirtualAddress).get();
 
             const auto names_count = export_directory.NumberOfNames;
-            // const auto function_count = export_directory.NumberOfFunctions;
+            const auto function_count = export_directory.NumberOfFunctions;
+
+            // An out-of-bounds array is not always an out-of-bounds read: a truncated one whose first
+            // entries still land inside the image yields exports invented from unrelated bytes.
+            const uint64_t image_size = buffer.get_buffer().size();
+            if (!image_range_fits(image_size, export_directory.AddressOfNames, names_count, sizeof(DWORD)) ||
+                !image_range_fits(image_size, export_directory.AddressOfNameOrdinals, names_count, sizeof(WORD)) ||
+                !image_range_fits(image_size, export_directory.AddressOfFunctions, function_count, sizeof(DWORD)))
+            {
+                return;
+            }
 
             const auto names = buffer.as<DWORD>(export_directory.AddressOfNames);
             const auto ordinals = buffer.as<WORD>(export_directory.AddressOfNameOrdinals);
             const auto functions = buffer.as<DWORD>(export_directory.AddressOfFunctions);
 
-            binary.exports.reserve(names_count);
+            binary.exports.reserve(function_count);
 
+            std::unordered_map<WORD, DWORD> name_index_by_ordinal{};
+            name_index_by_ordinal.reserve(names_count);
             for (DWORD i = 0; i < names_count; i++)
             {
                 const auto ordinal = ordinals.get(i);
+                if (ordinal >= function_count)
+                {
+                    return;
+                }
+
+                name_index_by_ordinal[ordinal] = i;
+            }
+
+            // AddressOfNames covers only part of AddressOfFunctions: exports without a name-table entry
+            // are still real exports and need a symbol.
+            for (DWORD ordinal = 0; ordinal < function_count; ordinal++)
+            {
+                const auto rva = functions.get(ordinal);
+                if (rva == 0)
+                {
+                    continue; // Unused ordinal slot.
+                }
 
                 exported_symbol symbol{};
                 symbol.ordinal = export_directory.Base + ordinal;
-                symbol.rva = functions.get(ordinal);
+                symbol.rva = rva;
                 symbol.address = binary.image_base + symbol.rva;
-                symbol.name = buffer.as_string(names.get(i));
+
+                const auto name_index = name_index_by_ordinal.find(static_cast<WORD>(ordinal));
+                if (name_index != name_index_by_ordinal.end())
+                {
+                    symbol.name = buffer.as_string(names.get(name_index->second));
+                }
+                else
+                {
+                    symbol.name = "#" + std::to_string(symbol.ordinal);
+                }
 
                 binary.exports.push_back(std::move(symbol));
             }
@@ -198,22 +241,57 @@ namespace sogen
                 read_mapped_object<IMAGE_EXPORT_DIRECTORY>(memory, binary.image_base + export_directory_entry.VirtualAddress);
 
             const auto names_count = export_directory.NumberOfNames;
-            binary.exports.reserve(names_count);
+            const auto function_count = export_directory.NumberOfFunctions;
 
+            const auto image_size = binary.size_of_image;
+            if (!image_range_fits(image_size, export_directory.AddressOfNames, names_count, sizeof(DWORD)) ||
+                !image_range_fits(image_size, export_directory.AddressOfNameOrdinals, names_count, sizeof(WORD)) ||
+                !image_range_fits(image_size, export_directory.AddressOfFunctions, function_count, sizeof(DWORD)))
+            {
+                return;
+            }
+
+            binary.exports.reserve(function_count);
+
+            std::unordered_map<WORD, DWORD> name_index_by_ordinal{};
+            name_index_by_ordinal.reserve(names_count);
             for (DWORD i = 0; i < names_count; i++)
             {
                 const auto ordinal =
                     read_mapped_object<WORD>(memory, binary.image_base + export_directory.AddressOfNameOrdinals + i * sizeof(WORD));
+                if (ordinal >= function_count)
+                {
+                    return;
+                }
+
+                name_index_by_ordinal[ordinal] = i;
+            }
+
+            for (DWORD ordinal = 0; ordinal < function_count; ordinal++)
+            {
                 const auto function_rva =
                     read_mapped_object<DWORD>(memory, binary.image_base + export_directory.AddressOfFunctions + ordinal * sizeof(DWORD));
-                const auto name_rva =
-                    read_mapped_object<DWORD>(memory, binary.image_base + export_directory.AddressOfNames + i * sizeof(DWORD));
+                if (function_rva == 0)
+                {
+                    continue; // Unused ordinal slot.
+                }
 
                 exported_symbol symbol{};
                 symbol.ordinal = export_directory.Base + ordinal;
                 symbol.rva = function_rva;
                 symbol.address = binary.image_base + symbol.rva;
-                symbol.name = read_mapped_string(memory, binary.image_base + name_rva);
+
+                const auto name_index = name_index_by_ordinal.find(static_cast<WORD>(ordinal));
+                if (name_index != name_index_by_ordinal.end())
+                {
+                    const auto name_rva = read_mapped_object<DWORD>(memory, binary.image_base + export_directory.AddressOfNames +
+                                                                                name_index->second * sizeof(DWORD));
+                    symbol.name = read_mapped_string(memory, binary.image_base + name_rva);
+                }
+                else
+                {
+                    symbol.name = "#" + std::to_string(symbol.ordinal);
+                }
 
                 binary.exports.push_back(std::move(symbol));
             }
@@ -221,6 +299,22 @@ namespace sogen
             for (const auto& symbol : binary.exports)
             {
                 binary.address_names.try_emplace(symbol.address, symbol.name);
+            }
+        }
+
+        // A process launch never parses the image's own export table, so Windows starts an EXE whose export
+        // data-directory points at junk. Reading one off the end of the image must not fail the whole map.
+        template <typename T, typename Source>
+        void collect_exports_or_ignore(mapped_module& binary, const Source& source, const PEOptionalHeader_t<T>& optional_header)
+        {
+            try
+            {
+                collect_exports(binary, source, optional_header);
+            }
+            catch (...)
+            {
+                binary.exports.clear();
+                binary.address_names.clear();
             }
         }
 
@@ -478,7 +572,7 @@ namespace sogen
                 memory.write_memory(image_base_address, &image_base, sizeof(image_base));
 
                 apply_relocations(binary, memory, optional_header, relocation_base);
-                collect_exports(binary, memory, optional_header);
+                collect_exports_or_ignore(binary, memory, optional_header);
                 collect_imports(binary, memory, optional_header);
 
                 // TODO: Make sure to match kernel allocation patterns to attain correct initial permissions!
@@ -685,7 +779,7 @@ namespace sogen
                 binary.sections.push_back(std::move(section_info));
             }
 
-            collect_exports(binary, buffer, optional_header);
+            collect_exports_or_ignore(binary, buffer, optional_header);
         }
         catch (const std::exception&)
         {

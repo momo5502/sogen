@@ -703,6 +703,38 @@ namespace sogen
                 surface.pixels[static_cast<size_t>(y) * surface.width + static_cast<size_t>(x)] = color;
             }
 
+            uint32_t dib_pixel_to_bgra32(const uint8_t* row, const uint32_t x, const uint16_t bpp, const std::vector<uint32_t>& palette)
+            {
+                switch (bpp)
+                {
+                case 1:
+                    return palette[(row[x / 8u] >> (7u - (x & 7u))) & 1u];
+                case 4: {
+                    const uint8_t packed = row[x / 2u];
+                    const uint8_t index = (x & 1u) == 0u ? packed >> 4u : packed & 0x0Fu;
+                    return palette[index];
+                }
+                case 8:
+                    return palette[row[x]];
+                case 16: {
+                    const uint8_t* p = row + static_cast<size_t>(x) * 2;
+                    const uint32_t v = static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8);
+                    // BI_RGB 16bpp is RGB555, not RGB565.
+                    const uint32_t r = ((v >> 10u) & 0x1Fu) * 255u / 31u;
+                    const uint32_t g = ((v >> 5u) & 0x1Fu) * 255u / 31u;
+                    const uint32_t b = (v & 0x1Fu) * 255u / 31u;
+                    return 0xFF000000u | (r << 16) | (g << 8) | b;
+                }
+                case 24:
+                case 32: {
+                    const uint8_t* p = row + static_cast<size_t>(x) * (bpp / 8u);
+                    return 0xFF000000u | (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[1]) << 8) | p[0];
+                }
+                default:
+                    return 0xFF000000u;
+                }
+            }
+
             std::optional<uint32_t> get_surface_pixel(const gdi_bitmap_surface& surface, const int x, const int y)
             {
                 if (x < 0 || y < 0 || x >= static_cast<int>(surface.width) || y >= static_cast<int>(surface.height))
@@ -2220,7 +2252,7 @@ namespace sogen
         int handle_NtGdiSetDIBitsToDeviceInternal(const syscall_context& c, const hdc dc, const int x_dest, const int y_dest,
                                                   const uint32_t width, const uint32_t height, const int x_src, const int y_src,
                                                   const uint32_t /*start_scan*/, const uint32_t scan_lines, const emulator_pointer bits,
-                                                  const emulator_pointer info, const uint32_t /*color_use*/, const uint32_t max_bits,
+                                                  const emulator_pointer info, const uint32_t color_use, const uint32_t max_bits,
                                                   const uint32_t /*max_info*/, const uint32_t /*transform_coordinates*/,
                                                   const uint64_t /*color_transform*/)
         {
@@ -2247,11 +2279,23 @@ namespace sogen
             c.emu.read_memory(info + 14, &bit_count, sizeof(bit_count));
             c.emu.read_memory(info + 16, &compression, sizeof(compression));
 
+            uint32_t bi_size = 0;
+            uint32_t clr_used = 0;
+            c.emu.read_memory(info + 0, &bi_size, sizeof(bi_size));
+            c.emu.read_memory(info + 32, &clr_used, sizeof(clr_used));
+
             constexpr uint32_t bi_rgb = 0;
-            if ((bit_count != 32 && bit_count != 24) || compression != bi_rgb || bi_width <= 0)
+            constexpr uint32_t dib_rgb_colors = 0;
+            constexpr uint32_t bitmapinfoheader_size = 40;
+            const bool valid_bit_count =
+                bit_count == 1 || bit_count == 4 || bit_count == 8 || bit_count == 16 || bit_count == 24 || bit_count == 32;
+            // A colour table is only an RGBQUAD array for DIB_RGB_COLORS with a BITMAPINFOHEADER or later;
+            // DIB_PAL_COLORS stores 16-bit logical-palette indices and BITMAPCOREHEADER stores RGBTRIPLEs.
+            const bool valid_color_table = bit_count > 8 || (color_use == dib_rgb_colors && bi_size >= bitmapinfoheader_size);
+            if (!valid_bit_count || !valid_color_table || compression != bi_rgb || bi_width <= 0)
             {
-                c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count,
-                                   compression, bi_width);
+                c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB (bpp=%u compression=%u usage=%u width=%d)\n", bit_count,
+                                   compression, color_use, bi_width);
                 return 0;
             }
 
@@ -2259,9 +2303,26 @@ namespace sogen
             const auto src_width = static_cast<uint32_t>(bi_width);
             const auto src_height = static_cast<uint32_t>(top_down ? -bi_height : bi_height);
             const auto stored_rows = std::min(scan_lines, src_height);
-            const size_t bytes_per_pixel = bit_count / 8;
             // DIB scanlines are DWORD-aligned, not tightly packed.
             const size_t stride = ((static_cast<size_t>(src_width) * bit_count + 31u) / 32u) * 4u;
+
+            std::vector<uint32_t> palette{};
+            if (bit_count <= 8)
+            {
+                const uint32_t max_colors = 1u << bit_count;
+                const uint32_t palette_entries = clr_used != 0 ? std::min(clr_used, max_colors) : max_colors;
+                constexpr size_t rgbquad_size = 4;
+                const auto color_table = c.emu.read_memory(info + bi_size, static_cast<size_t>(palette_entries) * rgbquad_size);
+
+                // Pixel data may index past biClrUsed, so size the palette by bit depth rather than by the table.
+                palette.resize(max_colors, 0xFF000000u);
+                for (uint32_t i = 0; i < palette_entries; ++i)
+                {
+                    const std::byte* bgrx = color_table.data() + static_cast<size_t>(i) * rgbquad_size;
+                    palette[i] = 0xFF000000u | (std::to_integer<uint32_t>(bgrx[2]) << 16) | (std::to_integer<uint32_t>(bgrx[1]) << 8) |
+                                 std::to_integer<uint32_t>(bgrx[0]);
+                }
+            }
 
             std::vector<uint8_t> data(stride * stored_rows);
             if (data.empty())
@@ -2297,11 +2358,8 @@ namespace sogen
                     {
                         break;
                     }
-                    const uint8_t* px = row + static_cast<size_t>(src_x) * bytes_per_pixel;
-                    const uint32_t pixel =
-                        static_cast<uint32_t>(px[0]) | (static_cast<uint32_t>(px[1]) << 8) | (static_cast<uint32_t>(px[2]) << 16);
                     set_surface_pixel(*surface, x_dest + origin_x + static_cast<int>(i), y_dest + origin_y + static_cast<int>(j),
-                                      pixel | 0xFF000000u);
+                                      dib_pixel_to_bgra32(row, src_x, bit_count, palette));
                 }
                 ++copied;
             }

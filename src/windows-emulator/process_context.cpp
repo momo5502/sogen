@@ -3,6 +3,7 @@
 
 #include "emulator_utils.hpp"
 #include "registry/registry_utils.hpp"
+#include "sxs/activation_context.hpp"
 #include "syscall_utils.hpp"
 #include "windows_emulator.hpp"
 #include "version/windows_version_manager.hpp"
@@ -228,8 +229,8 @@ namespace sogen
             env_map[u"SystemDrive"] = system_drive;
             env_map[u"SystemRoot"] = system_root;
             env_map[u"SystemTemp"] = system_temp;
-            env_map[u"TMP"] = user_profile + u"\\AppData\\Temp";
-            env_map[u"TEMP"] = user_profile + u"\\AppData\\Temp";
+            env_map[u"TMP"] = user_profile + u"\\AppData\\Local\\Temp";
+            env_map[u"TEMP"] = user_profile + u"\\AppData\\Local\\Temp";
             env_map[u"USERPROFILE"] = user_profile;
 
             for (const auto& [key, value] : app_settings.environment)
@@ -474,6 +475,22 @@ namespace sogen
             if (ntdll32 != nullptr)
             {
                 this->rtl_user_thread_start32 = ntdll32->find_export("RtlUserThreadStart");
+            }
+        }
+
+        const auto preferred_language =
+            registry_utils::read_registry_string(win_emu.registry, R"(\Registry\User\Control Panel\International)", "LocaleName")
+                .value_or(u"");
+        const auto activation_context = sxs::build_process_activation_context(
+            win_emu.file_sys, executable, windows_path(version.get_system_root()), u16_to_u8(preferred_language));
+        if (!activation_context.empty())
+        {
+            const auto activation_context_address = allocator.reserve(activation_context.size(), alignof(uint32_t));
+            emu.write_memory(activation_context_address, activation_context.data(), activation_context.size());
+            this->peb64.access([&](PEB64& peb) { peb.ActivationContextData = activation_context_address; });
+            if (this->peb32)
+            {
+                this->peb32->access([&](PEB32& peb) { peb.ActivationContextData = static_cast<uint32_t>(activation_context_address); });
             }
         }
 

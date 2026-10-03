@@ -115,6 +115,7 @@ CALL :collect normaliz.dll
 CALL :collect nsi.dll
 CALL :collect ntasn1.dll
 CALL :collect ntdll.dll
+CALL :collect ntmarta.dll
 CALL :collect ole32.dll
 CALL :collect oleaut32.dll
 CALL :collect opengl32.dll

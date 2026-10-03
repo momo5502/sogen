@@ -71,6 +71,9 @@ namespace sogen
                                     uint64_t /*apc_context*/, emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                     uint64_t buffer, ULONG length, emulator_object<LARGE_INTEGER> /*byte_offset*/,
                                     emulator_object<ULONG> /*key*/);
+        NTSTATUS handle_NtCancelIoFileEx(const syscall_context& c, handle file_handle,
+                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_request_to_cancel,
+                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block);
         NTSTATUS handle_NtCopyFileChunk(const syscall_context& c, handle source_handle, handle destination_handle, handle event_handle,
                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, ULONG length,
                                         emulator_object<LARGE_INTEGER> source_offset, emulator_object<LARGE_INTEGER> destination_offset,
@@ -544,6 +547,9 @@ namespace sogen
         BOOL handle_NtUserMoveWindow(const syscall_context& c, hwnd hwnd, int x, int y, int width, int height, BOOL repaint);
         uint64_t handle_NtUserGetProcessWindowStation();
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, hwnd hwnd, uint64_t param, uint32_t code);
+        BOOL handle_NtUserCallHwndLock(const syscall_context& c, hwnd hwnd, uint32_t routine);
+        uint64_t handle_NtUserCallHwnd(const syscall_context& c, hwnd hwnd, uint32_t routine);
+        uint64_t handle_NtUserCallOneParam(const syscall_context& c, uint64_t param, uint32_t routine);
         uint16_t handle_NtUserRegisterClassExWOW(const syscall_context& c, emulator_object<EMU_WNDCLASSEX> wnd_class_ex,
                                                  emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name,
                                                  emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_version,
@@ -995,6 +1001,15 @@ namespace sogen
             context.output_buffer_length = output_buffer_length;
             context.vcpu = &c.vcpu;
 
+            if (c.proc.is_wow64_process && io_status_block)
+            {
+                const auto native_iosb = io_status_block.read();
+                if (native_iosb.Pointer != 0)
+                {
+                    context.wow64_io_status_block.set_address(static_cast<emulator_pointer>(native_iosb.Pointer));
+                }
+            }
+
             try
             {
                 return device->execute_ioctl(c.win_emu, context);
@@ -1348,6 +1363,7 @@ namespace sogen
         add_handler(NtTerminateProcess);
         add_handler(NtFlushProcessWriteBuffers);
         add_handler(NtWriteFile);
+        add_handler(NtCancelIoFileEx);
         add_handler(NtCopyFileChunk);
         add_handler(NtLockFile);
         add_handler(NtUnlockFile);
@@ -1577,6 +1593,9 @@ namespace sogen
         add_handler(NtAreMappedFilesTheSame);
         add_handler(NtUserGetProcessWindowStation);
         add_handler(NtUserCallHwndParam);
+        add_handler(NtUserCallHwndLock);
+        add_handler(NtUserCallHwnd);
+        add_handler(NtUserCallOneParam);
         add_handler(NtUserRegisterClassExWOW);
         add_handler(NtUserUnregisterClass);
         add_handler(NtUserSetWindowsHookEx);

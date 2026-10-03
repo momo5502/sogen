@@ -106,6 +106,7 @@ namespace sogen
             {u"SogenSteam"sv, create_steam_bridge},
             // AFD
             {u"Afd\\Endpoint"sv, create_afd_endpoint},
+            {u"Afd\\Mio"sv, create_afd_mio_endpoint},
             {u"Afd\\AsyncConnectHlp"sv, create_afd_async_connect_hlp},
             // Transport
             {u"Tcp"sv, create_transport_stub_device},
@@ -151,7 +152,7 @@ namespace sogen
         }
 
         const auto result = this->io_control(win_emu, c);
-        write_io_status(c.io_status_block, result);
+        write_io_status(c, result);
 
         // A synchronously-completing IOCTL must signal the optional completion event the caller passed, so a
         // thread that issues the request and then waits on the event is released. Asynchronous devices return
@@ -164,7 +165,34 @@ namespace sogen
             }
         }
 
+        constexpr ULONG file_skip_completion_port_on_success = 0x1;
+        if (result != STATUS_PENDING && NT_SUCCESS(result) &&
+            !(this->completion_notification_flags_ & file_skip_completion_port_on_success))
+        {
+            this->queue_io_completion(win_emu, c);
+        }
+
         return result;
+    }
+
+    void io_device::queue_io_completion(windows_emulator& win_emu, const io_device_context& context) const
+    {
+        if (!this->completion_port_ || !context.io_status_block)
+        {
+            return;
+        }
+
+        auto* completion = win_emu.process.io_completions.get(*this->completion_port_);
+        if (!completion)
+        {
+            return;
+        }
+
+        io_completion_message message{};
+        message.key_context = this->completion_key_;
+        message.apc_context = context.apc_context;
+        message.io_status_block = context.io_status_block.read();
+        completion->enqueue(message);
     }
 
     NTSTATUS io_device_container::io_control(windows_emulator& win_emu, const io_device_context& context)
@@ -172,6 +200,26 @@ namespace sogen
         this->assert_validity();
         win_emu.callbacks.on_ioctrl(*this->device_, this->device_name_, context.io_control_code);
         return this->device_->io_control(win_emu, context);
+    }
+
+    bool io_device_container::cancel_io(windows_emulator& win_emu, const uint64_t io_status_block)
+    {
+        this->assert_validity();
+        return this->device_->cancel_io(win_emu, io_status_block);
+    }
+
+    void io_device_container::set_completion_information(const handle completion_port, const uint64_t completion_key)
+    {
+        this->assert_validity();
+        io_device::set_completion_information(completion_port, completion_key);
+        this->device_->set_completion_information(completion_port, completion_key);
+    }
+
+    void io_device_container::set_completion_notification_flags(const ULONG flags)
+    {
+        this->assert_validity();
+        io_device::set_completion_notification_flags(flags);
+        this->device_->set_completion_notification_flags(flags);
     }
 
     void io_device_container::work(windows_emulator& win_emu)
@@ -186,6 +234,9 @@ namespace sogen
 
         buffer.write(this->is_32_bit_);
         buffer.write_string(this->device_name_);
+        buffer.write_optional(this->completion_port_);
+        buffer.write(this->completion_key_);
+        buffer.write(this->completion_notification_flags_);
         this->device_->serialize(buffer);
     }
 
@@ -193,6 +244,9 @@ namespace sogen
     {
         buffer.read(this->is_32_bit_);
         buffer.read_string(this->device_name_);
+        buffer.read_optional(this->completion_port_);
+        buffer.read(this->completion_key_);
+        buffer.read(this->completion_notification_flags_);
 
         this->setup();
         this->device_->deserialize(buffer);

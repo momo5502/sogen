@@ -340,12 +340,12 @@ namespace sogen
             }
 
             const auto index = static_cast<uint32_t>(h.value.id);
-            if (index == 0 || index >= user_handle_table::MAX_HANDLES)
+            if (index == 0 || index >= user_handle_table::MAX_HANDLE_INDICES)
             {
                 return;
             }
 
-            c.proc.user_handles.get_handle_table().access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, index);
+            c.proc.user_handles.set_owner(index, owner);
         }
 
         void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, bool erase);
@@ -1263,8 +1263,8 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            user_shared_info_ptr = c.proc.base_allocator.reserve(sizeof(WIN32K_USERCONNECT32), alignof(WIN32K_USERCONNECT32));
-            std::array<std::byte, sizeof(WIN32K_USERCONNECT32)> zeros{};
+            user_shared_info_ptr = c.proc.base_allocator.reserve(sizeof(USER_SHAREDINFO), alignof(USER_SHAREDINFO));
+            std::array<std::byte, sizeof(USER_SHAREDINFO)> zeros{};
             c.emu.write_memory(user_shared_info_ptr, zeros.data(), zeros.size());
 
             uint32_t user_shared_info_ptr32{};
@@ -1585,6 +1585,11 @@ namespace sogen
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
         void draw_system_button_glyph(const syscall_context& c, hdc dc, int x, int y, uint32_t index);
         BOOL handle_NtUserRemoveMenu(const syscall_context& c, hmenu menu, UINT position, UINT flags);
+        BOOL handle_NtUserSetDialogPointer(const syscall_context& c, hwnd hwnd, emulator_pointer ptr);
+        BOOL handle_NtUserSetDialogSystemMenu(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserSetMsgBox(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserUpdateWindow(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserPostQuitMessage(const syscall_context& c, int exit_code);
 
         NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
         {
@@ -1698,14 +1703,7 @@ namespace sogen
                 return destination_status;
             }
 
-            WIN32K_USERCONNECT32 connect_info{};
-            const auto connect_status = win32k_userconnect::build_wow64_userconnect(c.proc, connect_info);
-            if (connect_status != STATUS_SUCCESS)
-            {
-                return connect_status;
-            }
-
-            if (!win32k_userconnect::try_write_wow64_userconnect(c.emu, connect_destination, connect_info))
+            if (!win32k_userconnect::try_write_user_shared_info(c.emu, connect_destination, c.proc))
             {
                 return STATUS_INVALID_PARAMETER;
             }
@@ -1719,7 +1717,7 @@ namespace sogen
 
             if (user_shared_info_ptr != 0)
             {
-                if (!win32k_userconnect::try_write_wow64_userconnect(c.emu, user_shared_info_ptr, connect_info))
+                if (!win32k_userconnect::try_write_user_shared_info(c.emu, user_shared_info_ptr, c.proc))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -2833,15 +2831,77 @@ namespace sogen
             return 1;
         }
 
+        // Routine numbers for the Win10 19041-19045 user-call table. Other Windows
+        // versions use different numbers, so the table is gated by guest build below.
+        constexpr uint32_t user_call_set_dialog_pointer = 99;
+        constexpr uint32_t user_call_set_dialog_system_menu = 111;
+        constexpr uint32_t user_call_update_window = 115;
+        constexpr uint32_t user_call_set_msg_box = 89;
+        constexpr uint32_t user_call_release_dc = 0x39;
+        constexpr uint32_t user_call_post_quit_message = 0x3B;
+
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t code)
         {
-            (void)hwnd;
-            (void)param;
+            if (c.win_emu.version.is_build_within(19041, 19046) && code == user_call_set_dialog_pointer)
+            {
+                return handle_NtUserSetDialogPointer(c, hwnd, param);
+            }
+
             if (c.win_emu.callbacks.on_generic_activity)
             {
                 c.win_emu.callbacks.on_generic_activity("NtUserCallHwndParam code=" + std::to_string(code));
             }
 
+            return 0;
+        }
+
+        BOOL handle_NtUserCallHwndLock(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_set_dialog_system_menu)
+                {
+                    return handle_NtUserSetDialogSystemMenu(c, hwnd);
+                }
+
+                if (routine == user_call_update_window)
+                {
+                    // user32!UpdateWindow is dispatched through NtUserCallHwndLock(115) on Win10.
+                    return handle_NtUserUpdateWindow(c, hwnd);
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwndLock routine: 0x%X\n", routine);
+            return FALSE;
+        }
+
+        uint64_t handle_NtUserCallHwnd(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046) && routine == user_call_set_msg_box)
+            {
+                return handle_NtUserSetMsgBox(c, hwnd);
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwnd routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallOneParam(const syscall_context& c, const uint64_t param, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_release_dc)
+                {
+                    return handle_NtUserReleaseDC();
+                }
+
+                if (routine == user_call_post_quit_message)
+                {
+                    return handle_NtUserPostQuitMessage(c, static_cast<int>(param));
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallOneParam routine: 0x%X\n", routine);
             return 0;
         }
 
@@ -4359,14 +4419,14 @@ namespace sogen
                 return desktop->mapped_object;
             }
 
-            const auto index = handle.value.id;
+            const auto index = static_cast<uint32_t>(handle.value.id);
 
-            if (index == 0 || index >= user_handle_table::MAX_HANDLES)
+            if (index == 0 || index >= user_handle_table::MAX_HANDLE_INDICES)
             {
                 return 0;
             }
 
-            const auto handle_entry = c.proc.user_handles.get_handle_table().read(static_cast<size_t>(index));
+            const auto handle_entry = c.proc.user_handles.get_handle_table().read(user_handle_table::handle_index_to_ahe_slot(index));
             return handle_entry.pHead;
         }
 

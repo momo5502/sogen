@@ -304,6 +304,66 @@ plus the surrounding calls needed to actually use them:
     (the `vkCreateDevice`/features paths are on their path too). Full DXVK rendering (swapchain +
     DXVK's large runtime device-function set) is still ahead; DXVK remains otherwise deprioritized.
 
+- **macOS / MoltenVK host bring-up (portability driver).** The host had only ever been run against
+  native ICDs (Linux) or SwiftShader; on an Apple-Silicon Mac the host `vulkan-1.dll`/`libvulkan.dylib`
+  resolves to the **MoltenVK** portability driver (Vulkan-over-Metal), which the Khronos loader refuses
+  to use unless the caller opts in. Two portability requirements were added to `vulkan_host`:
+  - `create_instance` now enables `VK_KHR_portability_enumeration` and sets
+    `VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR` when the loader advertises that instance
+    extension; without it `vkCreateInstance` returns `VK_ERROR_INCOMPATIBLE_DRIVER` and no physical
+    device is ever enumerated. The extension is implemented by the loader, not the driver, so it can
+    appear on Linux loaders too — but enabling it is harmless everywhere: it only un-hides
+    non-conformant devices from enumeration, it never misreports a device's capabilities.
+  - `create_device` now appends `VK_KHR_portability_subset` when the physical device advertises it
+    (Vulkan requires enabling it whenever the device does); the guest never asks for it. Whether a
+    device advertises it is checked once and cached per physical device.
+  Verified end-to-end on macOS against a real GPU: the guest `vulkan-shim-test` enumerates the host
+  **Apple M5 Pro** through MoltenVK and its `fill+readback` (`0xDEADBEEF`) and `clear+readback`
+  (`0xFF0000FF`) checks both pass — the GPU produces the pixels and the guest reads them back exactly.
+  This ran under the Unicorn CPU backend (the bridge is CPU-backend-agnostic) with the direct-alias
+  `vkMapMemory` path actually taken (host allocations are page-rounded and MoltenVK returns
+  page-aligned mapped pointers, so the whole `VkDeviceMemory` aliases straight into guest VA). Run it
+  with the homebrew loader + MoltenVK ICD on the environment:
+  `DYLD_LIBRARY_PATH=/opt/homebrew/lib VK_ICD_FILENAMES=/opt/homebrew/etc/vulkan/icd.d/MoltenVK_icd.json`.
+
+- **DXVK feature spoofing on portability devices.** DXVK's adapter filter refuses any Vulkan device
+  that lacks its unified D3D8/9/10/11 baseline: the `geometryShader` and `shaderCullDistance` core
+  features, `VK_EXT_depth_clip_enable` (+ its `depthClipEnable` feature), and the
+  `robustBufferAccess2`/`nullDescriptor` features of `VK_EXT_robustness2`. MoltenVK genuinely supports
+  none of these (Apple GPUs have no geometry-shader stage or shader cull distance; MoltenVK implements
+  neither depth-clip-enable nor full robustness2), so without intervention DXVK rejects the only
+  adapter on macOS and no D3D9 rendering is possible at all. D3D9 itself needs none of these
+  capabilities — the filter is just shared across all the D3D versions DXVK implements.
+
+  `vulkan_host` therefore lies at *query* time and retracts the lie at *device-creation* time:
+  - `vkGetPhysicalDeviceFeatures2` reports `geometryShader`, `shaderCullDistance`, `depthClipEnable`,
+    `robustBufferAccess2` and `nullDescriptor` as supported, and `vkEnumerateDeviceExtensionProperties`
+    injects a synthetic `VK_EXT_depth_clip_enable` entry, so DXVK's filter passes.
+  - `vkCreateDevice` masks the requested feature set back down to what the device really supports
+    (re-querying the same pNext chain shape) and strips `VK_EXT_depth_clip_enable` from the enabled
+    extensions unless the device genuinely implements it, so MoltenVK is never asked to enable a
+    capability it cannot provide and device creation succeeds.
+
+  DXVK never observes the retraction — it believes the query and takes its normal code paths — and
+  that is safe because D3D9 exercises none of the spoofed capabilities. There is no DXVK
+  configuration that relaxes its required-feature set, and MoltenVK cannot grow a geometry stage, so
+  the bridge is the only place the mismatch can be resolved. Three known limitations:
+  - The spoof is not scoped to DXVK: every guest Vulkan client on a portability device is told the
+    five capabilities exist. A client that actually uses one of them (a geometry shader, cull
+    distance, or a D3D12 title through vkd3d) fails at pipeline creation instead of at adapter
+    selection, where it would otherwise have skipped the device cleanly.
+  - Depth clip stays at the Vulkan default, which matches D3D9's default state, so a title that
+    explicitly disables D3D9 depth clipping silently misrenders.
+  - DXVK's `VK_NULL_HANDLE` descriptor binds for unbound resources rely on MoltenVK/Metal tolerating
+    null descriptors in practice without the formal `nullDescriptor` feature — empirical behavior,
+    not a guaranteed contract.
+
+  All of this is gated to **portability devices** — those advertising `VK_KHR_portability_subset`,
+  which is the Vulkan spec's own definition of a non-conformant device; a conformant native driver
+  never advertises it. A native Linux/Windows driver that really lacks one of these features (e.g. a
+  software rasterizer without `geometryShader`) sees its real capabilities, and whatever the guest
+  requests reaches it unmodified — `vkCreateDevice` fails there exactly as it would without the shim.
+
 ## Remoted Vulkan entry points so far
 
 Instance/device: `vkCreateInstance`, `vkDestroyInstance`, `vkEnumeratePhysicalDevices`,

@@ -190,6 +190,11 @@ namespace sogen
                     c.emu, process_information, process_information_length, return_length,
                     [&](EmulatorTraits<Emu64>::ULONG_PTR& peb32) { peb32 = c.proc.peb32 ? c.proc.peb32->value() : 0; });
 
+            case ProcessConsoleHostProcess:
+                return handle_query<EmulatorTraits<Emu64>::ULONG_PTR>(
+                    c.emu, process_information, process_information_length, return_length,
+                    [](EmulatorTraits<Emu64>::ULONG_PTR& process_id) { process_id = process_context::process_id; });
+
             case ProcessBasicInformation: {
                 const auto init_basic_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
                     basic_info.PebBaseAddress = c.proc.peb64.value();
