@@ -115,6 +115,10 @@ namespace sogen
 
     struct io_device : ref_counted_object
     {
+        std::optional<handle> completion_port_{};
+        uint64_t completion_key_{};
+        ULONG completion_notification_flags_{};
+
         io_device() = default;
         ~io_device() override = default;
 
@@ -125,6 +129,26 @@ namespace sogen
         io_device& operator=(const io_device&) = delete;
 
         virtual NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) = 0;
+
+        virtual void set_completion_information(const handle completion_port, const uint64_t completion_key)
+        {
+            this->completion_port_ = completion_port;
+            this->completion_key_ = completion_key;
+        }
+
+        virtual void set_completion_notification_flags(const ULONG flags)
+        {
+            this->completion_notification_flags_ = flags;
+        }
+
+        void queue_io_completion(windows_emulator& win_emu, const io_device_context& context) const;
+
+        virtual bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block)
+        {
+            (void)win_emu;
+            (void)io_status_block;
+            return false;
+        }
 
         virtual void create(windows_emulator& win_emu, const io_device_creation_data& data)
         {
@@ -190,6 +214,9 @@ namespace sogen
 
         void work(windows_emulator& win_emu) override;
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override;
+        bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block) override;
+        void set_completion_information(handle completion_port, uint64_t completion_key) override;
+        void set_completion_notification_flags(ULONG flags) override;
 
         void serialize_object(utils::buffer_serializer& buffer) const override;
         void deserialize_object(utils::buffer_deserializer& buffer) override;

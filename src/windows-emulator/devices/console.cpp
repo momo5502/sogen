@@ -12,6 +12,7 @@ namespace sogen
 
         enum class console_api : uint32_t
         {
+            get_console_mode = 0x01000001,
             fill_console_output = 0x02000000,
             set_console_cursor_position = 0x0200000A,
             set_console_text_attribute = 0x0200000D,
@@ -116,7 +117,7 @@ namespace sogen
 
                 console_ioctl_header header{};
                 win_emu.emu().read_memory(context.input_buffer, &header, sizeof(header));
-                if (header.target_handle != STDOUT_HANDLE.h || header.input_count != 1 || header.output_count != 1 ||
+                if (header.input_count != 1 || header.output_count != 1 ||
                     header.message_buffer_size != sizeof(console_message_header) + header.data_size ||
                     header.data != header.message + sizeof(console_message_header) || !header.message || !header.data)
                 {
@@ -130,8 +131,26 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                switch (static_cast<console_api>(message.api_number))
+                const auto api = static_cast<console_api>(message.api_number);
+                if (header.target_handle != STDOUT_HANDLE.h &&
+                    (header.target_handle != STDIN_HANDLE.h || api != console_api::get_console_mode))
                 {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                switch (api)
+                {
+                case console_api::get_console_mode: {
+                    if (message.data_size != sizeof(DWORD))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    const DWORD mode = header.target_handle == STDIN_HANDLE.h ? 0x0007 : 0x0003;
+                    win_emu.emu().write_memory(header.data, &mode, sizeof(mode));
+                    return STATUS_SUCCESS;
+                }
+
                 case console_api::fill_console_output: {
                     if (message.data_size != sizeof(fill_console_output_request))
                     {
