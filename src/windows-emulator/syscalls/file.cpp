@@ -1423,11 +1423,11 @@ namespace sogen
 
             if (!io_request_to_cancel || !device->cancel_io(c.win_emu, io_request_to_cancel.value()))
             {
-                io_status_block.write(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_NOT_FOUND});
+                io_status_block.write(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_NOT_FOUND, .Information = 0});
                 return STATUS_NOT_FOUND;
             }
 
-            io_status_block.write(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_SUCCESS});
+            io_status_block.write(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_SUCCESS, .Information = 0});
             return STATUS_SUCCESS;
         }
 
