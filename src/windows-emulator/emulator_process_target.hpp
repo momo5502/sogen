@@ -112,7 +112,7 @@ namespace sogen
                 {
                     return process_memory_result{.error = process_error::unavailable};
                 }
-                return process_memory_result{.address = address, .size = size, .permission = old_permission.common};
+                return process_memory_result{.address = address, .size = size, .permission = old_permission.flattened()};
             });
         }
 

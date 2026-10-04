@@ -86,6 +86,38 @@ namespace sogen
             return emulator_allocator{memory, base, size};
         }
 
+        void append_command_line_argument(std::u16string& command_line, const std::u16string_view argument)
+        {
+            if (!argument.empty() && argument.find_first_of(u" \t\"") == std::u16string_view::npos)
+            {
+                command_line.append(argument);
+                return;
+            }
+
+            command_line.push_back(u'"');
+            size_t backslashes{};
+            for (const auto character : argument)
+            {
+                if (character == u'\\')
+                {
+                    ++backslashes;
+                    continue;
+                }
+                if (character == u'"')
+                {
+                    command_line.append(backslashes * 2 + 1, u'\\');
+                }
+                else
+                {
+                    command_line.append(backslashes, u'\\');
+                }
+                backslashes = 0;
+                command_line.push_back(character);
+            }
+            command_line.append(backslashes * 2, u'\\');
+            command_line.push_back(u'"');
+        }
+
         void setup_gdt(x86_64_emulator& emu, memory_manager& memory)
         {
             const auto vcpu_count = emu.vcpu_count();
@@ -260,7 +292,6 @@ namespace sogen
     {
         this->process_id = app_settings.process_id;
         this->initial_thread_id = app_settings.thread_id;
-        this->next_process_id = std::max(this->next_process_id, this->initial_thread_id + 4);
         this->processes.get(GUEST_PROCESS_HANDLE)->id = this->process_id;
 
         auto& emu = win_emu.emu();
@@ -330,19 +361,13 @@ namespace sogen
             const auto application_str = app_settings.application.u16string();
 
             const auto& argument0 = app_settings.argument0.empty() ? application_str : app_settings.argument0;
-            std::u16string command_line = u"\"" + argument0 + u"\"";
+            std::u16string command_line{};
+            append_command_line_argument(command_line, argument0);
 
             for (const auto& arg : app_settings.arguments)
             {
                 command_line.push_back(u' ');
-                if (arg.find(' ') != std::string::npos)
-                {
-                    command_line.append(u"\"" + arg + u"\"");
-                }
-                else
-                {
-                    command_line.append(arg);
-                }
+                append_command_line_argument(command_line, arg);
             }
 
             allocator.make_unicode_string(proc_params.CommandLine, command_line);
@@ -742,7 +767,6 @@ namespace sogen
         buffer.write_vector(this->default_register_set);
         buffer.write(this->process_id);
         buffer.write(this->initial_thread_id);
-        buffer.write(this->next_process_id);
         buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
 
@@ -842,7 +866,6 @@ namespace sogen
         buffer.read_vector(this->default_register_set);
         buffer.read(this->process_id);
         buffer.read(this->initial_thread_id);
-        buffer.read(this->next_process_id);
         buffer.read(this->spawned_thread_count);
 
         for (auto& thread : this->threads | std::views::values)

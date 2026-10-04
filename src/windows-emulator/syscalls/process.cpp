@@ -208,17 +208,13 @@ namespace sogen
             const auto* pe_arch = std::get_if<winpe::pe_arch>(&image_arch);
             const auto child_is_wow64 = pe_arch && *pe_arch == winpe::pe_arch::pe32;
 
-            const auto process_id = c.proc.next_process_id;
-            const auto thread_id = process_id + 4;
-            request.process_id = process_id;
-            request.thread_id = thread_id;
-
             const auto result = manager->create_process(std::move(request));
             if (!result)
             {
                 return map_process_error(result.error);
             }
-            c.proc.next_process_id += 8;
+            const auto process_id = result.process_id;
+            const auto thread_id = result.thread_id;
 
             emulator_process child{};
             child.process = result.process;

@@ -3,6 +3,7 @@
 #include <emulator_process_target.hpp>
 #include <registry/registry_file.hpp>
 #include <utils/finally.hpp>
+#include <utils/executable_path.hpp>
 #ifdef _WIN32
 #include <whp_x86_64_emulator.hpp>
 #include <utils/win.hpp>
@@ -34,19 +35,7 @@ namespace sogen::sandbox
     {
         std::filesystem::path get_current_binary_dir()
         {
-#ifdef _WIN32
-            std::array<wchar_t, MAX_PATH> buffer{};
-
-            const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-            if (length == 0 || length == buffer.size())
-            {
-                throw std::runtime_error("Resolving module file name failed");
-            }
-
-            return std::filesystem::path(buffer.data()).parent_path();
-#else
-            return "./";
-#endif
+            return utils::get_current_executable_path().parent_path();
         }
 
         std::filesystem::path get_sandbox_executable()

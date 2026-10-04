@@ -133,11 +133,19 @@ enum MemoryPermission : uint8_t {
   MemoryPermission_ReadExecute = 5,
   MemoryPermission_WriteExecute = 6,
   MemoryPermission_All = 7,
+  MemoryPermission_Guard = 8,
+  MemoryPermission_ReadGuard = 9,
+  MemoryPermission_WriteGuard = 10,
+  MemoryPermission_ReadWriteGuard = 11,
+  MemoryPermission_ExecuteGuard = 12,
+  MemoryPermission_ReadExecuteGuard = 13,
+  MemoryPermission_WriteExecuteGuard = 14,
+  MemoryPermission_AllGuard = 15,
   MemoryPermission_MIN = MemoryPermission_None,
-  MemoryPermission_MAX = MemoryPermission_All
+  MemoryPermission_MAX = MemoryPermission_AllGuard
 };
 
-inline const MemoryPermission (&EnumValuesMemoryPermission())[8] {
+inline const MemoryPermission (&EnumValuesMemoryPermission())[16] {
   static const MemoryPermission values[] = {
     MemoryPermission_None,
     MemoryPermission_Read,
@@ -146,13 +154,21 @@ inline const MemoryPermission (&EnumValuesMemoryPermission())[8] {
     MemoryPermission_Execute,
     MemoryPermission_ReadExecute,
     MemoryPermission_WriteExecute,
-    MemoryPermission_All
+    MemoryPermission_All,
+    MemoryPermission_Guard,
+    MemoryPermission_ReadGuard,
+    MemoryPermission_WriteGuard,
+    MemoryPermission_ReadWriteGuard,
+    MemoryPermission_ExecuteGuard,
+    MemoryPermission_ReadExecuteGuard,
+    MemoryPermission_WriteExecuteGuard,
+    MemoryPermission_AllGuard
   };
   return values;
 }
 
 inline const char * const *EnumNamesMemoryPermission() {
-  static const char * const names[9] = {
+  static const char * const names[17] = {
     "None",
     "Read",
     "Write",
@@ -161,13 +177,21 @@ inline const char * const *EnumNamesMemoryPermission() {
     "ReadExecute",
     "WriteExecute",
     "All",
+    "Guard",
+    "ReadGuard",
+    "WriteGuard",
+    "ReadWriteGuard",
+    "ExecuteGuard",
+    "ReadExecuteGuard",
+    "WriteExecuteGuard",
+    "AllGuard",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameMemoryPermission(MemoryPermission e) {
-  if (::flatbuffers::IsOutRange(e, MemoryPermission_None, MemoryPermission_All)) return "";
+  if (::flatbuffers::IsOutRange(e, MemoryPermission_None, MemoryPermission_AllGuard)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesMemoryPermission()[index];
 }

@@ -86,6 +86,8 @@ namespace sogen
     struct process_create_result
     {
         managed_process process{};
+        uint32_t process_id{};
+        uint32_t thread_id{};
         uint64_t native_environment{};
         uint64_t compatibility_environment{};
         uint64_t native_parameters{};

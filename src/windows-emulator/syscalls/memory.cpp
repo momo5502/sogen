@@ -389,7 +389,8 @@ namespace sogen
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
-                const auto result = manager->protect_memory(process->process, aligned_start, aligned_length, requested_protection->common);
+                const auto result =
+                    manager->protect_memory(process->process, aligned_start, aligned_length, requested_protection->flattened());
                 if (!result)
                 {
                     return map_process_memory_error(result.error);
@@ -471,8 +472,8 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
                 const auto requested_address = requested_base ? page_align_down(requested_base) : 0;
-                const auto result =
-                    manager->allocate_memory(process->process, requested_address, allocation_bytes, protection->common, reserve, commit);
+                const auto result = manager->allocate_memory(process->process, requested_address, allocation_bytes, protection->flattened(),
+                                                             reserve, commit);
                 if (!result)
                 {
                     return map_process_memory_error(result.error);

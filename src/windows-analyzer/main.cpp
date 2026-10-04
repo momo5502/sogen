@@ -17,10 +17,11 @@
 #include "jsonl_reporter.hpp"
 #include "stdout_file_reporter.hpp"
 #include "tenet_tracer.hpp"
-#include "subprocess_process_manager.hpp"
+#include <subprocess_process_manager.hpp>
 
 #include <utils/finally.hpp>
 #include <utils/interupt_handler.hpp>
+#include <utils/executable_path.hpp>
 
 #if defined(OS_EMSCRIPTEN) && !defined(SOGEN_EMSCRIPTEN_SUPPORT_NODEJS)
 #include <event_handler.hpp>
@@ -36,19 +37,7 @@ namespace sogen
     {
         std::filesystem::path get_current_binary_dir()
         {
-#ifdef _WIN32
-            std::array<wchar_t, MAX_PATH> buffer{};
-
-            const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-            if (length == 0 || length == buffer.size())
-            {
-                throw std::runtime_error("Resolving module file name failed");
-            }
-
-            return std::filesystem::path(buffer.data()).parent_path();
-#else
-            return "./";
-#endif
+            return utils::get_current_executable_path().parent_path();
         }
 
 #ifndef OS_EMSCRIPTEN

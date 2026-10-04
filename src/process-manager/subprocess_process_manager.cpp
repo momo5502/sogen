@@ -38,6 +38,8 @@ namespace sogen
     namespace
     {
         constexpr uint32_t maximum_payload_size = 64U << 20;
+        constexpr auto response_timeout = std::chrono::seconds(5);
+        constexpr auto exit_notification_timeout = std::chrono::milliseconds(250);
 
         template <typename T>
         bool send_message(network::tcp_client_socket& socket, T payload)
@@ -272,12 +274,29 @@ namespace sogen
         reproc::process process{};
         network::tcp_client_socket control{};
         std::thread output_thread{};
-        mutable std::mutex mutex{};
+        mutable std::mutex control_mutex{};
+        mutable std::mutex state_mutex{};
         mutable std::optional<process_exit> exit{};
         std::optional<uint64_t> termination_code{};
         std::optional<int> host_exit_status{};
         bool host_failure{};
         std::atomic_bool kill_requested{};
+
+        std::optional<ProcessProtocol::MessageT> receive_response(const ProcessProtocol::MessagePayload expected,
+                                                                  const std::chrono::steady_clock::time_point deadline)
+        {
+            auto message = receive_message_until(this->control, deadline);
+            if (!message)
+            {
+                return std::nullopt;
+            }
+            if (message->payload.type == ProcessProtocol::MessagePayload_ProcessExited)
+            {
+                const std::scoped_lock lock(this->state_mutex);
+                this->exit = process_exit{.kind = process_exit_kind::exited, .code = message->payload.AsProcessExited()->exit_code};
+            }
+            return message->payload.type == expected ? std::move(message) : std::nullopt;
+        }
 
         ~process_entry()
         {
@@ -545,34 +564,44 @@ namespace sogen
         options.redirect.in.type = reproc::redirect::parent;
         options.redirect.out.type = reproc::redirect::pipe;
         options.redirect.err.type = reproc::redirect::pipe;
-        options.stop = {.first = {.action = reproc::stop::terminate, .timeout = reproc::milliseconds(2000)},
-                        .second = {.action = reproc::stop::kill, .timeout = reproc::milliseconds(2000)},
-                        .third = {.action = reproc::stop::wait, .timeout = reproc::milliseconds(1000)}};
-
         const auto start_error = entry->process.start(command, options);
         if (start_error)
         {
             return {.error = map_process_error(start_error)};
         }
 
+        const auto [host_process_id, process_id_error] = entry->process.pid();
+        if (process_id_error || host_process_id <= 0)
+        {
+            (void)entry->process.kill();
+            (void)entry->process.wait(reproc::infinite);
+            return {.error = process_error::internal_failure};
+        }
+        request.process_id = static_cast<uint32_t>(host_process_id) * 2;
+        request.thread_id = request.process_id + 1;
+
         entry->output_thread = std::thread([process = entry.get()] {
             std::array<uint8_t, 4096> buffer{};
             for (;;)
             {
-                if (process->kill_requested.exchange(false))
+                if (process->kill_requested)
                 {
-                    if (process->process.kill())
+                    const auto kill_error = process->process.kill();
+                    if (!kill_error)
                     {
-                        const std::scoped_lock lock(process->mutex);
+                        process->kill_requested = false;
+                    }
+                    else
+                    {
+                        const std::scoped_lock lock(process->state_mutex);
                         process->host_failure = true;
-                        break;
                     }
                 }
                 const auto [events, poll_error] =
                     process->process.poll(reproc::event::out | reproc::event::err | reproc::event::exit, reproc::milliseconds(50));
                 if (poll_error && poll_error != std::errc::timed_out)
                 {
-                    const std::scoped_lock lock(process->mutex);
+                    const std::scoped_lock lock(process->state_mutex);
                     process->host_failure = true;
                     break;
                 }
@@ -595,7 +624,7 @@ namespace sogen
                 if ((events & reproc::event::exit) != 0)
                 {
                     const auto [status, wait_error] = process->process.wait(reproc::infinite);
-                    const std::scoped_lock lock(process->mutex);
+                    const std::scoped_lock lock(process->state_mutex);
                     if (wait_error)
                     {
                         process->host_failure = true;
@@ -636,29 +665,29 @@ namespace sogen
 
         if (!entry->control || !send_message(entry->control, encode_create_request(request)))
         {
+            entry->kill_requested = true;
             return {.error = process_error::communication_failure};
         }
 
         const auto started = receive_message_until(entry->control, deadline);
         if (!started || started->payload.type != ProcessProtocol::MessagePayload_ProcessStarted)
         {
+            entry->kill_requested = true;
             return {.error = process_error::internal_failure};
         }
-        if (!entry->control.set_blocking(true))
-        {
-            return {.error = process_error::communication_failure};
-        }
-
         {
             const std::scoped_lock lock(this->mutex_);
             if (this->stopping_)
             {
+                entry->kill_requested = true;
                 return {.error = process_error::unavailable};
             }
             this->processes_.emplace(handle.value, entry);
         }
         const auto& process_started = *started->payload.AsProcessStarted();
         return {.process = handle,
+                .process_id = request.process_id,
+                .thread_id = request.thread_id,
                 .native_environment = process_started.native_environment,
                 .compatibility_environment = process_started.compatibility_environment,
                 .native_parameters = process_started.native_parameters,
@@ -672,12 +701,13 @@ namespace sogen
         {
             return process_error::invalid_process;
         }
-        const std::scoped_lock lock(entry->mutex);
+        const std::scoped_lock lock(entry->control_mutex);
         if (!send_message(entry->control, ProcessProtocol::ResumeProcessRequestT{}))
         {
             return process_error::communication_failure;
         }
-        auto response = receive_message(entry->control);
+        auto response = entry->receive_response(ProcessProtocol::MessagePayload_ResumeProcessResponse,
+                                                std::chrono::steady_clock::now() + response_timeout);
         if (!response || response->payload.type != ProcessProtocol::MessagePayload_ResumeProcessResponse)
         {
             return process_error::communication_failure;
@@ -700,12 +730,13 @@ namespace sogen
         request.permission = encode_permission(permission);
         request.reserve = reserve;
         request.commit = commit;
-        const std::scoped_lock lock(entry->mutex);
+        const std::scoped_lock lock(entry->control_mutex);
         if (!send_message(entry->control, request))
         {
             return {.error = process_error::communication_failure};
         }
-        const auto response = receive_message(entry->control);
+        const auto response = entry->receive_response(ProcessProtocol::MessagePayload_ProcessMemoryResponse,
+                                                      std::chrono::steady_clock::now() + response_timeout);
         if (!response || response->payload.type != ProcessProtocol::MessagePayload_ProcessMemoryResponse)
         {
             return {.error = process_error::communication_failure};
@@ -725,12 +756,13 @@ namespace sogen
         request.address = address;
         request.size = size;
         request.release = release;
-        const std::scoped_lock lock(entry->mutex);
+        const std::scoped_lock lock(entry->control_mutex);
         if (!send_message(entry->control, request))
         {
             return process_error::communication_failure;
         }
-        const auto response = receive_message(entry->control);
+        const auto response = entry->receive_response(ProcessProtocol::MessagePayload_ProcessErrorResponse,
+                                                      std::chrono::steady_clock::now() + response_timeout);
         if (!response || response->payload.type != ProcessProtocol::MessagePayload_ProcessErrorResponse)
         {
             return process_error::communication_failure;
@@ -750,12 +782,13 @@ namespace sogen
         request.address = address;
         request.size = size;
         request.permission = encode_permission(permission);
-        const std::scoped_lock lock(entry->mutex);
+        const std::scoped_lock lock(entry->control_mutex);
         if (!send_message(entry->control, request))
         {
             return {.error = process_error::communication_failure};
         }
-        const auto response = receive_message(entry->control);
+        const auto response = entry->receive_response(ProcessProtocol::MessagePayload_ProcessMemoryResponse,
+                                                      std::chrono::steady_clock::now() + response_timeout);
         if (!response || response->payload.type != ProcessProtocol::MessagePayload_ProcessMemoryResponse)
         {
             return {.error = process_error::communication_failure};
@@ -774,12 +807,13 @@ namespace sogen
         ProcessProtocol::ReadMemoryRequestT request{};
         request.address = address;
         request.size = size;
-        const std::scoped_lock lock(entry->mutex);
+        const std::scoped_lock lock(entry->control_mutex);
         if (!send_message(entry->control, request))
         {
             return {.error = process_error::communication_failure};
         }
-        auto response = receive_message(entry->control);
+        auto response = entry->receive_response(ProcessProtocol::MessagePayload_ReadMemoryResponse,
+                                                std::chrono::steady_clock::now() + response_timeout);
         if (!response || response->payload.type != ProcessProtocol::MessagePayload_ReadMemoryResponse)
         {
             return {.error = process_error::communication_failure};
@@ -799,12 +833,13 @@ namespace sogen
         ProcessProtocol::WriteMemoryRequestT request{};
         request.address = address;
         request.data.assign(data.begin(), data.end());
-        const std::scoped_lock lock(entry->mutex);
+        const std::scoped_lock lock(entry->control_mutex);
         if (!send_message(entry->control, std::move(request)))
         {
             return {.error = process_error::communication_failure};
         }
-        const auto response = receive_message(entry->control);
+        const auto response = entry->receive_response(ProcessProtocol::MessagePayload_ProcessMemoryResponse,
+                                                      std::chrono::steady_clock::now() + response_timeout);
         if (!response || response->payload.type != ProcessProtocol::MessagePayload_ProcessMemoryResponse)
         {
             return {.error = process_error::communication_failure};
@@ -820,12 +855,14 @@ namespace sogen
             return process_error::invalid_process;
         }
 
-        const std::scoped_lock lock(entry->mutex);
-        if (entry->exit)
         {
-            return process_error::none;
+            const std::scoped_lock lock(entry->state_mutex);
+            if (entry->exit)
+            {
+                return process_error::none;
+            }
+            entry->termination_code = exit_code;
         }
-        entry->termination_code = exit_code;
         entry->kill_requested = true;
         return process_error::none;
     }
@@ -838,27 +875,32 @@ namespace sogen
             return {.error = process_error::invalid_process};
         }
 
-        const std::scoped_lock lock(entry->mutex);
+        bool host_exited{};
+        {
+            const std::scoped_lock lock(entry->state_mutex);
+            if (entry->exit)
+            {
+                return {.status = entry->exit};
+            }
+            if (!entry->host_exit_status && !entry->host_failure)
+            {
+                return {};
+            }
+            host_exited = entry->host_exit_status.has_value();
+        }
+
+        if (host_exited)
+        {
+            const std::scoped_lock lock(entry->control_mutex);
+            (void)entry->receive_response(ProcessProtocol::MessagePayload_ProcessExited,
+                                          std::chrono::steady_clock::now() + exit_notification_timeout);
+        }
+
+        const std::scoped_lock lock(entry->state_mutex);
         if (entry->exit)
         {
             return {.status = entry->exit};
         }
-
-        if (!entry->host_exit_status && !entry->host_failure)
-        {
-            return {};
-        }
-
-        if (entry->host_exit_status)
-        {
-            const auto message = receive_message(entry->control);
-            if (message && message->payload.type == ProcessProtocol::MessagePayload_ProcessExited)
-            {
-                entry->exit = process_exit{.kind = process_exit_kind::exited, .code = message->payload.AsProcessExited()->exit_code};
-                return {.status = entry->exit};
-            }
-        }
-
         if (entry->termination_code)
         {
             entry->exit = process_exit{.kind = process_exit_kind::terminated, .code = *entry->termination_code};
