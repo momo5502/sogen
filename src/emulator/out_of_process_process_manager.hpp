@@ -26,7 +26,7 @@ namespace sogen
         managed_process_connection& operator=(managed_process_connection&&) noexcept = default;
 
         const process_create_request& request() const;
-        bool notify_started();
+        bool wait_for_resume(managed_process_target& target);
         bool notify_exit(uint64_t exit_code);
 
       private:
@@ -50,8 +50,16 @@ namespace sogen
         out_of_process_process_manager& operator=(out_of_process_process_manager&&) = delete;
 
         process_create_result create_process(process_create_request request) override;
+        process_error resume_process(managed_process process) override;
         process_error terminate_process(managed_process process, uint64_t exit_code) override;
         process_exit_status_result exit_status(managed_process process) const override;
+        process_memory_result allocate_memory(managed_process process, uint64_t address, uint64_t size, memory_permission permission,
+                                              bool reserve, bool commit) override;
+        process_error free_memory(managed_process process, uint64_t address, uint64_t size, bool release) override;
+        process_memory_result protect_memory(managed_process process, uint64_t address, uint64_t size,
+                                             memory_permission permission) override;
+        process_memory_read_result read_memory(managed_process process, uint64_t address, uint64_t size) const override;
+        process_memory_result write_memory(managed_process process, uint64_t address, std::span<const uint8_t> data) override;
 
       private:
         struct process_entry;

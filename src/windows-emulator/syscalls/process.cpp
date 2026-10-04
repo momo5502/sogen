@@ -143,18 +143,13 @@ namespace sogen
                                             const ACCESS_MASK /*thread_desired_access*/,
                                             const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*process_object_attributes*/,
                                             const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*thread_object_attributes*/,
-                                            const ULONG /*process_flags*/, const ULONG thread_flags,
+                                            const ULONG /*process_flags*/, const ULONG /*thread_flags*/,
                                             const emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_parameters,
                                             const emulator_object<PS_CREATE_INFO<EmulatorTraits<Emu64>>> create_info,
                                             const emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list)
         {
             auto* manager = c.win_emu.processes();
             if (!manager)
-            {
-                return STATUS_NOT_SUPPORTED;
-            }
-
-            if ((thread_flags & THREAD_CREATE_FLAGS_CREATE_SUSPENDED) != 0)
             {
                 return STATUS_NOT_SUPPORTED;
             }
@@ -226,6 +221,8 @@ namespace sogen
             child.process = result.process;
             child.id = process_id;
             child.is_wow64_process = child_is_wow64;
+            child.native_environment = result.native_environment;
+            child.compatibility_environment = result.compatibility_environment;
             const auto child_process_handle = c.proc.processes.store(std::move(child));
 
             managed_process_thread initial_thread{};
@@ -240,6 +237,10 @@ namespace sogen
             creation.State = PsCreateSuccess;
             creation.SuccessState = {};
             creation.SuccessState.CurrentParameterFlags = parameters.Flags;
+            creation.SuccessState.PebAddressNative = result.native_environment;
+            creation.SuccessState.PebAddressWow64 = static_cast<uint32_t>(result.compatibility_environment);
+            creation.SuccessState.UserProcessParametersNative = result.native_parameters;
+            creation.SuccessState.UserProcessParametersWow64 = static_cast<uint32_t>(result.compatibility_parameters);
             create_info.write(creation);
 
             if (attribute_list)
@@ -298,14 +299,9 @@ namespace sogen
 
                     if (info_class == ProcessWow64Information)
                     {
-                        if (managed->is_wow64_process)
-                        {
-                            return STATUS_NOT_SUPPORTED;
-                        }
-
-                        return handle_query<EmulatorTraits<Emu64>::ULONG_PTR>(c.emu, process_information, process_information_length,
-                                                                              return_length,
-                                                                              [](EmulatorTraits<Emu64>::ULONG_PTR& peb32) { peb32 = 0; });
+                        return handle_query<EmulatorTraits<Emu64>::ULONG_PTR>(
+                            c.emu, process_information, process_information_length, return_length,
+                            [&](EmulatorTraits<Emu64>::ULONG_PTR& peb32) { peb32 = managed->compatibility_environment; });
                     }
 
                     if (info_class != ProcessBasicInformation)
@@ -322,6 +318,7 @@ namespace sogen
                     const auto init_process_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
                         basic_info = {};
                         basic_info.ExitStatus = status.status ? process_exit_code(*status.status) : STATUS_PENDING;
+                        basic_info.PebBaseAddress = managed->native_environment;
                         basic_info.UniqueProcessId = managed->id;
                         basic_info.InheritedFromUniqueProcessId = process_context::process_id;
                     };

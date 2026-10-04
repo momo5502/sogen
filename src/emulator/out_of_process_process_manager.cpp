@@ -38,6 +38,13 @@ namespace sogen
             create_request = 2,
             started = 3,
             exited = 4,
+            resume = 5,
+            allocate_memory = 6,
+            free_memory = 7,
+            protect_memory = 8,
+            read_memory = 9,
+            write_memory = 10,
+            response = 11,
         };
 
         struct message_header
@@ -316,9 +323,103 @@ namespace sogen
         return this->request_;
     }
 
-    bool managed_process_connection::notify_started()
+    bool managed_process_connection::wait_for_resume(managed_process_target& target)
     {
-        return send_message(this->socket_, message_type::started);
+        std::string started{};
+        append_value(started, target.native_environment());
+        append_value(started, target.compatibility_environment());
+        append_value(started, target.native_parameters());
+        append_value(started, target.compatibility_parameters());
+        if (!send_message(this->socket_, message_type::started, started))
+        {
+            return false;
+        }
+
+        while (const auto message = receive_message(this->socket_))
+        {
+            if (message->first == message_type::resume)
+            {
+                return send_message(this->socket_, message_type::response);
+            }
+
+            size_t offset = 0;
+            std::string response{};
+            process_error error = process_error::internal_failure;
+            try
+            {
+                if (message->first == message_type::allocate_memory)
+                {
+                    const auto address = read_value<uint64_t>(message->second, offset);
+                    const auto size = read_value<uint64_t>(message->second, offset);
+                    const auto permission = read_value<memory_permission>(message->second, offset);
+                    const auto reserve = read_value<bool>(message->second, offset);
+                    const auto commit = read_value<bool>(message->second, offset);
+                    const auto result = target.allocate_memory(address, size, permission, reserve, commit);
+                    append_value(response, result.error);
+                    append_value(response, result.address);
+                    append_value(response, result.size);
+                    append_value(response, result.permission);
+                }
+                else if (message->first == message_type::free_memory)
+                {
+                    const auto address = read_value<uint64_t>(message->second, offset);
+                    const auto size = read_value<uint64_t>(message->second, offset);
+                    const auto release = read_value<bool>(message->second, offset);
+                    append_value(response, target.free_memory(address, size, release));
+                }
+                else if (message->first == message_type::protect_memory)
+                {
+                    const auto address = read_value<uint64_t>(message->second, offset);
+                    const auto size = read_value<uint64_t>(message->second, offset);
+                    const auto permission = read_value<memory_permission>(message->second, offset);
+                    const auto result = target.protect_memory(address, size, permission);
+                    append_value(response, result.error);
+                    append_value(response, result.address);
+                    append_value(response, result.size);
+                    append_value(response, result.permission);
+                }
+                else if (message->first == message_type::read_memory)
+                {
+                    const auto address = read_value<uint64_t>(message->second, offset);
+                    const auto size = read_value<uint64_t>(message->second, offset);
+                    const auto result = target.read_memory(address, size);
+                    append_value(response, result.error);
+                    append_value(response, static_cast<uint64_t>(result.data.size()));
+                    response.append(reinterpret_cast<const char*>(result.data.data()), result.data.size());
+                }
+                else if (message->first == message_type::write_memory)
+                {
+                    const auto address = read_value<uint64_t>(message->second, offset);
+                    const auto size = read_value<uint64_t>(message->second, offset);
+                    if (size > message->second.size() - offset)
+                    {
+                        throw std::runtime_error("Invalid managed process memory write");
+                    }
+                    const auto data =
+                        std::span{reinterpret_cast<const uint8_t*>(message->second.data() + offset), static_cast<size_t>(size)};
+                    const auto result = target.write_memory(address, data);
+                    append_value(response, result.error);
+                    append_value(response, result.address);
+                    append_value(response, result.size);
+                    append_value(response, result.permission);
+                }
+                else
+                {
+                    append_value(response, error);
+                }
+            }
+            catch (...)
+            {
+                response.clear();
+                append_value(response, error);
+            }
+
+            if (!send_message(this->socket_, message_type::response, response))
+            {
+                return false;
+            }
+        }
+        return false;
     }
 
     bool managed_process_connection::notify_exit(const uint64_t exit_code)
@@ -532,7 +633,227 @@ namespace sogen
             }
             this->processes_.emplace(handle.value, entry);
         }
-        return {.process = handle};
+        size_t offset = 0;
+        const auto native_environment = read_value<uint64_t>(started->second, offset);
+        const auto compatibility_environment = read_value<uint64_t>(started->second, offset);
+        const auto native_parameters = read_value<uint64_t>(started->second, offset);
+        const auto compatibility_parameters = read_value<uint64_t>(started->second, offset);
+        if (offset != started->second.size())
+        {
+            return {.error = process_error::communication_failure};
+        }
+        return {.process = handle,
+                .native_environment = native_environment,
+                .compatibility_environment = compatibility_environment,
+                .native_parameters = native_parameters,
+                .compatibility_parameters = compatibility_parameters};
+    }
+
+    process_error out_of_process_process_manager::resume_process(const managed_process process)
+    {
+        const auto entry = this->find_process(process);
+        if (!entry)
+        {
+            return process_error::invalid_process;
+        }
+        const std::scoped_lock lock(entry->mutex);
+        if (!send_message(entry->control, message_type::resume))
+        {
+            return process_error::communication_failure;
+        }
+        const auto response = receive_message(entry->control);
+        return response && response->first == message_type::response ? process_error::none : process_error::communication_failure;
+    }
+
+    process_memory_result out_of_process_process_manager::allocate_memory(const managed_process process, const uint64_t address,
+                                                                          const uint64_t size, const memory_permission permission,
+                                                                          const bool reserve, const bool commit)
+    {
+        const auto entry = this->find_process(process);
+        if (!entry)
+        {
+            return {.error = process_error::invalid_process};
+        }
+        std::string payload{};
+        append_value(payload, address);
+        append_value(payload, size);
+        append_value(payload, permission);
+        append_value(payload, reserve);
+        append_value(payload, commit);
+        const std::scoped_lock lock(entry->mutex);
+        if (!send_message(entry->control, message_type::allocate_memory, payload))
+        {
+            return {.error = process_error::communication_failure};
+        }
+        const auto response = receive_message(entry->control);
+        if (!response || response->first != message_type::response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        try
+        {
+            size_t offset = 0;
+            process_memory_result result{};
+            result.error = read_value<process_error>(response->second, offset);
+            result.address = read_value<uint64_t>(response->second, offset);
+            result.size = read_value<uint64_t>(response->second, offset);
+            result.permission = read_value<memory_permission>(response->second, offset);
+            return offset == response->second.size() ? result : process_memory_result{.error = process_error::communication_failure};
+        }
+        catch (...)
+        {
+            return {.error = process_error::communication_failure};
+        }
+    }
+
+    process_error out_of_process_process_manager::free_memory(const managed_process process, const uint64_t address, const uint64_t size,
+                                                              const bool release)
+    {
+        const auto entry = this->find_process(process);
+        if (!entry)
+        {
+            return process_error::invalid_process;
+        }
+        std::string payload{};
+        append_value(payload, address);
+        append_value(payload, size);
+        append_value(payload, release);
+        const std::scoped_lock lock(entry->mutex);
+        if (!send_message(entry->control, message_type::free_memory, payload))
+        {
+            return process_error::communication_failure;
+        }
+        const auto response = receive_message(entry->control);
+        if (!response || response->first != message_type::response)
+        {
+            return process_error::communication_failure;
+        }
+        try
+        {
+            size_t offset = 0;
+            const auto error = read_value<process_error>(response->second, offset);
+            return offset == response->second.size() ? error : process_error::communication_failure;
+        }
+        catch (...)
+        {
+            return process_error::communication_failure;
+        }
+    }
+
+    process_memory_result out_of_process_process_manager::protect_memory(const managed_process process, const uint64_t address,
+                                                                         const uint64_t size, const memory_permission permission)
+    {
+        const auto entry = this->find_process(process);
+        if (!entry)
+        {
+            return {.error = process_error::invalid_process};
+        }
+        std::string payload{};
+        append_value(payload, address);
+        append_value(payload, size);
+        append_value(payload, permission);
+        const std::scoped_lock lock(entry->mutex);
+        if (!send_message(entry->control, message_type::protect_memory, payload))
+        {
+            return {.error = process_error::communication_failure};
+        }
+        const auto response = receive_message(entry->control);
+        if (!response || response->first != message_type::response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        try
+        {
+            size_t offset = 0;
+            process_memory_result result{};
+            result.error = read_value<process_error>(response->second, offset);
+            result.address = read_value<uint64_t>(response->second, offset);
+            result.size = read_value<uint64_t>(response->second, offset);
+            result.permission = read_value<memory_permission>(response->second, offset);
+            return offset == response->second.size() ? result : process_memory_result{.error = process_error::communication_failure};
+        }
+        catch (...)
+        {
+            return {.error = process_error::communication_failure};
+        }
+    }
+
+    process_memory_read_result out_of_process_process_manager::read_memory(const managed_process process, const uint64_t address,
+                                                                           const uint64_t size) const
+    {
+        const auto entry = this->find_process(process);
+        if (!entry)
+        {
+            return {.error = process_error::invalid_process};
+        }
+        std::string payload{};
+        append_value(payload, address);
+        append_value(payload, size);
+        const std::scoped_lock lock(entry->mutex);
+        if (!send_message(entry->control, message_type::read_memory, payload))
+        {
+            return {.error = process_error::communication_failure};
+        }
+        const auto response = receive_message(entry->control);
+        if (!response || response->first != message_type::response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        try
+        {
+            size_t offset = 0;
+            process_memory_read_result result{};
+            result.error = read_value<process_error>(response->second, offset);
+            const auto data_size = read_value<uint64_t>(response->second, offset);
+            if (data_size > response->second.size() - offset)
+            {
+                return {.error = process_error::communication_failure};
+            }
+            result.data.assign(response->second.begin() + static_cast<ptrdiff_t>(offset), response->second.end());
+            return result;
+        }
+        catch (...)
+        {
+            return {.error = process_error::communication_failure};
+        }
+    }
+
+    process_memory_result out_of_process_process_manager::write_memory(const managed_process process, const uint64_t address,
+                                                                       const std::span<const uint8_t> data)
+    {
+        const auto entry = this->find_process(process);
+        if (!entry || data.size() > maximum_payload_size - sizeof(address) - sizeof(uint64_t))
+        {
+            return {.error = entry ? process_error::resource_limit : process_error::invalid_process};
+        }
+        std::string payload{};
+        append_value(payload, address);
+        append_value(payload, static_cast<uint64_t>(data.size()));
+        payload.append(reinterpret_cast<const char*>(data.data()), data.size());
+        const std::scoped_lock lock(entry->mutex);
+        if (!send_message(entry->control, message_type::write_memory, payload))
+        {
+            return {.error = process_error::communication_failure};
+        }
+        const auto response = receive_message(entry->control);
+        if (!response || response->first != message_type::response)
+        {
+            return {.error = process_error::communication_failure};
+        }
+        try
+        {
+            size_t offset = 0;
+            process_memory_result result{};
+            result.error = read_value<process_error>(response->second, offset);
+            result.address = read_value<uint64_t>(response->second, offset);
+            result.size = read_value<uint64_t>(response->second, offset);
+            result.permission = read_value<memory_permission>(response->second, offset);
+            return offset == response->second.size() ? result : process_memory_result{.error = process_error::communication_failure};
+        }
+        catch (...)
+        {
+            return {.error = process_error::communication_failure};
+        }
     }
 
     process_error out_of_process_process_manager::terminate_process(const managed_process process, const uint64_t exit_code)

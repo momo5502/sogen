@@ -732,6 +732,14 @@ namespace sogen
             if (auto* managed = c.proc.managed_threads.get(thread_handle))
             {
                 previous_suspend_count.write_if_valid(managed->resume_observed ? 0 : 1);
+                if (!managed->resume_observed)
+                {
+                    auto* manager = c.win_emu.processes();
+                    if (!manager || manager->resume_process(managed->process) != process_error::none)
+                    {
+                        return STATUS_UNSUCCESSFUL;
+                    }
+                }
                 managed->resume_observed = true;
                 return STATUS_SUCCESS;
             }

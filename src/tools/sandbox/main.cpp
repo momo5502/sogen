@@ -1,5 +1,6 @@
 #include <windows_emulator.hpp>
 #include <out_of_process_process_manager.hpp>
+#include <emulator_process_target.hpp>
 #include <registry/registry_file.hpp>
 #ifdef _WIN32
 #include <whp_x86_64_emulator.hpp>
@@ -161,9 +162,14 @@ namespace sogen::sandbox
             }
             win_emu.log.disable_output(true);
 
-            if (managed_connection && !managed_connection->notify_started())
+            if (managed_connection)
             {
-                throw std::runtime_error("Acknowledging managed process startup failed");
+                win_emu.setup_process_if_necessary();
+                emulator_process_target managed_target{win_emu};
+                if (!managed_connection->wait_for_resume(managed_target))
+                {
+                    throw std::runtime_error("Acknowledging managed process startup failed");
+                }
             }
 
             std::atomic_uint32_t signals_received{0};

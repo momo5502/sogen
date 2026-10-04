@@ -245,6 +245,8 @@ namespace sogen
         managed_process process{};
         uint32_t id{};
         bool is_wow64_process{};
+        uint64_t native_environment{};
+        uint64_t compatibility_environment{};
 
       private:
         void serialize_object(utils::buffer_serializer& buffer) const override
@@ -252,6 +254,8 @@ namespace sogen
             buffer.write(this->process.value);
             buffer.write(this->id);
             buffer.write(this->is_wow64_process);
+            buffer.write(this->native_environment);
+            buffer.write(this->compatibility_environment);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -259,6 +263,8 @@ namespace sogen
             buffer.read(this->process.value);
             buffer.read(this->id);
             buffer.read(this->is_wow64_process);
+            buffer.read(this->native_environment);
+            buffer.read(this->compatibility_environment);
         }
     };
 

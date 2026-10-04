@@ -3,7 +3,7 @@
 #include <CLI/CLI.hpp>
 
 #include <windows_emulator.hpp>
-#include <in_process_process_manager.hpp>
+#include <emulator_process_target.hpp>
 #include <backend_selection.hpp>
 #include <win_x86_64_gdb_stub_handler.hpp>
 #include <minidump_loader.hpp>
@@ -624,42 +624,6 @@ namespace sogen
             return create_application_emulator(options, args, std::move(interfaces));
         }
 
-        class analyzer_managed_process final : public in_process_process
-        {
-          public:
-            explicit analyzer_managed_process(std::unique_ptr<windows_emulator> emulator)
-                : emulator_(std::move(emulator))
-            {
-            }
-
-            process_exit run() override
-            {
-                this->emulator_->start();
-                if (this->termination_requested_.load())
-                {
-                    return {.kind = process_exit_kind::terminated, .code = this->termination_code_.load()};
-                }
-                if (!this->emulator_->process.exit_status)
-                {
-                    return {.kind = process_exit_kind::runtime_failure};
-                }
-
-                return {.kind = process_exit_kind::exited, .code = static_cast<uint32_t>(*this->emulator_->process.exit_status)};
-            }
-
-            void terminate(const uint64_t exit_code) override
-            {
-                this->termination_code_.store(exit_code);
-                this->termination_requested_.store(true);
-                this->emulator_->stop();
-            }
-
-          private:
-            std::unique_ptr<windows_emulator> emulator_{};
-            std::atomic_bool termination_requested_{};
-            std::atomic_uint64_t termination_code_{};
-        };
-
         const char* get_module_memory_region_name(const mapped_module& mod, const uint64_t address)
         {
             if (!mod.contains(address))
@@ -705,45 +669,21 @@ namespace sogen
                     get_current_binary_dir() / "sandbox.exe",
                     [&](const auto port, const auto& token) { return create_managed_process_arguments(options, port, token); });
             }
-            else
 #endif
-            {
-                manager = std::make_unique<in_process_process_manager>(
-                    [&](const process_create_request& request) -> std::unique_ptr<in_process_process> {
-                        application_settings app_settings{
-                            .application = windows_path(u8_to_u16(request.application)),
-                        };
-                        app_settings.arguments.reserve(request.arguments.size());
-                        for (const auto& argument : request.arguments)
-                        {
-                            app_settings.arguments.push_back(u8_to_u16(argument));
-                        }
-                        for (const auto& [name, value] : request.environment)
-                        {
-                            app_settings.environment.insert_or_assign(u8_to_u16(name), u8_to_u16(value));
-                        }
-                        if (!request.working_directory.empty())
-                        {
-                            app_settings.working_directory = windows_path(u8_to_u16(request.working_directory));
-                        }
-
-                        emulator_interfaces child_interfaces{.processes = manager_interface};
-                        auto child = std::make_unique<windows_emulator>(create_configured_backend(options), std::move(app_settings),
-                                                                        create_emulator_settings(options), emulator_callbacks{},
-                                                                        std::move(child_interfaces));
-                        apply_registry_files(*child, options);
-                        return std::make_unique<analyzer_managed_process>(std::move(child));
-                    });
-            }
             manager_interface = manager.get();
 
             const auto concise_logging = options.concise_logging;
             const auto win_emu = setup_emulator(options, args, emulator_interfaces{.processes = manager_interface});
             apply_registry_files(*win_emu, options);
 #ifndef OS_EMSCRIPTEN
-            if (options.managed_process && !options.managed_process->notify_started())
+            if (options.managed_process)
             {
-                throw std::runtime_error("Acknowledging managed process startup failed");
+                win_emu->setup_process_if_necessary();
+                emulator_process_target managed_target{*win_emu};
+                if (!options.managed_process->wait_for_resume(managed_target))
+                {
+                    throw std::runtime_error("Acknowledging managed process startup failed");
+                }
             }
 #endif
             context.win_emu = win_emu.get();
