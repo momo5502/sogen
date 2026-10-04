@@ -393,7 +393,7 @@ namespace sogen
         {
             emulator_process current_process{};
             current_process.id = process_id;
-            const auto process_handle = this->processes.store(std::move(current_process));
+            [[maybe_unused]] const auto process_handle = this->processes.store(std::move(current_process));
             assert(process_handle == GUEST_PROCESS_HANDLE);
         }
 
