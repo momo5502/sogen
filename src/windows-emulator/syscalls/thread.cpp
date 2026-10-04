@@ -286,13 +286,17 @@ namespace sogen
                     return STATUS_INVALID_HANDLE;
                 }
 
+                NTSTATUS exit_status = STATUS_PENDING;
+                if (status.status)
+                {
+                    exit_status = status.status->kind == process_exit_kind::runtime_failure ? STATUS_UNSUCCESSFUL
+                                                                                            : static_cast<NTSTATUS>(status.status->code);
+                }
+
                 const emulator_object<THREAD_BASIC_INFORMATION64> info{c.emu, thread_information};
                 info.access([&](THREAD_BASIC_INFORMATION64& value) {
                     value = {};
-                    value.ExitStatus = status.status ? (status.status->kind == process_exit_kind::runtime_failure
-                                                            ? STATUS_UNSUCCESSFUL
-                                                            : static_cast<NTSTATUS>(status.status->code))
-                                                     : STATUS_PENDING;
+                    value.ExitStatus = exit_status;
                     value.ClientId = {.UniqueProcess = managed->process_id, .UniqueThread = managed->thread_id};
                 });
                 return STATUS_SUCCESS;
