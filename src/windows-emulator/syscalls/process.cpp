@@ -226,8 +226,6 @@ namespace sogen
             child.process = result.process;
             child.id = process_id;
             child.is_wow64_process = child_is_wow64;
-            child.initialize_remote_memory();
-            const auto peb_address = child.peb_address;
             const auto child_process_handle = c.proc.processes.store(std::move(child));
 
             managed_process_thread initial_thread{};
@@ -241,10 +239,7 @@ namespace sogen
 
             creation.State = PsCreateSuccess;
             creation.SuccessState = {};
-            creation.SuccessState.UserProcessParametersNative = process_parameters.value();
             creation.SuccessState.CurrentParameterFlags = parameters.Flags;
-            creation.SuccessState.PebAddressNative = peb_address;
-            creation.SuccessState.PebAddressWow64 = child_is_wow64 ? static_cast<uint32_t>(peb_address) : 0;
             create_info.write(creation);
 
             if (attribute_list)
@@ -303,9 +298,14 @@ namespace sogen
 
                     if (info_class == ProcessWow64Information)
                     {
-                        return handle_query<EmulatorTraits<Emu64>::ULONG_PTR>(
-                            c.emu, process_information, process_information_length, return_length,
-                            [&](EmulatorTraits<Emu64>::ULONG_PTR& peb32) { peb32 = managed->is_wow64_process ? managed->peb_address : 0; });
+                        if (managed->is_wow64_process)
+                        {
+                            return STATUS_NOT_SUPPORTED;
+                        }
+
+                        return handle_query<EmulatorTraits<Emu64>::ULONG_PTR>(c.emu, process_information, process_information_length,
+                                                                              return_length,
+                                                                              [](EmulatorTraits<Emu64>::ULONG_PTR& peb32) { peb32 = 0; });
                     }
 
                     if (info_class != ProcessBasicInformation)

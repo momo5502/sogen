@@ -244,59 +244,21 @@ namespace sogen
       public:
         managed_process process{};
         uint32_t id{};
-        uint64_t peb_address{};
         bool is_wow64_process{};
 
-        void initialize_remote_memory();
-        bool allocate_remote_memory(uint64_t& address, size_t size);
-        bool free_remote_memory(uint64_t address);
-        bool protect_remote_memory(uint64_t address, size_t size) const;
-        bool read_remote_memory(uint64_t address, void* data, size_t size) const;
-        bool write_remote_memory(uint64_t address, const void* data, size_t size);
-
       private:
-        struct remote_memory_region
-        {
-            uint64_t base{};
-            std::vector<uint8_t> data{};
-        };
-
-        remote_memory_region* find_remote_region(uint64_t address, size_t size);
-        const remote_memory_region* find_remote_region(uint64_t address, size_t size) const;
-
-        uint64_t next_remote_allocation_{0x100000000ULL};
-        std::vector<remote_memory_region> remote_memory_{};
-
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->process.value);
             buffer.write(this->id);
-            buffer.write(this->peb_address);
             buffer.write(this->is_wow64_process);
-            buffer.write(this->next_remote_allocation_);
-            buffer.write(this->remote_memory_.size());
-            for (const auto& region : this->remote_memory_)
-            {
-                buffer.write(region.base);
-                buffer.write(region.data);
-            }
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read(this->process.value);
             buffer.read(this->id);
-            buffer.read(this->peb_address);
             buffer.read(this->is_wow64_process);
-            buffer.read(this->next_remote_allocation_);
-            size_t region_count{};
-            buffer.read(region_count);
-            this->remote_memory_.resize(region_count);
-            for (auto& region : this->remote_memory_)
-            {
-                buffer.read(region.base);
-                buffer.read(region.data);
-            }
         }
     };
 
