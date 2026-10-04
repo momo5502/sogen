@@ -179,10 +179,12 @@ namespace sogen
 
         ProcessProtocol::ProcessMemoryResponseT encode_memory_result(const process_memory_result& result)
         {
-            return {.error = encode_error(result.error),
-                    .address = result.address,
-                    .size = result.size,
-                    .permission = encode_permission(result.permission)};
+            ProcessProtocol::ProcessMemoryResponseT response{};
+            response.error = encode_error(result.error);
+            response.address = result.address;
+            response.size = result.size;
+            response.permission = encode_permission(result.permission);
+            return response;
         }
 
         process_memory_result decode_memory_result(const ProcessProtocol::ProcessMemoryResponseT& result)
@@ -312,13 +314,14 @@ namespace sogen
 
     bool managed_process_connection::wait_for_resume(managed_process_target& target)
     {
-        ProcessProtocol::ProcessStartedT started{.native_environment = target.native_environment(),
-                                                 .compatibility_environment = target.compatibility_environment(),
-                                                 .native_parameters = target.native_parameters(),
-                                                 .compatibility_parameters = target.compatibility_parameters()};
+        ProcessProtocol::ProcessStartedT started{};
+        started.native_environment = target.native_environment();
+        started.compatibility_environment = target.compatibility_environment();
+        started.native_parameters = target.native_parameters();
+        started.compatibility_parameters = target.compatibility_parameters();
         {
             const std::scoped_lock lock(this->send_mutex_);
-            if (!send_message(this->socket_, std::move(started)))
+            if (!send_message(this->socket_, started))
             {
                 return false;
             }
@@ -371,7 +374,9 @@ namespace sogen
                 const auto error = target.free_memory(request.address, request.size, request.release);
                 {
                     const std::scoped_lock lock(this->send_mutex_);
-                    if (!send_message(this->socket_, ProcessProtocol::ProcessErrorResponseT{.error = encode_error(error)}))
+                    ProcessProtocol::ProcessErrorResponseT response{};
+                    response.error = encode_error(error);
+                    if (!send_message(this->socket_, response))
                     {
                         return false;
                     }
@@ -395,8 +400,10 @@ namespace sogen
                 auto result = target.read_memory(request.address, request.size);
                 {
                     const std::scoped_lock lock(this->send_mutex_);
-                    if (!send_message(this->socket_, ProcessProtocol::ReadMemoryResponseT{.error = encode_error(result.error),
-                                                                                          .data = std::move(result.data)}))
+                    ProcessProtocol::ReadMemoryResponseT response{};
+                    response.error = encode_error(result.error);
+                    response.data = std::move(result.data);
+                    if (!send_message(this->socket_, std::move(response)))
                     {
                         return false;
                     }
@@ -424,10 +431,12 @@ namespace sogen
 
     bool managed_process_connection::notify_exit(const uint64_t exit_code)
     {
+        ProcessProtocol::ProcessExitedT message{};
+        message.exit_code = exit_code;
         bool sent{};
         {
             const std::scoped_lock lock(this->send_mutex_);
-            sent = send_message(this->socket_, ProcessProtocol::ProcessExitedT{.exit_code = exit_code});
+            sent = send_message(this->socket_, message);
         }
         this->disconnect();
         return sent;
@@ -445,12 +454,14 @@ namespace sogen
     managed_process_connection connect_managed_process(const uint16_t port, const std::string& token)
     {
         network::tcp_client_socket socket{AF_INET};
-        if (!socket.connect(network::address{"127.0.0.1", port}) || !send_message(socket, ProcessProtocol::HelloT{.token = token}))
+        ProcessProtocol::HelloT hello{};
+        hello.token = token;
+        if (!socket.connect(network::address{"127.0.0.1", port}) || !send_message(socket, std::move(hello)))
         {
             throw std::runtime_error("Connecting to the managed process parent failed");
         }
 
-        const auto message = receive_message(socket);
+        auto message = receive_message(socket);
         if (!message || message->payload.type != ProcessProtocol::MessagePayload_ProcessCreateRequest)
         {
             throw std::runtime_error("Receiving the managed process request failed");
@@ -666,7 +677,7 @@ namespace sogen
         {
             return process_error::communication_failure;
         }
-        const auto response = receive_message(entry->control);
+        auto response = receive_message(entry->control);
         if (!response || response->payload.type != ProcessProtocol::MessagePayload_ResumeProcessResponse)
         {
             return process_error::communication_failure;
@@ -683,11 +694,14 @@ namespace sogen
         {
             return {.error = process_error::invalid_process};
         }
+        ProcessProtocol::AllocateMemoryRequestT request{};
+        request.address = address;
+        request.size = size;
+        request.permission = encode_permission(permission);
+        request.reserve = reserve;
+        request.commit = commit;
         const std::scoped_lock lock(entry->mutex);
-        if (!send_message(
-                entry->control,
-                ProcessProtocol::AllocateMemoryRequestT{
-                    .address = address, .size = size, .permission = encode_permission(permission), .reserve = reserve, .commit = commit}))
+        if (!send_message(entry->control, request))
         {
             return {.error = process_error::communication_failure};
         }
@@ -707,8 +721,12 @@ namespace sogen
         {
             return process_error::invalid_process;
         }
+        ProcessProtocol::FreeMemoryRequestT request{};
+        request.address = address;
+        request.size = size;
+        request.release = release;
         const std::scoped_lock lock(entry->mutex);
-        if (!send_message(entry->control, ProcessProtocol::FreeMemoryRequestT{.address = address, .size = size, .release = release}))
+        if (!send_message(entry->control, request))
         {
             return process_error::communication_failure;
         }
@@ -728,9 +746,12 @@ namespace sogen
         {
             return {.error = process_error::invalid_process};
         }
+        ProcessProtocol::ProtectMemoryRequestT request{};
+        request.address = address;
+        request.size = size;
+        request.permission = encode_permission(permission);
         const std::scoped_lock lock(entry->mutex);
-        if (!send_message(entry->control, ProcessProtocol::ProtectMemoryRequestT{
-                                              .address = address, .size = size, .permission = encode_permission(permission)}))
+        if (!send_message(entry->control, request))
         {
             return {.error = process_error::communication_failure};
         }
@@ -750,17 +771,20 @@ namespace sogen
         {
             return {.error = process_error::invalid_process};
         }
+        ProcessProtocol::ReadMemoryRequestT request{};
+        request.address = address;
+        request.size = size;
         const std::scoped_lock lock(entry->mutex);
-        if (!send_message(entry->control, ProcessProtocol::ReadMemoryRequestT{.address = address, .size = size}))
+        if (!send_message(entry->control, request))
         {
             return {.error = process_error::communication_failure};
         }
-        const auto response = receive_message(entry->control);
+        auto response = receive_message(entry->control);
         if (!response || response->payload.type != ProcessProtocol::MessagePayload_ReadMemoryResponse)
         {
             return {.error = process_error::communication_failure};
         }
-        auto result = std::move(*response->payload.AsReadMemoryResponse());
+        auto& result = *response->payload.AsReadMemoryResponse();
         return {.data = std::move(result.data), .error = decode_error(result.error)};
     }
 
@@ -772,7 +796,8 @@ namespace sogen
         {
             return {.error = entry ? process_error::resource_limit : process_error::invalid_process};
         }
-        ProcessProtocol::WriteMemoryRequestT request{.address = address};
+        ProcessProtocol::WriteMemoryRequestT request{};
+        request.address = address;
         request.data.assign(data.begin(), data.end());
         const std::scoped_lock lock(entry->mutex);
         if (!send_message(entry->control, std::move(request)))
