@@ -271,8 +271,9 @@ namespace sogen
                                                       emulator_pointer message_information, uint32_t length,
                                                       emulator_object<ULONG> return_length);
         NTSTATUS handle_NtAlpcSetInformation();
-        NTSTATUS handle_NtAlpcCreateSecurityContext();
-        NTSTATUS handle_NtAlpcDeleteSecurityContext();
+        NTSTATUS handle_NtAlpcCreateSecurityContext(const syscall_context& c, handle port_handle, ULONG flags,
+                                                    emulator_object<ALPC_SECURITY_ATTR<EmulatorTraits<Emu64>>> security_attribute);
+        NTSTATUS handle_NtAlpcDeleteSecurityContext(const syscall_context& c, handle port_handle, ULONG flags, handle context_handle);
 
         // syscalls/process.cpp:
         NTSTATUS handle_NtQueryInformationProcess(const syscall_context& c, handle process_handle, uint32_t info_class,

@@ -493,7 +493,9 @@ namespace sogen
                 return handle_system_process_information(c, system_information, system_information_length, return_length);
 
             case SystemFlushInformation:
+            case SystemSecureBootPolicyInformation:
             case SystemCodeIntegrityPolicyInformation:
+            case SystemCodeIntegrityPoliciesFullInformation:
             case SystemHypervisorSharedPageInformation:
             case SystemFeatureConfigurationInformation:
             case SystemSupportedProcessorArchitectures2:

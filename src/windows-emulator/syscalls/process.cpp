@@ -178,7 +178,8 @@ namespace sogen
             auto command_line = parse_command_line(read_unicode_string(c.emu, parameters.CommandLine));
 
             process_create_request request{};
-            request.application = u16_to_u8(windows_path(read_unicode_string(c.emu, parameters.ImagePathName)).u16string());
+            const windows_path application_path{read_unicode_string(c.emu, parameters.ImagePathName)};
+            request.application = u16_to_u8(application_path.u16string());
             request.working_directory =
                 u16_to_u8(windows_path(read_unicode_string(c.emu, parameters.CurrentDirectory.DosPath)).u16string());
             request.environment = read_environment(c, parameters);
@@ -198,6 +199,10 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
+            const auto image_arch = winpe::get_pe_arch(c.win_emu.file_sys.translate(application_path));
+            const auto* pe_arch = std::get_if<winpe::pe_arch>(&image_arch);
+            const auto child_is_wow64 = pe_arch && *pe_arch == winpe::pe_arch::pe32;
+
             const auto result = manager->create_process(std::move(request));
             if (!result)
             {
@@ -211,6 +216,7 @@ namespace sogen
             emulator_process child{};
             child.process = result.process;
             child.id = process_id;
+            child.is_wow64_process = child_is_wow64;
             child.initialize_remote_memory();
             const auto peb_address = child.peb_address;
             const auto child_process_handle = c.proc.processes.store(std::move(child));
@@ -229,6 +235,7 @@ namespace sogen
             creation.SuccessState.UserProcessParametersNative = process_parameters.value();
             creation.SuccessState.CurrentParameterFlags = parameters.Flags;
             creation.SuccessState.PebAddressNative = peb_address;
+            creation.SuccessState.PebAddressWow64 = child_is_wow64 ? static_cast<uint32_t>(peb_address) : 0;
             create_info.write(creation);
 
             if (attribute_list)
@@ -257,7 +264,7 @@ namespace sogen
                         image_info.SubSystemMajorVersion = 6;
                         image_info.MajorOperatingSystemVersion = 6;
                         image_info.ImageCharacteristics = IMAGE_FILE_EXECUTABLE_IMAGE | IMAGE_FILE_LARGE_ADDRESS_AWARE;
-                        image_info.Machine = PEMachineType::AMD64;
+                        image_info.Machine = child_is_wow64 ? PEMachineType::I386 : PEMachineType::AMD64;
                         image_info.ImageContainsCode = TRUE;
                         c.emu.write_memory(attribute.ValuePtr, &image_info, sizeof(image_info));
                         if (attribute.ReturnLength)
@@ -280,7 +287,19 @@ namespace sogen
                 const auto* managed = c.proc.processes.get(process_handle);
                 if (managed && managed->process)
                 {
-                    if (info_class != ProcessBasicInformation || !c.win_emu.processes())
+                    if (!c.win_emu.processes())
+                    {
+                        return STATUS_NOT_SUPPORTED;
+                    }
+
+                    if (info_class == ProcessWow64Information)
+                    {
+                        return handle_query<EmulatorTraits<Emu64>::ULONG_PTR>(
+                            c.emu, process_information, process_information_length, return_length,
+                            [&](EmulatorTraits<Emu64>::ULONG_PTR& peb32) { peb32 = managed->is_wow64_process ? managed->peb_address : 0; });
+                    }
+
+                    if (info_class != ProcessBasicInformation)
                     {
                         return STATUS_NOT_SUPPORTED;
                     }

@@ -413,14 +413,26 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtAlpcCreateSecurityContext()
+        NTSTATUS handle_NtAlpcCreateSecurityContext(const syscall_context& c, const handle port_handle, const ULONG /*flags*/,
+                                                    const emulator_object<ALPC_SECURITY_ATTR<EmulatorTraits<Emu64>>> security_attribute)
         {
-            return STATUS_NOT_SUPPORTED;
+            if (!c.proc.ports.get(port_handle))
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+            if (!security_attribute)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            security_attribute.access([](ALPC_SECURITY_ATTR<EmulatorTraits<Emu64>>& attribute) { attribute.ContextHandle = 1; });
+            return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtAlpcDeleteSecurityContext()
+        NTSTATUS handle_NtAlpcDeleteSecurityContext(const syscall_context& c, const handle port_handle, const ULONG /*flags*/,
+                                                    const handle /*context_handle*/)
         {
-            return STATUS_NOT_SUPPORTED;
+            return c.proc.ports.get(port_handle) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
         }
 
         NTSTATUS handle_NtAlpcConnectPortEx()

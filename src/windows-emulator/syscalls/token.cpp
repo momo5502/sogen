@@ -332,7 +332,8 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (token_information_class == TokenIsAppContainer || token_information_class == TokenIsAppSilo)
+            if (token_information_class == TokenSandBoxInert || token_information_class == TokenHasRestrictions ||
+                token_information_class == TokenIsAppContainer || token_information_class == TokenIsAppSilo)
             {
                 constexpr auto required_size = sizeof(ULONG);
                 return_length.write(required_size);
@@ -385,7 +386,9 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (token_information_class == TokenSecurityAttributes)
+            if (token_information_class == TokenUserClaimAttributes || token_information_class == TokenDeviceClaimAttributes ||
+                token_information_class == TokenRestrictedUserClaimAttributes ||
+                token_information_class == TokenRestrictedDeviceClaimAttributes || token_information_class == TokenSecurityAttributes)
             {
                 constexpr auto required_size = sizeof(TOKEN_SECURITY_ATTRIBUTES_INFORMATION);
                 return_length.write(required_size);
@@ -557,44 +560,7 @@ namespace sogen
                 const auto attribute_name_2 = read_unicode_string(c.emu, attributes, 1);
                 if (attribute_name_1 == u"WIN://SYSAPPID" && attribute_name_2 == u"WIN://PKG")
                 {
-                    constexpr auto attrs_offset = sizeof(TOKEN_SECURITY_ATTRIBUTES_INFORMATION);
-                    constexpr auto claims_offset = attrs_offset + 2 * sizeof(TOKEN_SECURITY_ATTRIBUTE_V1);
-                    constexpr auto required_size = claims_offset + sizeof(uint64_t);
-
-                    if (return_length.value())
-                    {
-                        return_length.write(required_size);
-                    }
-
-                    if (buffer == 0 || buffer_length < required_size)
-                    {
-                        return STATUS_BUFFER_TOO_SMALL;
-                    }
-
-                    const auto attrs_ptr = buffer + attrs_offset;
-                    const auto claims_ptr = buffer + claims_offset;
-
-                    TOKEN_SECURITY_ATTRIBUTES_INFORMATION info{};
-                    info.Version = 1;
-                    info.Reserved = 0;
-                    info.AttributeCount = 2;
-                    info.Attribute.pAttributeV1 = attrs_ptr;
-
-                    std::array<TOKEN_SECURITY_ATTRIBUTE_V1, 2> attrs{};
-
-                    attrs[0].ValueType = 3; // STRING
-                    attrs[0].ValueCount = 0;
-                    attrs[0].Values = 0;
-
-                    attrs[1].ValueType = 2; // UINT64
-                    attrs[1].ValueCount = 1;
-                    attrs[1].Values = claims_ptr;
-
-                    c.emu.write_memory(buffer, info);
-                    c.emu.write_memory(attrs_ptr, attrs);
-                    c.emu.write_memory(claims_ptr, 0);
-
-                    return STATUS_SUCCESS;
+                    return STATUS_NOT_FOUND;
                 }
             }
 

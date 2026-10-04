@@ -245,6 +245,7 @@ namespace sogen
         managed_process process{};
         uint32_t id{};
         uint64_t peb_address{};
+        bool is_wow64_process{};
 
         void initialize_remote_memory();
         bool allocate_remote_memory(uint64_t& address, size_t size);
@@ -271,6 +272,7 @@ namespace sogen
             buffer.write(this->process.value);
             buffer.write(this->id);
             buffer.write(this->peb_address);
+            buffer.write(this->is_wow64_process);
             buffer.write(this->next_remote_allocation_);
             buffer.write(this->remote_memory_.size());
             for (const auto& region : this->remote_memory_)
@@ -285,6 +287,7 @@ namespace sogen
             buffer.read(this->process.value);
             buffer.read(this->id);
             buffer.read(this->peb_address);
+            buffer.read(this->is_wow64_process);
             buffer.read(this->next_remote_allocation_);
             size_t region_count{};
             buffer.read(region_count);
