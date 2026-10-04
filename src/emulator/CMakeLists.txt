@@ -7,7 +7,7 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
 list(SORT SRC_FILES)
 
 if(EMSCRIPTEN)
-  list(FILTER SRC_FILES EXCLUDE REGEX "out_of_process_process_manager\\.(cpp|hpp)$")
+  list(FILTER SRC_FILES EXCLUDE REGEX "subprocess_process_manager\\.(cpp|hpp)$")
 endif()
 
 add_library(emulator ${SRC_FILES})

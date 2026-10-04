@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -22,32 +23,38 @@ namespace sogen
 
         managed_process_connection(const managed_process_connection&) = delete;
         managed_process_connection& operator=(const managed_process_connection&) = delete;
-        managed_process_connection(managed_process_connection&&) noexcept = default;
-        managed_process_connection& operator=(managed_process_connection&&) noexcept = default;
+        managed_process_connection(managed_process_connection&& other) noexcept;
+        managed_process_connection& operator=(managed_process_connection&&) = delete;
+        ~managed_process_connection();
 
         const process_create_request& request() const;
         bool wait_for_resume(managed_process_target& target);
         bool notify_exit(uint64_t exit_code);
+        void disconnect();
 
       private:
+        bool handle_messages(managed_process_target& target, bool wait_for_resume);
+
         network::tcp_client_socket socket_{};
         process_create_request request_{};
+        std::mutex send_mutex_{};
+        std::thread control_thread_{};
     };
 
     managed_process_connection connect_managed_process(uint16_t port, const std::string& token);
 
-    class out_of_process_process_manager final : public process_manager
+    class subprocess_process_manager final : public process_manager
     {
       public:
         using argument_factory = std::function<std::vector<std::string>(uint16_t, const std::string&)>;
 
-        out_of_process_process_manager(std::filesystem::path executable, argument_factory arguments);
-        ~out_of_process_process_manager() override;
+        subprocess_process_manager(std::filesystem::path executable, argument_factory arguments);
+        ~subprocess_process_manager() override;
 
-        out_of_process_process_manager(const out_of_process_process_manager&) = delete;
-        out_of_process_process_manager& operator=(const out_of_process_process_manager&) = delete;
-        out_of_process_process_manager(out_of_process_process_manager&&) = delete;
-        out_of_process_process_manager& operator=(out_of_process_process_manager&&) = delete;
+        subprocess_process_manager(const subprocess_process_manager&) = delete;
+        subprocess_process_manager& operator=(const subprocess_process_manager&) = delete;
+        subprocess_process_manager(subprocess_process_manager&&) = delete;
+        subprocess_process_manager& operator=(subprocess_process_manager&&) = delete;
 
         process_create_result create_process(process_create_request request) override;
         process_error resume_process(managed_process process) override;

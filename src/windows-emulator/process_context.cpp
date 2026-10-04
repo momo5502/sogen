@@ -258,6 +258,11 @@ namespace sogen
     void process_context::setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
                                 const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32)
     {
+        this->process_id = app_settings.process_id;
+        this->initial_thread_id = app_settings.thread_id;
+        this->next_process_id = std::max(this->next_process_id, this->initial_thread_id + 4);
+        this->processes.get(GUEST_PROCESS_HANDLE)->id = this->process_id;
+
         auto& emu = win_emu.emu();
         const auto& version = win_emu.version;
         const auto& fake_env = win_emu.fake_env;
@@ -324,7 +329,8 @@ namespace sogen
 
             const auto application_str = app_settings.application.u16string();
 
-            std::u16string command_line = u"\"" + application_str + u"\"";
+            const auto& argument0 = app_settings.argument0.empty() ? application_str : app_settings.argument0;
+            std::u16string command_line = u"\"" + argument0 + u"\"";
 
             for (const auto& arg : app_settings.arguments)
             {
@@ -579,7 +585,7 @@ namespace sogen
             window.fnid = 0x29D;   // FNID_DESKTOP
             window.windowBand = 1; // ZBID_DESKTOP
             window.dpiContext = USER_DEFAULT_WINDOW_DPI_CONTEXT;
-            window.processId = process_context::process_id;
+            window.processId = this->process_id;
         });
 
         // Seed the shared foreground window with the desktop so the guest's client-side GetForegroundWindow
@@ -612,7 +618,7 @@ namespace sogen
                 window.rcClient = window.rcWindow;
                 window.windowBand = 1; // ZBID_DESKTOP
                 window.dpiContext = USER_DEFAULT_WINDOW_DPI_CONTEXT;
-                window.processId = process_context::process_id;
+                window.processId = this->process_id;
             });
             return handle;
         };
@@ -734,6 +740,8 @@ namespace sogen
         buffer.write(this->uuid_sequence);
 
         buffer.write_vector(this->default_register_set);
+        buffer.write(this->process_id);
+        buffer.write(this->initial_thread_id);
         buffer.write(this->next_process_id);
         buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
@@ -832,6 +840,8 @@ namespace sogen
         buffer.read(this->uuid_sequence);
 
         buffer.read_vector(this->default_register_set);
+        buffer.read(this->process_id);
+        buffer.read(this->initial_thread_id);
         buffer.read(this->next_process_id);
         buffer.read(this->spawned_thread_count);
 
@@ -1122,8 +1132,7 @@ namespace sogen
     handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
                                           const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread)
     {
-        // Thread ids are 8, 12, 16, ... (the process keeps id 4); all 4-aligned like real Windows.
-        const uint32_t thread_id = (++this->spawned_thread_count + 1) * 4;
+        const uint32_t thread_id = this->initial_thread_id + this->spawned_thread_count++ * 4;
         emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;

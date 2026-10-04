@@ -156,7 +156,7 @@ namespace sogen
             return {.status = STATUS_PORT_DISCONNECTED};
         }
 
-        if (!c.receive_message && !dynamic_cast<rpc_port*>(this->port_.get()))
+        if (!c.receive_message && !this->port_->accepts_send_only_messages())
         {
             return {.status = STATUS_INVALID_PARAMETER};
         }

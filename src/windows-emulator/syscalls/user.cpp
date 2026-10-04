@@ -3226,7 +3226,7 @@ namespace sogen
                 guest_win.dpiContext = USER_DEFAULT_WINDOW_DPI_CONTEXT;
                 guest_win.fnid = get_builtin_window_fnid(normalized_class);
                 guest_win.threadId = win.thread_id;
-                guest_win.processId = process_context::process_id;
+                guest_win.processId = c.proc.process_id;
 
                 win.host_surface_window = !is_message_only;
 
@@ -5859,7 +5859,7 @@ namespace sogen
             // the thread.
             if (query_type == 0)
             {
-                return process_context::process_id;
+                return c.proc.process_id;
             }
 
             return win->thread_id;

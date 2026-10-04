@@ -190,6 +190,7 @@ namespace sogen
 
             if (!command_line.empty())
             {
+                request.argument0 = u16_to_u8(command_line.front());
                 command_line.erase(command_line.begin());
             }
             request.arguments.reserve(command_line.size());
@@ -207,14 +208,16 @@ namespace sogen
             const auto* pe_arch = std::get_if<winpe::pe_arch>(&image_arch);
             const auto child_is_wow64 = pe_arch && *pe_arch == winpe::pe_arch::pe32;
 
+            const auto process_id = c.proc.next_process_id;
+            const auto thread_id = process_id + 4;
+            request.process_id = process_id;
+            request.thread_id = thread_id;
+
             const auto result = manager->create_process(std::move(request));
             if (!result)
             {
                 return map_process_error(result.error);
             }
-
-            const auto process_id = c.proc.next_process_id;
-            const auto thread_id = process_id + 4;
             c.proc.next_process_id += 8;
 
             emulator_process child{};
@@ -320,7 +323,7 @@ namespace sogen
                         basic_info.ExitStatus = status.status ? process_exit_code(*status.status) : STATUS_PENDING;
                         basic_info.PebBaseAddress = managed->native_environment;
                         basic_info.UniqueProcessId = managed->id;
-                        basic_info.InheritedFromUniqueProcessId = process_context::process_id;
+                        basic_info.InheritedFromUniqueProcessId = c.proc.process_id;
                     };
 
                     switch (process_information_length)
@@ -519,7 +522,7 @@ namespace sogen
             case ProcessConsoleHostProcess:
                 return handle_query<EmulatorTraits<Emu64>::ULONG_PTR>(
                     c.emu, process_information, process_information_length, return_length,
-                    [](EmulatorTraits<Emu64>::ULONG_PTR& process_id) { process_id = process_context::process_id; });
+                    [&](EmulatorTraits<Emu64>::ULONG_PTR& process_id) { process_id = c.proc.process_id; });
 
             case ProcessBasicInformation: {
                 const auto init_basic_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
@@ -527,7 +530,7 @@ namespace sogen
                     const auto processor_count =
                         c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
                     basic_info.AffinityMask = processor_count >= 64 ? ~0ull : ((1ull << processor_count) - 1);
-                    basic_info.UniqueProcessId = process_context::process_id;
+                    basic_info.UniqueProcessId = c.proc.process_id;
                 };
 
                 switch (process_information_length)
@@ -894,7 +897,7 @@ namespace sogen
             const auto id = client_id.read();
 
             // The guest opening its own pid resolves to the real guest process handle.
-            if (id.UniqueProcess == process_context::process_id)
+            if (id.UniqueProcess == c.proc.process_id)
             {
                 process_handle.write(GUEST_PROCESS_HANDLE);
                 return STATUS_SUCCESS;

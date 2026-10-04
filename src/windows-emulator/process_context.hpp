@@ -564,10 +564,9 @@ namespace sogen
 
         std::vector<std::byte> default_register_set{};
 
-        // Process and thread ids mimic Windows' PspCidTable: a single space of distinct multiples of 4.
-        // The process keeps id 4; threads take 8, 12, 16, ... Real Windows never hands out tiny or
-        // non-4-aligned ids, and some code (e.g. CEG-style anti-tamper) relies on that.
-        static constexpr uint32_t process_id = 4;
+        // Process and thread ids share Windows' 4-aligned client ID space.
+        uint32_t process_id{4};
+        uint32_t initial_thread_id{8};
         uint32_t next_process_id{0x100};
         uint32_t spawned_thread_count{0};
         handle_store<handle_types::thread, emulator_thread> threads{};

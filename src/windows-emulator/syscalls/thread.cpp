@@ -544,11 +544,33 @@ namespace sogen
 
             const auto id = client_id.read();
 
-            for (auto& [h_val, t] : c.proc.threads)
+            if (id.UniqueProcess == 0 || id.UniqueProcess == c.proc.process_id)
             {
-                if (t.id == id.UniqueThread)
+                for (auto& [h_val, t] : c.proc.threads)
                 {
-                    thread_handle.write(c.proc.threads.make_handle(h_val));
+                    if (t.id == id.UniqueThread)
+                    {
+                        const auto handle = c.proc.threads.make_handle(h_val);
+                        if (!c.proc.threads.duplicate(handle))
+                        {
+                            return STATUS_INVALID_HANDLE;
+                        }
+                        thread_handle.write(handle);
+                        return STATUS_SUCCESS;
+                    }
+                }
+            }
+
+            for (auto& [h_val, thread] : c.proc.managed_threads)
+            {
+                if (thread.thread_id == id.UniqueThread && (id.UniqueProcess == 0 || thread.process_id == id.UniqueProcess))
+                {
+                    const auto handle = c.proc.managed_threads.make_handle(h_val);
+                    if (!c.proc.managed_threads.duplicate(handle))
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+                    thread_handle.write(handle);
                     return STATUS_SUCCESS;
                 }
             }

@@ -1,7 +1,8 @@
 #include <windows_emulator.hpp>
-#include <out_of_process_process_manager.hpp>
+#include <subprocess_process_manager.hpp>
 #include <emulator_process_target.hpp>
 #include <registry/registry_file.hpp>
+#include <utils/finally.hpp>
 #ifdef _WIN32
 #include <whp_x86_64_emulator.hpp>
 #include <utils/win.hpp>
@@ -82,6 +83,9 @@ namespace sogen::sandbox
             if (managed_connection)
             {
                 const auto& request = managed_connection->request();
+                app_settings.argument0 = u8_to_u16(request.argument0);
+                app_settings.process_id = request.process_id;
+                app_settings.thread_id = request.thread_id;
                 if (!request.working_directory.empty())
                 {
                     app_settings.working_directory = windows_path(u8_to_u16(request.working_directory));
@@ -116,31 +120,31 @@ namespace sogen::sandbox
 
             settings.path_mappings = std::move(path_mappings);
 
-            out_of_process_process_manager process_manager{get_sandbox_executable(), [&](const auto port, const auto& token) {
-                                                               std::vector<std::string> arguments{"--managed-process-port",
-                                                                                                  std::to_string(port),
-                                                                                                  "--managed-process-token",
-                                                                                                  token,
-                                                                                                  "--registry",
-                                                                                                  settings.registry_directory.string()};
-                                                               if (!settings.emulation_root.empty())
-                                                               {
-                                                                   arguments.emplace_back("--emulation");
-                                                                   arguments.push_back(settings.emulation_root.string());
-                                                               }
-                                                               for (const auto& [source, target] : settings.path_mappings)
-                                                               {
-                                                                   arguments.emplace_back("--path");
-                                                                   arguments.push_back(u16_to_u8(source.u16string()));
-                                                                   arguments.push_back(target.string());
-                                                               }
-                                                               for (const auto& file : registry_files)
-                                                               {
-                                                                   arguments.emplace_back("--reg-file");
-                                                                   arguments.push_back(file.string());
-                                                               }
-                                                               return arguments;
-                                                           }};
+            subprocess_process_manager process_manager{get_sandbox_executable(), [&](const auto port, const auto& token) {
+                                                           std::vector<std::string> arguments{"--managed-process-port",
+                                                                                              std::to_string(port),
+                                                                                              "--managed-process-token",
+                                                                                              token,
+                                                                                              "--registry",
+                                                                                              settings.registry_directory.string()};
+                                                           if (!settings.emulation_root.empty())
+                                                           {
+                                                               arguments.emplace_back("--emulation");
+                                                               arguments.push_back(settings.emulation_root.string());
+                                                           }
+                                                           for (const auto& [source, target] : settings.path_mappings)
+                                                           {
+                                                               arguments.emplace_back("--path");
+                                                               arguments.push_back(u16_to_u8(source.u16string()));
+                                                               arguments.push_back(target.string());
+                                                           }
+                                                           for (const auto& file : registry_files)
+                                                           {
+                                                               arguments.emplace_back("--reg-file");
+                                                               arguments.push_back(file.string());
+                                                           }
+                                                           return arguments;
+                                                       }};
 
             emulator_callbacks callbacks{};
             callbacks.on_stdout = [](const std::string_view data) {
@@ -162,15 +166,22 @@ namespace sogen::sandbox
             }
             win_emu.log.disable_output(true);
 
+            std::unique_ptr<emulator_process_target> managed_target{};
             if (managed_connection)
             {
                 win_emu.setup_process_if_necessary();
-                emulator_process_target managed_target{win_emu};
-                if (!managed_connection->wait_for_resume(managed_target))
+                managed_target = std::make_unique<emulator_process_target>(win_emu);
+                if (!managed_connection->wait_for_resume(*managed_target))
                 {
                     throw std::runtime_error("Acknowledging managed process startup failed");
                 }
             }
+            const auto managed_process_guard = utils::finally([&] {
+                if (managed_connection)
+                {
+                    managed_connection->disconnect();
+                }
+            });
 
             std::atomic_uint32_t signals_received{0};
             utils::interupt_handler interrupt_guard{[&] {

@@ -1,4 +1,4 @@
-#include "out_of_process_process_manager.hpp"
+#include "subprocess_process_manager.hpp"
 
 #include <network/address.hpp>
 #include <network/tcp_server_socket.hpp>
@@ -29,7 +29,7 @@ namespace sogen
     namespace
     {
         constexpr uint32_t protocol_magic = 0x50474F53;
-        constexpr uint32_t protocol_version = 1;
+        constexpr uint32_t protocol_version = 2;
         constexpr uint32_t maximum_payload_size = 64U << 20;
 
         enum class message_type : uint32_t
@@ -98,6 +98,7 @@ namespace sogen
         {
             std::string data{};
             append_string(data, request.application);
+            append_string(data, request.argument0);
             append_string(data, request.working_directory);
             append_value(data, static_cast<uint64_t>(request.arguments.size()));
             for (const auto& argument : request.arguments)
@@ -110,6 +111,8 @@ namespace sogen
                 append_string(data, name);
                 append_string(data, value);
             }
+            append_value(data, request.process_id);
+            append_value(data, request.thread_id);
             return data;
         }
 
@@ -119,6 +122,7 @@ namespace sogen
             size_t offset = 0;
             process_create_request request{};
             request.application = read_string(data, offset);
+            request.argument0 = read_string(data, offset);
             request.working_directory = read_string(data, offset);
 
             const auto argument_count = read_value<uint64_t>(data, offset);
@@ -144,6 +148,9 @@ namespace sogen
                 auto value = read_string(data, offset);
                 request.environment.insert_or_assign(std::move(name), std::move(value));
             }
+
+            request.process_id = read_value<uint32_t>(data, offset);
+            request.thread_id = read_value<uint32_t>(data, offset);
 
             if (offset != data.size())
             {
@@ -289,7 +296,7 @@ namespace sogen
         }
     }
 
-    struct out_of_process_process_manager::process_entry
+    struct subprocess_process_manager::process_entry
     {
         reproc::process process{};
         network::tcp_client_socket control{};
@@ -318,6 +325,17 @@ namespace sogen
     {
     }
 
+    managed_process_connection::managed_process_connection(managed_process_connection&& other) noexcept
+        : socket_(std::move(other.socket_)),
+          request_(std::move(other.request_))
+    {
+    }
+
+    managed_process_connection::~managed_process_connection()
+    {
+        this->disconnect();
+    }
+
     const process_create_request& managed_process_connection::request() const
     {
         return this->request_;
@@ -330,16 +348,41 @@ namespace sogen
         append_value(started, target.compatibility_environment());
         append_value(started, target.native_parameters());
         append_value(started, target.compatibility_parameters());
-        if (!send_message(this->socket_, message_type::started, started))
+        {
+            const std::scoped_lock lock(this->send_mutex_);
+            if (!send_message(this->socket_, message_type::started, started))
+            {
+                return false;
+            }
+        }
+
+        if (!this->handle_messages(target, true))
         {
             return false;
         }
 
+        this->control_thread_ = std::thread([this, &target] { (void)this->handle_messages(target, false); });
+        return true;
+    }
+
+    bool managed_process_connection::handle_messages(managed_process_target& target, const bool wait_for_resume)
+    {
         while (const auto message = receive_message(this->socket_))
         {
             if (message->first == message_type::resume)
             {
-                return send_message(this->socket_, message_type::response);
+                {
+                    const std::scoped_lock lock(this->send_mutex_);
+                    if (!send_message(this->socket_, message_type::response))
+                    {
+                        return false;
+                    }
+                }
+                if (wait_for_resume)
+                {
+                    return true;
+                }
+                continue;
             }
 
             size_t offset = 0;
@@ -414,9 +457,12 @@ namespace sogen
                 append_value(response, error);
             }
 
-            if (!send_message(this->socket_, message_type::response, response))
             {
-                return false;
+                const std::scoped_lock lock(this->send_mutex_);
+                if (!send_message(this->socket_, message_type::response, response))
+                {
+                    return false;
+                }
             }
         }
         return false;
@@ -426,7 +472,22 @@ namespace sogen
     {
         std::string payload{};
         append_value(payload, exit_code);
-        return send_message(this->socket_, message_type::exited, payload);
+        bool sent{};
+        {
+            const std::scoped_lock lock(this->send_mutex_);
+            sent = send_message(this->socket_, message_type::exited, payload);
+        }
+        this->disconnect();
+        return sent;
+    }
+
+    void managed_process_connection::disconnect()
+    {
+        this->socket_.close();
+        if (this->control_thread_.joinable())
+        {
+            this->control_thread_.join();
+        }
     }
 
     managed_process_connection connect_managed_process(const uint16_t port, const std::string& token)
@@ -445,7 +506,7 @@ namespace sogen
         return {std::move(socket), deserialize_request(message->second)};
     }
 
-    out_of_process_process_manager::out_of_process_process_manager(std::filesystem::path executable, argument_factory arguments)
+    subprocess_process_manager::subprocess_process_manager(std::filesystem::path executable, argument_factory arguments)
         : executable_(std::move(executable)),
           arguments_(std::move(arguments))
     {
@@ -455,7 +516,7 @@ namespace sogen
         }
     }
 
-    out_of_process_process_manager::~out_of_process_process_manager()
+    subprocess_process_manager::~subprocess_process_manager()
     {
         std::vector<std::shared_ptr<process_entry>> processes{};
         {
@@ -475,7 +536,7 @@ namespace sogen
         }
     }
 
-    process_create_result out_of_process_process_manager::create_process(process_create_request request)
+    process_create_result subprocess_process_manager::create_process(process_create_request request)
     {
         managed_process handle{};
         {
@@ -649,7 +710,7 @@ namespace sogen
                 .compatibility_parameters = compatibility_parameters};
     }
 
-    process_error out_of_process_process_manager::resume_process(const managed_process process)
+    process_error subprocess_process_manager::resume_process(const managed_process process)
     {
         const auto entry = this->find_process(process);
         if (!entry)
@@ -665,9 +726,9 @@ namespace sogen
         return response && response->first == message_type::response ? process_error::none : process_error::communication_failure;
     }
 
-    process_memory_result out_of_process_process_manager::allocate_memory(const managed_process process, const uint64_t address,
-                                                                          const uint64_t size, const memory_permission permission,
-                                                                          const bool reserve, const bool commit)
+    process_memory_result subprocess_process_manager::allocate_memory(const managed_process process, const uint64_t address,
+                                                                      const uint64_t size, const memory_permission permission,
+                                                                      const bool reserve, const bool commit)
     {
         const auto entry = this->find_process(process);
         if (!entry)
@@ -706,8 +767,8 @@ namespace sogen
         }
     }
 
-    process_error out_of_process_process_manager::free_memory(const managed_process process, const uint64_t address, const uint64_t size,
-                                                              const bool release)
+    process_error subprocess_process_manager::free_memory(const managed_process process, const uint64_t address, const uint64_t size,
+                                                          const bool release)
     {
         const auto entry = this->find_process(process);
         if (!entry)
@@ -740,8 +801,8 @@ namespace sogen
         }
     }
 
-    process_memory_result out_of_process_process_manager::protect_memory(const managed_process process, const uint64_t address,
-                                                                         const uint64_t size, const memory_permission permission)
+    process_memory_result subprocess_process_manager::protect_memory(const managed_process process, const uint64_t address,
+                                                                     const uint64_t size, const memory_permission permission)
     {
         const auto entry = this->find_process(process);
         if (!entry)
@@ -778,8 +839,8 @@ namespace sogen
         }
     }
 
-    process_memory_read_result out_of_process_process_manager::read_memory(const managed_process process, const uint64_t address,
-                                                                           const uint64_t size) const
+    process_memory_read_result subprocess_process_manager::read_memory(const managed_process process, const uint64_t address,
+                                                                       const uint64_t size) const
     {
         const auto entry = this->find_process(process);
         if (!entry)
@@ -818,8 +879,8 @@ namespace sogen
         }
     }
 
-    process_memory_result out_of_process_process_manager::write_memory(const managed_process process, const uint64_t address,
-                                                                       const std::span<const uint8_t> data)
+    process_memory_result subprocess_process_manager::write_memory(const managed_process process, const uint64_t address,
+                                                                   const std::span<const uint8_t> data)
     {
         const auto entry = this->find_process(process);
         if (!entry || data.size() > maximum_payload_size - sizeof(address) - sizeof(uint64_t))
@@ -856,7 +917,7 @@ namespace sogen
         }
     }
 
-    process_error out_of_process_process_manager::terminate_process(const managed_process process, const uint64_t exit_code)
+    process_error subprocess_process_manager::terminate_process(const managed_process process, const uint64_t exit_code)
     {
         const auto entry = this->find_process(process);
         if (!entry)
@@ -874,7 +935,7 @@ namespace sogen
         return process_error::none;
     }
 
-    process_exit_status_result out_of_process_process_manager::exit_status(const managed_process process) const
+    process_exit_status_result subprocess_process_manager::exit_status(const managed_process process) const
     {
         const auto entry = this->find_process(process);
         if (!entry)
@@ -919,8 +980,7 @@ namespace sogen
         return {.status = entry->exit};
     }
 
-    std::shared_ptr<out_of_process_process_manager::process_entry> out_of_process_process_manager::find_process(
-        const managed_process process) const
+    std::shared_ptr<subprocess_process_manager::process_entry> subprocess_process_manager::find_process(const managed_process process) const
     {
         const std::scoped_lock lock(this->mutex_);
         const auto entry = this->processes_.find(process.value);

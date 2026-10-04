@@ -17,7 +17,7 @@
 #include "jsonl_reporter.hpp"
 #include "stdout_file_reporter.hpp"
 #include "tenet_tracer.hpp"
-#include "out_of_process_process_manager.hpp"
+#include "subprocess_process_manager.hpp"
 
 #include <utils/finally.hpp>
 #include <utils/interupt_handler.hpp>
@@ -584,6 +584,15 @@ namespace sogen
                 .arguments = parse_arguments(args),
                 .environment = options.environment,
             };
+#ifndef OS_EMSCRIPTEN
+            if (options.managed_process)
+            {
+                const auto& request = options.managed_process->request();
+                app_settings.argument0 = u8_to_u16(request.argument0);
+                app_settings.process_id = request.process_id;
+                app_settings.thread_id = request.thread_id;
+            }
+#endif
             if (!options.working_directory.empty())
             {
                 app_settings.working_directory = windows_path(options.working_directory);
@@ -665,7 +674,7 @@ namespace sogen
             const auto backend = options.backend.value_or(get_x86_64_emulator_backend_from_environment());
             if (backend == backend_type::whp)
             {
-                manager = std::make_unique<out_of_process_process_manager>(
+                manager = std::make_unique<subprocess_process_manager>(
                     get_current_binary_dir() / "sandbox.exe",
                     [&](const auto port, const auto& token) { return create_managed_process_arguments(options, port, token); });
             }
@@ -676,15 +685,22 @@ namespace sogen
             const auto win_emu = setup_emulator(options, args, emulator_interfaces{.processes = manager_interface});
             apply_registry_files(*win_emu, options);
 #ifndef OS_EMSCRIPTEN
+            std::unique_ptr<emulator_process_target> managed_target{};
             if (options.managed_process)
             {
                 win_emu->setup_process_if_necessary();
-                emulator_process_target managed_target{*win_emu};
-                if (!options.managed_process->wait_for_resume(managed_target))
+                managed_target = std::make_unique<emulator_process_target>(*win_emu);
+                if (!options.managed_process->wait_for_resume(*managed_target))
                 {
                     throw std::runtime_error("Acknowledging managed process startup failed");
                 }
             }
+            const auto managed_process_guard = utils::finally([&] {
+                if (options.managed_process)
+                {
+                    options.managed_process->disconnect();
+                }
+            });
 #endif
             context.win_emu = win_emu.get();
 

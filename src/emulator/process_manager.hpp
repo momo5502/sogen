@@ -75,9 +75,12 @@ namespace sogen
     struct process_create_request
     {
         std::string application{};
+        std::string argument0{};
         std::string working_directory{};
         std::vector<std::string> arguments{};
         std::unordered_map<std::string, std::string> environment{};
+        uint32_t process_id{4};
+        uint32_t thread_id{8};
     };
 
     struct process_create_result
