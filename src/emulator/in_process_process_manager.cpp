@@ -11,7 +11,7 @@ namespace sogen
     struct in_process_process_manager::process_entry
     {
         std::unique_ptr<in_process_process> process{};
-        std::jthread thread{};
+        std::thread thread{};
         mutable std::mutex mutex{};
         std::optional<process_exit> exit{};
     };
@@ -95,7 +95,7 @@ namespace sogen
 
         try
         {
-            entry->thread = std::jthread([entry] {
+            entry->thread = std::thread([entry] {
                 process_exit exit{};
                 try
                 {
