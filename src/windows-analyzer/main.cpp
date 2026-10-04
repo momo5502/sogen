@@ -709,7 +709,7 @@ namespace sogen
 #endif
             {
                 manager = std::make_unique<in_process_process_manager>(
-                    [&](process_create_request request) -> std::unique_ptr<in_process_process> {
+                    [&](const process_create_request& request) -> std::unique_ptr<in_process_process> {
                         application_settings app_settings{
                             .application = windows_path(u8_to_u16(request.application)),
                         };
