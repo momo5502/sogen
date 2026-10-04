@@ -436,7 +436,12 @@ namespace sogen
             {
                 if (process->kill_requested.exchange(false))
                 {
-                    (void)process->process.kill();
+                    if (process->process.kill())
+                    {
+                        const std::scoped_lock lock(process->mutex);
+                        process->host_failure = true;
+                        break;
+                    }
                 }
                 const auto [events, poll_error] =
                     process->process.poll(reproc::event::out | reproc::event::err | reproc::event::exit, reproc::milliseconds(50));

@@ -696,9 +696,9 @@ namespace sogen
 
             process_manager* manager_interface = nullptr;
             std::unique_ptr<process_manager> manager{};
-            const auto backend = options.backend.value_or(get_x86_64_emulator_backend_from_environment());
 
 #ifndef OS_EMSCRIPTEN
+            const auto backend = options.backend.value_or(get_x86_64_emulator_backend_from_environment());
             if (backend == backend_type::whp)
             {
                 manager = std::make_unique<out_of_process_process_manager>(
