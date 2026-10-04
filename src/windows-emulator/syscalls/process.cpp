@@ -11,6 +11,9 @@ namespace sogen
     {
         namespace
         {
+            constexpr ULONG windows_cui_subsystem = 3;
+            constexpr USHORT executable_large_address_aware_image = 0x0022;
+
             std::vector<std::u16string> parse_command_line(const std::u16string_view command_line)
             {
                 std::vector<std::u16string> arguments{};
@@ -261,10 +264,10 @@ namespace sogen
                         SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>> image_info{};
                         image_info.MaximumStackSize = 1ULL << 20;
                         image_info.CommittedStackSize = 0x1000;
-                        image_info.SubSystemType = IMAGE_SUBSYSTEM_WINDOWS_CUI;
+                        image_info.SubSystemType = windows_cui_subsystem;
                         image_info.SubSystemMajorVersion = 6;
                         image_info.MajorOperatingSystemVersion = 6;
-                        image_info.ImageCharacteristics = IMAGE_FILE_EXECUTABLE_IMAGE | IMAGE_FILE_LARGE_ADDRESS_AWARE;
+                        image_info.ImageCharacteristics = executable_large_address_aware_image;
                         image_info.Machine = child_is_wow64 ? PEMachineType::I386 : PEMachineType::AMD64;
                         image_info.ImageContainsCode = TRUE;
                         c.emu.write_memory(attribute.ValuePtr, &image_info, sizeof(image_info));
