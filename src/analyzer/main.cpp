@@ -1,26 +1,29 @@
+#include "os_selection.hpp"
+
 #include <cstdlib>
 
 namespace sogen
 {
     int windows_main(int argc, char** argv);
     int linux_main(int argc, char** argv);
-}
-
-namespace
-{
-    bool should_use_linux_analyzer()
-    {
-        const char* value = std::getenv("EMULATOR_LINUX");
-        return value != nullptr && value[0] == '1' && value[1] == '\0';
-    }
+    int macos_main(int argc, char** argv);
 }
 
 int main(int argc, char** argv)
 {
-    if (should_use_linux_analyzer())
-    {
-        return sogen::linux_main(argc, argv);
-    }
+    auto invocation = sogen::select_analyzer_invocation(argc, argv, std::getenv("EMULATOR_LINUX"), std::getenv("EMULATOR_MACOS"));
 
-    return sogen::windows_main(argc, argv);
+    const auto count = static_cast<int>(invocation.arguments.size());
+    auto** arguments = invocation.arguments.data();
+
+    switch (invocation.os)
+    {
+    case sogen::analyzer_os::linux:
+        return sogen::linux_main(count, arguments);
+    case sogen::analyzer_os::macos:
+        return sogen::macos_main(count, arguments);
+    case sogen::analyzer_os::windows:
+    default:
+        return sogen::windows_main(count, arguments);
+    }
 }

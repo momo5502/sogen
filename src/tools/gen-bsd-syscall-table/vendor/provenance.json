@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/apple-oss-distributions/xnu",
+  "xnu_version": "xnu-12377.121.6",
+  "retrieved": "2026-08-19",
+  "license": "Apple Public Source License 2.0",
+  "files": {
+    "syscalls.master": {"path": "bsd/kern/syscalls.master", "sha256": "7e866891439ad5b3464777d2cacc3b82fc2e7f439fb5a8686c3e6f160d5aeab5"},
+    "syscall_sw.c": {"path": "osfmk/kern/syscall_sw.c", "sha256": "9c84c9ea109067bbdac35c4ddcb3de872c228a7cfff51b72a6d5a109fc431820"},
+    "APPLE_LICENSE": {"path": "APPLE_LICENSE", "sha256": "e5881019d8766c1e88a5fe1dbca4ba40c78011d41fcb18f6e9f50df60182685b"}
+  }
+}

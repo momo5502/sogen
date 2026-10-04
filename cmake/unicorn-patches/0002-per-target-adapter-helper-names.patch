@@ -1,0 +1,251 @@
+diff --git a/qemu/include/exec/helper-adapter.h b/qemu/include/exec/helper-adapter.h
+index bcdf449..f6b7095 100644
+--- a/qemu/include/exec/helper-adapter.h
++++ b/qemu/include/exec/helper-adapter.h
+@@ -84,7 +84,7 @@
+     return 0;
+ #define GEN_ADAPTER_0_NONVOID(name) return HELPER(name)();
+ #define GEN_ADAPTER_0_DEFINE(name, ret)                                        \
+-    uint64_t glue(adapter_helper_, name)(GEN_ADAPTER_ARGS)                     \
++    uint64_t ADAPTER_HELPER(name)(GEN_ADAPTER_ARGS)                     \
+     {                                                                          \
+         IIF(IS_VOID(ret))(GEN_ADAPTER_0_VOID(name),                            \
+                           GEN_ADAPTER_0_NONVOID(name))                         \
+@@ -96,7 +96,7 @@
+ #define GEN_ADAPTER_1_NONVOID(name, t1)                                        \
+     return (uint64_t)HELPER(name)(SELECT_ARG(dh_ctype(t1), A1));
+ #define GEN_ADAPTER_1_DEFINE(name, ret, t1)                                    \
+-    uint64_t glue(adapter_helper_, name)(GEN_ADAPTER_ARGS)                     \
++    uint64_t ADAPTER_HELPER(name)(GEN_ADAPTER_ARGS)                     \
+     {                                                                          \
+         GEN_ADAPTER_ARGS_ARRAY                                                 \
+         ASSIGN_ARG(dh_ctype(t1), A1);                                          \
+@@ -111,7 +111,7 @@
+     return (uint64_t)HELPER(name)(SELECT_ARG(dh_ctype(t1), A1),                \
+                                   SELECT_ARG(dh_ctype(t2), A2));
+ #define GEN_ADAPTER_2_DEFINE(name, ret, t1, t2)                                \
+-    uint64_t glue(adapter_helper_, name)(GEN_ADAPTER_ARGS)                     \
++    uint64_t ADAPTER_HELPER(name)(GEN_ADAPTER_ARGS)                     \
+     {                                                                          \
+         GEN_ADAPTER_ARGS_ARRAY                                                 \
+         ASSIGN_ARG(dh_ctype(t1), A1);                                          \
+@@ -129,7 +129,7 @@
+                                   SELECT_ARG(dh_ctype(t2), A2),                \
+                                   SELECT_ARG(dh_ctype(t3), A3));
+ #define GEN_ADAPTER_3_DEFINE(name, ret, t1, t2, t3)                            \
+-    uint64_t glue(adapter_helper_, name)(GEN_ADAPTER_ARGS)                     \
++    uint64_t ADAPTER_HELPER(name)(GEN_ADAPTER_ARGS)                     \
+     {                                                                          \
+         GEN_ADAPTER_ARGS_ARRAY                                                 \
+         ASSIGN_ARG(dh_ctype(t1), A1);                                          \
+@@ -148,7 +148,7 @@
+         SELECT_ARG(dh_ctype(t1), A1), SELECT_ARG(dh_ctype(t2), A2),            \
+         SELECT_ARG(dh_ctype(t3), A3), SELECT_ARG(dh_ctype(t4), A4));
+ #define GEN_ADAPTER_4_DEFINE(name, ret, t1, t2, t3, t4)                        \
+-    uint64_t glue(adapter_helper_, name)(GEN_ADAPTER_ARGS)                     \
++    uint64_t ADAPTER_HELPER(name)(GEN_ADAPTER_ARGS)                     \
+     {                                                                          \
+         GEN_ADAPTER_ARGS_ARRAY                                                 \
+         ASSIGN_ARG(dh_ctype(t1), A1);                                          \
+@@ -170,7 +170,7 @@
+         SELECT_ARG(dh_ctype(t3), A3), SELECT_ARG(dh_ctype(t4), A4),            \
+         SELECT_ARG(dh_ctype(t5), A5));
+ #define GEN_ADAPTER_5_DEFINE(name, ret, t1, t2, t3, t4, t5)                    \
+-    uint64_t glue(adapter_helper_, name)(GEN_ADAPTER_ARGS)                     \
++    uint64_t ADAPTER_HELPER(name)(GEN_ADAPTER_ARGS)                     \
+     {                                                                          \
+         GEN_ADAPTER_ARGS_ARRAY                                                 \
+         ASSIGN_ARG(dh_ctype(t1), A1);                                          \
+@@ -193,7 +193,7 @@
+         SELECT_ARG(dh_ctype(t3), A3), SELECT_ARG(dh_ctype(t4), A4),            \
+         SELECT_ARG(dh_ctype(t5), A5), SELECT_ARG(dh_ctype(t6), A6));
+ #define GEN_ADAPTER_6_DEFINE(name, ret, t1, t2, t3, t4, t5, t6)                \
+-    uint64_t glue(adapter_helper_, name)(GEN_ADAPTER_ARGS)                     \
++    uint64_t ADAPTER_HELPER(name)(GEN_ADAPTER_ARGS)                     \
+     {                                                                          \
+         GEN_ADAPTER_ARGS_ARRAY                                                 \
+         ASSIGN_ARG(dh_ctype(t1), A1);                                          \
+@@ -219,7 +219,7 @@
+         SELECT_ARG(dh_ctype(t5), A5), SELECT_ARG(dh_ctype(t6), A6),            \
+         SELECT_ARG(dh_ctype(t7), A7));
+ #define GEN_ADAPTER_7_DEFINE(name, ret, t1, t2, t3, t4, t5, t6, t7)            \
+-    uint64_t glue(adapter_helper_, name)(GEN_ADAPTER_ARGS)                     \
++    uint64_t ADAPTER_HELPER(name)(GEN_ADAPTER_ARGS)                     \
+     {                                                                          \
+         GEN_ADAPTER_ARGS_ARRAY                                                 \
+         ASSIGN_ARG(dh_ctype(t1), A1);                                          \
+diff --git a/qemu/include/exec/helper-gen.h b/qemu/include/exec/helper-gen.h
+index afd2d4d..b50f038 100644
+--- a/qemu/include/exec/helper-gen.h
++++ b/qemu/include/exec/helper-gen.h
+@@ -12,7 +12,7 @@
+     static inline void glue(gen_helper_, name)(TCGContext * tcg_ctx,           \
+                                                dh_retvar_decl0(ret))           \
+     {                                                                          \
+-        tcg_gen_callN(tcg_ctx, glue(adapter_helper_, name), dh_retvar(ret), 0, \
++        tcg_gen_callN(tcg_ctx, ADAPTER_HELPER(name), dh_retvar(ret), 0, \
+                       NULL);                                                   \
+     }
+ 
+@@ -22,7 +22,7 @@
+         TCGContext * tcg_ctx, dh_retvar_decl(ret) dh_arg_decl(t1, 1))          \
+     {                                                                          \
+         TCGTemp *args[1] = {dh_arg(t1, 1)};                                    \
+-        tcg_gen_callN(tcg_ctx, glue(adapter_helper_, name), dh_retvar(ret), 1, \
++        tcg_gen_callN(tcg_ctx, ADAPTER_HELPER(name), dh_retvar(ret), 1, \
+                       args);                                                   \
+     }
+ 
+@@ -33,7 +33,7 @@
+         dh_arg_decl(t2, 2))                                                    \
+     {                                                                          \
+         TCGTemp *args[2] = {dh_arg(t1, 1), dh_arg(t2, 2)};                     \
+-        tcg_gen_callN(tcg_ctx, glue(adapter_helper_, name), dh_retvar(ret), 2, \
++        tcg_gen_callN(tcg_ctx, ADAPTER_HELPER(name), dh_retvar(ret), 2, \
+                       args);                                                   \
+     }
+ 
+@@ -44,7 +44,7 @@
+         dh_arg_decl(t2, 2), dh_arg_decl(t3, 3))                                \
+     {                                                                          \
+         TCGTemp *args[3] = {dh_arg(t1, 1), dh_arg(t2, 2), dh_arg(t3, 3)};      \
+-        tcg_gen_callN(tcg_ctx, glue(adapter_helper_, name), dh_retvar(ret), 3, \
++        tcg_gen_callN(tcg_ctx, ADAPTER_HELPER(name), dh_retvar(ret), 3, \
+                       args);                                                   \
+     }
+ 
+@@ -56,7 +56,7 @@
+     {                                                                          \
+         TCGTemp *args[4] = {dh_arg(t1, 1), dh_arg(t2, 2), dh_arg(t3, 3),       \
+                             dh_arg(t4, 4)};                                    \
+-        tcg_gen_callN(tcg_ctx, glue(adapter_helper_, name), dh_retvar(ret), 4, \
++        tcg_gen_callN(tcg_ctx, ADAPTER_HELPER(name), dh_retvar(ret), 4, \
+                       args);                                                   \
+     }
+ 
+@@ -69,7 +69,7 @@
+     {                                                                          \
+         TCGTemp *args[5] = {dh_arg(t1, 1), dh_arg(t2, 2), dh_arg(t3, 3),       \
+                             dh_arg(t4, 4), dh_arg(t5, 5)};                     \
+-        tcg_gen_callN(tcg_ctx, glue(adapter_helper_, name), dh_retvar(ret), 5, \
++        tcg_gen_callN(tcg_ctx, ADAPTER_HELPER(name), dh_retvar(ret), 5, \
+                       args);                                                   \
+     }
+ 
+@@ -82,7 +82,7 @@
+     {                                                                          \
+         TCGTemp *args[6] = {dh_arg(t1, 1), dh_arg(t2, 2), dh_arg(t3, 3),       \
+                             dh_arg(t4, 4), dh_arg(t5, 5), dh_arg(t6, 6)};      \
+-        tcg_gen_callN(tcg_ctx, glue(adapter_helper_, name), dh_retvar(ret), 6, \
++        tcg_gen_callN(tcg_ctx, ADAPTER_HELPER(name), dh_retvar(ret), 6, \
+                       args);                                                   \
+     }
+ 
+@@ -96,7 +96,7 @@
+         TCGTemp *args[7] = {dh_arg(t1, 1), dh_arg(t2, 2), dh_arg(t3, 3),       \
+                             dh_arg(t4, 4), dh_arg(t5, 5), dh_arg(t6, 6),       \
+                             dh_arg(t7, 7)};                                    \
+-        tcg_gen_callN(tcg_ctx, glue(adapter_helper_, name), dh_retvar(ret), 7, \
++        tcg_gen_callN(tcg_ctx, ADAPTER_HELPER(name), dh_retvar(ret), 7, \
+                       args);                                                   \
+     }
+ 
+diff --git a/qemu/include/exec/helper-head.h b/qemu/include/exec/helper-head.h
+index 9d7add4..33bc302 100644
+--- a/qemu/include/exec/helper-head.h
++++ b/qemu/include/exec/helper-head.h
+@@ -20,6 +20,19 @@
+ 
+ #define HELPER(name) glue(helper_, name)
+ 
++/* Unicorn: an adapter thunk's body calls HELPER(name), which the -include'd
++   <arch>.h remaps to a target-suffixed symbol, so the thunks are per-target
++   even though their generated name was not. Every target therefore emitted a
++   same-named thunk with a different body; the linker silently kept one and
++   both targets called through it. Postfix the thunk too, the way memory.h
++   already postfixes address_space_*. */
++#ifdef UNICORN_ARCH_POSTFIX
++#define ADAPTER_HELPER(name)                                                   \
++    glue(glue(adapter_helper_, name), UNICORN_ARCH_POSTFIX)
++#else
++#define ADAPTER_HELPER(name) glue(adapter_helper_, name)
++#endif
++
+ /* Some types that make sense in C, but not for TCG.  */
+ #define dh_alias_i32 i32
+ #define dh_alias_s32 i32
+diff --git a/qemu/include/exec/helper-proto.h b/qemu/include/exec/helper-proto.h
+index f204973..449684a 100644
+--- a/qemu/include/exec/helper-proto.h
++++ b/qemu/include/exec/helper-proto.h
+@@ -19,7 +19,7 @@
+ #endif
+         
+ #define GEN_ADAPTER_DECLARE(name) \
+-    uint64_t glue(adapter_helper_, name)(GEN_ADAPTER_ARGS);
++    uint64_t ADAPTER_HELPER(name)(GEN_ADAPTER_ARGS);
+ 
+ 
+ 
+diff --git a/qemu/include/exec/helper-tcg.h b/qemu/include/exec/helper-tcg.h
+index e54a8db..267779f 100644
+--- a/qemu/include/exec/helper-tcg.h
++++ b/qemu/include/exec/helper-tcg.h
+@@ -11,49 +11,49 @@
+ #define str(s) #s
+ 
+ #define DEF_HELPER_FLAGS_0(NAME, FLAGS, ret) \
+-  { .func = glue(adapter_helper_, NAME), .name = str(NAME), \
++  { .func = ADAPTER_HELPER(NAME), .name = str(NAME), \
+     .flags = FLAGS | dh_callflag(ret), \
+     .sizemask = dh_sizemask(ret, 0) },
+ 
+ #define DEF_HELPER_FLAGS_1(NAME, FLAGS, ret, t1) \
+-  { .func = glue(adapter_helper_, NAME), .name = str(NAME), \
++  { .func = ADAPTER_HELPER(NAME), .name = str(NAME), \
+     .flags = FLAGS | dh_callflag(ret), \
+     .sizemask = dh_sizemask(ret, 0) | dh_sizemask(t1, 1) },
+ 
+ #define DEF_HELPER_FLAGS_2(NAME, FLAGS, ret, t1, t2) \
+-  { .func = glue(adapter_helper_, NAME), .name = str(NAME), \
++  { .func = ADAPTER_HELPER(NAME), .name = str(NAME), \
+     .flags = FLAGS | dh_callflag(ret), \
+     .sizemask = dh_sizemask(ret, 0) | dh_sizemask(t1, 1) \
+     | dh_sizemask(t2, 2) },
+ 
+ #define DEF_HELPER_FLAGS_3(NAME, FLAGS, ret, t1, t2, t3) \
+-  { .func = glue(adapter_helper_, NAME), .name = str(NAME), \
++  { .func = ADAPTER_HELPER(NAME), .name = str(NAME), \
+     .flags = FLAGS | dh_callflag(ret), \
+     .sizemask = dh_sizemask(ret, 0) | dh_sizemask(t1, 1) \
+     | dh_sizemask(t2, 2) | dh_sizemask(t3, 3) },
+ 
+ #define DEF_HELPER_FLAGS_4(NAME, FLAGS, ret, t1, t2, t3, t4) \
+-  { .func = glue(adapter_helper_, NAME), .name = str(NAME), \
++  { .func = ADAPTER_HELPER(NAME), .name = str(NAME), \
+     .flags = FLAGS | dh_callflag(ret), \
+     .sizemask = dh_sizemask(ret, 0) | dh_sizemask(t1, 1) \
+     | dh_sizemask(t2, 2) | dh_sizemask(t3, 3) | dh_sizemask(t4, 4) },
+ 
+ #define DEF_HELPER_FLAGS_5(NAME, FLAGS, ret, t1, t2, t3, t4, t5) \
+-  { .func = glue(adapter_helper_, NAME), .name = str(NAME), \
++  { .func = ADAPTER_HELPER(NAME), .name = str(NAME), \
+     .flags = FLAGS | dh_callflag(ret), \
+     .sizemask = dh_sizemask(ret, 0) | dh_sizemask(t1, 1) \
+     | dh_sizemask(t2, 2) | dh_sizemask(t3, 3) | dh_sizemask(t4, 4) \
+     | dh_sizemask(t5, 5) },
+ 
+ #define DEF_HELPER_FLAGS_6(NAME, FLAGS, ret, t1, t2, t3, t4, t5, t6) \
+-  { .func = glue(adapter_helper_, NAME), .name = str(NAME), \
++  { .func = ADAPTER_HELPER(NAME), .name = str(NAME), \
+     .flags = FLAGS | dh_callflag(ret), \
+     .sizemask = dh_sizemask(ret, 0) | dh_sizemask(t1, 1) \
+     | dh_sizemask(t2, 2) | dh_sizemask(t3, 3) | dh_sizemask(t4, 4) \
+     | dh_sizemask(t5, 5) | dh_sizemask(t6, 6) },
+ 
+ #define DEF_HELPER_FLAGS_7(NAME, FLAGS, ret, t1, t2, t3, t4, t5, t6, t7) \
+-  { .func = glue(adapter_helper_, NAME), .name = str(NAME), .flags = FLAGS, \
++  { .func = ADAPTER_HELPER(NAME), .name = str(NAME), .flags = FLAGS, \
+     .sizemask = dh_sizemask(ret, 0) | dh_sizemask(t1, 1) \
+     | dh_sizemask(t2, 2) | dh_sizemask(t3, 3) | dh_sizemask(t4, 4) \
+     | dh_sizemask(t5, 5) | dh_sizemask(t6, 6) | dh_sizemask(t7, 7) },

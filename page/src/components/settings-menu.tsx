@@ -2,7 +2,7 @@ import React from "react";
 import { Checkbox } from "./ui/checkbox";
 import { Label } from "./ui/label";
 
-import { Settings } from "@/settings";
+import { EmulatorMode, Settings } from "@/settings";
 import { EnvironmentVariableList } from "./environment-variable-list";
 import { TextTooltip } from "./text-tooltip";
 import { ItemList } from "./item-list";
@@ -62,7 +62,11 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
   }
 
   render() {
-    const isLinux = this.state.mode === "linux";
+    const mode = this.state.mode;
+    const supportsWindowsTracing = mode === "windows";
+    const supportsExtendedOptions = mode !== "linux";
+    const supportsInterestingModules = mode === "windows";
+    const supportsDesktopSettings = mode === "macos";
 
     return (
       <div className="grid gap-3">
@@ -77,7 +81,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
           <RadioGroup
             value={this.state.mode}
             onValueChange={(value) =>
-              this.setState({ mode: value as "windows" | "linux" })
+              this.setState({ mode: value as EmulatorMode })
             }
           >
             <div className="flex items-center gap-4">
@@ -96,16 +100,25 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
                 tooltip={"Emulate Linux x86-64 binaries (ELF)"}
               />
             </div>
+            <div className="flex items-center gap-4">
+              <RadioGroupItem value="macos" id="settings-mode-macos" />
+              <SettingsLabel
+                htmlFor="settings-mode-macos"
+                text={"macOS Emulator"}
+                tooltip={"Emulate macOS arm64 binaries (Mach-O)"}
+              />
+            </div>
           </RadioGroup>
         </div>
 
-        {isLinux ? (
-          <p className="text-xs text-muted-foreground mb-2">
-            Linux mode currently supports verbose logging. Windows-specific
-            tracing options are disabled.
-          </p>
-        ) : (
+        {supportsWindowsTracing ? (
           <></>
+        ) : (
+          <p className="text-xs text-muted-foreground mb-2">
+            {mode === "linux"
+              ? "Linux mode currently supports verbose logging. Windows-specific tracing options are disabled."
+              : "macOS mode supports logging levels, ignored functions and environment variables, but not Windows-specific tracing options or Interesting Modules."}
+          </p>
         )}
 
         <div className="flex gap-6 mb-2">
@@ -138,7 +151,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               <RadioGroupItem
                 value="concise"
                 id="settings-concise"
-                disabled={isLinux}
+                disabled={!supportsExtendedOptions}
               />
               <SettingsLabel
                 htmlFor="settings-concise"
@@ -150,7 +163,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               <RadioGroupItem
                 value="very-concise"
                 id="settings-very-concise"
-                disabled={isLinux}
+                disabled={!supportsExtendedOptions}
               />
               <SettingsLabel
                 htmlFor="settings-very-concise"
@@ -162,7 +175,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               <RadioGroupItem
                 value="silent"
                 id="settings-silent"
-                disabled={isLinux}
+                disabled={!supportsExtendedOptions}
               />
               <SettingsLabel
                 htmlFor="settings-silent"
@@ -176,7 +189,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
         <div className="flex gap-4">
           <Checkbox
             id="settings-buffer"
-            disabled={isLinux}
+            disabled={!supportsWindowsTracing}
             checked={this.state.bufferStdout}
             onCheckedChange={(checked: boolean) => {
               this.setState({ bufferStdout: checked });
@@ -194,7 +207,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
         <div className="flex gap-4">
           <Checkbox
             id="settings-exec"
-            disabled={isLinux}
+            disabled={!supportsWindowsTracing}
             checked={this.state.execAccess}
             onCheckedChange={(checked: boolean) => {
               this.setState({ execAccess: checked });
@@ -210,7 +223,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
         <div className="flex gap-4">
           <Checkbox
             id="settings-foreign"
-            disabled={isLinux}
+            disabled={!supportsWindowsTracing}
             checked={this.state.foreignAccess}
             onCheckedChange={(checked: boolean) => {
               this.setState({ foreignAccess: checked });
@@ -228,7 +241,7 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
         <div className="flex gap-4">
           <Checkbox
             id="settings-summary"
-            disabled={isLinux}
+            disabled={!supportsWindowsTracing}
             checked={this.state.instructionSummary}
             onCheckedChange={(checked: boolean) => {
               this.setState({ instructionSummary: checked });
@@ -285,9 +298,118 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
           />
         </div>
 
-        {isLinux ? (
-          <></>
-        ) : (
+        {supportsDesktopSettings && (
+          <>
+            <div className="flex items-center gap-4">
+              <SettingsLabel
+                htmlFor="settings-desktop-size"
+                text={"Desktop Size"}
+                tooltip={
+                  "Width x height of the composed desktop sent to the guest, e.g. 1024x640"
+                }
+              />
+              <Input
+                id="settings-desktop-size"
+                className="w-32"
+                placeholder="1024x640"
+                value={this.state.desktopSize}
+                onChange={(e) => this.setState({ desktopSize: e.target.value })}
+              />
+            </div>
+
+            <div className="flex items-center gap-4">
+              <SettingsLabel
+                htmlFor="settings-frame-interval"
+                text={"Frame Interval (ms)"}
+                tooltip={
+                  "How often the composed desktop is streamed to the page, in milliseconds"
+                }
+              />
+              <Input
+                id="settings-frame-interval"
+                type="number"
+                min={0}
+                className="w-32"
+                value={this.state.frameIntervalMs}
+                onChange={(e) =>
+                  this.setState({
+                    frameIntervalMs: Number(e.target.value) || 0,
+                  })
+                }
+              />
+            </div>
+
+            <div className="flex items-center gap-4">
+              <SettingsLabel
+                htmlFor="settings-max-instructions"
+                text={"Max Instructions"}
+                tooltip={
+                  "Stop the run after this many guest instructions. 0 means unlimited"
+                }
+              />
+              <Input
+                id="settings-max-instructions"
+                type="number"
+                min={0}
+                className="w-32"
+                value={this.state.maxInstructions}
+                onChange={(e) =>
+                  this.setState({
+                    maxInstructions: Number(e.target.value) || 0,
+                  })
+                }
+              />
+            </div>
+
+            <div className="flex items-center gap-4">
+              <SettingsLabel
+                htmlFor="settings-string-limit"
+                text={"String Limit"}
+                tooltip={
+                  "Maximum length of a decoded string in the trace, in characters"
+                }
+              />
+              <Input
+                id="settings-string-limit"
+                type="number"
+                min={0}
+                max={65536}
+                className="w-32"
+                value={this.state.stringLimit}
+                onChange={(e) =>
+                  this.setState({
+                    stringLimit: Number(e.target.value) || 0,
+                  })
+                }
+              />
+            </div>
+
+            <div className="flex items-center gap-4">
+              <SettingsLabel
+                htmlFor="settings-buffer-limit"
+                text={"Buffer Limit"}
+                tooltip={
+                  "Maximum number of bytes previewed from a decoded buffer in the trace"
+                }
+              />
+              <Input
+                id="settings-buffer-limit"
+                type="number"
+                min={0}
+                max={4096}
+                className="w-32"
+                value={this.state.bufferLimit}
+                onChange={(e) =>
+                  this.setState({
+                    bufferLimit: Number(e.target.value) || 0,
+                  })
+                }
+              />
+            </div>
+          </>
+        )}
+
+        {supportsExtendedOptions && (
           <>
             <Popover>
               <PopoverTrigger>
@@ -333,28 +455,30 @@ export class SettingsMenu extends React.Component<SettingsMenuProps, Settings> {
               </PopoverContent>
             </Popover>
 
-            <Popover>
-              <PopoverTrigger>
-                <TextTooltip tooltip="Log interactions of additional modules">
-                  <div className="flex items-center mb-1">
-                    <Label className="flex-1 text-left cursor-pointer">
-                      Interesting Modules
-                    </Label>
-                    <ChevronDown />
-                  </div>
-                </TextTooltip>
-              </PopoverTrigger>
-              <PopoverContent className="shadow-2xl">
-                <ItemList
-                  title="Interesting Modules"
-                  trim
-                  items={this.state.interestingModules}
-                  onChange={(items) =>
-                    this.setState({ interestingModules: items })
-                  }
-                />
-              </PopoverContent>
-            </Popover>
+            {supportsInterestingModules && (
+              <Popover>
+                <PopoverTrigger>
+                  <TextTooltip tooltip="Log interactions of additional modules">
+                    <div className="flex items-center mb-1">
+                      <Label className="flex-1 text-left cursor-pointer">
+                        Interesting Modules
+                      </Label>
+                      <ChevronDown />
+                    </div>
+                  </TextTooltip>
+                </PopoverTrigger>
+                <PopoverContent className="shadow-2xl">
+                  <ItemList
+                    title="Interesting Modules"
+                    trim
+                    items={this.state.interestingModules}
+                    onChange={(items) =>
+                      this.setState({ interestingModules: items })
+                    }
+                  />
+                </PopoverContent>
+              </Popover>
+            )}
           </>
         )}
       </div>
