@@ -6,7 +6,7 @@
 
 #include <functional>
 
-#include <process_manager.hpp>
+#include "process_manager.hpp"
 #include <utils/moved_marker.hpp>
 
 namespace sogen
