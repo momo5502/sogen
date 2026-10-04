@@ -51,6 +51,7 @@ namespace sogen
 #endif
         }
 
+#ifndef OS_EMSCRIPTEN
         std::filesystem::path get_sandbox_executable()
         {
 #ifdef _WIN32
@@ -59,6 +60,7 @@ namespace sogen
             return get_current_binary_dir() / "sandbox";
 #endif
         }
+#endif
 
         struct analysis_options : analysis_settings
         {
