@@ -581,7 +581,7 @@ namespace sogen
             struct
             {
                 ULONG InitFlags;
-                ACCESS_MASK AdditionalFileAccess;
+                ULONG AdditionalFileAccess;
             } InitState;
 
             struct

@@ -64,7 +64,7 @@ namespace sogen
         const std::scoped_lock lock(this->mutex_);
         if (this->stopping_)
         {
-            return {{}, process_error::unavailable};
+            return {.error = process_error::unavailable};
         }
 
         std::unique_ptr<in_process_process> process{};
@@ -74,12 +74,12 @@ namespace sogen
         }
         catch (...)
         {
-            return {{}, process_error::internal_failure};
+            return {.error = process_error::internal_failure};
         }
 
         if (!process)
         {
-            return {{}, process_error::unavailable};
+            return {.error = process_error::unavailable};
         }
 
         const auto entry = std::make_shared<process_entry>();
@@ -87,7 +87,7 @@ namespace sogen
 
         if (this->next_process_ == 0)
         {
-            return {{}, process_error::resource_limit};
+            return {.error = process_error::resource_limit};
         }
 
         const managed_process handle{this->next_process_++};
@@ -113,10 +113,10 @@ namespace sogen
         catch (...)
         {
             this->processes_.erase(handle.value);
-            return {{}, process_error::resource_limit};
+            return {.error = process_error::resource_limit};
         }
 
-        return {handle, process_error::none};
+        return {.process = handle};
     }
 
     process_error in_process_process_manager::terminate_process(const managed_process process, const uint64_t exit_code)
@@ -143,11 +143,11 @@ namespace sogen
         const auto entry = this->find_process(process);
         if (!entry)
         {
-            return {{}, process_error::invalid_process};
+            return {.error = process_error::invalid_process};
         }
 
         const std::scoped_lock lock(entry->mutex);
-        return {entry->exit, process_error::none};
+        return {.status = entry->exit};
     }
 
     std::shared_ptr<in_process_process_manager::process_entry> in_process_process_manager::find_process(const managed_process process) const

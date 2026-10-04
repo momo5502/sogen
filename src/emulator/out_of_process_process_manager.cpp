@@ -77,7 +77,7 @@ namespace sogen
         std::string read_string(const std::string_view data, size_t& offset)
         {
             const auto size = read_value<uint64_t>(data, offset);
-            if (size > data.size() - std::min(offset, data.size()) || size > std::numeric_limits<size_t>::max())
+            if (size > data.size() - offset || size > std::numeric_limits<size_t>::max())
             {
                 throw std::runtime_error("Invalid managed process string");
             }
@@ -161,13 +161,41 @@ namespace sogen
             return data;
         }
 
+        std::optional<std::string> receive_exact_until(network::tcp_client_socket& socket, const size_t size,
+                                                       const std::chrono::steady_clock::time_point deadline)
+        {
+            std::string data{};
+            data.reserve(size);
+            while (data.size() < size)
+            {
+                if (std::chrono::steady_clock::now() >= deadline)
+                {
+                    return std::nullopt;
+                }
+                if (!socket.is_ready(true))
+                {
+                    socket.sleep(std::chrono::milliseconds(10), true);
+                    continue;
+                }
+
+                auto part = socket.receive(size - data.size());
+                if (!part)
+                {
+                    return std::nullopt;
+                }
+                data.append(*part);
+            }
+            return data;
+        }
+
         bool send_message(network::tcp_client_socket& socket, const message_type type, const std::string_view payload = {})
         {
             if (payload.size() > maximum_payload_size)
             {
                 return false;
             }
-            const message_header header{protocol_magic, protocol_version, type, static_cast<uint32_t>(payload.size())};
+            const message_header header{
+                .magic = protocol_magic, .version = protocol_version, .type = type, .size = static_cast<uint32_t>(payload.size())};
             return socket.send(&header, sizeof(header)) && socket.send(payload);
         }
 
@@ -194,15 +222,44 @@ namespace sogen
             return std::pair{header.type, std::move(*payload)};
         }
 
+        std::optional<std::pair<message_type, std::string>> receive_message_until(network::tcp_client_socket& socket,
+                                                                                  const std::chrono::steady_clock::time_point deadline)
+        {
+            const auto header_data = receive_exact_until(socket, sizeof(message_header), deadline);
+            if (!header_data)
+            {
+                return std::nullopt;
+            }
+
+            message_header header{};
+            memcpy(&header, header_data->data(), sizeof(header));
+            if (header.magic != protocol_magic || header.version != protocol_version || header.size > maximum_payload_size)
+            {
+                return std::nullopt;
+            }
+
+            auto payload = receive_exact_until(socket, header.size, deadline);
+            if (!payload)
+            {
+                return std::nullopt;
+            }
+            return std::pair{header.type, std::move(*payload)};
+        }
+
         std::string make_token()
         {
             std::random_device random{};
-            constexpr char digits[] = "0123456789abcdef";
+            constexpr std::array digits{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
             std::string token{};
             token.reserve(32);
-            for (size_t i = 0; i < 32; ++i)
+            for (size_t i = 0; i < 4; ++i)
             {
-                token.push_back(digits[random() & 0xF]);
+                auto value = random();
+                for (size_t digit = 0; digit < 8; ++digit)
+                {
+                    token.push_back(digits[value & 0xF]);
+                    value >>= 4;
+                }
             }
             return token;
         }
@@ -235,7 +292,6 @@ namespace sogen
         std::optional<uint64_t> termination_code{};
         std::optional<int> host_exit_status{};
         bool host_failure{};
-        std::atomic_bool terminate_requested{};
         std::atomic_bool kill_requested{};
 
         ~process_entry()
@@ -314,26 +370,30 @@ namespace sogen
 
         for (const auto& process : processes)
         {
-            process->terminate_requested = true;
+            process->kill_requested = true;
         }
     }
 
     process_create_result out_of_process_process_manager::create_process(process_create_request request)
     {
-        const std::scoped_lock lock(this->mutex_);
-        if (this->stopping_)
+        managed_process handle{};
         {
-            return {{}, process_error::unavailable};
-        }
-        if (this->next_process_ == 0)
-        {
-            return {{}, process_error::resource_limit};
+            const std::scoped_lock lock(this->mutex_);
+            if (this->stopping_)
+            {
+                return {.error = process_error::unavailable};
+            }
+            if (this->next_process_ == 0)
+            {
+                return {.error = process_error::resource_limit};
+            }
+            handle.value = this->next_process_++;
         }
 
         network::tcp_server_socket server{AF_INET};
         if (!server.bind(network::address{"127.0.0.1", 0}))
         {
-            return {{}, process_error::communication_failure};
+            return {.error = process_error::communication_failure};
         }
         server.listen();
 
@@ -345,7 +405,7 @@ namespace sogen
         }
         catch (...)
         {
-            return {{}, process_error::internal_failure};
+            return {.error = process_error::internal_failure};
         }
 
         std::vector<std::string> command{};
@@ -360,36 +420,24 @@ namespace sogen
         options.redirect.in.type = reproc::redirect::parent;
         options.redirect.out.type = reproc::redirect::pipe;
         options.redirect.err.type = reproc::redirect::pipe;
-        options.stop = {{reproc::stop::terminate, reproc::milliseconds(2000)},
-                        {reproc::stop::kill, reproc::milliseconds(2000)},
-                        {reproc::stop::wait, reproc::milliseconds(1000)}};
+        options.stop = {.first = {.action = reproc::stop::terminate, .timeout = reproc::milliseconds(2000)},
+                        .second = {.action = reproc::stop::kill, .timeout = reproc::milliseconds(2000)},
+                        .third = {.action = reproc::stop::wait, .timeout = reproc::milliseconds(1000)}};
 
         const auto start_error = entry->process.start(command, options);
         if (start_error)
         {
-            return {{}, map_process_error(start_error)};
+            return {.error = map_process_error(start_error)};
         }
 
         entry->output_thread = std::thread([process = entry.get()] {
-            const auto output = [](FILE* stream) {
-                return [stream](const uint8_t* data, const size_t size) {
-                    fwrite(data, 1, size, stream);
-                    fflush(stream);
-                };
-            };
-
             std::array<uint8_t, 4096> buffer{};
             for (;;)
             {
                 if (process->kill_requested.exchange(false))
                 {
-                    process->process.kill();
+                    (void)process->process.kill();
                 }
-                else if (process->terminate_requested.exchange(false))
-                {
-                    process->process.terminate();
-                }
-
                 const auto [events, poll_error] =
                     process->process.poll(reproc::event::out | reproc::event::err | reproc::event::exit, reproc::milliseconds(50));
                 if (poll_error && poll_error != std::errc::timed_out)
@@ -399,8 +447,8 @@ namespace sogen
                     break;
                 }
 
-                for (const auto [event, stream, file] : {std::tuple{reproc::event::out, reproc::stream::out, stdout},
-                                                         std::tuple{reproc::event::err, reproc::stream::err, stderr}})
+                for (const auto& [event, stream, file] : {std::tuple{reproc::event::out, reproc::stream::out, stdout},
+                                                          std::tuple{reproc::event::err, reproc::stream::err, stderr}})
                 {
                     if ((events & event) == 0)
                     {
@@ -409,7 +457,8 @@ namespace sogen
                     const auto [size, read_error] = process->process.read(stream, buffer.data(), buffer.size());
                     if (!read_error)
                     {
-                        output(file)(buffer.data(), size);
+                        (void)fwrite(buffer.data(), 1, size, file);
+                        fflush(file);
                     }
                 }
 
@@ -432,32 +481,53 @@ namespace sogen
 
         constexpr auto connection_timeout = std::chrono::seconds(30);
         const auto deadline = std::chrono::steady_clock::now() + connection_timeout;
-        while (!server.is_ready(true))
+        while (std::chrono::steady_clock::now() < deadline)
         {
-            if (std::chrono::steady_clock::now() >= deadline)
+            if (!server.is_ready(true))
             {
-                return {{}, process_error::communication_failure};
+                server.sleep(std::chrono::milliseconds(10), true);
+                continue;
             }
-            server.sleep(std::chrono::milliseconds(10), true);
+
+            auto candidate = server.accept();
+            if (!candidate.set_blocking(false))
+            {
+                continue;
+            }
+
+            const auto candidate_deadline = std::min(deadline, std::chrono::steady_clock::now() + std::chrono::milliseconds(250));
+            auto hello = receive_message_until(candidate, candidate_deadline);
+            if (hello && hello->first == message_type::hello && hello->second == token)
+            {
+                entry->control = std::move(candidate);
+                break;
+            }
         }
 
-        entry->control = server.accept();
-        auto hello = receive_message(entry->control);
-        if (!hello || hello->first != message_type::hello || hello->second != token ||
-            !send_message(entry->control, message_type::create_request, serialize_request(request)))
+        if (!entry->control || !send_message(entry->control, message_type::create_request, serialize_request(request)))
         {
-            return {{}, process_error::communication_failure};
+            return {.error = process_error::communication_failure};
         }
 
-        const auto started = receive_message(entry->control);
+        const auto started = receive_message_until(entry->control, deadline);
         if (!started || started->first != message_type::started)
         {
-            return {{}, process_error::internal_failure};
+            return {.error = process_error::internal_failure};
+        }
+        if (!entry->control.set_blocking(true))
+        {
+            return {.error = process_error::communication_failure};
         }
 
-        const managed_process handle{this->next_process_++};
-        this->processes_.emplace(handle.value, entry);
-        return {handle, process_error::none};
+        {
+            const std::scoped_lock lock(this->mutex_);
+            if (this->stopping_)
+            {
+                return {.error = process_error::unavailable};
+            }
+            this->processes_.emplace(handle.value, entry);
+        }
+        return {.process = handle};
     }
 
     process_error out_of_process_process_manager::terminate_process(const managed_process process, const uint64_t exit_code)
@@ -474,7 +544,7 @@ namespace sogen
             return process_error::none;
         }
         entry->termination_code = exit_code;
-        entry->terminate_requested = true;
+        entry->kill_requested = true;
         return process_error::none;
     }
 
@@ -483,41 +553,44 @@ namespace sogen
         const auto entry = this->find_process(process);
         if (!entry)
         {
-            return {{}, process_error::invalid_process};
+            return {.error = process_error::invalid_process};
         }
 
         const std::scoped_lock lock(entry->mutex);
         if (entry->exit)
         {
-            return {entry->exit, process_error::none};
+            return {.status = entry->exit};
         }
 
         if (!entry->host_exit_status && !entry->host_failure)
         {
-            return {{}, process_error::none};
+            return {};
+        }
+
+        if (entry->host_exit_status)
+        {
+            const auto message = receive_message(entry->control);
+            if (message && message->first == message_type::exited)
+            {
+                size_t offset = 0;
+                const auto exit_code = read_value<uint64_t>(message->second, offset);
+                if (offset == message->second.size())
+                {
+                    entry->exit = process_exit{.kind = process_exit_kind::exited, .code = exit_code};
+                    return {.status = entry->exit};
+                }
+            }
         }
 
         if (entry->termination_code)
         {
             entry->exit = process_exit{.kind = process_exit_kind::terminated, .code = *entry->termination_code};
-            return {entry->exit, process_error::none};
-        }
-
-        const auto message = receive_message(entry->control);
-        if (message && message->first == message_type::exited)
-        {
-            size_t offset = 0;
-            const auto exit_code = read_value<uint64_t>(message->second, offset);
-            if (offset == message->second.size())
-            {
-                entry->exit = process_exit{.kind = process_exit_kind::exited, .code = exit_code};
-                return {entry->exit, process_error::none};
-            }
+            return {.status = entry->exit};
         }
 
         entry->exit = process_exit{.kind = process_exit_kind::runtime_failure,
                                    .code = entry->host_exit_status ? static_cast<uint32_t>(*entry->host_exit_status) : 1};
-        return {entry->exit, process_error::none};
+        return {.status = entry->exit};
     }
 
     std::shared_ptr<out_of_process_process_manager::process_entry> out_of_process_process_manager::find_process(

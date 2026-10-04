@@ -24,7 +24,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (value.is_pseudo)
+            if (value.is_pseudo || h == GUEST_PROCESS_HANDLE)
             {
                 return STATUS_SUCCESS;
             }

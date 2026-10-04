@@ -82,8 +82,9 @@ namespace sogen
                     throw std::runtime_error("Process environment is too large");
                 }
 
-                std::u16string block(parameters.EnvironmentSize / sizeof(char16_t), u'\0');
-                c.emu.read_memory(parameters.Environment, block.data(), parameters.EnvironmentSize);
+                const auto environment_size = static_cast<size_t>(parameters.EnvironmentSize);
+                std::u16string block(environment_size / sizeof(char16_t), u'\0');
+                c.emu.read_memory(parameters.Environment, block.data(), environment_size);
 
                 for (size_t offset = 0; offset < block.size() && block[offset] != u'\0';)
                 {

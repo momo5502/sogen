@@ -47,6 +47,15 @@ namespace sogen::sandbox
 #endif
         }
 
+        std::filesystem::path get_sandbox_executable()
+        {
+#ifdef _WIN32
+            return get_current_binary_dir() / "sandbox.exe";
+#else
+            return get_current_binary_dir() / "sandbox";
+#endif
+        }
+
         std::vector<std::u16string> parse_arguments(const std::span<const std::string_view> args)
         {
             std::vector<std::u16string> wide_args{};
@@ -106,8 +115,7 @@ namespace sogen::sandbox
 
             settings.path_mappings = std::move(path_mappings);
 
-            out_of_process_process_manager process_manager{get_current_binary_dir() / "sandbox.exe",
-                                                           [&](const auto port, const auto& token) {
+            out_of_process_process_manager process_manager{get_sandbox_executable(), [&](const auto port, const auto& token) {
                                                                std::vector<std::string> arguments{"--managed-process-port",
                                                                                                   std::to_string(port),
                                                                                                   "--managed-process-token",
