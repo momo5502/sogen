@@ -18,9 +18,15 @@ namespace sogen
         constexpr ULONG k_lookup_sids_min_success_reply_size_64 = 0x10C;
         constexpr ULONG k_close_policy_reply_size_32 = 0x40;
         constexpr ULONG k_close_policy_reply_size_64 = 0x44;
+        constexpr ULONG k_lookup_account_reply_size_32 = 0xDC;
+        constexpr ULONG k_lookup_account_reply_size_64 = 0x11C;
+        constexpr ULONG k_get_user_name_reply_size_32 = 0x78;
+        constexpr ULONG k_get_user_name_reply_size_64 = 0x8C;
 
         constexpr uint32_t k_lsa_max_referenced_domains = 0x20;
         constexpr uint32_t k_sid_type_user = 1;
+        constexpr uint32_t k_policy_lookup_account_procedure = 3;
+        constexpr uint32_t k_sspi_get_user_name_procedure = 15;
         constexpr std::array<uint8_t, 16> k_policy_context_uuid = {
             0xBA, 0xA3, 0xDA, 0x01, 0x6E, 0x16, 0x62, 0x49, 0x81, 0x46, 0x13, 0x9B, 0x8A, 0x70, 0x69, 0xE7,
         };
@@ -28,6 +34,16 @@ namespace sogen
         ULONG select_by_pointer_size(const utils::aligned_binary_writer& writer, const ULONG size_32, const ULONG size_64)
         {
             return writer.pointer_size() == utils::aligned_binary_writer::pointer_size_32 ? size_32 : size_64;
+        }
+
+        void pad_to_reply_size(utils::aligned_binary_writer& writer, const ULONG size_32, const ULONG size_64)
+        {
+            const auto reply_size = static_cast<size_t>(select_by_pointer_size(writer, size_32, size_64));
+            const auto offset = static_cast<size_t>(writer.offset());
+            if (offset < reply_size)
+            {
+                writer.pad(reply_size - offset);
+            }
         }
 
         bool request_contains_sid(windows_emulator& win_emu, const lpc_request_context& c, const std::span<const uint8_t> sid)
@@ -152,6 +168,8 @@ namespace sogen
                     return handle_close_policy(win_emu, writer);
                 case 2:
                     return handle_lookup_sids(win_emu, c, writer);
+                case k_policy_lookup_account_procedure:
+                    return handle_lookup_account(win_emu, writer);
                 case 5:
                     // The shell's account-lookup path (e.g. SHGetKnownFolderPath, used while the engine sets
                     // up its crash-report queue) issues this additional lookup. We don't resolve it, but we
@@ -159,12 +177,63 @@ namespace sogen
                     // runtime raise RPC_S_CALL_FAILED in the caller, whose vectored exception handler then
                     // re-enters a half-initialized singleton and deadlocks.
                     return write_lookup_not_mapped_reply(writer);
+                case k_sspi_get_user_name_procedure:
+                    return handle_get_user_name(win_emu, writer);
                 default:
                     return STATUS_NOT_SUPPORTED;
                 }
             }
 
           private:
+            static NTSTATUS handle_lookup_account(windows_emulator& win_emu, utils::aligned_binary_writer& writer)
+            {
+                const auto domain = utils::string::to_lower(registry_utils::get_account_domain(win_emu.registry));
+                const auto domain_sid = derive_account_domain_sid(win_emu.process.sid);
+
+                writer.write_ndr_pointer(true);
+                writer.write<uint32_t>(1);
+                writer.write_ndr_pointer(true);
+                writer.write(k_lsa_max_referenced_domains);
+
+                writer.write_pointer_sized(1);
+                write_lsa_unicode_string_header(writer, domain);
+                writer.write_ndr_pointer(true);
+                writer.write_ndr_u16string(domain, false);
+
+                writer.write(static_cast<uint32_t>(domain_sid[1]));
+                writer.write(domain_sid.data(), domain_sid.size(), alignof(uint32_t));
+
+                writer.write<uint32_t>(1);
+                writer.write_ndr_pointer(true);
+                writer.write_pointer_sized(1);
+                writer.write(k_sid_type_user);
+                writer.write_ndr_pointer(true);
+                writer.write<uint32_t>(0);
+                writer.write<uint32_t>(0);
+                writer.write(static_cast<uint32_t>(win_emu.process.sid[1]));
+                writer.write(win_emu.process.sid.data(), win_emu.process.sid.size(), alignof(uint32_t));
+                writer.write<uint32_t>(1);
+
+                pad_to_reply_size(writer, k_lookup_account_reply_size_32, k_lookup_account_reply_size_64);
+
+                return STATUS_SUCCESS;
+            }
+
+            static NTSTATUS handle_get_user_name(windows_emulator& win_emu, utils::aligned_binary_writer& writer)
+            {
+                const auto domain = registry_utils::get_account_domain(win_emu.registry);
+                const auto user = registry_utils::get_user_name(win_emu.registry);
+                const auto name = domain + u"\\" + user;
+                const auto length = static_cast<uint16_t>(name.size() * sizeof(char16_t));
+
+                writer.write(length);
+                writer.write(static_cast<uint16_t>(length + sizeof(char16_t)));
+                writer.write_ndr_pointer(true);
+                writer.write_ndr_u16string(name, false);
+                pad_to_reply_size(writer, k_get_user_name_reply_size_32, k_get_user_name_reply_size_64);
+                return STATUS_SUCCESS;
+            }
+
             static NTSTATUS handle_open_policy(windows_emulator& win_emu, utils::aligned_binary_writer& writer)
             {
                 (void)win_emu;
