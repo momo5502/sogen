@@ -264,6 +264,40 @@ namespace sogen
                                                  const uint64_t thread_information, const uint32_t thread_information_length,
                                                  const emulator_object<uint32_t> return_length)
         {
+            if (const auto* managed = c.proc.managed_threads.get(thread_handle))
+            {
+                if (info_class != ThreadBasicInformation || !c.win_emu.processes())
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                if (return_length)
+                {
+                    return_length.write(sizeof(THREAD_BASIC_INFORMATION64));
+                }
+                if (thread_information_length < sizeof(THREAD_BASIC_INFORMATION64))
+                {
+                    return STATUS_BUFFER_OVERFLOW;
+                }
+
+                const auto status = c.win_emu.processes()->exit_status(managed->process);
+                if (!status)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                const emulator_object<THREAD_BASIC_INFORMATION64> info{c.emu, thread_information};
+                info.access([&](THREAD_BASIC_INFORMATION64& value) {
+                    value = {};
+                    value.ExitStatus = status.status ? (status.status->kind == process_exit_kind::runtime_failure
+                                                            ? STATUS_UNSUCCESSFUL
+                                                            : static_cast<NTSTATUS>(status.status->code))
+                                                     : STATUS_PENDING;
+                    value.ClientId = {.UniqueProcess = managed->process_id, .UniqueThread = managed->thread_id};
+                });
+                return STATUS_SUCCESS;
+            }
+
             const auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
 
             if (!thread)
@@ -540,6 +574,18 @@ namespace sogen
 
         NTSTATUS handle_NtTerminateThread(const syscall_context& c, const handle thread_handle, const NTSTATUS exit_status)
         {
+            if (const auto* managed = c.proc.managed_threads.get(thread_handle))
+            {
+                if (!c.win_emu.processes())
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                return c.win_emu.processes()->terminate_process(managed->process, static_cast<uint32_t>(exit_status)) == process_error::none
+                           ? STATUS_SUCCESS
+                           : STATUS_INVALID_HANDLE;
+            }
+
             auto* thread = !thread_handle.bits ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
 
             if (!thread)
@@ -643,6 +689,11 @@ namespace sogen
         NTSTATUS handle_NtSuspendThread(const syscall_context& c, const handle thread_handle,
                                         const emulator_object<ULONG> previous_suspend_count)
         {
+            if (c.proc.managed_threads.get(thread_handle))
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
             auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
 
             if (!thread)
@@ -674,6 +725,13 @@ namespace sogen
         NTSTATUS handle_NtResumeThread(const syscall_context& c, const handle thread_handle,
                                        const emulator_object<ULONG> previous_suspend_count)
         {
+            if (auto* managed = c.proc.managed_threads.get(thread_handle))
+            {
+                previous_suspend_count.write_if_valid(managed->resume_observed ? 0 : 1);
+                managed->resume_observed = true;
+                return STATUS_SUCCESS;
+            }
+
             auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
             if (!thread)
             {

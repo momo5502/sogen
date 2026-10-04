@@ -715,6 +715,8 @@ namespace sogen
         buffer.write(this->accelerator_tables);
         buffer.write(this->registry_keys);
         buffer.write(this->private_namespaces);
+        buffer.write(this->processes);
+        buffer.write(this->managed_threads);
         buffer.write_map(this->atoms);
         buffer.write_map(this->classes);
 
@@ -732,6 +734,7 @@ namespace sogen
         buffer.write(this->uuid_sequence);
 
         buffer.write_vector(this->default_register_set);
+        buffer.write(this->next_process_id);
         buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
 
@@ -810,6 +813,8 @@ namespace sogen
         buffer.read(this->accelerator_tables);
         buffer.read(this->registry_keys);
         buffer.read(this->private_namespaces);
+        buffer.read(this->processes);
+        buffer.read(this->managed_threads);
         buffer.read_map(this->atoms);
         buffer.read_map(this->classes);
 
@@ -827,6 +832,7 @@ namespace sogen
         buffer.read(this->uuid_sequence);
 
         buffer.read_vector(this->default_register_set);
+        buffer.read(this->next_process_id);
         buffer.read(this->spawned_thread_count);
 
         for (auto& thread : this->threads | std::views::values)
@@ -970,10 +976,10 @@ namespace sogen
     {
         switch (handle.value.type)
         {
-        case handle_types::process: {
-            static dummy_handle_store<handle_types::process, emulator_process> handle_store{GUEST_PROCESS_HANDLE};
-            return &handle_store;
-        }
+        case handle_types::process:
+            return &this->processes;
+        case handle_types::managed_thread:
+            return &this->managed_threads;
         case handle_types::thread:
             return &threads;
         case handle_types::event:

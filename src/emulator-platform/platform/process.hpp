@@ -558,6 +558,65 @@ namespace sogen
         PsAttributeMax
     };
 
+    enum PS_CREATE_STATE : uint32_t
+    {
+        PsCreateInitialState,
+        PsCreateFailOnFileOpen,
+        PsCreateFailOnSectionCreate,
+        PsCreateFailExeFormat,
+        PsCreateFailMachineMismatch,
+        PsCreateFailExeName,
+        PsCreateSuccess,
+        PsCreateMaximumStates,
+    };
+
+    template <typename Traits>
+    struct PS_CREATE_INFO
+    {
+        Traits::SIZE_T Size;
+        PS_CREATE_STATE State;
+
+        union
+        {
+            struct
+            {
+                ULONG InitFlags;
+                ACCESS_MASK AdditionalFileAccess;
+            } InitState;
+
+            struct
+            {
+                Traits::HANDLE FileHandle;
+            } FailSection;
+
+            struct
+            {
+                USHORT DllCharacteristics;
+            } ExeFormat;
+
+            struct
+            {
+                Traits::HANDLE IFEOKey;
+            } ExeName;
+
+            struct
+            {
+                ULONG OutputFlags;
+                Traits::HANDLE FileHandle;
+                Traits::HANDLE SectionHandle;
+                ULONGLONG UserProcessParametersNative;
+                ULONG UserProcessParametersWow64;
+                ULONG CurrentParameterFlags;
+                ULONGLONG PebAddressNative;
+                ULONG PebAddressWow64;
+                ULONGLONG ManifestAddress;
+                ULONG ManifestSize;
+            } SuccessState;
+        };
+    };
+
+    static_assert(sizeof(PS_CREATE_INFO<EmulatorTraits<Emu64>>) == 0x58);
+
     struct SYSTEM_PROCESSOR_INFORMATION64
     {
         USHORT ProcessorArchitecture;

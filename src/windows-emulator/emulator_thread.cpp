@@ -8,6 +8,102 @@
 
 namespace sogen
 {
+    namespace
+    {
+        bool contains_remote_range(const uint64_t base, const size_t region_size, const uint64_t address, const size_t size)
+        {
+            return address >= base && size <= region_size && address - base <= region_size - size;
+        }
+    }
+
+    void emulator_process::initialize_remote_memory()
+    {
+        constexpr size_t peb_region_size = 0x1000;
+        this->peb_address = 0x7FFDF000;
+        this->remote_memory_.push_back({.base = this->peb_address, .data = std::vector<uint8_t>(peb_region_size)});
+    }
+
+    bool emulator_process::allocate_remote_memory(uint64_t& address, const size_t size)
+    {
+        if (size == 0)
+        {
+            return false;
+        }
+
+        const auto allocation_size = static_cast<size_t>(page_align_up(size));
+        if (address == 0)
+        {
+            address = this->next_remote_allocation_;
+            this->next_remote_allocation_ = page_align_up(address + allocation_size + 0xFFFF);
+        }
+
+        const auto overlaps = std::ranges::any_of(this->remote_memory_, [&](const auto& region) {
+            const auto region_end = region.base + region.data.size();
+            const auto allocation_end = address + allocation_size;
+            return address < region_end && region.base < allocation_end;
+        });
+        if (overlaps)
+        {
+            return false;
+        }
+
+        this->remote_memory_.push_back({.base = address, .data = std::vector<uint8_t>(allocation_size)});
+        return true;
+    }
+
+    bool emulator_process::free_remote_memory(const uint64_t address)
+    {
+        const auto entry = std::ranges::find(this->remote_memory_, address, &remote_memory_region::base);
+        if (entry == this->remote_memory_.end())
+        {
+            return false;
+        }
+        this->remote_memory_.erase(entry);
+        return true;
+    }
+
+    bool emulator_process::protect_remote_memory(const uint64_t address, const size_t size) const
+    {
+        return this->find_remote_region(address, size) != nullptr;
+    }
+
+    bool emulator_process::read_remote_memory(const uint64_t address, void* data, const size_t size) const
+    {
+        const auto* region = this->find_remote_region(address, size);
+        if (!region)
+        {
+            return false;
+        }
+        memcpy(data, region->data.data() + (address - region->base), size);
+        return true;
+    }
+
+    bool emulator_process::write_remote_memory(const uint64_t address, const void* data, const size_t size)
+    {
+        auto* region = this->find_remote_region(address, size);
+        if (!region)
+        {
+            return false;
+        }
+        memcpy(region->data.data() + (address - region->base), data, size);
+        return true;
+    }
+
+    emulator_process::remote_memory_region* emulator_process::find_remote_region(const uint64_t address, const size_t size)
+    {
+        const auto entry = std::ranges::find_if(this->remote_memory_, [&](const auto& region) {
+            return contains_remote_range(region.base, region.data.size(), address, size);
+        });
+        return entry == this->remote_memory_.end() ? nullptr : &*entry;
+    }
+
+    const emulator_process::remote_memory_region* emulator_process::find_remote_region(const uint64_t address, const size_t size) const
+    {
+        const auto entry = std::ranges::find_if(this->remote_memory_, [&](const auto& region) {
+            return contains_remote_range(region.base, region.data.size(), address, size);
+        });
+        return entry == this->remote_memory_.end() ? nullptr : &*entry;
+    }
 
     namespace
     {
@@ -69,8 +165,9 @@ namespace sogen
             }
         }
 
-        wait_state observe_object_signal(process_context& c, const handle h, const uint32_t current_thread_id)
+        wait_state observe_object_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id)
         {
+            auto& c = win_emu.process;
             const auto type = h.value.type;
 
             switch (type)
@@ -82,6 +179,27 @@ namespace sogen
                 if (h == GUEST_PROCESS_HANDLE && c.exit_status.has_value())
                 {
                     return wait_state::signaled;
+                }
+
+                if (const auto* process = c.processes.get(h); process && process->process && win_emu.processes())
+                {
+                    const auto status = win_emu.processes()->exit_status(process->process);
+                    if (status && status.status.has_value())
+                    {
+                        return wait_state::signaled;
+                    }
+                }
+
+                break;
+
+            case handle_types::managed_thread:
+                if (const auto* thread = c.managed_threads.get(h); thread && win_emu.processes())
+                {
+                    const auto status = win_emu.processes()->exit_status(thread->process);
+                    if (status && status.status.has_value())
+                    {
+                        return wait_state::signaled;
+                    }
                 }
 
                 break;
@@ -173,17 +291,36 @@ namespace sogen
             return wait_state::not_signaled;
         }
 
-        std::optional<wait_state> consume_object_signal(process_context& c, const handle h, const uint32_t current_thread_id)
+        std::optional<wait_state> consume_object_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id)
         {
+            auto& c = win_emu.process;
             switch (h.value.type)
             {
             case handle_types::process: {
-                if (h != GUEST_PROCESS_HANDLE || !c.exit_status.has_value())
+                if (h == GUEST_PROCESS_HANDLE)
+                {
+                    return c.exit_status.has_value() ? std::optional{wait_state::signaled} : std::nullopt;
+                }
+
+                const auto* process = c.processes.get(h);
+                if (!process || !process->process || !win_emu.processes())
                 {
                     return std::nullopt;
                 }
 
-                return wait_state::signaled;
+                const auto status = win_emu.processes()->exit_status(process->process);
+                return status && status.status.has_value() ? std::optional{wait_state::signaled} : std::nullopt;
+            }
+
+            case handle_types::managed_thread: {
+                const auto* thread = c.managed_threads.get(h);
+                if (!thread || !win_emu.processes())
+                {
+                    return std::nullopt;
+                }
+
+                const auto status = win_emu.processes()->exit_status(thread->process);
+                return status && status.status.has_value() ? std::optional{wait_state::signaled} : std::nullopt;
             }
 
             case handle_types::event: {
@@ -1066,7 +1203,7 @@ namespace sogen
                 {
                     const auto& obj = this->await_objects[i];
 
-                    const auto state = observe_object_signal(process, obj, this->id);
+                    const auto state = observe_object_signal(win_emu, obj, this->id);
                     const auto signaled = state != wait_state::not_signaled;
                     all_signaled &= signaled;
 
@@ -1077,7 +1214,7 @@ namespace sogen
 
                     if (signaled && this->await_any)
                     {
-                        const auto consumed_state = consume_object_signal(process, obj, this->id);
+                        const auto consumed_state = consume_object_signal(win_emu, obj, this->id);
                         if (!consumed_state.has_value())
                         {
                             throw std::runtime_error("Failed to consume object signal!");
@@ -1111,7 +1248,7 @@ namespace sogen
             {
                 for (const auto& obj : this->await_objects)
                 {
-                    const auto consumed_state = consume_object_signal(process, obj, this->id);
+                    const auto consumed_state = consume_object_signal(win_emu, obj, this->id);
                     if (!consumed_state.has_value())
                     {
                         throw std::runtime_error("Failed to consume object signal!");

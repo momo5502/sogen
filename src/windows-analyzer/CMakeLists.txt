@@ -42,4 +42,3 @@ if(SOGEN_ENABLE_REFLECTION)
     reflect
   )
 endif()
-

@@ -59,3 +59,6 @@
 	url = https://github.com/momo5502/FEX.git
 	shallow = true
     branch = macos-arm64
+[submodule "deps/reproc"]
+	path = deps/reproc
+	url = https://github.com/daandemeyer/reproc.git

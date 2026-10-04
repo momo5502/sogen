@@ -343,7 +343,20 @@ namespace sogen
         {
             if (!c.proc.is_current_process_handle(process_handle))
             {
-                return STATUS_NOT_SUPPORTED;
+                auto* process = c.proc.processes.get(process_handle);
+                if (!process || !process->process)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                const auto address = base_address.read();
+                const auto size = bytes_to_protect.read();
+                if (!process->protect_remote_memory(address, size))
+                {
+                    return STATUS_INVALID_ADDRESS;
+                }
+                old_protection.try_write(PAGE_READWRITE);
+                return STATUS_SUCCESS;
             }
 
             const auto orig_start = base_address.read();
@@ -393,7 +406,22 @@ namespace sogen
         {
             if (!c.proc.is_current_process_handle(process_handle))
             {
-                return STATUS_NOT_SUPPORTED;
+                auto* process = c.proc.processes.get(process_handle);
+                if (!process || !process->process)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                auto address = base_address.read();
+                const auto size = bytes_to_allocate.read();
+                if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT)) != 0 || (allocation_type & (MEM_RESERVE | MEM_COMMIT)) == 0 ||
+                    !process->allocate_remote_memory(address, static_cast<size_t>(size)))
+                {
+                    return STATUS_MEMORY_NOT_ALLOCATED;
+                }
+                base_address.write(address);
+                bytes_to_allocate.write(page_align_up(size));
+                return STATUS_SUCCESS;
             }
 
             auto allocation_bytes = bytes_to_allocate.read();
@@ -566,7 +594,12 @@ namespace sogen
         {
             if (!c.proc.is_current_process_handle(process_handle))
             {
-                return STATUS_NOT_SUPPORTED;
+                auto* process = c.proc.processes.get(process_handle);
+                if (!process || !process->process || free_type != MEM_RELEASE || bytes_to_allocate.read() != 0)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+                return process->free_remote_memory(page_align_down(base_address.read())) ? STATUS_SUCCESS : STATUS_MEMORY_NOT_ALLOCATED;
             }
 
             if (free_type == 0)
@@ -678,7 +711,20 @@ namespace sogen
 
             if (!c.proc.is_current_process_handle(process_handle))
             {
-                return STATUS_NOT_SUPPORTED;
+                const auto* process = c.proc.processes.get(process_handle);
+                if (!process || !process->process)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                std::vector<uint8_t> data(number_of_bytes_to_read);
+                if (!process->read_remote_memory(base_address, data.data(), data.size()) ||
+                    !c.emu.try_write_memory(buffer, data.data(), data.size()))
+                {
+                    return STATUS_INVALID_ADDRESS;
+                }
+                number_of_bytes_read.try_write(number_of_bytes_to_read);
+                return STATUS_SUCCESS;
             }
 
             if (number_of_bytes_to_read == 0)
@@ -732,7 +778,20 @@ namespace sogen
 
             if (!c.proc.is_current_process_handle(process_handle))
             {
-                return STATUS_NOT_SUPPORTED;
+                auto* process = c.proc.processes.get(process_handle);
+                if (!process || !process->process)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                std::vector<uint8_t> data(number_of_bytes_to_write);
+                if (!c.emu.try_read_memory(buffer, data.data(), data.size()) ||
+                    !process->write_remote_memory(base_address, data.data(), data.size()))
+                {
+                    return STATUS_INVALID_ADDRESS;
+                }
+                number_of_bytes_write.try_write(number_of_bytes_to_write);
+                return STATUS_SUCCESS;
             }
 
             if (number_of_bytes_to_write == 0)

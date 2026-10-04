@@ -3,6 +3,7 @@
 #include <CLI/CLI.hpp>
 
 #include <windows_emulator.hpp>
+#include <in_process_process_manager.hpp>
 #include <backend_selection.hpp>
 #include <win_x86_64_gdb_stub_handler.hpp>
 #include <minidump_loader.hpp>
@@ -16,6 +17,7 @@
 #include "jsonl_reporter.hpp"
 #include "stdout_file_reporter.hpp"
 #include "tenet_tracer.hpp"
+#include "out_of_process_process_manager.hpp"
 
 #include <utils/finally.hpp>
 #include <utils/interupt_handler.hpp>
@@ -76,9 +78,43 @@ namespace sogen
             std::vector<std::filesystem::path> registry_files{};
             std::filesystem::path emulation_root{};
             std::filesystem::path working_directory{};
+            uint16_t managed_process_port{};
+            std::string managed_process_token{};
+            managed_process_connection* managed_process{};
             std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
             utils::unordered_insensitive_u16string_map<std::u16string> environment{};
         };
+
+#ifndef OS_EMSCRIPTEN
+        std::vector<std::string> create_managed_process_arguments(const analysis_options& options, const uint16_t port,
+                                                                  const std::string& token)
+        {
+            std::vector<std::string> arguments{"--managed-process-port", std::to_string(port), "--managed-process-token", token};
+
+            const auto add_path = [&](const std::string_view option, const std::filesystem::path& path) {
+                if (!path.empty())
+                {
+                    arguments.emplace_back(option);
+                    arguments.push_back(path.string());
+                }
+            };
+            add_path("--emulation", options.emulation_root);
+            add_path("--registry", options.registry_path);
+            for (const auto& registry_file : options.registry_files)
+            {
+                arguments.emplace_back("--reg-file");
+                arguments.push_back(registry_file.string());
+            }
+            for (const auto& [source, target] : options.path_mappings)
+            {
+                arguments.emplace_back("--path");
+                arguments.push_back(u16_to_u8(source.u16string()));
+                arguments.push_back(target.string());
+            }
+
+            return arguments;
+        }
+#endif
 
         void split_and_insert(std::set<std::string, std::less<>>& container, const std::string_view str, const char splitter = ',')
         {
@@ -527,14 +563,16 @@ namespace sogen
             return emu;
         }
 
-        std::unique_ptr<windows_emulator> create_empty_emulator(const analysis_options& options)
+        std::unique_ptr<windows_emulator> create_empty_emulator(const analysis_options& options, emulator_interfaces interfaces = {})
         {
             const auto settings = create_emulator_settings(options);
-            return std::make_unique<windows_emulator>(create_configured_backend(options), settings);
+            return std::make_unique<windows_emulator>(create_configured_backend(options), settings, emulator_callbacks{},
+                                                      std::move(interfaces));
         }
 
         std::unique_ptr<windows_emulator> create_application_emulator(const analysis_options& options,
-                                                                      const std::span<const std::string_view> args)
+                                                                      const std::span<const std::string_view> args,
+                                                                      emulator_interfaces interfaces = {})
         {
             if (args.empty())
             {
@@ -552,7 +590,8 @@ namespace sogen
             }
 
             const auto settings = create_emulator_settings(options);
-            return std::make_unique<windows_emulator>(create_configured_backend(options), std::move(app_settings), settings);
+            return std::make_unique<windows_emulator>(create_configured_backend(options), std::move(app_settings), settings,
+                                                      emulator_callbacks{}, std::move(interfaces));
         }
 
         void apply_registry_files(windows_emulator& win_emu, const analysis_options& options)
@@ -563,26 +602,63 @@ namespace sogen
             }
         }
 
-        std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options, const std::span<const std::string_view> args)
+        std::unique_ptr<windows_emulator> setup_emulator(const analysis_options& options, const std::span<const std::string_view> args,
+                                                         emulator_interfaces interfaces)
         {
             if (!options.dump.empty())
             {
                 // load snapshot
-                auto win_emu = create_empty_emulator(options);
+                auto win_emu = create_empty_emulator(options, std::move(interfaces));
                 snapshot::load_emulator_snapshot(*win_emu, options.dump);
                 return win_emu;
             }
             if (!options.minidump_path.empty())
             {
                 // load minidump
-                auto win_emu = create_empty_emulator(options);
+                auto win_emu = create_empty_emulator(options, std::move(interfaces));
                 minidump_loader::load_minidump_into_emulator(*win_emu, options.minidump_path);
                 return win_emu;
             }
 
             // default: load application
-            return create_application_emulator(options, args);
+            return create_application_emulator(options, args, std::move(interfaces));
         }
+
+        class analyzer_managed_process final : public in_process_process
+        {
+          public:
+            explicit analyzer_managed_process(std::unique_ptr<windows_emulator> emulator)
+                : emulator_(std::move(emulator))
+            {
+            }
+
+            process_exit run() override
+            {
+                this->emulator_->start();
+                if (this->termination_requested_.load())
+                {
+                    return {.kind = process_exit_kind::terminated, .code = this->termination_code_.load()};
+                }
+                if (!this->emulator_->process.exit_status)
+                {
+                    return {.kind = process_exit_kind::runtime_failure};
+                }
+
+                return {.kind = process_exit_kind::exited, .code = static_cast<uint32_t>(*this->emulator_->process.exit_status)};
+            }
+
+            void terminate(const uint64_t exit_code) override
+            {
+                this->termination_code_.store(exit_code);
+                this->termination_requested_.store(true);
+                this->emulator_->stop();
+            }
+
+          private:
+            std::unique_ptr<windows_emulator> emulator_{};
+            std::atomic_bool termination_requested_{};
+            std::atomic_uint64_t termination_code_{};
+        };
 
         const char* get_module_memory_region_name(const mapped_module& mod, const uint64_t address)
         {
@@ -618,9 +694,58 @@ namespace sogen
                 .auto_break_before_call = options.break_call,
             };
 
+            process_manager* manager_interface = nullptr;
+            std::unique_ptr<process_manager> manager{};
+            const auto backend = options.backend.value_or(get_x86_64_emulator_backend_from_environment());
+
+#ifndef OS_EMSCRIPTEN
+            if (backend == backend_type::whp)
+            {
+                manager = std::make_unique<out_of_process_process_manager>(
+                    get_current_binary_dir() / "sandbox.exe",
+                    [&](const auto port, const auto& token) { return create_managed_process_arguments(options, port, token); });
+            }
+            else
+#endif
+            {
+                manager = std::make_unique<in_process_process_manager>(
+                    [&](process_create_request request) -> std::unique_ptr<in_process_process> {
+                        application_settings app_settings{
+                            .application = windows_path(u8_to_u16(request.application)),
+                        };
+                        app_settings.arguments.reserve(request.arguments.size());
+                        for (const auto& argument : request.arguments)
+                        {
+                            app_settings.arguments.push_back(u8_to_u16(argument));
+                        }
+                        for (const auto& [name, value] : request.environment)
+                        {
+                            app_settings.environment.insert_or_assign(u8_to_u16(name), u8_to_u16(value));
+                        }
+                        if (!request.working_directory.empty())
+                        {
+                            app_settings.working_directory = windows_path(u8_to_u16(request.working_directory));
+                        }
+
+                        emulator_interfaces child_interfaces{.processes = manager_interface};
+                        auto child = std::make_unique<windows_emulator>(create_configured_backend(options), std::move(app_settings),
+                                                                        create_emulator_settings(options), emulator_callbacks{},
+                                                                        std::move(child_interfaces));
+                        apply_registry_files(*child, options);
+                        return std::make_unique<analyzer_managed_process>(std::move(child));
+                    });
+            }
+            manager_interface = manager.get();
+
             const auto concise_logging = options.concise_logging;
-            const auto win_emu = setup_emulator(options, args);
+            const auto win_emu = setup_emulator(options, args, emulator_interfaces{.processes = manager_interface});
             apply_registry_files(*win_emu, options);
+#ifndef OS_EMSCRIPTEN
+            if (options.managed_process && !options.managed_process->notify_started())
+            {
+                throw std::runtime_error("Acknowledging managed process startup failed");
+            }
+#endif
             context.win_emu = win_emu.get();
 
             std::vector<std::unique_ptr<analysis_reporter>> reporters{};
@@ -848,7 +973,18 @@ namespace sogen
                 }
             }
 
-            return run_emulation(context, options);
+            const auto success = run_emulation(context, options);
+#ifndef OS_EMSCRIPTEN
+            if (options.managed_process && win_emu->process.exit_status)
+            {
+                const auto exit_status = static_cast<uint64_t>(static_cast<uint32_t>(*win_emu->process.exit_status));
+                if (!options.managed_process->notify_exit(exit_status))
+                {
+                    throw std::runtime_error("Reporting managed process exit failed");
+                }
+            }
+#endif
+            return success;
         }
 
         int run_main(int argc, char** argv)
@@ -910,6 +1046,8 @@ namespace sogen
 
             app.add_option("-e,--emulation", options.emulation_root, "Set emulation root path");
             app.add_option("--working-directory", options.working_directory, "Set the working directory for the analyzed application");
+            app.add_option("--managed-process-port", options.managed_process_port)->group("");
+            app.add_option("--managed-process-token", options.managed_process_token)->group("");
             app.add_option("-a,--snapshot", options.dump, "Load snapshot dump from path");
             app.add_option("--minidump", options.minidump_path, "Load minidump from path");
             app.add_option("--report", options.report_path, "Write machine-readable analysis events to a file");
@@ -951,6 +1089,9 @@ namespace sogen
                 return 1;
             }
 
+#ifndef OS_EMSCRIPTEN
+            std::optional<managed_process_connection> managed_process{};
+#endif
             try
             {
                 if (options.use_gdb && options.vcpu_count > 1)
@@ -987,7 +1128,34 @@ namespace sogen
                     options.environment[std::u16string(name.begin(), name.end())] = std::u16string(value.begin(), value.end());
                 }
 
-                const auto application = app.remaining();
+                auto application = app.remaining();
+#ifndef OS_EMSCRIPTEN
+                if (options.managed_process_port != 0)
+                {
+                    if (options.managed_process_token.empty())
+                    {
+                        throw std::runtime_error("A managed process token is required");
+                    }
+
+                    managed_process.emplace(connect_managed_process(options.managed_process_port, options.managed_process_token));
+                    options.managed_process = &*managed_process;
+                    const auto& request = managed_process->request();
+
+                    application.clear();
+                    application.push_back(request.application);
+                    for (const auto& argument : request.arguments)
+                    {
+                        application.push_back(argument);
+                    }
+
+                    options.working_directory = std::filesystem::path(u8_to_u16(request.working_directory));
+                    options.environment.clear();
+                    for (const auto& [name, value] : request.environment)
+                    {
+                        options.environment.insert_or_assign(u8_to_u16(name), u8_to_u16(value));
+                    }
+                }
+#endif
                 const std::vector<std::string_view> args{application.begin(), application.end()};
 
                 bool result{};

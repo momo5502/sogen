@@ -36,6 +36,7 @@ namespace sogen
             private_namespace,
             process,
             accelerator_table,
+            managed_thread,
         };
     };
 

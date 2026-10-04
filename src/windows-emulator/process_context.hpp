@@ -391,6 +391,10 @@ namespace sogen
               kusd(memory, clock),
               user_handles(memory)
         {
+            emulator_process current_process{};
+            current_process.id = process_id;
+            const auto process_handle = this->processes.store(std::move(current_process));
+            assert(process_handle == GUEST_PROCESS_HANDLE);
         }
 
         void setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
@@ -548,6 +552,8 @@ namespace sogen
         handle_store<handle_types::timer, timer> timers{};
         user_handle_store<handle_types::accelerator_table, accelerator_table> accelerator_tables{user_handles};
         handle_store<handle_types::registry, registry_key> registry_keys{};
+        handle_store<handle_types::process, emulator_process> processes{};
+        handle_store<handle_types::managed_thread, managed_process_thread> managed_threads{};
         std::map<uint32_t, handle> thread_handles_by_id{};
         std::map<uint16_t, atom_entry> atoms{};
         utils::insensitive_u16string_map<class_entry> classes{};
@@ -562,6 +568,7 @@ namespace sogen
         // The process keeps id 4; threads take 8, 12, 16, ... Real Windows never hands out tiny or
         // non-4-aligned ids, and some code (e.g. CEG-style anti-tamper) relies on that.
         static constexpr uint32_t process_id = 4;
+        uint32_t next_process_id{0x100};
         uint32_t spawned_thread_count{0};
         handle_store<handle_types::thread, emulator_thread> threads{};
 
