@@ -6,10 +6,6 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
 
 list(SORT SRC_FILES)
 
-if(EMSCRIPTEN)
-  list(FILTER SRC_FILES EXCLUDE REGEX "subprocess_process_manager\\.(cpp|hpp)$")
-endif()
-
 if(SOGEN_ENABLE_SDL3 AND SOGEN_USE_SYSTEM_SDL3 AND NOT EMSCRIPTEN AND NOT TARGET SDL3::SDL3)
   find_package(SDL3 CONFIG REQUIRED)
 endif()
@@ -30,11 +26,8 @@ if(NOT SOGEN_ENABLE_CLANG_TIDY)
   target_precompile_headers(windows-emulator PRIVATE std_include.hpp)
 endif()
 
-target_link_libraries(windows-emulator PUBLIC emulator minidump)
+target_link_libraries(windows-emulator PUBLIC emulator minidump process-manager)
 target_link_libraries(windows-emulator PRIVATE gpu-bridge-protocol vulkan-headers steam-bridge-protocol)
-if(NOT EMSCRIPTEN)
-  target_link_libraries(windows-emulator PRIVATE reproc++)
-endif()
 
 # When the Steamworks SDK was provided, link the real Steam host backend (owns the SDK headers + the
 # real steamclient64.dll connection behind a clean C ABI) and let the device use it.

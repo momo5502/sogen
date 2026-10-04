@@ -19,6 +19,7 @@ target_link_libraries(windows-analyzer PRIVATE
   disassembler
   capstone
   windows-emulator
+  process-manager
   windows-gdb-stub
   backend-selection
   cli11

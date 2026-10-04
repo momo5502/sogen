@@ -1,5 +1,16 @@
 #include "subprocess_process_manager.hpp"
 
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4244)
+#endif
+
+#include "process_protocol_generated.hxx"
+
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
 #include <network/address.hpp>
 #include <network/tcp_server_socket.hpp>
 
@@ -13,9 +24,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <cstring>
 #include <cstdio>
-#include <limits>
 #include <optional>
 #include <random>
 #include <stdexcept>
@@ -28,135 +37,21 @@ namespace sogen
 {
     namespace
     {
-        constexpr uint32_t protocol_magic = 0x50474F53;
-        constexpr uint32_t protocol_version = 2;
         constexpr uint32_t maximum_payload_size = 64U << 20;
 
-        enum class message_type : uint32_t
-        {
-            hello = 1,
-            create_request = 2,
-            started = 3,
-            exited = 4,
-            resume = 5,
-            allocate_memory = 6,
-            free_memory = 7,
-            protect_memory = 8,
-            read_memory = 9,
-            write_memory = 10,
-            response = 11,
-        };
-
-        struct message_header
-        {
-            uint32_t magic{};
-            uint32_t version{};
-            message_type type{};
-            uint32_t size{};
-        };
-
         template <typename T>
-        void append_value(std::string& data, const T& value)
+        bool send_message(network::tcp_client_socket& socket, T payload)
         {
-            data.append(reinterpret_cast<const char*>(&value), sizeof(value));
-        }
+            ProcessProtocol::MessageT message{};
+            message.payload.Set(std::move(payload));
 
-        void append_string(std::string& data, const std::string& value)
-        {
-            append_value(data, static_cast<uint64_t>(value.size()));
-            data.append(value);
-        }
-
-        template <typename T>
-        T read_value(const std::string_view data, size_t& offset)
-        {
-            if (offset > data.size() || sizeof(T) > data.size() - offset)
+            flatbuffers::FlatBufferBuilder builder{};
+            ProcessProtocol::FinishSizePrefixedMessageBuffer(builder, ProcessProtocol::Message::Pack(builder, &message));
+            if (builder.GetSize() > maximum_payload_size + sizeof(flatbuffers::uoffset_t))
             {
-                throw std::runtime_error("Invalid managed process message");
+                return false;
             }
-
-            T value{};
-            memcpy(&value, data.data() + offset, sizeof(value));
-            offset += sizeof(value);
-            return value;
-        }
-
-        std::string read_string(const std::string_view data, size_t& offset)
-        {
-            const auto size = read_value<uint64_t>(data, offset);
-            if (size > data.size() - offset || size > std::numeric_limits<size_t>::max())
-            {
-                throw std::runtime_error("Invalid managed process string");
-            }
-
-            std::string value{data.substr(offset, static_cast<size_t>(size))};
-            offset += static_cast<size_t>(size);
-            return value;
-        }
-
-        std::string serialize_request(const process_create_request& request)
-        {
-            std::string data{};
-            append_string(data, request.application);
-            append_string(data, request.argument0);
-            append_string(data, request.working_directory);
-            append_value(data, static_cast<uint64_t>(request.arguments.size()));
-            for (const auto& argument : request.arguments)
-            {
-                append_string(data, argument);
-            }
-            append_value(data, static_cast<uint64_t>(request.environment.size()));
-            for (const auto& [name, value] : request.environment)
-            {
-                append_string(data, name);
-                append_string(data, value);
-            }
-            append_value(data, request.process_id);
-            append_value(data, request.thread_id);
-            return data;
-        }
-
-        process_create_request deserialize_request(const std::string_view data)
-        {
-            constexpr uint64_t maximum_collection_size = 1ULL << 20;
-            size_t offset = 0;
-            process_create_request request{};
-            request.application = read_string(data, offset);
-            request.argument0 = read_string(data, offset);
-            request.working_directory = read_string(data, offset);
-
-            const auto argument_count = read_value<uint64_t>(data, offset);
-            if (argument_count > maximum_collection_size)
-            {
-                throw std::runtime_error("Managed process request contains too many arguments");
-            }
-            request.arguments.reserve(static_cast<size_t>(argument_count));
-            for (uint64_t i = 0; i < argument_count; ++i)
-            {
-                request.arguments.push_back(read_string(data, offset));
-            }
-
-            const auto environment_count = read_value<uint64_t>(data, offset);
-            if (environment_count > maximum_collection_size)
-            {
-                throw std::runtime_error("Managed process request contains too many environment variables");
-            }
-            request.environment.reserve(static_cast<size_t>(environment_count));
-            for (uint64_t i = 0; i < environment_count; ++i)
-            {
-                auto name = read_string(data, offset);
-                auto value = read_string(data, offset);
-                request.environment.insert_or_assign(std::move(name), std::move(value));
-            }
-
-            request.process_id = read_value<uint32_t>(data, offset);
-            request.thread_id = read_value<uint32_t>(data, offset);
-
-            if (offset != data.size())
-            {
-                throw std::runtime_error("Invalid managed process request size");
-            }
-            return request;
+            return socket.send(builder.GetBufferPointer(), builder.GetSize());
         }
 
         std::optional<std::string> receive_exact(network::tcp_client_socket& socket, const size_t size)
@@ -202,62 +97,136 @@ namespace sogen
             return data;
         }
 
-        bool send_message(network::tcp_client_socket& socket, const message_type type, const std::string_view payload = {})
+        std::optional<ProcessProtocol::MessageT> decode_message(std::string data)
         {
-            if (payload.size() > maximum_payload_size)
+            flatbuffers::Verifier verifier{reinterpret_cast<const uint8_t*>(data.data()), data.size()};
+            if (!ProcessProtocol::VerifySizePrefixedMessageBuffer(verifier))
             {
-                return false;
+                return std::nullopt;
             }
-            const message_header header{
-                .magic = protocol_magic, .version = protocol_version, .type = type, .size = static_cast<uint32_t>(payload.size())};
-            return socket.send(&header, sizeof(header)) && socket.send(payload);
+
+            ProcessProtocol::MessageT message{};
+            ProcessProtocol::GetSizePrefixedMessage(data.data())->UnPackTo(&message);
+            return message;
         }
 
-        std::optional<std::pair<message_type, std::string>> receive_message(network::tcp_client_socket& socket)
+        std::optional<ProcessProtocol::MessageT> receive_message(network::tcp_client_socket& socket)
         {
-            const auto header_data = receive_exact(socket, sizeof(message_header));
-            if (!header_data)
+            auto size_data = receive_exact(socket, sizeof(flatbuffers::uoffset_t));
+            if (!size_data)
             {
                 return std::nullopt;
             }
 
-            message_header header{};
-            memcpy(&header, header_data->data(), sizeof(header));
-            if (header.magic != protocol_magic || header.version != protocol_version || header.size > maximum_payload_size)
+            const auto size = flatbuffers::ReadScalar<flatbuffers::uoffset_t>(size_data->data());
+            if (size > maximum_payload_size)
             {
                 return std::nullopt;
             }
 
-            auto payload = receive_exact(socket, header.size);
-            if (!payload)
+            auto data = receive_exact(socket, size);
+            if (!data)
             {
                 return std::nullopt;
             }
-            return std::pair{header.type, std::move(*payload)};
+            size_data->append(*data);
+            return decode_message(std::move(*size_data));
         }
 
-        std::optional<std::pair<message_type, std::string>> receive_message_until(network::tcp_client_socket& socket,
-                                                                                  const std::chrono::steady_clock::time_point deadline)
+        std::optional<ProcessProtocol::MessageT> receive_message_until(network::tcp_client_socket& socket,
+                                                                       const std::chrono::steady_clock::time_point deadline)
         {
-            const auto header_data = receive_exact_until(socket, sizeof(message_header), deadline);
-            if (!header_data)
+            auto size_data = receive_exact_until(socket, sizeof(flatbuffers::uoffset_t), deadline);
+            if (!size_data)
             {
                 return std::nullopt;
             }
 
-            message_header header{};
-            memcpy(&header, header_data->data(), sizeof(header));
-            if (header.magic != protocol_magic || header.version != protocol_version || header.size > maximum_payload_size)
+            const auto size = flatbuffers::ReadScalar<flatbuffers::uoffset_t>(size_data->data());
+            if (size > maximum_payload_size)
             {
                 return std::nullopt;
             }
 
-            auto payload = receive_exact_until(socket, header.size, deadline);
-            if (!payload)
+            auto data = receive_exact_until(socket, size, deadline);
+            if (!data)
             {
                 return std::nullopt;
             }
-            return std::pair{header.type, std::move(*payload)};
+            size_data->append(*data);
+            return decode_message(std::move(*size_data));
+        }
+
+        ProcessProtocol::ProcessError encode_error(const process_error error)
+        {
+            return static_cast<ProcessProtocol::ProcessError>(error);
+        }
+
+        process_error decode_error(const ProcessProtocol::ProcessError error)
+        {
+            return static_cast<process_error>(error);
+        }
+
+        ProcessProtocol::MemoryPermission encode_permission(const memory_permission permission)
+        {
+            return static_cast<ProcessProtocol::MemoryPermission>(permission);
+        }
+
+        memory_permission decode_permission(const ProcessProtocol::MemoryPermission permission)
+        {
+            return static_cast<memory_permission>(permission);
+        }
+
+        ProcessProtocol::ProcessMemoryResponseT encode_memory_result(const process_memory_result& result)
+        {
+            return {.error = encode_error(result.error),
+                    .address = result.address,
+                    .size = result.size,
+                    .permission = encode_permission(result.permission)};
+        }
+
+        process_memory_result decode_memory_result(const ProcessProtocol::ProcessMemoryResponseT& result)
+        {
+            return {.address = result.address,
+                    .size = result.size,
+                    .permission = decode_permission(result.permission),
+                    .error = decode_error(result.error)};
+        }
+
+        ProcessProtocol::ProcessCreateRequestT encode_create_request(const process_create_request& request)
+        {
+            ProcessProtocol::ProcessCreateRequestT result{};
+            result.application = request.application;
+            result.argument0 = request.argument0;
+            result.working_directory = request.working_directory;
+            result.arguments = request.arguments;
+            result.process_id = request.process_id;
+            result.thread_id = request.thread_id;
+            result.environment.reserve(request.environment.size());
+            for (const auto& [name, value] : request.environment)
+            {
+                auto variable = std::make_unique<ProcessProtocol::EnvironmentVariableT>();
+                variable->name = name;
+                variable->value = value;
+                result.environment.push_back(std::move(variable));
+            }
+            return result;
+        }
+
+        process_create_request decode_create_request(ProcessProtocol::ProcessCreateRequestT request)
+        {
+            process_create_request result{.application = std::move(request.application),
+                                          .argument0 = std::move(request.argument0),
+                                          .working_directory = std::move(request.working_directory),
+                                          .arguments = std::move(request.arguments),
+                                          .process_id = request.process_id,
+                                          .thread_id = request.thread_id};
+            result.environment.reserve(request.environment.size());
+            for (auto& variable : request.environment)
+            {
+                result.environment.insert_or_assign(std::move(variable->name), std::move(variable->value));
+            }
+            return result;
         }
 
         std::string make_token()
@@ -343,14 +312,13 @@ namespace sogen
 
     bool managed_process_connection::wait_for_resume(managed_process_target& target)
     {
-        std::string started{};
-        append_value(started, target.native_environment());
-        append_value(started, target.compatibility_environment());
-        append_value(started, target.native_parameters());
-        append_value(started, target.compatibility_parameters());
+        ProcessProtocol::ProcessStartedT started{.native_environment = target.native_environment(),
+                                                 .compatibility_environment = target.compatibility_environment(),
+                                                 .native_parameters = target.native_parameters(),
+                                                 .compatibility_parameters = target.compatibility_parameters()};
         {
             const std::scoped_lock lock(this->send_mutex_);
-            if (!send_message(this->socket_, message_type::started, started))
+            if (!send_message(this->socket_, std::move(started)))
             {
                 return false;
             }
@@ -369,11 +337,12 @@ namespace sogen
     {
         while (const auto message = receive_message(this->socket_))
         {
-            if (message->first == message_type::resume)
+            switch (message->payload.type)
             {
+            case ProcessProtocol::MessagePayload_ResumeProcessRequest: {
                 {
                     const std::scoped_lock lock(this->send_mutex_);
-                    if (!send_message(this->socket_, message_type::response))
+                    if (!send_message(this->socket_, ProcessProtocol::ResumeProcessResponseT{}))
                     {
                         return false;
                     }
@@ -382,87 +351,72 @@ namespace sogen
                 {
                     return true;
                 }
-                continue;
+                break;
             }
-
-            size_t offset = 0;
-            std::string response{};
-            process_error error = process_error::internal_failure;
-            try
-            {
-                if (message->first == message_type::allocate_memory)
+            case ProcessProtocol::MessagePayload_AllocateMemoryRequest: {
+                const auto& request = *message->payload.AsAllocateMemoryRequest();
+                const auto result = target.allocate_memory(request.address, request.size, decode_permission(request.permission),
+                                                           request.reserve, request.commit);
                 {
-                    const auto address = read_value<uint64_t>(message->second, offset);
-                    const auto size = read_value<uint64_t>(message->second, offset);
-                    const auto permission = read_value<memory_permission>(message->second, offset);
-                    const auto reserve = read_value<bool>(message->second, offset);
-                    const auto commit = read_value<bool>(message->second, offset);
-                    const auto result = target.allocate_memory(address, size, permission, reserve, commit);
-                    append_value(response, result.error);
-                    append_value(response, result.address);
-                    append_value(response, result.size);
-                    append_value(response, result.permission);
-                }
-                else if (message->first == message_type::free_memory)
-                {
-                    const auto address = read_value<uint64_t>(message->second, offset);
-                    const auto size = read_value<uint64_t>(message->second, offset);
-                    const auto release = read_value<bool>(message->second, offset);
-                    append_value(response, target.free_memory(address, size, release));
-                }
-                else if (message->first == message_type::protect_memory)
-                {
-                    const auto address = read_value<uint64_t>(message->second, offset);
-                    const auto size = read_value<uint64_t>(message->second, offset);
-                    const auto permission = read_value<memory_permission>(message->second, offset);
-                    const auto result = target.protect_memory(address, size, permission);
-                    append_value(response, result.error);
-                    append_value(response, result.address);
-                    append_value(response, result.size);
-                    append_value(response, result.permission);
-                }
-                else if (message->first == message_type::read_memory)
-                {
-                    const auto address = read_value<uint64_t>(message->second, offset);
-                    const auto size = read_value<uint64_t>(message->second, offset);
-                    const auto result = target.read_memory(address, size);
-                    append_value(response, result.error);
-                    append_value(response, static_cast<uint64_t>(result.data.size()));
-                    response.append(reinterpret_cast<const char*>(result.data.data()), result.data.size());
-                }
-                else if (message->first == message_type::write_memory)
-                {
-                    const auto address = read_value<uint64_t>(message->second, offset);
-                    const auto size = read_value<uint64_t>(message->second, offset);
-                    if (size > message->second.size() - offset)
+                    const std::scoped_lock lock(this->send_mutex_);
+                    if (!send_message(this->socket_, encode_memory_result(result)))
                     {
-                        throw std::runtime_error("Invalid managed process memory write");
+                        return false;
                     }
-                    const auto data =
-                        std::span{reinterpret_cast<const uint8_t*>(message->second.data() + offset), static_cast<size_t>(size)};
-                    const auto result = target.write_memory(address, data);
-                    append_value(response, result.error);
-                    append_value(response, result.address);
-                    append_value(response, result.size);
-                    append_value(response, result.permission);
                 }
-                else
-                {
-                    append_value(response, error);
-                }
+                break;
             }
-            catch (...)
-            {
-                response.clear();
-                append_value(response, error);
-            }
-
-            {
-                const std::scoped_lock lock(this->send_mutex_);
-                if (!send_message(this->socket_, message_type::response, response))
+            case ProcessProtocol::MessagePayload_FreeMemoryRequest: {
+                const auto& request = *message->payload.AsFreeMemoryRequest();
+                const auto error = target.free_memory(request.address, request.size, request.release);
                 {
-                    return false;
+                    const std::scoped_lock lock(this->send_mutex_);
+                    if (!send_message(this->socket_, ProcessProtocol::ProcessErrorResponseT{.error = encode_error(error)}))
+                    {
+                        return false;
+                    }
                 }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_ProtectMemoryRequest: {
+                const auto& request = *message->payload.AsProtectMemoryRequest();
+                const auto result = target.protect_memory(request.address, request.size, decode_permission(request.permission));
+                {
+                    const std::scoped_lock lock(this->send_mutex_);
+                    if (!send_message(this->socket_, encode_memory_result(result)))
+                    {
+                        return false;
+                    }
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_ReadMemoryRequest: {
+                const auto& request = *message->payload.AsReadMemoryRequest();
+                auto result = target.read_memory(request.address, request.size);
+                {
+                    const std::scoped_lock lock(this->send_mutex_);
+                    if (!send_message(this->socket_, ProcessProtocol::ReadMemoryResponseT{.error = encode_error(result.error),
+                                                                                          .data = std::move(result.data)}))
+                    {
+                        return false;
+                    }
+                }
+                break;
+            }
+            case ProcessProtocol::MessagePayload_WriteMemoryRequest: {
+                const auto& request = *message->payload.AsWriteMemoryRequest();
+                const auto result = target.write_memory(request.address, request.data);
+                {
+                    const std::scoped_lock lock(this->send_mutex_);
+                    if (!send_message(this->socket_, encode_memory_result(result)))
+                    {
+                        return false;
+                    }
+                }
+                break;
+            }
+            default:
+                return false;
             }
         }
         return false;
@@ -470,12 +424,10 @@ namespace sogen
 
     bool managed_process_connection::notify_exit(const uint64_t exit_code)
     {
-        std::string payload{};
-        append_value(payload, exit_code);
         bool sent{};
         {
             const std::scoped_lock lock(this->send_mutex_);
-            sent = send_message(this->socket_, message_type::exited, payload);
+            sent = send_message(this->socket_, ProcessProtocol::ProcessExitedT{.exit_code = exit_code});
         }
         this->disconnect();
         return sent;
@@ -493,17 +445,17 @@ namespace sogen
     managed_process_connection connect_managed_process(const uint16_t port, const std::string& token)
     {
         network::tcp_client_socket socket{AF_INET};
-        if (!socket.connect(network::address{"127.0.0.1", port}) || !send_message(socket, message_type::hello, token))
+        if (!socket.connect(network::address{"127.0.0.1", port}) || !send_message(socket, ProcessProtocol::HelloT{.token = token}))
         {
             throw std::runtime_error("Connecting to the managed process parent failed");
         }
 
         const auto message = receive_message(socket);
-        if (!message || message->first != message_type::create_request)
+        if (!message || message->payload.type != ProcessProtocol::MessagePayload_ProcessCreateRequest)
         {
             throw std::runtime_error("Receiving the managed process request failed");
         }
-        return {std::move(socket), deserialize_request(message->second)};
+        return {std::move(socket), decode_create_request(std::move(*message->payload.AsProcessCreateRequest()))};
     }
 
     subprocess_process_manager::subprocess_process_manager(std::filesystem::path executable, argument_factory arguments)
@@ -664,20 +616,20 @@ namespace sogen
 
             const auto candidate_deadline = std::min(deadline, std::chrono::steady_clock::now() + std::chrono::milliseconds(250));
             auto hello = receive_message_until(candidate, candidate_deadline);
-            if (hello && hello->first == message_type::hello && hello->second == token)
+            if (hello && hello->payload.type == ProcessProtocol::MessagePayload_Hello && hello->payload.AsHello()->token == token)
             {
                 entry->control = std::move(candidate);
                 break;
             }
         }
 
-        if (!entry->control || !send_message(entry->control, message_type::create_request, serialize_request(request)))
+        if (!entry->control || !send_message(entry->control, encode_create_request(request)))
         {
             return {.error = process_error::communication_failure};
         }
 
         const auto started = receive_message_until(entry->control, deadline);
-        if (!started || started->first != message_type::started)
+        if (!started || started->payload.type != ProcessProtocol::MessagePayload_ProcessStarted)
         {
             return {.error = process_error::internal_failure};
         }
@@ -694,20 +646,12 @@ namespace sogen
             }
             this->processes_.emplace(handle.value, entry);
         }
-        size_t offset = 0;
-        const auto native_environment = read_value<uint64_t>(started->second, offset);
-        const auto compatibility_environment = read_value<uint64_t>(started->second, offset);
-        const auto native_parameters = read_value<uint64_t>(started->second, offset);
-        const auto compatibility_parameters = read_value<uint64_t>(started->second, offset);
-        if (offset != started->second.size())
-        {
-            return {.error = process_error::communication_failure};
-        }
+        const auto& process_started = *started->payload.AsProcessStarted();
         return {.process = handle,
-                .native_environment = native_environment,
-                .compatibility_environment = compatibility_environment,
-                .native_parameters = native_parameters,
-                .compatibility_parameters = compatibility_parameters};
+                .native_environment = process_started.native_environment,
+                .compatibility_environment = process_started.compatibility_environment,
+                .native_parameters = process_started.native_parameters,
+                .compatibility_parameters = process_started.compatibility_parameters};
     }
 
     process_error subprocess_process_manager::resume_process(const managed_process process)
@@ -718,12 +662,16 @@ namespace sogen
             return process_error::invalid_process;
         }
         const std::scoped_lock lock(entry->mutex);
-        if (!send_message(entry->control, message_type::resume))
+        if (!send_message(entry->control, ProcessProtocol::ResumeProcessRequestT{}))
         {
             return process_error::communication_failure;
         }
         const auto response = receive_message(entry->control);
-        return response && response->first == message_type::response ? process_error::none : process_error::communication_failure;
+        if (!response || response->payload.type != ProcessProtocol::MessagePayload_ResumeProcessResponse)
+        {
+            return process_error::communication_failure;
+        }
+        return decode_error(response->payload.AsResumeProcessResponse()->error);
     }
 
     process_memory_result subprocess_process_manager::allocate_memory(const managed_process process, const uint64_t address,
@@ -735,36 +683,20 @@ namespace sogen
         {
             return {.error = process_error::invalid_process};
         }
-        std::string payload{};
-        append_value(payload, address);
-        append_value(payload, size);
-        append_value(payload, permission);
-        append_value(payload, reserve);
-        append_value(payload, commit);
         const std::scoped_lock lock(entry->mutex);
-        if (!send_message(entry->control, message_type::allocate_memory, payload))
+        if (!send_message(
+                entry->control,
+                ProcessProtocol::AllocateMemoryRequestT{
+                    .address = address, .size = size, .permission = encode_permission(permission), .reserve = reserve, .commit = commit}))
         {
             return {.error = process_error::communication_failure};
         }
         const auto response = receive_message(entry->control);
-        if (!response || response->first != message_type::response)
+        if (!response || response->payload.type != ProcessProtocol::MessagePayload_ProcessMemoryResponse)
         {
             return {.error = process_error::communication_failure};
         }
-        try
-        {
-            size_t offset = 0;
-            process_memory_result result{};
-            result.error = read_value<process_error>(response->second, offset);
-            result.address = read_value<uint64_t>(response->second, offset);
-            result.size = read_value<uint64_t>(response->second, offset);
-            result.permission = read_value<memory_permission>(response->second, offset);
-            return offset == response->second.size() ? result : process_memory_result{.error = process_error::communication_failure};
-        }
-        catch (...)
-        {
-            return {.error = process_error::communication_failure};
-        }
+        return decode_memory_result(*response->payload.AsProcessMemoryResponse());
     }
 
     process_error subprocess_process_manager::free_memory(const managed_process process, const uint64_t address, const uint64_t size,
@@ -775,30 +707,17 @@ namespace sogen
         {
             return process_error::invalid_process;
         }
-        std::string payload{};
-        append_value(payload, address);
-        append_value(payload, size);
-        append_value(payload, release);
         const std::scoped_lock lock(entry->mutex);
-        if (!send_message(entry->control, message_type::free_memory, payload))
+        if (!send_message(entry->control, ProcessProtocol::FreeMemoryRequestT{.address = address, .size = size, .release = release}))
         {
             return process_error::communication_failure;
         }
         const auto response = receive_message(entry->control);
-        if (!response || response->first != message_type::response)
+        if (!response || response->payload.type != ProcessProtocol::MessagePayload_ProcessErrorResponse)
         {
             return process_error::communication_failure;
         }
-        try
-        {
-            size_t offset = 0;
-            const auto error = read_value<process_error>(response->second, offset);
-            return offset == response->second.size() ? error : process_error::communication_failure;
-        }
-        catch (...)
-        {
-            return process_error::communication_failure;
-        }
+        return decode_error(response->payload.AsProcessErrorResponse()->error);
     }
 
     process_memory_result subprocess_process_manager::protect_memory(const managed_process process, const uint64_t address,
@@ -809,34 +728,18 @@ namespace sogen
         {
             return {.error = process_error::invalid_process};
         }
-        std::string payload{};
-        append_value(payload, address);
-        append_value(payload, size);
-        append_value(payload, permission);
         const std::scoped_lock lock(entry->mutex);
-        if (!send_message(entry->control, message_type::protect_memory, payload))
+        if (!send_message(entry->control, ProcessProtocol::ProtectMemoryRequestT{
+                                              .address = address, .size = size, .permission = encode_permission(permission)}))
         {
             return {.error = process_error::communication_failure};
         }
         const auto response = receive_message(entry->control);
-        if (!response || response->first != message_type::response)
+        if (!response || response->payload.type != ProcessProtocol::MessagePayload_ProcessMemoryResponse)
         {
             return {.error = process_error::communication_failure};
         }
-        try
-        {
-            size_t offset = 0;
-            process_memory_result result{};
-            result.error = read_value<process_error>(response->second, offset);
-            result.address = read_value<uint64_t>(response->second, offset);
-            result.size = read_value<uint64_t>(response->second, offset);
-            result.permission = read_value<memory_permission>(response->second, offset);
-            return offset == response->second.size() ? result : process_memory_result{.error = process_error::communication_failure};
-        }
-        catch (...)
-        {
-            return {.error = process_error::communication_failure};
-        }
+        return decode_memory_result(*response->payload.AsProcessMemoryResponse());
     }
 
     process_memory_read_result subprocess_process_manager::read_memory(const managed_process process, const uint64_t address,
@@ -847,74 +750,41 @@ namespace sogen
         {
             return {.error = process_error::invalid_process};
         }
-        std::string payload{};
-        append_value(payload, address);
-        append_value(payload, size);
         const std::scoped_lock lock(entry->mutex);
-        if (!send_message(entry->control, message_type::read_memory, payload))
+        if (!send_message(entry->control, ProcessProtocol::ReadMemoryRequestT{.address = address, .size = size}))
         {
             return {.error = process_error::communication_failure};
         }
         const auto response = receive_message(entry->control);
-        if (!response || response->first != message_type::response)
+        if (!response || response->payload.type != ProcessProtocol::MessagePayload_ReadMemoryResponse)
         {
             return {.error = process_error::communication_failure};
         }
-        try
-        {
-            size_t offset = 0;
-            process_memory_read_result result{};
-            result.error = read_value<process_error>(response->second, offset);
-            const auto data_size = read_value<uint64_t>(response->second, offset);
-            if (data_size > response->second.size() - offset)
-            {
-                return {.error = process_error::communication_failure};
-            }
-            result.data.assign(response->second.begin() + static_cast<ptrdiff_t>(offset), response->second.end());
-            return result;
-        }
-        catch (...)
-        {
-            return {.error = process_error::communication_failure};
-        }
+        auto result = std::move(*response->payload.AsReadMemoryResponse());
+        return {.data = std::move(result.data), .error = decode_error(result.error)};
     }
 
     process_memory_result subprocess_process_manager::write_memory(const managed_process process, const uint64_t address,
                                                                    const std::span<const uint8_t> data)
     {
         const auto entry = this->find_process(process);
-        if (!entry || data.size() > maximum_payload_size - sizeof(address) - sizeof(uint64_t))
+        if (!entry || data.size() > maximum_payload_size)
         {
             return {.error = entry ? process_error::resource_limit : process_error::invalid_process};
         }
-        std::string payload{};
-        append_value(payload, address);
-        append_value(payload, static_cast<uint64_t>(data.size()));
-        payload.append(reinterpret_cast<const char*>(data.data()), data.size());
+        ProcessProtocol::WriteMemoryRequestT request{.address = address};
+        request.data.assign(data.begin(), data.end());
         const std::scoped_lock lock(entry->mutex);
-        if (!send_message(entry->control, message_type::write_memory, payload))
+        if (!send_message(entry->control, std::move(request)))
         {
             return {.error = process_error::communication_failure};
         }
         const auto response = receive_message(entry->control);
-        if (!response || response->first != message_type::response)
+        if (!response || response->payload.type != ProcessProtocol::MessagePayload_ProcessMemoryResponse)
         {
             return {.error = process_error::communication_failure};
         }
-        try
-        {
-            size_t offset = 0;
-            process_memory_result result{};
-            result.error = read_value<process_error>(response->second, offset);
-            result.address = read_value<uint64_t>(response->second, offset);
-            result.size = read_value<uint64_t>(response->second, offset);
-            result.permission = read_value<memory_permission>(response->second, offset);
-            return offset == response->second.size() ? result : process_memory_result{.error = process_error::communication_failure};
-        }
-        catch (...)
-        {
-            return {.error = process_error::communication_failure};
-        }
+        return decode_memory_result(*response->payload.AsProcessMemoryResponse());
     }
 
     process_error subprocess_process_manager::terminate_process(const managed_process process, const uint64_t exit_code)
@@ -957,15 +827,10 @@ namespace sogen
         if (entry->host_exit_status)
         {
             const auto message = receive_message(entry->control);
-            if (message && message->first == message_type::exited)
+            if (message && message->payload.type == ProcessProtocol::MessagePayload_ProcessExited)
             {
-                size_t offset = 0;
-                const auto exit_code = read_value<uint64_t>(message->second, offset);
-                if (offset == message->second.size())
-                {
-                    entry->exit = process_exit{.kind = process_exit_kind::exited, .code = exit_code};
-                    return {.status = entry->exit};
-                }
+                entry->exit = process_exit{.kind = process_exit_kind::exited, .code = message->payload.AsProcessExited()->exit_code};
+                return {.status = entry->exit};
             }
         }
 
