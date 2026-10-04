@@ -1913,7 +1913,7 @@ namespace sogen::fex
             }
         }
 
-        void release_guest_address_range(uint64_t address, size_t size) override
+        void release_guest_address_range(uint64_t address, uint64_t size) override
         {
             // The caller guarantees the range holds no reserved guest ranges (see memory_interface), so
             // every host page wholly inside it is a stale claim and can go back to the OS. Boundary
