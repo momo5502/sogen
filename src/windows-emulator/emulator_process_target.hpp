@@ -49,11 +49,16 @@ namespace sogen
                 uint64_t result = address;
                 if (reserve)
                 {
-                    result = address
-                                 ? (this->emulator_.memory.allocate_memory(address, static_cast<size_t>(size), emulator_permission, !commit)
-                                        ? address
-                                        : 0)
-                                 : this->emulator_.memory.allocate_memory(static_cast<size_t>(size), emulator_permission, !commit);
+                    if (address)
+                    {
+                        result = this->emulator_.memory.allocate_memory(address, static_cast<size_t>(size), emulator_permission, !commit)
+                                     ? address
+                                     : 0;
+                    }
+                    else
+                    {
+                        result = this->emulator_.memory.allocate_memory(static_cast<size_t>(size), emulator_permission, !commit);
+                    }
                 }
                 else if (commit && address && this->emulator_.memory.commit_memory(address, static_cast<size_t>(size), emulator_permission))
                 {
@@ -61,10 +66,15 @@ namespace sogen
                 }
                 else if (commit)
                 {
-                    result =
-                        address ? (this->emulator_.memory.allocate_memory(address, static_cast<size_t>(size), emulator_permission) ? address
-                                                                                                                                   : 0)
-                                : this->emulator_.memory.allocate_memory(static_cast<size_t>(size), emulator_permission);
+                    if (address)
+                    {
+                        result =
+                            this->emulator_.memory.allocate_memory(address, static_cast<size_t>(size), emulator_permission) ? address : 0;
+                    }
+                    else
+                    {
+                        result = this->emulator_.memory.allocate_memory(static_cast<size_t>(size), emulator_permission);
+                    }
                 }
                 else
                 {
