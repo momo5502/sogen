@@ -1,7 +1,7 @@
 #include "executable_path.hpp"
 
 #if defined(_WIN32)
-#include <Windows.h>
+#include <windows.h>
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>
 #endif
