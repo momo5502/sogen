@@ -678,7 +678,6 @@ namespace sogen
                 .auto_break_before_call = options.break_call,
             };
 
-            process_manager* manager_interface = nullptr;
             std::unique_ptr<process_manager> manager{};
 
 #ifndef OS_EMSCRIPTEN
@@ -690,10 +689,8 @@ namespace sogen
                 });
             }
 #endif
-            manager_interface = manager.get();
-
             const auto concise_logging = options.concise_logging;
-            const auto win_emu = setup_emulator(options, args, emulator_interfaces{.processes = manager_interface});
+            const auto win_emu = setup_emulator(options, args, emulator_interfaces{.processes = manager.get()});
             apply_registry_files(*win_emu, options);
 #ifndef OS_EMSCRIPTEN
             std::unique_ptr<emulator_process_target> managed_target{};
