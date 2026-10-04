@@ -143,13 +143,18 @@ namespace sogen
                                             const ACCESS_MASK /*thread_desired_access*/,
                                             const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*process_object_attributes*/,
                                             const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*thread_object_attributes*/,
-                                            const ULONG /*process_flags*/, const ULONG /*thread_flags*/,
+                                            const ULONG /*process_flags*/, const ULONG thread_flags,
                                             const emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_parameters,
                                             const emulator_object<PS_CREATE_INFO<EmulatorTraits<Emu64>>> create_info,
                                             const emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list)
         {
             auto* manager = c.win_emu.processes();
             if (!manager)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            if ((thread_flags & THREAD_CREATE_FLAGS_CREATE_SUSPENDED) != 0)
             {
                 return STATUS_NOT_SUPPORTED;
             }
