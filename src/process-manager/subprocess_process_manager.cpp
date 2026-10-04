@@ -573,8 +573,8 @@ namespace sogen
         const auto [host_process_id, process_id_error] = entry->process.pid();
         if (process_id_error || host_process_id <= 0)
         {
-            (void)entry->process.kill();
-            (void)entry->process.wait(reproc::infinite);
+            std::ignore = entry->process.kill();
+            std::ignore = entry->process.wait(reproc::infinite);
             return {.error = process_error::internal_failure};
         }
         request.process_id = static_cast<uint32_t>(host_process_id) * 2;
