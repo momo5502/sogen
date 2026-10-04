@@ -1,6 +1,13 @@
 set(UNICORN_ARCH "x86" CACHE STRING "")
 add_subdirectory(unicorn)
 
+if(NOT EMSCRIPTEN)
+  set(REPROC++ ON CACHE BOOL "" FORCE)
+  set(REPROC_INSTALL OFF CACHE BOOL "" FORCE)
+  set(REPROC_OBJECT_LIBRARIES ON CACHE BOOL "" FORCE)
+  add_subdirectory(reproc)
+endif()
+
 ##########################################
 
 option(BASE64_ENABLE_TESTING "" OFF)

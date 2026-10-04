@@ -332,7 +332,8 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (token_information_class == TokenIsAppContainer || token_information_class == TokenIsAppSilo)
+            if (token_information_class == TokenSandBoxInert || token_information_class == TokenHasRestrictions ||
+                token_information_class == TokenIsAppContainer || token_information_class == TokenIsAppSilo)
             {
                 constexpr auto required_size = sizeof(ULONG);
                 return_length.write(required_size);
@@ -385,7 +386,9 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (token_information_class == TokenSecurityAttributes)
+            if (token_information_class == TokenUserClaimAttributes || token_information_class == TokenDeviceClaimAttributes ||
+                token_information_class == TokenRestrictedUserClaimAttributes ||
+                token_information_class == TokenRestrictedDeviceClaimAttributes || token_information_class == TokenSecurityAttributes)
             {
                 constexpr auto required_size = sizeof(TOKEN_SECURITY_ATTRIBUTES_INFORMATION);
                 return_length.write(required_size);

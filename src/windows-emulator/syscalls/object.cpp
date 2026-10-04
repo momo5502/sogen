@@ -24,7 +24,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (value.is_pseudo)
+            if (value.is_pseudo || h == GUEST_PROCESS_HANDLE)
             {
                 return STATUS_SUCCESS;
             }
@@ -145,6 +145,7 @@ namespace sogen
             case handle_types::port:
                 return u"Port";
             case handle_types::thread:
+            case handle_types::managed_thread:
                 return u"Thread";
             case handle_types::registry:
                 return u"Registry";
@@ -303,7 +304,7 @@ namespace sogen
                     break;
                 }
                 case handle_types::process: {
-                    if (effective_handle != GUEST_PROCESS_HANDLE)
+                    if (!c.proc.processes.get(effective_handle))
                     {
                         return STATUS_INVALID_HANDLE;
                     }
@@ -313,6 +314,14 @@ namespace sogen
                 case handle_types::thread: {
                     const auto* thread = c.proc.threads.get(effective_handle);
                     if (!thread)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    break;
+                }
+                case handle_types::managed_thread: {
+                    if (!c.proc.managed_threads.get(effective_handle))
                     {
                         return STATUS_INVALID_HANDLE;
                     }
@@ -500,7 +509,10 @@ namespace sogen
             {
             case handle_types::process:
                 // The synthetic Steam process never signals, so a liveness wait times out ("alive").
-                return (h == GUEST_PROCESS_HANDLE || h == STEAM_PROCESS_HANDLE) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+                return (h == STEAM_PROCESS_HANDLE || c.proc.processes.get(h)) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+
+            case handle_types::managed_thread:
+                return validate_handle_in_store(c.proc.managed_threads);
 
             case handle_types::file:
                 if (h.value.is_pseudo)

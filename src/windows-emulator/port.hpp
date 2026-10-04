@@ -376,12 +376,22 @@ namespace sogen
 
         virtual lpc_message_result handle_message(windows_emulator& win_emu, const lpc_message_context& c);
 
+        virtual bool accepts_send_only_messages() const
+        {
+            return false;
+        }
+
         virtual lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) = 0;
     };
 
     struct rpc_port : port
     {
         lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) override;
+
+        bool accepts_send_only_messages() const override
+        {
+            return true;
+        }
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
