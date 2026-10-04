@@ -51,6 +51,15 @@ namespace sogen
 #endif
         }
 
+        std::filesystem::path get_sandbox_executable()
+        {
+#ifdef _WIN32
+            return get_current_binary_dir() / "sandbox.exe";
+#else
+            return get_current_binary_dir() / "sandbox";
+#endif
+        }
+
         struct analysis_options : analysis_settings
         {
             mutable bool use_gdb{false};
@@ -674,9 +683,9 @@ namespace sogen
             const auto backend = options.backend.value_or(get_x86_64_emulator_backend_from_environment());
             if (backend == backend_type::whp)
             {
-                manager = std::make_unique<subprocess_process_manager>(
-                    get_current_binary_dir() / "sandbox.exe",
-                    [&](const auto port, const auto& token) { return create_managed_process_arguments(options, port, token); });
+                manager = std::make_unique<subprocess_process_manager>(get_sandbox_executable(), [&](const auto port, const auto& token) {
+                    return create_managed_process_arguments(options, port, token);
+                });
             }
 #endif
             manager_interface = manager.get();

@@ -799,7 +799,7 @@ namespace sogen
                     {
                         break;
                     }
-                    std::copy(result.data.begin(), result.data.end(), memory.begin());
+                    std::ranges::copy(result.data, memory.begin());
                 }
 
                 if (!c.emu.try_write_memory(current_buffer, memory.data(), chunk_size))
