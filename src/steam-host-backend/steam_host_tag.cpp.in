@@ -20,10 +20,10 @@ extern "C" int sogen_steam_dispatch_@STEAM_TAG@(const char* version, void* iface
                                                 const unsigned char* in, uint32_t in_len, unsigned char* out,
                                                 uint32_t out_cap, uint32_t* out_len, uint64_t* ret)
 {
-    sogen::steam_host::steam_host_reader reader{in, in + in_len};
+    sogen::steam_host::steam_host_reader reader{.p = in, .end = in + in_len};
     std::vector<unsigned char> reply;
     uint64_t local_ret = 0;
-    sogen::steam_host::steam_host_writer writer{reply, local_ret};
+    sogen::steam_host::steam_host_writer writer{.out = reply, .ret = local_ret};
 
     const int status = sogen::steam_host::@STEAM_TAG@::dispatch(version, iface, method, reader, writer);
 

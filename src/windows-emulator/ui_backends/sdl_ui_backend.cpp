@@ -1303,6 +1303,7 @@ namespace sogen
                 using result_type = std::invoke_result_t<Fn>;
                 static_assert(!std::is_void_v<result_type>);
 
+                auto task_ptr = std::make_shared<Fn>(std::move(task));
                 std::future<result_type> future;
                 bool run_direct{};
                 {
@@ -1312,10 +1313,10 @@ namespace sogen
                     {
                         auto promise = std::make_shared<std::promise<result_type>>();
                         future = promise->get_future();
-                        this->commands_.emplace_back([task = std::move(task), promise = std::move(promise)]() mutable {
+                        this->commands_.emplace_back([task_ptr, promise = std::move(promise)]() mutable {
                             try
                             {
-                                promise->set_value(task());
+                                promise->set_value((*task_ptr)());
                             }
                             catch (...)
                             {
@@ -1325,7 +1326,7 @@ namespace sogen
                     }
                 }
 
-                return run_direct ? task() : future.get();
+                return run_direct ? (*task_ptr)() : future.get();
             }
 
             void drain_commands()
