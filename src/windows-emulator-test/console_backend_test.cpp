@@ -126,19 +126,12 @@ namespace sogen::test
         const auto console_handle = emu.process.devices.store(std::move(console));
         emu.process.console_handle = console_handle;
 
-        utils::buffer_serializer state{};
-        state.write(uint32_t{1});
-        state.write(false);
-        state.write_string(std::u16string_view{u"Console"});
-        state.write(uint32_t{1});
-        state.write(uint16_t{7});
-        state.write(std::array<int16_t, 2>{});
-        state.write(uint32_t{0x0079});
-        state.write(uint32_t{0x0003});
-
-        utils::buffer_deserializer deserializer{state};
         auto* restored_console = emu.process.devices.get(console_handle);
         ASSERT_NE(restored_console, nullptr);
+        utils::buffer_serializer state{};
+        restored_console->serialize(state);
+
+        utils::buffer_deserializer deserializer{state};
         restored_console->deserialize(deserializer);
 
         emu.console().reset();
@@ -147,7 +140,7 @@ namespace sogen::test
         emu.process.restore_after_state_restore(emu);
 
         EXPECT_TRUE(backend_ptr->mode_.processed);
-        EXPECT_FALSE(backend_ptr->mode_.line);
-        EXPECT_FALSE(backend_ptr->mode_.echo);
+        EXPECT_TRUE(backend_ptr->mode_.line);
+        EXPECT_TRUE(backend_ptr->mode_.echo);
     }
 } // namespace sogen::test

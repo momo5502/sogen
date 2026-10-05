@@ -85,7 +85,7 @@ namespace sogen::sspi
         }
 
         static void export_keys(void* context, const mbedtls_ssl_key_export_type type, const unsigned char* secret,
-                                const size_t secret_size, const unsigned char client[32], const unsigned char server[32],
+                                const size_t secret_size, const unsigned char* client, const unsigned char* server,
                                 const mbedtls_tls_prf_types key_prf)
         {
             auto& self = *static_cast<impl*>(context);
@@ -187,10 +187,10 @@ namespace sogen::sspi
         }
 
         auto state = std::make_unique<impl>();
-        constexpr unsigned char personalization[] = "sogen-sspi-tls-client";
-        const int cipher_suites[] = {MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 0};
-        if (mbedtls_ctr_drbg_seed(&state->random, mbedtls_entropy_func, &state->entropy, personalization, sizeof(personalization) - 1) !=
-                0 ||
+        constexpr std::string_view personalization = "sogen-sspi-tls-client";
+        constexpr std::array cipher_suites{MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 0};
+        if (mbedtls_ctr_drbg_seed(&state->random, mbedtls_entropy_func, &state->entropy,
+                                  reinterpret_cast<const unsigned char*>(personalization.data()), personalization.size()) != 0 ||
             mbedtls_ssl_config_defaults(&state->config, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) !=
                 0)
         {
@@ -200,7 +200,7 @@ namespace sogen::sspi
         mbedtls_ssl_conf_authmode(&state->config, MBEDTLS_SSL_VERIFY_NONE);
         mbedtls_ssl_conf_min_tls_version(&state->config, MBEDTLS_SSL_VERSION_TLS1_2);
         mbedtls_ssl_conf_max_tls_version(&state->config, MBEDTLS_SSL_VERSION_TLS1_2);
-        mbedtls_ssl_conf_ciphersuites(&state->config, cipher_suites);
+        mbedtls_ssl_conf_ciphersuites(&state->config, cipher_suites.data());
         mbedtls_ssl_conf_session_tickets(&state->config, MBEDTLS_SSL_SESSION_TICKETS_DISABLED);
         if (mbedtls_ssl_setup(&state->ssl, &state->config) != 0)
         {

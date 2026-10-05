@@ -2499,7 +2499,8 @@ namespace sogen
             c.emu.read_memory(info + 32, &clr_used, sizeof(clr_used));
 
             constexpr uint32_t bi_rgb = 0;
-            if ((bit_count != 4 && bit_count != 32 && bit_count != 24) || compression != bi_rgb || bi_width <= 0)
+            if ((bit_count != 1 && bit_count != 4 && bit_count != 8 && bit_count != 16 && bit_count != 24 && bit_count != 32) ||
+                compression != bi_rgb || bi_width <= 0)
             {
                 c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count,
                                    compression, bi_width);
@@ -2512,10 +2513,11 @@ namespace sogen
             const auto stored_rows = std::min(scan_lines, src_height);
             const size_t stride = ((static_cast<size_t>(src_width) * bit_count + 31u) / 32u) * 4u;
 
-            std::array<uint32_t, 16> palette{};
-            if (bit_count == 4)
+            std::array<uint32_t, 256> palette{};
+            if (bit_count <= 8)
             {
-                const uint32_t palette_entries = clr_used != 0 ? std::min<uint32_t>(clr_used, 16) : 16;
+                const uint32_t palette_size = 1u << bit_count;
+                const uint32_t palette_entries = clr_used != 0 ? std::min(clr_used, palette_size) : palette_size;
                 const uint64_t palette_ptr = info + bi_size;
                 for (uint32_t i = 0; i < palette_entries; ++i)
                 {
@@ -2574,16 +2576,35 @@ namespace sogen
                         std::memcpy(&pixel, row + static_cast<size_t>(src_x) * sizeof(uint32_t), sizeof(pixel));
                         pixel |= 0xFF000000u;
                     }
+                    else if (bit_count == 16)
+                    {
+                        uint16_t packed{};
+                        std::memcpy(&packed, row + static_cast<size_t>(src_x) * sizeof(packed), sizeof(packed));
+                        const uint32_t blue = packed & 0x1Fu;
+                        const uint32_t green = (packed >> 5) & 0x1Fu;
+                        const uint32_t red = (packed >> 10) & 0x1Fu;
+                        pixel = 0xFF000000u | ((red << 3 | red >> 2) << 16) | ((green << 3 | green >> 2) << 8) | (blue << 3 | blue >> 2);
+                    }
                     else if (bit_count == 24)
                     {
                         const uint8_t* px = row + static_cast<size_t>(src_x) * 3;
                         pixel = static_cast<uint32_t>(px[0]) | (static_cast<uint32_t>(px[1]) << 8) | (static_cast<uint32_t>(px[2]) << 16) |
                                 0xFF000000u;
                     }
-                    else
+                    else if (bit_count == 8)
+                    {
+                        pixel = palette[row[src_x]];
+                    }
+                    else if (bit_count == 4)
                     {
                         const uint8_t packed = row[static_cast<size_t>(src_x) / 2u];
                         const uint8_t index = (src_x & 1u) == 0 ? static_cast<uint8_t>(packed >> 4) : static_cast<uint8_t>(packed & 0x0Fu);
+                        pixel = palette[index];
+                    }
+                    else
+                    {
+                        const uint8_t packed = row[static_cast<size_t>(src_x) / 8u];
+                        const uint8_t index = static_cast<uint8_t>((packed >> (7u - (src_x & 7u))) & 1u);
                         pixel = palette[index];
                     }
 
@@ -2636,7 +2657,8 @@ namespace sogen
             c.emu.read_memory(info + 0, &bi_size, sizeof(bi_size));
             c.emu.read_memory(info + 32, &clr_used, sizeof(clr_used)); // BITMAPINFOHEADER.biClrUsed
 
-            if ((bit_count != 4 && bit_count != 24 && bit_count != 32) || compression != bi_rgb || bi_width <= 0 || bi_height == 0)
+            if ((bit_count != 1 && bit_count != 4 && bit_count != 8 && bit_count != 16 && bit_count != 24 && bit_count != 32) ||
+                compression != bi_rgb || bi_width <= 0 || bi_height == 0)
             {
                 c.win_emu.log.warn("NtGdiStretchDIBitsInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count, compression,
                                    bi_width);
@@ -2650,10 +2672,11 @@ namespace sogen
             // DIB scanlines are DWORD-aligned, not tightly packed.
             const size_t stride = ((static_cast<size_t>(img_width) * bit_count + 31u) / 32u) * 4u;
 
-            std::array<uint32_t, 16> palette{};
-            if (bit_count == 4)
+            std::array<uint32_t, 256> palette{};
+            if (bit_count <= 8)
             {
-                const uint32_t palette_entries = clr_used != 0 ? std::min<uint32_t>(clr_used, 16) : 16;
+                const uint32_t palette_size = 1u << bit_count;
+                const uint32_t palette_entries = clr_used != 0 ? std::min(clr_used, palette_size) : palette_size;
                 const uint64_t palette_ptr = info + bi_size;
 
                 for (uint32_t i = 0; i < palette_entries; ++i)
@@ -2723,19 +2746,38 @@ namespace sogen
                         std::memcpy(&pixel, row + static_cast<size_t>(img_x) * sizeof(uint32_t), sizeof(pixel));
                         pixel |= 0xFF000000u;
                     }
+                    else if (bit_count == 16)
+                    {
+                        uint16_t packed{};
+                        std::memcpy(&packed, row + static_cast<size_t>(img_x) * sizeof(packed), sizeof(packed));
+                        const uint32_t blue = packed & 0x1Fu;
+                        const uint32_t green = (packed >> 5) & 0x1Fu;
+                        const uint32_t red = (packed >> 10) & 0x1Fu;
+                        pixel = 0xFF000000u | ((red << 3 | red >> 2) << 16) | ((green << 3 | green >> 2) << 8) | (blue << 3 | blue >> 2);
+                    }
                     else if (bit_count == 24)
                     {
                         const uint8_t* px = row + static_cast<size_t>(img_x) * 3;
                         pixel = static_cast<uint32_t>(px[0]) | (static_cast<uint32_t>(px[1]) << 8) | (static_cast<uint32_t>(px[2]) << 16) |
                                 0xFF000000u;
                     }
-                    else // 4bpp BI_RGB
+                    else if (bit_count == 8)
+                    {
+                        pixel = palette[row[img_x]];
+                    }
+                    else if (bit_count == 4)
                     {
                         const uint8_t packed = row[static_cast<size_t>(img_x) / 2u];
 
                         // In 4bpp DIBs, the left pixel is the high nibble.
                         const uint8_t index = (img_x & 1u) == 0 ? static_cast<uint8_t>(packed >> 4) : static_cast<uint8_t>(packed & 0x0Fu);
 
+                        pixel = palette[index];
+                    }
+                    else
+                    {
+                        const uint8_t packed = row[static_cast<size_t>(img_x) / 8u];
+                        const uint8_t index = static_cast<uint8_t>((packed >> (7u - (img_x & 7u))) & 1u);
                         pixel = palette[index];
                     }
 

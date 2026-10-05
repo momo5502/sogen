@@ -87,13 +87,13 @@ namespace sogen
 
             struct credential_record
             {
-                security_handle handle{k_credential_lower, k_credential_upper};
+                security_handle handle{.lower = k_credential_lower, .upper = k_credential_upper};
                 bool live{};
             };
 
             struct context_record
             {
-                security_handle handle{k_context_lower, k_context_upper};
+                security_handle handle{.lower = k_context_lower, .upper = k_context_upper};
                 security_handle credential{};
                 std::string target{};
                 std::unique_ptr<sspi::tls_client> tls{};
@@ -581,7 +581,7 @@ namespace sogen
                                                                                                   : STATUS_INVALID_PARAMETER;
                     }
                     this->context_ = {
-                        .handle = {k_context_lower, k_context_upper},
+                        .handle = {.lower = k_context_lower, .upper = k_context_upper},
                         .credential = this->credential_.handle,
                         .target = request.target,
                         .tls = std::move(tls),

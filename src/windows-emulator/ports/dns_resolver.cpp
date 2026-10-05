@@ -166,7 +166,7 @@ namespace sogen
             const auto results = win_emu.dns_lookup().resolve_host(u16_to_u8(host), family, &failure);
             if (failure)
             {
-                failures.push_back({family, std::move(*failure)});
+                failures.push_back({.family = family, .error = std::move(*failure)});
             }
 
             std::vector<resolved_dns_record> records;
