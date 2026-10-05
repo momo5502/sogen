@@ -1,4 +1,5 @@
 #include "../std_include.hpp"
+#include "../vulkan_handle_utils.hpp"
 #include <platform/ui_backend.hpp>
 
 #include <SDL3/SDL.h>
@@ -1012,7 +1013,7 @@ namespace sogen
                         render_window(*state);
                         return uint64_t{};
                     }
-                    return reinterpret_cast<uint64_t>(surface);
+                    return pack_vulkan_handle(surface);
                 });
             }
 

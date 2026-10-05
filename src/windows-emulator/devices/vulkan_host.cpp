@@ -1,4 +1,5 @@
 #include "vulkan_host.hpp"
+#include "../vulkan_handle_utils.hpp"
 
 #include <address_utils.hpp>
 
@@ -10,7 +11,6 @@
 #include <cstring>
 #include <optional>
 #include <string_view>
-#include <type_traits>
 #include <unordered_map>
 #include <vector>
 #include <ranges>
@@ -37,19 +37,6 @@ namespace sogen
 {
     namespace
     {
-        template <typename Handle>
-        Handle unpack_handle(const uint64_t value)
-        {
-            if constexpr (std::is_pointer_v<Handle>)
-            {
-                return reinterpret_cast<Handle>(static_cast<uintptr_t>(value));
-            }
-            else
-            {
-                return static_cast<Handle>(value);
-            }
-        }
-
         // Extensions whose entry points the bridge does not marshal. They must never reach the guest: a guest
         // that sees them enables them and then calls into nothing. DXVK, for instance, creates shared textures
         // as soon as it sees VK_KHR_external_memory_win32 and crashes when the shim has no implementation.
@@ -4018,7 +4005,7 @@ namespace sogen
 
         const uint64_t id = this->impl_->next_id++;
         this->impl_->surfaces.emplace(id, impl::surface_data{
-                                              .handle = unpack_handle<VkSurfaceKHR>(native_surface),
+                                              .handle = unpack_vulkan_handle<VkSurfaceKHR>(native_surface),
                                               .instance_id = instance,
                                           });
         out_surface = id;
