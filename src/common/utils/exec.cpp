@@ -15,7 +15,7 @@
 #endif
 #endif
 
-#if !defined(_WIN32) && !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+#if defined(__APPLE__)
 extern char** environ;
 #endif
 
