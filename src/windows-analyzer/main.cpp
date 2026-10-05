@@ -971,7 +971,7 @@ namespace sogen
                        "  analyzer --report run.jsonl test-sample.exe\n"
                        "  analyzer -e path/to/root -p c:/analysis-sample.exe /path/to/sample.exe c:/analysis-sample.exe");
 
-            analysis_options options{};
+            analysis_options options;
 
             auto* const debug_option = app.add_flag("-d,--debug", options.use_gdb, "Enable GDB debugging mode");
             app.add_option("--bind", options.gdb_host, "IP or hostname to bind to in GDB mode")->capture_default_str()->needs(debug_option);
