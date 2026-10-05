@@ -387,7 +387,13 @@ namespace sogen
                 if (!result.view_payload.empty())
                 {
                     const auto allocation_start = c.proc.is_wow64_process ? DEFAULT_ALLOCATION_ADDRESS_32BIT : 0;
-                    const auto view_size = page_align_up(result.view_payload.size());
+                    const auto aligned_view_size = page_align_up(static_cast<uint64_t>(result.view_payload.size()));
+                    if (sizeof(size_t) < sizeof(aligned_view_size) &&
+                        aligned_view_size > static_cast<uint64_t>(std::numeric_limits<size_t>::max()))
+                    {
+                        return STATUS_NO_MEMORY;
+                    }
+                    const auto view_size = static_cast<size_t>(aligned_view_size);
                     const auto view_base =
                         c.win_emu.memory.allocate_memory(view_size, memory_permission::read_write, false, allocation_start);
                     if (view_base == 0)
