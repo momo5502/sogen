@@ -123,8 +123,11 @@ namespace sogen
             }
 
             case handle_types::file: {
-                // File I/O is synchronous in the emulator, so no operation is ever in flight when a
-                // wait is issued -- the file object's built-in event stays signaled.
+                if (h == STDIN_HANDLE)
+                {
+                    return win_emu.console().input_available() ? wait_state::signaled : wait_state::not_signaled;
+                }
+
                 if (h.value.is_pseudo || c.files.get(h))
                 {
                     return wait_state::signaled;
@@ -1254,7 +1257,7 @@ namespace sogen
                                                           this->await_msg->filter_max, true))
             {
                 this->await_msg->message.write(*m);
-                this->current_message_time = m->time;
+                this->record_current_message(*m);
 
                 uint64_t active_handle = 0;
                 uint64_t active_window_ptr = 0;

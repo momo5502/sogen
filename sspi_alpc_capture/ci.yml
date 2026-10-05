@@ -1,0 +1,70 @@
+name: SSPI ALPC Capture (Windows x64)
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: sspi_alpc_capture
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Configure x64 Release build
+        id: configure
+        continue-on-error: true
+        run: cmake -S . -B build -A x64
+
+      - name: Compile x64 Release build
+        id: build
+        if: steps.configure.outcome == 'success'
+        continue-on-error: true
+        run: cmake --build build --config Release
+
+      - name: Run capture utility
+        id: capture
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          Remove-Item -Recurse -Force capture -ErrorAction SilentlyContinue
+          $PSNativeCommandUseErrorActionPreference = $false
+          & .\build\Release\sspi_alpc_capture.exe 2>&1 |
+            Tee-Object -FilePath capture_console.log
+          $captureExitCode = $LASTEXITCODE
+          "exit_code=$captureExitCode" >> $env:GITHUB_OUTPUT
+          exit $captureExitCode
+
+      - name: Upload capture results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sspi-alpc-capture-results-windows-x64
+          if-no-files-found: warn
+          path: |
+            sspi_alpc_capture/capture/
+            sspi_alpc_capture/capture_console.log
+            sspi_alpc_capture/build/Release/sspi_alpc_capture.exe
+
+      - name: Report build or capture failure
+        if: always()
+        run: |
+          if ('${{ steps.configure.outcome }}' -ne 'success') {
+            throw 'CMake configuration failed.'
+          }
+          if ('${{ steps.build.outcome }}' -ne 'success') {
+            throw 'Release compilation failed.'
+          }
+          if ('${{ steps.capture.outcome }}' -ne 'success') {
+            throw 'Capture utility exited with code ${{ steps.capture.outputs.exit_code }}.'
+          }

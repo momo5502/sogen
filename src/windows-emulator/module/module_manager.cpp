@@ -40,6 +40,34 @@ namespace sogen
 
     namespace utils
     {
+        static void serialize(buffer_serializer& buffer, const pdb_signature& sig)
+        {
+            buffer.write(sig.guid);
+            buffer.write(sig.age);
+            buffer.write(sig.path);
+        }
+
+        static void deserialize(buffer_deserializer& buffer, pdb_signature& sig)
+        {
+            buffer.read(sig.guid);
+            buffer.read(sig.age);
+            buffer.read(sig.path);
+        }
+
+        static void serialize(buffer_serializer& buffer, const pe_section_symbol_mapping& section)
+        {
+            buffer.write(section.virtual_address);
+            buffer.write(section.virtual_size);
+            buffer.write(section.raw_size);
+        }
+
+        static void deserialize(buffer_deserializer& buffer, pe_section_symbol_mapping& section)
+        {
+            buffer.read(section.virtual_address);
+            buffer.read(section.virtual_size);
+            buffer.read(section.raw_size);
+        }
+
         static void serialize(buffer_serializer& buffer, const exported_symbol& sym)
         {
             buffer.write(sym.name);
@@ -104,8 +132,12 @@ namespace sogen
 
             buffer.write_vector(mod.exports);
             buffer.write_map(mod.address_names);
+            buffer.write_map(mod.symbol_address_names);
+            buffer.write_optional(mod.pdb);
+            buffer.write(mod.has_symbols);
 
             buffer.write_vector(mod.sections);
+            buffer.write_vector(mod.pe_sections);
 
             buffer.write(mod.is_static);
         }
@@ -130,8 +162,12 @@ namespace sogen
 
             buffer.read_vector(mod.exports);
             buffer.read_map(mod.address_names);
+            buffer.read_map(mod.symbol_address_names);
+            buffer.read_optional(mod.pdb);
+            buffer.read(mod.has_symbols);
 
             buffer.read_vector(mod.sections);
+            buffer.read_vector(mod.pe_sections);
 
             buffer.read(mod.is_static);
         }

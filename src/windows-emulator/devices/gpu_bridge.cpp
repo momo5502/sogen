@@ -18,14 +18,6 @@ namespace sogen
         // in snapshots yet; restoring with an open GPU handle is an experimental limitation.
         struct gpu_bridge_device : io_device
         {
-            void work(windows_emulator& win_emu) override
-            {
-                for (auto& frame : this->vulkan_.poll_presented_frames())
-                {
-                    present_surface_if_ready(win_emu, frame.hwnd, frame.width, frame.height, frame.pixels);
-                }
-            }
-
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
             {
                 switch (context.io_control_code)
@@ -222,6 +214,12 @@ namespace sogen
                     return handle_destroy_pipeline(win_emu, context);
                 case gpu_bridge::ioctl_get_surface_capabilities:
                     return handle_get_surface_capabilities(win_emu, context);
+                case gpu_bridge::ioctl_get_surface_support:
+                    return handle_get_surface_support(win_emu, context);
+                case gpu_bridge::ioctl_get_surface_formats:
+                    return handle_get_surface_formats(win_emu, context);
+                case gpu_bridge::ioctl_get_surface_present_modes:
+                    return handle_get_surface_present_modes(win_emu, context);
                 case gpu_bridge::ioctl_record_commands:
                     return handle_record_commands(win_emu, context);
                 case gpu_bridge::ioctl_create_descriptor_set_layout:
@@ -306,23 +304,6 @@ namespace sogen
                 }
             }
 
-            static void present_surface_if_ready(windows_emulator& win_emu, const uint64_t hwnd_value, const uint32_t width,
-                                                 const uint32_t height, const std::vector<std::byte>& pixels)
-            {
-                if (hwnd_value == 0 || pixels.empty())
-                {
-                    return;
-                }
-
-                win_emu.ui().present_surface(static_cast<hwnd>(hwnd_value), ui_surface_desc{
-                                                                                .width = static_cast<int>(width),
-                                                                                .height = static_cast<int>(height),
-                                                                                .stride = static_cast<int>(width * 4),
-                                                                                .format = ui_surface_format::bgra8,
-                                                                                .pixels = pixels.data(),
-                                                                            });
-            }
-
             // Reads a fixed-size request struct from the guest input buffer.
             template <typename Request>
             static bool read_input(windows_emulator& win_emu, const io_device_context& context, Request& out)
@@ -401,7 +382,8 @@ namespace sogen
                 }
 
                 uint64_t instance = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_instance(instance);
+                const auto extensions = win_emu.ui().vulkan_instance_extensions();
+                const int32_t result = this->vulkan_.create_instance(extensions, instance);
 
                 const gpu_bridge::create_instance_response response{
                     .vk_result = result,
@@ -1889,8 +1871,18 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                uint64_t native_instance = 0;
+                if (!this->vulkan_.get_native_instance_handle(request.instance, native_instance))
+                {
+                    return write_output(
+                        win_emu, context,
+                        gpu_bridge::create_surface_response{.vk_result = -3, .reserved = 0, .surface = gpu_bridge::null_object});
+                }
+
+                const uint64_t native_surface =
+                    win_emu.ui().create_vulkan_surface(static_cast<hwnd>(request.hwnd), native_instance);
                 uint64_t surface = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_surface(request.hwnd, surface);
+                const int32_t result = this->vulkan_.create_surface(request.instance, native_surface, surface);
                 return write_output(win_emu, context,
                                     gpu_bridge::create_surface_response{.vk_result = result, .reserved = 0, .surface = surface});
             }
@@ -1915,11 +1907,19 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                std::vector<uint32_t> queue_family_indices;
+                if (!read_trailing_array(win_emu, context, sizeof(request), request.queue_family_index_count, queue_family_indices))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 uint64_t swapchain = gpu_bridge::null_object;
                 uint32_t image_count = 0;
-                const int32_t result =
-                    this->vulkan_.create_swapchain(request.device, request.surface, request.format, request.width, request.height,
-                                                   request.min_image_count, request.image_usage, swapchain, image_count);
+                const int32_t result = this->vulkan_.create_swapchain(
+                    request.device, request.surface, request.old_swapchain, request.flags, request.format, request.color_space, request.width,
+                    request.height, request.image_array_layers, request.min_image_count, request.image_usage, request.sharing_mode,
+                    std::span{queue_family_indices}, request.pre_transform, request.composite_alpha, request.present_mode, request.clipped,
+                    swapchain, image_count);
                 return write_output(
                     win_emu, context,
                     gpu_bridge::create_swapchain_response{.vk_result = result, .image_count = image_count, .swapchain = swapchain});
@@ -1984,7 +1984,8 @@ namespace sogen
                 }
 
                 uint32_t index = 0;
-                const int32_t result = this->vulkan_.acquire_next_image(request.swapchain, request.semaphore, request.fence, index);
+                const int32_t result =
+                    this->vulkan_.acquire_next_image(request.swapchain, request.timeout, request.semaphore, request.fence, index);
                 return write_output(win_emu, context, gpu_bridge::acquire_next_image_response{.vk_result = result, .image_index = index});
             }
 
@@ -2001,20 +2002,8 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                std::vector<std::byte> pixels;
-                uint32_t width = 0;
-                uint32_t height = 0;
-                uint64_t hwnd_value = 0;
-                const int32_t result = this->vulkan_.queue_present(request.queue, request.swapchain, request.image_index, wait_semaphores,
-                                                                   pixels, width, height, hwnd_value);
-
-                // Hand the freshly read-back pixels to the guest window through the UI backend (the same
-                // seam GDI EndPaint uses). The swapchain is B8G8R8A8, matching bgra8, so no swizzle.
-                if (result == 0 /* VK_SUCCESS */)
-                {
-                    present_surface_if_ready(win_emu, hwnd_value, width, height, pixels);
-                }
-
+                const int32_t result =
+                    this->vulkan_.queue_present(request.queue, request.swapchain, request.image_index, wait_semaphores);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -3459,9 +3448,10 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    return this->vulkan_.cmd_pipeline_barrier(req.command_buffer, req.image, req.src_stage_mask, req.dst_stage_mask,
-                                                              req.src_access_mask, req.dst_access_mask, req.old_layout, req.new_layout,
-                                                              to_host_range(req.subresource));
+                    return this->vulkan_.cmd_pipeline_barrier(
+                        req.command_buffer, req.image, req.src_stage_mask, req.dst_stage_mask, req.src_access_mask, req.dst_access_mask,
+                        req.old_layout, req.new_layout, req.src_queue_family_index, req.dst_queue_family_index,
+                        to_host_range(req.subresource));
                 }
                 case gpu_bridge::command::cmd_clear_color_image: {
                     gpu_bridge::cmd_clear_color_image_request req{};
@@ -3644,43 +3634,113 @@ namespace sogen
 
             NTSTATUS handle_get_surface_capabilities(windows_emulator& win_emu, const io_device_context& context)
             {
+                using response_t = gpu_bridge::get_surface_capabilities_response;
                 gpu_bridge::get_surface_capabilities_request request{};
                 if (!read_input(win_emu, context, request))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
-
-                if (!context.output_buffer || context.output_buffer_length == 0)
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
                 {
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                // Resolve the guest window's client size so the host can report it as the surface's current
-                // extent; otherwise the layer (DXVK) can't determine the size and creates a 0x0 swapchain.
-                uint32_t window_width = 0;
-                uint32_t window_height = 0;
-                if (const uint64_t surface_hwnd = this->vulkan_.get_surface_hwnd(request.surface); surface_hwnd != 0)
-                {
-                    if (const auto* win = win_emu.process.windows.get(static_cast<hwnd>(surface_hwnd));
-                        win && win->client_width() > 0 && win->client_height() > 0)
-                    {
-                        // Client size, not outer: DXVK pins its swapchain to this extent and must match its
-                        // client-sized backbuffer, else the present upscales (see window::nonclient_insets).
-                        window_width = static_cast<uint32_t>(win->client_width());
-                        window_height = static_cast<uint32_t>(win->client_height());
-                    }
-                }
+                const size_t capacity = std::min<size_t>(context.output_buffer_length - sizeof(response_t), max_readback_bytes);
+                std::vector<std::byte> caps(capacity);
+                const int32_t result =
+                    this->vulkan_.get_surface_capabilities(request.physical_device, request.surface, caps.data(), caps.size());
 
-                std::vector<std::byte> caps(std::min<size_t>(context.output_buffer_length, max_readback_bytes));
-                const int32_t result = this->vulkan_.get_surface_capabilities(request.physical_device, request.surface, window_width,
-                                                                              window_height, caps.data(), caps.size());
-                if (result != 0)
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(
+                    response_t{.vk_result = result, .reserved = 0});
+                const size_t written = result == 0 ? caps.size() : 0;
+                if (written > 0)
+                {
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), caps.data(), written);
+                }
+                set_information(context, static_cast<ULONG>(sizeof(response_t) + written));
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_surface_support(windows_emulator& win_emu, const io_device_context& context)
+            {
+                gpu_bridge::get_surface_support_request request{};
+                if (!read_input(win_emu, context, request))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                win_emu.emu().write_memory(context.output_buffer, caps.data(), caps.size());
-                set_information(context, static_cast<ULONG>(caps.size()));
+                uint32_t supported = 0;
+                const int32_t result = this->vulkan_.get_surface_support(request.physical_device, request.surface,
+                                                                         request.queue_family_index, supported);
+                return write_output(win_emu, context,
+                                    gpu_bridge::get_surface_support_response{.vk_result = result, .supported = supported});
+            }
+
+            NTSTATUS handle_get_surface_formats(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using response_t = gpu_bridge::get_surface_formats_response;
+                gpu_bridge::get_surface_formats_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto capacity = static_cast<uint32_t>(std::min<uint64_t>(
+                    (context.output_buffer_length - sizeof(response_t)) / sizeof(gpu_bridge::surface_format),
+                    max_array_readback_bytes / sizeof(gpu_bridge::surface_format)));
+                const uint32_t max_count = std::min(request.max_count, capacity);
+                std::vector<vulkan_host::surface_format> formats(max_count);
+                uint32_t count = 0;
+                const int32_t result = this->vulkan_.get_surface_formats(request.physical_device, request.surface, std::span{formats}, count);
+
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response_t{.vk_result = result, .count = count});
+                const uint32_t written = std::min(count, max_count);
+                if (written > 0)
+                {
+                    std::vector<gpu_bridge::surface_format> wire(written);
+                    for (uint32_t i = 0; i < written; ++i)
+                    {
+                        wire[i] = {.format = formats[i].format, .color_space = formats[i].color_space};
+                    }
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), wire.data(),
+                                               wire.size() * sizeof(wire.front()));
+                }
+                set_information(context, static_cast<ULONG>(sizeof(response_t) + written * sizeof(gpu_bridge::surface_format)));
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS handle_get_surface_present_modes(windows_emulator& win_emu, const io_device_context& context)
+            {
+                using response_t = gpu_bridge::get_surface_present_modes_response;
+                gpu_bridge::get_surface_present_modes_request request{};
+                if (!read_input(win_emu, context, request))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                if (!context.output_buffer || context.output_buffer_length < sizeof(response_t))
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                const auto capacity = static_cast<uint32_t>(std::min<uint64_t>(
+                    (context.output_buffer_length - sizeof(response_t)) / sizeof(uint32_t),
+                    max_array_readback_bytes / sizeof(uint32_t)));
+                const uint32_t max_count = std::min(request.max_count, capacity);
+                std::vector<uint32_t> modes(max_count);
+                uint32_t count = 0;
+                const int32_t result = this->vulkan_.get_surface_present_modes(request.physical_device, request.surface, std::span{modes}, count);
+
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response_t{.vk_result = result, .count = count});
+                const uint32_t written = std::min(count, max_count);
+                if (written > 0)
+                {
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), modes.data(), written * sizeof(uint32_t));
+                }
+                set_information(context, static_cast<ULONG>(sizeof(response_t) + written * sizeof(uint32_t)));
                 return STATUS_SUCCESS;
             }
         };

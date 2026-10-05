@@ -24,31 +24,6 @@ namespace sogen
             std::vector<parsed_registry_value> values{};
         };
 
-        std::u16string_view trim_left(std::u16string_view value)
-        {
-            while (!value.empty() && (value.front() == u' ' || value.front() == u'\t'))
-            {
-                value.remove_prefix(1);
-            }
-
-            return value;
-        }
-
-        std::u16string_view trim_right(std::u16string_view value)
-        {
-            while (!value.empty() && (value.back() == u' ' || value.back() == u'\t'))
-            {
-                value.remove_suffix(1);
-            }
-
-            return value;
-        }
-
-        std::u16string_view trim(std::u16string_view value)
-        {
-            return trim_right(trim_left(value));
-        }
-
         std::runtime_error parse_error(const std::string_view source_name, const size_t line, const std::string_view message)
         {
             return std::runtime_error(std::string{source_name} + ":" + std::to_string(line) + ": " + std::string{message});
@@ -154,14 +129,15 @@ namespace sogen
 
                 if (!lines.empty())
                 {
-                    auto previous = trim_right(lines.back().second);
+                    auto previous = utils::string::trim_right(lines.back().second);
                     const auto equals = find_assignment_separator(previous);
-                    const auto value = equals ? trim_left(previous.substr(*equals + 1)) : std::u16string_view{};
-                    const auto is_hex_continuation = previous.ends_with(u'\\') && utils::string::starts_with_ignore_case(value, u"hex"sv);
+                    const auto value = equals ? utils::string::trim_left(previous.substr(*equals + 1)) : std::u16string{};
+                    const auto is_hex_continuation =
+                        previous.ends_with(u'\\') && utils::string::starts_with_ignore_case(value, std::u16string{u"hex"});
                     if (is_hex_continuation)
                     {
                         lines.back().second.resize(previous.size() - 1);
-                        const auto continuation = trim_left(line);
+                        const auto continuation = utils::string::trim_left(line);
                         lines.back().second.append(continuation.begin(), continuation.end());
                     }
                     else
@@ -192,7 +168,7 @@ namespace sogen
 
         std::u16string parse_quoted_string(std::u16string_view& input, const std::string_view source_name, const size_t line)
         {
-            input = trim_left(input);
+            input = utils::string::trim_left(input);
             if (input.empty() || input.front() != u'"')
             {
                 throw parse_error(source_name, line, "expected a quoted string");
@@ -294,7 +270,7 @@ namespace sogen
         parsed_registry_value parse_registry_value(std::u16string_view line_text, const std::string_view source_name, const size_t line)
         {
             parsed_registry_value result{};
-            line_text = trim(line_text);
+            line_text = utils::string::trim(line_text);
 
             if (line_text.front() == u'@')
             {
@@ -306,12 +282,12 @@ namespace sogen
                 result.name = u16_to_u8(name);
             }
 
-            line_text = trim_left(line_text);
+            line_text = utils::string::trim_left(line_text);
             if (line_text.empty() || line_text.front() != u'=')
             {
                 throw parse_error(source_name, line, "expected '=' after registry value name");
             }
-            line_text = trim(line_text.substr(1));
+            line_text = utils::string::trim(line_text.substr(1));
 
             if (line_text == u"-")
             {
@@ -321,7 +297,7 @@ namespace sogen
             if (!line_text.empty() && line_text.front() == u'"')
             {
                 const auto string_value = parse_quoted_string(line_text, source_name, line);
-                if (!trim(line_text).empty())
+                if (!utils::string::trim(line_text).empty())
                 {
                     throw parse_error(source_name, line, "unexpected characters after string value");
                 }
@@ -333,7 +309,7 @@ namespace sogen
 
             if (utils::string::starts_with_ignore_case(line_text, u"dword:"sv))
             {
-                const auto number = parse_hex_number(trim(line_text.substr(6)), source_name, line);
+                const auto number = parse_hex_number(utils::string::trim(line_text.substr(6)), source_name, line);
                 result.type = REG_DWORD;
                 result.data = {
                     static_cast<std::byte>(number & 0xFF),
@@ -362,17 +338,17 @@ namespace sogen
                 line_text.remove_prefix(close + 1);
             }
 
-            line_text = trim_left(line_text);
+            line_text = utils::string::trim_left(line_text);
             if (line_text.empty() || line_text.front() != u':')
             {
                 throw parse_error(source_name, line, "expected ':' before hexadecimal data");
             }
-            line_text = trim(line_text.substr(1));
+            line_text = utils::string::trim(line_text.substr(1));
 
             while (!line_text.empty())
             {
                 const auto comma = line_text.find(u',');
-                const auto token = trim(line_text.substr(0, comma));
+                const auto token = utils::string::trim(line_text.substr(0, comma));
                 if (token.empty())
                 {
                     throw parse_error(source_name, line, "empty hexadecimal byte");
@@ -383,7 +359,7 @@ namespace sogen
                 {
                     break;
                 }
-                line_text = trim(line_text.substr(comma + 1));
+                line_text = utils::string::trim(line_text.substr(comma + 1));
             }
 
             return result;
@@ -391,7 +367,7 @@ namespace sogen
 
         std::u16string to_nt_registry_path(std::u16string_view path, const std::string_view source_name, const size_t line)
         {
-            path = trim(path);
+            path = utils::string::trim(path);
             if (path.empty())
             {
                 throw parse_error(source_name, line, "empty registry path");
@@ -459,7 +435,7 @@ namespace sogen
 
             for (const auto& [line_number, storage] : lines)
             {
-                auto line = trim(storage);
+                auto line = utils::string::trim(storage);
                 if (line.empty() || line.front() == u';' || line.front() == u'#')
                 {
                     continue;
@@ -467,7 +443,7 @@ namespace sogen
 
                 if (!header_seen)
                 {
-                    if (!utils::string::equals_ignore_case(line, u"Windows Registry Editor Version 5.00"sv))
+                    if (!utils::string::equals_ignore_case(line, std::u16string{u"Windows Registry Editor Version 5.00"}))
                     {
                         throw parse_error(source_name, line_number, "missing or unsupported .reg file header");
                     }
@@ -482,7 +458,7 @@ namespace sogen
                         throw parse_error(source_name, line_number, "unterminated registry key section");
                     }
 
-                    auto path = trim(line.substr(1, line.size() - 2));
+                    auto path = utils::string::trim(line.substr(1, line.size() - 2));
                     if (!path.empty() && path.front() == u'-')
                     {
                         throw parse_error(source_name, line_number, "deleting registry keys is not supported");

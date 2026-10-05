@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace sogen
@@ -31,9 +32,8 @@ namespace sogen
         // False if no Vulkan driver could be loaded on the host.
         bool available() const;
 
-        // Creates a bare instance (no layers/extensions). out_instance is set to a fresh object id
-        // on success, or 0 on failure.
-        int32_t create_instance(uint64_t& out_instance);
+        int32_t create_instance(std::span<const std::string> extensions, uint64_t& out_instance);
+        bool get_native_instance_handle(uint64_t instance, uint64_t& out_handle) const;
         void destroy_instance(uint64_t instance);
 
         // Reports the host physical devices for the instance. out_count always receives the true
@@ -259,7 +259,7 @@ namespace sogen
         // Records a single image memory barrier into the (recording) command buffer.
         int32_t cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask, uint32_t dst_stage_mask,
                                      uint32_t src_access_mask, uint32_t dst_access_mask, uint32_t old_layout, uint32_t new_layout,
-                                     const subresource_range& range);
+                                     uint32_t src_queue_family_index, uint32_t dst_queue_family_index, const subresource_range& range);
         // Records vkCmdClearColorImage with an RGBA float clear color.
         int32_t cmd_clear_color_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float r, float g, float b, float a,
                                       const subresource_range& range);
@@ -359,49 +359,31 @@ namespace sogen
                                float max_lod, uint64_t& out_sampler);
         void destroy_sampler(uint64_t device, uint64_t sampler);
 
-        // --- WSI (modeled with offscreen images; "present" reads back and hands pixels to the UI) ---
+        // --- WSI ---
 
-        // A surface is just the guest HWND to present to; no real host VkSurfaceKHR is created.
-        int32_t create_surface(uint64_t hwnd, uint64_t& out_surface);
-        void destroy_surface(uint64_t surface);
-
-        // Writes synthetic VkSurfaceCapabilitiesKHR into out; currentExtent is left undefined
-        // (0xFFFFFFFF) so the guest chooses the swapchain extent.
-        uint64_t get_surface_hwnd(uint64_t surface) const;
-        int32_t get_surface_capabilities(uint64_t physical_device, uint64_t surface, uint32_t window_width, uint32_t window_height,
-                                         void* out, size_t out_size);
-
-        // Creates `min_image_count` (>= 2) offscreen images of the given format/extent plus a readback
-        // buffer. out_image_count receives the number of images created.
-        int32_t create_swapchain(uint64_t device, uint64_t surface, uint32_t format, uint32_t width, uint32_t height,
-                                 uint32_t min_image_count, uint32_t image_usage, uint64_t& out_swapchain, uint32_t& out_image_count);
-        void destroy_swapchain(uint64_t device, uint64_t swapchain);
-
-        // Writes the swapchain's image object ids into out_images; out_count gets the true count.
-        int32_t get_swapchain_images(uint64_t swapchain, std::span<uint64_t> out_images, uint32_t& out_count);
-
-        // Returns the next image index (round-robin; images are always immediately available). Since the
-        // image is ready immediately, the caller's acquire semaphore/fence are signalled right away so the
-        // render submit that waits on them can proceed (0 = none).
-        int32_t acquire_next_image(uint64_t swapchain, uint64_t semaphore, uint64_t fence, uint32_t& out_index);
-
-        // Submits an asynchronous copy of the presented image into the readback buffer. If the previous
-        // copy has already completed, out_pixels receives that frame immediately; otherwise it is later
-        // returned by poll_presented_frames().
-        int32_t queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index, const std::vector<uint64_t>& wait_semaphores,
-                              std::vector<std::byte>& out_pixels, uint32_t& out_width, uint32_t& out_height, uint64_t& out_hwnd);
-
-        struct presented_frame
+        struct surface_format
         {
-            std::vector<std::byte> pixels{};
-            uint32_t width{};
-            uint32_t height{};
-            uint64_t hwnd{};
+            uint32_t format{};
+            uint32_t color_space{};
         };
 
-        // Collects readbacks whose GPU fences have completed without waiting. This lets the host UI
-        // display a static final frame even when the guest does not issue another present.
-        std::vector<presented_frame> poll_presented_frames();
+        int32_t create_surface(uint64_t instance, uint64_t native_surface, uint64_t& out_surface);
+        void destroy_surface(uint64_t surface);
+        int32_t get_surface_support(uint64_t physical_device, uint64_t surface, uint32_t queue_family_index, uint32_t& out_supported);
+        int32_t get_surface_capabilities(uint64_t physical_device, uint64_t surface, void* out, size_t out_size);
+        int32_t get_surface_formats(uint64_t physical_device, uint64_t surface, std::span<surface_format> out_formats,
+                                    uint32_t& out_count);
+        int32_t get_surface_present_modes(uint64_t physical_device, uint64_t surface, std::span<uint32_t> out_modes, uint32_t& out_count);
+
+        int32_t create_swapchain(uint64_t device, uint64_t surface, uint64_t old_swapchain, uint32_t flags, uint32_t format,
+                                 uint32_t color_space, uint32_t width, uint32_t height, uint32_t image_array_layers,
+                                 uint32_t min_image_count, uint32_t image_usage, uint32_t sharing_mode,
+                                 std::span<const uint32_t> queue_family_indices, uint32_t pre_transform, uint32_t composite_alpha,
+                                 uint32_t present_mode, uint32_t clipped, uint64_t& out_swapchain, uint32_t& out_image_count);
+        void destroy_swapchain(uint64_t device, uint64_t swapchain);
+        int32_t get_swapchain_images(uint64_t swapchain, std::span<uint64_t> out_images, uint32_t& out_count);
+        int32_t acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore, uint64_t fence, uint32_t& out_index);
+        int32_t queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index, const std::vector<uint64_t>& wait_semaphores);
 
         // --- graphics pipeline (enough for a render-pass triangle) ---
 
@@ -448,7 +430,7 @@ namespace sogen
                                             uint64_t destination_buffer, uint64_t destination_offset, uint64_t stride, uint32_t flags);
 
         // One color attachment + an optional depth attachment (depth_format == 0 => color only), single
-        // subpass (initial/final layouts as given; PRESENT_SRC_KHR is mapped to TRANSFER_SRC_OPTIMAL).
+        // subpass with the requested initial/final layouts.
         int32_t create_render_pass(uint64_t device, uint32_t format, uint32_t load_op, uint32_t store_op, uint32_t initial_layout,
                                    uint32_t final_layout, uint32_t depth_format, uint64_t& out_render_pass);
         void destroy_render_pass(uint64_t device, uint64_t render_pass);

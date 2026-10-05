@@ -698,6 +698,7 @@ namespace sogen
           socket_factory_(get_socket_factory(interfaces)),
           ui_backend_(get_ui_backend(interfaces)),
           audio_backend_(get_audio_backend(interfaces)),
+          console_backend_(interfaces.console ? std::move(interfaces.console) : create_default_console_backend()),
           process_manager_(interfaces.processes),
           emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
           fake_env(effective_fake_env(settings, static_cast<uint32_t>(this->emu_->vcpu_count()))),
@@ -1815,6 +1816,7 @@ namespace sogen
         this->clear_section_first_execution_hooks();
         this->ui().reset();
         this->audio().stop();
+        this->console().reset();
 
         // Match raw serialize() above; do not use backend snapshot mode here.
         this->emu().deserialize_state(buffer, false);
@@ -1871,6 +1873,7 @@ namespace sogen
         this->clear_section_first_execution_hooks();
         this->ui().reset();
         this->audio().stop();
+        this->console().reset();
 
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);

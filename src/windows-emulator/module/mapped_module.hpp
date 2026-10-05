@@ -1,5 +1,6 @@
 #pragma once
 #include <memory_region.hpp>
+#include <platform/win_pefile_debug.hpp>
 #include "../windows_path.hpp"
 
 namespace sogen
@@ -11,6 +12,13 @@ namespace sogen
         uint64_t ordinal{};
         uint64_t rva{};
         uint64_t address{};
+    };
+
+    struct pe_section_symbol_mapping
+    {
+        uint32_t virtual_address{};
+        uint32_t virtual_size{};
+        uint32_t raw_size{};
     };
 
     struct imported_symbol
@@ -54,8 +62,12 @@ namespace sogen
         imported_symbols imports{};
         imported_module_list imported_modules{};
         address_name_mapping address_names{};
+        address_name_mapping symbol_address_names{};
+        std::optional<pdb_signature> pdb{};
+        bool has_symbols{};
 
         std::vector<mapped_section> sections{};
+        std::vector<pe_section_symbol_mapping> pe_sections{};
 
         bool is_static{false};
 

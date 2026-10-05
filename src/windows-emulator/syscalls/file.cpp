@@ -5,8 +5,8 @@
 
 #include <algorithm>
 #include <charconv>
-#include <iostream>
 #include <utils/finally.hpp>
+
 #include <utils/wildcard.hpp>
 #include "utils/stat.hpp"
 
@@ -21,12 +21,6 @@ namespace sogen
     {
         namespace
         {
-            struct file_completion_information
-            {
-                handle completion_port;
-                uint64_t completion_key;
-            };
-
             bool has_valid_filename_characters(const std::u16string_view path)
             {
                 constexpr std::u16string_view invalid_characters = u"\"<>|*?";
@@ -137,39 +131,34 @@ namespace sogen
             if (!f)
             {
                 auto* device = c.proc.devices.get(file_handle);
-                if (device)
+                if (!device)
                 {
-                    if (info_class == FileCompletionInformation)
-                    {
-                        if (length < sizeof(file_completion_information))
-                        {
-                            return STATUS_INFO_LENGTH_MISMATCH;
-                        }
-
-                        const auto info = c.emu.read_memory<file_completion_information>(file_information);
-                        const auto completion_port = c.proc.resolve_object_pseudo_handle(info.completion_port, c.vcpu.active_thread);
-                        if (!c.proc.io_completions.get(completion_port))
-                        {
-                            return STATUS_INVALID_HANDLE;
-                        }
-
-                        device->set_completion_information(completion_port, info.completion_key);
-                    }
-
-                    if (info_class == FileIoCompletionNotificationInformation)
-                    {
-                        if (length < sizeof(ULONG))
-                        {
-                            return STATUS_INFO_LENGTH_MISMATCH;
-                        }
-
-                        device->set_completion_notification_flags(c.emu.read_memory<ULONG>(file_information));
-                    }
-
-                    return STATUS_SUCCESS;
+                    return STATUS_INVALID_HANDLE;
                 }
 
-                return STATUS_INVALID_HANDLE;
+                if (info_class == FileCompletionInformation)
+                {
+                    if (length < sizeof(handle) + sizeof(uint64_t))
+                    {
+                        return STATUS_INFO_LENGTH_MISMATCH;
+                    }
+
+                    const auto completion_port = c.emu.read_memory<handle>(file_information);
+                    const auto completion_key = c.emu.read_memory<uint64_t>(file_information + sizeof(handle));
+                    return device->set_completion_association(c.proc, c.vcpu.active_thread, completion_port, completion_key);
+                }
+
+                if (info_class == FileIoCompletionNotificationInformation)
+                {
+                    if (length < sizeof(ULONG))
+                    {
+                        return STATUS_INFO_LENGTH_MISMATCH;
+                    }
+
+                    device->set_completion_notification_flags(c.emu.read_memory<ULONG>(file_information));
+                }
+
+                return STATUS_SUCCESS;
             }
 
             if (info_class == FileBasicInformation)
@@ -332,7 +321,7 @@ namespace sogen
             case FileFsDeviceInformation:
                 return handle_query<FILE_FS_DEVICE_INFORMATION>(
                     c.emu, fs_information, length, io_status_block, [&](FILE_FS_DEVICE_INFORMATION& info) {
-                        if (file_handle == STDOUT_HANDLE || file_handle == STDIN_HANDLE || file_handle == CONSOLE_HANDLE)
+                        if (file_handle == STDIN_HANDLE || file_handle == STDOUT_HANDLE || file_handle == CONSOLE_HANDLE)
                         {
                             info.DeviceType = FILE_DEVICE_CONSOLE;
                             info.Characteristics = 0x20000;
@@ -1159,17 +1148,16 @@ namespace sogen
                     return ret(STATUS_BUFFER_OVERFLOW);
                 }
 
-                const auto filepath = windows_path(filename);
-                if (filepath.is_relative())
+                auto [native_file_handle, status] = open_file(c.win_emu.file_sys, filename, u"r");
+                if (status != STATUS_SUCCESS)
                 {
-                    return ret(STATUS_OBJECT_NAME_NOT_FOUND);
+                    return ret(status);
                 }
 
-                const auto local_filename = c.win_emu.file_sys.translate(filepath);
                 struct compat_stat file_stat{};
-                if (!compat_stat(local_filename, &file_stat))
+                if (!compat_fstat(native_file_handle.file_descriptor(), &file_stat))
                 {
-                    return ret(STATUS_OBJECT_NAME_NOT_FOUND);
+                    return STATUS_INVALID_HANDLE;
                 }
 
                 const auto is_directory = (file_stat.st_mode & S_IFDIR) != 0;
@@ -1297,25 +1285,14 @@ namespace sogen
                                    const ULONG length, const emulator_object<LARGE_INTEGER> byte_offset,
                                    const emulator_object<ULONG> /*key*/)
         {
-            std::string temp_buffer{};
-            temp_buffer.resize(length);
-
             if (file_handle == STDIN_HANDLE)
             {
-                char chr{};
-                if (std::cin.readsome(&chr, 1) <= 0)
-                {
-                    std::cin.read(&chr, 1);
-                }
-
-                std::cin.putback(chr);
-
-                const auto read_count = std::cin.readsome(temp_buffer.data(), static_cast<std::streamsize>(temp_buffer.size()));
-                const auto count = std::max(read_count, static_cast<std::streamsize>(0));
-
-                commit_file_data(std::string_view(temp_buffer.data(), static_cast<size_t>(count)), c.emu, io_status_block, buffer);
+                const auto data = c.win_emu.console().read_input(length);
+                commit_file_data(data, c.emu, io_status_block, buffer);
                 return STATUS_SUCCESS;
             }
+            std::string temp_buffer{};
+            temp_buffer.resize(length);
 
             if (file_handle == NUL_HANDLE)
             {
@@ -1403,32 +1380,6 @@ namespace sogen
 
             deliver_file_io_completion(c, event, apc_routine, apc_context, io_status_block, status, 0);
             return status;
-        }
-
-        NTSTATUS handle_NtCancelIoFileEx(const syscall_context& c, const handle file_handle,
-                                         const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_request_to_cancel,
-                                         const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block)
-        {
-            if (!io_status_block)
-            {
-                return STATUS_INVALID_PARAMETER;
-            }
-
-            const auto resolved_handle = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
-            auto* device = c.proc.devices.get(resolved_handle);
-            if (!device)
-            {
-                return STATUS_INVALID_HANDLE;
-            }
-
-            if (!io_request_to_cancel || !device->cancel_io(c.win_emu, io_request_to_cancel.value()))
-            {
-                io_status_block.write(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_NOT_FOUND, .Information = 0});
-                return STATUS_NOT_FOUND;
-            }
-
-            io_status_block.write(IO_STATUS_BLOCK<EmulatorTraits<Emu64>>{.Status = STATUS_SUCCESS, .Information = 0});
-            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtWriteFile(const syscall_context& c, const handle file_handle, const uint64_t /*event*/,

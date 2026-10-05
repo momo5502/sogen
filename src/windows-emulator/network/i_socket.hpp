@@ -15,6 +15,7 @@ namespace sogen
             virtual void set_blocking(bool blocking) = 0;
 
             virtual int get_last_error() = 0;
+            virtual std::optional<int> get_socket_error() = 0;
 
             virtual bool is_ready(bool in_poll) = 0;
             virtual bool is_listening() = 0;

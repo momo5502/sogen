@@ -70,7 +70,8 @@ namespace sogen::test
 
         struct sample_dns_lookup final : network::dns_lookup
         {
-            std::vector<network::address> resolve_host(const std::string_view hostname, const std::optional<int> family) override
+            std::vector<network::address> resolve_host(const std::string_view hostname, const std::optional<int> family,
+                                                       std::optional<network::dns_lookup_failure>* /*failure*/) override
             {
                 if (hostname != "google.com")
                 {
@@ -147,6 +148,10 @@ namespace sogen::test
             // need a real window, so use the no-op backend unless one is explicitly injected.
             interfaces.ui = std::make_unique<null_ui_backend>();
         }
+        if (!interfaces.console)
+        {
+            interfaces.console = std::make_unique<null_console_backend>();
+        }
 
         return windows_emulator{
             create_x86_64_emulator_from_environment(),
@@ -188,6 +193,10 @@ namespace sogen::test
             // See create_emulator() above: tests don't need a real (SDL) window, and a real UI backend's
             // host-originated events would otherwise race with deterministic guest execution.
             interfaces.ui = std::make_unique<null_ui_backend>();
+        }
+        if (!interfaces.console)
+        {
+            interfaces.console = std::make_unique<null_console_backend>();
         }
 
         return windows_emulator{

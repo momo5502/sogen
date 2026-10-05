@@ -1,8 +1,9 @@
 #include "../std_include.hpp"
 #include "../debug_font.hpp"
-#include "../emulated_display_adapter.hpp"
 #include "../emulator_utils.hpp"
+#include "../gdi_font_signature.hpp"
 #include "../syscall_utils.hpp"
+#include "../paint_trace.hpp"
 
 #include <array>
 #include <bit>
@@ -27,6 +28,7 @@ namespace sogen
             constexpr uint8_t k_gdi_font_type = 0x0A;
             constexpr uint8_t k_gdi_brush_type = 0x10;
             constexpr uint8_t k_gdi_pen_type = 0x30;
+            constexpr int32_t k_gdi_dc_object_bitmap = 0x50000;
 
             constexpr uint32_t k_gdi_dc_attr_size = 0x130;
             constexpr uint32_t k_gdi_brush_attr_size = 0x20;
@@ -199,8 +201,6 @@ namespace sogen
             constexpr uint32_t k_dxgk_context_handle = 0x6000;
             constexpr uint32_t k_dxgk_shared_primary_handle = 0x7000;
             constexpr LUID k_dxgk_adapter_luid = {0x1000, 0};
-            // Stable emulator-only unique adapter id. Sequential, not a host device.
-            constexpr GUID k_dxgk_adapter_unique_id = {0x00000001, 0x0002, 0x0003, {0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
             constexpr uint32_t k_dxgk_adapter_source_count = 1;
             constexpr uint32_t k_dxgk_command_buffer_size = 0x1000;
             constexpr uint32_t k_dxgk_allocation_list_entry_size = 8;
@@ -215,11 +215,15 @@ namespace sogen
             constexpr uint32_t k_dxgk_max_list_count = 0x10000;            // 64k entries (<= 1.5 MiB of list bytes)
             constexpr uint64_t k_dxgk_dedicated_video_memory_size = 4ull * 1024 * 1024 * 1024;
             constexpr uint64_t k_dxgk_shared_system_memory_size = 8ull * 1024 * 1024 * 1024;
+            constexpr uint32_t k_dxgk_fake_vendor_id = 0x10DE;
+            constexpr uint32_t k_dxgk_fake_device_id = 0x1C03;
+            constexpr uint32_t k_dxgk_fake_revision_id = 0xA1;
             constexpr uint32_t k_dxgk_open_resource_resource_private_size = 0x18;
             constexpr uint32_t k_dxgk_open_resource_allocation_private_size = 0x18;
             constexpr uint32_t k_dxgk_open_resource_descriptor_size = 0x80;
             constexpr uint32_t k_dxgk_open_resource_total_private_size =
                 k_dxgk_open_resource_allocation_private_size + k_dxgk_open_resource_descriptor_size;
+            constexpr GUID k_dxgk_adapter_guid = {0x5b45201d, 0xf2f2, 0x4f3b, {0x85, 0xbb, 0x30, 0xff, 0x1f, 0x95, 0x35, 0x99}};
 
             uint64_t ensure_gdi_shared_table(const syscall_context& c)
             {
@@ -422,7 +426,7 @@ namespace sogen
                     entry_obj.access([&](GDI_HANDLE_ENTRY64& writable) {
                         writable = {};
                         writable.Object = object_ptr;
-                        writable.Owner.ProcessId = static_cast<uint16_t>(c.proc.process_id);
+                        writable.Owner.ProcessId = static_cast<uint16_t>(process_context::process_id);
                         writable.Unique = unique;
                         writable.Type = type;
                         writable.Flags = 0;
@@ -536,6 +540,7 @@ namespace sogen
                 const auto dc_it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
                 if (dc_it == c.proc.gdi_dc_states.end())
                 {
+                    paint_trace::log("gdi.resolve hdc=0x%08" PRIx32 " failed=no-dc-state", static_cast<uint32_t>(dc));
                     return nullptr;
                 }
 
@@ -545,22 +550,29 @@ namespace sogen
                     const auto bmp_it = c.proc.gdi_bitmap_surfaces.find(dc_state.selected_bitmap);
                     if (bmp_it == c.proc.gdi_bitmap_surfaces.end())
                     {
+                        paint_trace::log("gdi.resolve hdc=0x%08" PRIx32 " bitmap=0x%08" PRIx32 " failed=missing-bitmap-surface",
+                                         static_cast<uint32_t>(dc), dc_state.selected_bitmap);
                         return nullptr;
                     }
 
                     present_handle = static_cast<uint32_t>(dc_state.target_window);
+                    paint_trace::log("gdi.resolve hdc=0x%08" PRIx32 " memory-dc bitmap=0x%08" PRIx32 " target=0x%08" PRIx32,
+                                     static_cast<uint32_t>(dc), dc_state.selected_bitmap, present_handle);
                     sync_surface_from_guest_dib(c, bmp_it->second);
                     return &bmp_it->second;
                 }
 
                 if (dc_state.target_window == 0)
                 {
+                    paint_trace::log("gdi.resolve hdc=0x%08" PRIx32 " failed=no-target-window", static_cast<uint32_t>(dc));
                     return nullptr;
                 }
 
                 const auto* win = c.proc.windows.get(dc_state.target_window);
                 if (!win)
                 {
+                    paint_trace::log("gdi.resolve hdc=0x%08" PRIx32 " target=0x%08" PRIx32 " failed=missing-window",
+                                     static_cast<uint32_t>(dc), static_cast<uint32_t>(dc_state.target_window));
                     return nullptr;
                 }
 
@@ -576,6 +588,11 @@ namespace sogen
 
                 if (!win || !win->host_surface_window || win->client_width() <= 0 || win->client_height() <= 0)
                 {
+                    paint_trace::log("gdi.resolve hdc=0x%08" PRIx32 " target=0x%08" PRIx32
+                                     " root=%p host-surface=%d client=%dx%d failed=no-root-surface",
+                                     static_cast<uint32_t>(dc), static_cast<uint32_t>(dc_state.target_window),
+                                     static_cast<const void*>(win), win != nullptr && win->host_surface_window ? 1 : 0,
+                                     win != nullptr ? win->client_width() : 0, win != nullptr ? win->client_height() : 0);
                     return nullptr;
                 }
 
@@ -586,9 +603,12 @@ namespace sogen
                 auto& surface = c.proc.gdi_window_surfaces[top_handle];
                 if (surface.width != width || surface.height != height || surface.pixels.size() != static_cast<size_t>(width) * height)
                 {
+                    const auto fill_color = window_surface_fill_color(c, *win);
                     surface.width = width;
                     surface.height = height;
-                    surface.pixels.assign(static_cast<size_t>(width) * height, window_surface_fill_color(c, *win));
+                    surface.pixels.assign(static_cast<size_t>(width) * height, fill_color);
+                    paint_trace::log("gdi.surface-create root=0x%08" PRIx32 " target=0x%08" PRIx32 " size=%ux%u fill=%08" PRIx32,
+                                     top_handle, static_cast<uint32_t>(dc_state.target_window), width, height, fill_color);
                 }
 
                 origin_x = off_x;
@@ -675,6 +695,7 @@ namespace sogen
             {
                 if (surface == nullptr)
                 {
+                    paint_trace::log("gdi.present rejected=null-surface target=0x%08" PRIx32, present_handle);
                     return;
                 }
 
@@ -682,9 +703,13 @@ namespace sogen
 
                 if (present_handle == 0 || surface->width <= 0 || surface->height <= 0 || surface->pixels.empty())
                 {
+                    paint_trace::log("gdi.present rejected target=0x%08" PRIx32 " size=%ux%u pixels=%zu", present_handle, surface->width,
+                                     surface->height, surface->pixels.size());
                     return;
                 }
 
+                paint_trace::log_surface("gdi.present", present_handle, surface->pixels.data(), static_cast<int>(surface->width),
+                                         static_cast<int>(surface->height), static_cast<int>(surface->width * sizeof(uint32_t)));
                 c.win_emu.ui().present_surface(present_handle,
                                                ui_surface_desc{.width = static_cast<int>(surface->width),
                                                                .height = static_cast<int>(surface->height),
@@ -701,38 +726,6 @@ namespace sogen
                 }
 
                 surface.pixels[static_cast<size_t>(y) * surface.width + static_cast<size_t>(x)] = color;
-            }
-
-            uint32_t dib_pixel_to_bgra32(const uint8_t* row, const uint32_t x, const uint16_t bpp, const std::vector<uint32_t>& palette)
-            {
-                switch (bpp)
-                {
-                case 1:
-                    return palette[(row[x / 8u] >> (7u - (x & 7u))) & 1u];
-                case 4: {
-                    const uint8_t packed = row[x / 2u];
-                    const uint8_t index = (x & 1u) == 0u ? packed >> 4u : packed & 0x0Fu;
-                    return palette[index];
-                }
-                case 8:
-                    return palette[row[x]];
-                case 16: {
-                    const uint8_t* p = row + static_cast<size_t>(x) * 2;
-                    const uint32_t v = static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8);
-                    // BI_RGB 16bpp is RGB555, not RGB565.
-                    const uint32_t r = ((v >> 10u) & 0x1Fu) * 255u / 31u;
-                    const uint32_t g = ((v >> 5u) & 0x1Fu) * 255u / 31u;
-                    const uint32_t b = (v & 0x1Fu) * 255u / 31u;
-                    return 0xFF000000u | (r << 16) | (g << 8) | b;
-                }
-                case 24:
-                case 32: {
-                    const uint8_t* p = row + static_cast<size_t>(x) * (bpp / 8u);
-                    return 0xFF000000u | (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[1]) << 8) | p[0];
-                }
-                default:
-                    return 0xFF000000u;
-                }
             }
 
             std::optional<uint32_t> get_surface_pixel(const gdi_bitmap_surface& surface, const int x, const int y)
@@ -976,6 +969,24 @@ namespace sogen
                 }
             }
 
+            std::string trace_text(const std::u16string_view text)
+            {
+                constexpr size_t maximum_code_units = 96;
+                auto result = u16_to_u8(text.substr(0, maximum_code_units));
+                for (auto& character : result)
+                {
+                    if (static_cast<unsigned char>(character) < 0x20 || character == '\x7F')
+                    {
+                        character = '.';
+                    }
+                }
+                if (text.size() > maximum_code_units)
+                {
+                    result += "...";
+                }
+                return result;
+            }
+
             void fill_rect(gdi_bitmap_surface& surface, const int left, const int top, const int right, const int bottom,
                            const uint32_t color)
             {
@@ -994,6 +1005,8 @@ namespace sogen
                 const auto batch_offset = batch.Offset & ~k_gdibs_no_rect;
                 if (batch_offset == 0 || batch.HDC == 0 || batch_offset > sizeof(batch.Buffer))
                 {
+                    paint_trace::log("gdi.batch skipped hdc=0x%" PRIx64 " offset=0x%" PRIx64 " capacity=%zu",
+                                     static_cast<uint64_t>(batch.HDC), static_cast<uint64_t>(batch.Offset), sizeof(batch.Buffer));
                     return true;
                 }
 
@@ -1002,10 +1015,16 @@ namespace sogen
                 gdi_bitmap_surface* surface = nullptr;
                 int32_t origin_x = 0;
                 int32_t origin_y = 0;
-                if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
+                uint32_t present_handle = 0;
+                if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y, &present_handle) || !surface)
                 {
+                    paint_trace::log("gdi.batch hdc=0x%08" PRIx32 " offset=0x%" PRIx64 " failed=no-surface", static_cast<uint32_t>(dc),
+                                     static_cast<uint64_t>(batch_offset));
                     return true;
                 }
+
+                paint_trace::log("gdi.batch begin hdc=0x%08" PRIx32 " target=0x%08" PRIx32 " offset=0x%" PRIx64 " origin=[%d,%d]",
+                                 static_cast<uint32_t>(dc), present_handle, static_cast<uint64_t>(batch_offset), origin_x, origin_y);
 
                 const auto* bytes = reinterpret_cast<const uint8_t*>(batch.Buffer);
                 size_t offset = 0;
@@ -1014,6 +1033,9 @@ namespace sogen
                     const auto* header = reinterpret_cast<const gdi_batch_header*>(bytes + offset);
                     if (header->size <= 0 || offset + static_cast<size_t>(header->size) > batch_offset)
                     {
+                        paint_trace::log("gdi.batch invalid hdc=0x%08" PRIx32 " offset=%zu command=%d size=%d batch-size=0x%" PRIx64,
+                                         static_cast<uint32_t>(dc), offset, static_cast<int>(header->cmd), static_cast<int>(header->size),
+                                         static_cast<uint64_t>(batch_offset));
                         break;
                     }
 
@@ -1045,11 +1067,29 @@ namespace sogen
                             const auto* dx = reinterpret_cast<const uint32_t*>(text_out->string.data());
                             const auto* text =
                                 reinterpret_cast<const char16_t*>(text_out->string.data() + text_out->dx_size / sizeof(char16_t));
+                            const auto text_view = std::u16string_view(text, text_out->count);
+                            if (paint_trace::enabled())
+                            {
+                                const auto display_text = trace_text(text_view);
+                                paint_trace::log("gdi.batch.text target=0x%08" PRIx32 " hdc=0x%08" PRIx32
+                                                 " offset=%zu pos=[%d,%d] origin=[%d,%d] count=%u options=%08" PRIx32 " fg=%08" PRIx32
+                                                 " bg=%08" PRIx32 " rect=[%d,%d-%d,%d] has-rect=%d text=\"%s\"",
+                                                 present_handle, static_cast<uint32_t>(dc), offset, text_out->x, text_out->y, origin_x,
+                                                 origin_y, static_cast<unsigned>(text_out->count), text_out->options, text_out->foreground,
+                                                 text_out->background, clip_rect.left, clip_rect.top, clip_rect.right, clip_rect.bottom,
+                                                 has_rect ? 1 : 0, display_text.c_str());
+                            }
                             draw_text(*surface, text_out->x + text_out->viewport_org.x + origin_x,
-                                      text_out->y + text_out->viewport_org.y + origin_y, std::u16string_view(text, text_out->count),
-                                      colorref_to_bgra(text_out->foreground),
+                                      text_out->y + text_out->viewport_org.y + origin_y, text_view, colorref_to_bgra(text_out->foreground),
                                       has_rect && (text_out->options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
                                       text_out->dx_size >= text_out->count * sizeof(uint32_t) ? dx : nullptr);
+                        }
+                        else
+                        {
+                            paint_trace::log("gdi.batch.text invalid-payload hdc=0x%08" PRIx32
+                                             " offset=%zu size=%d count=%u dx-bytes=%zu payload=%zu",
+                                             static_cast<uint32_t>(dc), offset, static_cast<int>(header->size),
+                                             static_cast<unsigned>(text_out->count), dx_bytes, payload_capacity);
                         }
                     }
                     else if (header->cmd == k_gdi_batch_cmd_poly_pat_blt &&
@@ -1061,6 +1101,11 @@ namespace sogen
                         const auto available_rects =
                             (static_cast<size_t>(header->size) - k_gdi_poly_pat_blt_rect_offset) / k_gdi_pat_rect_size;
                         const auto rect_count = declared_count == 0 ? available_rects : std::min<size_t>(declared_count, available_rects);
+                        const auto* poly_blt = reinterpret_cast<const gdi_batch_poly_pat_blt*>(header);
+                        paint_trace::log("gdi.batch.poly target=0x%08" PRIx32 " hdc=0x%08" PRIx32 " offset=%zu rop=%08" PRIx32
+                                         " mode=%08" PRIx32 " declared=%" PRIu32 " available=%zu",
+                                         present_handle, static_cast<uint32_t>(dc), offset, poly_blt->rop, poly_blt->mode, declared_count,
+                                         available_rects);
                         for (size_t i = 0; i < rect_count; ++i)
                         {
                             const auto rect_offset = offset + k_gdi_poly_pat_blt_rect_offset + (i * k_gdi_pat_rect_size);
@@ -1070,11 +1115,28 @@ namespace sogen
                             brush = rect.brush;
 
                             const auto color = brush != 0 ? get_brush_color(c, static_cast<uint32_t>(brush)) : get_dc_brush_color(c, dc);
+                            if (paint_trace::enabled() && i < 64)
+                            {
+                                paint_trace::log("gdi.batch.poly-rect target=0x%08" PRIx32
+                                                 " index=%zu rect=[%d,%d %dx%d] origin=[%d,%d] brush=0x%" PRIx64 " color=%08" PRIx32,
+                                                 present_handle, i, rect.x, rect.y, rect.width, rect.height, origin_x, origin_y, brush,
+                                                 color);
+                            }
+                            else if (paint_trace::enabled() && i == 64)
+                            {
+                                paint_trace::log("gdi.batch.poly-rect target=0x%08" PRIx32 " remaining=%zu suppressed", present_handle,
+                                                 rect_count - i);
+                            }
                             fill_rect(*surface, rect.x + origin_x, rect.y + origin_y, rect.x + rect.width + origin_x,
                                       rect.y + rect.height + origin_y, color);
                         }
                     }
 
+                    else
+                    {
+                        paint_trace::log("gdi.batch unknown hdc=0x%08" PRIx32 " offset=%zu command=%d size=%d", static_cast<uint32_t>(dc),
+                                         offset, static_cast<int>(header->cmd), static_cast<int>(header->size));
+                    }
                     offset += static_cast<size_t>(header->size);
                 }
 
@@ -1083,6 +1145,12 @@ namespace sogen
 
             void seed_user_system_color_brushes(const syscall_context& c)
             {
+                c.proc.user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) {
+                    for (size_t i = 0; i < USER_NUM_SYSCOLORS; ++i)
+                    {
+                        server_info.systemColors[i] = k_default_system_colors[i];
+                    }
+                });
                 constexpr size_t k_brush_seed_count =
                     USER_NUM_SYSCOLORS < USER_SERVERINFO_BRUSH_SLOT_COUNT ? USER_NUM_SYSCOLORS : USER_SERVERINFO_BRUSH_SLOT_COUNT;
 
@@ -1293,8 +1361,67 @@ namespace sogen
                 return handle_value;
             }
 
-            uint32_t create_gdi_bitmap_surface(const syscall_context& c, const uint32_t width, const uint32_t height,
-                                               const uint32_t fill = k_default_bitmap_fill,
+            void trace_bitmap_surface(const char* const event, const uint32_t bitmap_handle, const gdi_bitmap_surface& surface)
+            {
+                if (!paint_trace::enabled())
+                {
+                    return;
+                }
+
+                paint_trace::log("%s bitmap=0x%08" PRIx32 " size=%ux%u pixels=%zu guest-bits=0x%" PRIx64
+                                 " guest-stride=%u guest-bpp=%u top-down=%d owns-memory=%d",
+                                 event, bitmap_handle, surface.width, surface.height, surface.pixels.size(),
+                                 static_cast<uint64_t>(surface.guest_bits), surface.guest_stride, surface.guest_bpp,
+                                 surface.guest_top_down ? 1 : 0, surface.guest_owns_memory ? 1 : 0);
+            }
+
+            void trace_bitmap_owners(const char* const event, const syscall_context& c, const uint32_t bitmap_handle)
+            {
+                if (!paint_trace::enabled() || bitmap_handle == 0)
+                {
+                    return;
+                }
+
+                size_t active_owner_count = 0;
+                for (const auto& [dc_handle, state] : c.proc.gdi_dc_states)
+                {
+                    if (state.selected_bitmap != bitmap_handle)
+                    {
+                        continue;
+                    }
+
+                    paint_trace::log("%s bitmap=0x%08" PRIx32 " active-owner=%zu hdc=0x%08" PRIx32 " memory=%d target=0x%08" PRIx32
+                                     " origin=[%d,%d]",
+                                     event, bitmap_handle, active_owner_count, dc_handle, state.is_memory_dc ? 1 : 0,
+                                     static_cast<uint32_t>(state.target_window), state.current_x, state.current_y);
+                    ++active_owner_count;
+                }
+
+                size_t saved_owner_count = 0;
+                for (const auto& [dc_handle, stack] : c.proc.gdi_dc_save_states)
+                {
+                    for (size_t depth = 0; depth < stack.size(); ++depth)
+                    {
+                        const auto& saved = stack[depth];
+                        if (saved.selected_bitmap != bitmap_handle)
+                        {
+                            continue;
+                        }
+
+                        paint_trace::log("%s bitmap=0x%08" PRIx32 " saved-owner=%zu hdc=0x%08" PRIx32
+                                         " depth=%zu memory=%d target=0x%08" PRIx32 " origin=[%d,%d]",
+                                         event, bitmap_handle, saved_owner_count, dc_handle, depth, saved.is_memory_dc ? 1 : 0,
+                                         static_cast<uint32_t>(saved.target_window), saved.current_x, saved.current_y);
+                        ++saved_owner_count;
+                    }
+                }
+
+                paint_trace::log("%s bitmap=0x%08" PRIx32 " active-owners=%zu saved-owners=%zu", event, bitmap_handle, active_owner_count,
+                                 saved_owner_count);
+            }
+
+            uint32_t create_gdi_bitmap_surface(const syscall_context& c, const char* const source, const uint32_t width,
+                                               const uint32_t height, const uint32_t fill = k_default_bitmap_fill,
                                                gdi_bitmap_surface** const created_surface = nullptr)
             {
                 if (created_surface != nullptr)
@@ -1312,11 +1439,32 @@ namespace sogen
                 surface.width = width;
                 surface.height = height;
                 surface.pixels.assign(static_cast<size_t>(width) * static_cast<size_t>(height), fill);
+                paint_trace::log("gdi.bitmap-create source=%s bitmap=0x%08" PRIx32 " size=%ux%u fill=%08" PRIx32, source, handle_value,
+                                 width, height, fill);
                 if (created_surface != nullptr)
                 {
                     *created_surface = &surface;
                 }
                 return handle_value;
+            }
+
+            uint32_t ensure_memory_dc_default_bitmap(const syscall_context& c)
+            {
+                const auto default_bitmap = c.proc.gdi_memory_dc_default_bitmap_handle;
+                if (default_bitmap != 0 && c.proc.gdi_bitmap_surfaces.contains(default_bitmap))
+                {
+                    return default_bitmap;
+                }
+
+                gdi_bitmap_surface* surface = nullptr;
+                const auto created_bitmap = create_gdi_bitmap_surface(c, "compatible-dc-default", 1, 1, 0xFF000000u, &surface);
+                if (surface != nullptr)
+                {
+                    surface->guest_bpp = 1;
+                }
+
+                c.proc.gdi_memory_dc_default_bitmap_handle = created_bitmap;
+                return created_bitmap;
             }
 
             hdc ensure_default_hdc(const syscall_context& c)
@@ -1632,6 +1780,18 @@ namespace sogen
             }
         }
 
+        bool set_gdi_region_rect(const syscall_context& c, const handle region, const RECT& rect)
+        {
+            uint64_t region_attr = 0;
+            if (!get_gdi_object_address(c, static_cast<uint32_t>(region.bits), k_gdi_region_type, region_attr))
+            {
+                return false;
+            }
+
+            c.emu.write_memory(region_attr, &rect, sizeof(rect));
+            return true;
+        }
+
         // Returns the surface a paint DC should be presented to, and (via present_handle) the host window handle it
         // belongs to (the top-level window for child controls). Used by NtUserEndPaint to flush guest paint output.
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, const hdc dc, uint32_t& present_handle)
@@ -1670,6 +1830,14 @@ namespace sogen
             return get_device_caps_value(index);
         }
 
+        COLORREF handle_NtGdiGetNearestColor(const syscall_context&, const hdc dc, const COLORREF color)
+        {
+            const auto result = static_cast<COLORREF>(color & 0x00FFFFFFu);
+            paint_trace::log("gdi.nearest-color hdc=0x%08" PRIx32 " requested=%08" PRIx32 " returned=%08" PRIx32, static_cast<uint32_t>(dc),
+                             color, result);
+            return result;
+        }
+
         uint32_t handle_NtGdiGetDeviceCapsAll(const syscall_context& c, const hdc /*dc*/, const emulator_pointer caps)
         {
             write_device_caps(c, caps, 0x24);
@@ -1679,6 +1847,11 @@ namespace sogen
         uint32_t handle_NtGdiComputeXformCoefficients(const syscall_context&, const hdc dc)
         {
             return dc ? 1 : 0;
+        }
+
+        uint32_t handle_NtGdiSetBoundsRect(const syscall_context&, const hdc, const emulator_pointer, const uint32_t)
+        {
+            return 0;
         }
 
         void draw_system_button_glyph(const syscall_context& c, const hdc dc, const int x, const int y, const uint32_t index)
@@ -1818,6 +1991,12 @@ namespace sogen
             {
                 BOOL result = TRUE;
                 thread.teb64->access([&](TEB64& teb) {
+                    if (paint_trace::enabled() && teb.GdiTebBatch.Offset != 0)
+                    {
+                        paint_trace::log("gdi.flush arch=64 thread=%u hdc=0x%" PRIx64 " offset=0x%" PRIx64 " count=%u", thread.id,
+                                         static_cast<uint64_t>(teb.GdiTebBatch.HDC), static_cast<uint64_t>(teb.GdiTebBatch.Offset),
+                                         static_cast<unsigned>(teb.GdiBatchCount));
+                    }
                     result = flush_gdi_text_batch(c, teb.GdiTebBatch) ? TRUE : FALSE;
                     teb.GdiTebBatch = {};
                     teb.GdiBatchCount = 0;
@@ -1829,6 +2008,12 @@ namespace sogen
             {
                 BOOL result = TRUE;
                 thread.teb32->access([&](TEB32& teb) {
+                    if (paint_trace::enabled() && teb.GdiTebBatch.Offset != 0)
+                    {
+                        paint_trace::log("gdi.flush arch=32 thread=%u hdc=0x%" PRIx64 " offset=0x%" PRIx64 " count=%u", thread.id,
+                                         static_cast<uint64_t>(teb.GdiTebBatch.HDC), static_cast<uint64_t>(teb.GdiTebBatch.Offset),
+                                         static_cast<unsigned>(teb.GdiBatchCount));
+                    }
                     result = flush_gdi_text_batch(c, teb.GdiTebBatch) ? TRUE : FALSE;
                     teb.GdiTebBatch = {};
                     teb.GdiBatchCount = 0;
@@ -1847,6 +2032,8 @@ namespace sogen
             {
                 c.emu.write_memory(brush_attr + sizeof(uint32_t), &color, sizeof(color));
             }
+            paint_trace::log("gdi.create-solid-brush brush=0x%" PRIx64 " colorref=%08" PRIx32 " bgra=%08" PRIx32,
+                             static_cast<uint64_t>(handle), color, colorref_to_bgra(color));
             return handle;
         }
 
@@ -1898,15 +2085,16 @@ namespace sogen
 
             it->second.is_memory_dc = true;
 
-            // Memory DCs begin with a default monochrome bitmap selected, and SelectObject
-            // returns that previous bitmap on the first real bitmap selection.
-            const auto default_bitmap = create_gdi_bitmap_surface(c, 1, 1, 0xFF000000u);
+            const auto default_bitmap = ensure_memory_dc_default_bitmap(c);
             if (default_bitmap == 0)
             {
                 return 0;
             }
 
             it->second.selected_bitmap = default_bitmap;
+            paint_trace::log("gdi.memory-dc-create hdc=0x%08" PRIx32 " default-bitmap=0x%08" PRIx32, static_cast<uint32_t>(dc),
+                             default_bitmap);
+            trace_bitmap_owners("gdi.memory-dc-create", c, default_bitmap);
             return dc;
         }
 
@@ -1938,6 +2126,10 @@ namespace sogen
             }
 
             stack.push_back(snapshot);
+            paint_trace::log("gdi.save-dc hdc=0x%08" PRIx32 " level=%zu bitmap=0x%08" PRIx32 " memory=%d target=0x%08" PRIx32, dc_value,
+                             stack.size(), snapshot.selected_bitmap, snapshot.is_memory_dc ? 1 : 0,
+                             static_cast<uint32_t>(snapshot.target_window));
+            trace_bitmap_owners("gdi.save-dc", c, snapshot.selected_bitmap);
             return static_cast<int32_t>(stack.size());
         }
 
@@ -1973,8 +2165,30 @@ namespace sogen
                 target_index = static_cast<size_t>(saved_dc) - 1;
             }
 
+            const bool tracing = paint_trace::enabled();
+            uint32_t previous_bitmap = 0;
+            uint32_t restored_bitmap = 0;
+            if (tracing)
+            {
+                if (const auto previous = c.proc.gdi_dc_states.find(dc_value); previous != c.proc.gdi_dc_states.end())
+                {
+                    previous_bitmap = previous->second.selected_bitmap;
+                }
+                restored_bitmap = stack[target_index].selected_bitmap;
+            }
             c.proc.gdi_dc_states[dc_value] = stack[target_index];
             stack.resize(target_index);
+            if (tracing)
+            {
+                paint_trace::log("gdi.restore-dc hdc=0x%08" PRIx32 " saved=%d old-bitmap=0x%08" PRIx32 " restored-bitmap=0x%08" PRIx32
+                                 " remaining-saves=%zu",
+                                 dc_value, saved_dc, previous_bitmap, restored_bitmap, stack.size());
+                trace_bitmap_owners("gdi.restore-dc", c, restored_bitmap);
+                if (previous_bitmap != restored_bitmap)
+                {
+                    trace_bitmap_owners("gdi.restore-dc-released", c, previous_bitmap);
+                }
+            }
             return TRUE;
         }
 
@@ -2015,14 +2229,14 @@ namespace sogen
 
         uint64_t handle_NtGdiCreateCompatibleBitmap(const syscall_context& c, const hdc /*dc*/, const uint32_t width, const uint32_t height)
         {
-            return create_gdi_bitmap_surface(c, width, height);
+            return create_gdi_bitmap_surface(c, "compatible-bitmap", width, height);
         }
 
         uint64_t handle_NtGdiCreateBitmap(const syscall_context& c, const uint32_t width, const uint32_t height, const uint32_t planes,
                                           const uint32_t bits_pixel, const emulator_pointer bits)
         {
             gdi_bitmap_surface* surface = nullptr;
-            const auto handle_value = create_gdi_bitmap_surface(c, width, height, k_default_bitmap_fill, &surface);
+            const auto handle_value = create_gdi_bitmap_surface(c, "bitmap", width, height, k_default_bitmap_fill, &surface);
             if (surface != nullptr)
             {
                 if (bits != 0 && planes == 1 && bits_pixel == 32)
@@ -2152,7 +2366,7 @@ namespace sogen
             c.emu.write_memory(guest_bits, zeroed.data(), zeroed.size());
 
             gdi_bitmap_surface* surface = nullptr;
-            const auto handle_value = create_gdi_bitmap_surface(c, width, abs_height, 0, &surface);
+            const auto handle_value = create_gdi_bitmap_surface(c, "dib-section", width, abs_height, 0, &surface);
             if (handle_value == 0)
             {
                 c.win_emu.memory.release_memory(guest_bits, 0);
@@ -2164,6 +2378,7 @@ namespace sogen
             surface->guest_bpp = header.biBitCount;
             surface->guest_top_down = header.biHeight < 0;
             surface->guest_owns_memory = true;
+            trace_bitmap_surface("gdi.bitmap-dib-section", handle_value, *surface);
 
             bits.write(guest_bits);
             return handle_value;
@@ -2175,7 +2390,7 @@ namespace sogen
                                                     const uint32_t /*cj*/, const uint32_t /*i_usage*/)
         {
             gdi_bitmap_surface* surface = nullptr;
-            const auto handle_value = create_gdi_bitmap_surface(c, width, height, k_default_bitmap_fill, &surface);
+            const auto handle_value = create_gdi_bitmap_surface(c, "dibitmap", width, height, k_default_bitmap_fill, &surface);
             if (surface != nullptr)
             {
                 if (bits != 0)
@@ -2252,7 +2467,7 @@ namespace sogen
         int handle_NtGdiSetDIBitsToDeviceInternal(const syscall_context& c, const hdc dc, const int x_dest, const int y_dest,
                                                   const uint32_t width, const uint32_t height, const int x_src, const int y_src,
                                                   const uint32_t /*start_scan*/, const uint32_t scan_lines, const emulator_pointer bits,
-                                                  const emulator_pointer info, const uint32_t color_use, const uint32_t max_bits,
+                                                  const emulator_pointer info, const uint32_t /*color_use*/, const uint32_t max_bits,
                                                   const uint32_t /*max_info*/, const uint32_t /*transform_coordinates*/,
                                                   const uint64_t /*color_transform*/)
         {
@@ -2274,28 +2489,20 @@ namespace sogen
             int32_t bi_height = 0;
             uint16_t bit_count = 0;
             uint32_t compression = 0;
+            uint32_t bi_size = 0;
+            uint32_t clr_used = 0;
+            c.emu.read_memory(info + 0, &bi_size, sizeof(bi_size));
             c.emu.read_memory(info + 4, &bi_width, sizeof(bi_width));
             c.emu.read_memory(info + 8, &bi_height, sizeof(bi_height));
             c.emu.read_memory(info + 14, &bit_count, sizeof(bit_count));
             c.emu.read_memory(info + 16, &compression, sizeof(compression));
-
-            uint32_t bi_size = 0;
-            uint32_t clr_used = 0;
-            c.emu.read_memory(info + 0, &bi_size, sizeof(bi_size));
             c.emu.read_memory(info + 32, &clr_used, sizeof(clr_used));
 
             constexpr uint32_t bi_rgb = 0;
-            constexpr uint32_t dib_rgb_colors = 0;
-            constexpr uint32_t bitmapinfoheader_size = 40;
-            const bool valid_bit_count =
-                bit_count == 1 || bit_count == 4 || bit_count == 8 || bit_count == 16 || bit_count == 24 || bit_count == 32;
-            // A colour table is only an RGBQUAD array for DIB_RGB_COLORS with a BITMAPINFOHEADER or later;
-            // DIB_PAL_COLORS stores 16-bit logical-palette indices and BITMAPCOREHEADER stores RGBTRIPLEs.
-            const bool valid_color_table = bit_count > 8 || (color_use == dib_rgb_colors && bi_size >= bitmapinfoheader_size);
-            if (!valid_bit_count || !valid_color_table || compression != bi_rgb || bi_width <= 0)
+            if ((bit_count != 4 && bit_count != 32 && bit_count != 24) || compression != bi_rgb || bi_width <= 0)
             {
-                c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB (bpp=%u compression=%u usage=%u width=%d)\n", bit_count,
-                                   compression, color_use, bi_width);
+                c.win_emu.log.warn("NtGdiSetDIBitsToDeviceInternal: unsupported DIB (bpp=%u compression=%u width=%d)\n", bit_count,
+                                   compression, bi_width);
                 return 0;
             }
 
@@ -2303,24 +2510,26 @@ namespace sogen
             const auto src_width = static_cast<uint32_t>(bi_width);
             const auto src_height = static_cast<uint32_t>(top_down ? -bi_height : bi_height);
             const auto stored_rows = std::min(scan_lines, src_height);
-            // DIB scanlines are DWORD-aligned, not tightly packed.
             const size_t stride = ((static_cast<size_t>(src_width) * bit_count + 31u) / 32u) * 4u;
 
-            std::vector<uint32_t> palette{};
-            if (bit_count <= 8)
+            std::array<uint32_t, 16> palette{};
+            if (bit_count == 4)
             {
-                const uint32_t max_colors = 1u << bit_count;
-                const uint32_t palette_entries = clr_used != 0 ? std::min(clr_used, max_colors) : max_colors;
-                constexpr size_t rgbquad_size = 4;
-                const auto color_table = c.emu.read_memory(info + bi_size, static_cast<size_t>(palette_entries) * rgbquad_size);
-
-                // Pixel data may index past biClrUsed, so size the palette by bit depth rather than by the table.
-                palette.resize(max_colors, 0xFF000000u);
+                const uint32_t palette_entries = clr_used != 0 ? std::min<uint32_t>(clr_used, 16) : 16;
+                const uint64_t palette_ptr = info + bi_size;
                 for (uint32_t i = 0; i < palette_entries; ++i)
                 {
-                    const std::byte* bgrx = color_table.data() + static_cast<size_t>(i) * rgbquad_size;
-                    palette[i] = 0xFF000000u | (std::to_integer<uint32_t>(bgrx[2]) << 16) | (std::to_integer<uint32_t>(bgrx[1]) << 8) |
-                                 std::to_integer<uint32_t>(bgrx[0]);
+                    struct
+                    {
+                        uint8_t blue;
+                        uint8_t green;
+                        uint8_t red;
+                        uint8_t reserved;
+                    } rgb{};
+
+                    c.emu.read_memory(palette_ptr + static_cast<uint64_t>(i) * sizeof(rgb), &rgb, sizeof(rgb));
+                    palette[i] = 0xFF000000u | (static_cast<uint32_t>(rgb.red) << 16) | (static_cast<uint32_t>(rgb.green) << 8) |
+                                 static_cast<uint32_t>(rgb.blue);
                 }
             }
 
@@ -2358,8 +2567,27 @@ namespace sogen
                     {
                         break;
                     }
-                    set_surface_pixel(*surface, x_dest + origin_x + static_cast<int>(i), y_dest + origin_y + static_cast<int>(j),
-                                      dib_pixel_to_bgra32(row, src_x, bit_count, palette));
+
+                    uint32_t pixel = 0;
+                    if (bit_count == 32)
+                    {
+                        std::memcpy(&pixel, row + static_cast<size_t>(src_x) * sizeof(uint32_t), sizeof(pixel));
+                        pixel |= 0xFF000000u;
+                    }
+                    else if (bit_count == 24)
+                    {
+                        const uint8_t* px = row + static_cast<size_t>(src_x) * 3;
+                        pixel = static_cast<uint32_t>(px[0]) | (static_cast<uint32_t>(px[1]) << 8) | (static_cast<uint32_t>(px[2]) << 16) |
+                                0xFF000000u;
+                    }
+                    else
+                    {
+                        const uint8_t packed = row[static_cast<size_t>(src_x) / 2u];
+                        const uint8_t index = (src_x & 1u) == 0 ? static_cast<uint8_t>(packed >> 4) : static_cast<uint8_t>(packed & 0x0Fu);
+                        pixel = palette[index];
+                    }
+
+                    set_surface_pixel(*surface, x_dest + origin_x + static_cast<int>(i), y_dest + origin_y + static_cast<int>(j), pixel);
                 }
                 ++copied;
             }
@@ -2541,6 +2769,26 @@ namespace sogen
             {
                 c.proc.gdi_default_dc_handle = 0;
             }
+            if (paint_trace::enabled())
+            {
+                const auto saved_state_it = c.proc.gdi_dc_save_states.find(handle_value);
+                const auto saved_state_count =
+                    saved_state_it != c.proc.gdi_dc_save_states.end() ? saved_state_it->second.size() : size_t{0};
+                if (const auto dc_it = c.proc.gdi_dc_states.find(handle_value); dc_it != c.proc.gdi_dc_states.end())
+                {
+                    const auto& state = dc_it->second;
+                    paint_trace::log("gdi.dc-delete hdc=0x%08" PRIx32 " memory=%d selected-bitmap=0x%08" PRIx32 " target=0x%08" PRIx32
+                                     " saved-states=%zu",
+                                     handle_value, state.is_memory_dc ? 1 : 0, state.selected_bitmap,
+                                     static_cast<uint32_t>(state.target_window), saved_state_count);
+                    trace_bitmap_owners("gdi.dc-delete", c, state.selected_bitmap);
+                }
+                if (const auto bitmap_it = c.proc.gdi_bitmap_surfaces.find(handle_value); bitmap_it != c.proc.gdi_bitmap_surfaces.end())
+                {
+                    trace_bitmap_surface("gdi.bitmap-delete", handle_value, bitmap_it->second);
+                    trace_bitmap_owners("gdi.bitmap-delete-owners", c, handle_value);
+                }
+            }
 
             if (const auto bmp_it = c.proc.gdi_bitmap_surfaces.find(handle_value);
                 bmp_it != c.proc.gdi_bitmap_surfaces.end() && bmp_it->second.guest_owns_memory && bmp_it->second.guest_bits != 0)
@@ -2550,6 +2798,11 @@ namespace sogen
             if (entry.Object != 0)
             {
                 c.win_emu.memory.release_memory(entry.Object, 0);
+            }
+
+            if (handle_value == c.proc.gdi_memory_dc_default_bitmap_handle)
+            {
+                c.proc.gdi_memory_dc_default_bitmap_handle = 0;
             }
 
             c.proc.gdi_dc_states.erase(handle_value);
@@ -2562,30 +2815,56 @@ namespace sogen
             const auto it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
             if (it == c.proc.gdi_dc_states.end())
             {
+                paint_trace::log("gdi.select-bitmap hdc=0x%08" PRIx32 " bitmap=0x%" PRIx64 " failed=no-dc-state", static_cast<uint32_t>(dc),
+                                 bitmap.bits);
                 return 0;
             }
 
             if (!it->second.is_memory_dc)
             {
+                paint_trace::log("gdi.select-bitmap hdc=0x%08" PRIx32 " bitmap=0x%" PRIx64 " failed=not-memory-dc",
+                                 static_cast<uint32_t>(dc), bitmap.bits);
                 return 0;
             }
 
             const auto bitmap_handle = static_cast<uint32_t>(bitmap.bits);
             if (!c.proc.gdi_bitmap_surfaces.contains(bitmap_handle))
             {
+                paint_trace::log("gdi.select-bitmap hdc=0x%08" PRIx32 " bitmap=0x%08" PRIx32 " failed=missing-surface",
+                                 static_cast<uint32_t>(dc), bitmap_handle);
                 return 0;
             }
 
-            for (const auto& [other_dc, state] : c.proc.gdi_dc_states)
+            const auto old = it->second.selected_bitmap;
+            paint_trace::log("gdi.select-bitmap request hdc=0x%08" PRIx32 " old=0x%08" PRIx32 " requested=0x%08" PRIx32
+                             " memory=%d target=0x%08" PRIx32 " origin=[%d,%d]",
+                             static_cast<uint32_t>(dc), old, bitmap_handle, it->second.is_memory_dc ? 1 : 0,
+                             static_cast<uint32_t>(it->second.target_window), it->second.current_x, it->second.current_y);
+            trace_bitmap_owners("gdi.select-bitmap-before", c, bitmap_handle);
+
+            if (bitmap_handle != c.proc.gdi_memory_dc_default_bitmap_handle)
             {
-                if (other_dc != static_cast<uint32_t>(dc) && state.selected_bitmap == bitmap_handle)
+                for (const auto& [other_dc, state] : c.proc.gdi_dc_states)
                 {
-                    return 0;
+                    if (other_dc != static_cast<uint32_t>(dc) && state.selected_bitmap == bitmap_handle)
+                    {
+                        paint_trace::log("gdi.select-bitmap hdc=0x%08" PRIx32 " bitmap=0x%08" PRIx32
+                                         " failed=already-selected other-hdc=0x%08" PRIx32,
+                                         static_cast<uint32_t>(dc), bitmap_handle, other_dc);
+                        trace_bitmap_owners("gdi.select-bitmap-conflict", c, bitmap_handle);
+                        return 0;
+                    }
                 }
             }
 
-            const auto old = it->second.selected_bitmap;
             it->second.selected_bitmap = bitmap_handle;
+            paint_trace::log("gdi.select-bitmap hdc=0x%08" PRIx32 " old=0x%08" PRIx32 " new=0x%08" PRIx32, static_cast<uint32_t>(dc), old,
+                             bitmap_handle);
+            trace_bitmap_owners("gdi.select-bitmap-after", c, bitmap_handle);
+            if (old != bitmap_handle)
+            {
+                trace_bitmap_owners("gdi.select-bitmap-released", c, old);
+            }
             return old;
         }
 
@@ -2597,14 +2876,17 @@ namespace sogen
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, const handle bitmap)
         {
             const auto bitmap_handle = static_cast<uint32_t>(bitmap.bits);
+            trace_bitmap_owners("gdi.get-dc-for-bitmap", c, bitmap_handle);
             for (const auto& [dc_handle, dc_state] : c.proc.gdi_dc_states)
             {
                 if (dc_state.is_memory_dc && dc_state.selected_bitmap == bitmap_handle)
                 {
+                    paint_trace::log("gdi.get-dc-for-bitmap bitmap=0x%08" PRIx32 " result=0x%08" PRIx32, bitmap_handle, dc_handle);
                     return static_cast<hdc>(dc_handle);
                 }
             }
 
+            paint_trace::log("gdi.get-dc-for-bitmap bitmap=0x%08" PRIx32 " result=0x00000000", bitmap_handle);
             return 0;
         }
 
@@ -2620,6 +2902,21 @@ namespace sogen
             // DC is a real (non-memory) DC, so "is memory DC" is false.
             uint32_t value = 0;
             c.emu.write_memory(result, &value, sizeof(value));
+            return TRUE;
+        }
+
+        BOOL handle_NtGdiGetAndSetDCDword(const syscall_context& c, const hdc dc, const uint32_t method, const uint32_t value,
+                                          const emulator_pointer result)
+        {
+            constexpr uint32_t set_map_mode = 8;
+            constexpr uint32_t text_map_mode = 1;
+
+            if (dc == 0 || result == 0 || method != set_map_mode || value != text_map_mode)
+            {
+                return FALSE;
+            }
+
+            c.emu.write_memory(result, &text_map_mode, sizeof(text_map_mode));
             return TRUE;
         }
 
@@ -2797,6 +3094,10 @@ namespace sogen
                         font.text_metric.ntmTm.tmPitchAndFamily = DEFAULT_PITCH | FF_SWISS;
                         font.text_metric.ntmTm.ntmFlags =
                             (style.weight == FW_BOLD ? NTM_BOLD : NTM_REGULAR) | (style.italic ? NTM_ITALIC : 0);
+
+                        const auto signature = make_gdi_font_signature(font_charset);
+                        std::ranges::copy(signature.unicode_subsets, font.text_metric.fsUsb);
+                        std::ranges::copy(signature.code_pages, font.text_metric.fsCsb);
                     }
                 }
             }
@@ -2965,6 +3266,24 @@ namespace sogen
             const std::vector<ABC> widths(char_count, metrics);
             c.emu.write_memory(buffer, widths.data(), widths.size() * sizeof(ABC));
             return TRUE;
+        }
+
+        uint32_t handle_NtGdiGetGlyphIndicesW(const syscall_context& c, const hdc dc, const emulator_pointer text, const int32_t char_count,
+                                              const emulator_pointer glyph_indices, const uint32_t /*flags*/)
+        {
+            constexpr uint32_t gdi_error = 0xFFFFFFFF;
+            if (dc == 0 || text == 0 || glyph_indices == 0 || char_count < 0)
+            {
+                return gdi_error;
+            }
+
+            std::vector<char16_t> characters(static_cast<size_t>(char_count));
+            c.emu.read_memory(text, characters.data(), characters.size() * sizeof(char16_t));
+
+            std::vector<uint16_t> indices(characters.size());
+            std::ranges::transform(characters, indices.begin(), [](const char16_t character) { return static_cast<uint16_t>(character); });
+            c.emu.write_memory(glyph_indices, indices.data(), indices.size() * sizeof(uint16_t));
+            return static_cast<uint32_t>(indices.size());
         }
 
         uint32_t handle_NtGdiGetGlyphOutline(const syscall_context& c, const hdc dc, const UINT character, const UINT format,
@@ -3261,10 +3580,46 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, const LONG /*x_left*/, const LONG /*y_top*/, const LONG /*x_right*/,
-                                           const LONG /*y_bottom*/)
+        uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, const LONG x_left, const LONG y_top, const LONG x_right,
+                                           const LONG y_bottom)
         {
-            return allocate_gdi_object(c, k_gdi_region_type, k_gdi_region_attr_size);
+            const auto handle = allocate_gdi_object(c, k_gdi_region_type, k_gdi_region_attr_size);
+            uint64_t region_attr = 0;
+            if (handle != 0 && get_gdi_object_address(c, handle, k_gdi_region_type, region_attr))
+            {
+                const RECT rect{
+                    .left = x_left,
+                    .top = y_top,
+                    .right = x_right,
+                    .bottom = y_bottom,
+                };
+                c.emu.write_memory(region_attr, &rect, sizeof(rect));
+            }
+            return handle;
+        }
+
+        BOOL handle_NtGdiEqualRgn(const syscall_context& c, const handle first_region, const handle second_region)
+        {
+            uint64_t first_attr = 0;
+            uint64_t second_attr = 0;
+            if (!get_gdi_object_address(c, static_cast<uint32_t>(first_region.bits), k_gdi_region_type, first_attr) ||
+                !get_gdi_object_address(c, static_cast<uint32_t>(second_region.bits), k_gdi_region_type, second_attr))
+            {
+                return FALSE;
+            }
+
+            RECT first_rect{};
+            RECT second_rect{};
+            if (!c.win_emu.memory.try_read_memory(first_attr, &first_rect, sizeof(first_rect)) ||
+                !c.win_emu.memory.try_read_memory(second_attr, &second_rect, sizeof(second_rect)))
+            {
+                return FALSE;
+            }
+
+            return first_rect.left == second_rect.left && first_rect.top == second_rect.top && first_rect.right == second_rect.right &&
+                           first_rect.bottom == second_rect.bottom
+                       ? TRUE
+                       : FALSE;
         }
 
         int32_t handle_NtGdiGetRandomRgn(const syscall_context&, const hdc dc, const uint64_t region, const LONG /*index*/)
@@ -3462,6 +3817,12 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtGdiPolyPolyDraw()
+        {
+            // Path geometry is not modeled yet; accept the draw request so callers can continue.
+            return TRUE;
+        }
+
         BOOL handle_NtGdiRectangle(const syscall_context& c, const hdc dc, const LONG left, const LONG top, const LONG right,
                                    const LONG bottom)
         {
@@ -3488,6 +3849,8 @@ namespace sogen
         {
             if (dst_dc == 0 || width <= 0 || height <= 0)
             {
+                paint_trace::log("gdi.bitblt dst=0x%08" PRIx32 " src=0x%08" PRIx32 " rect=[%d,%d %dx%d] rejected=invalid-input",
+                                 static_cast<uint32_t>(dst_dc), static_cast<uint32_t>(src_dc), x_dst, y_dst, width, height);
                 return FALSE;
             }
 
@@ -3500,6 +3863,7 @@ namespace sogen
             gdi_bitmap_surface* dst_surface = resolve_dc_surface(c, dst_dc, dst_origin_x, dst_origin_y, present_handle);
             if (!dst_surface || dst_surface->width == 0 || dst_surface->height == 0 || dst_surface->pixels.empty())
             {
+                paint_trace::log("gdi.bitblt dst=0x%08" PRIx32 " rejected=no-destination-surface", static_cast<uint32_t>(dst_dc));
                 return FALSE;
             }
 
@@ -3515,12 +3879,14 @@ namespace sogen
                 uint32_t unused_present_handle = 0;
                 if (src_dc == 0)
                 {
+                    paint_trace::log("gdi.bitblt target=0x%08" PRIx32 " rejected=no-source-dc", present_handle);
                     return FALSE;
                 }
 
                 src_surface = resolve_dc_surface(c, src_dc, src_origin_x, src_origin_y, unused_present_handle);
                 if (!src_surface || src_surface->width == 0 || src_surface->height == 0 || src_surface->pixels.empty())
                 {
+                    paint_trace::log("gdi.bitblt target=0x%08" PRIx32 " rejected=no-source-surface", present_handle);
                     return FALSE;
                 }
             }
@@ -3619,6 +3985,12 @@ namespace sogen
             }
 
             const uint32_t pattern = get_dc_brush_color(c, dst_dc);
+            paint_trace::log("gdi.bitblt target=0x%08" PRIx32 " dst=0x%08" PRIx32 " src=0x%08" PRIx32 " requested=[%d,%d %dx%d <- %d,%d]"
+                             " clipped=[%" PRId64 ",%" PRId64 " %" PRId64 "x%" PRId64 " <- %" PRId64 ",%" PRId64 "]"
+                             " origins-dst=[%d,%d] origins-src=[%d,%d] rop=%08" PRIx32 " rop3=%02x source=%d pattern=%08" PRIx32,
+                             present_handle, static_cast<uint32_t>(dst_dc), static_cast<uint32_t>(src_dc), x_dst, y_dst, width, height,
+                             x_src, y_src, dx, dy, w, h, sx, sy, dst_origin_x, dst_origin_y, src_origin_x, src_origin_y, rop,
+                             static_cast<unsigned>(rop3), needs_source ? 1 : 0, pattern);
 
             for (size_t row = 0; row < blt_height; ++row)
             {
@@ -3649,6 +4021,10 @@ namespace sogen
         {
             if (dst_dc == 0 || dst_width == 0 || dst_height == 0 || src_width == 0 || src_height == 0)
             {
+                paint_trace::log("gdi.stretchblt dst=0x%08" PRIx32 " src=0x%08" PRIx32
+                                 " dst=[%d,%d %dx%d] src=[%d,%d %dx%d] rejected=invalid-input",
+                                 static_cast<uint32_t>(dst_dc), static_cast<uint32_t>(src_dc), x_dst, y_dst, dst_width, dst_height, x_src,
+                                 y_src, src_width, src_height);
                 return FALSE;
             }
 
@@ -3660,6 +4036,7 @@ namespace sogen
             gdi_bitmap_surface* dst_surface = resolve_dc_surface(c, dst_dc, dst_origin_x, dst_origin_y, present_handle);
             if (!dst_surface || dst_surface->width == 0 || dst_surface->height == 0 || dst_surface->pixels.empty())
             {
+                paint_trace::log("gdi.stretchblt dst=0x%08" PRIx32 " rejected=no-destination-surface", static_cast<uint32_t>(dst_dc));
                 return FALSE;
             }
 
@@ -3673,6 +4050,7 @@ namespace sogen
             {
                 if (src_dc == 0)
                 {
+                    paint_trace::log("gdi.stretchblt target=0x%08" PRIx32 " rejected=no-source-dc", present_handle);
                     return FALSE;
                 }
 
@@ -3680,6 +4058,7 @@ namespace sogen
                 src_surface = resolve_dc_surface(c, src_dc, src_origin_x, src_origin_y, unused_present_handle);
                 if (!src_surface || src_surface->width == 0 || src_surface->height == 0 || src_surface->pixels.empty())
                 {
+                    paint_trace::log("gdi.stretchblt target=0x%08" PRIx32 " rejected=no-source-surface", present_handle);
                     return FALSE;
                 }
             }
@@ -3696,6 +4075,12 @@ namespace sogen
             const bool flip_src_y = src_height < 0;
 
             const uint32_t pattern = get_dc_brush_color(c, dst_dc);
+            paint_trace::log(
+                "gdi.stretchblt target=0x%08" PRIx32 " dst=0x%08" PRIx32 " src=0x%08" PRIx32 " dst=[%d,%d %dx%d] src=[%d,%d %dx%d]"
+                " origins-dst=[%d,%d] origins-src=[%d,%d] rop=%08" PRIx32 " rop3=%02x source=%d flips=[%d,%d,%d,%d] pattern=%08" PRIx32,
+                present_handle, static_cast<uint32_t>(dst_dc), static_cast<uint32_t>(src_dc), x_dst, y_dst, dst_width, dst_height, x_src,
+                y_src, src_width, src_height, dst_origin_x, dst_origin_y, src_origin_x, src_origin_y, rop, static_cast<unsigned>(rop3),
+                needs_source ? 1 : 0, flip_x ? 1 : 0, flip_y ? 1 : 0, flip_src_x ? 1 : 0, flip_src_y ? 1 : 0, pattern);
 
             for (int dy = 0; dy < dst_h; ++dy)
             {
@@ -3757,18 +4142,34 @@ namespace sogen
         }
 
         BOOL handle_NtGdiPatBlt(const syscall_context& c, const hdc dc, const LONG x, const LONG y, const LONG width, const LONG height,
-                                const DWORD /*rop*/)
+                                const DWORD rop)
         {
             gdi_dc_state* dc_state = nullptr;
             gdi_bitmap_surface* surface = nullptr;
             int32_t origin_x = 0;
             int32_t origin_y = 0;
-            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !dc_state || !surface)
+            uint32_t present_handle = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y, &present_handle) || !dc_state || !surface)
             {
+                paint_trace::log("gdi.patblt hdc=0x%08" PRIx32 " rect=[%d,%d %dx%d] rop=%08" PRIx32 " failed=no-surface",
+                                 static_cast<uint32_t>(dc), x, y, width, height, rop);
                 return FALSE;
             }
 
             const auto color = get_dc_brush_color(c, dc);
+            uint32_t brush_handle = 0;
+            if (paint_trace::enabled())
+            {
+                uint64_t dc_attr = 0;
+                if (get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+                {
+                    c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_hbrush_offset, &brush_handle, sizeof(brush_handle));
+                }
+            }
+            paint_trace::log("gdi.patblt target=0x%08" PRIx32 " hdc=0x%08" PRIx32 " rect=[%d,%d %dx%d] origin=[%d,%d] rop=%08" PRIx32
+                             " brush=0x%08" PRIx32 " color=%08" PRIx32,
+                             present_handle, static_cast<uint32_t>(dc), x, y, width, height, origin_x, origin_y, rop, brush_handle, color);
+
             for (int yy = 0; yy < height; ++yy)
             {
                 for (int xx = 0; xx < width; ++xx)
@@ -3779,40 +4180,59 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtGdiPolyPatBlt(const syscall_context& c, const hdc dc, const DWORD /*rop*/, const emulator_pointer poly,
-                                    const DWORD count, const DWORD /*mode*/)
+        BOOL handle_NtGdiPolyPatBlt(const syscall_context& c, const hdc dc, const DWORD rop, const emulator_pointer poly, const DWORD count,
+                                    const DWORD mode)
         {
             gdi_dc_state* dc_state = nullptr;
             gdi_bitmap_surface* surface = nullptr;
             int32_t origin_x = 0;
             int32_t origin_y = 0;
-            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !surface)
+            uint32_t present_handle = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y, &present_handle) || !surface)
             {
+                paint_trace::log("gdi.polypatblt hdc=0x%08" PRIx32 " poly=0x%" PRIx64 " count=%u rop=%08" PRIx32 " mode=%08" PRIx32
+                                 " failed=no-surface",
+                                 static_cast<uint32_t>(dc), static_cast<uint64_t>(poly), static_cast<unsigned>(count), rop, mode);
                 return FALSE;
             }
 
+            paint_trace::log("gdi.polypatblt target=0x%08" PRIx32 " hdc=0x%08" PRIx32 " poly=0x%" PRIx64
+                             " count=%u origin=[%d,%d] rop=%08" PRIx32 " mode=%08" PRIx32,
+                             present_handle, static_cast<uint32_t>(dc), static_cast<uint64_t>(poly), static_cast<unsigned>(count), origin_x,
+                             origin_y, rop, mode);
             if (poly == 0 || count == 0 || count > 0x1000)
             {
+                paint_trace::log("gdi.polypatblt target=0x%08" PRIx32 " rejected=invalid-input", present_handle);
                 return FALSE;
             }
 
-            // POLYPATBLT entry (verified at runtime against this build's gdi32): { int x; int y; int cx; int cy; HBRUSH hbr; }
-            // i.e. position + size, NOT a RECT with right/bottom. Button frame draws pass thin edges such as
-            // {x=96, y=4, cx=1, cy=20}, which only make sense as width/height. HBRUSH is at +0x10 on x64.
             constexpr uint64_t k_entry_size = 0x18;
             constexpr uint64_t k_brush_offset = 0x10;
             for (DWORD i = 0; i < count; ++i)
             {
                 const auto entry = poly + static_cast<uint64_t>(i) * k_entry_size;
-                std::array<int32_t, 4> rect{}; // x, y, cx, cy
+                std::array<int32_t, 4> rect{};
                 uint64_t brush = 0;
                 if (!c.win_emu.memory.try_read_memory(entry, rect.data(), rect.size() * sizeof(int32_t)) ||
                     !c.win_emu.memory.try_read_memory(entry + k_brush_offset, &brush, sizeof(brush)))
                 {
+                    paint_trace::log("gdi.polypatblt target=0x%08" PRIx32 " index=%u failed=invalid-entry entry=0x%" PRIx64, present_handle,
+                                     static_cast<unsigned>(i), entry);
                     return FALSE;
                 }
 
                 const auto color = brush != 0 ? get_brush_color(c, static_cast<uint32_t>(brush)) : get_dc_brush_color(c, dc);
+                if (paint_trace::enabled() && i < 64)
+                {
+                    paint_trace::log("gdi.polypatblt-rect target=0x%08" PRIx32 " index=%u rect=[%d,%d %dx%d] brush=0x%" PRIx64
+                                     " color=%08" PRIx32,
+                                     present_handle, static_cast<unsigned>(i), rect[0], rect[1], rect[2], rect[3], brush, color);
+                }
+                else if (paint_trace::enabled() && i == 64)
+                {
+                    paint_trace::log("gdi.polypatblt-rect target=0x%08" PRIx32 " remaining=%u suppressed", present_handle,
+                                     static_cast<unsigned>(count - i));
+                }
                 fill_rect(*surface, rect[0] + origin_x, rect[1] + origin_y, rect[0] + rect[2] + origin_x, rect[1] + rect[3] + origin_y,
                           color);
             }
@@ -3821,7 +4241,7 @@ namespace sogen
 
         BOOL handle_NtGdiExtTextOutW(const syscall_context& c, const hdc dc, const LONG x, const LONG y, const UINT options,
                                      const emulator_pointer rect, const emulator_pointer text, const UINT count, const emulator_pointer dx,
-                                     const DWORD /*code_page*/)
+                                     const DWORD code_page)
         {
             (void)handle_NtGdiFlush(c);
 
@@ -3829,13 +4249,19 @@ namespace sogen
             gdi_bitmap_surface* surface = nullptr;
             int32_t origin_x = 0;
             int32_t origin_y = 0;
-            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y) || !dc_state || !surface)
+            uint32_t present_handle = 0;
+            if (!get_dc_state_and_surface(c, dc, dc_state, surface, origin_x, origin_y, &present_handle) || !dc_state || !surface)
             {
+                paint_trace::log("gdi.exttextout hdc=0x%08" PRIx32 " count=%u failed=no-surface", static_cast<uint32_t>(dc),
+                                 static_cast<unsigned>(count));
                 return FALSE;
             }
 
             if (count == 0 || text == 0)
             {
+                paint_trace::log(
+                    "gdi.exttextout target=0x%08" PRIx32 " hdc=0x%08" PRIx32 " pos=[%d,%d] count=%u text=0x%" PRIx64 " skipped=empty",
+                    present_handle, static_cast<uint32_t>(dc), x, y, static_cast<unsigned>(count), static_cast<uint64_t>(text));
                 dc_state->current_x = x;
                 dc_state->current_y = y;
                 return TRUE;
@@ -3868,6 +4294,16 @@ namespace sogen
             }
 
             const auto color = get_dc_text_color(c, dc);
+            if (paint_trace::enabled())
+            {
+                const auto display_text = trace_text(glyphs);
+                paint_trace::log("gdi.exttextout target=0x%08" PRIx32 " hdc=0x%08" PRIx32
+                                 " pos=[%d,%d] origin=[%d,%d] count=%u options=%08" PRIx32 " code-page=%08" PRIx32 " fg=%08" PRIx32
+                                 " bg=%08" PRIx32 " rect=[%d,%d-%d,%d] has-rect=%d dx=0x%" PRIx64 " text=\"%s\"",
+                                 present_handle, static_cast<uint32_t>(dc), x, y, origin_x, origin_y, static_cast<unsigned>(count), options,
+                                 code_page, color, get_dc_background_color(c, dc), clip_rect.left, clip_rect.top, clip_rect.right,
+                                 clip_rect.bottom, has_rect ? 1 : 0, static_cast<uint64_t>(dx), display_text.c_str());
+            }
             draw_text(*surface, x + origin_x, y + origin_y, glyphs, color, has_rect && (options & ETO_CLIPPED) != 0 ? &clip_rect : nullptr,
                       advances.empty() ? nullptr : advances.data());
 
@@ -3922,6 +4358,8 @@ namespace sogen
                 c.win_emu.memory.try_read_memory(dc_attr + k_gdi_dc_attr_hbrush_offset, &old_brush, sizeof(old_brush));
                 c.emu.write_memory(dc_attr + k_gdi_dc_attr_hbrush_offset, &brush, sizeof(brush));
             }
+            paint_trace::log("gdi.select-brush hdc=0x%08" PRIx32 " old=0x%08" PRIx32 " new=0x%08" PRIx32, static_cast<uint32_t>(dc),
+                             old_brush, brush);
             return old_brush;
         }
 
@@ -3979,9 +4417,21 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtGdiGetDCObject()
+        uint64_t handle_NtGdiGetDCObject(const syscall_context& c, const hdc dc, const int32_t object_type)
         {
-            return STATUS_SUCCESS;
+            if (object_type != k_gdi_dc_object_bitmap)
+            {
+                return 0;
+            }
+
+            const auto dc_it = c.proc.gdi_dc_states.find(static_cast<uint32_t>(dc));
+            if (dc_it == c.proc.gdi_dc_states.end())
+            {
+                return 0;
+            }
+
+            const auto bitmap = dc_it->second.selected_bitmap;
+            return c.proc.gdi_bitmap_surfaces.contains(bitmap) ? bitmap : 0;
         }
 
         BOOL handle_NtGdiUnrealizeObject(const syscall_context& c, const handle h)
@@ -4186,7 +4636,7 @@ namespace sogen
             }
 
             case KMTQAITYPE::KMTQAITYPE_ADAPTERGUID: {
-                GUID adapter_guid = k_dxgk_adapter_unique_id;
+                GUID adapter_guid = k_dxgk_adapter_guid;
                 return write_query_adapter_info(c, query, adapter_guid);
             }
 
@@ -4258,10 +4708,10 @@ namespace sogen
                     UINT32 FunctionNumber;
                 } ids{};
 
-                ids.VendorID = emulated_display::vendor_id;
-                ids.DeviceID = emulated_display::device_id;
+                ids.VendorID = k_dxgk_fake_vendor_id;
+                ids.DeviceID = k_dxgk_fake_device_id;
                 ids.SubSystemID = 0;
-                ids.RevisionID = emulated_display::revision_id;
+                ids.RevisionID = k_dxgk_fake_revision_id;
                 ids.BusNumber = 0;
                 ids.DeviceNumber = 0;
                 ids.FunctionNumber = 0;
@@ -4274,7 +4724,7 @@ namespace sogen
             }
 
             case KMTQAITYPE::KMTQAITYPE_QUERY_ADAPTER_UNIQUE_GUID: {
-                GUID unique_guid = k_dxgk_adapter_unique_id;
+                GUID unique_guid = k_dxgk_adapter_guid;
                 return write_query_adapter_info(c, query, unique_guid);
             }
 
@@ -4405,46 +4855,6 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        void complete_warp_sync_command(const syscall_context& c, const uint64_t command_ptr, const UINT32 command_length)
-        {
-            constexpr uint32_t k_sync_magic = 0x434E5953;
-            constexpr uint32_t k_ack_magic = 0x4B415953;
-            constexpr uint32_t k_ack_length = 8;
-            if (command_ptr == 0 || command_length < 24)
-            {
-                return;
-            }
-
-            uint32_t magic{};
-            if (!c.emu.try_read_memory(command_ptr, &magic, sizeof(magic)) || magic != k_sync_magic)
-            {
-                return;
-            }
-
-            // SYNC carries a UM completion event at +8 and an error event at +16. After the KM
-            // consumes the DMA buffer it overwrites the header with a sync-ack (magic + length 8).
-            // Leaving SYNC in place is treated as E_OUTOFMEMORY and the D3D11 device is removed.
-            // Signal only the completion event; the error event is DXGI_ERROR_DEVICE_REMOVED.
-            uint64_t completion{};
-            if (!c.emu.try_read_memory(command_ptr + 8, &completion, sizeof(completion)))
-            {
-                return;
-            }
-
-            uint32_t ack_magic = k_ack_magic;
-            uint32_t ack_length = k_ack_length;
-            if (!c.emu.try_write_memory(command_ptr, &ack_magic, sizeof(ack_magic)))
-            {
-                return;
-            }
-
-            c.emu.try_write_memory(command_ptr + 4, &ack_length, sizeof(ack_length));
-            if (auto* entry = c.proc.events.get(completion))
-            {
-                entry->signaled = true;
-            }
-        }
-
         void reserve_dxgk_submission_buffers(const syscall_context& c, const uint32_t command_buffer_size,
                                              const uint32_t allocation_list_count, const uint32_t patch_location_list_count)
         {
@@ -4504,15 +4914,6 @@ namespace sogen
                 if (render.hContext != k_dxgk_context_handle && render.hContext != k_dxgk_device_handle)
                 {
                     dxgk_warn(c, "NtGdiDdDDIRender: Unknown context 0x%X", render.hContext);
-                }
-
-                const auto& command_buffer = c.proc.dxgk.command_buffer;
-                const auto command_offset = static_cast<uint64_t>(render.CommandOffset);
-                const auto command_length = static_cast<uint64_t>(render.CommandLength);
-                if (command_buffer.address != 0 && command_offset <= command_buffer.size &&
-                    command_length <= static_cast<uint64_t>(command_buffer.size) - command_offset)
-                {
-                    complete_warp_sync_command(c, command_buffer.address + command_offset, render.CommandLength);
                 }
 
                 // Clamp the guest-controlled sizes: at least the defaults, but never above the caps above.
@@ -4971,7 +5372,7 @@ namespace sogen
             }
 
             gdi_bitmap_surface* surface = nullptr;
-            const auto bitmap_handle = create_gdi_bitmap_surface(c, params.Width, params.Height, 0, &surface);
+            const auto bitmap_handle = create_gdi_bitmap_surface(c, "d3dkmt-memory", params.Width, params.Height, 0, &surface);
             if (bitmap_handle == 0)
             {
                 return STATUS_NO_MEMORY;
@@ -5132,45 +5533,6 @@ namespace sogen
                 open_params.VidPnSourceId = 0;
             });
 
-            return STATUS_SUCCESS;
-        }
-
-        NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromGpu()
-        {
-            return STATUS_SUCCESS;
-        }
-
-        NTSTATUS handle_NtGdiDdDDIWaitForSynchronizationObjectFromCpu(
-            const syscall_context& c, const emulator_object<EMU_D3DKMT_WAITFORSYNCHRONIZATIONOBJECTFROMCPU> wait_desc)
-        {
-            if (!wait_desc)
-            {
-                return STATUS_INVALID_PARAMETER;
-            }
-
-            const auto wait = wait_desc.read();
-            if (wait.hAsyncEvent == 0)
-            {
-                return STATUS_SUCCESS;
-            }
-
-            auto* entry = c.proc.events.get(wait.hAsyncEvent);
-            if (!entry)
-            {
-                return STATUS_INVALID_HANDLE;
-            }
-
-            entry->signaled = true;
-            return STATUS_SUCCESS;
-        }
-
-        NTSTATUS handle_NtGdiDdDDISignalSynchronizationObjectFromGpu()
-        {
-            return STATUS_SUCCESS;
-        }
-
-        NTSTATUS handle_NtGdiDdDDISignalSynchronizationObjectFromCpu()
-        {
             return STATUS_SUCCESS;
         }
 

@@ -3,6 +3,8 @@
 #include "analysis.hpp"
 #include "analysis_reporter.hpp"
 #include "disassembler.hpp"
+#include "symbol_loader.hpp"
+#include "snapshot.hpp"
 #include "windows_emulator.hpp"
 #include <utils/lazy_object.hpp>
 
@@ -97,6 +99,76 @@ namespace sogen
             }
 
             return win_emu.mod_manager.find_name(var_ptr);
+        }
+
+        struct address_symbol_context
+        {
+            std::optional<std::string> module_name{};
+            std::optional<std::string> function{};
+        };
+
+        address_symbol_context describe_address(const analysis_context& analysis, const uint64_t address,
+                                                const bool allow_caller_symbol_load = false)
+        {
+            address_symbol_context context{};
+            auto& manager = analysis.win_emu->mod_manager;
+
+            mapped_module* mod{};
+            if (manager.executable && manager.executable->contains(address))
+            {
+                mod = manager.executable;
+            }
+            else
+            {
+                mod = manager.find_by_address(address);
+            }
+
+            if (!mod)
+            {
+                return context;
+            }
+
+            context.module_name = mod->name;
+
+            if (const auto exact = mod->address_names.find(address); exact != mod->address_names.end())
+            {
+                context.function = exact->second;
+                return context;
+            }
+
+            const auto should_load_caller_symbols = [](const analysis_context& analysis) {
+                if (analysis.settings->concise_logging && !analysis.has_reached_main)
+                {
+                    return false;
+                }
+
+                return analysis.has_report_output || (!analysis.settings->silent && !analysis.win_emu->log.is_output_disabled());
+            };
+
+            if (allow_caller_symbol_load && analysis.symbols && mod->symbol_address_names.empty() && should_load_caller_symbols(analysis))
+            {
+                analysis.symbols->ensure_caller_symbols(address);
+            }
+
+            if (mod->symbol_address_names.empty())
+            {
+                return context;
+            }
+
+            if (const auto exact = mod->symbol_address_names.find(address); exact != mod->symbol_address_names.end())
+            {
+                context.function = exact->second;
+                return context;
+            }
+
+            auto symbol = mod->symbol_address_names.upper_bound(address);
+            if (symbol != mod->symbol_address_names.begin())
+            {
+                --symbol;
+                context.function = symbol->second;
+            }
+
+            return context;
         }
 
         std::vector<function_execution_detail> collect_function_details(const analysis_context& c, const std::string_view function)
@@ -443,6 +515,17 @@ namespace sogen
             return ++c.traced_call_count;
         }
 
+        void snapshot_before_traced_call(analysis_context& c, const uint64_t call_count)
+        {
+            if (!c.auto_snapshot_before_call || *c.auto_snapshot_before_call != call_count)
+            {
+                return;
+            }
+
+            c.auto_snapshot_before_call.reset();
+            snapshot::write_emulator_snapshot(*c.win_emu);
+        }
+
         bool break_before_traced_call(analysis_context& c, const uint64_t call_count)
         {
             if (!c.auto_break_before_call || *c.auto_break_before_call != call_count)
@@ -471,10 +554,13 @@ namespace sogen
                                             const uint64_t address)
         {
             const auto is_main_exe = &binary == c.win_emu->mod_manager.executable;
-            if (!c.has_reached_main && c.settings->concise_logging && !c.settings->silent && is_main_exe)
+            if (!c.has_reached_main && c.settings->concise_logging && is_main_exe)
             {
                 c.has_reached_main = true;
-                c.win_emu->log.disable_output(false);
+                if (!c.settings->silent)
+                {
+                    c.win_emu->log.disable_output(false);
+                }
             }
 
             if (!c.settings->log_first_section_execution)
@@ -554,18 +640,30 @@ namespace sogen
             }
 
             const auto export_entry = binary->address_names.find(address);
-            if (export_entry != binary->address_names.end())
+            const auto symbol_entry =
+                c.symbols && c.symbols->use_for_trace() ? binary->symbol_address_names.find(address) : binary->symbol_address_names.end();
+            std::optional<std::string_view> function_name{};
+            if (symbol_entry != binary->symbol_address_names.end())
             {
-                if (!c.settings->ignored_functions.contains(export_entry->second))
+                function_name = symbol_entry->second;
+            }
+            else if (export_entry != binary->address_names.end())
+            {
+                function_name = export_entry->second;
+            }
+            if (function_name)
+            {
+                if (!c.settings->ignored_functions.contains(*function_name))
                 {
-                    auto details = collect_function_details(c, export_entry->second);
+                    auto details = collect_function_details(c, *function_name);
                     const auto call_count = next_traced_call_count(c);
                     c.emit_observation<function_execution_event>([&](auto& event) {
                         event.call_count = call_count;
-                        event.function_name = export_entry->second;
+                        event.function_name = *function_name;
                         event.interesting = is_interesting_call;
                         event.details = std::move(details);
                     });
+                    snapshot_before_traced_call(c, call_count);
                     (void)break_before_traced_call(c, call_count);
                 }
             }
@@ -575,16 +673,27 @@ namespace sogen
             }
             else if (is_previous_main_exe && binary != previous_binary && !is_return(c.d, c.win_emu->emu(), previous_ip))
             {
-                auto nearest_entry = binary->address_names.upper_bound(address);
-                if (nearest_entry == binary->address_names.begin())
+                const auto find_nearest_entry = [address](const address_name_mapping& address_names) {
+                    auto entry = address_names.upper_bound(address);
+                    return entry == address_names.begin() ? address_names.end() : std::prev(entry);
+                };
+
+                const auto nearest_export = find_nearest_entry(binary->address_names);
+                const auto nearest_symbol = c.symbols && c.symbols->use_for_trace() ? find_nearest_entry(binary->symbol_address_names)
+                                                                                    : binary->symbol_address_names.end();
+
+                const auto prefer_symbol =
+                    nearest_symbol != binary->symbol_address_names.end() &&
+                    (nearest_export == binary->address_names.end() || nearest_symbol->first >= nearest_export->first);
+                if (!prefer_symbol && nearest_export == binary->address_names.end())
                 {
                     return;
                 }
 
-                --nearest_entry;
+                const auto& nearest_entry = prefer_symbol ? *nearest_symbol : *nearest_export;
                 c.emit_observation<foreign_code_transition_event>([&](auto& event) {
-                    event.function_name = nearest_entry->second;
-                    event.function_offset = address - nearest_entry->first;
+                    event.function_name = nearest_entry.second;
+                    event.function_offset = address - nearest_entry.first;
                     event.interesting = is_interesting_call;
                 });
             }
@@ -660,6 +769,7 @@ namespace sogen
                     event.syscall_id = syscall_id;
                     event.syscall_name = std::string(syscall_name);
                 });
+                snapshot_before_traced_call(c, call_count);
 
                 if (break_before_traced_syscall(c, call_count, address))
                 {
@@ -675,7 +785,7 @@ namespace sogen
                     uint64_t return_address{};
                     emu.try_read_memory(rsp, &return_address, sizeof(return_address));
 
-                    const auto* caller_mod_name = win_emu.mod_manager.find_name(return_address);
+                    const auto caller_context = describe_address(c, return_address, true);
                     const auto call_count = next_traced_call_count(c);
 
                     c.emit_observation<syscall_event>([&](auto& event) {
@@ -684,8 +794,10 @@ namespace sogen
                         event.syscall_id = syscall_id;
                         event.syscall_name = std::string(syscall_name);
                         event.caller_rip = return_address;
-                        event.caller_module = caller_mod_name ? std::optional<std::string>{caller_mod_name} : std::nullopt;
+                        event.caller_module = caller_context.module_name;
+                        event.caller_function = caller_context.function;
                     });
+                    snapshot_before_traced_call(c, call_count);
 
                     if (break_before_traced_syscall(c, call_count, address))
                     {
@@ -695,7 +807,7 @@ namespace sogen
             }
             else
             {
-                const auto* previous_mod = win_emu.mod_manager.find_by_address(previous_ip);
+                const auto caller_context = describe_address(c, previous_ip, true);
                 const auto call_count = next_traced_call_count(c);
 
                 c.emit_observation<syscall_event>([&](auto& event) {
@@ -704,8 +816,10 @@ namespace sogen
                     event.syscall_id = syscall_id;
                     event.syscall_name = std::string(syscall_name);
                     event.caller_rip = previous_ip;
-                    event.caller_module = previous_mod ? std::optional<std::string>{previous_mod->name} : std::nullopt;
+                    event.caller_module = caller_context.module_name;
+                    event.caller_function = caller_context.function;
                 });
+                snapshot_before_traced_call(c, call_count);
 
                 if (break_before_traced_syscall(c, call_count, address))
                 {
@@ -811,22 +925,24 @@ namespace sogen
     {
         auto& emu = this->win_emu->active_cpu();
         const auto rip = emu.read_instruction_pointer();
-        const auto* rip_module = this->win_emu->mod_manager.find_name(rip);
+        const auto rip_context = describe_address(*this, rip, false);
 
         execution_context context{
             .thread_id = 0,
             .rip = rip,
-            .rip_module = rip_module ? rip_module : "<N/A>",
+            .rip_module = rip_context.module_name.value_or("<N/A>"),
+            .rip_function = rip_context.function,
         };
 
         try
         {
             const auto& thread = this->win_emu->current_thread();
             const auto previous_ip = thread.previous_ip;
-            const auto* previous_module = previous_ip ? this->win_emu->mod_manager.find_name(previous_ip) : nullptr;
+            const auto previous_context = previous_ip ? std::optional{describe_address(*this, previous_ip, true)} : std::nullopt;
             context.thread_id = thread.id;
             context.previous_ip = previous_ip ? std::optional<uint64_t>{previous_ip} : std::nullopt;
-            context.previous_ip_module = previous_module ? std::optional<std::string>{previous_module} : std::nullopt;
+            context.previous_ip_module = previous_context ? previous_context->module_name : std::nullopt;
+            context.previous_ip_function = previous_context ? previous_context->function : std::nullopt;
         }
         catch (...)
         {

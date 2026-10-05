@@ -260,8 +260,10 @@ namespace sogen
                     object.field("tid", event.execution.thread_id);
                     object.hex_field("rip", event.execution.rip);
                     object.field("mod", event.execution.rip_module);
+                    object.optional_string_field("fnAtRip", event.execution.rip_function);
                     object.optional_hex_field("prev", event.execution.previous_ip);
                     object.optional_string_field("prevMod", event.execution.previous_ip_module);
+                    object.optional_string_field("prevFn", event.execution.previous_ip_function);
                 }
 
                 write_fields(object, event);
@@ -560,6 +562,7 @@ namespace sogen
                 object.field("name", event.syscall_name);
                 object.optional_hex_field("callerRip", event.caller_rip);
                 object.optional_string_field("callerMod", event.caller_module);
+                object.optional_string_field("callerFn", event.caller_function);
             }
 
             static void write_fields(json_object_builder& object, const foreign_module_read_event& event)

@@ -551,7 +551,8 @@ namespace sogen
         user_handle_store<handle_types::type::menu, menu> menus{user_handles};
         handle_store<handle_types::timer, timer> timers{};
         user_handle_store<handle_types::accelerator_table, accelerator_table> accelerator_tables{user_handles};
-        handle_store<handle_types::registry, registry_key> registry_keys{};
+        handle_store<handle_types::deferred_window_positions, deferred_window_positions> deferred_window_position_batches{};
+        handle_store<handle_types::registry, registry_key, 2> registry_keys{};
         handle_store<handle_types::process, emulator_process> processes{};
         handle_store<handle_types::managed_thread, managed_process_thread> managed_threads{};
         std::map<uint32_t, handle> thread_handles_by_id{};

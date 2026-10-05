@@ -16,6 +16,7 @@ namespace sogen
     class module_manager;
     class windows_emulator;
     class analysis_reporter;
+    class symbol_loader;
 
     using string_set = std::set<std::string, std::less<>>;
 
@@ -48,6 +49,8 @@ namespace sogen
     {
         const analysis_settings* settings{};
         windows_emulator* win_emu{};
+        symbol_loader* symbols{};
+        bool has_report_output{};
         std::vector<analysis_reporter*> reporters{};
 
         std::string output{};
@@ -61,6 +64,7 @@ namespace sogen
         std::set<std::pair<uint64_t, uint32_t>> cpuid_cache{};
         uint64_t traced_call_count{};
         std::optional<uint64_t> auto_break_before_call{};
+        std::optional<uint64_t> auto_snapshot_before_call{};
         std::optional<uint64_t> syscall_to_resume_after_break{};
 
         mutable std::pair<uint64_t, uint64_t> mapping_violation{0, 0};

@@ -90,7 +90,11 @@ namespace sogen
             EVENT_TYPE type = NotificationEvent;
             bool is_signaled = false;
 
-            if (auto* entry = c.proc.events.get(event_handle))
+            if (event_handle.value.is_pseudo)
+            {
+                is_signaled = true;
+            }
+            else if (auto* entry = c.proc.events.get(event_handle))
             {
                 type = entry->type;
                 is_signaled = entry->signaled;

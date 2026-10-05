@@ -16,6 +16,7 @@
 #include "analysis_reporter.hpp"
 #include "jsonl_reporter.hpp"
 #include "stdout_file_reporter.hpp"
+#include "symbol_loader.hpp"
 #include "tenet_tracer.hpp"
 #include <subprocess_process_manager.hpp>
 
@@ -83,6 +84,7 @@ namespace sogen
             managed_process_connection* managed_process{};
             std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
             utils::unordered_insensitive_u16string_map<std::u16string> environment{};
+            symbol_options symbols{};
         };
 
 #ifndef OS_EMSCRIPTEN
@@ -768,6 +770,16 @@ namespace sogen
             register_analysis_callbacks(context);
             watch_system_objects(context, options.modules, options.verbose_logging, options.concise_logging);
 
+            std::optional<symbol_loader> symbols{};
+            if (options.symbols.enabled())
+            {
+                auto symbol_options = options.symbols;
+                symbol_options.verbose_logging = options.verbose_logging;
+                symbol_options.interesting_modules = options.modules;
+                symbols.emplace(*win_emu, std::move(symbol_options));
+                context.symbols = &*symbols;
+            }
+
             const auto& exe = *win_emu->mod_manager.executable;
             const auto is_whp = win_emu->emu().get_name() == "Windows Hypervisor Platform";
 
@@ -1009,6 +1021,32 @@ namespace sogen
             app.add_option("--whp-exec-hook", options.whp_execution_hook_mode, "WHP memory execution hook mode")
                 ->capture_default_str()
                 ->check(CLI::IsMember({"auto", "int3"}));
+            std::string symbol_use_value{"callers"};
+            auto* const symbol_use_option =
+                app.add_option("--symbol-use", symbol_use_value, "Use loaded symbols for trace, callers, or all")
+                    ->expected(0, 1)
+                    ->default_val("callers")
+                    ->check(CLI::IsMember({"trace", "callers", "all"}));
+
+            std::string pdb_use_value{"callers"};
+            auto* const pdb_use_option = app.add_option("--pdb-use", pdb_use_value, "Enable PDB symbols for trace, callers, or all")
+                                             ->expected(0, 1)
+                                             ->default_val("callers")
+                                             ->check(CLI::IsMember({"trace", "callers", "all"}))
+                                             ->excludes(symbol_use_option);
+
+            std::vector<std::string> map_inputs{};
+            app.add_option("--map", map_inputs, "Load MSVC MAP symbols from [MODULE=]PATH (defaults to the main executable)")
+                ->expected(1, -1)
+                ->allow_extra_args(false);
+
+            std::vector<std::string> symbol_servers{};
+            app.add_option("--symbol-server", symbol_servers, "Add a symbol server searched before Microsoft's public server")
+                ->expected(1, -1)
+                ->allow_extra_args(false);
+
+            std::string symbol_cache{};
+            app.add_option("--symbol-cache", symbol_cache, "Set Sogen's download cache for PDB symbol files");
             app.add_option("-r,--registry", options.registry_path, "Set registry path");
             app.add_option("--reg-file", options.registry_files, "Import registry values from a .reg file")
                 ->type_name("FILE")
@@ -1059,6 +1097,75 @@ namespace sogen
                         {"kvm", backend_type::kvm},         {"fex", backend_type::fex},
                     };
                     options.backend = backends.at(backend_name);
+                }
+
+                const auto apply_symbol_use = [&](const std::string_view value) {
+                    if (value == "trace")
+                    {
+                        options.symbols.use_mode = symbol_use_mode::trace;
+                    }
+                    else if (value == "all")
+                    {
+                        options.symbols.use_mode = symbol_use_mode::all;
+                    }
+                    else
+                    {
+                        options.symbols.use_mode = symbol_use_mode::callers;
+                    }
+                };
+
+                if (symbol_use_option->count() > 0)
+                {
+                    apply_symbol_use(symbol_use_value);
+                }
+
+                if (pdb_use_option->count() > 0)
+                {
+                    options.symbols.pdb.auto_lookup = true;
+                    apply_symbol_use(pdb_use_value);
+                }
+
+                std::set<std::string> mapped_modules{};
+                for (auto& map_input : map_inputs)
+                {
+                    const auto separator = map_input.find('=');
+                    map_symbol_input input{};
+                    if (separator == std::string::npos)
+                    {
+                        if (map_input.empty())
+                        {
+                            throw std::runtime_error("--map requires a path");
+                        }
+                        input.path = map_input;
+                    }
+                    else
+                    {
+                        if (separator == 0 || separator + 1 == map_input.size())
+                        {
+                            throw std::runtime_error("--map module association must use MODULE=PATH");
+                        }
+                        input = map_symbol_input{
+                            .module = map_input.substr(0, separator),
+                            .path = map_input.substr(separator + 1),
+                        };
+                    }
+
+                    const auto module_key = input.module ? utils::string::to_lower(*input.module) : std::string{};
+                    if (!mapped_modules.insert(module_key).second)
+                    {
+                        throw std::runtime_error("--map accepts only one mapping per module");
+                    }
+                    options.symbols.maps.emplace_back(std::move(input));
+                }
+
+                for (auto& symbol_server : symbol_servers)
+                {
+                    options.symbols.pdb.symbol_servers.emplace_back(std::move(symbol_server));
+                }
+
+                if (!symbol_cache.empty())
+                {
+                    options.symbols.pdb.symbol_cache = std::filesystem::path(symbol_cache);
                 }
 
                 for (auto& module_name : tracked_modules)

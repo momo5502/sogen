@@ -126,6 +126,11 @@ namespace sogen
                         return this->error;
                     }
 
+                    std::optional<int> get_socket_error() override
+                    {
+                        return this->error;
+                    }
+
                     bool is_ready(const bool in_poll) override
                     {
                         if (this->listening)

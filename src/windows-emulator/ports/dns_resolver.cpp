@@ -35,6 +35,12 @@ namespace sogen
             std::array<std::byte, k_dns_record_data_size> data{};
         };
 
+        struct dns_resolution_failure
+        {
+            int family{};
+            network::dns_lookup_failure error{};
+        };
+
         struct dns_query_request
         {
             std::u16string hostname;
@@ -81,6 +87,28 @@ namespace sogen
                 writer.pad(64);
             }
         };
+
+        void log_dns_resolution_failure(windows_emulator& win_emu, const std::u16string& host,
+                                        const std::vector<dns_resolution_failure>& failures)
+        {
+            const auto hostname = u16_to_u8(host);
+            if (failures.empty())
+            {
+                win_emu.log.warn("DNS lookup failed: host=%s no addresses returned\n", hostname.c_str());
+                return;
+            }
+
+            for (const auto& failure : failures)
+            {
+#ifdef _WIN32
+                win_emu.log.warn("DNS lookup failed: host=%s family=%d status=%d wsa_error=%d message=%s\n", hostname.c_str(),
+                                 failure.family, failure.error.status, failure.error.wsa_error, failure.error.message.c_str());
+#else
+                win_emu.log.warn("DNS lookup failed: host=%s family=%d status=%d message=%s\n", hostname.c_str(), failure.family,
+                                 failure.error.status, failure.error.message.c_str());
+#endif
+            }
+        }
 
         bool parse_dns_query_request(windows_emulator& win_emu, const lpc_request_context& c, dns_query_request& request)
         {
@@ -130,10 +158,16 @@ namespace sogen
             return true;
         }
 
-        std::vector<resolved_dns_record> resolve_host_addresses(windows_emulator& win_emu, const std::u16string& host, const WORD dns_type)
+        std::vector<resolved_dns_record> resolve_host_addresses(windows_emulator& win_emu, const std::u16string& host, const WORD dns_type,
+                                                                std::vector<dns_resolution_failure>& failures)
         {
             const auto family = dns_type == DNS_TYPE_A ? AF_INET : AF_INET6;
-            const auto results = win_emu.dns_lookup().resolve_host(u16_to_u8(host), family);
+            std::optional<network::dns_lookup_failure> failure;
+            const auto results = win_emu.dns_lookup().resolve_host(u16_to_u8(host), family, &failure);
+            if (failure)
+            {
+                failures.push_back({family, std::move(*failure)});
+            }
 
             std::vector<resolved_dns_record> records;
             for (const auto& current : results)
@@ -177,11 +211,11 @@ namespace sogen
         }
 
         std::optional<resolved_dns_record> resolve_single_host_record(windows_emulator& win_emu, const std::u16string& host,
-                                                                      const WORD dns_type)
+                                                                      const WORD dns_type, std::vector<dns_resolution_failure>& failures)
         {
             if (dns_type == DNS_TYPE_A)
             {
-                auto records = resolve_host_addresses(win_emu, host, DNS_TYPE_A);
+                auto records = resolve_host_addresses(win_emu, host, DNS_TYPE_A, failures);
                 if (records.empty())
                 {
                     return std::nullopt;
@@ -192,13 +226,13 @@ namespace sogen
 
             if (dns_type == DNS_TYPE_AAAA)
             {
-                auto ipv6_records = resolve_host_addresses(win_emu, host, DNS_TYPE_AAAA);
+                auto ipv6_records = resolve_host_addresses(win_emu, host, DNS_TYPE_AAAA, failures);
                 if (!ipv6_records.empty())
                 {
                     return ipv6_records.front();
                 }
 
-                auto ipv4_records = resolve_host_addresses(win_emu, host, DNS_TYPE_A);
+                auto ipv4_records = resolve_host_addresses(win_emu, host, DNS_TYPE_A, failures);
                 if (ipv4_records.empty())
                 {
                     return std::nullopt;
@@ -248,8 +282,13 @@ namespace sogen
                 writer.write(request.cookie);
 
                 dns_query_response response{};
-                response.record = resolve_single_host_record(win_emu, request.hostname, request.type);
+                std::vector<dns_resolution_failure> failures;
+                response.record = resolve_single_host_record(win_emu, request.hostname, request.type, failures);
                 response.error_code = response.record ? ERROR_SUCCESS : DNS_ERROR_RCODE_NAME_ERROR;
+                if (!response.record)
+                {
+                    log_dns_resolution_failure(win_emu, request.hostname, failures);
+                }
                 writer.write(response);
 
                 return STATUS_SUCCESS;

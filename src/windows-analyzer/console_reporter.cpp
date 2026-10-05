@@ -5,6 +5,7 @@
 
 #include <cinttypes>
 #include <logger.hpp>
+#include <utils/string.hpp>
 
 namespace sogen
 {
@@ -42,6 +43,7 @@ namespace sogen
                                },
                                [&](const stdout_chunk_event& e) {
                                    (void)fwrite(e.data.data(), 1, e.data.size(), stdout); //
+                                   fflush(stdout);
                                },
                                [&](const auto&) {
                                    // Ignore all other events in silent mode.
@@ -57,6 +59,27 @@ namespace sogen
                 }
 
                 return "[" + std::to_string(call_count) + "] ";
+            }
+
+            static std::string format_symbol_location(const std::optional<std::string>& function, const std::string& module,
+                                                      const std::optional<uint64_t> raw_address = std::nullopt)
+            {
+                if (!function || function->empty())
+                {
+                    if (raw_address)
+                    {
+                        return "0x" + utils::string::to_hex_number(*raw_address) + " (" + module + ")";
+                    }
+
+                    return module;
+                }
+
+                if (raw_address)
+                {
+                    return *function + " (" + module + ") (0x" + utils::string::to_hex_number(*raw_address) + ")";
+                }
+
+                return *function + " (" + module + ")";
             }
 
             void report_regular(const analysis_event& event)
@@ -119,8 +142,10 @@ namespace sogen
                         },
                         [&](const memory_violation_event& e) {
                             const auto* label = e.violation_type == "protection" ? "Protection violation" : "Mapping violation";
-                            this->log_.print(color::gray, "%s: 0x%" PRIx64 " (%" PRIx64 ") - %s at 0x%" PRIx64 " (%s)\n", label, e.address,
-                                             e.size, e.operation.c_str(), e.execution.rip, e.execution.rip_module.c_str());
+                            const auto fault_location =
+                                format_symbol_location(e.execution.rip_function, e.execution.rip_module, e.execution.rip);
+                            this->log_.print(color::gray, "%s: 0x%" PRIx64 " (%" PRIx64 ") - %s at %s\n", label, e.address, e.size,
+                                             e.operation.c_str(), fault_location.c_str());
                         },
                         [&](const io_control_event& e) {
                             this->log_.print(color::dark_gray, "--> %s: 0x%X\n", e.device_name.c_str(), e.code);
@@ -173,10 +198,13 @@ namespace sogen
                         },
                         [&](const function_execution_event& e) {
                             const auto prefix = this->make_call_prefix(e.call_count);
-                            this->log_.print(e.interesting ? color::yellow : color::dark_gray,
-                                             "%sExecuting function: %s (%s) (0x%" PRIx64 ") via 0x%" PRIx64 " (%s)\n", prefix.c_str(),
-                                             e.function_name.c_str(), e.execution.rip_module.c_str(), e.execution.rip,
-                                             e.execution.previous_ip.value_or(0), e.execution.previous_ip_module.value_or("<N/A>").c_str());
+                            const auto current_function =
+                                format_symbol_location(std::optional{e.function_name}, e.execution.rip_module, e.execution.rip);
+                            const auto parent_function =
+                                format_symbol_location(e.execution.previous_ip_function, e.execution.previous_ip_module.value_or("<N/A>"),
+                                                       e.execution.previous_ip);
+                            this->log_.print(e.interesting ? color::yellow : color::dark_gray, "%sExecuting function: %s via %s\n",
+                                             prefix.c_str(), current_function.c_str(), parent_function.c_str());
                             for (const auto& detail : e.details)
                             {
                                 if (detail.label.empty())
@@ -194,10 +222,13 @@ namespace sogen
                                              e.execution.rip_module.c_str(), e.execution.rip);
                         },
                         [&](const foreign_code_transition_event& e) {
+                            const auto parent_function =
+                                format_symbol_location(e.execution.previous_ip_function, e.execution.previous_ip_module.value_or("<N/A>"),
+                                                       e.execution.previous_ip);
                             this->log_.print(e.interesting ? color::yellow : color::dark_gray,
-                                             "Transition to foreign code: %s+0x%" PRIx64 " (%s) (0x%" PRIx64 ") via 0x%" PRIx64 " (%s)\n",
+                                             "Transition to foreign code: %s+0x%" PRIx64 " (%s) (0x%" PRIx64 ") via %s\n",
                                              e.function_name.c_str(), e.function_offset, e.execution.rip_module.c_str(), e.execution.rip,
-                                             e.execution.previous_ip.value_or(0), e.execution.previous_ip_module.value_or("<N/A>").c_str());
+                                             parent_function.c_str());
                         },
                         [&](const section_first_execute_event& e) {
                             this->log_.print(
@@ -225,19 +256,22 @@ namespace sogen
                                                  prefix.c_str(), e.syscall_name.c_str(), e.syscall_id, e.execution.rip,
                                                  e.execution.rip_module.c_str());
                                 break;
-                            case syscall_classification::crafted_out_of_line:
-                                this->log_.print(
-                                    color::blue, "%sCrafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via 0x%" PRIx64 " (%s)\n",
-                                    prefix.c_str(), e.syscall_name.c_str(), e.syscall_id, e.execution.rip, e.execution.rip_module.c_str(),
-                                    e.execution.previous_ip.value_or(0), e.execution.previous_ip_module.value_or("<N/A>").c_str());
+                            case syscall_classification::crafted_out_of_line: {
+                                const auto caller =
+                                    format_symbol_location(e.caller_function, e.caller_module.value_or("<N/A>"), e.caller_rip);
+                                this->log_.print(color::blue, "%sCrafted out-of-line syscall: %s (0x%X) at 0x%" PRIx64 " (%s) via %s\n",
+                                                 prefix.c_str(), e.syscall_name.c_str(), e.syscall_id, e.execution.rip,
+                                                 e.execution.rip_module.c_str(), caller.c_str());
                                 break;
+                            }
                             case syscall_classification::regular:
-                            default:
-                                this->log_.print(color::dark_gray,
-                                                 "%sExecuting syscall: %s (0x%X) at 0x%" PRIx64 " via 0x%" PRIx64 " (%s)\n", prefix.c_str(),
-                                                 e.syscall_name.c_str(), e.syscall_id, e.execution.rip, e.caller_rip.value_or(0),
-                                                 e.caller_module.value_or("<N/A>").c_str());
+                            default: {
+                                const auto caller =
+                                    format_symbol_location(e.caller_function, e.caller_module.value_or("<N/A>"), e.caller_rip);
+                                this->log_.print(color::dark_gray, "%sExecuting syscall: %s (0x%X) at 0x%" PRIx64 " via %s\n",
+                                                 prefix.c_str(), e.syscall_name.c_str(), e.syscall_id, e.execution.rip, caller.c_str());
                                 break;
+                            }
                             }
                         },
                         [&](const foreign_module_read_event& e) {

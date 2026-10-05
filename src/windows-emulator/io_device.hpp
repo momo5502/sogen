@@ -19,17 +19,20 @@ namespace sogen
 
     struct io_device_context
     {
+        handle source_handle{};
         handle event{};
         emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine{};
         emulator_pointer apc_context{};
         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block;
-        emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu32>>> wow64_io_status_block;
+        emulator_pointer wow64_x86_io_status_block{};
         ULONG io_control_code{};
         emulator_pointer input_buffer{};
         ULONG input_buffer_length{};
         emulator_pointer output_buffer{};
         ULONG output_buffer_length{};
-
+        handle completion_port{};
+        uint64_t completion_key{};
+        uint32_t completion_notification_flags{};
         // The vCPU whose thread issued this I/O request. Set on syscall-originated ioctls;
         // null (and not serialized) for deserialized delayed ioctls re-executed from the
         // scheduler's device pump, which must not depend on an issuing thread.
@@ -38,8 +41,7 @@ namespace sogen
         emulator_thread& thread() const;
 
         io_device_context(memory_interface& emu)
-            : io_status_block(emu),
-              wow64_io_status_block(emu)
+            : io_status_block(emu)
         {
         }
 
@@ -50,30 +52,38 @@ namespace sogen
 
         void serialize(utils::buffer_serializer& buffer) const
         {
+            buffer.write(source_handle);
             buffer.write(event);
             buffer.write(apc_routine);
             buffer.write(apc_context);
             buffer.write(io_status_block);
-            buffer.write(wow64_io_status_block);
+            buffer.write(wow64_x86_io_status_block);
             buffer.write(io_control_code);
             buffer.write(input_buffer);
             buffer.write(input_buffer_length);
             buffer.write(output_buffer);
             buffer.write(output_buffer_length);
+            buffer.write(completion_port);
+            buffer.write(completion_key);
+            buffer.write(completion_notification_flags);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
         {
+            buffer.read(source_handle);
             buffer.read(event);
             buffer.read(apc_routine);
             buffer.read(apc_context);
             buffer.read(io_status_block);
-            buffer.read(wow64_io_status_block);
+            buffer.read(wow64_x86_io_status_block);
             buffer.read(io_control_code);
             buffer.read(input_buffer);
             buffer.read(input_buffer_length);
             buffer.read(output_buffer);
             buffer.read(output_buffer_length);
+            buffer.read(completion_port);
+            buffer.read(completion_key);
+            buffer.read(completion_notification_flags);
         }
     };
 
@@ -81,6 +91,12 @@ namespace sogen
     {
         uint64_t buffer;
         uint32_t length;
+    };
+
+    struct device_completion_association
+    {
+        handle completion_port{};
+        uint64_t key{};
     };
 
     inline NTSTATUS write_io_status(const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const NTSTATUS status,
@@ -98,27 +114,8 @@ namespace sogen
         return status;
     }
 
-    inline NTSTATUS write_io_status(const io_device_context& context, const NTSTATUS status, const bool clear_struct = false)
-    {
-        const auto result = write_io_status(context.io_status_block, status, clear_struct);
-        if (context.io_status_block && context.wow64_io_status_block)
-        {
-            const auto native_status = context.io_status_block.read();
-            context.wow64_io_status_block.access([&](IO_STATUS_BLOCK<EmulatorTraits<Emu32>>& status_block) {
-                status_block.Status = native_status.Status;
-                status_block.Information = static_cast<EmulatorTraits<Emu32>::ULONG_PTR>(native_status.Information);
-            });
-        }
-
-        return result;
-    }
-
     struct io_device : ref_counted_object
     {
-        std::optional<handle> completion_port_{};
-        uint64_t completion_key_{};
-        ULONG completion_notification_flags_{};
-
         io_device() = default;
         ~io_device() override = default;
 
@@ -130,35 +127,25 @@ namespace sogen
 
         virtual NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) = 0;
 
-        virtual void set_completion_information(const handle completion_port, const uint64_t completion_key)
-        {
-            this->completion_port_ = completion_port;
-            this->completion_key_ = completion_key;
-        }
-
-        virtual void set_completion_notification_flags(const ULONG flags)
-        {
-            this->completion_notification_flags_ = flags;
-        }
-
-        void queue_io_completion(windows_emulator& win_emu, const io_device_context& context) const;
-
-        virtual bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block)
-        {
-            (void)win_emu;
-            (void)io_status_block;
-            return false;
-        }
-
         virtual void create(windows_emulator& win_emu, const io_device_creation_data& data)
         {
             (void)win_emu;
             (void)data;
         }
 
+        virtual void restore_after_state_restore(windows_emulator& win_emu)
+        {
+            (void)win_emu;
+        }
+
         virtual void work(windows_emulator& win_emu)
         {
             (void)win_emu;
+        }
+
+        virtual void release_references(process_context& process)
+        {
+            (void)process;
         }
 
         NTSTATUS execute_ioctl(windows_emulator& win_emu, const io_device_context& c);
@@ -213,10 +200,12 @@ namespace sogen
         }
 
         void work(windows_emulator& win_emu) override;
+        void restore_after_state_restore(windows_emulator& win_emu) override;
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override;
-        bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block) override;
-        void set_completion_information(handle completion_port, uint64_t completion_key) override;
-        void set_completion_notification_flags(ULONG flags) override;
+        NTSTATUS set_completion_association(process_context& process, const emulator_thread* active_thread, handle completion_port,
+                                            uint64_t key);
+        void set_completion_notification_flags(uint32_t flags);
+        void release_references(process_context& process) override;
 
         void serialize_object(utils::buffer_serializer& buffer) const override;
         void deserialize_object(utils::buffer_deserializer& buffer) override;
@@ -246,6 +235,8 @@ namespace sogen
         bool is_32_bit_{};
         std::u16string device_name_{};
         std::unique_ptr<io_device> device_{};
+        std::optional<device_completion_association> completion_association_{};
+        uint32_t completion_notification_flags_{};
 
         void setup()
         {

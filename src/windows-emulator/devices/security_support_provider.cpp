@@ -1,28 +1,55 @@
 #include "../std_include.hpp"
 #include "security_support_provider.hpp"
+#include "security_support_provider_data.hpp"
 
 #include "../windows_emulator.hpp"
 
 #include <utils/string.hpp>
+#include <platform/unicode.hpp>
 
 namespace sogen
 {
 
     namespace
     {
-        struct ksec_algorithm_request
+        std::string ksec_hex_dump(const uint8_t* data, const size_t length)
         {
-            std::array<uint8_t, 6> reserved0;
-            uint16_t operation;
-            std::array<uint8_t, 0x28> reserved1;
-            std::array<char16_t, 8> algorithm_name;
-        };
+            constexpr char hex_digits[] = "0123456789abcdef";
+            std::string result;
+            result.reserve(length * 3);
+            for (size_t i = 0; i < length; ++i)
+            {
+                if (i != 0)
+                {
+                    result.push_back(' ');
+                }
+                result.push_back(hex_digits[data[i] >> 4]);
+                result.push_back(hex_digits[data[i] & 0x0f]);
+            }
+            return result;
+        }
 
-        static_assert(offsetof(ksec_algorithm_request, operation) == 6);
-        static_assert(offsetof(ksec_algorithm_request, algorithm_name) == 0x30);
-        static_assert(sizeof(ksec_algorithm_request) == 0x40);
+        constexpr std::size_t ksec_operation_offset = 0x06;
+        constexpr std::size_t ksec_algorithm_name_offset = 0x30;
+        constexpr std::size_t ksec_algorithm_request_min_size = ksec_algorithm_name_offset;
 
-        constexpr std::size_t ksec_algorithm_request_min_size = offsetof(ksec_algorithm_request, algorithm_name);
+        std::u16string read_ksec_algorithm_name(const std::span<const uint8_t> request)
+        {
+            std::u16string name;
+            for (size_t offset = ksec_algorithm_name_offset; offset + sizeof(char16_t) <= request.size(); offset += sizeof(char16_t))
+            {
+                const auto character =
+                    static_cast<char16_t>(static_cast<uint16_t>(request[offset]) | (static_cast<uint16_t>(request[offset + 1]) << 8));
+                if (character == u'\0')
+                {
+                    break;
+                }
+
+                name.push_back(character);
+            }
+
+            return name;
+        }
 
         struct security_support_provider : stateless_device
         {
@@ -40,6 +67,38 @@ namespace sogen
                  0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x00, 0x63, 0x00, 0x72, 0x00, 0x79, 0x00, 0x70, 0x00, 0x74, 0x00,
                  0x70, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x73, 0x00,
                  0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+            // Microsoft SSL Protocol Provider -> ncryptsslp.dll (native KsecDD capture)
+            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+            std::uint8_t ssl_provider_output_data[192] = //
+                {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00,
+                 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x01, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+                 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x63, 0x00, 0x72, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
+                 0xFF, 0xFF, 0xFF, 0xFF, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+                 0x4D, 0x00, 0x69, 0x00, 0x63, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x73, 0x00, 0x6F, 0x00, 0x66, 0x00, 0x74, 0x00, 0x20, 0x00,
+                 0x53, 0x00, 0x53, 0x00, 0x4C, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x74, 0x00, 0x6F, 0x00, 0x63, 0x00,
+                 0x6F, 0x00, 0x6C, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x76, 0x00, 0x69, 0x00, 0x64, 0x00, 0x65, 0x00,
+                 0x72, 0x00, 0x00, 0x00, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                 0x6E, 0x00, 0x63, 0x00, 0x72, 0x00, 0x79, 0x00, 0x70, 0x00, 0x74, 0x00, 0x73, 0x00, 0x73, 0x00, 0x6C, 0x00, 0x70, 0x00,
+                 0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+            // AES Microsoft Primitive Provider (native KsecDD capture)
+            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+            std::uint8_t aes_output_data[280] = //
+                {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00,
+                 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                 0x58, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x53, 0x00, 0x00, 0x00, 0x98, 0x00, 0x00, 0x00,
+                 0x00, 0x00, 0x00, 0x00, 0xD8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+                 0x41, 0x00, 0x45, 0x00, 0x53, 0x00, 0x00, 0x00, 0x4D, 0x00, 0x69, 0x00, 0x63, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x73, 0x00,
+                 0x6F, 0x00, 0x66, 0x00, 0x74, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00,
+                 0x69, 0x00, 0x76, 0x00, 0x65, 0x00, 0x20, 0x00, 0x50, 0x00, 0x72, 0x00, 0x6F, 0x00, 0x76, 0x00, 0x69, 0x00, 0x64, 0x00,
+                 0x65, 0x00, 0x72, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xA0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                 0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD0, 0x00, 0x00, 0x00,
+                 0x00, 0x00, 0x00, 0x00, 0x4B, 0x00, 0x65, 0x00, 0x79, 0x00, 0x4C, 0x00, 0x65, 0x00, 0x6E, 0x00, 0x67, 0x00, 0x74, 0x00,
+                 0x68, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE8, 0x00, 0x00, 0x00,
+                 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x62, 0x00, 0x63, 0x00, 0x72, 0x00, 0x79, 0x00,
+                 0x70, 0x00, 0x74, 0x00, 0x70, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6D, 0x00, 0x69, 0x00, 0x74, 0x00, 0x69, 0x00, 0x76, 0x00,
+                 0x65, 0x00, 0x73, 0x00, 0x2E, 0x00, 0x64, 0x00, 0x6C, 0x00, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
             // SHA256 Microsoft Primitive Provider
             // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
@@ -75,11 +134,13 @@ namespace sogen
             // Offsets into a provider response. The algorithm name is a fixed-width
             // field rather than a packed string, and 0x34 holds a two-character
             // abbreviation of it that BCrypt cross-checks.
+            static constexpr std::size_t response_interface_offset = 0x18;
             static constexpr std::size_t response_name_offset = 0x50;
             static constexpr std::size_t response_abbreviation_offset = 0x34;
             static constexpr std::size_t response_abbreviation_size = 0x04;
+            static constexpr std::size_t response_key_length_offset = 0xD0;
 
-            struct hash_algorithm
+            struct provider_algorithm
             {
                 std::u16string_view name;
                 // Third and fourth characters of the name: "SHA1" -> A1, "MD5" -> 5.
@@ -88,18 +149,32 @@ namespace sogen
                 // The provider name follows the algorithm name directly, so the
                 // field is only as wide as the longest name sharing the template.
                 std::size_t name_size;
+                std::uint32_t interface_id;
+                std::uint32_t key_length{};
             };
 
-            std::optional<hash_algorithm> find_hash_algorithm(const std::u16string_view name)
+            std::optional<provider_algorithm> find_provider_algorithm(const std::u16string_view name)
             {
-                const std::array<hash_algorithm, 7> algorithms{{
-                    {.name = u"SHA1", .abbreviation = u"A1", .response = sha256_output_data, .name_size = 0x10},
-                    {.name = u"SHA256", .abbreviation = u"A2", .response = sha256_output_data, .name_size = 0x10},
-                    {.name = u"SHA384", .abbreviation = u"A3", .response = sha256_output_data, .name_size = 0x10},
-                    {.name = u"SHA512", .abbreviation = u"A5", .response = sha256_output_data, .name_size = 0x10},
-                    {.name = u"MD2", .abbreviation = u"2", .response = md5_output_data, .name_size = 0x08},
-                    {.name = u"MD4", .abbreviation = u"4", .response = md5_output_data, .name_size = 0x08},
-                    {.name = u"MD5", .abbreviation = u"5", .response = md5_output_data, .name_size = 0x08},
+                const std::array<provider_algorithm, 9> algorithms{{
+                    {.name = u"SHA1", .abbreviation = u"A1", .response = sha256_output_data, .name_size = 0x10, .interface_id = 2},
+                    {.name = u"SHA256", .abbreviation = u"A2", .response = sha256_output_data, .name_size = 0x10, .interface_id = 2},
+                    {.name = u"SHA384", .abbreviation = u"A3", .response = sha256_output_data, .name_size = 0x10, .interface_id = 2},
+                    {.name = u"SHA512", .abbreviation = u"A5", .response = sha256_output_data, .name_size = 0x10, .interface_id = 2},
+                    {.name = u"DSA",
+                     .abbreviation = u"A",
+                     .response = aes_output_data,
+                     .name_size = 0x08,
+                     .interface_id = 5,
+                     .key_length = 1024},
+                    {.name = u"RSA",
+                     .abbreviation = u"A",
+                     .response = aes_output_data,
+                     .name_size = 0x08,
+                     .interface_id = 3,
+                     .key_length = 1024},
+                    {.name = u"MD2", .abbreviation = u"2", .response = md5_output_data, .name_size = 0x08, .interface_id = 2},
+                    {.name = u"MD4", .abbreviation = u"4", .response = md5_output_data, .name_size = 0x08, .interface_id = 2},
+                    {.name = u"MD5", .abbreviation = u"5", .response = md5_output_data, .name_size = 0x08, .interface_id = 2},
                 }};
 
                 for (const auto& algorithm : algorithms)
@@ -113,7 +188,7 @@ namespace sogen
                 return std::nullopt;
             }
 
-            static void patch_algorithm_name(std::vector<std::uint8_t>& response, const hash_algorithm& algorithm)
+            static void patch_algorithm_response(std::vector<std::uint8_t>& response, const provider_algorithm& algorithm)
             {
                 const auto write_utf16 = [&](const std::size_t offset, const std::u16string_view text) {
                     for (std::size_t i = 0; i < text.size(); ++i)
@@ -122,6 +197,11 @@ namespace sogen
                         response[offset + (i * 2) + 1] = static_cast<std::uint8_t>(text[i] >> 8);
                     }
                 };
+                std::memcpy(response.data() + response_interface_offset, &algorithm.interface_id, sizeof(algorithm.interface_id));
+                if (algorithm.key_length != 0)
+                {
+                    std::memcpy(response.data() + response_key_length_offset, &algorithm.key_length, sizeof(algorithm.key_length));
+                }
 
                 std::fill_n(response.begin() + response_name_offset, algorithm.name_size, std::uint8_t{});
                 std::fill_n(response.begin() + response_abbreviation_offset, response_abbreviation_size, std::uint8_t{});
@@ -131,32 +211,52 @@ namespace sogen
 
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
             {
+                const auto log_result = [&](const NTSTATUS status, const char* stage) {
+                    win_emu.log.force_print(color::gray, "[ksecdd] ioctl=0x%08X stage=%s status=0x%08X input=0x%llX/%u output=0x%llX/%u\n",
+                                            static_cast<unsigned>(c.io_control_code), stage, static_cast<unsigned>(status),
+                                            static_cast<unsigned long long>(c.input_buffer), static_cast<unsigned>(c.input_buffer_length),
+                                            static_cast<unsigned long long>(c.output_buffer),
+                                            static_cast<unsigned>(c.output_buffer_length));
+                    return status;
+                };
+
                 if (c.io_control_code != 0x390400)
                 {
-                    return STATUS_NOT_SUPPORTED;
+                    return log_result(STATUS_NOT_SUPPORTED, "unsupported_ioctl");
                 }
 
                 if (!c.input_buffer || c.input_buffer_length < ksec_algorithm_request_min_size)
                 {
-                    return STATUS_INVALID_PARAMETER;
+                    return log_result(STATUS_INVALID_PARAMETER, "invalid_input");
                 }
 
-                const auto request =
-                    win_emu.emu().read_memory<ksec_algorithm_request>(c.input_buffer, static_cast<size_t>(c.input_buffer_length));
+                const auto request_dump_length = std::min<size_t>(c.input_buffer_length, 0x1000);
+                std::vector<uint8_t> request_dump(request_dump_length);
+                win_emu.emu().read_memory(c.input_buffer, request_dump.data(), request_dump.size());
 
-                if (request.operation != 2)
+                uint16_t operation{};
+                std::memcpy(&operation, request_dump.data() + ksec_operation_offset, sizeof(operation));
+
+                std::u16string algorithm_name;
+                if (operation == 2)
                 {
-                    return STATUS_SUCCESS;
+                    algorithm_name = read_ksec_algorithm_name(std::span<const uint8_t>{request_dump});
                 }
 
-                // bcrypt sizes the request to the name it carries (0x38 bytes for "MD5"), so it can be shorter than
-                // the struct. The field is guest-controlled and may not be NUL-terminated.
-                const auto algorithm_name = utils::string::to_string_view<char16_t>(request.algorithm_name);
+                const auto algorithm_name_utf8 = operation == 2 ? u16_to_u8(algorithm_name) : std::string{"<unused>"};
+                const auto request_hex = ksec_hex_dump(request_dump.data(), request_dump.size());
+                win_emu.log.force_print(color::gray, "[ksecdd] operation=%u algorithm=%s request=%s\n", static_cast<unsigned>(operation),
+                                        algorithm_name_utf8.c_str(), request_hex.c_str());
 
-                const auto write_response = [&](const auto& output_data) -> NTSTATUS {
+                if (operation != 2)
+                {
+                    return log_result(STATUS_SUCCESS, "operation_not_2");
+                }
+
+                const auto write_response = [&](const auto& output_data, const char* stage) -> NTSTATUS {
                     if (!c.output_buffer || c.output_buffer_length < sizeof(output_data))
                     {
-                        return STATUS_BUFFER_TOO_SMALL;
+                        return log_result(STATUS_BUFFER_TOO_SMALL, "response_buffer_too_small");
                     }
 
                     win_emu.emu().write_memory(c.output_buffer, output_data);
@@ -168,24 +268,77 @@ namespace sogen
                         c.io_status_block.write(block);
                     }
 
-                    return STATUS_SUCCESS;
+                    return log_result(STATUS_SUCCESS, stage);
                 };
 
-                // Hash providers differ from their same-length sibling only in the
-                // algorithm name and a two-character abbreviation of it, so the two
-                // captured layouts cover the whole family. Falling through to the
-                // RNG response instead makes BCryptOpenAlgorithmProvider fail, which
-                // takes CryptCreateHash with it.
-                if (const auto hash = find_hash_algorithm(algorithm_name))
+                if (algorithm_name.empty())
                 {
-                    if (!c.output_buffer || c.output_buffer_length < hash->response.size())
+                    constexpr std::array<std::uint32_t, 2> overflow_response{
+                        static_cast<std::uint32_t>(STATUS_BUFFER_TOO_SMALL),
+                        static_cast<std::uint32_t>(ksecdd_data::provider_enumeration_response.size()),
+                    };
+                    if (!c.output_buffer || c.output_buffer_length < sizeof(overflow_response))
                     {
-                        return STATUS_BUFFER_TOO_SMALL;
+                        return log_result(STATUS_BUFFER_TOO_SMALL, "enumeration_status_buffer_too_small");
+                    }
+                    if (c.output_buffer_length < ksecdd_data::provider_enumeration_response.size())
+                    {
+                        win_emu.emu().write_memory(c.output_buffer, overflow_response);
+                        if (c.io_status_block)
+                        {
+                            IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                            block.Information = sizeof(overflow_response);
+                            c.io_status_block.write(block);
+                        }
+                        return log_result(STATUS_BUFFER_OVERFLOW, "enumeration_buffer_overflow");
                     }
 
-                    // Copy: the template is shared between algorithms of the same size.
-                    std::vector<std::uint8_t> response{hash->response.begin(), hash->response.end()};
-                    patch_algorithm_name(response, *hash);
+                    return write_response(ksecdd_data::provider_enumeration_response, "enumeration_response");
+                }
+
+                if (algorithm_name == u"Microsoft Primitive Provider")
+                {
+                    if (!c.output_buffer || c.output_buffer_length < sizeof(NTSTATUS))
+                    {
+                        return log_result(STATUS_BUFFER_TOO_SMALL, "provider_status_buffer_too_small");
+                    }
+
+                    const NTSTATUS provider_status = STATUS_NOT_FOUND;
+                    win_emu.emu().write_memory(c.output_buffer, provider_status);
+                    if (c.io_status_block)
+                    {
+                        IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                        block.Information = sizeof(provider_status);
+                        c.io_status_block.write(block);
+                    }
+
+                    return log_result(STATUS_BUFFER_OVERFLOW, "provider_not_found");
+                }
+
+                if (algorithm_name == u"KEY_STORAGE")
+                {
+                    return write_response(ksecdd_data::key_storage_provider_response, "key_storage_provider_response");
+                }
+
+                if (algorithm_name == u"Microsoft SSL Protocol Provider")
+                {
+                    return write_response(ssl_provider_output_data, "ssl_provider_response");
+                }
+
+                if (algorithm_name == u"AES")
+                {
+                    return write_response(aes_output_data, "aes_response");
+                }
+
+                if (const auto algorithm = find_provider_algorithm(algorithm_name))
+                {
+                    if (!c.output_buffer || c.output_buffer_length < algorithm->response.size())
+                    {
+                        return log_result(STATUS_BUFFER_TOO_SMALL, "provider_response_buffer_too_small");
+                    }
+
+                    std::vector<std::uint8_t> response{algorithm->response.begin(), algorithm->response.end()};
+                    patch_algorithm_response(response, *algorithm);
 
                     win_emu.emu().write_memory(c.output_buffer, response.data(), response.size());
 
@@ -196,10 +349,10 @@ namespace sogen
                         c.io_status_block.write(block);
                     }
 
-                    return STATUS_SUCCESS;
+                    return log_result(STATUS_SUCCESS, "provider_response");
                 }
 
-                return write_response(rng_output_data);
+                return write_response(rng_output_data, "rng_response");
             }
         };
     }

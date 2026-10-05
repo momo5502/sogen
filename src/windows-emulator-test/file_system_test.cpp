@@ -4,6 +4,16 @@
 
 namespace sogen::test
 {
+#ifdef OS_WINDOWS
+    TEST(FileSystemTest, EmptyRootUsesNativeWindowsPaths)
+    {
+        const file_system fs{std::filesystem::path{}};
+        const windows_path path{'c', {u"windows", u"system32", u"ntdll.dll"}};
+
+        EXPECT_EQ(std::filesystem::path(path.u16string()), fs.translate(path));
+    }
+#endif
+
     TEST(FileSystemTest, PathTraversalIsNotPossible)
     {
         const auto current_dir = std::filesystem::current_path();
