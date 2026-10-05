@@ -234,6 +234,7 @@ namespace sogen
 
             return lock;
 #elif defined(__EMSCRIPTEN__)
+            static_cast<void>(path);
             ec = std::make_error_code(std::errc::operation_not_supported);
             return std::nullopt;
 #else
