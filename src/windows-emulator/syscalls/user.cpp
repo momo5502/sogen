@@ -3045,7 +3045,7 @@ namespace sogen
             {
                 if (routine == user_call_release_dc)
                 {
-                    return handle_NtUserReleaseDC();
+                    return handle_NtUserReleaseDC(c, static_cast<hdc>(param));
                 }
 
                 if (routine == user_call_post_quit_message)

@@ -467,6 +467,7 @@ namespace sogen
         uint64_t zw_callback_return{};
         uint64_t dispatch_client_message{};
         uint32_t gdi_default_dc_handle{};
+        uint32_t gdi_memory_dc_default_bitmap_handle{};
         std::map<uint32_t, gdi_dc_state> gdi_dc_states{};
         // Per-DC stack of states pushed by NtGdiSaveDC and popped by NtGdiRestoreDC.
         std::map<uint32_t, std::vector<gdi_dc_state>> gdi_dc_save_states{};
@@ -575,6 +576,7 @@ namespace sogen
         // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)
         // rather than reading the handle attribute directly. Transient (valid only until the next reply).
         std::vector<alpc_reply_handle> pending_alpc_message_handles{};
+        std::map<uint32_t, std::array<uint64_t, 2>> pending_alpc_reply_views{};
 
         // The guest event a WASAPI EVENTCALLBACK client registered via SetEventHandle on its render endpoint.
         // The audio render thread signals it at the device rate so the client's render loop wakes and refills the

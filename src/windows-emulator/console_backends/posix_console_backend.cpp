@@ -45,7 +45,7 @@ namespace sogen
                     return;
                 }
 
-                pollfd descriptor{STDIN_FILENO, POLLIN, 0};
+                pollfd descriptor{.fd = STDIN_FILENO, .events = POLLIN, .revents = 0};
                 int poll_result{};
                 do
                 {
@@ -74,7 +74,7 @@ namespace sogen
                         return;
                     }
 
-                    pollfd pending{STDIN_FILENO, POLLIN, 0};
+                    pollfd pending{.fd = STDIN_FILENO, .events = POLLIN, .revents = 0};
                     do
                     {
                         poll_result = poll(&pending, 1, 0);

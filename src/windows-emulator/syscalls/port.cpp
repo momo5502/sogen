@@ -350,7 +350,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            const auto port_key = port_handle.bits & 0xFFFFFFFF;
+            const auto port_key = static_cast<uint32_t>(port_handle.bits & 0xFFFFFFFF);
             if (send_message)
             {
                 const auto send_header = lpc_port_message::read(send_message);
@@ -359,7 +359,7 @@ namespace sogen
                     const auto pending_view = c.proc.pending_alpc_reply_views.find(port_key);
                     if (pending_view != c.proc.pending_alpc_reply_views.end())
                     {
-                        c.win_emu.memory.release_memory(pending_view->second.first, static_cast<size_t>(pending_view->second.second));
+                        c.win_emu.memory.release_memory(pending_view->second[0], static_cast<size_t>(pending_view->second[1]));
                         c.proc.pending_alpc_reply_views.erase(pending_view);
                     }
                     return STATUS_SUCCESS;
@@ -405,7 +405,7 @@ namespace sogen
                     const auto previous_view = c.proc.pending_alpc_reply_views.find(port_key);
                     if (previous_view != c.proc.pending_alpc_reply_views.end())
                     {
-                        c.win_emu.memory.release_memory(previous_view->second.first, static_cast<size_t>(previous_view->second.second));
+                        c.win_emu.memory.release_memory(previous_view->second[0], static_cast<size_t>(previous_view->second[1]));
                     }
                     c.proc.pending_alpc_reply_views[port_key] = {view_base, view_size};
                 }

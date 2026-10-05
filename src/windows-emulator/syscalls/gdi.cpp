@@ -426,7 +426,7 @@ namespace sogen
                     entry_obj.access([&](GDI_HANDLE_ENTRY64& writable) {
                         writable = {};
                         writable.Object = object_ptr;
-                        writable.Owner.ProcessId = static_cast<uint16_t>(process_context::process_id);
+                        writable.Owner.ProcessId = static_cast<uint16_t>(c.proc.process_id);
                         writable.Unique = unique;
                         writable.Type = type;
                         writable.Flags = 0;

@@ -358,12 +358,12 @@ namespace sogen
 
         template <typename Traits>
         std::vector<afd_poll_endpoint<Traits>> resolve_afd_poll_endpoints(windows_emulator& win_emu,
-                                                                          const std::span<const AFD_POLL_HANDLE_INFO<Traits>> handles);
+                                                                          std::span<const AFD_POLL_HANDLE_INFO<Traits>> handles);
 
         template <typename Traits>
         NTSTATUS perform_afd_poll(windows_emulator& win_emu, const io_device_context& c,
-                                  const std::span<const afd_poll_endpoint<Traits>> endpoints,
-                                  const std::span<const AFD_POLL_HANDLE_INFO<Traits>> handles);
+                                  std::span<const afd_poll_endpoint<Traits>> endpoints,
+                                  std::span<const AFD_POLL_HANDLE_INFO<Traits>> handles);
 
         template <typename Traits>
         struct afd_endpoint : io_device
@@ -486,12 +486,12 @@ namespace sogen
 
             NTSTATUS ioctl_set_information(windows_emulator& win_emu, const io_device_context& c)
             {
-                if (c.input_buffer_length < sizeof(AFD_INFO))
+                if (c.input_buffer_length < sizeof(AFD_INFORMATION))
                 {
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                const auto info = win_emu.emu().read_memory<AFD_INFO>(c.input_buffer);
+                const auto info = win_emu.emu().read_memory<AFD_INFORMATION>(c.input_buffer);
                 if (info.InformationClass == AFD_INFO_BLOCKING_MODE)
                 {
                     this->non_blocking_ = info.Information.Boolean != FALSE;
@@ -1328,7 +1328,7 @@ namespace sogen
 
         template <typename Traits>
         std::vector<afd_poll_endpoint<Traits>> resolve_afd_poll_endpoints(windows_emulator& win_emu,
-                                                                          const std::span<const AFD_POLL_HANDLE_INFO<Traits>> handles)
+                                                                          std::span<const AFD_POLL_HANDLE_INFO<Traits>> handles)
         {
             auto& proc = win_emu.process;
 
@@ -1361,8 +1361,8 @@ namespace sogen
 
         template <typename Traits>
         NTSTATUS perform_afd_poll(windows_emulator& win_emu, const io_device_context& c,
-                                  const std::span<const afd_poll_endpoint<Traits>> endpoints,
-                                  const std::span<const AFD_POLL_HANDLE_INFO<Traits>> handles)
+                                  std::span<const afd_poll_endpoint<Traits>> endpoints,
+                                  std::span<const AFD_POLL_HANDLE_INFO<Traits>> handles)
         {
             const auto entry_count = std::min(endpoints.size(), handles.size());
 
@@ -1450,8 +1450,8 @@ namespace sogen
 
                 pending_mio_poll(io_device_context context, std::optional<std::chrono::steady_clock::time_point> timeout,
                                  const handle retained_completion_port, const uint64_t iosb, const emulator_pointer apc_context)
-                    : context(std::move(context)),
-                      timeout(std::move(timeout)),
+                    : context(context),
+                      timeout(timeout),
                       retained_completion_port(retained_completion_port),
                       iosb(iosb),
                       apc_context(apc_context)
@@ -1618,7 +1618,7 @@ namespace sogen
 
                 if (!info.Timeout.QuadPart)
                 {
-                    this->clear_poll_results(win_emu, c);
+                    clear_poll_results(win_emu, c);
                     return this->complete_poll(win_emu, c, STATUS_TIMEOUT);
                 }
 
@@ -1635,7 +1635,7 @@ namespace sogen
                     const auto& pending = this->pending_polls_[*this->executing_pending_index_];
                     if (pending.timeout && pending.timeout <= win_emu.clock().steady_now())
                     {
-                        this->clear_poll_results(win_emu, c);
+                        clear_poll_results(win_emu, c);
                         return this->complete_poll(win_emu, c, STATUS_TIMEOUT);
                     }
 
@@ -1644,7 +1644,7 @@ namespace sogen
 
                 if (timeout && timeout <= win_emu.clock().steady_now())
                 {
-                    this->clear_poll_results(win_emu, c);
+                    clear_poll_results(win_emu, c);
                     return this->complete_poll(win_emu, c, STATUS_TIMEOUT);
                 }
 

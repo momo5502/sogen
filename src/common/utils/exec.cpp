@@ -15,6 +15,10 @@
 #endif
 #endif
 
+#if !defined(_WIN32) && !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+extern char** environ;
+#endif
+
 namespace sogen
 {
 

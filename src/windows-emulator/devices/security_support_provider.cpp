@@ -14,7 +14,7 @@ namespace sogen
     {
         std::string ksec_hex_dump(const uint8_t* data, const size_t length)
         {
-            constexpr char hex_digits[] = "0123456789abcdef";
+            constexpr std::string_view hex_digits = "0123456789abcdef";
             std::string result;
             result.reserve(length * 3);
             for (size_t i = 0; i < length; ++i)
