@@ -1295,6 +1295,7 @@ namespace sogen
 
                 task();
             }
+
             template <typename Fn>
             auto run_sync(Fn task) -> std::invoke_result_t<Fn>
             {
@@ -1325,7 +1326,6 @@ namespace sogen
 
                 return run_direct ? task() : future.get();
             }
-
 
             void drain_commands()
             {

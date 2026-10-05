@@ -2998,8 +2998,7 @@ extern "C"
         request.surface = to_object_id(surface);
 
         std::array<std::byte, sizeof(gb::get_surface_capabilities_response) + sizeof(VkSurfaceCapabilitiesKHR)> output{};
-        if (!bridge_call(gb::ioctl_get_surface_capabilities, &request, sizeof(request), output.data(),
-                         static_cast<DWORD>(output.size())))
+        if (!bridge_call(gb::ioctl_get_surface_capabilities, &request, sizeof(request), output.data(), static_cast<DWORD>(output.size())))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -3908,8 +3907,7 @@ extern "C"
         request.present_mode = static_cast<uint32_t>(pCreateInfo->presentMode);
         request.clipped = pCreateInfo->clipped;
 
-        std::vector<uint8_t> message(sizeof(request) +
-                                     static_cast<size_t>(request.queue_family_index_count) * sizeof(uint32_t));
+        std::vector<uint8_t> message(sizeof(request) + static_cast<size_t>(request.queue_family_index_count) * sizeof(uint32_t));
         std::memcpy(message.data(), &request, sizeof(request));
         if (request.queue_family_index_count > 0 && pCreateInfo->pQueueFamilyIndices)
         {

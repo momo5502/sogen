@@ -51,7 +51,7 @@ namespace sogen
             std::string_view{"VK_KHR_present_id"},               //
             std::string_view{"VK_KHR_present_wait"},             //
             std::string_view{"VK_GOOGLE_display_timing"},        //
-            std::string_view{"VK_EXT_hdr_metadata"},              //
+            std::string_view{"VK_EXT_hdr_metadata"},             //
             std::string_view{"VK_NV_low_latency2"},              //
         };
 
@@ -4259,11 +4259,11 @@ namespace sogen
         {
             const uint64_t image_id = this->impl_->next_id++;
             this->impl_->images.emplace(image_id, impl::image_data{
-                                                     .handle = image,
-                                                     .device_id = device,
-                                                     .samples = 1,
-                                                     .owned = false,
-                                                 });
+                                                      .handle = image,
+                                                      .device_id = device,
+                                                      .samples = 1,
+                                                      .owned = false,
+                                                  });
             sc.image_ids.push_back(image_id);
         }
 
@@ -4302,8 +4302,7 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore, uint64_t fence,
-                                            uint32_t& out_index)
+    int32_t vulkan_host::acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore, uint64_t fence, uint32_t& out_index)
     {
         out_index = 0;
         const auto sc_it = this->impl_->swapchains.find(swapchain);

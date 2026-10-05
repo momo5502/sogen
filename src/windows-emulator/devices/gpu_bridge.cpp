@@ -1879,8 +1879,7 @@ namespace sogen
                         gpu_bridge::create_surface_response{.vk_result = -3, .reserved = 0, .surface = gpu_bridge::null_object});
                 }
 
-                const uint64_t native_surface =
-                    win_emu.ui().create_vulkan_surface(static_cast<hwnd>(request.hwnd), native_instance);
+                const uint64_t native_surface = win_emu.ui().create_vulkan_surface(static_cast<hwnd>(request.hwnd), native_instance);
                 uint64_t surface = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_surface(request.instance, native_surface, surface);
                 return write_output(win_emu, context,
@@ -1916,10 +1915,10 @@ namespace sogen
                 uint64_t swapchain = gpu_bridge::null_object;
                 uint32_t image_count = 0;
                 const int32_t result = this->vulkan_.create_swapchain(
-                    request.device, request.surface, request.old_swapchain, request.flags, request.format, request.color_space, request.width,
-                    request.height, request.image_array_layers, request.min_image_count, request.image_usage, request.sharing_mode,
-                    std::span{queue_family_indices}, request.pre_transform, request.composite_alpha, request.present_mode, request.clipped,
-                    swapchain, image_count);
+                    request.device, request.surface, request.old_swapchain, request.flags, request.format, request.color_space,
+                    request.width, request.height, request.image_array_layers, request.min_image_count, request.image_usage,
+                    request.sharing_mode, std::span{queue_family_indices}, request.pre_transform, request.composite_alpha,
+                    request.present_mode, request.clipped, swapchain, image_count);
                 return write_output(
                     win_emu, context,
                     gpu_bridge::create_swapchain_response{.vk_result = result, .image_count = image_count, .swapchain = swapchain});
@@ -2002,8 +2001,7 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const int32_t result =
-                    this->vulkan_.queue_present(request.queue, request.swapchain, request.image_index, wait_semaphores);
+                const int32_t result = this->vulkan_.queue_present(request.queue, request.swapchain, request.image_index, wait_semaphores);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -3448,10 +3446,10 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    return this->vulkan_.cmd_pipeline_barrier(
-                        req.command_buffer, req.image, req.src_stage_mask, req.dst_stage_mask, req.src_access_mask, req.dst_access_mask,
-                        req.old_layout, req.new_layout, req.src_queue_family_index, req.dst_queue_family_index,
-                        to_host_range(req.subresource));
+                    return this->vulkan_.cmd_pipeline_barrier(req.command_buffer, req.image, req.src_stage_mask, req.dst_stage_mask,
+                                                              req.src_access_mask, req.dst_access_mask, req.old_layout, req.new_layout,
+                                                              req.src_queue_family_index, req.dst_queue_family_index,
+                                                              to_host_range(req.subresource));
                 }
                 case gpu_bridge::command::cmd_clear_color_image: {
                     gpu_bridge::cmd_clear_color_image_request req{};
@@ -3650,8 +3648,7 @@ namespace sogen
                 const int32_t result =
                     this->vulkan_.get_surface_capabilities(request.physical_device, request.surface, caps.data(), caps.size());
 
-                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(
-                    response_t{.vk_result = result, .reserved = 0});
+                emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response_t{.vk_result = result, .reserved = 0});
                 const size_t written = result == 0 ? caps.size() : 0;
                 if (written > 0)
                 {
@@ -3670,8 +3667,8 @@ namespace sogen
                 }
 
                 uint32_t supported = 0;
-                const int32_t result = this->vulkan_.get_surface_support(request.physical_device, request.surface,
-                                                                         request.queue_family_index, supported);
+                const int32_t result =
+                    this->vulkan_.get_surface_support(request.physical_device, request.surface, request.queue_family_index, supported);
                 return write_output(win_emu, context,
                                     gpu_bridge::get_surface_support_response{.vk_result = result, .supported = supported});
             }
@@ -3689,13 +3686,14 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
-                const auto capacity = static_cast<uint32_t>(std::min<uint64_t>(
-                    (context.output_buffer_length - sizeof(response_t)) / sizeof(gpu_bridge::surface_format),
-                    max_array_readback_bytes / sizeof(gpu_bridge::surface_format)));
+                const auto capacity = static_cast<uint32_t>(
+                    std::min<uint64_t>((context.output_buffer_length - sizeof(response_t)) / sizeof(gpu_bridge::surface_format),
+                                       max_array_readback_bytes / sizeof(gpu_bridge::surface_format)));
                 const uint32_t max_count = std::min(request.max_count, capacity);
                 std::vector<vulkan_host::surface_format> formats(max_count);
                 uint32_t count = 0;
-                const int32_t result = this->vulkan_.get_surface_formats(request.physical_device, request.surface, std::span{formats}, count);
+                const int32_t result =
+                    this->vulkan_.get_surface_formats(request.physical_device, request.surface, std::span{formats}, count);
 
                 emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response_t{.vk_result = result, .count = count});
                 const uint32_t written = std::min(count, max_count);
@@ -3706,8 +3704,7 @@ namespace sogen
                     {
                         wire[i] = {.format = formats[i].format, .color_space = formats[i].color_space};
                     }
-                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), wire.data(),
-                                               wire.size() * sizeof(wire.front()));
+                    win_emu.emu().write_memory(context.output_buffer + sizeof(response_t), wire.data(), wire.size() * sizeof(wire.front()));
                 }
                 set_information(context, static_cast<ULONG>(sizeof(response_t) + written * sizeof(gpu_bridge::surface_format)));
                 return STATUS_SUCCESS;
@@ -3727,12 +3724,12 @@ namespace sogen
                 }
 
                 const auto capacity = static_cast<uint32_t>(std::min<uint64_t>(
-                    (context.output_buffer_length - sizeof(response_t)) / sizeof(uint32_t),
-                    max_array_readback_bytes / sizeof(uint32_t)));
+                    (context.output_buffer_length - sizeof(response_t)) / sizeof(uint32_t), max_array_readback_bytes / sizeof(uint32_t)));
                 const uint32_t max_count = std::min(request.max_count, capacity);
                 std::vector<uint32_t> modes(max_count);
                 uint32_t count = 0;
-                const int32_t result = this->vulkan_.get_surface_present_modes(request.physical_device, request.surface, std::span{modes}, count);
+                const int32_t result =
+                    this->vulkan_.get_surface_present_modes(request.physical_device, request.surface, std::span{modes}, count);
 
                 emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response_t{.vk_result = result, .count = count});
                 const uint32_t written = std::min(count, max_count);

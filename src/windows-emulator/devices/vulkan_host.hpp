@@ -371,8 +371,7 @@ namespace sogen
         void destroy_surface(uint64_t surface);
         int32_t get_surface_support(uint64_t physical_device, uint64_t surface, uint32_t queue_family_index, uint32_t& out_supported);
         int32_t get_surface_capabilities(uint64_t physical_device, uint64_t surface, void* out, size_t out_size);
-        int32_t get_surface_formats(uint64_t physical_device, uint64_t surface, std::span<surface_format> out_formats,
-                                    uint32_t& out_count);
+        int32_t get_surface_formats(uint64_t physical_device, uint64_t surface, std::span<surface_format> out_formats, uint32_t& out_count);
         int32_t get_surface_present_modes(uint64_t physical_device, uint64_t surface, std::span<uint32_t> out_modes, uint32_t& out_count);
 
         int32_t create_swapchain(uint64_t device, uint64_t surface, uint64_t old_swapchain, uint32_t flags, uint32_t format,
