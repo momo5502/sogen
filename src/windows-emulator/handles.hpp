@@ -186,7 +186,7 @@ namespace sogen
         virtual std::optional<handle> duplicate(handle h) = 0;
     };
 
-    template <handle_types::type Type, typename T>
+    template <handle_types::type Type, typename T, uint32_t IndexShift = 0>
         requires(utils::Serializable<T> && std::is_base_of_v<ref_counted_object, T>)
     class handle_store : public generic_handle_store
     {
@@ -225,7 +225,7 @@ namespace sogen
             h.bits = 0;
             h.value.is_pseudo = false;
             h.value.type = Type;
-            h.value.id = index;
+            h.value.id = index << IndexShift;
 
             return h;
         }
@@ -414,7 +414,7 @@ namespace sogen
                 return this->store_.end();
             }
 
-            return this->store_.find(static_cast<uint32_t>(h.id));
+            return this->store_.find(static_cast<uint32_t>(h.id) >> IndexShift);
         }
 
         uint32_t find_free_index()
