@@ -18,6 +18,10 @@ target_link_libraries(windows-emulator-test PRIVATE
   vulkan-bridge-marshal
 )
 
+if(EMSCRIPTEN)
+  target_link_options(windows-emulator-test PRIVATE -sASYNCIFY_EXPORTS=main)
+endif()
+
 if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
   add_dependencies(windows-emulator-test test-sample)
 endif()

@@ -86,6 +86,38 @@ namespace sogen
             return emulator_allocator{memory, base, size};
         }
 
+        void append_command_line_argument(std::u16string& command_line, const std::u16string_view argument)
+        {
+            if (!argument.empty() && argument.find_first_of(u" \t\"") == std::u16string_view::npos)
+            {
+                command_line.append(argument);
+                return;
+            }
+
+            command_line.push_back(u'"');
+            size_t backslashes{};
+            for (const auto character : argument)
+            {
+                if (character == u'\\')
+                {
+                    ++backslashes;
+                    continue;
+                }
+                if (character == u'"')
+                {
+                    command_line.append(backslashes * 2 + 1, u'\\');
+                }
+                else
+                {
+                    command_line.append(backslashes, u'\\');
+                }
+                backslashes = 0;
+                command_line.push_back(character);
+            }
+            command_line.append(backslashes * 2, u'\\');
+            command_line.push_back(u'"');
+        }
+
         void setup_gdt(x86_64_emulator& emu, memory_manager& memory)
         {
             const auto vcpu_count = emu.vcpu_count();
@@ -258,6 +290,10 @@ namespace sogen
     void process_context::setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
                                 const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32)
     {
+        this->process_id = app_settings.process_id;
+        this->initial_thread_id = app_settings.thread_id;
+        this->processes.get(GUEST_PROCESS_HANDLE)->id = this->process_id;
+
         auto& emu = win_emu.emu();
         const auto& version = win_emu.version;
         const auto& fake_env = win_emu.fake_env;
@@ -324,19 +360,14 @@ namespace sogen
 
             const auto application_str = app_settings.application.u16string();
 
-            std::u16string command_line = u"\"" + application_str + u"\"";
+            const auto& argument0 = app_settings.argument0.empty() ? application_str : app_settings.argument0;
+            std::u16string command_line{};
+            append_command_line_argument(command_line, argument0);
 
             for (const auto& arg : app_settings.arguments)
             {
                 command_line.push_back(u' ');
-                if (arg.find(' ') != std::string::npos)
-                {
-                    command_line.append(u"\"" + arg + u"\"");
-                }
-                else
-                {
-                    command_line.append(arg);
-                }
+                append_command_line_argument(command_line, arg);
             }
 
             allocator.make_unicode_string(proc_params.CommandLine, command_line);
@@ -579,7 +610,7 @@ namespace sogen
             window.fnid = 0x29D;   // FNID_DESKTOP
             window.windowBand = 1; // ZBID_DESKTOP
             window.dpiContext = USER_DEFAULT_WINDOW_DPI_CONTEXT;
-            window.processId = process_context::process_id;
+            window.processId = this->process_id;
         });
 
         // Seed the shared foreground window with the desktop so the guest's client-side GetForegroundWindow
@@ -612,7 +643,7 @@ namespace sogen
                 window.rcClient = window.rcWindow;
                 window.windowBand = 1; // ZBID_DESKTOP
                 window.dpiContext = USER_DEFAULT_WINDOW_DPI_CONTEXT;
-                window.processId = process_context::process_id;
+                window.processId = this->process_id;
             });
             return handle;
         };
@@ -715,6 +746,8 @@ namespace sogen
         buffer.write(this->accelerator_tables);
         buffer.write(this->registry_keys);
         buffer.write(this->private_namespaces);
+        buffer.write(this->processes);
+        buffer.write(this->managed_threads);
         buffer.write_map(this->atoms);
         buffer.write_map(this->classes);
 
@@ -732,6 +765,8 @@ namespace sogen
         buffer.write(this->uuid_sequence);
 
         buffer.write_vector(this->default_register_set);
+        buffer.write(this->process_id);
+        buffer.write(this->initial_thread_id);
         buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
 
@@ -810,6 +845,8 @@ namespace sogen
         buffer.read(this->accelerator_tables);
         buffer.read(this->registry_keys);
         buffer.read(this->private_namespaces);
+        buffer.read(this->processes);
+        buffer.read(this->managed_threads);
         buffer.read_map(this->atoms);
         buffer.read_map(this->classes);
 
@@ -827,6 +864,8 @@ namespace sogen
         buffer.read(this->uuid_sequence);
 
         buffer.read_vector(this->default_register_set);
+        buffer.read(this->process_id);
+        buffer.read(this->initial_thread_id);
         buffer.read(this->spawned_thread_count);
 
         for (auto& thread : this->threads | std::views::values)
@@ -970,10 +1009,10 @@ namespace sogen
     {
         switch (handle.value.type)
         {
-        case handle_types::process: {
-            static dummy_handle_store<handle_types::process, emulator_process> handle_store{GUEST_PROCESS_HANDLE};
-            return &handle_store;
-        }
+        case handle_types::process:
+            return &this->processes;
+        case handle_types::managed_thread:
+            return &this->managed_threads;
         case handle_types::thread:
             return &threads;
         case handle_types::event:
@@ -1116,8 +1155,7 @@ namespace sogen
     handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
                                           const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread)
     {
-        // Thread ids are 8, 12, 16, ... (the process keeps id 4); all 4-aligned like real Windows.
-        const uint32_t thread_id = (++this->spawned_thread_count + 1) * 4;
+        const uint32_t thread_id = this->initial_thread_id + this->spawned_thread_count++ * 4;
         emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;

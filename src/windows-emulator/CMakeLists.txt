@@ -26,7 +26,7 @@ if(NOT SOGEN_ENABLE_CLANG_TIDY)
   target_precompile_headers(windows-emulator PRIVATE std_include.hpp)
 endif()
 
-target_link_libraries(windows-emulator PUBLIC emulator minidump)
+target_link_libraries(windows-emulator PUBLIC emulator minidump process-manager)
 target_link_libraries(windows-emulator PRIVATE gpu-bridge-protocol vulkan-headers steam-bridge-protocol)
 
 # When the Steamworks SDK was provided, link the real Steam host backend (owns the SDK headers + the

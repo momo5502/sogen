@@ -271,8 +271,9 @@ namespace sogen
                                                       emulator_pointer message_information, uint32_t length,
                                                       emulator_object<ULONG> return_length);
         NTSTATUS handle_NtAlpcSetInformation();
-        NTSTATUS handle_NtAlpcCreateSecurityContext();
-        NTSTATUS handle_NtAlpcDeleteSecurityContext();
+        NTSTATUS handle_NtAlpcCreateSecurityContext(const syscall_context& c, handle port_handle, ULONG flags,
+                                                    emulator_object<ALPC_SECURITY_ATTR<EmulatorTraits<Emu64>>> security_attribute);
+        NTSTATUS handle_NtAlpcDeleteSecurityContext(const syscall_context& c, handle port_handle, ULONG flags, handle context_handle);
 
         // syscalls/process.cpp:
         NTSTATUS handle_NtQueryInformationProcess(const syscall_context& c, handle process_handle, uint32_t info_class,
@@ -288,6 +289,15 @@ namespace sogen
         NTSTATUS handle_NtOpenProcessTokenEx(const syscall_context& c, handle process_handle, ACCESS_MASK desired_access,
                                              ULONG /*handle_attributes*/, emulator_object<handle> token_handle);
         NTSTATUS handle_NtTerminateProcess(const syscall_context& c, handle process_handle, NTSTATUS exit_status);
+        NTSTATUS handle_NtCreateUserProcess(const syscall_context& c, emulator_object<handle> process_handle,
+                                            emulator_object<handle> thread_handle, ACCESS_MASK process_desired_access,
+                                            ACCESS_MASK thread_desired_access,
+                                            emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> process_object_attributes,
+                                            emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> thread_object_attributes,
+                                            ULONG process_flags, ULONG thread_flags,
+                                            emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_parameters,
+                                            emulator_object<PS_CREATE_INFO<EmulatorTraits<Emu64>>> create_info,
+                                            emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list);
         NTSTATUS handle_NtFlushProcessWriteBuffers(const syscall_context& c);
 
         // syscalls/registry.cpp:
@@ -1069,11 +1079,6 @@ namespace sogen
         }
 
         NTSTATUS handle_NtQueryInformationJobObject()
-        {
-            return STATUS_NOT_SUPPORTED;
-        }
-
-        NTSTATUS handle_NtCreateUserProcess()
         {
             return STATUS_NOT_SUPPORTED;
         }

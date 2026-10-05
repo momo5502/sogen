@@ -162,7 +162,7 @@ namespace sogen
             return {.status = STATUS_PORT_DISCONNECTED};
         }
 
-        if (!c.receive_message)
+        if (!c.receive_message && !this->port_->accepts_send_only_messages())
         {
             return {.status = STATUS_INVALID_PARAMETER};
         }
@@ -188,6 +188,11 @@ namespace sogen
         }
 
         auto result = this->port_->handle_message(win_emu, c);
+
+        if (!c.receive_message)
+        {
+            return {.status = result.status};
+        }
 
         if (NT_SUCCESS(result.status) && c.receive_buffer_length < result.total_length())
         {
