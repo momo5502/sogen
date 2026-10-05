@@ -706,7 +706,6 @@ namespace sogen
         int handle_NtUserSetScrollInfo();
         BOOL handle_NtUserShowScrollBar();
         BOOL handle_NtUserIsTouchWindow();
-        BOOL handle_NtUserIsTopLevelWindow(const syscall_context& c, hwnd window);
         uint64_t handle_NtUserGetTopLevelWindow(const syscall_context& c, hwnd window);
         BOOL handle_NtUserGetWindowPlacement(const syscall_context& c, hwnd window_handle, emulator_pointer placement_address);
         BOOL handle_NtUserSetWindowPlacement(const syscall_context& c, hwnd window_handle, emulator_pointer placement_address);

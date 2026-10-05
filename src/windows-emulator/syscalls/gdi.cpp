@@ -2604,7 +2604,7 @@ namespace sogen
                     else
                     {
                         const uint8_t packed = row[static_cast<size_t>(src_x) / 8u];
-                        const uint8_t index = static_cast<uint8_t>((packed >> (7u - (src_x & 7u))) & 1u);
+                        const auto index = static_cast<uint8_t>((packed >> (7u - (src_x & 7u))) & 1u);
                         pixel = palette[index];
                     }
 
@@ -2777,7 +2777,7 @@ namespace sogen
                     else
                     {
                         const uint8_t packed = row[static_cast<size_t>(img_x) / 8u];
-                        const uint8_t index = static_cast<uint8_t>((packed >> (7u - (img_x & 7u))) & 1u);
+                        const auto index = static_cast<uint8_t>((packed >> (7u - (img_x & 7u))) & 1u);
                         pixel = palette[index];
                     }
 
