@@ -62,7 +62,7 @@
 [submodule "deps/reproc"]
 	path = deps/reproc
 	url = https://github.com/daandemeyer/reproc.git
-[submodule "deps/openssl"]
-	path = deps/openssl
-	url = https://github.com/openssl/openssl.git
+[submodule "deps/mbedtls"]
+	path = deps/mbedtls
+	url = https://github.com/Mbed-TLS/mbedtls.git
 	shallow = true
