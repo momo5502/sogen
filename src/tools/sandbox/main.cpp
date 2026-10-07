@@ -63,12 +63,17 @@ namespace sogen::sandbox
 
         int run(const std::span<const std::string_view> args, std::unordered_map<windows_path, std::filesystem::path> path_mappings,
                 const std::filesystem::path& emulation_root, const std::filesystem::path& registry_directory,
-                const std::vector<std::filesystem::path>& registry_files, managed_process_connection* managed_connection)
+                const std::vector<std::filesystem::path>& registry_files,
+                const std::vector<std::pair<std::string, std::string>>& environment, managed_process_connection* managed_connection)
         {
             application_settings app_settings{
                 .application = std::u8string(args[0].begin(), args[0].end()),
                 .arguments = parse_arguments(args),
             };
+            for (const auto& [name, value] : environment)
+            {
+                app_settings.environment.insert_or_assign(u8_to_u16(name), u8_to_u16(value));
+            }
             if (managed_connection)
             {
                 const auto& request = managed_connection->request();
@@ -213,6 +218,7 @@ namespace sogen::sandbox
             std::filesystem::path emulation_root{};
             std::filesystem::path registry_directory{};
             std::vector<std::filesystem::path> registry_files{};
+            std::vector<std::pair<std::string, std::string>> environment{};
             uint16_t managed_process_port{};
             std::string managed_process_token{};
             app.add_option("-e,--emulation", emulation_root, "Set emulation root path");
@@ -221,6 +227,7 @@ namespace sogen::sandbox
                 ->type_name("FILE")
                 ->expected(1)
                 ->allow_extra_args(false);
+            app.add_option("--env", environment, "Set a guest environment variable")->type_name("NAME VALUE")->allow_extra_args(false);
             app.add_option("--managed-process-port", managed_process_port)->group("");
             app.add_option("--managed-process-token", managed_process_token)->group("");
 
@@ -259,7 +266,7 @@ namespace sogen::sandbox
                 }
 
                 const std::vector<std::string_view> views{application.begin(), application.end()};
-                return run(views, std::move(mappings), emulation_root, registry_directory, registry_files,
+                return run(views, std::move(mappings), emulation_root, registry_directory, registry_files, environment,
                            managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)
