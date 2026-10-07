@@ -3469,7 +3469,8 @@ extern "C"
         const auto* formats = reinterpret_cast<const gb::surface_format*>(out.data() + sizeof(*response));
         for (uint32_t i = 0; i < written; ++i)
         {
-            pSurfaceFormats[i] = {static_cast<VkFormat>(formats[i].format), static_cast<VkColorSpaceKHR>(formats[i].color_space)};
+            pSurfaceFormats[i] = {.format = static_cast<VkFormat>(formats[i].format),
+                                  .colorSpace = static_cast<VkColorSpaceKHR>(formats[i].color_space)};
         }
         *pCount = written;
         return written < response->count ? VK_INCOMPLETE : VK_SUCCESS;
