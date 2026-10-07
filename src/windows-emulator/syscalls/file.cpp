@@ -1660,7 +1660,7 @@ namespace sogen
                 c.win_emu.log.warn("NtUnlockFile range not found for %s: handle 0x%" PRIx64 ", range 0x%" PRIx64 "+0x%" PRIx64
                                    ", key 0x%X, no held ranges\n",
                                    u16_to_u8(f->host_path.u16string()).c_str(), file_handle.bits, static_cast<uint64_t>(offset),
-                                   static_cast<uint64_t>(range_length), key);
+                                   static_cast<uint64_t>(range_length), static_cast<unsigned int>(key));
                 write_lock_io_status(io_status_block, STATUS_RANGE_NOT_LOCKED);
                 return STATUS_RANGE_NOT_LOCKED;
             }
@@ -1675,11 +1675,11 @@ namespace sogen
                 c.win_emu.log.warn("NtUnlockFile range not found for %s: handle 0x%" PRIx64 ", range 0x%" PRIx64 "+0x%" PRIx64
                                    ", key 0x%X, held ranges %zu\n",
                                    u16_to_u8(f->host_path.u16string()).c_str(), file_handle.bits, static_cast<uint64_t>(offset),
-                                   static_cast<uint64_t>(range_length), key, locks.size());
+                                   static_cast<uint64_t>(range_length), static_cast<unsigned int>(key), locks.size());
                 for (const auto& existing : locks)
                 {
                     c.win_emu.log.warn("Held file lock: handle 0x%" PRIx64 ", range 0x%" PRIx64 "+0x%" PRIx64 ", key 0x%X\n",
-                                       existing.owner.bits, existing.offset, existing.length, existing.key);
+                                       existing.owner.bits, existing.offset, existing.length, static_cast<unsigned int>(existing.key));
                 }
                 write_lock_io_status(io_status_block, STATUS_RANGE_NOT_LOCKED);
                 return STATUS_RANGE_NOT_LOCKED;
@@ -2341,7 +2341,7 @@ namespace sogen
                 c.win_emu.log.warn("NtCreateNamedPipeFile on unsupported path: %s (object attributes 0x%" PRIx64 ", name 0x%" PRIx64
                                    ", root 0x%" PRIx64 ", desired access 0x%X)\n",
                                    u16_to_u8(filename).c_str(), object_attributes.value(), attributes.ObjectName, attributes.RootDirectory,
-                                   desired_access);
+                                   static_cast<unsigned int>(desired_access));
                 return STATUS_NOT_SUPPORTED;
             }
 

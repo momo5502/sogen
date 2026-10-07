@@ -1145,7 +1145,8 @@ namespace sogen
                                                   const uint64_t info, const ULONG length)
         {
             c.win_emu.log.info("NtSetInformationJobObject: handle=0x%llX class=%u info=0x%llX length=%u\n",
-                               static_cast<unsigned long long>(job_handle.bits), info_class, static_cast<unsigned long long>(info), length);
+                               static_cast<unsigned long long>(job_handle.bits), info_class, static_cast<unsigned long long>(info),
+                               static_cast<unsigned int>(length));
             auto* job = c.proc.jobs.get(job_handle);
             if (!job)
             {

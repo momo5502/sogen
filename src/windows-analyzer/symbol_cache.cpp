@@ -206,7 +206,7 @@ namespace sogen
                 return std::nullopt;
             }
 
-            const auto mutex = CreateMutexW(nullptr, FALSE, mutex_name->c_str());
+            auto* const mutex = CreateMutexW(nullptr, FALSE, mutex_name->c_str());
             if (!mutex)
             {
                 ec = std::error_code{static_cast<int>(GetLastError()), std::system_category()};
@@ -223,7 +223,7 @@ namespace sogen
             }
 
             symbol_cache::download_lock lock{reinterpret_cast<std::intptr_t>(mutex)};
-            const auto file =
+            auto* const file =
                 CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY, nullptr);
             if (file == INVALID_HANDLE_VALUE)
             {
@@ -446,7 +446,7 @@ namespace sogen
         }
 
 #ifdef _WIN32
-        const auto handle = reinterpret_cast<HANDLE>(native_handle_);
+        auto* const handle = reinterpret_cast<HANDLE>(native_handle_);
         ReleaseMutex(handle);
         CloseHandle(handle);
 #elif !defined(__EMSCRIPTEN__)
@@ -494,7 +494,7 @@ namespace sogen
             {
                 name.back() = '_';
             }
-            stored_name = std::move(name);
+            stored_name = name;
         }
 
         return pdb_name / make_signature_key(sig) / stored_name;
