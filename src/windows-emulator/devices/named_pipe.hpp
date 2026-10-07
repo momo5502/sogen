@@ -16,7 +16,7 @@ namespace sogen
         ULONG message_length;
     };
 
-    class named_pipe : public io_device_container
+    class named_pipe : public io_device
     {
       public:
         std::u16string name;

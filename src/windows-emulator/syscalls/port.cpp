@@ -18,6 +18,10 @@ namespace sogen
         {
             auto port_name = read_unicode_string(c.emu, server_port_name);
             c.win_emu.callbacks.on_generic_access("Connecting port", port_name);
+            if (!is_supported_port(port_name))
+            {
+                return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
 
             port_creation_data data{};
             data.sequence_number = 1;
@@ -106,7 +110,10 @@ namespace sogen
         {
             auto port_name = read_unicode_string(c.emu, server_port_name);
             c.win_emu.callbacks.on_generic_access("Connecting port", port_name);
-
+            if (!is_supported_port(port_name))
+            {
+                return STATUS_OBJECT_NAME_NOT_FOUND;
+            }
             port_creation_data data{};
             data.flags = ALPC_PORFLG_ALLOW_LPC_REQUESTS;
             if (port_attributes)
@@ -244,7 +251,7 @@ namespace sogen
             const auto write_attribute = [&]<typename Traits>() {
                 view_attribute_at<Traits>(c, *attr_base)
                     .write({
-                        .Flags = 0,
+                        .Flags = 0x40000,
                         .SectionHandle = 0,
                         .ViewBase = static_cast<typename Traits::PVOID>(view_base),
                         .ViewSize = static_cast<typename Traits::SIZE_T>(view_size),
@@ -356,12 +363,6 @@ namespace sogen
                 const auto send_header = lpc_port_message::read(send_message);
                 if ((send_header.native.u2.s2.Type & LPC_CONTINUATION_REQUIRED) != 0)
                 {
-                    const auto pending_view = c.proc.pending_alpc_reply_views.find(port_key);
-                    if (pending_view != c.proc.pending_alpc_reply_views.end())
-                    {
-                        c.win_emu.memory.release_memory(pending_view->second[0], static_cast<size_t>(pending_view->second[1]));
-                        c.proc.pending_alpc_reply_views.erase(pending_view);
-                    }
                     return STATUS_SUCCESS;
                 }
             }
@@ -408,12 +409,7 @@ namespace sogen
                         return STATUS_INVALID_PARAMETER;
                     }
 
-                    const auto previous_view = c.proc.pending_alpc_reply_views.find(port_key);
-                    if (previous_view != c.proc.pending_alpc_reply_views.end())
-                    {
-                        c.win_emu.memory.release_memory(previous_view->second[0], static_cast<size_t>(previous_view->second[1]));
-                    }
-                    c.proc.pending_alpc_reply_views[port_key] = {view_base, view_size};
+                    c.proc.pending_alpc_reply_views[port_key].push_back({view_base, view_size});
                 }
 
                 result.message.write(receive_message);

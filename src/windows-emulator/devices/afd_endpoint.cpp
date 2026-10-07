@@ -1495,6 +1495,37 @@ namespace sogen
                 this->executing_pending_index_ = {};
             }
 
+            bool cancel_io(windows_emulator& win_emu, const handle file_handle, const uint64_t io_status_block) override
+            {
+                bool cancelled = false;
+                for (size_t index = 0; index < this->pending_polls_.size();)
+                {
+                    auto& pending = this->pending_polls_[index];
+                    if (pending.context.source_handle != file_handle || (io_status_block && pending.iosb != io_status_block))
+                    {
+                        ++index;
+                        continue;
+                    }
+
+                    auto completed = std::move(pending);
+                    this->pending_polls_.erase(this->pending_polls_.begin() + static_cast<std::ptrdiff_t>(index));
+                    this->complete_poll(win_emu, completed.context, STATUS_CANCELLED);
+                    if (auto* event = win_emu.process.events.get(completed.context.event))
+                    {
+                        event->signaled = true;
+                    }
+
+                    io_completion_wait::release_handle_reference(win_emu.process, completed.retained_completion_port);
+                    cancelled = true;
+                    if (io_status_block)
+                    {
+                        break;
+                    }
+                }
+
+                return cancelled;
+            }
+
             void work(windows_emulator& win_emu) override
             {
                 for (size_t index = 0; index < this->pending_polls_.size();)

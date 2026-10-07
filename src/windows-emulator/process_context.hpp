@@ -543,6 +543,7 @@ namespace sogen
         handle_store<handle_types::io_completion, io_completion> io_completions{};
         handle_store<handle_types::wait_completion_packet, wait_completion_packet> wait_completion_packets{};
         handle_store<handle_types::worker_factory, worker_factory> worker_factories{};
+        handle_store<handle_types::job, job_object> jobs{};
         handle_store<handle_types::port, port_container> ports{};
         handle_store<handle_types::mutant, mutant> mutants{};
         handle_store<handle_types::private_namespace, private_namespace> private_namespaces{};
@@ -576,7 +577,7 @@ namespace sogen
         // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)
         // rather than reading the handle attribute directly. Transient (valid only until the next reply).
         std::vector<alpc_reply_handle> pending_alpc_message_handles{};
-        std::map<uint32_t, std::array<uint64_t, 2>> pending_alpc_reply_views{};
+        std::map<uint32_t, std::vector<std::array<uint64_t, 2>>> pending_alpc_reply_views{};
 
         // The guest event a WASAPI EVENTCALLBACK client registered via SetEventHandle on its render endpoint.
         // The audio render thread signals it at the device rate so the client's render loop wakes and refills the

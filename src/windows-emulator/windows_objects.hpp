@@ -14,6 +14,24 @@
 namespace sogen
 {
 
+    struct job_object : ref_counted_object
+    {
+        std::u16string name{};
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->name);
+            buffer.write(this->limits);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->name);
+            buffer.read(this->limits);
+        }
+    };
+
     struct timer : ref_counted_object
     {
         std::u16string name{};

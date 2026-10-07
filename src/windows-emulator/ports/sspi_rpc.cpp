@@ -22,7 +22,7 @@ namespace sogen
         constexpr uint64_t k_context_lower = 0;
         constexpr uint64_t k_context_upper = 0x104a0;
         constexpr uint64_t k_expiry = 0x7fffff36d5969fff;
-        constexpr uint32_t k_context_attributes = 0x0000c11c;
+        constexpr uint32_t k_context_attributes = 0x0008819c;
         constexpr uint32_t k_continue_needed = 0x00090312;
         constexpr uint32_t k_incomplete_message = 0x80090318;
         constexpr uint32_t k_illegal_message = 0x80090326;
@@ -88,16 +88,14 @@ namespace sogen
             struct credential_record
             {
                 security_handle handle{.lower = k_credential_lower, .upper = k_credential_upper};
-                bool live{};
+                uint32_t acquisitions{};
             };
 
             struct context_record
             {
                 security_handle handle{.lower = k_context_lower, .upper = k_context_upper};
-                security_handle credential{};
                 std::string target{};
                 std::unique_ptr<sspi::tls_client> tls{};
-                bool live{};
                 bool finalized{};
             };
 
@@ -412,7 +410,6 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                this->package_calls_ |= uint16_t{1} << package_id;
                 return STATUS_SUCCESS;
             }
 
@@ -430,7 +427,7 @@ namespace sogen
                     !read_value(*request, 0x42, package_maximum_length) || !read_value(*request, 0x48, package_referent) ||
                     !read_value(*request, 0x60, package_count) || !read_value(*request, 0xc0, credential_use) || package_length != 0x58 ||
                     package_maximum_length != 0x5a || package_referent == 0 || package_count != 44 || credential_use != 2 ||
-                    writer.offset() != 0x18 || this->package_calls_ == 0)
+                    writer.offset() != 0x18)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -441,7 +438,7 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                this->credential_.live = true;
+                ++this->credential_.acquisitions;
                 const auto start = writer.offset();
                 writer.write<uint64_t>(this->credential_.handle.lower);
                 writer.write<uint64_t>(this->credential_.handle.upper);
@@ -559,18 +556,20 @@ namespace sogen
                                                      utils::aligned_binary_writer& writer)
             {
                 context_request request{};
-                if (writer.pointer_size() != utils::aligned_binary_writer::pointer_size_64 || writer.offset() != 0x18 ||
-                    !decode_context_request(win_emu, c, request) || !this->credential_.live ||
+                const bool decoded = decode_context_request(win_emu, c, request);
+                if (writer.pointer_size() != utils::aligned_binary_writer::pointer_size_64 || writer.offset() != 0x18 || !decoded ||
                     !matches_marshaled_handle(request.credential, this->credential_.handle) || request.target.empty() ||
-                    request.requested_attributes != k_context_attributes || request.representation != 0x10)
+                    (request.requested_attributes != 0x0000c11c && request.requested_attributes != 0x0009819c) ||
+                    (request.representation != 0x10 && request.representation != 0))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
                 std::span<const uint8_t> input{};
-                if (!this->context_.live)
+                context_record* context{};
+                if (request.context == security_handle{})
                 {
-                    if (request.context != security_handle{} || !request.buffers.empty())
+                    if (this->credential_.acquisitions == 0 || !request.buffers.empty())
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
@@ -580,18 +579,27 @@ namespace sogen
                         return write_context_reply(writer, 0, {}, 0, 0, {}, k_illegal_message, 0) ? STATUS_SUCCESS
                                                                                                   : STATUS_INVALID_PARAMETER;
                     }
-                    this->context_ = {
-                        .handle = {.lower = k_context_lower, .upper = k_context_upper},
-                        .credential = this->credential_.handle,
-                        .target = request.target,
-                        .tls = std::move(tls),
-                        .live = true,
-                    };
+                    const auto context_upper = this->next_context_upper_++;
+                    auto entry = this->contexts_
+                                     .emplace(context_upper,
+                                              context_record{
+                                                  .handle = {.lower = k_context_lower, .upper = context_upper},
+                                                  .target = request.target,
+                                                  .tls = std::move(tls),
+                                              })
+                                     .first;
+                    context = &entry->second;
                 }
                 else
                 {
-                    if (this->context_.finalized || request.target != this->context_.target ||
-                        !matches_marshaled_handle(request.context, this->context_.handle) || request.buffers.size() != 2 ||
+                    const auto entry = this->contexts_.find(request.context.upper);
+                    if (entry == this->contexts_.end())
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    context = &entry->second;
+                    if (context->finalized || request.target != context->target ||
+                        !matches_marshaled_handle(request.context, context->handle) || request.buffers.size() != 2 ||
                         request.buffers[0].type != 2 || request.buffers[0].referent == 0 || request.buffers[1].size != 0 ||
                         request.buffers[1].type != 0 || request.buffers[1].referent != 0)
                     {
@@ -600,7 +608,7 @@ namespace sogen
                     input = buffer_payload(request, request.buffers[0]);
                 }
 
-                auto result = this->context_.tls->process(input);
+                auto result = context->tls->process(input);
                 if (result.output_token.size() > std::numeric_limits<uint32_t>::max() ||
                     result.missing_size > std::numeric_limits<uint32_t>::max() || result.extra_size > std::numeric_limits<uint32_t>::max())
                 {
@@ -609,40 +617,44 @@ namespace sogen
 
                 if (result.status == sspi::handshake_status::failed)
                 {
-                    return write_context_reply(writer, 0, result.output_token, 0, 0, this->context_.handle, k_illegal_message, 0)
+                    return write_context_reply(writer, 0, result.output_token, 0, 0, context->handle, k_illegal_message, 0)
                                ? STATUS_SUCCESS
                                : STATUS_INVALID_PARAMETER;
                 }
                 if (result.status == sspi::handshake_status::incomplete_message)
                 {
                     return write_context_reply(writer, 0x10, result.output_token, static_cast<uint32_t>(result.missing_size), 4,
-                                               this->context_.handle, k_incomplete_message, 0)
+                                               context->handle, k_incomplete_message, 0)
                                ? STATUS_SUCCESS
                                : STATUS_INVALID_PARAMETER;
                 }
                 if (result.status == sspi::handshake_status::continue_needed)
                 {
-                    return write_context_reply(writer, 0, result.output_token, 0, 0, this->context_.handle, k_continue_needed, k_expiry)
+                    return write_context_reply(writer, 0, result.output_token, 0, 0, context->handle, k_continue_needed, k_expiry)
                                ? STATUS_SUCCESS
                                : STATUS_INVALID_PARAMETER;
                 }
 
-                const auto handoff = this->context_.tls->take_handoff_state();
+                auto handoff = context->tls->take_handoff_state();
+                if (handoff && request.requested_attributes == 0x0009819c)
+                {
+                    handoff->serialized_context_flags = 0x000000000840c400;
+                }
                 const auto provider_context = handoff ? sspi::build_provider_context(*handoff) : std::nullopt;
                 if (!provider_context)
                 {
-                    return write_context_reply(writer, 0, result.output_token, 0, 0, this->context_.handle, k_illegal_message, 0)
+                    return write_context_reply(writer, 0, result.output_token, 0, 0, context->handle, k_illegal_message, 0)
                                ? STATUS_SUCCESS
                                : STATUS_INVALID_PARAMETER;
                 }
                 const uint32_t extra_type = result.extra_size == 0 ? 0 : 5;
                 if (!write_final_context_reply(writer, result.output_token, *provider_context, static_cast<uint32_t>(result.extra_size),
-                                               extra_type, this->context_.handle))
+                                               extra_type, context->handle))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
-                this->context_.tls.reset();
-                this->context_.finalized = true;
+                context->tls.reset();
+                context->finalized = true;
                 return STATUS_SUCCESS;
             }
 
@@ -658,12 +670,12 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                const auto context = this->contexts_.find(handle.upper);
                 const uint32_t status =
-                    this->context_.live && matches_marshaled_handle(handle, this->context_.handle) ? 0 : k_invalid_handle;
+                    context != this->contexts_.end() && matches_marshaled_handle(handle, context->second.handle) ? 0 : k_invalid_handle;
                 if (status == 0)
                 {
-                    this->context_.tls.reset();
-                    this->context_.live = false;
+                    this->contexts_.erase(context);
                 }
                 const auto start = writer.offset();
                 writer.write<uint32_t>(status);
@@ -686,11 +698,12 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const uint32_t status =
-                    this->credential_.live && matches_marshaled_handle(handle, this->credential_.handle) ? 0 : k_invalid_handle;
+                const uint32_t status = this->credential_.acquisitions != 0 && matches_marshaled_handle(handle, this->credential_.handle)
+                                            ? 0
+                                            : k_invalid_handle;
                 if (status == 0)
                 {
-                    this->credential_.live = false;
+                    --this->credential_.acquisitions;
                 }
                 const auto start = writer.offset();
                 writer.write<uint32_t>(status);
@@ -728,10 +741,10 @@ namespace sogen
             }
 
             bool connected_{};
-            uint16_t package_calls_{};
             uint64_t package_strings_{};
             credential_record credential_{};
-            context_record context_{};
+            std::unordered_map<uint64_t, context_record> contexts_{};
+            uint64_t next_context_upper_{k_context_upper};
         };
     }
 

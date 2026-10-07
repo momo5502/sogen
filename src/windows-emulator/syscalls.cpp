@@ -71,6 +71,9 @@ namespace sogen
                                     uint64_t /*apc_context*/, emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                     uint64_t buffer, ULONG length, emulator_object<LARGE_INTEGER> /*byte_offset*/,
                                     emulator_object<ULONG> /*key*/);
+        NTSTATUS handle_NtCancelIoFileEx(const syscall_context& c, handle file_handle,
+                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_request_to_cancel,
+                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block);
         NTSTATUS handle_NtCopyFileChunk(const syscall_context& c, handle source_handle, handle destination_handle, handle event_handle,
                                         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, ULONG length,
                                         emulator_object<LARGE_INTEGER> source_offset, emulator_object<LARGE_INTEGER> destination_offset,
@@ -1097,9 +1100,81 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtCreateJobObject(const syscall_context& c, const emulator_object<handle> job_handle,
+                                          const ACCESS_MASK /*desired_access*/,
+                                          const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
+        {
+            if (!job_handle)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            job_object job{};
+            if (object_attributes)
+            {
+                const auto attributes = object_attributes.read();
+                if (attributes.ObjectName)
+                {
+                    job.name = read_unicode_string(c.emu, attributes.ObjectName);
+                }
+            }
+
+            if (!job.name.empty())
+            {
+                for (auto& entry : c.proc.jobs)
+                {
+                    if (entry.second.name == job.name)
+                    {
+                        ++entry.second.ref_count;
+                        job_handle.write(c.proc.jobs.make_handle(entry.first));
+                        return STATUS_OBJECT_NAME_EXISTS;
+                    }
+                }
+            }
+
+            job_handle.write(c.proc.jobs.store(std::move(job)));
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtQueryInformationJobObject()
         {
             return STATUS_NOT_SUPPORTED;
+        }
+
+        NTSTATUS handle_NtSetInformationJobObject(const syscall_context& c, const handle job_handle, const uint32_t info_class,
+                                                  const uint64_t info, const ULONG length)
+        {
+            c.win_emu.log.info("NtSetInformationJobObject: handle=0x%llX class=%u info=0x%llX length=%u\n", job_handle.bits, info_class,
+                               info, length);
+            auto* job = c.proc.jobs.get(job_handle);
+            if (!job)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            if (info_class != JobObjectExtendedLimitInformation)
+            {
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
+            if (length != sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION))
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            if (!info)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            const auto limits = c.emu.read_memory<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>(info);
+            if (limits.BasicLimitInformation.LimitFlags & ~JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            job->limits = limits;
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtCreateUserProcess()
@@ -1392,6 +1467,7 @@ namespace sogen
         add_handler(NtTerminateProcess);
         add_handler(NtFlushProcessWriteBuffers);
         add_handler(NtWriteFile);
+        add_handler(NtCancelIoFileEx);
         add_handler(NtCopyFileChunk);
         add_handler(NtLockFile);
         add_handler(NtUnlockFile);
@@ -1502,6 +1578,8 @@ namespace sogen
         add_handler(NtDeleteWnfStateName);
         add_handler(NtRaiseException);
         add_handler(NtQueryInformationJobObject);
+        add_handler(NtCreateJobObject);
+        add_handler(NtSetInformationJobObject);
         add_handler(NtSetSystemInformation);
         add_handler(NtQueryInformationFile);
         add_handler(NtCreateThreadEx);

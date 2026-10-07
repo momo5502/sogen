@@ -41,6 +41,8 @@ namespace sogen::sspi
         std::array<uint8_t, 4> outbound_fixed_iv{};
         uint64_t outbound_sequence{};
         uint64_t serialized_context_flags{};
+        std::vector<std::vector<uint8_t>> peer_certificates{};
+        std::array<uint8_t, 12> tls_unique{};
     };
 
     std::optional<std::vector<uint8_t>> build_provider_context(const provider_context_input& input);

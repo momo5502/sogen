@@ -148,6 +148,14 @@ namespace sogen
             (void)process;
         }
 
+        virtual bool cancel_io(windows_emulator& win_emu, handle file_handle, uint64_t io_status_block)
+        {
+            (void)win_emu;
+            (void)file_handle;
+            (void)io_status_block;
+            return false;
+        }
+
         NTSTATUS execute_ioctl(windows_emulator& win_emu, const io_device_context& c);
     };
 
@@ -206,6 +214,7 @@ namespace sogen
                                             uint64_t key);
         void set_completion_notification_flags(uint32_t flags);
         void release_references(process_context& process) override;
+        bool cancel_io(windows_emulator& win_emu, handle file_handle, uint64_t io_status_block) override;
 
         void serialize_object(utils::buffer_serializer& buffer) const override;
         void deserialize_object(utils::buffer_deserializer& buffer) override;

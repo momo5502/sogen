@@ -104,7 +104,7 @@ namespace sogen
             return create_dns_resolver();
         }
 
-        if (port == u"\\RPC Control\\LSARPC_ENDPOINT" || port == u"\\RPC Control\\lsapolicylookup" || port == u"\\RPC Control\\lsasspirpc")
+        if (port == u"\\RPC Control\\LSARPC_ENDPOINT" || port == u"\\RPC Control\\lsapolicylookup")
         {
             return create_lsa_policy_lookup_port();
         }
@@ -151,6 +151,11 @@ namespace sogen
         }
 
         return std::make_unique<dummy_port>(std::u16string(port));
+    }
+
+    bool is_supported_port(const std::u16string_view port)
+    {
+        return dynamic_cast<dummy_port*>(create_port(port).get()) == nullptr;
     }
 
     lpc_message_result port_container::handle_message(windows_emulator& win_emu, const lpc_message_context& c)

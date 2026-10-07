@@ -194,6 +194,12 @@ namespace sogen
         }
     }
 
+    bool io_device_container::cancel_io(windows_emulator& win_emu, const handle file_handle, const uint64_t io_status_block)
+    {
+        this->assert_validity();
+        return this->device_->cancel_io(win_emu, file_handle, io_status_block);
+    }
+
     NTSTATUS io_device_container::io_control(windows_emulator& win_emu, const io_device_context& context)
     {
         this->assert_validity();

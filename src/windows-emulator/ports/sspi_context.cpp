@@ -1,6 +1,10 @@
 #include "../std_include.hpp"
 #include "sspi_context.hpp"
 
+#ifdef _WIN32
+#include <wincrypt.h>
+#endif
+
 namespace sogen::sspi
 {
     namespace
@@ -9,6 +13,8 @@ namespace sogen::sspi
         constexpr uint32_t serialized_read_key = 2;
         constexpr uint32_t serialized_write_key = 3;
         constexpr uint32_t serialized_provider_name = 9;
+        constexpr uint32_t serialized_unique_binding = 0x0b;
+        constexpr uint32_t serialized_certificate_store = 0x15;
         constexpr size_t ssl3_wrapper_size = 80;
         constexpr size_t opaque_blob_size = 0x230;
         constexpr uint32_t opaque_blob_magic = 0x4d53534b;
@@ -187,6 +193,58 @@ namespace sogen::sspi
             write_value(output, 12, uint32_t{0});
             std::memcpy(output.data() + 16, payload.data(), payload.size());
         }
+
+        std::optional<std::vector<uint8_t>> serialize_certificate_store(const std::vector<std::vector<uint8_t>>& certificates)
+        {
+#ifdef _WIN32
+            const auto store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, nullptr);
+            if (store == nullptr)
+            {
+                return std::nullopt;
+            }
+
+            bool success = true;
+            for (size_t index = certificates.size(); index-- > 0;)
+            {
+                const auto& certificate = certificates[index];
+                PCCERT_CONTEXT context = nullptr;
+                if (certificate.size() > std::numeric_limits<DWORD>::max() ||
+                    !CertAddEncodedCertificateToStore(store, X509_ASN_ENCODING, certificate.data(), static_cast<DWORD>(certificate.size()),
+                                                      CERT_STORE_ADD_ALWAYS, &context))
+                {
+                    success = false;
+                    break;
+                }
+                DWORD chain_index = static_cast<DWORD>(index);
+                CRYPT_DATA_BLOB chain_index_blob{sizeof(chain_index), reinterpret_cast<BYTE*>(&chain_index)};
+                std::array<BYTE, 20> sha1{};
+                DWORD sha1_size = static_cast<DWORD>(sha1.size());
+                success = CertSetCertificateContextProperty(context, 0xe697, 0, &chain_index_blob) != FALSE &&
+                          CertGetCertificateContextProperty(context, CERT_SHA1_HASH_PROP_ID, sha1.data(), &sha1_size) != FALSE;
+                CertFreeCertificateContext(context);
+                if (!success)
+                {
+                    break;
+                }
+            }
+            CRYPT_DATA_BLOB blob{};
+            if (success)
+            {
+                success = CertSaveStore(store, 0, CERT_STORE_SAVE_AS_STORE, CERT_STORE_SAVE_TO_MEMORY, &blob, 0) != FALSE;
+            }
+            std::vector<uint8_t> bytes;
+            if (success)
+            {
+                bytes.resize(blob.cbData);
+                blob.pbData = bytes.data();
+                success = CertSaveStore(store, 0, CERT_STORE_SAVE_AS_STORE, CERT_STORE_SAVE_TO_MEMORY, &blob, 0) != FALSE;
+            }
+            CertCloseStore(store, 0);
+            return success ? std::optional{std::move(bytes)} : std::nullopt;
+#else
+            return certificates.empty() ? std::optional{std::vector<uint8_t>{}} : std::nullopt;
+#endif
+        }
     }
 
     tls_record_framing frame_tls_records(const std::span<const uint8_t> bytes)
@@ -253,12 +311,16 @@ namespace sogen::sspi
         write_value(std::span{packed}, 0x10, uint32_t{0x800});
         write_value(std::span{packed}, 0x14, input.cipher_suite);
         write_value(std::span{packed}, 0x18, uint32_t{0x17});
-        write_value(std::span{packed}, 0x1c, uint32_t{0x100});
+        write_value(std::span{packed}, 0x1c, uint32_t{input.peer_certificates.empty() ? 0x100U : 0xffU});
         write_value(std::span{packed}, 0x20, uint32_t{8});
         write_value(std::span{packed}, 0x24, uint32_t{8});
         write_value(std::span{packed}, 0x2c, uint32_t{1});
         write_value(std::span{packed}, 0x30, input.inbound_sequence);
         write_value(std::span{packed}, 0x38, input.outbound_sequence);
+        if (!input.peer_certificates.empty())
+        {
+            write_value(std::span{packed}, 0x90, uint32_t{0x8009030e});
+        }
         write_value(std::span{packed}, 0x98, uint32_t{5});
         write_value(std::span{packed}, 0xb0, uint32_t{0xffffffff});
 
@@ -274,8 +336,18 @@ namespace sogen::sspi
         append_item(result, serialized_provider_name, provider, static_cast<uint32_t>(provider.size()));
         append_item(result, serialized_read_key, inbound, static_cast<uint32_t>(inbound.size()));
         append_item(result, serialized_write_key, outbound, static_cast<uint32_t>(outbound.size()));
+        if (!input.peer_certificates.empty())
+        {
+            const auto certificate_store = serialize_certificate_store(input.peer_certificates);
+            if (!certificate_store || certificate_store->size() > std::numeric_limits<uint32_t>::max())
+            {
+                return std::nullopt;
+            }
+            append_item(result, serialized_certificate_store, *certificate_store, static_cast<uint32_t>(certificate_store->size()));
+            append_item(result, serialized_unique_binding, input.tls_unique, static_cast<uint32_t>(input.tls_unique.size()));
+        }
         append_item(result, 0, {}, 0);
-        if (result.size() != 1624)
+        if (input.peer_certificates.empty() && result.size() != 1624)
         {
             return std::nullopt;
         }

@@ -102,6 +102,10 @@ namespace sogen::sspi
 
         bool count_outbound(const std::span<const uint8_t> records)
         {
+            if (records.empty())
+            {
+                return true;
+            }
             const auto framing = frame_tls_records(records);
             if (framing.missing_size != 0 || framing.complete_size != records.size())
             {
@@ -173,6 +177,15 @@ namespace sogen::sspi
             std::memcpy(result.inbound_raw_key.data(), key_block.data() + 16, result.inbound_raw_key.size());
             std::memcpy(result.outbound_fixed_iv.data(), key_block.data() + 32, result.outbound_fixed_iv.size());
             std::memcpy(result.inbound_fixed_iv.data(), key_block.data() + 36, result.inbound_fixed_iv.size());
+            for (auto certificate = mbedtls_ssl_get_peer_cert(&ssl); certificate != nullptr; certificate = certificate->next)
+            {
+                result.peer_certificates.emplace_back(certificate->raw.p, certificate->raw.p + certificate->raw.len);
+            }
+            if (ssl.MBEDTLS_PRIVATE(verify_data_len) != result.tls_unique.size())
+            {
+                return std::nullopt;
+            }
+            std::memcpy(result.tls_unique.data(), ssl.MBEDTLS_PRIVATE(own_verify_data), result.tls_unique.size());
             mbedtls_platform_zeroize(key_block.data(), key_block.size());
             handoff_taken = true;
             return result;
@@ -188,7 +201,7 @@ namespace sogen::sspi
 
         auto state = std::make_unique<impl>();
         constexpr std::string_view personalization = "sogen-sspi-tls-client";
-        constexpr std::array cipher_suites{MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 0};
+        static constexpr std::array cipher_suites{MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 0};
         if (mbedtls_ctr_drbg_seed(&state->random, mbedtls_entropy_func, &state->entropy,
                                   reinterpret_cast<const unsigned char*>(personalization.data()), personalization.size()) != 0 ||
             mbedtls_ssl_config_defaults(&state->config, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) !=
