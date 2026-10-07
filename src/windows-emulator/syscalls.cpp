@@ -1152,12 +1152,24 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (info_class != JobObjectExtendedLimitInformation)
+            constexpr uint32_t extended_limit_information_class = 9;
+            constexpr ULONG extended_limit_information_size = 144;
+            constexpr uint64_t limit_flags_offset = 16;
+            constexpr uint32_t kill_on_job_close = 0x2000;
+
+#ifdef _WIN32
+            static_assert(extended_limit_information_class == JobObjectExtendedLimitInformation);
+            static_assert(extended_limit_information_size == sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+            static_assert(limit_flags_offset == offsetof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION, BasicLimitInformation.LimitFlags));
+            static_assert(kill_on_job_close == JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE);
+#endif
+
+            if (info_class != extended_limit_information_class)
             {
                 return STATUS_INVALID_INFO_CLASS;
             }
 
-            if (length != sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION))
+            if (length != extended_limit_information_size)
             {
                 return STATUS_INFO_LENGTH_MISMATCH;
             }
@@ -1167,13 +1179,13 @@ namespace sogen
                 return STATUS_ACCESS_VIOLATION;
             }
 
-            const auto limits = c.emu.read_memory<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>(info);
-            if (limits.BasicLimitInformation.LimitFlags & ~JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)
+            const auto limit_flags = c.emu.read_memory<uint32_t>(info + limit_flags_offset);
+            if (limit_flags & ~kill_on_job_close)
             {
                 return STATUS_NOT_SUPPORTED;
             }
 
-            job->limits = limits;
+            job->limit_flags = limit_flags;
             return STATUS_SUCCESS;
         }
 
