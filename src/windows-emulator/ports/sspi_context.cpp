@@ -197,7 +197,7 @@ namespace sogen::sspi
         std::optional<std::vector<uint8_t>> serialize_certificate_store(const std::vector<std::vector<uint8_t>>& certificates)
         {
 #ifdef _WIN32
-            const auto store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, nullptr);
+            auto* const store = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, nullptr);
             if (store == nullptr)
             {
                 return std::nullopt;
@@ -215,10 +215,10 @@ namespace sogen::sspi
                     success = false;
                     break;
                 }
-                DWORD chain_index = static_cast<DWORD>(index);
+                auto chain_index = static_cast<DWORD>(index);
                 CRYPT_DATA_BLOB chain_index_blob{sizeof(chain_index), reinterpret_cast<BYTE*>(&chain_index)};
                 std::array<BYTE, 20> sha1{};
-                DWORD sha1_size = static_cast<DWORD>(sha1.size());
+                auto sha1_size = static_cast<DWORD>(sha1.size());
                 success = CertSetCertificateContextProperty(context, 0xe697, 0, &chain_index_blob) != FALSE &&
                           CertGetCertificateContextProperty(context, CERT_SHA1_HASH_PROP_ID, sha1.data(), &sha1_size) != FALSE;
                 CertFreeCertificateContext(context);
