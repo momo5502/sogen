@@ -1603,10 +1603,11 @@ namespace sogen
 
                     // Blocking lock completion is not modeled yet; surface the conflict immediately.
                     c.win_emu.log.warn(
-                        "NtLockFile conflict: %s requested=0x%llX+0x%llX owner=0x%X held=0x%llX+0x%llX fail_immediately=%u\n",
+                        "NtLockFile conflict: %s requested=0x%llX+0x%llX owner=0x%llX held=0x%llX+0x%llX fail_immediately=%u\n",
                         u16_to_u8(f->host_path.u16string()).c_str(), static_cast<unsigned long long>(offset),
-                        static_cast<unsigned long long>(range_length), existing.owner, static_cast<unsigned long long>(existing.offset),
-                        static_cast<unsigned long long>(existing.length), fail_immediately);
+                        static_cast<unsigned long long>(range_length), static_cast<unsigned long long>(existing.owner.bits),
+                        static_cast<unsigned long long>(existing.offset), static_cast<unsigned long long>(existing.length),
+                        fail_immediately);
                     (void)fail_immediately;
                     write_lock_io_status(io_status_block, STATUS_LOCK_NOT_GRANTED);
                     return STATUS_LOCK_NOT_GRANTED;
