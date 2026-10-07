@@ -4,31 +4,11 @@
 
 #include "../windows_emulator.hpp"
 
-#include <utils/string.hpp>
-#include <platform/unicode.hpp>
-
 namespace sogen
 {
 
     namespace
     {
-        std::string ksec_hex_dump(const uint8_t* data, const size_t length)
-        {
-            constexpr std::string_view hex_digits = "0123456789abcdef";
-            std::string result;
-            result.reserve(length * 3);
-            for (size_t i = 0; i < length; ++i)
-            {
-                if (i != 0)
-                {
-                    result.push_back(' ');
-                }
-                result.push_back(hex_digits[data[i] >> 4]);
-                result.push_back(hex_digits[data[i] & 0x0f]);
-            }
-            return result;
-        }
-
         constexpr std::size_t ksec_operation_offset = 0x06;
         constexpr std::size_t ksec_algorithm_name_offset = 0x30;
         constexpr std::size_t ksec_algorithm_request_min_size = ksec_algorithm_name_offset;
@@ -243,52 +223,38 @@ namespace sogen
 
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
             {
-                const auto log_result = [&](const NTSTATUS status, const char* stage) {
-                    win_emu.log.force_print(color::gray, "[ksecdd] ioctl=0x%08X stage=%s status=0x%08X input=0x%llX/%u output=0x%llX/%u\n",
-                                            static_cast<unsigned>(c.io_control_code), stage, static_cast<unsigned>(status),
-                                            static_cast<unsigned long long>(c.input_buffer), static_cast<unsigned>(c.input_buffer_length),
-                                            static_cast<unsigned long long>(c.output_buffer),
-                                            static_cast<unsigned>(c.output_buffer_length));
-                    return status;
-                };
-
                 if (c.io_control_code != 0x390400)
                 {
-                    return log_result(STATUS_NOT_SUPPORTED, "unsupported_ioctl");
+                    return STATUS_NOT_SUPPORTED;
                 }
 
                 if (!c.input_buffer || c.input_buffer_length < ksec_algorithm_request_min_size)
                 {
-                    return log_result(STATUS_INVALID_PARAMETER, "invalid_input");
+                    return STATUS_INVALID_PARAMETER;
                 }
 
-                const auto request_dump_length = std::min<size_t>(c.input_buffer_length, 0x1000);
-                std::vector<uint8_t> request_dump(request_dump_length);
-                win_emu.emu().read_memory(c.input_buffer, request_dump.data(), request_dump.size());
+                const auto request_size = std::min<size_t>(c.input_buffer_length, 0x1000);
+                std::vector<uint8_t> request(request_size);
+                win_emu.emu().read_memory(c.input_buffer, request.data(), request.size());
 
                 uint16_t operation{};
-                std::memcpy(&operation, request_dump.data() + ksec_operation_offset, sizeof(operation));
+                std::memcpy(&operation, request.data() + ksec_operation_offset, sizeof(operation));
 
                 std::u16string algorithm_name;
                 if (operation == 2)
                 {
-                    algorithm_name = read_ksec_algorithm_name(std::span<const uint8_t>{request_dump});
+                    algorithm_name = read_ksec_algorithm_name(std::span<const uint8_t>{request});
                 }
-
-                const auto algorithm_name_utf8 = operation == 2 ? u16_to_u8(algorithm_name) : std::string{"<unused>"};
-                const auto request_hex = ksec_hex_dump(request_dump.data(), request_dump.size());
-                win_emu.log.force_print(color::gray, "[ksecdd] operation=%u algorithm=%s request=%s\n", static_cast<unsigned>(operation),
-                                        algorithm_name_utf8.c_str(), request_hex.c_str());
 
                 if (operation != 2)
                 {
-                    return log_result(STATUS_SUCCESS, "operation_not_2");
+                    return STATUS_SUCCESS;
                 }
 
-                const auto write_response = [&](const auto& output_data, const char* stage) -> NTSTATUS {
+                const auto write_response = [&](const auto& output_data) -> NTSTATUS {
                     if (!c.output_buffer || c.output_buffer_length < sizeof(output_data))
                     {
-                        return log_result(STATUS_BUFFER_TOO_SMALL, "response_buffer_too_small");
+                        return STATUS_BUFFER_TOO_SMALL;
                     }
 
                     win_emu.emu().write_memory(c.output_buffer, output_data);
@@ -300,7 +266,7 @@ namespace sogen
                         c.io_status_block.write(block);
                     }
 
-                    return log_result(STATUS_SUCCESS, stage);
+                    return STATUS_SUCCESS;
                 };
 
                 if (algorithm_name.empty())
@@ -311,7 +277,7 @@ namespace sogen
                     };
                     if (!c.output_buffer || c.output_buffer_length < sizeof(overflow_response))
                     {
-                        return log_result(STATUS_BUFFER_TOO_SMALL, "enumeration_status_buffer_too_small");
+                        return STATUS_BUFFER_TOO_SMALL;
                     }
                     if (c.output_buffer_length < ksecdd_data::provider_enumeration_response.size())
                     {
@@ -322,17 +288,17 @@ namespace sogen
                             block.Information = sizeof(overflow_response);
                             c.io_status_block.write(block);
                         }
-                        return log_result(STATUS_BUFFER_OVERFLOW, "enumeration_buffer_overflow");
+                        return STATUS_BUFFER_OVERFLOW;
                     }
 
-                    return write_response(ksecdd_data::provider_enumeration_response, "enumeration_response");
+                    return write_response(ksecdd_data::provider_enumeration_response);
                 }
 
                 if (algorithm_name == u"Microsoft Primitive Provider")
                 {
                     if (!c.output_buffer || c.output_buffer_length < sizeof(NTSTATUS))
                     {
-                        return log_result(STATUS_BUFFER_TOO_SMALL, "provider_status_buffer_too_small");
+                        return STATUS_BUFFER_TOO_SMALL;
                     }
 
                     const NTSTATUS provider_status = STATUS_NOT_FOUND;
@@ -344,29 +310,29 @@ namespace sogen
                         c.io_status_block.write(block);
                     }
 
-                    return log_result(STATUS_BUFFER_OVERFLOW, "provider_not_found");
+                    return STATUS_BUFFER_OVERFLOW;
                 }
 
                 if (algorithm_name == u"KEY_STORAGE")
                 {
-                    return write_response(ksecdd_data::key_storage_provider_response, "key_storage_provider_response");
+                    return write_response(ksecdd_data::key_storage_provider_response);
                 }
 
                 if (algorithm_name == u"Microsoft SSL Protocol Provider")
                 {
-                    return write_response(ssl_provider_output_data, "ssl_provider_response");
+                    return write_response(ssl_provider_output_data);
                 }
 
                 if (algorithm_name == u"AES")
                 {
-                    return write_response(aes_output_data, "aes_response");
+                    return write_response(aes_output_data);
                 }
 
                 if (const auto algorithm = find_provider_algorithm(algorithm_name))
                 {
                     if (!c.output_buffer || c.output_buffer_length < algorithm->response.size())
                     {
-                        return log_result(STATUS_BUFFER_TOO_SMALL, "provider_response_buffer_too_small");
+                        return STATUS_BUFFER_TOO_SMALL;
                     }
 
                     std::vector<std::uint8_t> response{algorithm->response.begin(), algorithm->response.end()};
@@ -381,10 +347,10 @@ namespace sogen
                         c.io_status_block.write(block);
                     }
 
-                    return log_result(STATUS_SUCCESS, "provider_response");
+                    return STATUS_SUCCESS;
                 }
 
-                return write_response(rng_output_data, "rng_response");
+                return write_response(rng_output_data);
             }
         };
     }
