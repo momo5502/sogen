@@ -1144,8 +1144,8 @@ namespace sogen
         NTSTATUS handle_NtSetInformationJobObject(const syscall_context& c, const handle job_handle, const uint32_t info_class,
                                                   const uint64_t info, const ULONG length)
         {
-            c.win_emu.log.info("NtSetInformationJobObject: handle=0x%llX class=%u info=0x%llX length=%u\n", job_handle.bits, info_class,
-                               info, length);
+            c.win_emu.log.info("NtSetInformationJobObject: handle=0x%llX class=%u info=0x%llX length=%u\n",
+                               static_cast<unsigned long long>(job_handle.bits), info_class, static_cast<unsigned long long>(info), length);
             auto* job = c.proc.jobs.get(job_handle);
             if (!job)
             {
