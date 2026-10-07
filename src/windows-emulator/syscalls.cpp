@@ -1159,9 +1159,11 @@ namespace sogen
 
 #ifdef _WIN32
             static_assert(extended_limit_information_class == JobObjectExtendedLimitInformation);
-            static_assert(extended_limit_information_size == sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
             static_assert(limit_flags_offset == offsetof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION, BasicLimitInformation.LimitFlags));
             static_assert(kill_on_job_close == JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE);
+#ifdef _WIN64
+            static_assert(extended_limit_information_size == sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+#endif
 #endif
 
             if (info_class != extended_limit_information_class)
