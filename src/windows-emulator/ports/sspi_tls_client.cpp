@@ -177,7 +177,7 @@ namespace sogen::sspi
             std::memcpy(result.inbound_raw_key.data(), key_block.data() + 16, result.inbound_raw_key.size());
             std::memcpy(result.outbound_fixed_iv.data(), key_block.data() + 32, result.outbound_fixed_iv.size());
             std::memcpy(result.inbound_fixed_iv.data(), key_block.data() + 36, result.inbound_fixed_iv.size());
-            for (auto certificate = mbedtls_ssl_get_peer_cert(&ssl); certificate != nullptr; certificate = certificate->next)
+            for (const auto* certificate = mbedtls_ssl_get_peer_cert(&ssl); certificate != nullptr; certificate = certificate->next)
             {
                 result.peer_certificates.emplace_back(certificate->raw.p, certificate->raw.p + certificate->raw.len);
             }
