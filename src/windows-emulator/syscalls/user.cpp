@@ -1877,14 +1877,10 @@ namespace sogen
 
         BOOL handle_NtUserReleaseDC(const syscall_context& c, const hdc dc)
         {
-            // TODO: Native GDI makes window-DC writes visible during the drawing operation; presenting on ReleaseDC is only
-            // a Sogen flush boundary. Move presentation into window-DC drawing operations once they share a common path.
             uint32_t present_handle = 0;
             if (auto* surface = get_dc_present_surface(c, dc, present_handle);
                 surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
             {
-                paint_trace::log_surface("user.release-dc", present_handle, surface->pixels.data(), static_cast<int>(surface->width),
-                                         static_cast<int>(surface->height), static_cast<int>(surface->width * sizeof(uint32_t)));
                 c.win_emu.ui().present_surface(present_handle,
                                                ui_surface_desc{.width = static_cast<int>(surface->width),
                                                                .height = static_cast<int>(surface->height),
@@ -2909,7 +2905,7 @@ namespace sogen
             {
                 if (routine == user_call_release_dc)
                 {
-                    return handle_NtUserReleaseDC();
+                    return handle_NtUserReleaseDC(c, static_cast<hdc>(param));
                 }
 
                 if (routine == user_call_post_quit_message)
