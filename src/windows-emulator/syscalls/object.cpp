@@ -165,6 +165,8 @@ namespace sogen
                 return u"WaitCompletionPacket";
             case handle_types::worker_factory:
                 return u"TpWorkerFactory";
+            case handle_types::job:
+                return u"Job";
             case handle_types::private_namespace:
                 return u"Directory";
             case handle_types::process:
