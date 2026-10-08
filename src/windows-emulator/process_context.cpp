@@ -742,6 +742,7 @@ namespace sogen
         buffer.write(this->default_desktop);
         buffer.write(this->desktops);
         buffer.write(this->windows);
+        buffer.write(this->menus);
         buffer.write(this->timers);
         buffer.write(this->accelerator_tables);
         buffer.write(this->registry_keys);
@@ -841,6 +842,7 @@ namespace sogen
         buffer.read(this->default_desktop);
         buffer.read(this->desktops);
         buffer.read(this->windows);
+        buffer.read(this->menus);
         buffer.read(this->timers);
         buffer.read(this->accelerator_tables);
         buffer.read(this->registry_keys);

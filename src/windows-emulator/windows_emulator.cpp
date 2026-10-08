@@ -1783,6 +1783,7 @@ namespace sogen
             return window{this->emu()}; //
         });
 
+        buffer.register_factory<menu>([this] { return menu{this->emu()}; });
         buffer.register_factory<accelerator_table>([this] { return accelerator_table{this->emu()}; });
     }
 
