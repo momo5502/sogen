@@ -715,6 +715,27 @@ namespace sogen
                     throw std::runtime_error("Invalid AFD endpoint socket!");
                 }
 
+                if (this->executing_delayed_ioctl_)
+                {
+                    const auto socket_error = this->s_->get_socket_error();
+                    if (!socket_error)
+                    {
+                        return STATUS_UNSUCCESSFUL;
+                    }
+
+                    if (*socket_error == 0)
+                    {
+                        return STATUS_SUCCESS;
+                    }
+
+                    if (*socket_error == SERR(ECONNREFUSED))
+                    {
+                        return STATUS_CONNECTION_REFUSED;
+                    }
+
+                    return STATUS_UNSUCCESSFUL;
+                }
+
                 auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
 
                 // AFD_CONNECT_INFO::RemoteAddress follows BOOLEAN + two ULONG_PTR (pointer-aligned): 24 on x64, 12 on WoW64.
@@ -726,19 +747,24 @@ namespace sogen
                 }
 
                 const auto addr = convert_to_host_address(win_emu, std::span(data).subspan(address_offset));
-
-                if (!this->s_->connect(addr))
+                const auto connected = this->s_->connect(addr);
+                if (!connected)
                 {
                     const auto error = this->s_->get_last_error();
-                    if (error == SERR(EWOULDBLOCK))
+
+                    if (error == SERR(EINPROGRESS) || error == SERR(EWOULDBLOCK)
+#ifndef _WIN32
+                        || error == EAGAIN
+#endif
+                        || error == SERR(EALREADY))
                     {
                         this->delay_ioctrl(c, false);
                         return STATUS_PENDING;
                     }
 
-                    if (this->executing_delayed_ioctl_ && error == SERR(EISCONN))
+                    if (error == SERR(ECONNREFUSED))
                     {
-                        return STATUS_SUCCESS;
+                        return STATUS_CONNECTION_REFUSED;
                     }
 
                     return STATUS_UNSUCCESSFUL;
