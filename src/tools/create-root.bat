@@ -85,6 +85,7 @@ CALL :collect kernel.appcore.dll
 CALL :collect kernel32.dll
 CALL :collect kernelbase.dll
 CALL :collect ktmw32.dll
+CALL :collect mfperfhelper.dll
 CALL :collect mfplat.dll
 CALL :collect mfreadwrite.dll
 CALL :collect mmdevapi.dll
@@ -168,6 +169,8 @@ CALL :collect wintrust.dll
 CALL :collect wintypes.dll
 CALL :collect wlanapi.dll
 CALL :collect wldap32.dll
+CALL :collect wmasf.dll
+CALL :collect wmvcore.dll
 CALL :collect wow64.dll
 CALL :collect wow64base.dll
 CALL :collect wow64con.dll
@@ -177,6 +180,7 @@ CALL :collect ws2_32.dll
 CALL :collect wshbth.dll
 CALL :collect wsock32.dll
 CALL :collect wtsapi32.dll
+CALL :collect xmllite.dll
 CALL :collect x3daudio1_7.dll
 CALL :collect xapofx1_5.dll
 CALL :collect xaudio2_9.dll
