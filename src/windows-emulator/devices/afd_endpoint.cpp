@@ -384,6 +384,7 @@ namespace sogen
             // WSAEWOULDBLOCK) instead of pending, because the guest's synchronous recv/send call would
             // otherwise wait forever on a packet that never arrives.
             bool non_blocking_{false};
+            std::vector<std::byte> shared_context_{};
 
             afd_endpoint()
             {
@@ -477,6 +478,8 @@ namespace sogen
 
             void update_shared_info(windows_emulator& win_emu, const io_device_context& c)
             {
+                this->shared_context_ = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
+
                 constexpr size_t option_flags_offset = 0x2c;
                 constexpr ULONG non_blocking_flag = 1u << 6;
                 if (c.input_buffer_length < option_flags_offset + sizeof(ULONG))
@@ -499,6 +502,28 @@ namespace sogen
                 if (info.InformationClass == AFD_INFO_BLOCKING_MODE)
                 {
                     this->non_blocking_ = info.Information.Boolean != FALSE;
+                }
+
+                return STATUS_SUCCESS;
+            }
+
+            NTSTATUS ioctl_get_context(windows_emulator& win_emu, const io_device_context& c) const
+            {
+                if (c.output_buffer_length < this->shared_context_.size())
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+
+                if (!this->shared_context_.empty())
+                {
+                    win_emu.emu().write_memory(c.output_buffer, this->shared_context_.data(), this->shared_context_.size());
+                }
+
+                if (c.io_status_block)
+                {
+                    status_block block{};
+                    block.Information = static_cast<ULONG>(this->shared_context_.size());
+                    c.io_status_block.write(block);
                 }
 
                 return STATUS_SUCCESS;
@@ -610,6 +635,7 @@ namespace sogen
                 buffer.read_optional(this->completion_port_);
                 buffer.read(this->completion_key_);
                 buffer.read(this->completion_notification_flags_);
+                buffer.read(this->shared_context_);
             }
 
             void serialize_object(utils::buffer_serializer& buffer) const override
@@ -622,6 +648,7 @@ namespace sogen
                 buffer.write_optional(this->completion_port_);
                 buffer.write(this->completion_key_);
                 buffer.write(this->completion_notification_flags_);
+                buffer.write(this->shared_context_);
             }
 
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
@@ -658,6 +685,8 @@ namespace sogen
                     return this->ioctl_poll(win_emu, c);
                 case AFD_GET_ADDRESS:
                     return this->ioctl_get_address(win_emu, c);
+                case AFD_GET_CONTEXT:
+                    return this->ioctl_get_context(win_emu, c);
                 case AFD_EVENT_SELECT:
                     return this->ioctl_event_select(win_emu, c);
                 case AFD_ENUM_NETWORK_EVENTS:
