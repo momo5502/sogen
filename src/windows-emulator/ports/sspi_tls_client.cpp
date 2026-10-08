@@ -7,10 +7,6 @@
 
 namespace sogen::sspi
 {
-    namespace
-    {
-    }
-
     struct tls_client::impl
     {
         mbedtls_ssl_context ssl{};
@@ -149,9 +145,10 @@ namespace sogen::sspi
         std::optional<provider_context_input> extract_handoff()
         {
             constexpr uint32_t tls_1_2 = 0x0303;
-            constexpr uint32_t cipher_suite = MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256;
+            const auto cipher_suite = mbedtls_ssl_get_ciphersuite_id_from_ssl(&ssl);
             if (!complete || handoff_taken || !exported || mbedtls_ssl_get_version_number(&ssl) != MBEDTLS_SSL_VERSION_TLS1_2 ||
-                mbedtls_ssl_get_ciphersuite_id_from_ssl(&ssl) != cipher_suite)
+                (cipher_suite != MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256 &&
+                 cipher_suite != MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256))
             {
                 return std::nullopt;
             }
@@ -168,7 +165,7 @@ namespace sogen::sspi
 
             provider_context_input result{
                 .protocol = tls_1_2,
-                .cipher_suite = cipher_suite,
+                .cipher_suite = static_cast<uint32_t>(cipher_suite),
                 .inbound_sequence = inbound_counter.value(),
                 .outbound_sequence = outbound_counter.value(),
                 .serialized_context_flags = 0x0000000008008200,
@@ -181,6 +178,7 @@ namespace sogen::sspi
             {
                 result.peer_certificates.emplace_back(certificate->raw.p, certificate->raw.p + certificate->raw.len);
             }
+            // Session tickets are disabled so this is the Finished value from a full handshake in the pinned mbedTLS revision.
             if (ssl.MBEDTLS_PRIVATE(verify_data_len) != result.tls_unique.size())
             {
                 return std::nullopt;
@@ -201,7 +199,8 @@ namespace sogen::sspi
 
         auto state = std::make_unique<impl>();
         constexpr std::string_view personalization = "sogen-sspi-tls-client";
-        static constexpr std::array cipher_suites{MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256, 0};
+        static constexpr std::array cipher_suites{MBEDTLS_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+                                                  MBEDTLS_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256, 0};
         if (mbedtls_ctr_drbg_seed(&state->random, mbedtls_entropy_func, &state->entropy,
                                   reinterpret_cast<const unsigned char*>(personalization.data()), personalization.size()) != 0 ||
             mbedtls_ssl_config_defaults(&state->config, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) !=

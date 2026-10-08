@@ -255,7 +255,7 @@ namespace sogen
 
         if (!request_result.view_payload.empty())
         {
-            recv_header.native.u2.s2.Type |= LPC_CONTINUATION_REQUIRED;
+            recv_header.native.u2.s2.Type |= lpc_continuation_required;
         }
 
         if (header_size + payload_size > static_cast<ULONG>(std::numeric_limits<CSHORT>::max()))

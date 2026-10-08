@@ -309,7 +309,6 @@ namespace sogen
                 write_attribute.template operator()<EmulatorTraits<Emu64>>();
             }
 
-            // Preserve CONTEXT and any view emitted for the same reply while marking the handle valid.
             header.ValidAttributes =
                 (header.ValidAttributes & (ALPC_MESSAGE_CONTEXT_ATTRIBUTE | ALPC_MESSAGE_VIEW_ATTRIBUTE)) | ALPC_MESSAGE_HANDLE_ATTRIBUTE;
             attributes.write(header);
@@ -352,7 +351,7 @@ namespace sogen
             if (send_message)
             {
                 const auto send_header = lpc_port_message::read(send_message);
-                if ((send_header.native.u2.s2.Type & LPC_CONTINUATION_REQUIRED) != 0)
+                if ((send_header.native.u2.s2.Type & lpc_continuation_required) != 0)
                 {
                     return STATUS_SUCCESS;
                 }
@@ -551,7 +550,7 @@ namespace sogen
         }
 
         NTSTATUS handle_NtAlpcDeleteSecurityContext(const syscall_context& c, const handle port_handle, const ULONG flags,
-                                                    const EmulatorTraits<Emu64>::HANDLE context_handle)
+                                                    const handle context_handle)
         {
             if (flags != 0)
             {
@@ -570,7 +569,7 @@ namespace sogen
                 return STATUS_PORT_DISCONNECTED;
             }
 
-            return internal_port->delete_security_context(context_handle) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+            return internal_port->delete_security_context(context_handle.bits) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
         }
 
         NTSTATUS handle_NtAlpcConnectPortEx()

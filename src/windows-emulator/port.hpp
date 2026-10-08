@@ -15,6 +15,7 @@
 
 namespace sogen
 {
+    inline constexpr uint16_t lpc_continuation_required = 0x2000;
 
     class windows_emulator;
     struct process_context;
