@@ -147,13 +147,7 @@ namespace sogen
                         }
 
                         const auto info = c.emu.read_memory<file_completion_information>(file_information);
-                        const auto completion_port = c.proc.resolve_object_pseudo_handle(info.completion_port, c.vcpu.active_thread);
-                        if (!c.proc.io_completions.get(completion_port))
-                        {
-                            return STATUS_INVALID_HANDLE;
-                        }
-
-                        device->set_completion_information(completion_port, info.completion_key);
+                        return device->set_completion_association(c.proc, c.vcpu.active_thread, info.completion_port, info.completion_key);
                     }
 
                     if (info_class == FileIoCompletionNotificationInformation)

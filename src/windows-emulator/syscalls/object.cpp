@@ -47,6 +47,15 @@ namespace sogen
                 }
             }
 
+            if (value.type == handle_types::device)
+            {
+                auto* device = c.proc.devices.get(h);
+                if (device && device->ref_count == 1)
+                {
+                    device->release_references(c.proc);
+                }
+            }
+
             if (value.type == handle_types::file)
             {
                 auto* file = c.proc.files.get(h);
