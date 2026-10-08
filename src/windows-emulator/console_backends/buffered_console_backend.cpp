@@ -112,9 +112,10 @@ namespace sogen
         this->read_recording_ = &consumed;
         const auto event = this->read_input_event_impl(wait);
         this->read_recording_ = nullptr;
-        for (auto it = consumed.rbegin(); it != consumed.rend(); ++it)
+        while (!consumed.empty())
         {
-            this->input_.push_front(*it);
+            this->input_.push_front(consumed.back());
+            consumed.pop_back();
         }
         this->pending_events_ = pending_events;
         return event;
