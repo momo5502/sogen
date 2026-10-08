@@ -4667,11 +4667,26 @@ namespace sogen
                                                     const int height, const UINT flags, const uint32_t /*band*/, const BOOL /*use_band*/)
         {
             auto* batch = c.proc.deferred_window_position_batches.get(batch_handle);
-            if (!batch || !c.proc.windows.get(window))
+            if (!batch)
+            {
+                set_guest_last_error(c, 1405);
+                return 0;
+            }
+
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
             {
                 set_guest_last_error(c, 1400);
                 return 0;
             }
+
+            if (!batch->positions.empty() && batch->parent_handle != win->parent_handle)
+            {
+                set_guest_last_error(c, 1441);
+                return 0;
+            }
+
+            batch->parent_handle = win->parent_handle;
 
             batch->positions.push_back({
                 .hwnd = window,
@@ -4727,7 +4742,7 @@ namespace sogen
             auto* batch = c.proc.deferred_window_position_batches.get(batch_handle);
             if (!batch)
             {
-                set_guest_last_error(c, 1400);
+                set_guest_last_error(c, 1405);
                 return FALSE;
             }
 
