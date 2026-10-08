@@ -56,6 +56,27 @@ namespace sogen
         }
     };
 
+    struct user_cbt_hook
+    {
+        uint64_t handle{};
+        uint64_t proc{};
+        bool ansi{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->handle);
+            buffer.write(this->proc);
+            buffer.write(this->ansi);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->handle);
+            buffer.read(this->proc);
+            buffer.read(this->ansi);
+        }
+    };
+
     struct pending_apc
     {
         uint32_t flags{};
@@ -386,6 +407,8 @@ namespace sogen
 
         std::vector<callback_frame> callback_stack;
         std::optional<uint64_t> callback_return_rax{};
+        std::optional<user_cbt_hook> cbt_hook{};
+        uint64_t next_cbt_hook_handle{1};
 
         std::map<user_timer_key, user_timer> user_timers{};
         uint64_t next_user_timer_id{1};
@@ -510,6 +533,8 @@ namespace sogen
 
             buffer.write_vector(this->callback_stack);
             buffer.write_optional(this->callback_return_rax);
+            buffer.write_optional(this->cbt_hook);
+            buffer.write(this->next_cbt_hook_handle);
 
             buffer.write_map(this->user_timers);
             buffer.write(this->next_user_timer_id);
@@ -579,6 +604,8 @@ namespace sogen
 
             buffer.read_vector(this->callback_stack);
             buffer.read_optional(this->callback_return_rax);
+            buffer.read_optional(this->cbt_hook);
+            buffer.read(this->next_cbt_hook_handle);
 
             buffer.read_map(this->user_timers);
             buffer.read(this->next_user_timer_id);
