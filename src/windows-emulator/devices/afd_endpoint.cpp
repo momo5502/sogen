@@ -472,7 +472,7 @@ namespace sogen
                 }
 
                 handle retained_port{};
-                const auto* active_thread = c.vcpu ? &c.vcpu->thread() : nullptr;
+                const auto* active_thread = c.vcpu ? &c.thread() : nullptr;
                 if (!io_completion_wait::retain_handle_reference(win_emu.process, active_thread, c.completion_port, retained_port))
                 {
                     return false;
@@ -1570,7 +1570,7 @@ namespace sogen
                 }
 
                 handle retained_port{};
-                const auto* active_thread = c.vcpu ? &c.vcpu->thread() : nullptr;
+                const auto* active_thread = c.vcpu ? &c.thread() : nullptr;
                 if (!io_completion_wait::retain_handle_reference(win_emu.process, active_thread, c.completion_port, retained_port))
                 {
                     return STATUS_INVALID_HANDLE;
