@@ -737,11 +737,13 @@ namespace sogen
         buffer.write(this->io_completions);
         buffer.write(this->wait_completion_packets);
         buffer.write(this->worker_factories);
+        buffer.write(this->jobs);
         buffer.write(this->ports);
         buffer.write(this->mutants);
         buffer.write(this->default_desktop);
         buffer.write(this->desktops);
         buffer.write(this->windows);
+        buffer.write(this->menus);
         buffer.write(this->timers);
         buffer.write(this->accelerator_tables);
         buffer.write(this->deferred_window_position_batches);
@@ -837,11 +839,13 @@ namespace sogen
         buffer.read(this->io_completions);
         buffer.read(this->wait_completion_packets);
         buffer.read(this->worker_factories);
+        buffer.read(this->jobs);
         buffer.read(this->ports);
         buffer.read(this->mutants);
         buffer.read(this->default_desktop);
         buffer.read(this->desktops);
         buffer.read(this->windows);
+        buffer.read(this->menus);
         buffer.read(this->timers);
         buffer.read(this->accelerator_tables);
         buffer.read(this->deferred_window_position_batches);
@@ -1031,6 +1035,8 @@ namespace sogen
             return &wait_completion_packets;
         case handle_types::worker_factory:
             return &worker_factories;
+        case handle_types::job:
+            return &jobs;
         case handle_types::registry:
             return &registry_keys;
         case handle_types::mutant:

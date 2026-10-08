@@ -1083,9 +1083,93 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        NTSTATUS handle_NtCreateJobObject(const syscall_context& c, const emulator_object<handle> job_handle,
+                                          const ACCESS_MASK /*desired_access*/,
+                                          const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes)
+        {
+            if (!job_handle)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            job_object job{};
+            if (object_attributes)
+            {
+                const auto attributes = object_attributes.read();
+                if (attributes.ObjectName)
+                {
+                    job.name = read_unicode_string(c.emu, attributes.ObjectName);
+                }
+            }
+
+            if (!job.name.empty())
+            {
+                for (auto& entry : c.proc.jobs)
+                {
+                    if (entry.second.name == job.name)
+                    {
+                        ++entry.second.ref_count;
+                        job_handle.write(c.proc.jobs.make_handle(entry.first));
+                        return STATUS_OBJECT_NAME_EXISTS;
+                    }
+                }
+            }
+
+            job_handle.write(c.proc.jobs.store(std::move(job)));
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtQueryInformationJobObject()
         {
             return STATUS_NOT_SUPPORTED;
+        }
+
+        NTSTATUS handle_NtSetInformationJobObject(const syscall_context& c, const handle job_handle, const uint32_t info_class,
+                                                  const uint64_t info, const ULONG length)
+        {
+            auto* job = c.proc.jobs.get(job_handle);
+            if (!job)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            constexpr uint32_t extended_limit_information_class = 9;
+            constexpr ULONG extended_limit_information_size = 144;
+            constexpr uint64_t limit_flags_offset = 16;
+            constexpr uint32_t kill_on_job_close = 0x2000;
+
+#ifdef _WIN32
+            static_assert(extended_limit_information_class == JobObjectExtendedLimitInformation);
+            static_assert(limit_flags_offset == offsetof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION, BasicLimitInformation.LimitFlags));
+            static_assert(kill_on_job_close == JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE);
+#ifdef _WIN64
+            static_assert(extended_limit_information_size == sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+#endif
+#endif
+
+            if (info_class != extended_limit_information_class)
+            {
+                return STATUS_INVALID_INFO_CLASS;
+            }
+
+            if (length != extended_limit_information_size)
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            if (!info)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            const auto limit_flags = c.emu.read_memory<uint32_t>(info + limit_flags_offset);
+            if (limit_flags & ~kill_on_job_close)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            job->limit_flags = limit_flags;
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtCreateDebugObject()
@@ -1478,6 +1562,8 @@ namespace sogen
         add_handler(NtDeleteWnfStateName);
         add_handler(NtRaiseException);
         add_handler(NtQueryInformationJobObject);
+        add_handler(NtCreateJobObject);
+        add_handler(NtSetInformationJobObject);
         add_handler(NtSetSystemInformation);
         add_handler(NtQueryInformationFile);
         add_handler(NtCreateThreadEx);
