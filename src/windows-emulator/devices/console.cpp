@@ -12,12 +12,17 @@ namespace sogen
 
         enum class console_api : uint32_t
         {
+            get_console_code_page = 0x01000000,
             get_console_mode = 0x01000001,
+            set_console_mode = 0x01000002,
             fill_console_output = 0x02000000,
             set_console_cursor_position = 0x0200000A,
             set_console_text_attribute = 0x0200000D,
             get_console_screen_buffer_info = 0x02000007,
         };
+
+        constexpr uint32_t default_input_mode = 0x00F7;
+        constexpr uint32_t default_output_mode = 0x0003;
 
         enum class fill_console_output_type : uint32_t
         {
@@ -95,12 +100,16 @@ namespace sogen
             {
                 buffer.write(text_attributes_);
                 buffer.write(cursor_position_);
+                buffer.write(input_mode_);
+                buffer.write(output_mode_);
             }
 
             void deserialize_object(utils::buffer_deserializer& buffer) override
             {
                 buffer.read(text_attributes_);
                 buffer.read(cursor_position_);
+                buffer.read(input_mode_);
+                buffer.read(output_mode_);
             }
 
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
@@ -131,28 +140,59 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const auto api = static_cast<console_api>(message.api_number);
-                if (header.target_handle != STDOUT_HANDLE.h &&
-                    (header.target_handle != STDIN_HANDLE.h || api != console_api::get_console_mode))
+                if (header.target_handle != STDIN_HANDLE.h && header.target_handle != STDOUT_HANDLE.h &&
+                    header.target_handle != CONSOLE_HANDLE.h && header.target_handle != 0)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                switch (api)
+                switch (static_cast<console_api>(message.api_number))
                 {
                 case console_api::get_console_mode: {
-                    if (message.data_size != sizeof(DWORD))
+                    if ((header.target_handle != STDIN_HANDLE.h && header.target_handle != STDOUT_HANDLE.h) ||
+                        message.data_size != sizeof(uint32_t))
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
 
-                    const DWORD mode = header.target_handle == STDIN_HANDLE.h ? 0x0007 : 0x0003;
+                    const auto mode = header.target_handle == STDIN_HANDLE.h ? input_mode_ : output_mode_;
                     win_emu.emu().write_memory(header.data, &mode, sizeof(mode));
                     return STATUS_SUCCESS;
                 }
 
+                case console_api::set_console_mode: {
+                    if ((header.target_handle != STDIN_HANDLE.h && header.target_handle != STDOUT_HANDLE.h) ||
+                        message.data_size != sizeof(uint32_t))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    uint32_t mode{};
+                    win_emu.emu().read_memory(header.data, &mode, sizeof(mode));
+                    if (header.target_handle == STDIN_HANDLE.h)
+                    {
+                        input_mode_ = mode;
+                    }
+                    else
+                    {
+                        output_mode_ = mode;
+                    }
+                    return STATUS_SUCCESS;
+                }
+
+                case console_api::get_console_code_page: {
+                    if (message.data_size != sizeof(uint64_t))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    constexpr uint64_t utf8_code_page = 65001;
+                    win_emu.emu().write_memory(header.data, &utf8_code_page, sizeof(utf8_code_page));
+                    return STATUS_SUCCESS;
+                }
+
                 case console_api::fill_console_output: {
-                    if (message.data_size != sizeof(fill_console_output_request))
+                    if (header.target_handle != STDOUT_HANDLE.h || message.data_size != sizeof(fill_console_output_request))
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
@@ -173,7 +213,7 @@ namespace sogen
                 }
 
                 case console_api::set_console_cursor_position:
-                    if (message.data_size != sizeof(cursor_position_))
+                    if (header.target_handle != STDOUT_HANDLE.h || message.data_size != sizeof(cursor_position_))
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
@@ -182,7 +222,7 @@ namespace sogen
                     return STATUS_SUCCESS;
 
                 case console_api::set_console_text_attribute: {
-                    if (message.data_size != sizeof(text_attributes_))
+                    if (header.target_handle != STDOUT_HANDLE.h || message.data_size != sizeof(text_attributes_))
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
@@ -192,7 +232,7 @@ namespace sogen
                 }
 
                 case console_api::get_console_screen_buffer_info: {
-                    if (message.data_size != sizeof(console_screen_buffer_info_response))
+                    if (header.target_handle != STDOUT_HANDLE.h || message.data_size != sizeof(console_screen_buffer_info_response))
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
@@ -221,6 +261,8 @@ namespace sogen
 
           private:
             uint16_t text_attributes_{7};
+            uint32_t input_mode_{default_input_mode};
+            uint32_t output_mode_{default_output_mode};
             console_coordinate cursor_position_{};
         };
     }

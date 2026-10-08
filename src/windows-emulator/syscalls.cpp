@@ -500,7 +500,7 @@ namespace sogen
         hwnd handle_NtUserWindowFromDC(const syscall_context& c, hdc dc);
         uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd window, hdc dc, uint32_t control_type);
         BOOL handle_NtUserFillWindow(const syscall_context& c, hwnd parent_window, hwnd window, hdc dc, hbrush brush);
-        BOOL handle_NtUserReleaseDC();
+        BOOL handle_NtUserReleaseDC(const syscall_context& c, hdc dc);
         hwnd handle_NtUserSetCapture(const syscall_context& c, hwnd window);
         BOOL handle_NtUserReleaseCapture(const syscall_context& c);
         BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, emulator_pointer devices, uint32_t device_count, uint32_t size);
@@ -598,6 +598,8 @@ namespace sogen
                                           uint64_t result_info, DWORD type, BOOL ansi);
         uint64_t completion_NtUserMessageCall(const syscall_context& c, hwnd hwnd, UINT msg, uint64_t w_param, uint64_t l_param,
                                               uint64_t result_info, DWORD type, BOOL ansi);
+        BOOL handle_NtUserGetComboBoxInfo(const syscall_context& c, hwnd combo_box, emulator_pointer combo_box_info);
+        BOOL completion_NtUserGetComboBoxInfo(const syscall_context& c, hwnd combo_box, emulator_pointer combo_box_info);
         uint64_t handle_NtUserDispatchMessage(const syscall_context& c, emulator_object<msg> message);
         BOOL handle_NtUserTranslateMessage(const syscall_context& c, emulator_object<msg> message, UINT flags);
         BOOL handle_NtUserGetMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
@@ -701,6 +703,7 @@ namespace sogen
         BOOL handle_NtUserDestroyMenu(const syscall_context& c, hmenu menu);
         BOOL handle_NtUserDrawMenuBar(const syscall_context& c, hwnd hwnd);
         int32_t handle_NtUserEnableMenuItem(const syscall_context& c, hmenu menu, UINT item, UINT enable);
+        int32_t handle_NtUserCheckMenuItem(const syscall_context& c, hmenu menu, UINT item, UINT check);
         BOOL handle_NtUserCreateCaret();
         BOOL handle_NtUserDestroyCaret();
         BOOL handle_NtUserSetCaretPos();
@@ -1699,6 +1702,7 @@ namespace sogen
         add_handler(NtUserCreateWindowEx);
         add_handler(NtUserShowWindow);
         add_handler(NtUserMessageCall);
+        add_handler(NtUserGetComboBoxInfo);
         add_handler(NtUserDispatchMessage);
         add_handler(NtUserTranslateMessage);
         add_handler(NtUserGetMessage);
@@ -1862,6 +1866,7 @@ namespace sogen
         add_handler(NtUserDestroyMenu);
         add_handler(NtUserDrawMenuBar);
         add_handler(NtUserEnableMenuItem);
+        add_handler(NtUserCheckMenuItem);
         add_handler(NtUserSetWindowCompositionAttribute);
         add_handler(NtUserGetWindowPlacement);
         add_handler(NtUserCreateCaret);
@@ -1939,6 +1944,7 @@ namespace sogen
         add_callback(NtUserSetWindowPos, window_position_state);
         add_callback(NtUserEndDeferWindowPosEx, deferred_window_position_state);
         add_callback(NtUserMessageCall, message_call_state);
+        add_callback(NtUserGetComboBoxInfo, message_call_state);
         add_callback(NtUserUpdateWindow, window_update_state);
         add_stateless_callback(NtUserEnumDisplayMonitors);
 
