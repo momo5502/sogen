@@ -1079,7 +1079,6 @@ namespace sogen
         // With a portability driver installed (MoltenVK on macOS) the loader fails vkCreateInstance with
         // VK_ERROR_INCOMPATIBLE_DRIVER unless the caller enables VK_KHR_portability_enumeration and sets
         // VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR.
-        std::vector<const char*> instance_extensions;
         if (const auto enumerate_instance_extensions = reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
                 this->impl_->get_instance_proc_addr(nullptr, "vkEnumerateInstanceExtensionProperties")))
         {
@@ -1099,17 +1098,14 @@ namespace sogen
             const bool has_portability_enumeration = std::ranges::any_of(available, [](const VkExtensionProperties& ext) {
                 return std::string_view{static_cast<const char*>(ext.extensionName)} == VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
             });
-            if (has_portability_enumeration)
+            if (has_portability_enumeration && (create_info.flags & VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR) == 0)
             {
-                instance_extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+                extension_names.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
                 create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
             }
         }
-        if (!instance_extensions.empty())
-        {
-            create_info.enabledExtensionCount = static_cast<uint32_t>(instance_extensions.size());
-            create_info.ppEnabledExtensionNames = instance_extensions.data();
-        }
+        create_info.enabledExtensionCount = static_cast<uint32_t>(extension_names.size());
+        create_info.ppEnabledExtensionNames = extension_names.empty() ? nullptr : extension_names.data();
 
         VkInstance instance{};
         const VkResult result = this->impl_->create_instance(&create_info, nullptr, &instance);

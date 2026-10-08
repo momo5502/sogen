@@ -359,8 +359,6 @@ namespace sogen
                                float max_lod, uint64_t& out_sampler);
         void destroy_sampler(uint64_t device, uint64_t sampler);
 
-        // --- WSI ---
-
         struct surface_format
         {
             uint32_t format{};
