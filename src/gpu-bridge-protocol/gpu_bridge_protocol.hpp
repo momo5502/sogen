@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 29;
+    inline constexpr uint32_t protocol_version = 30;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -200,6 +200,9 @@ namespace sogen::gpu_bridge
         merge_pipeline_caches = 0x8A1,
         get_device_memory_commitment = 0x8A2,
         get_calibrated_timestamps = 0x8A3,
+        get_surface_support = 0x8A4,
+        get_surface_formats = 0x8A5,
+        get_surface_present_modes = 0x8A6,
     };
 
     // Discriminator for cmd_set_dynamic_u32: the family of extended-dynamic-state setters that all take a
@@ -293,6 +296,9 @@ namespace sogen::gpu_bridge
     inline constexpr uint32_t ioctl_create_graphics_pipeline = make_ioctl(static_cast<uint32_t>(command::create_graphics_pipeline));
     inline constexpr uint32_t ioctl_destroy_pipeline = make_ioctl(static_cast<uint32_t>(command::destroy_pipeline));
     inline constexpr uint32_t ioctl_get_surface_capabilities = make_ioctl(static_cast<uint32_t>(command::get_surface_capabilities));
+    inline constexpr uint32_t ioctl_get_surface_support = make_ioctl(static_cast<uint32_t>(command::get_surface_support));
+    inline constexpr uint32_t ioctl_get_surface_formats = make_ioctl(static_cast<uint32_t>(command::get_surface_formats));
+    inline constexpr uint32_t ioctl_get_surface_present_modes = make_ioctl(static_cast<uint32_t>(command::get_surface_present_modes));
     inline constexpr uint32_t ioctl_record_commands = make_ioctl(static_cast<uint32_t>(command::record_commands));
     inline constexpr uint32_t ioctl_create_descriptor_set_layout = make_ioctl(static_cast<uint32_t>(command::create_descriptor_set_layout));
     inline constexpr uint32_t ioctl_get_descriptor_set_layout_support =
@@ -1110,6 +1116,8 @@ namespace sogen::gpu_bridge
         uint32_t dst_access_mask;
         uint32_t old_layout; // VkImageLayout
         uint32_t new_layout;
+        uint32_t src_queue_family_index;
+        uint32_t dst_queue_family_index;
     };
 
     struct cmd_clear_color_image_request
@@ -1280,6 +1288,7 @@ namespace sogen::gpu_bridge
 
     struct create_surface_request
     {
+        object_id instance;
         uint64_t hwnd;
     };
 
@@ -1299,12 +1308,22 @@ namespace sogen::gpu_bridge
     {
         object_id device;
         object_id surface;
-        uint32_t format; // VkFormat (use B8G8R8A8_UNORM to match the UI backend's bgra8)
+        object_id old_swapchain;
+        uint32_t flags;
+        uint32_t format;
+        uint32_t color_space;
         uint32_t width;
         uint32_t height;
+        uint32_t image_array_layers;
         uint32_t min_image_count;
-        uint32_t image_usage;  // VkImageUsageFlags requested on swapchain images
-        uint32_t present_mode; // VkPresentModeKHR (ignored; effectively FIFO)
+        uint32_t image_usage;
+        uint32_t sharing_mode;
+        uint32_t queue_family_index_count;
+        uint32_t pre_transform;
+        uint32_t composite_alpha;
+        uint32_t present_mode;
+        uint32_t clipped;
+        // uint32_t queue_family_indices[queue_family_index_count];
     };
 
     struct create_swapchain_response
@@ -1338,6 +1357,7 @@ namespace sogen::gpu_bridge
     struct acquire_next_image_request
     {
         object_id swapchain;
+        uint64_t timeout;
         object_id semaphore; // null_object if the caller passed VK_NULL_HANDLE
         object_id fence;     // null_object if the caller passed VK_NULL_HANDLE
     };
@@ -1678,7 +1698,7 @@ namespace sogen::gpu_bridge
         uint32_t load_op;        // VkAttachmentLoadOp
         uint32_t store_op;       // VkAttachmentStoreOp
         uint32_t initial_layout; // VkImageLayout
-        uint32_t final_layout;   // VkImageLayout (PRESENT_SRC_KHR is mapped to TRANSFER_SRC_OPTIMAL)
+        uint32_t final_layout;   // VkImageLayout
         uint32_t depth_format;   // VkFormat of the depth attachment, or 0 for no depth attachment
         uint32_t reserved;
     };
@@ -2262,14 +2282,68 @@ namespace sogen::gpu_bridge
         // uint32_t dynamic_offsets[dynamic_offset_count];
     };
 
-    // ioctl_get_surface_capabilities: in (out = raw VkSurfaceCapabilitiesKHR bytes). The bridge has no
-    // real surface, so it returns synthetic caps with currentExtent = (0xFFFFFFFF, 0xFFFFFFFF), i.e.
-    // "the application chooses the extent". A real driver (when the guest links the real loader) returns
-    // the true client-area extent instead.
+    // ioctl_get_surface_capabilities: in; out = raw VkSurfaceCapabilitiesKHR bytes from the host WSI.
     struct get_surface_capabilities_request
     {
         object_id physical_device;
         object_id surface;
+    };
+
+    struct get_surface_capabilities_response
+    {
+        int32_t vk_result;
+        uint32_t reserved;
+        // raw VkSurfaceCapabilitiesKHR bytes follow
+    };
+
+    struct get_surface_support_request
+    {
+        object_id physical_device;
+        object_id surface;
+        uint32_t queue_family_index;
+        uint32_t reserved;
+    };
+
+    struct get_surface_support_response
+    {
+        int32_t vk_result;
+        uint32_t supported;
+    };
+
+    struct surface_format
+    {
+        uint32_t format;
+        uint32_t color_space;
+    };
+
+    struct get_surface_formats_request
+    {
+        object_id physical_device;
+        object_id surface;
+        uint32_t max_count;
+        uint32_t reserved;
+    };
+
+    struct get_surface_formats_response
+    {
+        int32_t vk_result;
+        uint32_t count;
+        // surface_format formats[count];
+    };
+
+    struct get_surface_present_modes_request
+    {
+        object_id physical_device;
+        object_id surface;
+        uint32_t max_count;
+        uint32_t reserved;
+    };
+
+    struct get_surface_present_modes_response
+    {
+        int32_t vk_result;
+        uint32_t count;
+        // uint32_t modes[count];
     };
 
     // whole command buffer's recording (begin -> cmds -> end) crosses the bridge in a single IOCTL
@@ -2304,6 +2378,12 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(get_image_subresource_layout_request) == 32, "wire layout drift");
     static_assert(sizeof(get_image_subresource_layout_response) == 48, "wire layout drift");
     static_assert(sizeof(queue_present_request) == 24, "wire layout drift");
+    static_assert(sizeof(create_surface_request) == 16, "wire layout drift");
+    static_assert(sizeof(create_swapchain_request) == 80, "wire layout drift");
+    static_assert(sizeof(cmd_pipeline_barrier_request) == 72, "wire layout drift");
+    static_assert(sizeof(acquire_next_image_request) == 32, "wire layout drift");
+    static_assert(sizeof(get_surface_support_request) == 24, "wire layout drift");
+    static_assert(sizeof(surface_format) == 8, "wire layout drift");
     static_assert(sizeof(create_buffer_view_request) == 40, "wire layout drift");
     static_assert(sizeof(create_shader_module_request) == 16, "wire layout drift");
     static_assert(sizeof(vertex_input_divisor) == 8, "wire layout drift");
