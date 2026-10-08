@@ -14,6 +14,7 @@ SET EMU_FILESYS=%EMU_ROOT%\filesys
 SET EMU_WINDIR=%EMU_FILESYS%\c\windows
 SET EMU_SYSDIR=%EMU_WINDIR%\system32
 SET EMU_SYSDIR_WOW64=%EMU_WINDIR%\syswow64
+SET EMU_SYSTEMRESOURCESDIR=%EMU_WINDIR%\systemresources
 SET EMU_CURSORDIR=%EMU_WINDIR%\cursors
 SET EMU_SORTDIR=%EMU_WINDIR%\globalization\sorting
 SET EMU_REGDIR=%EMU_ROOT%\registry
@@ -22,6 +23,9 @@ SET EMU_STEAMDIR=%EMU_FILESYS%\c\steam
 MKDIR %EMU_SYSDIR%
 MKDIR %EMU_SYSDIR_WOW64%
 MKDIR %EMU_CURSORDIR%
+MKDIR %EMU_SYSDIR%\en-us
+MKDIR %EMU_SYSDIR_WOW64%\en-us
+MKDIR %EMU_SYSTEMRESOURCESDIR%
 MKDIR %EMU_SORTDIR%
 MKDIR %EMU_REGDIR%
 MKDIR %EMU_STEAMDIR%
@@ -43,6 +47,8 @@ CALL :collect coloradapterclient.dll
 CALL :collect combase.dll
 CALL :collect comctl32.dll
 CALL :collect comdlg32.dll
+CALL :collect_file "%WINDIR%\System32\en-US", comdlg32.dll.mui, %EMU_SYSDIR%\en-us
+CALL :collect_file "%WINDIR%\SysWOW64\en-US", comdlg32.dll.mui, %EMU_SYSDIR_WOW64%\en-us
 CALL :collect coremessaging.dll
 CALL :collect crypt32.dll
 CALL :collect cryptbase.dll
@@ -124,6 +130,7 @@ CALL :collect pdh.dll
 CALL :collect powrprof.dll
 CALL :collect profapi.dll
 CALL :collect propsys.dll
+CALL :collect_file "%WINDIR%\SystemResources", PROPSYS.dll.mun, %EMU_SYSTEMRESOURCESDIR%
 CALL :collect psapi.dll
 CALL :collect rasadhlp.dll
 CALL :collect resampledmo.dll
@@ -136,6 +143,8 @@ CALL :collect sechost.dll
 CALL :collect setupapi.dll
 CALL :collect shcore.dll
 CALL :collect shell32.dll
+CALL :collect_file "%WINDIR%\System32\en-US", shell32.dll.mui, %EMU_SYSDIR%\en-us
+CALL :collect_file "%WINDIR%\SysWOW64\en-US", shell32.dll.mui, %EMU_SYSDIR_WOW64%\en-us
 CALL :collect shlwapi.dll
 CALL :collect slwga.dll
 CALL :collect sppc.dll
@@ -187,6 +196,8 @@ CALL :collect xaudio2_9.dll
 CALL :collect xinput1_3.dll
 CALL :collect xinput1_4.dll
 CALL :collect xinput9_1_0.dll
+CALL :collect_file "%WINDIR%\System32\en-US", user32.dll.mui, %EMU_SYSDIR%\en-us
+CALL :collect_file "%WINDIR%\SysWOW64\en-US", user32.dll.mui, %EMU_SYSDIR_WOW64%\en-us
 
 CALL :collect locale.nls
 CALL :collect c_1252.nls
