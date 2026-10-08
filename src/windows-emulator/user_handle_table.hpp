@@ -51,7 +51,11 @@ namespace sogen
                 srv.systemMetrics[10] = 17;             // SM_CXHTHUMB
                 srv.systemMetrics[11] = 32;             // SM_CXICON
                 srv.systemMetrics[12] = 32;             // SM_CYICON
+                srv.systemMetrics[13] = 32;             // SM_CXCURSOR
+                srv.systemMetrics[14] = 32;             // SM_CYCURSOR
+                srv.systemMetrics[15] = 19;             // SM_CYMENU
                 srv.dpiDependentSystemMetrics[13] = 32; // SM_CXCURSOR
+                srv.dpiDependentSystemMetrics[14] = 32; // SM_CYCURSOR
                 srv.dpiDependentSystemMetrics[15] = 19; // SM_CYMENU
                 srv.systemMetrics[19] = 1;              // SM_MOUSEPRESENT
                 srv.systemMetrics[20] = 17;             // SM_CYVSCROLL
@@ -59,12 +63,12 @@ namespace sogen
                 srv.systemMetrics[43] = 3;              // SM_CMOUSEBUTTONS
                 srv.systemMetrics[49] = 16;             // SM_CXSMICON
                 srv.systemMetrics[50] = 16;             // SM_CYSMICON
-                srv.dpiDependentSystemMetrics[20] = 16;
-                srv.dpiDependentSystemMetrics[21] = 16;
-                srv.systemMetrics[75] = 1;    // SM_MOUSEWHEELPRESENT
-                srv.systemMetrics[78] = 1920; // SM_CXVIRTUALSCREEN
-                srv.systemMetrics[79] = 1080; // SM_CYVIRTUALSCREEN
-                srv.systemMetrics[91] = 1;    // SM_MOUSEHORIZONTALWHEELPRESENT
+                srv.dpiDependentSystemMetrics[20] = 17; // SM_CYVSCROLL
+                srv.dpiDependentSystemMetrics[21] = 17; // SM_CXHSCROLL
+                srv.systemMetrics[75] = 1;              // SM_MOUSEWHEELPRESENT
+                srv.systemMetrics[78] = 1920;           // SM_CXVIRTUALSCREEN
+                srv.systemMetrics[79] = 1080;           // SM_CYVIRTUALSCREEN
+                srv.systemMetrics[91] = 1;              // SM_MOUSEHORIZONTALWHEELPRESENT
             });
 
             const auto handle_table_size = static_cast<size_t>(page_align_up(sizeof(USER_HANDLEENTRY) * MAX_HANDLES));
