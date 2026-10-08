@@ -500,7 +500,7 @@ namespace sogen
         hwnd handle_NtUserWindowFromDC(const syscall_context& c, hdc dc);
         uint64_t handle_NtUserGetControlBrush(const syscall_context& c, hwnd window, hdc dc, uint32_t control_type);
         BOOL handle_NtUserFillWindow(const syscall_context& c, hwnd parent_window, hwnd window, hdc dc, hbrush brush);
-        BOOL handle_NtUserReleaseDC();
+        BOOL handle_NtUserReleaseDC(const syscall_context& c, hdc dc);
         hwnd handle_NtUserSetCapture(const syscall_context& c, hwnd window);
         BOOL handle_NtUserReleaseCapture(const syscall_context& c);
         BOOL handle_NtUserRegisterRawInputDevices(const syscall_context& c, emulator_pointer devices, uint32_t device_count, uint32_t size);
