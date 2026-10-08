@@ -2236,6 +2236,48 @@ namespace sogen::fex
             return true;
         }
 
+        std::optional<memory_violation_type> first_range_violation(uint64_t address, size_t size, memory_permission permission) const
+        {
+            if (size == 0)
+            {
+                return std::nullopt;
+            }
+
+#ifdef __APPLE__
+            const uint64_t end = address + size;
+            for (uint64_t page = address & ~(page_size - 1); page < end; page += page_size)
+            {
+                const auto it = this->page_shadow_apple_.find(page);
+                if (it == this->page_shadow_apple_.end())
+                {
+                    return memory_violation_type::unmapped;
+                }
+                if ((it->second & permission) != permission)
+                {
+                    return memory_violation_type::protection;
+                }
+            }
+#else
+            uint64_t cursor = address;
+            const uint64_t end = address + size;
+            while (cursor < end)
+            {
+                const auto it = this->find_region_containing(cursor);
+                if (it == this->regions_.end())
+                {
+                    return memory_violation_type::unmapped;
+                }
+                if ((it->second.permissions & permission) != permission)
+                {
+                    return memory_violation_type::protection;
+                }
+                cursor = it->first + it->second.size;
+            }
+#endif
+
+            return std::nullopt;
+        }
+
         // For loader-privileged writes: sogen itself writing guest memory it declared read-only, such as
         // a PE section's initial file content before its final permission is locked in. Needed because
         // this backend enforces the declared permission through real host protection, unlike Unicorn's
@@ -2881,20 +2923,12 @@ namespace sogen::fex
         {
             const uint64_t pc = get_host_pc(uctx);
             const auto guest_fault_addr = fault_addr;
-#ifdef __APPLE__
-            // Apple Silicon host pages are 16KB, so the 4KB guest-page shadow is authoritative when
-            // neighboring guest pages require different permissions within one host page.
-            const auto guest_page = guest_fault_addr & ~(page_size - 1);
-            const auto shadow_it = this->page_shadow_apple_.find(guest_page);
-            const auto declared = (shadow_it != this->page_shadow_apple_.end()) ? shadow_it->second : memory_permission::none;
-#else
-            const auto region_it = this->find_region_containing(guest_fault_addr);
-            const auto declared = region_it != this->regions_.end() ? region_it->second.permissions : memory_permission::none;
-#endif
 
             memory_operation operation = memory_operation::exec;
+            size_t access_size = 1;
             if (fault_addr != pc)
             {
+                const auto insn = *reinterpret_cast<const uint32_t*>(pc);
 #ifdef __ANDROID__
                 // The emulation decoder below is intentionally limited to the ordered STLR-family
                 // instructions that can fault for alignment. Ordinary translated STR/STUR stores must
@@ -2908,17 +2942,27 @@ namespace sogen::fex
                 else
 #endif
                 {
-                    const auto insn = *reinterpret_cast<const uint32_t*>(pc);
                     operation = decode_arm64_store(insn) ? memory_operation::write : memory_operation::read;
+                }
+
+                if (operation == memory_operation::write)
+                {
+                    if (const auto store = decode_arm64_store(insn))
+                    {
+                        access_size = store->size;
+                    }
+                }
+                else if (const auto load = decode_arm64_load(insn))
+                {
+                    access_size = load->size;
                 }
             }
 
-            if ((declared & operation) == operation)
+            const auto violation = this->first_range_violation(guest_fault_addr, access_size, operation);
+            if (!violation)
             {
                 return this->handle_misaligned_atomic_fault(uctx, fault_addr);
             }
-
-            const auto type = (declared == memory_permission::none) ? memory_violation_type::unmapped : memory_violation_type::protection;
 
             // FEX's block chaining (directly-linked blocks and callret RET fast-paths) advances execution
             // without rewriting CurrentFrame->State.rip, so it holds whatever was last written to it and
@@ -2934,9 +2978,9 @@ namespace sogen::fex
             pending_fault_dispatch dispatch{};
             dispatch.kind = pending_fault_kind::memory_violation;
             dispatch.address = guest_fault_addr;
-            dispatch.size = 1;
+            dispatch.size = access_size;
             dispatch.operation = operation;
-            dispatch.type = type;
+            dispatch.type = *violation;
 
             // SRA is still live only in host registers here - this fault interrupted guest-translated
             // JIT code at an arbitrary point, not FEXCore's own controlled synthetic-exception path.
