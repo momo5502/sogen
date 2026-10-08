@@ -2767,6 +2767,16 @@ namespace sogen
 
                 for (const auto& style : styles)
                 {
+                    gdi_font_signature signature{};
+                    for (const auto& supported_script : scripts)
+                    {
+                        const auto font_charset = supported_script.first;
+                        if (style.supports_arabic_and_hebrew || (font_charset != ARABIC_CHARSET && font_charset != HEBREW_CHARSET))
+                        {
+                            add_gdi_font_charset(signature, font_charset);
+                        }
+                    }
+
                     for (const auto& [font_charset, script] : scripts)
                     {
                         if ((!style.supports_arabic_and_hebrew && (font_charset == ARABIC_CHARSET || font_charset == HEBREW_CHARSET)) ||
@@ -2800,7 +2810,6 @@ namespace sogen
                         font.text_metric.ntmTm.ntmFlags =
                             (style.weight == FW_BOLD ? NTM_BOLD : NTM_REGULAR) | (style.italic ? NTM_ITALIC : 0);
 
-                        const auto signature = make_gdi_font_signature(font_charset);
                         std::ranges::copy(signature.unicode_subsets, font.text_metric.fsUsb);
                         std::ranges::copy(signature.code_pages, font.text_metric.fsCsb);
                     }
