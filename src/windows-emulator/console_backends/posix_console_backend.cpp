@@ -21,13 +21,13 @@ namespace sogen
 
             void set_input_mode(const console_input_mode& mode) override
             {
-                if (!mode.line || !mode.echo)
+                if (mode.line && mode.echo && mode.processed)
                 {
-                    this->enable_raw_terminal();
+                    this->restore_terminal();
                 }
                 else
                 {
-                    this->restore_terminal();
+                    this->configure_terminal(mode);
                 }
             }
 
@@ -88,46 +88,54 @@ namespace sogen
             }
 
           private:
-            void enable_raw_terminal()
+            void configure_terminal(const console_input_mode& mode)
             {
-                if (terminal_raw_ || !isatty(STDIN_FILENO))
+                if (!isatty(STDIN_FILENO))
                 {
                     return;
                 }
 
-                termios original{};
-                if (tcgetattr(STDIN_FILENO, &original) != 0)
+                if (!terminal_modified_ && tcgetattr(STDIN_FILENO, &original_terminal_) != 0)
                 {
                     return;
                 }
 
-                auto raw = original;
-                raw.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
-                raw.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
-                raw.c_cflag &= ~(CSIZE | PARENB);
-                raw.c_cflag |= CS8;
-                raw.c_cc[VMIN] = 1;
-                raw.c_cc[VTIME] = 0;
-                if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == 0)
+                auto configured = original_terminal_;
+                if (!mode.line)
                 {
-                    original_terminal_ = original;
-                    terminal_raw_ = true;
+                    configured.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
+                    configured.c_lflag &= ~(ICANON | IEXTEN);
+                    configured.c_cflag &= ~(CSIZE | PARENB);
+                    configured.c_cflag |= CS8;
+                    configured.c_cc[VMIN] = 1;
+                    configured.c_cc[VTIME] = 0;
+                }
+                else
+                {
+                    configured.c_lflag |= ICANON;
+                }
+
+                configured.c_lflag = mode.echo ? configured.c_lflag | ECHO : configured.c_lflag & ~(ECHO | ECHONL);
+                configured.c_lflag = mode.processed ? configured.c_lflag | ISIG : configured.c_lflag & ~ISIG;
+                if (tcsetattr(STDIN_FILENO, TCSANOW, &configured) == 0)
+                {
+                    terminal_modified_ = true;
                 }
             }
 
             void restore_terminal()
             {
-                if (!terminal_raw_)
+                if (!terminal_modified_)
                 {
                     return;
                 }
 
                 (void)tcsetattr(STDIN_FILENO, TCSANOW, &original_terminal_);
-                terminal_raw_ = false;
+                terminal_modified_ = false;
             }
 
             termios original_terminal_{};
-            bool terminal_raw_{};
+            bool terminal_modified_{};
         };
     }
 

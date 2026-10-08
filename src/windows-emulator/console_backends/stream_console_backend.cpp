@@ -9,6 +9,37 @@ namespace sogen
 {
     namespace
     {
+        bool host_input_available()
+        {
+            if (std::cin.rdbuf()->in_avail() > 0)
+            {
+                return true;
+            }
+
+#ifdef OS_WINDOWS
+            const auto input = GetStdHandle(STD_INPUT_HANDLE);
+            if (input == nullptr || input == INVALID_HANDLE_VALUE)
+            {
+                return false;
+            }
+
+            switch (GetFileType(input))
+            {
+            case FILE_TYPE_PIPE: {
+                DWORD available{};
+                return PeekNamedPipe(input, nullptr, 0, nullptr, &available, nullptr) != 0 && available > 0;
+            }
+            case FILE_TYPE_CHAR:
+                return WaitForSingleObject(input, 0) == WAIT_OBJECT_0;
+            case FILE_TYPE_DISK:
+                return std::cin.peek() != std::char_traits<char>::eof();
+            default:
+                break;
+            }
+#endif
+            return false;
+        }
+
         class stream_console_backend final : public buffered_console_backend
         {
           public:
@@ -33,7 +64,7 @@ namespace sogen
                 const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
                 do
                 {
-                    if (std::cin.rdbuf()->in_avail() > 0)
+                    if (host_input_available())
                     {
                         this->read_available();
                         return;

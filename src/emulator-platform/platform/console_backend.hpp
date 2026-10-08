@@ -46,7 +46,7 @@ namespace sogen
         virtual ~console_backend() = default;
 
         virtual bool input_available() = 0;
-        virtual std::optional<console_key_event> read_input_event() = 0;
+        virtual std::optional<console_key_event> read_input_event(bool wait, bool remove) = 0;
         virtual std::string read_input(size_t length) = 0;
         virtual void set_input_mode(const console_input_mode& mode) = 0;
         virtual void reset() = 0;
@@ -60,7 +60,7 @@ namespace sogen
             return false;
         }
 
-        std::optional<console_key_event> read_input_event() override
+        std::optional<console_key_event> read_input_event(bool /*wait*/, bool /*remove*/) override
         {
             return std::nullopt;
         }

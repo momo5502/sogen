@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <charconv>
 #include <utils/finally.hpp>
-
 #include <utils/wildcard.hpp>
 #include "utils/stat.hpp"
 
@@ -1297,6 +1296,7 @@ namespace sogen
                 commit_file_data(data, c.emu, io_status_block, buffer);
                 return STATUS_SUCCESS;
             }
+
             std::string temp_buffer{};
             temp_buffer.resize(length);
 
