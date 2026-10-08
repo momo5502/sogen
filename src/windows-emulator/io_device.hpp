@@ -140,7 +140,7 @@ namespace sogen
             return context;
         }
 
-        void queue_io_completion(windows_emulator& win_emu, const io_device_context& context) const;
+        static void queue_io_completion(windows_emulator& win_emu, const io_device_context& context);
 
         virtual void release_references(process_context& process)
         {

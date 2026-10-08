@@ -280,7 +280,7 @@ namespace sogen
                 socket_events |= POLLRDBAND;
             }
 
-            if (poll_events & (AFD_POLL_CONNECT | AFD_POLL_SEND))
+            if (poll_events & (AFD_POLL_CONNECT | AFD_POLL_CONNECT_FAIL | AFD_POLL_SEND))
             {
                 socket_events |= POLLWRNORM;
             }
@@ -326,7 +326,7 @@ namespace sogen
                 }
             }
 
-            if (has_connect_failure && afd_poll_events & AFD_POLL_CONNECT_FAIL)
+            if (is_connecting && has_connect_failure && afd_poll_events & AFD_POLL_CONNECT_FAIL)
             {
                 afd_events |= AFD_POLL_CONNECT_FAIL;
             }
@@ -362,6 +362,7 @@ namespace sogen
             std::unique_ptr<network::i_socket> s_{};
 
             bool executing_delayed_ioctl_{};
+            bool connect_failed_{};
             std::optional<afd_creation_data> creation_data{};
             std::optional<bool> require_poll_{};
             std::optional<io_device_context> delayed_ioctl_{};
@@ -462,30 +463,35 @@ namespace sogen
                 }
             }
 
-            bool delay_ioctrl(windows_emulator& win_emu, const io_device_context& c, const std::optional<bool> require_poll = {},
-                              const std::optional<std::chrono::steady_clock::time_point> timeout = {},
-                              const std::optional<std::function<void(windows_emulator&, const io_device_context&)>>& timeout_callback = {})
+            NTSTATUS delay_ioctrl(
+                windows_emulator& win_emu, const io_device_context& c, const std::optional<bool> require_poll = {},
+                const std::optional<std::chrono::steady_clock::time_point> timeout = {},
+                const std::optional<std::function<void(windows_emulator&, const io_device_context&)>>& timeout_callback = {})
             {
                 if (this->executing_delayed_ioctl_)
                 {
-                    return true;
+                    return STATUS_PENDING;
+                }
+
+                if (this->delayed_ioctl_)
+                {
+                    return STATUS_INVALID_PARAMETER;
                 }
 
                 handle retained_port{};
                 const auto* active_thread = c.vcpu ? &c.thread() : nullptr;
                 if (!io_completion_wait::retain_handle_reference(win_emu.process, active_thread, c.completion_port, retained_port))
                 {
-                    return false;
+                    return STATUS_INVALID_HANDLE;
                 }
 
-                io_completion_wait::release_handle_reference(win_emu.process, this->retained_completion_port_);
                 this->timeout_callback_ = timeout_callback;
                 this->timeout_ = timeout;
                 this->require_poll_ = require_poll;
                 this->delayed_ioctl_ = c;
                 this->delayed_ioctl_->completion_port = retained_port;
                 this->retained_completion_port_ = retained_port;
-                return true;
+                return STATUS_PENDING;
             }
 
             void clear_pending_state(windows_emulator& win_emu)
@@ -560,7 +566,7 @@ namespace sogen
                     return STATUS_DEVICE_NOT_READY;
                 }
 
-                return this->delay_ioctrl(win_emu, c, require_poll) ? STATUS_PENDING : STATUS_INVALID_HANDLE;
+                return this->delay_ioctrl(win_emu, c, require_poll);
             }
 
             void work(windows_emulator& win_emu) override
@@ -590,11 +596,12 @@ namespace sogen
                     win_emu.socket_factory().poll_sockets(std::span{&pfd, 1});
                 }
 
-                const auto socket_events = pfd.revents;
+                const auto socket_events = static_cast<int16_t>(pfd.revents | (this->connect_failed_ ? POLLERR : 0));
 
                 if (socket_events && this->event_select_mask_)
                 {
-                    const bool is_connecting = this->delayed_ioctl_ && _AFD_REQUEST(this->delayed_ioctl_->io_control_code) == AFD_CONNECT;
+                    const bool is_connecting = this->connect_failed_ ||
+                                               (this->delayed_ioctl_ && _AFD_REQUEST(this->delayed_ioctl_->io_control_code) == AFD_CONNECT);
                     ULONG current_events =
                         map_socket_response_events_to_afd(socket_events, this->event_select_mask_, pfd.s->is_listening(), is_connecting);
 
@@ -653,6 +660,7 @@ namespace sogen
                 buffer.read(this->retained_completion_port_);
                 buffer.read_optional(this->timeout_);
                 buffer.read(this->non_blocking_);
+                buffer.read(this->connect_failed_);
                 buffer.read(this->shared_context_);
             }
 
@@ -664,6 +672,7 @@ namespace sogen
                 buffer.write(this->retained_completion_port_);
                 buffer.write_optional(this->timeout_);
                 buffer.write(this->non_blocking_);
+                buffer.write(this->connect_failed_);
                 buffer.write(this->shared_context_);
             }
 
@@ -736,14 +745,17 @@ namespace sogen
                     const auto socket_error = this->s_->get_socket_error();
                     if (!socket_error)
                     {
+                        this->connect_failed_ = true;
                         return STATUS_UNSUCCESSFUL;
                     }
 
                     if (*socket_error == 0)
                     {
+                        this->connect_failed_ = false;
                         return STATUS_SUCCESS;
                     }
 
+                    this->connect_failed_ = true;
                     if (*socket_error == SERR(ECONNREFUSED))
                     {
                         return STATUS_CONNECTION_REFUSED;
@@ -752,6 +764,7 @@ namespace sogen
                     return STATUS_UNSUCCESSFUL;
                 }
 
+                this->connect_failed_ = false;
                 auto data = win_emu.emu().read_memory(c.input_buffer, c.input_buffer_length);
 
                 // AFD_CONNECT_INFO::RemoteAddress follows BOOLEAN + two ULONG_PTR (pointer-aligned): 24 on x64, 12 on WoW64.
@@ -774,14 +787,16 @@ namespace sogen
 #endif
                         || error == SERR(EALREADY))
                     {
-                        return this->delay_ioctrl(win_emu, c, false) ? STATUS_PENDING : STATUS_INVALID_HANDLE;
+                        return this->delay_ioctrl(win_emu, c, false);
                     }
 
                     if (error == SERR(ECONNREFUSED))
                     {
+                        this->connect_failed_ = true;
                         return STATUS_CONNECTION_REFUSED;
                     }
 
+                    this->connect_failed_ = true;
                     return STATUS_UNSUCCESSFUL;
                 }
 
@@ -856,7 +871,7 @@ namespace sogen
                     const auto error = this->s_->get_last_error();
                     if (error == SERR(EWOULDBLOCK))
                     {
-                        return this->delay_ioctrl(win_emu, c, true) ? STATUS_PENDING : STATUS_INVALID_HANDLE;
+                        return this->delay_ioctrl(win_emu, c, true);
                     }
 
                     return STATUS_UNSUCCESSFUL;
@@ -1161,8 +1176,16 @@ namespace sogen
                     pfd.revents = pfd.events;
                 }
 
-                const auto count = win_emu.socket_factory().poll_sockets(poll_data);
-                if (count <= 0)
+                win_emu.socket_factory().poll_sockets(poll_data);
+                for (size_t index = 0; index < poll_data.size(); ++index)
+                {
+                    if (endpoints[index]->connect_failed_)
+                    {
+                        poll_data[index].revents = static_cast<int16_t>(poll_data[index].revents | POLLERR);
+                    }
+                }
+
+                if (std::ranges::none_of(poll_data, [](const network::poll_entry& entry) { return entry.revents != 0; }))
                 {
                     return STATUS_PENDING;
                 }
@@ -1184,7 +1207,8 @@ namespace sogen
                     }
 
                     const bool is_connecting =
-                        endpoint->delayed_ioctl_ && _AFD_REQUEST(endpoint->delayed_ioctl_->io_control_code) == AFD_CONNECT;
+                        endpoint->connect_failed_ ||
+                        (endpoint->delayed_ioctl_ && _AFD_REQUEST(endpoint->delayed_ioctl_->io_control_code) == AFD_CONNECT);
 
                     auto entry = handle_info_obj.read(source_index);
                     entry.PollEvents =
@@ -1193,8 +1217,6 @@ namespace sogen
 
                     handle_info_obj.write(entry, current_index++);
                 }
-
-                assert(current_index == static_cast<size_t>(count));
 
                 const emulator_object<AFD_POLL_INFO<Traits>> info_obj{win_emu.emu(), c.input_buffer};
                 info_obj.access([&](AFD_POLL_INFO<Traits>& info) {
@@ -1248,9 +1270,10 @@ namespace sogen
                                                                               {.QuadPart = std::numeric_limits<int64_t>::max()});
                     }
 
-                    if (!this->delay_ioctrl(win_emu, c, {}, timeout, timeout_callback))
+                    const auto delay_status = this->delay_ioctrl(win_emu, c, {}, timeout, timeout_callback);
+                    if (delay_status != STATUS_PENDING)
                     {
-                        return STATUS_INVALID_HANDLE;
+                        return delay_status;
                     }
                 }
 
@@ -1667,7 +1690,7 @@ namespace sogen
                     return STATUS_INVALID_HANDLE;
                 }
 
-                return target_endpoint->execute_ioctl(win_emu, c);
+                return target_endpoint->io_control(win_emu, c);
             }
         };
     }

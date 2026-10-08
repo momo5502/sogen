@@ -5,6 +5,7 @@
 #include <queue>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 
 #include <network/socket.hpp>
 
@@ -63,6 +64,7 @@ namespace sogen
                 {
                     static_socket_factory_impl* factory{};
                     int error{0};
+                    int connect_error{0};
                     address a{};
                     address peer_addr{};
                     std::shared_ptr<pipe_state> pipe{};
@@ -128,7 +130,7 @@ namespace sogen
 
                     std::optional<int> get_socket_error() override
                     {
-                        return this->error;
+                        return std::exchange(this->connect_error, 0);
                     }
 
                     bool is_ready(const bool in_poll) override
@@ -172,6 +174,7 @@ namespace sogen
                         if (it == queues.end())
                         {
                             this->error = SERR(ECONNREFUSED);
+                            this->connect_error = this->error;
                             return false;
                         }
 
@@ -179,6 +182,7 @@ namespace sogen
                         this->is_server_side = false;
                         it->second.emplace_back(pending_connection{.client_addr = this->a, .p = this->pipe});
                         this->error = 0;
+                        this->connect_error = 0;
                         return true;
                     }
 
