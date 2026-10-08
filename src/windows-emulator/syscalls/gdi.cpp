@@ -2,6 +2,7 @@
 #include "../debug_font.hpp"
 #include "../emulated_display_adapter.hpp"
 #include "../emulator_utils.hpp"
+#include "../gdi_font_signature.hpp"
 #include "../syscall_utils.hpp"
 
 #include <array>
@@ -2798,6 +2799,10 @@ namespace sogen
                         font.text_metric.ntmTm.tmPitchAndFamily = DEFAULT_PITCH | FF_SWISS;
                         font.text_metric.ntmTm.ntmFlags =
                             (style.weight == FW_BOLD ? NTM_BOLD : NTM_REGULAR) | (style.italic ? NTM_ITALIC : 0);
+
+                        const auto signature = make_gdi_font_signature(font_charset);
+                        std::ranges::copy(signature.unicode_subsets, font.text_metric.fsUsb);
+                        std::ranges::copy(signature.code_pages, font.text_metric.fsCsb);
                     }
                 }
             }
