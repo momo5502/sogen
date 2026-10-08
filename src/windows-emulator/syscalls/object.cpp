@@ -56,6 +56,23 @@ namespace sogen
                 }
             }
 
+            if (value.type == handle_types::port)
+            {
+                const auto* port = c.proc.ports.get(h);
+                if (port && port->ref_count == 1)
+                {
+                    const auto port_key = static_cast<uint32_t>(h.bits & 0xFFFFFFFF);
+                    if (const auto views = c.proc.pending_alpc_reply_views.find(port_key); views != c.proc.pending_alpc_reply_views.end())
+                    {
+                        for (const auto& view : views->second)
+                        {
+                            c.win_emu.memory.release_memory(view[0], static_cast<size_t>(view[1]));
+                        }
+                        c.proc.pending_alpc_reply_views.erase(views);
+                    }
+                }
+            }
+
             if (value.type == handle_types::file)
             {
                 auto* file = c.proc.files.get(h);
