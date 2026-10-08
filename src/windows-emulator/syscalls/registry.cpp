@@ -306,7 +306,8 @@ namespace sogen
                 constexpr auto base_size = offsetof(KEY_VALUE_FULL_INFORMATION, Name);
                 const auto name_size = original_name.size() * 2;
                 const auto value_size = value->data.size();
-                const auto data_offset = align_up(base_size + name_size, c.proc.is_wow64_process ? 4 : 8);
+                const auto data_offset =
+                    value_size == 0 ? base_size + name_size : align_up(base_size + name_size, c.proc.is_wow64_process ? 4 : 8);
                 const auto required_size = data_offset + value_size;
                 result_length.write(static_cast<ULONG>(required_size));
 
@@ -727,7 +728,8 @@ namespace sogen
                 constexpr auto base_size = offsetof(KEY_VALUE_FULL_INFORMATION, Name);
                 const auto name_size = value_name_u16.size() * 2;
                 const auto data_size = value->data.size();
-                const auto data_offset = static_cast<ULONG>(align_up(base_size + name_size, c.proc.is_wow64_process ? 4 : 8));
+                const auto data_offset = static_cast<ULONG>(
+                    data_size == 0 ? base_size + name_size : align_up(base_size + name_size, c.proc.is_wow64_process ? 4 : 8));
                 const auto required_size = data_offset + data_size;
 
                 result_length.write(static_cast<ULONG>(required_size));
