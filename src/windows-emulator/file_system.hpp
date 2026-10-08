@@ -9,7 +9,7 @@ namespace sogen
     {
       public:
         file_system(const std::filesystem::path& root)
-            : root_(canonical(root))
+            : root_(root.empty() ? root : canonical(root))
         {
         }
 
