@@ -5,8 +5,8 @@
 
 #include <algorithm>
 #include <charconv>
-#include <iostream>
 #include <utils/finally.hpp>
+
 #include <utils/wildcard.hpp>
 #include "utils/stat.hpp"
 
@@ -1291,25 +1291,14 @@ namespace sogen
                                    const ULONG length, const emulator_object<LARGE_INTEGER> byte_offset,
                                    const emulator_object<ULONG> /*key*/)
         {
-            std::string temp_buffer{};
-            temp_buffer.resize(length);
-
             if (file_handle == STDIN_HANDLE)
             {
-                char chr{};
-                if (std::cin.readsome(&chr, 1) <= 0)
-                {
-                    std::cin.read(&chr, 1);
-                }
-
-                std::cin.putback(chr);
-
-                const auto read_count = std::cin.readsome(temp_buffer.data(), static_cast<std::streamsize>(temp_buffer.size()));
-                const auto count = std::max(read_count, static_cast<std::streamsize>(0));
-
-                commit_file_data(std::string_view(temp_buffer.data(), static_cast<size_t>(count)), c.emu, io_status_block, buffer);
+                const auto data = c.win_emu.console().read_input(length);
+                commit_file_data(data, c.emu, io_status_block, buffer);
                 return STATUS_SUCCESS;
             }
+            std::string temp_buffer{};
+            temp_buffer.resize(length);
 
             if (file_handle == NUL_HANDLE)
             {

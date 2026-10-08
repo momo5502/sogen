@@ -681,6 +681,16 @@ namespace sogen
             return create_default_crypt_protect_backend(emulation_root);
         }
 
+        std::unique_ptr<console_backend> get_console_backend(emulator_interfaces& interfaces)
+        {
+            if (interfaces.console)
+            {
+                return std::move(interfaces.console);
+            }
+
+            return create_default_console_backend();
+        }
+
         // The guest must see at least as many logical processors as there are vCPUs, otherwise a
         // thread running on a higher-indexed vCPU would report a processor number the guest
         // considers out of range. The configured fake value still wins when it is larger (e.g. the
@@ -712,6 +722,7 @@ namespace sogen
           crypt_protect_backend_(get_crypt_protect_backend(
               interfaces, settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root))),
           process_manager_(interfaces.processes),
+          console_backend_(get_console_backend(interfaces)),
           emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
           fake_env(effective_fake_env(settings, static_cast<uint32_t>(this->emu_->vcpu_count()))),
           callbacks(std::move(callbacks)),
@@ -1831,6 +1842,7 @@ namespace sogen
         this->clear_section_first_execution_hooks();
         this->ui().reset();
         this->audio().stop();
+        this->console().reset();
 
         // Match raw serialize() above; do not use backend snapshot mode here.
         this->emu().deserialize_state(buffer, false);
@@ -1887,6 +1899,7 @@ namespace sogen
         this->clear_section_first_execution_hooks();
         this->ui().reset();
         this->audio().stop();
+        this->console().reset();
 
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);

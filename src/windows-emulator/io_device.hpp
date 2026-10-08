@@ -19,6 +19,7 @@ namespace sogen
 
     struct io_device_context
     {
+        handle source_handle{};
         handle event{};
         emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine{};
         emulator_pointer apc_context{};
@@ -53,6 +54,7 @@ namespace sogen
 
         void serialize(utils::buffer_serializer& buffer) const
         {
+            buffer.write(source_handle);
             buffer.write(event);
             buffer.write(apc_routine);
             buffer.write(apc_context);
@@ -70,6 +72,7 @@ namespace sogen
 
         void deserialize(utils::buffer_deserializer& buffer)
         {
+            buffer.read(source_handle);
             buffer.read(event);
             buffer.read(apc_routine);
             buffer.read(apc_context);
@@ -160,6 +163,11 @@ namespace sogen
             (void)data;
         }
 
+        virtual void restore_after_state_restore(windows_emulator& win_emu)
+        {
+            (void)win_emu;
+        }
+
         virtual void work(windows_emulator& win_emu)
         {
             (void)win_emu;
@@ -223,6 +231,7 @@ namespace sogen
         }
 
         void work(windows_emulator& win_emu) override;
+        void restore_after_state_restore(windows_emulator& win_emu) override;
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override;
         io_device_context prepare_io_context(const io_device_context& context) const override;
         bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block) override;

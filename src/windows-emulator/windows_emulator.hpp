@@ -17,9 +17,10 @@
 #include "network/dns_lookup.hpp"
 #include "network/socket_factory.hpp"
 #include "version/windows_version_manager.hpp"
-#include <platform/ui_backend.hpp>
 #include <platform/audio_backend.hpp>
 #include <platform/crypt_protect_backend.hpp>
+#include <platform/console_backend.hpp>
+#include <platform/ui_backend.hpp>
 
 namespace sogen
 {
@@ -129,6 +130,7 @@ namespace sogen
         std::unique_ptr<audio_backend> audio{};
         std::unique_ptr<crypt_protect_backend> crypt_protect{};
         process_manager* processes{};
+        std::unique_ptr<console_backend> console{};
     };
 
     // Per-vCPU scheduler state: the guest thread a virtual CPU is currently executing
@@ -164,6 +166,7 @@ namespace sogen
         std::unique_ptr<audio_backend> audio_backend_{};
         std::unique_ptr<crypt_protect_backend> crypt_protect_backend_{};
         process_manager* process_manager_{};
+        std::unique_ptr<console_backend> console_backend_{};
         bool setup_completed_{false};
 
       public:
@@ -264,6 +267,16 @@ namespace sogen
         process_manager* processes() const
         {
             return this->process_manager_;
+        }
+
+        console_backend& console()
+        {
+            return *this->console_backend_;
+        }
+
+        const console_backend& console() const
+        {
+            return *this->console_backend_;
         }
 
         void handle_ui_event(const ui_event& event);

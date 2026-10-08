@@ -997,7 +997,12 @@ namespace sogen
                                               const ULONG input_buffer_length, const emulator_pointer output_buffer,
                                               const ULONG output_buffer_length)
         {
-            const auto resolved_file_handle = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
+            auto resolved_file_handle = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
+            if (file_handle == STDIN_HANDLE || file_handle == STDOUT_HANDLE)
+            {
+                resolved_file_handle = c.proc.console_handle;
+            }
+
             auto* device = c.proc.devices.get(resolved_file_handle);
             if (!device)
             {
@@ -1010,6 +1015,7 @@ namespace sogen
             }
 
             io_device_context context{c.emu};
+            context.source_handle = file_handle;
             context.event = event;
             context.apc_routine = apc_routine;
             context.apc_context = apc_context;

@@ -903,6 +903,11 @@ namespace sogen
     {
         restore_windows_after_state_restore(win_emu);
 
+        for (auto& device : this->devices | std::views::values)
+        {
+            device.restore_after_state_restore(win_emu);
+        }
+
         for (auto& port : this->ports | std::views::values)
         {
             port.restore_after_state_restore(win_emu);
