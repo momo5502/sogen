@@ -270,6 +270,12 @@ namespace sogen
         this->device_->work(win_emu);
     }
 
+    void io_device_container::restore_after_state_restore(windows_emulator& win_emu)
+    {
+        this->assert_validity();
+        this->device_->restore_after_state_restore(win_emu);
+    }
+
     void io_device_container::serialize_object(utils::buffer_serializer& buffer) const
     {
         this->assert_validity();
