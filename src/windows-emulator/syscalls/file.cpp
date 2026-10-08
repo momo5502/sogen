@@ -1841,11 +1841,20 @@ namespace sogen
                 const auto* root_pipe = root_container ? root_container->get_internal_device<named_pipe>() : nullptr;
                 if (root_pipe)
                 {
+                    c.win_emu.callbacks.on_generic_access("Opening anonymous pipe", root_pipe->name);
+
                     io_device_creation_data data{};
                     io_device_container container{u"NamedPipe", c.win_emu, data};
                     auto* pipe_device = container.get_internal_device<named_pipe>();
                     pipe_device->name = root_pipe->name;
                     pipe_device->access = desired_access;
+                    pipe_device->pipe_type = root_pipe->pipe_type;
+                    pipe_device->read_mode = root_pipe->read_mode;
+                    pipe_device->completion_mode = root_pipe->completion_mode;
+                    pipe_device->max_instances = root_pipe->max_instances;
+                    pipe_device->inbound_quota = root_pipe->inbound_quota;
+                    pipe_device->outbound_quota = root_pipe->outbound_quota;
+                    pipe_device->default_timeout = root_pipe->default_timeout;
 
                     file_handle.write(c.proc.devices.store(std::move(container)));
 
@@ -2349,14 +2358,15 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
-            c.win_emu.callbacks.on_generic_access("Creating named pipe", filename);
+            const auto& pipe_name = anonymous_pipe ? root_pipe->name : filename;
+            c.win_emu.callbacks.on_generic_access("Creating named pipe", pipe_name);
 
             io_device_creation_data data{};
             io_device_container container{u"NamedPipe", c.win_emu, data};
 
             if (auto* pipe_device = container.get_internal_device<named_pipe>())
             {
-                pipe_device->name = anonymous_pipe ? root_pipe->name : filename;
+                pipe_device->name = pipe_name;
                 pipe_device->access = desired_access;
                 pipe_device->pipe_type = named_pipe_type;
                 pipe_device->read_mode = read_mode;
