@@ -171,7 +171,7 @@ namespace sogen
         if (result != STATUS_PENDING && NT_SUCCESS(result) &&
             !(request.completion_notification_flags & file_skip_completion_port_on_success))
         {
-            this->queue_io_completion(win_emu, request);
+            queue_io_completion(win_emu, request);
         }
 
         return result;

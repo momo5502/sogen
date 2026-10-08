@@ -440,7 +440,7 @@ namespace sogen
                 {
                     event->signaled = true;
                 }
-                this->queue_io_completion(win_emu, context);
+                io_device::queue_io_completion(win_emu, context);
             }
 
             void setup(network::socket_factory& factory)
