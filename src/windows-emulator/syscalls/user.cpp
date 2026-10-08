@@ -3974,9 +3974,15 @@ namespace sogen
             RECT item_rect = item ? RECT{item->x, item->y, item->x + item->width, item->y + item->height}
                                   : RECT{client.left, client.top, button_left, client.bottom};
             item_rect.right = std::max(item_rect.left, std::min(item_rect.right, button_left));
-            const uint32_t state_button = simple                                    ? k_state_system_invisible
-                                          : list && (list->style & WS_VISIBLE) != 0 ? k_state_system_pressed
-                                                                                    : 0;
+            uint32_t state_button = 0;
+            if (simple)
+            {
+                state_button = k_state_system_invisible;
+            }
+            else if (list && (list->style & WS_VISIBLE) != 0)
+            {
+                state_button = k_state_system_pressed;
+            }
             const uint64_t hwnd_item = item ? item->handle : 0;
             const uint64_t hwnd_list = list ? list->handle : 0;
 
