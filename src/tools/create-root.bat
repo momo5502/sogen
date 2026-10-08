@@ -130,6 +130,7 @@ CALL :collect rpcrt4.dll
 CALL :collect rpcss.dll
 CALL :collect rstrtmgr.dll
 CALL :collect rsaenh.dll
+CALL :collect samlib.dll
 CALL :collect sechost.dll
 CALL :collect setupapi.dll
 CALL :collect shcore.dll
