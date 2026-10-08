@@ -57,6 +57,32 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            const auto get_maximum_lengths = [&] {
+                ULONG max_sub_key_name_length{};
+                ULONG max_value_name_length{};
+                ULONG max_value_data_length{};
+                for (size_t index = 0; index < c.win_emu.registry.get_sub_key_count(*key); ++index)
+                {
+                    const auto name = c.win_emu.registry.get_sub_key_name(*key, index);
+                    if (name)
+                    {
+                        max_sub_key_name_length =
+                            std::max(max_sub_key_name_length, static_cast<ULONG>(u8_to_u16(*name).size() * sizeof(char16_t)));
+                    }
+                }
+                for (size_t index = 0; index < c.win_emu.registry.get_value_count(*key); ++index)
+                {
+                    const auto value = c.win_emu.registry.get_value(*key, index);
+                    if (value)
+                    {
+                        max_value_name_length =
+                            std::max(max_value_name_length, static_cast<ULONG>(u8_to_u16(value->name).size() * sizeof(char16_t)));
+                        max_value_data_length = std::max(max_value_data_length, static_cast<ULONG>(value->data.size()));
+                    }
+                }
+                return std::tuple{max_sub_key_name_length, max_value_name_length, max_value_data_length};
+            };
+
             if (key_information_class == KeyBasicInformation)
             {
                 auto key_name = std::filesystem::path(key->path.get()).filename().u16string();
@@ -129,12 +155,13 @@ namespace sogen
                 }
 
                 KEY_FULL_INFORMATION info{};
+                const auto [max_sub_key_name_length, max_value_name_length, max_value_data_length] = get_maximum_lengths();
                 info.ClassOffset = 0xFFFFFFFFu;
                 info.SubKeys = static_cast<ULONG>(c.win_emu.registry.get_sub_key_count(*key));
                 info.Values = static_cast<ULONG>(c.win_emu.registry.get_value_count(*key));
-                info.MaxNameLength = 0x1000;
-                info.MaxValueNameLength = 0x1000;
-                info.MaxValueDataLength = 0x1000;
+                info.MaxNameLength = max_sub_key_name_length;
+                info.MaxValueNameLength = max_value_name_length;
+                info.MaxValueDataLength = max_value_data_length;
 
                 c.emu.write_memory(key_information, &info, required_size);
                 return STATUS_SUCCESS;
@@ -159,12 +186,13 @@ namespace sogen
                 }
 
                 KEY_CACHED_INFORMATION info{};
+                const auto [max_sub_key_name_length, max_value_name_length, max_value_data_length] = get_maximum_lengths();
                 info.SubKeys = static_cast<ULONG>(c.win_emu.registry.get_sub_key_count(*key));
                 info.Values = static_cast<ULONG>(c.win_emu.registry.get_value_count(*key));
                 info.NameLength = static_cast<ULONG>(key_name.size() * 2);
-                info.MaxValueDataLen = 0x1000;
-                info.MaxValueNameLen = 0x1000;
-                info.MaxNameLen = 0x1000;
+                info.MaxValueDataLen = max_value_data_length;
+                info.MaxValueNameLen = max_value_name_length;
+                info.MaxNameLen = max_sub_key_name_length;
 
                 c.emu.write_memory(key_information, info);
                 return STATUS_SUCCESS;
@@ -278,13 +306,15 @@ namespace sogen
                 constexpr auto base_size = offsetof(KEY_VALUE_FULL_INFORMATION, Name);
                 const auto name_size = original_name.size() * 2;
                 const auto value_size = value->data.size();
-                const auto required_size = base_size + name_size + value_size;
+                const auto data_offset =
+                    value_size == 0 ? base_size + name_size : align_up(base_size + name_size, c.proc.is_wow64_process ? 4 : 8);
+                const auto required_size = data_offset + value_size;
                 result_length.write(static_cast<ULONG>(required_size));
 
                 KEY_VALUE_FULL_INFORMATION info{};
                 info.TitleIndex = 0;
                 info.Type = value->type;
-                info.DataOffset = static_cast<ULONG>(base_size + name_size);
+                info.DataOffset = static_cast<ULONG>(data_offset);
                 info.DataLength = static_cast<ULONG>(value->data.size());
                 info.NameLength = static_cast<ULONG>(original_name.size() * 2);
 
@@ -300,7 +330,7 @@ namespace sogen
 
                 c.emu.write_memory(key_value_information + base_size, original_name.data(), info.NameLength);
 
-                c.emu.write_memory(key_value_information + base_size + info.NameLength, value->data.data(), value->data.size());
+                c.emu.write_memory(key_value_information + data_offset, value->data.data(), value->data.size());
 
                 return STATUS_SUCCESS;
             }
@@ -698,7 +728,8 @@ namespace sogen
                 constexpr auto base_size = offsetof(KEY_VALUE_FULL_INFORMATION, Name);
                 const auto name_size = value_name_u16.size() * 2;
                 const auto data_size = value->data.size();
-                const auto data_offset = static_cast<ULONG>(base_size + name_size);
+                const auto data_offset = static_cast<ULONG>(
+                    data_size == 0 ? base_size + name_size : align_up(base_size + name_size, c.proc.is_wow64_process ? 4 : 8));
                 const auto required_size = data_offset + data_size;
 
                 result_length.write(static_cast<ULONG>(required_size));
