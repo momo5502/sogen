@@ -2236,11 +2236,11 @@ namespace sogen::fex
             return true;
         }
 
-        bool range_has_permission(uint64_t address, size_t size, memory_permission permission) const
+        std::optional<memory_violation_type> first_range_violation(uint64_t address, size_t size, memory_permission permission) const
         {
             if (size == 0)
             {
-                return true;
+                return std::nullopt;
             }
 
 #ifdef __APPLE__
@@ -2248,9 +2248,13 @@ namespace sogen::fex
             for (uint64_t page = address & ~(page_size - 1); page < end; page += page_size)
             {
                 const auto it = this->page_shadow_apple_.find(page);
-                if (it == this->page_shadow_apple_.end() || (it->second & permission) != permission)
+                if (it == this->page_shadow_apple_.end())
                 {
-                    return false;
+                    return memory_violation_type::unmapped;
+                }
+                if ((it->second & permission) != permission)
+                {
+                    return memory_violation_type::protection;
                 }
             }
 #else
@@ -2259,15 +2263,19 @@ namespace sogen::fex
             while (cursor < end)
             {
                 const auto it = this->find_region_containing(cursor);
-                if (it == this->regions_.end() || (it->second.permissions & permission) != permission)
+                if (it == this->regions_.end())
                 {
-                    return false;
+                    return memory_violation_type::unmapped;
+                }
+                if ((it->second.permissions & permission) != permission)
+                {
+                    return memory_violation_type::protection;
                 }
                 cursor = it->first + it->second.size;
             }
 #endif
 
-            return true;
+            return std::nullopt;
         }
 
         // For loader-privileged writes: sogen itself writing guest memory it declared read-only, such as
@@ -2950,13 +2958,11 @@ namespace sogen::fex
                 }
             }
 
-            if (this->range_has_permission(guest_fault_addr, access_size, operation))
+            const auto violation = this->first_range_violation(guest_fault_addr, access_size, operation);
+            if (!violation)
             {
                 return this->handle_misaligned_atomic_fault(uctx, fault_addr);
             }
-
-            const auto type =
-                this->is_range_mapped(guest_fault_addr, access_size) ? memory_violation_type::protection : memory_violation_type::unmapped;
 
             // FEX's block chaining (directly-linked blocks and callret RET fast-paths) advances execution
             // without rewriting CurrentFrame->State.rip, so it holds whatever was last written to it and
@@ -2974,7 +2980,7 @@ namespace sogen::fex
             dispatch.address = guest_fault_addr;
             dispatch.size = access_size;
             dispatch.operation = operation;
-            dispatch.type = type;
+            dispatch.type = *violation;
 
             // SRA is still live only in host registers here - this fault interrupted guest-translated
             // JIT code at an arbitrary point, not FEXCore's own controlled synthetic-exception path.

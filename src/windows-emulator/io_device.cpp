@@ -224,27 +224,121 @@ namespace sogen
 
     NTSTATUS io_device::execute_ioctl(windows_emulator& win_emu, const io_device_context& c)
     {
-        if (c.io_status_block)
+        auto request = this->prepare_io_context(c);
+        if (request.io_status_block)
         {
-            c.io_status_block.write({});
+            request.io_status_block.write({});
         }
 
-        const auto result = this->io_control(win_emu, c);
-        write_io_status(c.io_status_block, result);
-        write_wow64_io_status(c);
+        const auto result = this->io_control(win_emu, request);
+        write_io_status(request, result);
 
         // A synchronously-completing IOCTL must signal the optional completion event the caller passed, so a
         // thread that issues the request and then waits on the event is released. Asynchronous devices return
         // STATUS_PENDING and signal the event themselves once the delayed operation completes.
-        if (result != STATUS_PENDING && c.event.bits)
+        if (result != STATUS_PENDING && request.event.bits)
         {
-            if (auto* e = win_emu.process.events.get(c.event); e)
+            if (auto* e = win_emu.process.events.get(request.event); e)
             {
                 e->signaled = true;
             }
         }
 
+        constexpr ULONG file_skip_completion_port_on_success = 0x1;
+        if (result != STATUS_PENDING && NT_SUCCESS(result) &&
+            !(request.completion_notification_flags & file_skip_completion_port_on_success))
+        {
+            queue_io_completion(win_emu, request);
+        }
+
         return result;
+    }
+
+    void io_device::queue_io_completion(windows_emulator& win_emu, const io_device_context& context)
+    {
+        if (!context.completion_port.bits || !context.io_status_block)
+        {
+            return;
+        }
+
+        auto* completion = win_emu.process.io_completions.get(context.completion_port);
+        if (!completion)
+        {
+            return;
+        }
+
+        io_completion_message message{};
+        message.key_context = context.completion_key;
+        message.apc_context = context.apc_context;
+        message.io_status_block = context.io_status_block.read();
+        completion->enqueue(message);
+    }
+
+    NTSTATUS io_device_container::io_control(windows_emulator& win_emu, const io_device_context& context)
+    {
+        this->assert_validity();
+        win_emu.callbacks.on_ioctrl(*this->device_, this->device_name_, context.io_control_code);
+        return this->device_->io_control(win_emu, context);
+    }
+
+    io_device_context io_device_container::prepare_io_context(const io_device_context& context) const
+    {
+        auto request = context;
+        if (this->completion_association_)
+        {
+            request.completion_port = this->completion_association_->completion_port;
+            request.completion_key = this->completion_association_->key;
+        }
+        request.completion_notification_flags = this->completion_notification_flags_;
+        return request;
+    }
+
+    bool io_device_container::cancel_io(windows_emulator& win_emu, const uint64_t io_status_block)
+    {
+        this->assert_validity();
+        return this->device_->cancel_io(win_emu, io_status_block);
+    }
+
+    NTSTATUS io_device_container::set_completion_association(process_context& process, const emulator_thread* active_thread,
+                                                             const handle completion_port, const uint64_t key)
+    {
+        this->assert_validity();
+        if (this->completion_association_)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto resolved_port = process.resolve_object_pseudo_handle(completion_port, active_thread);
+        if (resolved_port.value.type != handle_types::io_completion || !process.io_completions.get(resolved_port))
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        handle retained_port{};
+        if (!io_completion_wait::retain_handle_reference(process, active_thread, resolved_port, retained_port))
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        this->completion_association_ = device_completion_association{.completion_port = retained_port, .key = key};
+        return STATUS_SUCCESS;
+    }
+
+    void io_device_container::set_completion_notification_flags(const ULONG flags)
+    {
+        this->assert_validity();
+        this->completion_notification_flags_ = flags;
+    }
+
+    void io_device_container::release_references(process_context& process)
+    {
+        this->assert_validity();
+        this->device_->release_references(process);
+        if (this->completion_association_)
+        {
+            io_completion_wait::release_handle_reference(process, this->completion_association_->completion_port);
+            this->completion_association_.reset();
+        }
     }
 
     void io_device_container::work(windows_emulator& win_emu)

@@ -322,6 +322,16 @@ namespace sogen
                     device_path = factory->name;
                     break;
                 }
+                case handle_types::job: {
+                    const auto* job = c.proc.jobs.get(effective_handle);
+                    if (!job)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    device_path = job->name;
+                    break;
+                }
                 case handle_types::private_namespace: {
                     const auto* ns = c.proc.private_namespaces.get(effective_handle);
                     if (!ns)

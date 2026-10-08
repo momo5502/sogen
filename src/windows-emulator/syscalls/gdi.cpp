@@ -130,12 +130,12 @@ namespace sogen
                 0x00E3E3E3u, // COLOR_3DLIGHT
                 0x00000000u, // COLOR_INFOTEXT
                 0x00E1FFFFu, // COLOR_INFOBK
+                0x00000000u, // reserved
                 0x00000000u, // COLOR_HOTLIGHT
                 0x00CC6600u, // COLOR_GRADIENTACTIVECAPTION
                 0x00F2E4D7u, // COLOR_GRADIENTINACTIVECAPTION
                 0x00F0F0F0u, // COLOR_MENUHILIGHT
                 0x00F0F0F0u, // COLOR_MENUBAR
-                0x00FFFFFFu, // COLOR_DESKTOP
             };
 
             struct gdi_batch_header
@@ -1158,7 +1158,8 @@ namespace sogen
                 uint64_t client_drawing_brush = 0;
                 bool needs_seed = false;
 
-                c.proc.user_handles.get_server_info().access([&](const USER_SERVERINFO& server_info) {
+                c.proc.user_handles.get_server_info().access([&](USER_SERVERINFO& server_info) {
+                    std::ranges::copy(k_default_system_colors, server_info.systemColors);
                     for (size_t i = 0; i < system_brushes.size(); ++i)
                     {
                         system_brushes[i] = server_info.ahbrSystem[i];

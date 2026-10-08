@@ -32,7 +32,8 @@ namespace sogen
         ULONG output_buffer_length{};
         handle completion_port{};
         uint64_t completion_key{};
-        uint32_t completion_notification_flags{};
+        ULONG completion_notification_flags{};
+
         // The vCPU whose thread issued this I/O request. Set on syscall-originated ioctls;
         // null (and not serialized) for deserialized delayed ioctls re-executed from the
         // scheduler's device pump, which must not depend on an issuing thread.
@@ -127,6 +128,25 @@ namespace sogen
 
         virtual NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) = 0;
 
+        virtual io_device_context prepare_io_context(const io_device_context& context) const
+        {
+            return context;
+        }
+
+        static void queue_io_completion(windows_emulator& win_emu, const io_device_context& context);
+
+        virtual void release_references(process_context& process)
+        {
+            (void)process;
+        }
+
+        virtual bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block)
+        {
+            (void)win_emu;
+            (void)io_status_block;
+            return false;
+        }
+
         virtual void create(windows_emulator& win_emu, const io_device_creation_data& data)
         {
             (void)win_emu;
@@ -194,6 +214,12 @@ namespace sogen
     // Ordered so the fuzzer's enumeration is deterministic across runs.
     const std::map<std::u16string_view, device_factory>& get_device_registry();
 
+    struct device_completion_association
+    {
+        handle completion_port{};
+        uint64_t key{};
+    };
+
     class io_device_container : public io_device
     {
       public:
@@ -210,11 +236,12 @@ namespace sogen
         void work(windows_emulator& win_emu) override;
         void restore_after_state_restore(windows_emulator& win_emu) override;
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override;
+        io_device_context prepare_io_context(const io_device_context& context) const override;
+        bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block) override;
         NTSTATUS set_completion_association(process_context& process, const emulator_thread* active_thread, handle completion_port,
                                             uint64_t key);
-        void set_completion_notification_flags(uint32_t flags);
+        void set_completion_notification_flags(ULONG flags);
         void release_references(process_context& process) override;
-        bool cancel_io(windows_emulator& win_emu, handle file_handle, uint64_t io_status_block) override;
 
         void serialize_object(utils::buffer_serializer& buffer) const override;
         void deserialize_object(utils::buffer_deserializer& buffer) override;
@@ -245,7 +272,7 @@ namespace sogen
         std::u16string device_name_{};
         std::unique_ptr<io_device> device_{};
         std::optional<device_completion_association> completion_association_{};
-        uint32_t completion_notification_flags_{};
+        ULONG completion_notification_flags_{};
 
         void setup()
         {

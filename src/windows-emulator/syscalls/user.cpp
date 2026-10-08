@@ -8,6 +8,7 @@
 #include "../window_show_orchestrator.hpp"
 #include "windows-emulator/user_callback_dispatch.hpp"
 #include <limits>
+#include <unordered_set>
 
 #ifdef msg
 #undef msg
@@ -47,9 +48,13 @@ namespace sogen
         constexpr uint32_t k_color_btnface = 15;
         constexpr auto k_user_timer_minimum = std::chrono::milliseconds{10};
         constexpr uint64_t k_hrgn_window = 1;
-        // user32 uses this fixed system atom for its private ComboLBox class.
-        constexpr uint16_t k_combo_lbox_system_atom = 0x8012;
         constexpr UINT k_cb_getcomboboxinfo = 0x0164;
+        constexpr uint16_t k_combo_lbox_system_atom = 0x8012;
+        constexpr uint32_t k_cbs_simple = 0x0001;
+        constexpr uint32_t k_cbs_type_mask = 0x0003;
+        constexpr uint32_t k_state_system_pressed = 0x00000008;
+        constexpr uint32_t k_state_system_invisible = 0x00008000;
+        constexpr size_t k_sm_cxvscroll_index = 2;
 
         struct send_message_callback_info
         {
@@ -1587,6 +1592,31 @@ namespace sogen
             return handle.bits;
         }
 
+        bool destroy_menu_tree(const syscall_context& c, const hmenu handle, std::unordered_set<hmenu>& visited)
+        {
+            if (!visited.insert(handle).second)
+            {
+                return false;
+            }
+
+            auto* menu_obj = c.proc.menus.get(handle);
+            if (!menu_obj)
+            {
+                return false;
+            }
+
+            for (const auto& item : menu_obj->items)
+            {
+                if (item.submenu != 0)
+                {
+                    destroy_menu_tree(c, item.submenu, visited);
+                }
+            }
+
+            menu_obj->release_guest_backing(c.win_emu.memory);
+            return c.proc.menus.erase(handle);
+        }
+
         std::u16string read_menu_item_text(const syscall_context& c, const EMU_MENUITEMINFO& mi,
                                            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> item_text)
         {
@@ -1975,14 +2005,10 @@ namespace sogen
 
         BOOL handle_NtUserReleaseDC(const syscall_context& c, const hdc dc)
         {
-            // TODO: Native GDI makes window-DC writes visible during the drawing operation; presenting on ReleaseDC is only
-            // a Sogen flush boundary. Move presentation into window-DC drawing operations once they share a common path.
             uint32_t present_handle = 0;
             if (auto* surface = get_dc_present_surface(c, dc, present_handle);
                 surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
             {
-                paint_trace::log_surface("user.release-dc", present_handle, surface->pixels.data(), static_cast<int>(surface->width),
-                                         static_cast<int>(surface->height), static_cast<int>(surface->width * sizeof(uint32_t)));
                 c.win_emu.ui().present_surface(present_handle,
                                                ui_surface_desc{.width = static_cast<int>(surface->width),
                                                                .height = static_cast<int>(surface->height),
@@ -4107,75 +4133,121 @@ namespace sogen
             return c.get_callback_result<uint64_t>();
         }
 
-        bool write_native_combo_box_info(const syscall_context& c, const window& combo_box, const emulator_pointer combo_box_info)
+        bool read_combo_box_info(const syscall_context& c, const emulator_pointer combo_box_info, const size_t required_size,
+                                 std::array<std::byte, 64>& data)
         {
-            const uint32_t required_size = c.proc.is_wow64_process ? 52 : 64;
+            if (!c.win_emu.memory.try_read_memory(combo_box_info, data.data(), required_size))
+            {
+                set_guest_last_error(c, 998);
+                return false;
+            }
+
             uint32_t cb_size{};
-            if (!c.win_emu.memory.try_read_memory(combo_box_info, &cb_size, sizeof(cb_size)) || cb_size < required_size)
+            std::memcpy(&cb_size, data.data(), sizeof(cb_size));
+            if (cb_size != required_size)
             {
                 set_guest_last_error(c, 87);
                 return false;
             }
 
+            return true;
+        }
+
+        bool write_native_combo_box_info(const syscall_context& c, const window& combo_box, const emulator_pointer combo_box_info,
+                                         const size_t required_size, std::array<std::byte, 64>& data)
+        {
             const window* item = nullptr;
             const window* list = nullptr;
-            for (const auto& [index, child] : c.proc.windows)
+            for (const auto& window_entry : c.proc.windows)
             {
-                (void)index;
-                if (child.parent_handle != combo_box.handle)
-                {
-                    continue;
-                }
-
-                if (utils::string::equals_ignore_case(std::u16string_view{child.class_name}, std::u16string_view{u"ComboLBox"}))
+                const auto& child = window_entry.second;
+                const auto class_name = std::u16string_view{child.class_name};
+                if (!list && (child.parent_handle == combo_box.handle || child.owner_handle == combo_box.handle) &&
+                    utils::string::equals_ignore_case(class_name, std::u16string_view{u"ComboLBox"}))
                 {
                     list = &child;
                 }
-                else if (utils::string::equals_ignore_case(std::u16string_view{child.class_name}, std::u16string_view{u"Edit"}) ||
-                         utils::string::equals_ignore_case(std::u16string_view{child.class_name}, std::u16string_view{u"Static"}))
+                else if (!item && child.parent_handle == combo_box.handle &&
+                         (utils::string::equals_ignore_case(class_name, std::u16string_view{u"Edit"}) ||
+                          utils::string::equals_ignore_case(class_name, std::u16string_view{u"Static"})))
                 {
                     item = &child;
                 }
             }
 
             const auto client = get_client_rect(combo_box);
-            const RECT item_rect = item ? RECT{item->x, item->y, item->x + item->width, item->y + item->height} : client;
+            int32_t button_width{};
+            c.proc.user_handles.get_server_info().access(
+                [&](const USER_SERVERINFO& server_info) { button_width = std::max(0, server_info.systemMetrics[k_sm_cxvscroll_index]); });
+            const bool simple = (combo_box.style & k_cbs_type_mask) == k_cbs_simple;
+            const LONG button_left = simple ? client.right : std::max<LONG>(client.left, client.right - button_width);
             const RECT button_rect{
-                .left = std::max<LONG>(0, client.right - 17),
+                .left = button_left,
                 .top = client.top,
                 .right = client.right,
                 .bottom = client.bottom,
             };
-            const uint32_t state_button = 0;
+            RECT item_rect = item ? RECT{item->x, item->y, item->x + item->width, item->y + item->height}
+                                  : RECT{client.left, client.top, button_left, client.bottom};
+            item_rect.right = std::max(item_rect.left, std::min(item_rect.right, button_left));
+            uint32_t state_button = 0;
+            if (simple)
+            {
+                state_button = k_state_system_invisible;
+            }
+            else if (list && (list->style & WS_VISIBLE) != 0)
+            {
+                state_button = k_state_system_pressed;
+            }
             const uint64_t hwnd_item = item ? item->handle : 0;
             const uint64_t hwnd_list = list ? list->handle : 0;
 
-            if (!c.win_emu.memory.try_write_memory(combo_box_info + 4, &item_rect, sizeof(item_rect)) ||
-                !c.win_emu.memory.try_write_memory(combo_box_info + 20, &button_rect, sizeof(button_rect)) ||
-                !c.win_emu.memory.try_write_memory(combo_box_info + 36, &state_button, sizeof(state_button)))
-            {
-                return false;
-            }
+            std::memcpy(data.data() + 4, &item_rect, sizeof(item_rect));
+            std::memcpy(data.data() + 20, &button_rect, sizeof(button_rect));
+            std::memcpy(data.data() + 36, &state_button, sizeof(state_button));
 
             if (c.proc.is_wow64_process)
             {
                 const auto combo_handle = static_cast<uint32_t>(combo_box.handle);
                 const auto item_handle = static_cast<uint32_t>(hwnd_item);
                 const auto list_handle = static_cast<uint32_t>(hwnd_list);
-                return c.win_emu.memory.try_write_memory(combo_box_info + 40, &combo_handle, sizeof(combo_handle)) &&
-                       c.win_emu.memory.try_write_memory(combo_box_info + 44, &item_handle, sizeof(item_handle)) &&
-                       c.win_emu.memory.try_write_memory(combo_box_info + 48, &list_handle, sizeof(list_handle));
+                std::memcpy(data.data() + 40, &combo_handle, sizeof(combo_handle));
+                std::memcpy(data.data() + 44, &item_handle, sizeof(item_handle));
+                std::memcpy(data.data() + 48, &list_handle, sizeof(list_handle));
+            }
+            else
+            {
+                std::memcpy(data.data() + 40, &combo_box.handle, sizeof(combo_box.handle));
+                std::memcpy(data.data() + 48, &hwnd_item, sizeof(hwnd_item));
+                std::memcpy(data.data() + 56, &hwnd_list, sizeof(hwnd_list));
             }
 
-            return c.win_emu.memory.try_write_memory(combo_box_info + 40, &combo_box.handle, sizeof(combo_box.handle)) &&
-                   c.win_emu.memory.try_write_memory(combo_box_info + 48, &hwnd_item, sizeof(hwnd_item)) &&
-                   c.win_emu.memory.try_write_memory(combo_box_info + 56, &hwnd_list, sizeof(hwnd_list));
+            if (!c.win_emu.memory.try_write_memory(combo_box_info, data.data(), required_size))
+            {
+                set_guest_last_error(c, 998);
+                return false;
+            }
+
+            return true;
         }
 
         BOOL handle_NtUserGetComboBoxInfo(const syscall_context& c, const hwnd combo_box, const emulator_pointer combo_box_info)
         {
             auto* win = c.proc.windows.get(combo_box);
-            if (!win || combo_box_info == 0)
+            if (!win)
+            {
+                set_guest_last_error(c, 1400);
+                return FALSE;
+            }
+            if (combo_box_info == 0)
+            {
+                set_guest_last_error(c, 998);
+                return FALSE;
+            }
+
+            const size_t required_size = c.proc.is_wow64_process ? 52 : 64;
+            std::array<std::byte, 64> data{};
+            if (!read_combo_box_info(c, combo_box_info, required_size, data))
             {
                 return FALSE;
             }
@@ -4183,14 +4255,20 @@ namespace sogen
             const auto normalized_class = normalize_builtin_window_class_name(win->class_name);
             if (utils::string::equals_ignore_case(normalized_class, std::u16string_view{u"ComboBox"}))
             {
-                return write_native_combo_box_info(c, *win, combo_box_info) ? TRUE : FALSE;
+                return write_native_combo_box_info(c, *win, combo_box_info, required_size, data) ? TRUE : FALSE;
+            }
+
+            if (!c.win_emu.memory.try_write_memory(combo_box_info, data.data(), required_size))
+            {
+                set_guest_last_error(c, 998);
+                return FALSE;
             }
 
             message_call_state state{};
             state.window = combo_box;
             state.message = k_cb_getcomboboxinfo;
             dispatch_window_message(c, callback_id::NtUserGetComboBoxInfo, std::move(state), *win, k_cb_getcomboboxinfo, 0, combo_box_info);
-            return {};
+            return FALSE;
         }
 
         BOOL completion_NtUserGetComboBoxInfo(const syscall_context& c, const hwnd /*combo_box*/, const emulator_pointer /*combo_box_info*/)
@@ -4893,6 +4971,14 @@ namespace sogen
 
             unlink_from_parent();
 
+            const auto* previous_parent = c.proc.windows.get(old_parent);
+            if (effective_parent->handle == desktop && previous_parent &&
+                utils::string::equals_ignore_case(std::u16string_view{child->class_name}, std::u16string_view{u"ComboLBox"}) &&
+                normalize_builtin_window_class_name(previous_parent->class_name) == u"ComboBox")
+            {
+                child->owner_handle = previous_parent->handle;
+            }
+
             child->parent_handle = effective_parent->handle;
             child->guest.access([&](USER_WINDOW& guest_win) {
                 guest_win.spwndParent = effective_parent->guest.value();
@@ -5504,6 +5590,12 @@ namespace sogen
                 return FALSE;
             }
 
+            if (win->system_menu_handle != 0 && win->system_menu_handle != menu)
+            {
+                std::unordered_set<hmenu> visited{menu};
+                destroy_menu_tree(c, win->system_menu_handle, visited);
+            }
+
             win->system_menu_handle = menu;
             return TRUE;
         }
@@ -5572,13 +5664,17 @@ namespace sogen
                 return 0;
             }
 
-            if (revert != FALSE && win->system_menu_handle != 0)
+            if (revert != FALSE)
             {
-                if (auto* menu = c.proc.menus.get(win->system_menu_handle))
+                if (win->system_menu_handle != 0)
                 {
-                    menu->items.clear();
-                    menu->sync_guest_items(c.win_emu.memory);
+                    std::unordered_set<hmenu> visited;
+                    destroy_menu_tree(c, win->system_menu_handle, visited);
                 }
+
+                win->system_menu_handle = 0;
+                (void)ensure_system_menu(c, *win);
+                return 0;
             }
 
             return ensure_system_menu(c, *win);
@@ -6235,14 +6331,8 @@ namespace sogen
 
         BOOL handle_NtUserDestroyMenu(const syscall_context& c, const hmenu menu)
         {
-            auto* m = c.proc.menus.get(menu);
-            if (!m)
-            {
-                return FALSE;
-            }
-
-            m->release_guest_backing(c.win_emu.memory);
-            return c.proc.menus.erase(menu) ? TRUE : FALSE;
+            std::unordered_set<hmenu> visited;
+            return destroy_menu_tree(c, menu, visited) ? TRUE : FALSE;
         }
 
         BOOL handle_NtUserDrawMenuBar(const syscall_context& c, const hwnd hwnd)
@@ -6317,14 +6407,46 @@ namespace sogen
             }
             else
             {
-                const auto entry =
-                    std::ranges::find_if(menu_object->items, [&](const menu_item& candidate) { return candidate.id == item; });
-                if (entry == menu_object->items.end())
+                std::vector<hmenu> pending{menu};
+                std::unordered_set<hmenu> visited{};
+                bool found = false;
+
+                while (!pending.empty() && !found)
+                {
+                    const hmenu current_handle = pending.back();
+                    pending.pop_back();
+                    if (!visited.insert(current_handle).second)
+                    {
+                        continue;
+                    }
+
+                    auto* current_menu = c.proc.menus.get(current_handle);
+                    if (!current_menu)
+                    {
+                        continue;
+                    }
+
+                    for (size_t current_index = 0; current_index < current_menu->items.size(); ++current_index)
+                    {
+                        const auto& candidate = current_menu->items[current_index];
+                        if (candidate.submenu != 0)
+                        {
+                            pending.push_back(candidate.submenu);
+                        }
+                        else if (candidate.id == item)
+                        {
+                            menu_object = current_menu;
+                            index = current_index;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!found)
                 {
                     return -1;
                 }
-
-                index = static_cast<size_t>(std::distance(menu_object->items.begin(), entry));
             }
 
             auto& menu_item = menu_object->items[index];

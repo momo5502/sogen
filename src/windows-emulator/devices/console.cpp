@@ -26,7 +26,7 @@ namespace sogen
             get_console_screen_buffer_info = 0x02000007,
         };
 
-        constexpr uint32_t default_input_mode = 0x007F;
+        constexpr uint32_t default_input_mode = 0x00F7;
         constexpr uint32_t default_output_mode = 0x0003;
 
         enum class fill_console_output_type : uint32_t

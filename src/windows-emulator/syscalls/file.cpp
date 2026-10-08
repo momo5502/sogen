@@ -133,7 +133,28 @@ namespace sogen
                 auto* device = c.proc.devices.get(file_handle);
                 if (!device)
                 {
-                    return STATUS_INVALID_HANDLE;
+                    if (info_class == FileCompletionInformation)
+                    {
+                        if (length < sizeof(file_completion_information))
+                        {
+                            return STATUS_INFO_LENGTH_MISMATCH;
+                        }
+
+                        const auto info = c.emu.read_memory<file_completion_information>(file_information);
+                        return device->set_completion_association(c.proc, c.vcpu.active_thread, info.completion_port, info.completion_key);
+                    }
+
+                    if (info_class == FileIoCompletionNotificationInformation)
+                    {
+                        if (length < sizeof(ULONG))
+                        {
+                            return STATUS_INFO_LENGTH_MISMATCH;
+                        }
+
+                        device->set_completion_notification_flags(c.emu.read_memory<ULONG>(file_information));
+                    }
+
+                    return STATUS_SUCCESS;
                 }
 
                 if (info_class == FileCompletionInformation)
@@ -321,7 +342,7 @@ namespace sogen
             case FileFsDeviceInformation:
                 return handle_query<FILE_FS_DEVICE_INFORMATION>(
                     c.emu, fs_information, length, io_status_block, [&](FILE_FS_DEVICE_INFORMATION& info) {
-                        if (file_handle == STDIN_HANDLE || file_handle == STDOUT_HANDLE || file_handle == CONSOLE_HANDLE)
+                        if (file_handle == STDOUT_HANDLE || file_handle == STDIN_HANDLE || file_handle == CONSOLE_HANDLE)
                         {
                             info.DeviceType = FILE_DEVICE_CONSOLE;
                             info.Characteristics = 0x20000;
@@ -1807,6 +1828,8 @@ namespace sogen
                                      ULONG /*share_access*/, ULONG create_disposition, ULONG create_options, uint64_t ea_buffer,
                                      ULONG ea_length)
         {
+            constexpr ULONG file_opened = 1;
+
             if (create_options & FILE_DELETE_ON_CLOSE && !(desired_access & DELETE))
             {
                 return STATUS_INVALID_PARAMETER;
@@ -1830,19 +1853,26 @@ namespace sogen
                 const auto* root_pipe = root_container ? root_container->get_internal_device<named_pipe>() : nullptr;
                 if (root_pipe)
                 {
-                    c.win_emu.callbacks.on_generic_access("Opening anonymous pipe", filename);
+                    c.win_emu.callbacks.on_generic_access("Opening anonymous pipe", root_pipe->name);
 
                     io_device_creation_data data{};
                     io_device_container container{u"NamedPipe", c.win_emu, data};
                     auto* pipe_device = container.get_internal_device<named_pipe>();
                     pipe_device->name = root_pipe->name;
                     pipe_device->access = desired_access;
+                    pipe_device->pipe_type = root_pipe->pipe_type;
+                    pipe_device->read_mode = root_pipe->read_mode;
+                    pipe_device->completion_mode = root_pipe->completion_mode;
+                    pipe_device->max_instances = root_pipe->max_instances;
+                    pipe_device->inbound_quota = root_pipe->inbound_quota;
+                    pipe_device->outbound_quota = root_pipe->outbound_quota;
+                    pipe_device->default_timeout = root_pipe->default_timeout;
 
                     file_handle.write(c.proc.devices.store(std::move(container)));
 
                     IO_STATUS_BLOCK<EmulatorTraits<Emu64>> iosb{};
                     iosb.Status = STATUS_SUCCESS;
-                    iosb.Information = 1;
+                    iosb.Information = file_opened;
                     io_status_block.write(iosb);
                     return STATUS_SUCCESS;
                 }
@@ -2323,7 +2353,6 @@ namespace sogen
         {
             constexpr ULONG file_created = 2;
 
-            (void)desired_access;
             (void)share_access;
             (void)create_disposition;
             (void)create_options;
@@ -2345,14 +2374,15 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
 
-            c.win_emu.callbacks.on_generic_access("Creating named pipe", filename);
+            const auto& pipe_name = anonymous_pipe ? root_pipe->name : filename;
+            c.win_emu.callbacks.on_generic_access("Creating named pipe", pipe_name);
 
             io_device_creation_data data{};
             io_device_container container{u"NamedPipe", c.win_emu, data};
 
             if (auto* pipe_device = container.get_internal_device<named_pipe>())
             {
-                pipe_device->name = anonymous_pipe ? root_pipe->name : filename;
+                pipe_device->name = pipe_name;
                 pipe_device->access = desired_access;
                 pipe_device->pipe_type = named_pipe_type;
                 pipe_device->read_mode = read_mode;

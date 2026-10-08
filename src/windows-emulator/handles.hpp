@@ -37,8 +37,8 @@ namespace sogen
             process,
             accelerator_table,
             managed_thread,
-            deferred_window_positions,
             job,
+            deferred_window_positions,
         };
     };
 
