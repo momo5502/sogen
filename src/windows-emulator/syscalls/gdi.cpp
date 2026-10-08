@@ -1653,18 +1653,6 @@ namespace sogen
             }
         }
 
-        bool set_gdi_region_rect(const syscall_context& c, const handle region, const RECT& rect)
-        {
-            uint64_t region_attr = 0;
-            if (!get_gdi_object_address(c, static_cast<uint32_t>(region.bits), k_gdi_region_type, region_attr))
-            {
-                return false;
-            }
-
-            c.emu.write_memory(region_attr, &rect, sizeof(rect));
-            return true;
-        }
-
         // Returns the surface a paint DC should be presented to, and (via present_handle) the host window handle it
         // belongs to (the top-level window for child controls). Used by NtUserEndPaint to flush guest paint output.
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, const hdc dc, uint32_t& present_handle)
@@ -3334,6 +3322,13 @@ namespace sogen
                 !c.win_emu.memory.try_read_memory(second_attr, &second_rect, sizeof(second_rect)))
             {
                 return FALSE;
+            }
+
+            const auto first_empty = first_rect.left >= first_rect.right || first_rect.top >= first_rect.bottom;
+            const auto second_empty = second_rect.left >= second_rect.right || second_rect.top >= second_rect.bottom;
+            if (first_empty || second_empty)
+            {
+                return first_empty == second_empty ? TRUE : FALSE;
             }
 
             return first_rect.left == second_rect.left && first_rect.top == second_rect.top && first_rect.right == second_rect.right &&

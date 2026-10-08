@@ -1663,7 +1663,6 @@ namespace sogen
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
         hdc create_gdi_window_dc(const syscall_context& c, hwnd window);
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
-        bool set_gdi_region_rect(const syscall_context& c, handle region, const RECT& rect);
         BOOL handle_NtGdiFlush(const syscall_context& c);
         BOOL handle_NtGdiPatBlt(const syscall_context& c, hdc dc, LONG x, LONG y, LONG width, LONG height, DWORD rop);
         uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, hdc dc, uint32_t brush, emulator_pointer old_brush_ptr);
@@ -3584,6 +3583,15 @@ namespace sogen
 
             if (s.phase == window_create_phase::cbt_create)
             {
+                if (c.get_callback_result<lresult>() != 0)
+                {
+                    release_window_create_allocations();
+                    c.win_emu.ui().destroy_window(win->handle);
+                    c.proc.gdi_window_surfaces.erase(static_cast<uint32_t>(win->handle));
+                    (void)c.proc.windows.erase(s.handle);
+                    return 0;
+                }
+
                 s.phase = window_create_phase::creation_messages;
                 dispatch_next_message(c, callback_id::NtUserCreateWindowEx, std::move(s), *win, s.message_queue);
                 return {};
@@ -4342,17 +4350,6 @@ namespace sogen
             }
 
             return win->update_pending ? TRUE : FALSE;
-        }
-
-        int32_t handle_NtUserGetUpdateRgn(const syscall_context& c, const hwnd hwnd, const handle region, const BOOL /*erase*/)
-        {
-            const auto* win = c.proc.windows.get(hwnd);
-            if (!win || !set_gdi_region_rect(c, region, win->update_pending ? win->update_rect : RECT{}))
-            {
-                return 0;
-            }
-
-            return win->update_pending ? 2 : 1;
         }
 
         void collect_pending_paint_tree(const syscall_context& c, window& win, std::vector<uint64_t>& order)
