@@ -58,7 +58,7 @@ jobs:
               return;
             }
 
-            await new Promise((resolve) => setTimeout(resolve, 90_000));
+            await new Promise((resolve) => setTimeout(resolve, 60_000));
             core.setOutput("should_run", (await hasOpenPullRequest()) ? "false" : "true");
 
   ci:
