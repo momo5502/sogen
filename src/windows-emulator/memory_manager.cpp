@@ -611,8 +611,9 @@ namespace sogen
             return false;
         }
 
-        if (memory_region_policy::is_section_kind(entry->second.kind) &&
-            !(allow_image_section && entry->second.kind == memory_region_kind::section_image))
+        const auto can_commit_section = entry->second.kind == memory_region_kind::pagefile_section_view ||
+                                        (allow_image_section && entry->second.kind == memory_region_kind::section_image);
+        if (memory_region_policy::is_section_kind(entry->second.kind) && !can_commit_section)
         {
             return false;
         }
