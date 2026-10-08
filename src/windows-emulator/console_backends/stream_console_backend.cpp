@@ -17,7 +17,7 @@ namespace sogen
             }
 
 #ifdef OS_WINDOWS
-            const auto input = GetStdHandle(STD_INPUT_HANDLE);
+            auto* const input = GetStdHandle(STD_INPUT_HANDLE);
             if (input == nullptr || input == INVALID_HANDLE_VALUE)
             {
                 return false;
