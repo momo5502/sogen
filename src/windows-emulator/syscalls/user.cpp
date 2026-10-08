@@ -5817,6 +5817,75 @@ namespace sogen
             return static_cast<int32_t>(previous_state);
         }
 
+        int32_t handle_NtUserCheckMenuItem(const syscall_context& c, const hmenu menu, const UINT item, const UINT check)
+        {
+            auto* menu_object = c.proc.menus.get(menu);
+            if (!menu_object)
+            {
+                return -1;
+            }
+
+            size_t index{};
+            if ((check & MF_BYPOSITION) != 0)
+            {
+                if (item >= menu_object->items.size())
+                {
+                    return -1;
+                }
+
+                index = item;
+            }
+            else
+            {
+                std::vector<hmenu> pending{menu};
+                std::unordered_set<hmenu> visited{};
+                bool found = false;
+
+                while (!pending.empty() && !found)
+                {
+                    const hmenu current_handle = pending.back();
+                    pending.pop_back();
+                    if (!visited.insert(current_handle).second)
+                    {
+                        continue;
+                    }
+
+                    auto* current_menu = c.proc.menus.get(current_handle);
+                    if (!current_menu)
+                    {
+                        continue;
+                    }
+
+                    for (size_t current_index = 0; current_index < current_menu->items.size(); ++current_index)
+                    {
+                        const auto& candidate = current_menu->items[current_index];
+                        if (candidate.submenu != 0)
+                        {
+                            pending.push_back(candidate.submenu);
+                        }
+                        else if (candidate.id == item)
+                        {
+                            menu_object = current_menu;
+                            index = current_index;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!found)
+                {
+                    return -1;
+                }
+            }
+
+            auto& menu_item = menu_object->items[index];
+            const UINT previous_state = menu_item.state & MF_CHECKED;
+            menu_item.state = (menu_item.state & ~MF_CHECKED) | (check & MF_CHECKED);
+            menu_object->sync_guest_item(c.win_emu.memory, index);
+            return static_cast<int32_t>(previous_state);
+        }
+
         BOOL handle_NtUserCreateCaret()
         {
             return TRUE;
