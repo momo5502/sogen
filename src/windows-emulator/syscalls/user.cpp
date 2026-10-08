@@ -5837,14 +5837,46 @@ namespace sogen
             }
             else
             {
-                const auto entry =
-                    std::ranges::find_if(menu_object->items, [&](const menu_item& candidate) { return candidate.id == item; });
-                if (entry == menu_object->items.end())
+                std::vector<hmenu> pending{menu};
+                std::unordered_set<hmenu> visited{};
+                bool found = false;
+
+                while (!pending.empty() && !found)
+                {
+                    const hmenu current_handle = pending.back();
+                    pending.pop_back();
+                    if (!visited.insert(current_handle).second)
+                    {
+                        continue;
+                    }
+
+                    auto* current_menu = c.proc.menus.get(current_handle);
+                    if (!current_menu)
+                    {
+                        continue;
+                    }
+
+                    for (size_t current_index = 0; current_index < current_menu->items.size(); ++current_index)
+                    {
+                        const auto& candidate = current_menu->items[current_index];
+                        if (candidate.submenu != 0)
+                        {
+                            pending.push_back(candidate.submenu);
+                        }
+                        else if (candidate.id == item)
+                        {
+                            menu_object = current_menu;
+                            index = current_index;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!found)
                 {
                     return -1;
                 }
-
-                index = static_cast<size_t>(std::distance(menu_object->items.begin(), entry));
             }
 
             auto& menu_item = menu_object->items[index];
