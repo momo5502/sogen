@@ -21,7 +21,7 @@ namespace sogen
             get_console_screen_buffer_info = 0x02000007,
         };
 
-        constexpr uint32_t default_input_mode = 0x007F;
+        constexpr uint32_t default_input_mode = 0x00F7;
         constexpr uint32_t default_output_mode = 0x0003;
 
         enum class fill_console_output_type : uint32_t
@@ -149,7 +149,8 @@ namespace sogen
                 switch (static_cast<console_api>(message.api_number))
                 {
                 case console_api::get_console_mode: {
-                    if (message.data_size != sizeof(uint32_t))
+                    if ((header.target_handle != STDIN_HANDLE.h && header.target_handle != STDOUT_HANDLE.h) ||
+                        message.data_size != sizeof(uint32_t))
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
@@ -160,7 +161,8 @@ namespace sogen
                 }
 
                 case console_api::set_console_mode: {
-                    if (message.data_size != sizeof(uint32_t))
+                    if ((header.target_handle != STDIN_HANDLE.h && header.target_handle != STDOUT_HANDLE.h) ||
+                        message.data_size != sizeof(uint32_t))
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
@@ -190,7 +192,7 @@ namespace sogen
                 }
 
                 case console_api::fill_console_output: {
-                    if (message.data_size != sizeof(fill_console_output_request))
+                    if (header.target_handle != STDOUT_HANDLE.h || message.data_size != sizeof(fill_console_output_request))
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
@@ -211,7 +213,7 @@ namespace sogen
                 }
 
                 case console_api::set_console_cursor_position:
-                    if (message.data_size != sizeof(cursor_position_))
+                    if (header.target_handle != STDOUT_HANDLE.h || message.data_size != sizeof(cursor_position_))
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
@@ -220,7 +222,7 @@ namespace sogen
                     return STATUS_SUCCESS;
 
                 case console_api::set_console_text_attribute: {
-                    if (message.data_size != sizeof(text_attributes_))
+                    if (header.target_handle != STDOUT_HANDLE.h || message.data_size != sizeof(text_attributes_))
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
@@ -230,7 +232,7 @@ namespace sogen
                 }
 
                 case console_api::get_console_screen_buffer_info: {
-                    if (message.data_size != sizeof(console_screen_buffer_info_response))
+                    if (header.target_handle != STDOUT_HANDLE.h || message.data_size != sizeof(console_screen_buffer_info_response))
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
