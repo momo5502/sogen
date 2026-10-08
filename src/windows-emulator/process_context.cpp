@@ -701,6 +701,7 @@ namespace sogen
         buffer.write(this->zw_callback_return);
         buffer.write(this->dispatch_client_message);
         buffer.write(this->gdi_default_dc_handle);
+        buffer.write_map(this->pending_alpc_reply_views);
         buffer.write_map(this->gdi_dc_states);
         buffer.write_map(this->gdi_dc_save_states);
         buffer.write_map(this->gdi_bitmap_surfaces);
@@ -803,6 +804,7 @@ namespace sogen
         buffer.read(this->zw_callback_return);
         buffer.read(this->dispatch_client_message);
         buffer.read(this->gdi_default_dc_handle);
+        buffer.read_map(this->pending_alpc_reply_views);
         buffer.read_map(this->gdi_dc_states);
         buffer.read_map(this->gdi_dc_save_states);
         buffer.read_map(this->gdi_bitmap_surfaces);

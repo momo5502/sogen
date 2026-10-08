@@ -132,3 +132,11 @@ include(zstd.cmake)
 ##########################################
 
 include("${PROJECT_SOURCE_DIR}/cmake/fex.cmake")
+
+set(MBEDTLS_TARGET_PREFIX "sogen_")
+set(ENABLE_PROGRAMS OFF)
+set(ENABLE_TESTING OFF)
+set(GEN_FILES OFF)
+set(USE_STATIC_MBEDTLS_LIBRARY ON)
+set(USE_SHARED_MBEDTLS_LIBRARY OFF)
+add_subdirectory(mbedtls)

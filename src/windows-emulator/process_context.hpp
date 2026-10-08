@@ -576,6 +576,7 @@ namespace sogen
         // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)
         // rather than reading the handle attribute directly. Transient (valid only until the next reply).
         std::vector<alpc_reply_handle> pending_alpc_message_handles{};
+        std::map<uint32_t, std::vector<std::array<uint64_t, 2>>> pending_alpc_reply_views{};
 
         // The guest event a WASAPI EVENTCALLBACK client registered via SetEventHandle on its render endpoint.
         // The audio render thread signals it at the device rate so the client's render loop wakes and refills the
