@@ -1378,6 +1378,7 @@ namespace sogen
 
         if (this->vcpu_count_ > 1)
         {
+            this->ui_backend_->pump_events();
             // One worker thread per vCPU; this thread pumps UI events until the run ends.
             active_workers = this->vcpu_count_;
             workers.reserve(this->vcpu_count_);

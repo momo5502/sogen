@@ -1,4 +1,5 @@
 #include "vulkan_host.hpp"
+#include "../vulkan_handle_utils.hpp"
 
 #include <address_utils.hpp>
 
@@ -46,6 +47,12 @@ namespace sogen
             std::string_view{"VK_KHR_external_fence_win32"},     //
             std::string_view{"VK_KHR_win32_keyed_mutex"},        //
             std::string_view{"VK_EXT_full_screen_exclusive"},    //
+            std::string_view{"VK_EXT_swapchain_maintenance1"},   //
+            std::string_view{"VK_KHR_swapchain_mutable_format"}, //
+            std::string_view{"VK_KHR_present_id"},               //
+            std::string_view{"VK_KHR_present_wait"},             //
+            std::string_view{"VK_GOOGLE_display_timing"},        //
+            std::string_view{"VK_EXT_hdr_metadata"},             //
             std::string_view{"VK_NV_low_latency2"},              //
         };
 
@@ -119,26 +126,6 @@ namespace sogen
             }
 
             return size <= allocation_size - offset;
-        }
-
-        // The swapchain readback/present path assumes a 32-bit (4 bytes/texel) color format end to end:
-        // the readback buffer is sized width*height*4 and the present copy converts to BGRA8. Restricting
-        // swapchain formats to 4-byte formats keeps the present-time vkCmdCopyImageToBuffer (which writes
-        // width*height*texelSize bytes) from ever exceeding that buffer. The guest picks the format.
-        bool is_supported_swapchain_format(const VkFormat format)
-        {
-            switch (format)
-            {
-            case VK_FORMAT_B8G8R8A8_UNORM:
-            case VK_FORMAT_B8G8R8A8_SRGB:
-            case VK_FORMAT_R8G8B8A8_UNORM:
-            case VK_FORMAT_R8G8B8A8_SRGB:
-            case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
-            case VK_FORMAT_A2R10G10B10_UNORM_PACK32:
-                return true;
-            default:
-                return false;
-            }
         }
 
         // VkPhysicalDeviceProperties crosses the 32/64-bit ABI boundary unchanged except for
@@ -215,6 +202,11 @@ namespace sogen
             PFN_vkGetPhysicalDeviceFeatures2 get_physical_device_features2{};
             PFN_vkGetPhysicalDeviceProperties2 get_physical_device_properties2{};
             PFN_vkEnumerateDeviceExtensionProperties enumerate_device_extension_properties{};
+            PFN_vkDestroySurfaceKHR destroy_surface{};
+            PFN_vkGetPhysicalDeviceSurfaceSupportKHR get_surface_support{};
+            PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR get_surface_capabilities{};
+            PFN_vkGetPhysicalDeviceSurfaceFormatsKHR get_surface_formats{};
+            PFN_vkGetPhysicalDeviceSurfacePresentModesKHR get_surface_present_modes{};
             PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR get_cooperative_matrix_properties{};
             PFN_vkGetPhysicalDeviceFragmentShadingRatesKHR get_fragment_shading_rates{};
             PFN_vkGetPhysicalDeviceCalibrateableTimeDomainsKHR get_calibrateable_time_domains{};
@@ -306,6 +298,11 @@ namespace sogen
             PFN_vkGetBufferDeviceAddress get_buffer_device_address{};
             PFN_vkQueueSubmit queue_submit{};
             PFN_vkQueueSubmit2 queue_submit2{};
+            PFN_vkCreateSwapchainKHR create_swapchain{};
+            PFN_vkDestroySwapchainKHR destroy_swapchain{};
+            PFN_vkGetSwapchainImagesKHR get_swapchain_images{};
+            PFN_vkAcquireNextImageKHR acquire_next_image{};
+            PFN_vkQueuePresentKHR queue_present{};
             PFN_vkAllocateMemory allocate_memory{};
             PFN_vkFreeMemory free_memory{};
             PFN_vkGetDeviceMemoryCommitment get_device_memory_commitment{};
@@ -429,34 +426,18 @@ namespace sogen
             PFN_vkCmdSetPrimitiveRestartEnable cmd_set_primitive_restart_enable{};
         };
 
-        // A guest-side window-system surface. There is no real host VkSurfaceKHR (the host driver may
-        // lack Win32 WSI); the bridge only needs the guest HWND to present readback pixels to.
         struct surface_data
         {
-            uint64_t hwnd{};
+            VkSurfaceKHR handle{};
+            uint64_t instance_id{};
         };
 
-        // A swapchain is modeled as N offscreen images plus a host-visible readback buffer. "Presenting"
-        // copies the chosen image into the readback buffer; the bridge then hands those pixels to the
-        // guest window via the UI backend. No real presentation engine is involved.
         struct swapchain_data
         {
+            VkSwapchainKHR handle{};
             uint64_t device_id{};
-            uint64_t hwnd{};
-            uint32_t width{};
-            uint32_t height{};
-            VkFormat format{};
-            std::vector<uint64_t> image_ids{}; // entries in `images`, owned by this swapchain
-            std::vector<VkDeviceMemory> image_memory{};
-            VkBuffer readback_buffer{};
-            VkDeviceMemory readback_memory{};
-            VkCommandPool present_pool{};
-            VkCommandBuffer present_cmd{};
-            VkFence present_fence{};
-            uint32_t next_image{};
-            // The device work loop polls this copy so the frame can be displayed without waiting for
-            // another guest present.
-            bool present_in_flight{};
+            uint64_t surface_id{};
+            std::vector<uint64_t> image_ids{};
         };
 
         std::unordered_map<uint64_t, instance_data> instances;
@@ -523,6 +504,7 @@ namespace sogen
             VkImage handle{};
             uint64_t device_id{};
             uint32_t samples{1};
+            bool owned{true};
         };
 
         struct sampler_data
@@ -645,26 +627,6 @@ namespace sogen
         std::unordered_map<uint64_t, descriptor_set_data> descriptor_sets;
         uint64_t next_id{1};
 
-        static bool drain_readback(swapchain_data& sc, device_data& dev, vulkan_host::presented_frame& frame)
-        {
-            const auto readback_size = static_cast<VkDeviceSize>(sc.width) * sc.height * 4;
-            void* mapped = nullptr;
-            if (dev.map_memory(dev.handle, sc.readback_memory, 0, readback_size, 0, &mapped) != VK_SUCCESS || !mapped)
-            {
-                sc.present_in_flight = false;
-                return false;
-            }
-
-            frame.pixels.resize(static_cast<size_t>(readback_size));
-            std::memcpy(frame.pixels.data(), mapped, frame.pixels.size());
-            dev.unmap_memory(dev.handle, sc.readback_memory);
-            frame.width = sc.width;
-            frame.height = sc.height;
-            frame.hwnd = sc.hwnd;
-            sc.present_in_flight = false;
-            return true;
-        }
-
         // Picks the first memory type set in `type_bits` that has all `required` property flags, using
         // the memory properties of the device's physical device. Returns UINT32_MAX if none qualifies.
         uint32_t find_memory_type(const device_data& dev, uint32_t type_bits, VkMemoryPropertyFlags required)
@@ -769,8 +731,6 @@ namespace sogen
             }
         }
 
-        // Frees every Vulkan resource a swapchain owns (offscreen images + memory, readback buffer +
-        // memory, present command pool/fence) and removes its images from the `images` table.
         void destroy_swapchain_resources(swapchain_data& sc)
         {
             const auto dev_it = this->devices.find(sc.device_id);
@@ -778,56 +738,18 @@ namespace sogen
             {
                 return;
             }
-            device_data& dev = dev_it->second;
-
-            // A deferred present copy may still be in flight on the GPU; wait it out before tearing down
-            // the command pool / fence / buffer it uses.
-            if (sc.present_in_flight && dev.get_fence_status && dev.queue_wait_idle &&
-                dev.get_fence_status(dev.handle, sc.present_fence) != VK_SUCCESS)
-            {
-                // No queue handle here, so flush the whole device instead.
-                if (dev.device_wait_idle)
-                {
-                    dev.device_wait_idle(dev.handle);
-                }
-            }
-            sc.present_in_flight = false;
 
             for (const uint64_t image_id : sc.image_ids)
             {
-                const auto img = this->images.find(image_id);
-                if (img != this->images.end())
-                {
-                    if (img->second.handle && dev.destroy_image)
-                    {
-                        dev.destroy_image(dev.handle, img->second.handle, nullptr);
-                    }
-                    this->images.erase(img);
-                }
+                this->images.erase(image_id);
             }
-            for (VkDeviceMemory memory : sc.image_memory)
+            sc.image_ids.clear();
+
+            if (sc.handle && dev_it->second.destroy_swapchain)
             {
-                if (memory && dev.free_memory)
-                {
-                    dev.free_memory(dev.handle, memory, nullptr);
-                }
+                dev_it->second.destroy_swapchain(dev_it->second.handle, sc.handle, nullptr);
             }
-            if (sc.present_fence && dev.destroy_fence)
-            {
-                dev.destroy_fence(dev.handle, sc.present_fence, nullptr);
-            }
-            if (sc.present_pool && dev.destroy_command_pool)
-            {
-                dev.destroy_command_pool(dev.handle, sc.present_pool, nullptr); // also frees present_cmd
-            }
-            if (sc.readback_buffer && dev.destroy_buffer)
-            {
-                dev.destroy_buffer(dev.handle, sc.readback_buffer, nullptr);
-            }
-            if (sc.readback_memory && dev.free_memory)
-            {
-                dev.free_memory(dev.handle, sc.readback_memory, nullptr);
-            }
+            sc.handle = VK_NULL_HANDLE;
         }
 
         void erase_device(uint64_t device_id)
@@ -836,21 +758,6 @@ namespace sogen
             if (it == this->devices.end())
             {
                 return;
-            }
-
-            // Tear down swapchains first: they own offscreen images (in the `images` table), a readback
-            // buffer, and a present command pool/fence that must go before the device.
-            for (auto sc = this->swapchains.begin(); sc != this->swapchains.end();)
-            {
-                if (sc->second.device_id == device_id)
-                {
-                    this->destroy_swapchain_resources(sc->second);
-                    sc = this->swapchains.erase(sc);
-                }
-                else
-                {
-                    ++sc;
-                }
             }
 
             // Descriptor pools (which free their sets) before descriptor set layouts those sets used.
@@ -947,6 +854,19 @@ namespace sogen
             this->erase_owned(this->query_pools, [&](const query_pool_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->shader_modules, [&](const shader_module_data& d) { return d.device_id == device_id; });
 
+            for (auto sc = this->swapchains.begin(); sc != this->swapchains.end();)
+            {
+                if (sc->second.device_id == device_id)
+                {
+                    this->destroy_swapchain_resources(sc->second);
+                    sc = this->swapchains.erase(sc);
+                }
+                else
+                {
+                    ++sc;
+                }
+            }
+
             // Destroy GPU-owned children (pools free their command buffers; fences are freed) before
             // the device itself.
             for (auto& [id, pool] : this->command_pools)
@@ -987,7 +907,7 @@ namespace sogen
             }
             for (auto& [id, image] : this->images)
             {
-                if (image.device_id == device_id && image.handle && it->second.destroy_image)
+                if (image.device_id == device_id && image.owned && image.handle && it->second.destroy_image)
                 {
                     it->second.destroy_image(it->second.handle, image.handle, nullptr);
                 }
@@ -1060,13 +980,20 @@ namespace sogen
 
         ~impl()
         {
-            for (auto& [id, device] : this->devices)
+            while (!this->devices.empty())
             {
-                if (device.handle && device.destroy_device)
+                this->erase_device(this->devices.begin()->first);
+            }
+
+            for (const auto& [id, surface] : this->surfaces)
+            {
+                const auto instance = this->instances.find(surface.instance_id);
+                if (instance != this->instances.end() && surface.handle && instance->second.destroy_surface)
                 {
-                    device.destroy_device(device.handle, nullptr);
+                    instance->second.destroy_surface(instance->second.handle, surface.handle, nullptr);
                 }
             }
+            this->surfaces.clear();
 
             for (auto& [id, instance] : this->instances)
             {
@@ -1101,7 +1028,7 @@ namespace sogen
         return this->impl_->create_instance != nullptr;
     }
 
-    int32_t vulkan_host::create_instance(uint64_t& out_instance)
+    int32_t vulkan_host::create_instance(std::span<const std::string> extensions, uint64_t& out_instance)
     {
         out_instance = 0;
 
@@ -1124,14 +1051,34 @@ namespace sogen
         app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
         app_info.apiVersion = api_version;
 
+        std::vector<const char*> extension_names;
+        extension_names.reserve(extensions.size());
+        VkInstanceCreateFlags instance_flags = 0;
+        for (const auto& extension : extensions)
+        {
+            if (extension.empty())
+            {
+                continue;
+            }
+            extension_names.push_back(extension.c_str());
+#ifdef VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME
+            if (extension == VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)
+            {
+                instance_flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            }
+#endif
+        }
+
         VkInstanceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+        create_info.flags = instance_flags;
         create_info.pApplicationInfo = &app_info;
+        create_info.enabledExtensionCount = static_cast<uint32_t>(extension_names.size());
+        create_info.ppEnabledExtensionNames = extension_names.empty() ? nullptr : extension_names.data();
 
         // With a portability driver installed (MoltenVK on macOS) the loader fails vkCreateInstance with
         // VK_ERROR_INCOMPATIBLE_DRIVER unless the caller enables VK_KHR_portability_enumeration and sets
         // VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR.
-        std::vector<const char*> instance_extensions;
         if (const auto enumerate_instance_extensions = reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
                 this->impl_->get_instance_proc_addr(nullptr, "vkEnumerateInstanceExtensionProperties")))
         {
@@ -1151,17 +1098,14 @@ namespace sogen
             const bool has_portability_enumeration = std::ranges::any_of(available, [](const VkExtensionProperties& ext) {
                 return std::string_view{static_cast<const char*>(ext.extensionName)} == VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
             });
-            if (has_portability_enumeration)
+            if (has_portability_enumeration && (create_info.flags & VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR) == 0)
             {
-                instance_extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+                extension_names.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
                 create_info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
             }
         }
-        if (!instance_extensions.empty())
-        {
-            create_info.enabledExtensionCount = static_cast<uint32_t>(instance_extensions.size());
-            create_info.ppEnabledExtensionNames = instance_extensions.data();
-        }
+        create_info.enabledExtensionCount = static_cast<uint32_t>(extension_names.size());
+        create_info.ppEnabledExtensionNames = extension_names.empty() ? nullptr : extension_names.data();
 
         VkInstance instance{};
         const VkResult result = this->impl_->create_instance(&create_info, nullptr, &instance);
@@ -1195,6 +1139,15 @@ namespace sogen
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceProperties2>(instance, "vkGetPhysicalDeviceProperties2");
         data.enumerate_device_extension_properties =
             this->impl_->load_instance_proc<PFN_vkEnumerateDeviceExtensionProperties>(instance, "vkEnumerateDeviceExtensionProperties");
+        data.destroy_surface = this->impl_->load_instance_proc<PFN_vkDestroySurfaceKHR>(instance, "vkDestroySurfaceKHR");
+        data.get_surface_support =
+            this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceSurfaceSupportKHR>(instance, "vkGetPhysicalDeviceSurfaceSupportKHR");
+        data.get_surface_capabilities = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR>(
+            instance, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR");
+        data.get_surface_formats =
+            this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceSurfaceFormatsKHR>(instance, "vkGetPhysicalDeviceSurfaceFormatsKHR");
+        data.get_surface_present_modes = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceSurfacePresentModesKHR>(
+            instance, "vkGetPhysicalDeviceSurfacePresentModesKHR");
         data.get_cooperative_matrix_properties = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR>(
             instance, "vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR");
         data.get_fragment_shading_rates = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceFragmentShadingRatesKHR>(
@@ -1213,6 +1166,18 @@ namespace sogen
         this->impl_->instances.emplace(id, data);
         out_instance = id;
         return VK_SUCCESS;
+    }
+
+    bool vulkan_host::get_native_instance_handle(uint64_t instance, uint64_t& out_handle) const
+    {
+        out_handle = 0;
+        const auto it = this->impl_->instances.find(instance);
+        if (it == this->impl_->instances.end() || !it->second.handle)
+        {
+            return false;
+        }
+        out_handle = reinterpret_cast<uint64_t>(it->second.handle);
+        return true;
     }
 
     void vulkan_host::destroy_instance(uint64_t instance)
@@ -1235,6 +1200,22 @@ namespace sogen
         for (const uint64_t device_id : owned_devices)
         {
             this->impl_->erase_device(device_id);
+        }
+
+        for (auto surface = this->impl_->surfaces.begin(); surface != this->impl_->surfaces.end();)
+        {
+            if (surface->second.instance_id == instance)
+            {
+                if (surface->second.handle && it->second.destroy_surface)
+                {
+                    it->second.destroy_surface(it->second.handle, surface->second.handle, nullptr);
+                }
+                surface = this->impl_->surfaces.erase(surface);
+            }
+            else
+            {
+                ++surface;
+            }
         }
 
         if (it->second.handle && it->second.destroy_instance)
@@ -2184,6 +2165,11 @@ namespace sogen
             data.get_fence_status = reinterpret_cast<PFN_vkGetFenceStatus>(resolve("vkGetFenceStatus"));
             data.queue_submit = reinterpret_cast<PFN_vkQueueSubmit>(resolve("vkQueueSubmit"));
             data.queue_submit2 = reinterpret_cast<PFN_vkQueueSubmit2>(resolve("vkQueueSubmit2"));
+            data.create_swapchain = reinterpret_cast<PFN_vkCreateSwapchainKHR>(resolve("vkCreateSwapchainKHR"));
+            data.destroy_swapchain = reinterpret_cast<PFN_vkDestroySwapchainKHR>(resolve("vkDestroySwapchainKHR"));
+            data.get_swapchain_images = reinterpret_cast<PFN_vkGetSwapchainImagesKHR>(resolve("vkGetSwapchainImagesKHR"));
+            data.acquire_next_image = reinterpret_cast<PFN_vkAcquireNextImageKHR>(resolve("vkAcquireNextImageKHR"));
+            data.queue_present = reinterpret_cast<PFN_vkQueuePresentKHR>(resolve("vkQueuePresentKHR"));
             data.allocate_memory = reinterpret_cast<PFN_vkAllocateMemory>(resolve("vkAllocateMemory"));
             data.free_memory = reinterpret_cast<PFN_vkFreeMemory>(resolve("vkFreeMemory"));
             data.get_device_memory_commitment = reinterpret_cast<PFN_vkGetDeviceMemoryCommitment>(resolve("vkGetDeviceMemoryCommitment"));
@@ -3529,7 +3515,7 @@ namespace sogen
     {
         const auto dev = this->impl_->devices.find(device);
         const auto it = this->impl_->images.find(image);
-        if (it == this->impl_->images.end() || it->second.device_id != device)
+        if (it == this->impl_->images.end() || it->second.device_id != device || !it->second.owned)
         {
             return;
         }
@@ -3627,22 +3613,15 @@ namespace sogen
             return out;
         }
 
-        // The bridge's swapchain images are ordinary offscreen VkImages with no real presentation
-        // engine, so the host driver would reject VK_IMAGE_LAYOUT_PRESENT_SRC_KHR. Map it to
-        // TRANSFER_SRC_OPTIMAL (the layout the present-time readback copy reads from), keeping the guest
-        // a faithful WSI app while the real driver stays valid.
         VkImageLayout translate_layout(uint32_t layout)
         {
-            if (layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
-            {
-                return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            }
             return static_cast<VkImageLayout>(layout);
         }
     }
 
     int32_t vulkan_host::cmd_pipeline_barrier(uint64_t command_buffer, uint64_t image, uint32_t src_stage_mask, uint32_t dst_stage_mask,
                                               uint32_t src_access_mask, uint32_t dst_access_mask, uint32_t old_layout, uint32_t new_layout,
+                                              uint32_t src_queue_family_index, uint32_t dst_queue_family_index,
                                               const subresource_range& range)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
@@ -3664,8 +3643,8 @@ namespace sogen
         barrier.dstAccessMask = dst_access_mask;
         barrier.oldLayout = translate_layout(old_layout);
         barrier.newLayout = translate_layout(new_layout);
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.srcQueueFamilyIndex = src_queue_family_index;
+        barrier.dstQueueFamilyIndex = dst_queue_family_index;
         barrier.image = img->second.handle;
         barrier.subresourceRange = to_vk_range(range);
 
@@ -4012,222 +3991,281 @@ namespace sogen
         this->impl_->samplers.erase(it);
     }
 
-    int32_t vulkan_host::create_surface(uint64_t hwnd, uint64_t& out_surface)
+    int32_t vulkan_host::create_surface(uint64_t instance, uint64_t native_surface, uint64_t& out_surface)
     {
+        out_surface = 0;
+        if (native_surface == 0 || !this->impl_->instances.contains(instance))
+        {
+            return VK_ERROR_SURFACE_LOST_KHR;
+        }
+
         const uint64_t id = this->impl_->next_id++;
-        this->impl_->surfaces.emplace(id, impl::surface_data{.hwnd = hwnd});
+        this->impl_->surfaces.emplace(id, impl::surface_data{
+                                              .handle = unpack_vulkan_handle<VkSurfaceKHR>(native_surface),
+                                              .instance_id = instance,
+                                          });
         out_surface = id;
         return VK_SUCCESS;
     }
 
     void vulkan_host::destroy_surface(uint64_t surface)
     {
-        this->impl_->surfaces.erase(surface);
-    }
-
-    uint64_t vulkan_host::get_surface_hwnd(uint64_t surface) const
-    {
         const auto it = this->impl_->surfaces.find(surface);
-        return it == this->impl_->surfaces.end() ? 0 : it->second.hwnd;
+        if (it == this->impl_->surfaces.end())
+        {
+            return;
+        }
+
+        const auto instance = this->impl_->instances.find(it->second.instance_id);
+        if (instance != this->impl_->instances.end() && it->second.handle && instance->second.destroy_surface)
+        {
+            instance->second.destroy_surface(instance->second.handle, it->second.handle, nullptr);
+        }
+        this->impl_->surfaces.erase(it);
     }
 
-    int32_t vulkan_host::get_surface_capabilities(uint64_t /*physical_device*/, uint64_t surface, uint32_t window_width,
-                                                  uint32_t window_height, void* out, size_t out_size)
+    int32_t vulkan_host::get_surface_support(uint64_t physical_device, uint64_t surface, uint32_t queue_family_index,
+                                             uint32_t& out_supported)
     {
-        if (!this->impl_->surfaces.contains(surface))
+        out_supported = 0;
+        const auto pd = this->impl_->physical_devices.find(physical_device);
+        const auto surf = this->impl_->surfaces.find(surface);
+        if (pd == this->impl_->physical_devices.end() || surf == this->impl_->surfaces.end() ||
+            pd->second.instance_id != surf->second.instance_id)
         {
             return VK_ERROR_SURFACE_LOST_KHR;
         }
 
-        VkSurfaceCapabilitiesKHR caps{};
-        caps.minImageCount = 2;
-        caps.maxImageCount = 0; // no upper bound
-        // Report the guest window's client size as the current extent. Returning the "undefined" value
-        // (0xFFFFFFFF) made DXVK fall back to querying the window size itself and end up with a 0x0
-        // swapchain, so nothing was ever presented (black window). A concrete extent fixes that.
-        caps.currentExtent = (window_width != 0 && window_height != 0) ? VkExtent2D{.width = window_width, .height = window_height}
-                                                                       : VkExtent2D{.width = 0xFFFFFFFFu, .height = 0xFFFFFFFFu};
-        caps.minImageExtent = {.width = 1, .height = 1};
-        caps.maxImageExtent = {.width = 16384, .height = 16384};
-        caps.maxImageArrayLayers = 1;
-        caps.supportedTransforms = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-        caps.currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-        caps.supportedCompositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-        caps.supportedUsageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        const auto instance = this->impl_->instances.find(pd->second.instance_id);
+        if (instance == this->impl_->instances.end() || !instance->second.get_surface_support)
+        {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
 
-        std::memcpy(out, &caps, std::min(out_size, sizeof(caps)));
+        VkBool32 supported = VK_FALSE;
+        const VkResult result =
+            instance->second.get_surface_support(pd->second.handle, queue_family_index, surf->second.handle, &supported);
+        out_supported = supported == VK_TRUE ? 1u : 0u;
+        return result;
+    }
+
+    int32_t vulkan_host::get_surface_capabilities(uint64_t physical_device, uint64_t surface, void* out, size_t out_size)
+    {
+        const auto pd = this->impl_->physical_devices.find(physical_device);
+        const auto surf = this->impl_->surfaces.find(surface);
+        if (pd == this->impl_->physical_devices.end() || surf == this->impl_->surfaces.end() ||
+            pd->second.instance_id != surf->second.instance_id)
+        {
+            return VK_ERROR_SURFACE_LOST_KHR;
+        }
+
+        const auto instance = this->impl_->instances.find(pd->second.instance_id);
+        if (instance == this->impl_->instances.end() || !instance->second.get_surface_capabilities)
+        {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+
+        VkSurfaceCapabilitiesKHR caps{};
+        const VkResult result = instance->second.get_surface_capabilities(pd->second.handle, surf->second.handle, &caps);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+        if (out && out_size > 0)
+        {
+            std::memcpy(out, &caps, std::min(out_size, sizeof(caps)));
+        }
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::create_swapchain(uint64_t device, uint64_t surface, uint32_t format, uint32_t width, uint32_t height,
-                                          uint32_t min_image_count, uint32_t image_usage, uint64_t& out_swapchain,
-                                          uint32_t& out_image_count)
+    int32_t vulkan_host::get_surface_formats(uint64_t physical_device, uint64_t surface, std::span<surface_format> out_formats,
+                                             uint32_t& out_count)
+    {
+        out_count = 0;
+        const auto pd = this->impl_->physical_devices.find(physical_device);
+        const auto surf = this->impl_->surfaces.find(surface);
+        if (pd == this->impl_->physical_devices.end() || surf == this->impl_->surfaces.end() ||
+            pd->second.instance_id != surf->second.instance_id)
+        {
+            return VK_ERROR_SURFACE_LOST_KHR;
+        }
+
+        const auto instance = this->impl_->instances.find(pd->second.instance_id);
+        if (instance == this->impl_->instances.end() || !instance->second.get_surface_formats)
+        {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+
+        uint32_t count = 0;
+        VkResult result = instance->second.get_surface_formats(pd->second.handle, surf->second.handle, &count, nullptr);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+        out_count = count;
+        if (out_formats.empty() || count == 0)
+        {
+            return VK_SUCCESS;
+        }
+
+        const uint32_t capacity = static_cast<uint32_t>(std::min<size_t>(out_formats.size(), count));
+        std::vector<VkSurfaceFormatKHR> formats(capacity);
+        uint32_t written = capacity;
+        result = instance->second.get_surface_formats(pd->second.handle, surf->second.handle, &written, formats.data());
+        if (result != VK_SUCCESS && result != VK_INCOMPLETE)
+        {
+            return result;
+        }
+        for (uint32_t i = 0; i < written; ++i)
+        {
+            out_formats[i] = {
+                .format = static_cast<uint32_t>(formats[i].format),
+                .color_space = static_cast<uint32_t>(formats[i].colorSpace),
+            };
+        }
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::get_surface_present_modes(uint64_t physical_device, uint64_t surface, std::span<uint32_t> out_modes,
+                                                   uint32_t& out_count)
+    {
+        out_count = 0;
+        const auto pd = this->impl_->physical_devices.find(physical_device);
+        const auto surf = this->impl_->surfaces.find(surface);
+        if (pd == this->impl_->physical_devices.end() || surf == this->impl_->surfaces.end() ||
+            pd->second.instance_id != surf->second.instance_id)
+        {
+            return VK_ERROR_SURFACE_LOST_KHR;
+        }
+
+        const auto instance = this->impl_->instances.find(pd->second.instance_id);
+        if (instance == this->impl_->instances.end() || !instance->second.get_surface_present_modes)
+        {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+
+        uint32_t count = 0;
+        VkResult result = instance->second.get_surface_present_modes(pd->second.handle, surf->second.handle, &count, nullptr);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+        out_count = count;
+        if (out_modes.empty() || count == 0)
+        {
+            return VK_SUCCESS;
+        }
+
+        const uint32_t capacity = static_cast<uint32_t>(std::min<size_t>(out_modes.size(), count));
+        std::vector<VkPresentModeKHR> modes(capacity);
+        uint32_t written = capacity;
+        result = instance->second.get_surface_present_modes(pd->second.handle, surf->second.handle, &written, modes.data());
+        if (result != VK_SUCCESS && result != VK_INCOMPLETE)
+        {
+            return result;
+        }
+        for (uint32_t i = 0; i < written; ++i)
+        {
+            out_modes[i] = static_cast<uint32_t>(modes[i]);
+        }
+        return VK_SUCCESS;
+    }
+
+    int32_t vulkan_host::create_swapchain(uint64_t device, uint64_t surface, uint64_t old_swapchain, uint32_t flags, uint32_t format,
+                                          uint32_t color_space, uint32_t width, uint32_t height, uint32_t image_array_layers,
+                                          uint32_t min_image_count, uint32_t image_usage, uint32_t sharing_mode,
+                                          std::span<const uint32_t> queue_family_indices, uint32_t pre_transform, uint32_t composite_alpha,
+                                          uint32_t present_mode, uint32_t clipped, uint64_t& out_swapchain, uint32_t& out_image_count)
     {
         out_swapchain = 0;
         out_image_count = 0;
 
         const auto dev_it = this->impl_->devices.find(device);
         const auto surf_it = this->impl_->surfaces.find(surface);
-        if (dev_it == this->impl_->devices.end() || surf_it == this->impl_->surfaces.end())
+        if (dev_it == this->impl_->devices.end() || surf_it == this->impl_->surfaces.end() ||
+            dev_it->second.instance_id != surf_it->second.instance_id)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         impl::device_data& dev = dev_it->second;
-        if (!dev.create_image || !dev.allocate_memory || !dev.bind_image_memory || !dev.create_buffer || !dev.bind_buffer_memory ||
-            !dev.create_command_pool || !dev.allocate_command_buffers || !dev.create_fence)
+        if (!dev.create_swapchain || !dev.destroy_swapchain || !dev.get_swapchain_images)
         {
-            return VK_ERROR_INITIALIZATION_FAILED;
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
 
-        // A real swapchain has only a handful of images; reject an absurd guest count before it drives the
-        // per-image allocation loop below (each iteration does create_image + allocate_memory). The bound is
-        // just a sanity ceiling well above any real use, not a hard Vulkan limit.
-        constexpr uint32_t max_swapchain_images = 128;
-        if (min_image_count > max_swapchain_images)
+        VkSwapchainKHR native_old_swapchain = VK_NULL_HANDLE;
+        if (old_swapchain != 0)
         {
-            return VK_ERROR_INITIALIZATION_FAILED;
+            const auto old = this->impl_->swapchains.find(old_swapchain);
+            if (old == this->impl_->swapchains.end() || old->second.device_id != device || old->second.surface_id != surface)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            native_old_swapchain = old->second.handle;
         }
-        const uint32_t image_count = (min_image_count < 2) ? 2 : min_image_count;
-        const auto vk_format = static_cast<VkFormat>(format);
 
-        // The readback buffer below is sized for 4 bytes/texel; reject wider guest-chosen formats so the
-        // present-time copy cannot overflow it.
-        if (!is_supported_swapchain_format(vk_format))
+        VkSwapchainCreateInfoKHR info{};
+        info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+        info.flags = static_cast<VkSwapchainCreateFlagsKHR>(flags);
+        info.surface = surf_it->second.handle;
+        info.minImageCount = min_image_count;
+        info.imageFormat = static_cast<VkFormat>(format);
+        info.imageColorSpace = static_cast<VkColorSpaceKHR>(color_space);
+        info.imageExtent = {.width = width, .height = height};
+        info.imageArrayLayers = image_array_layers;
+        info.imageUsage = static_cast<VkImageUsageFlags>(image_usage);
+        info.imageSharingMode = static_cast<VkSharingMode>(sharing_mode);
+        info.queueFamilyIndexCount = static_cast<uint32_t>(queue_family_indices.size());
+        info.pQueueFamilyIndices = queue_family_indices.empty() ? nullptr : queue_family_indices.data();
+        info.preTransform = static_cast<VkSurfaceTransformFlagBitsKHR>(pre_transform);
+        info.compositeAlpha = static_cast<VkCompositeAlphaFlagBitsKHR>(composite_alpha);
+        info.presentMode = static_cast<VkPresentModeKHR>(present_mode);
+        info.clipped = clipped ? VK_TRUE : VK_FALSE;
+        info.oldSwapchain = native_old_swapchain;
+
+        VkSwapchainKHR native_swapchain{};
+        VkResult result = dev.create_swapchain(dev.handle, &info, nullptr, &native_swapchain);
+        if (result != VK_SUCCESS)
         {
-            return VK_ERROR_INITIALIZATION_FAILED;
+            return result;
         }
+
+        uint32_t image_count = 0;
+        result = dev.get_swapchain_images(dev.handle, native_swapchain, &image_count, nullptr);
+        if (result != VK_SUCCESS || image_count == 0)
+        {
+            dev.destroy_swapchain(dev.handle, native_swapchain, nullptr);
+            return result == VK_SUCCESS ? VK_ERROR_INITIALIZATION_FAILED : result;
+        }
+
+        std::vector<VkImage> native_images(image_count);
+        result = dev.get_swapchain_images(dev.handle, native_swapchain, &image_count, native_images.data());
+        if (result != VK_SUCCESS)
+        {
+            dev.destroy_swapchain(dev.handle, native_swapchain, nullptr);
+            return result;
+        }
+        native_images.resize(image_count);
 
         impl::swapchain_data sc{};
+        sc.handle = native_swapchain;
         sc.device_id = device;
-        sc.hwnd = surf_it->second.hwnd;
-        sc.width = width;
-        sc.height = height;
-        sc.format = vk_format;
-
-        const auto fail = [&]() -> int32_t {
-            this->impl_->destroy_swapchain_resources(sc);
-            return VK_ERROR_INITIALIZATION_FAILED;
-        };
-
-        // Offscreen images that stand in for the swapchain's presentable images. TRANSFER_SRC is always
-        // added so the present-time readback copy can source them.
-        for (uint32_t i = 0; i < image_count; ++i)
+        sc.surface_id = surface;
+        sc.image_ids.reserve(native_images.size());
+        for (VkImage image : native_images)
         {
-            VkImageCreateInfo info{};
-            info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-            info.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
-            info.imageType = VK_IMAGE_TYPE_2D;
-            info.format = vk_format;
-            info.extent = {.width = width, .height = height, .depth = 1};
-            info.mipLevels = 1;
-            info.arrayLayers = 1;
-            info.samples = VK_SAMPLE_COUNT_1_BIT;
-            info.tiling = VK_IMAGE_TILING_OPTIMAL;
-            info.usage = image_usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-            info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-            info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-
-            VkImage image{};
-            if (dev.create_image(dev.handle, &info, nullptr, &image) != VK_SUCCESS)
-            {
-                return fail();
-            }
-
-            VkMemoryRequirements reqs{};
-            dev.get_image_memory_requirements(dev.handle, image, &reqs);
-            uint32_t type_index = this->impl_->find_memory_type(dev, reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            if (type_index == UINT32_MAX)
-            {
-                type_index = this->impl_->find_memory_type(dev, reqs.memoryTypeBits, 0);
-            }
-
-            VkMemoryAllocateInfo alloc{};
-            alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-            alloc.allocationSize = reqs.size;
-            alloc.memoryTypeIndex = type_index;
-            VkDeviceMemory memory{};
-            if (dev.allocate_memory(dev.handle, &alloc, nullptr, &memory) != VK_SUCCESS)
-            {
-                dev.destroy_image(dev.handle, image, nullptr);
-                return fail();
-            }
-            dev.bind_image_memory(dev.handle, image, memory, 0);
-
             const uint64_t image_id = this->impl_->next_id++;
-            this->impl_->images.emplace(image_id, impl::image_data{.handle = image, .device_id = device});
+            this->impl_->images.emplace(image_id, impl::image_data{
+                                                      .handle = image,
+                                                      .device_id = device,
+                                                      .samples = 1,
+                                                      .owned = false,
+                                                  });
             sc.image_ids.push_back(image_id);
-            sc.image_memory.push_back(memory);
-        }
-
-        // Host-visible readback buffer the presented image is copied into (4 bytes/pixel).
-        const VkDeviceSize readback_size = static_cast<VkDeviceSize>(width) * height * 4;
-        VkBufferCreateInfo buffer_info{};
-        buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        buffer_info.size = readback_size;
-        buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        if (dev.create_buffer(dev.handle, &buffer_info, nullptr, &sc.readback_buffer) != VK_SUCCESS)
-        {
-            return fail();
-        }
-
-        VkMemoryRequirements buffer_reqs{};
-        dev.get_buffer_memory_requirements(dev.handle, sc.readback_buffer, &buffer_reqs);
-        // Prefer HOST_CACHED for the readback buffer: presenting copies the frame here and the CPU then
-        // reads it all back, and reads from uncached/write-combined (plain COHERENT) memory are an order
-        // of magnitude slower. Keep COHERENT too so no manual vkInvalidateMappedMemoryRanges is needed;
-        // fall back to plain HOST_VISIBLE|HOST_COHERENT if the driver offers no cached+coherent type.
-        uint32_t buffer_type = this->impl_->find_memory_type(dev, buffer_reqs.memoryTypeBits,
-                                                             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
-                                                                 VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
-        if (buffer_type == UINT32_MAX)
-        {
-            buffer_type = this->impl_->find_memory_type(dev, buffer_reqs.memoryTypeBits,
-                                                        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        }
-        if (buffer_type == UINT32_MAX)
-        {
-            return fail();
-        }
-        VkMemoryAllocateInfo buffer_alloc{};
-        buffer_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        buffer_alloc.allocationSize = buffer_reqs.size;
-        buffer_alloc.memoryTypeIndex = buffer_type;
-        if (dev.allocate_memory(dev.handle, &buffer_alloc, nullptr, &sc.readback_memory) != VK_SUCCESS)
-        {
-            return fail();
-        }
-        dev.bind_buffer_memory(dev.handle, sc.readback_buffer, sc.readback_memory, 0);
-
-        // Reusable command buffer + fence for the per-present readback copy.
-        VkCommandPoolCreateInfo pool_info{};
-        pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        pool_info.queueFamilyIndex = dev.queue_family_index;
-        if (dev.create_command_pool(dev.handle, &pool_info, nullptr, &sc.present_pool) != VK_SUCCESS)
-        {
-            return fail();
-        }
-
-        VkCommandBufferAllocateInfo cb_info{};
-        cb_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        cb_info.commandPool = sc.present_pool;
-        cb_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        cb_info.commandBufferCount = 1;
-        if (dev.allocate_command_buffers(dev.handle, &cb_info, &sc.present_cmd) != VK_SUCCESS)
-        {
-            return fail();
-        }
-
-        VkFenceCreateInfo fence_info{};
-        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        if (dev.create_fence(dev.handle, &fence_info, nullptr, &sc.present_fence) != VK_SUCCESS)
-        {
-            return fail();
         }
 
         const uint64_t id = this->impl_->next_id++;
-        out_image_count = image_count;
+        out_image_count = static_cast<uint32_t>(sc.image_ids.size());
         this->impl_->swapchains.emplace(id, std::move(sc));
         out_swapchain = id;
         return VK_SUCCESS;
@@ -4261,245 +4299,85 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::acquire_next_image(uint64_t swapchain, uint64_t semaphore, uint64_t fence, uint32_t& out_index)
+    int32_t vulkan_host::acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore, uint64_t fence, uint32_t& out_index)
     {
         out_index = 0;
-        const auto it = this->impl_->swapchains.find(swapchain);
-        if (it == this->impl_->swapchains.end() || it->second.image_ids.empty())
+        const auto sc_it = this->impl_->swapchains.find(swapchain);
+        if (sc_it == this->impl_->swapchains.end())
         {
             return VK_ERROR_OUT_OF_DATE_KHR;
         }
 
-        // No real presentation engine: images are always available, handed out round-robin.
-        out_index = it->second.next_image;
-        it->second.next_image = (it->second.next_image + 1) % static_cast<uint32_t>(it->second.image_ids.size());
-
-        if (semaphore == 0 && fence == 0)
+        const auto dev_it = this->impl_->devices.find(sc_it->second.device_id);
+        if (dev_it == this->impl_->devices.end() || !dev_it->second.acquire_next_image)
         {
-            return VK_SUCCESS;
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
 
-        // The caller's render submit waits on the acquire semaphore (and it may wait on the fence) before it
-        // can run; with no present engine to signal them, an empty submit does so now that the image is ready.
-        // Otherwise that submit -- and the frame fence it signals -- would never complete, deadlocking DXVK.
-        const auto dev_it = this->impl_->devices.find(it->second.device_id);
-        if (dev_it == this->impl_->devices.end() || !dev_it->second.queue_submit)
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-        impl::device_data& dev = dev_it->second;
-
-        VkSemaphore sem_handle = VK_NULL_HANDLE;
+        VkSemaphore semaphore_handle = VK_NULL_HANDLE;
         if (semaphore != 0)
         {
-            const auto sem_it = this->impl_->semaphores.find(semaphore);
-            if (sem_it == this->impl_->semaphores.end() || sem_it->second.device_id != it->second.device_id)
+            const auto it = this->impl_->semaphores.find(semaphore);
+            if (it == this->impl_->semaphores.end() || it->second.device_id != sc_it->second.device_id)
             {
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
-            sem_handle = sem_it->second.handle;
+            semaphore_handle = it->second.handle;
         }
 
         VkFence fence_handle = VK_NULL_HANDLE;
         if (fence != 0)
         {
-            const auto fence_it = this->impl_->fences.find(fence);
-            if (fence_it == this->impl_->fences.end() || fence_it->second.device_id != it->second.device_id)
+            const auto it = this->impl_->fences.find(fence);
+            if (it == this->impl_->fences.end() || it->second.device_id != sc_it->second.device_id)
             {
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
-            fence_handle = fence_it->second.handle;
+            fence_handle = it->second.handle;
         }
 
-        VkQueue queue = VK_NULL_HANDLE;
-        for (const auto& [id, q] : this->impl_->queues)
-        {
-            if (q.device_id == it->second.device_id)
-            {
-                queue = q.handle;
-                break;
-            }
-        }
-        if (queue == VK_NULL_HANDLE)
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        VkSubmitInfo submit{};
-        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        if (sem_handle != VK_NULL_HANDLE)
-        {
-            submit.signalSemaphoreCount = 1;
-            submit.pSignalSemaphores = &sem_handle;
-        }
-
-        if (dev.queue_submit(queue, 1, &submit, fence_handle) != VK_SUCCESS)
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        return VK_SUCCESS;
+        return dev_it->second.acquire_next_image(dev_it->second.handle, sc_it->second.handle, timeout, semaphore_handle, fence_handle,
+                                                 &out_index);
     }
 
     int32_t vulkan_host::queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index,
-                                       const std::vector<uint64_t>& wait_semaphores, std::vector<std::byte>& out_pixels,
-                                       uint32_t& out_width, uint32_t& out_height, uint64_t& out_hwnd)
+                                       const std::vector<uint64_t>& wait_semaphores)
     {
-        out_pixels.clear();
-        out_width = 0;
-        out_height = 0;
-        out_hwnd = 0;
-
         const auto queue_it = this->impl_->queues.find(queue);
         const auto sc_it = this->impl_->swapchains.find(swapchain);
-        if (queue_it == this->impl_->queues.end() || sc_it == this->impl_->swapchains.end())
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-        impl::swapchain_data& sc = sc_it->second;
-        if (queue_it->second.device_id != sc.device_id || image_index >= sc.image_ids.size())
+        if (queue_it == this->impl_->queues.end() || sc_it == this->impl_->swapchains.end() ||
+            queue_it->second.device_id != sc_it->second.device_id || image_index >= sc_it->second.image_ids.size())
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        uint64_t source_image_id = sc.image_ids[image_index];
-
-        const auto dev_it = this->impl_->devices.find(sc.device_id);
-        const auto img_it = this->impl_->images.find(source_image_id);
-        if (dev_it == this->impl_->devices.end() || img_it == this->impl_->images.end() || img_it->second.device_id != sc.device_id)
+        const auto dev_it = this->impl_->devices.find(sc_it->second.device_id);
+        if (dev_it == this->impl_->devices.end() || !dev_it->second.queue_present)
         {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-        impl::device_data& dev = dev_it->second;
-        if (!dev.begin_command_buffer || !dev.end_command_buffer || !dev.cmd_copy_image_to_buffer || !dev.queue_submit ||
-            !dev.queue_wait_idle || !dev.get_fence_status || !dev.map_memory || !dev.unmap_memory || !dev.cmd_pipeline_barrier ||
-            !dev.reset_fences)
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
 
         std::vector<VkSemaphore> wait_handles;
         wait_handles.reserve(wait_semaphores.size());
         for (const uint64_t semaphore : wait_semaphores)
         {
-            const auto semaphore_it = this->impl_->semaphores.find(semaphore);
-            if (semaphore_it == this->impl_->semaphores.end() || semaphore_it->second.device_id != sc.device_id)
+            const auto it = this->impl_->semaphores.find(semaphore);
+            if (it == this->impl_->semaphores.end() || it->second.device_id != sc_it->second.device_id)
             {
                 return VK_ERROR_INITIALIZATION_FAILED;
             }
-            wait_handles.push_back(semaphore_it->second.handle);
+            wait_handles.push_back(it->second.handle);
         }
 
-        // The work loop normally collects completed readbacks. If another present arrives first, reclaim
-        // the single readback slot here; waiting is only necessary when the guest outruns the GPU copy.
-        if (sc.present_in_flight)
-        {
-            if (dev.get_fence_status(dev.handle, sc.present_fence) != VK_SUCCESS)
-            {
-                dev.queue_wait_idle(queue_it->second.handle);
-            }
-
-            presented_frame frame{};
-            if (impl::drain_readback(sc, dev, frame))
-            {
-                out_pixels = std::move(frame.pixels);
-                out_width = frame.width;
-                out_height = frame.height;
-                out_hwnd = frame.hwnd;
-            }
-        }
-
-        // Make the rendered image's writes visible to the copy, then copy it into the readback buffer.
-        // The guest left the image in PRESENT_SRC, which the bridge mapped to TRANSFER_SRC_OPTIMAL.
-        VkCommandBufferBeginInfo begin{};
-        begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        if (dev.begin_command_buffer(sc.present_cmd, &begin) != VK_SUCCESS)
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-
-        VkImageMemoryBarrier barrier{};
-        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
-        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = img_it->second.handle;
-        barrier.subresourceRange = {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1};
-        dev.cmd_pipeline_barrier(sc.present_cmd, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
-                                 nullptr, 1, &barrier);
-
-        VkImage copy_image = img_it->second.handle;
-        VkImageLayout copy_layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        const uint32_t copy_w = sc.width;
-        const uint32_t copy_h = sc.height;
-
-        VkBufferImageCopy region{};
-        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        region.imageSubresource.mipLevel = 0;
-        region.imageSubresource.baseArrayLayer = 0;
-        region.imageSubresource.layerCount = 1;
-        region.imageOffset = {.x = 0, .y = 0, .z = 0};
-        region.imageExtent = {.width = copy_w, .height = copy_h, .depth = 1};
-        dev.cmd_copy_image_to_buffer(sc.present_cmd, copy_image, copy_layout, sc.readback_buffer, 1, &region);
-        dev.end_command_buffer(sc.present_cmd);
-
-        dev.reset_fences(dev.handle, 1, &sc.present_fence);
-
-        VkSubmitInfo submit{};
-        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        std::vector<VkPipelineStageFlags> wait_stages(wait_handles.size(), VK_PIPELINE_STAGE_TRANSFER_BIT);
-        submit.waitSemaphoreCount = static_cast<uint32_t>(wait_handles.size());
-        submit.pWaitSemaphores = wait_handles.data();
-        submit.pWaitDstStageMask = wait_stages.data();
-        submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &sc.present_cmd;
-        if (dev.queue_submit(queue_it->second.handle, 1, &submit, sc.present_fence) != VK_SUCCESS)
-        {
-            return VK_ERROR_INITIALIZATION_FAILED;
-        }
-        // Do not wait here. gpu_bridge_device::work publishes the frame as soon as this fence signals.
-        sc.present_in_flight = true;
-
-        return VK_SUCCESS;
-    }
-
-    std::vector<vulkan_host::presented_frame> vulkan_host::poll_presented_frames()
-    {
-        std::vector<presented_frame> frames{};
-
-        for (auto& sc : this->impl_->swapchains | std::views::values)
-        {
-            if (!sc.present_in_flight)
-            {
-                continue;
-            }
-
-            const auto dev_it = this->impl_->devices.find(sc.device_id);
-            if (dev_it == this->impl_->devices.end())
-            {
-                continue;
-            }
-            auto& dev = dev_it->second;
-            if (!dev.get_fence_status || !dev.map_memory || !dev.unmap_memory ||
-                dev.get_fence_status(dev.handle, sc.present_fence) != VK_SUCCESS)
-            {
-                continue;
-            }
-
-            auto& frame = frames.emplace_back();
-            if (!impl::drain_readback(sc, dev, frame))
-            {
-                frames.pop_back();
-                continue;
-            }
-        }
-
-        return frames;
+        VkSwapchainKHR native_swapchain = sc_it->second.handle;
+        VkPresentInfoKHR info{};
+        info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        info.waitSemaphoreCount = static_cast<uint32_t>(wait_handles.size());
+        info.pWaitSemaphores = wait_handles.empty() ? nullptr : wait_handles.data();
+        info.swapchainCount = 1;
+        info.pSwapchains = &native_swapchain;
+        info.pImageIndices = &image_index;
+        return dev_it->second.queue_present(queue_it->second.handle, &info);
     }
 
     int32_t vulkan_host::create_shader_module(uint64_t device, uint32_t flags, const void* code, size_t code_size, uint64_t& out_module)
