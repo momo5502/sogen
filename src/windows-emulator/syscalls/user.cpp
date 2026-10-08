@@ -7,6 +7,7 @@
 #include "../window_show_orchestrator.hpp"
 #include "windows-emulator/user_callback_dispatch.hpp"
 #include <limits>
+#include <unordered_set>
 
 #ifdef msg
 #undef msg
@@ -1490,6 +1491,31 @@ namespace sogen
 
             win.system_menu_handle = menu_obj.handle;
             return handle.bits;
+        }
+
+        bool destroy_menu_tree(const syscall_context& c, const hmenu handle, std::unordered_set<hmenu>& visited)
+        {
+            if (!visited.insert(handle).second)
+            {
+                return false;
+            }
+
+            auto* menu_obj = c.proc.menus.get(handle);
+            if (!menu_obj)
+            {
+                return false;
+            }
+
+            for (const auto& item : menu_obj->items)
+            {
+                if (item.submenu != 0)
+                {
+                    destroy_menu_tree(c, item.submenu, visited);
+                }
+            }
+
+            menu_obj->release_guest_backing(c.win_emu.memory);
+            return c.proc.menus.erase(handle);
         }
 
         std::u16string read_menu_item_text(const syscall_context& c, const EMU_MENUITEMINFO& mi,
@@ -5058,6 +5084,12 @@ namespace sogen
                 return FALSE;
             }
 
+            if (win->system_menu_handle != 0 && win->system_menu_handle != menu)
+            {
+                std::unordered_set<hmenu> visited{menu};
+                destroy_menu_tree(c, win->system_menu_handle, visited);
+            }
+
             win->system_menu_handle = menu;
             return TRUE;
         }
@@ -5126,13 +5158,17 @@ namespace sogen
                 return 0;
             }
 
-            if (revert != FALSE && win->system_menu_handle != 0)
+            if (revert != FALSE)
             {
-                if (auto* menu = c.proc.menus.get(win->system_menu_handle))
+                if (win->system_menu_handle != 0)
                 {
-                    menu->items.clear();
-                    menu->sync_guest_items(c.win_emu.memory);
+                    std::unordered_set<hmenu> visited;
+                    destroy_menu_tree(c, win->system_menu_handle, visited);
                 }
+
+                win->system_menu_handle = 0;
+                (void)ensure_system_menu(c, *win);
+                return 0;
             }
 
             return ensure_system_menu(c, *win);
@@ -5784,14 +5820,8 @@ namespace sogen
 
         BOOL handle_NtUserDestroyMenu(const syscall_context& c, const hmenu menu)
         {
-            auto* m = c.proc.menus.get(menu);
-            if (!m)
-            {
-                return FALSE;
-            }
-
-            m->release_guest_backing(c.win_emu.memory);
-            return c.proc.menus.erase(menu) ? TRUE : FALSE;
+            std::unordered_set<hmenu> visited;
+            return destroy_menu_tree(c, menu, visited) ? TRUE : FALSE;
         }
 
         BOOL handle_NtUserDrawMenuBar(const syscall_context& c, const hwnd hwnd)
