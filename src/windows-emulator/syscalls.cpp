@@ -572,8 +572,12 @@ namespace sogen
                                          emulator_object<EMU_WNDCLASSEX> wnd_class_ex, emulator_pointer menu_name, BOOL /*ansi*/);
         int handle_NtUserGetClassName(const syscall_context& c, hwnd win_hwnd, BOOL real,
                                       emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> class_name);
-        NTSTATUS handle_NtUserSetWindowsHookEx();
-        NTSTATUS handle_NtUserUnhookWindowsHookEx();
+        uint64_t handle_NtUserSetWindowsHookEx(const syscall_context& c, hinstance instance,
+                                               emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> module, DWORD thread_id, int hook_id,
+                                               pointer proc, BOOL ansi);
+        BOOL handle_NtUserUnhookWindowsHookEx(const syscall_context& c, uint64_t hook);
+        lresult handle_NtUserCallNextHookEx(const syscall_context& c, int code, wparam w_param, lparam l_param, BOOL ansi);
+
         hwnd handle_NtUserCreateWindowEx(const syscall_context& c, DWORD ex_style, emulator_object<LARGE_STRING> class_name,
                                          emulator_object<LARGE_STRING> cls_version, emulator_object<LARGE_STRING> window_name, DWORD style,
                                          int x, int y, int width, int height, hwnd parent, hmenu menu, hinstance instance, pointer l_param,
@@ -715,6 +719,7 @@ namespace sogen
         uint64_t handle_NtUserQueryWindow(const syscall_context& c, hwnd window_handle, uint32_t query_type);
         int handle_NtUserSetScrollInfo();
         BOOL handle_NtUserIsTouchWindow();
+        uint64_t handle_NtUserGetTopLevelWindow(const syscall_context& c, hwnd window);
         BOOL handle_NtUserGetWindowPlacement(const syscall_context& c, hwnd window_handle, emulator_pointer placement_address);
         BOOL handle_NtUserTrackMouseEvent();
         BOOL handle_NtUserSetWindowRgn();
@@ -826,6 +831,7 @@ namespace sogen
         BOOL handle_NtGdiTransparentBlt(const syscall_context& c, hdc dst_dc, int x_dst, int y_dst, int dst_width, int dst_height,
                                         hdc src_dc, int x_src, int y_src, int src_width, int src_height, COLORREF transparent_color);
         uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
+        BOOL handle_NtGdiEqualRgn(const syscall_context& c, handle first_region, handle second_region);
         int32_t handle_NtGdiGetRandomRgn(const syscall_context& c, hdc dc, uint64_t region, LONG index);
         uint32_t handle_NtGdiGetRegionData(const syscall_context& c, handle hrgn, ULONG buffer_size, emulator_pointer region_data);
         int32_t handle_NtGdiGetAppClipBox(const syscall_context& c, hdc dc, emulator_object<RECT> rect);
@@ -850,7 +856,7 @@ namespace sogen
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, uint32_t handle_value, emulator_pointer entry_ptr);
         int32_t handle_NtGdiSetIcmMode();
         NTSTATUS handle_NtGdiSetLayout();
-        NTSTATUS handle_NtGdiGetDCObject();
+        uint64_t handle_NtGdiGetDCObject(const syscall_context& c, hdc dc, int32_t object_type);
         BOOL handle_NtGdiUnrealizeObject(const syscall_context& c, handle h);
         BOOL handle_NtGdiMoveToEx(const syscall_context& c, hdc dc, LONG x, LONG y, emulator_pointer old_point_ptr);
         uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, hdc dc, uint32_t brush, emulator_pointer old_brush_ptr);
@@ -1525,6 +1531,7 @@ namespace sogen
         add_handler(NtGdiGetCharABCWidthsW);
         add_handler(NtGdiGetGlyphOutline);
         add_handler(NtGdiCreateRectRgn);
+        add_handler(NtGdiEqualRgn);
         add_handler(NtGdiGetRandomRgn);
         add_handler(NtGdiGetRegionData);
         add_handler(NtGdiGetAppClipBox);
@@ -1701,6 +1708,8 @@ namespace sogen
         add_handler(NtUserUnregisterClass);
         add_handler(NtUserSetWindowsHookEx);
         add_handler(NtUserUnhookWindowsHookEx);
+        add_handler(NtUserCallNextHookEx);
+
         add_handler(NtUserCreateWindowEx);
         add_handler(NtUserShowWindow);
         add_handler(NtUserMessageCall);
@@ -1862,6 +1871,7 @@ namespace sogen
         add_handler(NtUserCreateMenu);
         add_handler(NtUserThunkedMenuItemInfo);
         add_handler(NtUserIsTouchWindow);
+        add_handler(NtUserGetTopLevelWindow);
         add_handler(NtUserCreatePopupMenu);
         add_handler(NtUserSetMenu);
         add_handler(NtUserSetMenuDefaultItem);

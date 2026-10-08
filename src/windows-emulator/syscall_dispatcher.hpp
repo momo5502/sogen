@@ -102,10 +102,17 @@ namespace sogen
         }
     };
 
+    enum class window_create_phase : uint8_t
+    {
+        cbt_create,
+        creation_messages,
+    };
+
     struct window_create_state : completion_state
     {
         hwnd handle{};
         hwnd parent_handle{};
+        window_create_phase phase{window_create_phase::cbt_create};
 
         emulator_stack_allocation min_max_info_alloc{};
         emulator_stack_allocation window_rect_alloc{};
@@ -118,6 +125,8 @@ namespace sogen
         {
             buffer.write(this->handle);
             buffer.write(this->parent_handle);
+            buffer.write(this->phase);
+
             buffer.write(this->min_max_info_alloc);
             buffer.write(this->window_rect_alloc);
             buffer.write(this->create_struct_alloc);
@@ -129,6 +138,8 @@ namespace sogen
         {
             buffer.read(this->handle);
             buffer.read(this->parent_handle);
+            buffer.read(this->phase);
+
             buffer.read(this->min_max_info_alloc);
             buffer.read(this->window_rect_alloc);
             buffer.read(this->create_struct_alloc);
