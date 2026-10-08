@@ -37,6 +37,7 @@ namespace sogen
             process,
             accelerator_table,
             managed_thread,
+            job,
         };
     };
 
