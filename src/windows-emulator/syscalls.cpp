@@ -614,6 +614,7 @@ namespace sogen
         BOOL handle_NtUserInvalidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
         BOOL handle_NtUserValidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect);
         BOOL handle_NtUserGetUpdateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
+        int32_t handle_NtUserGetUpdateRgn(const syscall_context& c, hwnd hwnd, handle region, BOOL erase);
         BOOL handle_NtUserUpdateWindow(const syscall_context& c, hwnd hwnd);
         BOOL completion_NtUserUpdateWindow(const syscall_context& c, hwnd hwnd);
         int32_t handle_NtUserGetKeyNameText(const syscall_context& c, int32_t l_param, emulator_pointer buffer, int32_t character_count);
@@ -1728,6 +1729,7 @@ namespace sogen
         add_handler(NtUserInvalidateRect);
         add_handler(NtUserValidateRect);
         add_handler(NtUserGetUpdateRect);
+        add_handler(NtUserGetUpdateRgn);
         add_handler(NtUserUpdateWindow);
         add_handler(NtUserGetCursorInfo);
         add_handler(NtUserMapVirtualKeyEx);
