@@ -10,7 +10,7 @@ namespace sogen
     {
       public:
         bool input_available() override;
-        std::optional<console_key_event> read_input_event() override;
+        std::optional<console_key_event> read_input_event(bool wait, bool remove) override;
         std::string read_input(size_t length) override;
         void reset() override;
 
@@ -20,8 +20,11 @@ namespace sogen
         std::deque<uint8_t> input_{};
 
       private:
+        std::optional<console_key_event> read_input_event_impl(bool wait);
         std::optional<uint8_t> read_byte(int timeout_ms);
         void unread(uint8_t byte);
+        std::deque<console_key_event> pending_events_{};
+        std::vector<uint8_t>* read_recording_{};
     };
 
 } // namespace sogen

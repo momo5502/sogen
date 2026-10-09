@@ -2,6 +2,7 @@
 #include "sspi_rpc.hpp"
 #include "sspi_context.hpp"
 #include "sspi_tls_client.hpp"
+#include "lsa_policy_lookup.hpp"
 
 #include "binary_writer.hpp"
 #include "../windows_emulator.hpp"
@@ -30,9 +31,34 @@ namespace sogen
 
         struct sspi_rpc_port : rpc_port
         {
-            NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c,
-                                utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>&) override
+            void serialize_object(utils::buffer_serializer& buffer) const override
             {
+                rpc_port::serialize_object(buffer);
+                buffer.write(this->connected_);
+                buffer.write(this->package_strings_);
+                buffer.write(this->credential_.acquisitions);
+                buffer.write_map(this->contexts_);
+                buffer.write(this->next_context_upper_);
+            }
+
+            void deserialize_object(utils::buffer_deserializer& buffer) override
+            {
+                rpc_port::deserialize_object(buffer);
+                buffer.read(this->connected_);
+                buffer.read(this->package_strings_);
+                buffer.read(this->credential_.acquisitions);
+                buffer.read_map(this->contexts_);
+                buffer.read(this->next_context_upper_);
+            }
+
+            NTSTATUS handle_rpc(windows_emulator& win_emu, const uint32_t procedure_id, const lpc_request_context& c,
+                                utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>& reply_handles) override
+            {
+                if (writer.pointer_size() == utils::aligned_binary_writer::pointer_size_32)
+                {
+                    auto fallback = create_lsa_policy_lookup_port();
+                    return dynamic_cast<rpc_port&>(*fallback).handle_rpc(win_emu, procedure_id, c, writer, reply_handles);
+                }
                 if (this->bound_interface() != k_sspi_rpc_interface)
                 {
                     return STATUS_NOT_SUPPORTED;
@@ -97,6 +123,25 @@ namespace sogen
                 std::string target{};
                 std::unique_ptr<sspi::tls_client> tls{};
                 bool finalized{};
+
+                void serialize(utils::buffer_serializer& buffer) const
+                {
+                    if (this->tls)
+                    {
+                        throw std::runtime_error("Cannot snapshot an active SSPI TLS handshake");
+                    }
+                    buffer.write(this->handle);
+                    buffer.write_string(this->target);
+                    buffer.write(this->finalized);
+                }
+
+                void deserialize(utils::buffer_deserializer& buffer)
+                {
+                    buffer.read(this->handle);
+                    buffer.read_string(this->target);
+                    buffer.read(this->finalized);
+                    this->tls.reset();
+                }
             };
 
             template <typename T>
@@ -124,7 +169,8 @@ namespace sogen
 
             static std::optional<std::vector<uint8_t>> read_request(windows_emulator& win_emu, const lpc_request_context& c)
             {
-                if (c.send_buffer == 0)
+                constexpr size_t max_sspi_request_size = 1u << 20;
+                if (c.send_buffer == 0 || c.send_buffer_length > max_sspi_request_size)
                 {
                     return std::nullopt;
                 }
@@ -617,6 +663,8 @@ namespace sogen
 
                 if (result.status == sspi::handshake_status::failed)
                 {
+                    context->tls.reset();
+                    context->finalized = true;
                     return write_context_reply(writer, 0, result.output_token, 0, 0, context->handle, k_illegal_message, 0)
                                ? STATUS_SUCCESS
                                : STATUS_INVALID_PARAMETER;
@@ -743,7 +791,7 @@ namespace sogen
             bool connected_{};
             uint64_t package_strings_{};
             credential_record credential_{};
-            std::unordered_map<uint64_t, context_record> contexts_{};
+            std::map<uint64_t, context_record> contexts_{};
             uint64_t next_context_upper_{k_context_upper};
         };
     }

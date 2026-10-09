@@ -1076,16 +1076,26 @@ namespace sogen
                     return;
                 }
 
+                auto* renderer = SDL_CreateRenderer(window, nullptr);
+                if (!renderer && (flags & SDL_WINDOW_VULKAN) != 0)
+                {
+                    SDL_DestroyWindow(window);
+                    flags &= ~SDL_WINDOW_VULKAN;
+                    window = SDL_CreateWindow(title.c_str(), static_cast<int>(width), static_cast<int>(height), flags);
+                    renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
+                }
+                if (!renderer)
+                {
+                    if (window)
+                    {
+                        SDL_DestroyWindow(window);
+                    }
+                    return;
+                }
+
 #ifdef _WIN32
                 apply_application_icon(window);
 #endif
-
-                auto* renderer = SDL_CreateRenderer(window, nullptr);
-                if (!renderer)
-                {
-                    SDL_DestroyWindow(window);
-                    return;
-                }
 
                 SDL_SetWindowPosition(window, desc.rect.left, desc.rect.top);
                 SDL_StartTextInput(window);

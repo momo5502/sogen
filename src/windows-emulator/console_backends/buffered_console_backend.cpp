@@ -84,17 +84,53 @@ namespace sogen
 
         const auto byte = this->input_.front();
         this->input_.pop_front();
+        if (this->read_recording_)
+        {
+            this->read_recording_->push_back(byte);
+        }
         return byte;
     }
 
     void buffered_console_backend::unread(const uint8_t byte)
     {
         this->input_.push_front(byte);
+        if (this->read_recording_ && !this->read_recording_->empty() && this->read_recording_->back() == byte)
+        {
+            this->read_recording_->pop_back();
+        }
     }
 
-    std::optional<console_key_event> buffered_console_backend::read_input_event()
+    std::optional<console_key_event> buffered_console_backend::read_input_event(const bool wait, const bool remove)
     {
-        const auto byte = this->read_byte(-1);
+        if (remove)
+        {
+            return this->read_input_event_impl(wait);
+        }
+
+        std::vector<uint8_t> consumed;
+        const auto pending_events = this->pending_events_;
+        this->read_recording_ = &consumed;
+        const auto event = this->read_input_event_impl(wait);
+        this->read_recording_ = nullptr;
+        while (!consumed.empty())
+        {
+            this->input_.push_front(consumed.back());
+            consumed.pop_back();
+        }
+        this->pending_events_ = pending_events;
+        return event;
+    }
+
+    std::optional<console_key_event> buffered_console_backend::read_input_event_impl(const bool wait)
+    {
+        if (!this->pending_events_.empty())
+        {
+            const auto event = this->pending_events_.front();
+            this->pending_events_.pop_front();
+            return event;
+        }
+
+        const auto byte = this->read_byte(wait ? -1 : 0);
         if (!byte)
         {
             return std::nullopt;
@@ -104,7 +140,7 @@ namespace sogen
         {
             if (this->input_.empty())
             {
-                this->refill(25);
+                this->refill(wait ? 25 : 0);
             }
             if (this->input_.empty())
             {
@@ -127,7 +163,7 @@ namespace sogen
             {
                 if (this->input_.empty())
                 {
-                    this->refill(25);
+                    this->refill(wait ? 25 : 0);
                 }
                 const auto next = this->read_byte(0);
                 if (!next)
@@ -145,9 +181,15 @@ namespace sogen
 
             if (const auto key = decode_escape_sequence(static_cast<char>(*prefix), std::string_view{sequence.data(), sequence_size}))
             {
-                return console_key_event{.key = *key};
+                const bool control = sequence_size >= 3 && sequence[sequence_size - 3] == ';' && sequence[sequence_size - 2] == '5';
+                return console_key_event{.key = *key, .control = control};
             }
 
+            for (size_t i = sequence_size; i > 0; --i)
+            {
+                this->unread(static_cast<uint8_t>(sequence[i - 1]));
+            }
+            this->unread(*prefix);
             return console_key_event{.key = console_key::escape};
         }
 
@@ -161,12 +203,78 @@ namespace sogen
         case '\b':
         case 0x7F:
             return console_key_event{.key = console_key::backspace, .character = u'\b'};
-        default:
+        default: {
+            if (*byte >= 0x80)
+            {
+                uint32_t code_point{};
+                size_t continuation_count{};
+                uint32_t minimum{};
+                if (*byte >= 0xC2 && *byte <= 0xDF)
+                {
+                    code_point = *byte & 0x1F;
+                    continuation_count = 1;
+                    minimum = 0x80;
+                }
+                else if (*byte >= 0xE0 && *byte <= 0xEF)
+                {
+                    code_point = *byte & 0x0F;
+                    continuation_count = 2;
+                    minimum = 0x800;
+                }
+                else if (*byte >= 0xF0 && *byte <= 0xF4)
+                {
+                    code_point = *byte & 0x07;
+                    continuation_count = 3;
+                    minimum = 0x10000;
+                }
+                else
+                {
+                    return console_key_event{.key = console_key::character, .character = u'\uFFFD'};
+                }
+
+                std::array<uint8_t, 4> sequence{*byte};
+                size_t sequence_size = 1;
+                for (size_t i = 0; i < continuation_count; ++i)
+                {
+                    const auto next = this->read_byte(wait ? -1 : 0);
+                    if (!next)
+                    {
+                        for (size_t j = sequence_size; j > 0; --j)
+                        {
+                            this->unread(sequence[j - 1]);
+                        }
+                        return std::nullopt;
+                    }
+                    if ((*next & 0xC0) != 0x80)
+                    {
+                        this->unread(*next);
+                        return console_key_event{.key = console_key::character, .character = u'\uFFFD'};
+                    }
+                    sequence[sequence_size++] = *next;
+                    code_point = (code_point << 6) | (*next & 0x3F);
+                }
+
+                if (code_point < minimum || code_point > 0x10FFFF || (code_point >= 0xD800 && code_point <= 0xDFFF))
+                {
+                    return console_key_event{.key = console_key::character, .character = u'\uFFFD'};
+                }
+                if (code_point > 0xFFFF)
+                {
+                    code_point -= 0x10000;
+                    this->pending_events_.push_back(console_key_event{.key = console_key::character,
+                                                                      .character = static_cast<char16_t>(0xDC00 + (code_point & 0x3FF))});
+                    return console_key_event{.key = console_key::character,
+                                             .character = static_cast<char16_t>(0xD800 + (code_point >> 10))};
+                }
+                return console_key_event{.key = console_key::character, .character = static_cast<char16_t>(code_point)};
+            }
+
             return console_key_event{
                 .key = console_key::character,
                 .character = static_cast<char16_t>(*byte),
                 .control = *byte > 0 && *byte <= 0x1A,
             };
+        }
         }
     }
 
@@ -205,6 +313,7 @@ namespace sogen
     void buffered_console_backend::reset()
     {
         this->input_.clear();
+        this->pending_events_.clear();
     }
 
 } // namespace sogen

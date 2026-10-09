@@ -3,6 +3,8 @@
 
 #ifdef _WIN32
 #include <wincrypt.h>
+#else
+#include <mbedtls/sha1.h>
 #endif
 
 namespace sogen::sspi
@@ -26,6 +28,7 @@ namespace sogen::sspi
         constexpr uint32_t ssl3_magic = 0x73736c33;
         constexpr uint32_t tls_1_2 = 0x0303;
         constexpr uint32_t tls_ecdhe_ecdsa_with_aes_128_gcm_sha256 = 0xc02b;
+        constexpr uint32_t tls_ecdhe_rsa_with_aes_128_gcm_sha256 = 0xc02f;
 
         template <typename T>
         void write_value(std::span<uint8_t> bytes, const size_t offset, const T value)
@@ -242,7 +245,53 @@ namespace sogen::sspi
             CertCloseStore(store, 0);
             return success ? std::optional{std::move(bytes)} : std::nullopt;
 #else
-            return certificates.empty() ? std::optional{std::vector<uint8_t>{}} : std::nullopt;
+            constexpr uint32_t serialized_store_magic = 0x54524543;
+            constexpr uint32_t certificate_entry = 0x20;
+            constexpr uint32_t chain_index_property = 0xe697;
+            constexpr uint32_t sha1_hash_property = 3;
+            std::vector<uint8_t> bytes;
+            const auto append_u32 = [&](const uint32_t value) {
+                for (unsigned shift = 0; shift < 32; shift += 8)
+                {
+                    bytes.push_back(static_cast<uint8_t>(value >> shift));
+                }
+            };
+            const auto append_entry = [&](const uint32_t id, const std::span<const uint8_t> data) {
+                append_u32(id);
+                append_u32(1);
+                append_u32(static_cast<uint32_t>(data.size()));
+                bytes.insert(bytes.end(), data.begin(), data.end());
+            };
+
+            append_u32(0);
+            // [MS-OSHARED] 2.3.9.1: a version-zero CERT header, certificate entries, and a zero end marker.
+            append_u32(serialized_store_magic);
+            for (size_t index = certificates.size(); index-- > 0;)
+            {
+                const auto& certificate = certificates[index];
+                if (certificate.size() > std::numeric_limits<uint32_t>::max() || index > std::numeric_limits<uint32_t>::max())
+                {
+                    return std::nullopt;
+                }
+
+                std::array<uint8_t, 4> chain_index{};
+                const auto ordinal = static_cast<uint32_t>(index);
+                for (unsigned shift = 0; shift < 32; shift += 8)
+                {
+                    chain_index[shift / 8] = static_cast<uint8_t>(ordinal >> shift);
+                }
+                append_entry(chain_index_property, chain_index);
+
+                std::array<uint8_t, 20> sha1{};
+                if (mbedtls_sha1(certificate.data(), certificate.size(), sha1.data()) != 0)
+                {
+                    return std::nullopt;
+                }
+                append_entry(sha1_hash_property, sha1);
+                append_entry(certificate_entry, certificate);
+            }
+            bytes.insert(bytes.end(), 12, uint8_t{});
+            return std::optional{std::move(bytes)};
 #endif
         }
     }
@@ -299,7 +348,8 @@ namespace sogen::sspi
 
     std::optional<std::vector<uint8_t>> build_provider_context(const provider_context_input& input)
     {
-        if (input.protocol != tls_1_2 || input.cipher_suite != tls_ecdhe_ecdsa_with_aes_128_gcm_sha256)
+        if (input.protocol != tls_1_2 ||
+            (input.cipher_suite != tls_ecdhe_ecdsa_with_aes_128_gcm_sha256 && input.cipher_suite != tls_ecdhe_rsa_with_aes_128_gcm_sha256))
         {
             return std::nullopt;
         }

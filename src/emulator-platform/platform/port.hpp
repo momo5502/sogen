@@ -2,21 +2,20 @@
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
-#define LPC_REQUEST               1
-#define LPC_REPLY                 2
-#define LPC_DATAGRAM              3
-#define LPC_LOST_REPLY            4
-#define LPC_PORT_CLOSED           5
-#define LPC_CLIENT_DIED           6
-#define LPC_EXCEPTION             7
-#define LPC_DEBUG_EVENT           8
-#define LPC_ERROR_EVENT           9
-#define LPC_CONNECTION_REQUEST    10
-#define LPC_NO_IMPERSONATE        0x4000
-#define LPC_CONTINUATION_REQUIRED 0x2000
-#define LPC_KERNELMODE_MESSAGE    0x8000
+#define LPC_REQUEST            1
+#define LPC_REPLY              2
+#define LPC_DATAGRAM           3
+#define LPC_LOST_REPLY         4
+#define LPC_PORT_CLOSED        5
+#define LPC_CLIENT_DIED        6
+#define LPC_EXCEPTION          7
+#define LPC_DEBUG_EVENT        8
+#define LPC_ERROR_EVENT        9
+#define LPC_CONNECTION_REQUEST 10
+#define LPC_NO_IMPERSONATE     0x4000
+#define LPC_KERNELMODE_MESSAGE 0x8000
 
-#define LpcpGetMessageType(x)     ((x)->u2.s2.Type & ~LPC_KERNELMODE_MESSAGE)
+#define LpcpGetMessageType(x)  ((x)->u2.s2.Type & ~LPC_KERNELMODE_MESSAGE)
 
 namespace sogen
 {
@@ -116,9 +115,12 @@ namespace sogen
     {
         ULONG Flags;
         typename Traits::HANDLE SectionHandle;
-        Traits::PVOID ViewBase;
-        Traits::SIZE_T ViewSize;
+        typename Traits::PVOID ViewBase;
+        typename Traits::SIZE_T ViewSize;
     };
+
+    static_assert(sizeof(ALPC_DATA_VIEW_ATTR<EmulatorTraits<Emu32>>) == 16);
+    static_assert(sizeof(ALPC_DATA_VIEW_ATTR<EmulatorTraits<Emu64>>) == 32);
 
     template <typename Traits>
     struct PORT_DATA_ENTRY

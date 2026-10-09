@@ -71,15 +71,18 @@ namespace sogen
     struct deferred_window_positions : ref_counted_object
     {
         std::vector<EMU_WINDOWPOS> positions{};
+        hwnd parent_handle{};
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write_vector(this->positions);
+            buffer.write(this->parent_handle);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read_vector(this->positions);
+            buffer.read(this->parent_handle);
         }
     };
 

@@ -13,10 +13,8 @@ namespace sogen
         std::array<uint32_t, 2> code_pages{};
     };
 
-    constexpr gdi_font_signature make_gdi_font_signature(const uint8_t charset)
+    constexpr void add_gdi_font_charset(gdi_font_signature& signature, const uint8_t charset)
     {
-        gdi_font_signature signature{};
-
         const auto set_unicode_subset = [&](const uint32_t bit) { signature.unicode_subsets[bit / 32] |= uint32_t{1} << (bit % 32); };
         const auto set_code_page = [&](const uint32_t bit) { signature.code_pages[bit / 32] |= uint32_t{1} << (bit % 32); };
 
@@ -72,7 +70,5 @@ namespace sogen
         default:
             break;
         }
-
-        return signature;
     }
 }

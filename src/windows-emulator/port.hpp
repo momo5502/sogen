@@ -15,6 +15,7 @@
 
 namespace sogen
 {
+    inline constexpr uint16_t lpc_continuation_required = 0x2000;
 
     class windows_emulator;
     struct process_context;
@@ -454,7 +455,6 @@ namespace sogen
     };
 
     std::unique_ptr<port> create_port(std::u16string_view port);
-    bool is_supported_port(std::u16string_view port);
 
     class port_container : public port
     {

@@ -52,6 +52,8 @@ namespace sogen::fuzz
 
             emulator_interfaces interfaces{};
             interfaces.socket_factory = network::create_static_socket_factory();
+            interfaces.ui = std::make_unique<null_ui_backend>();
+            interfaces.audio = std::make_unique<null_audio_backend>();
 
             return windows_emulator{mock::make_mock_emulator(), settings, {}, std::move(interfaces)};
         }

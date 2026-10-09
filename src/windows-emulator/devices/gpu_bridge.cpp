@@ -1874,9 +1874,11 @@ namespace sogen
                 uint64_t native_instance = 0;
                 if (!this->vulkan_.get_native_instance_handle(request.instance, native_instance))
                 {
-                    return write_output(
-                        win_emu, context,
-                        gpu_bridge::create_surface_response{.vk_result = -3, .reserved = 0, .surface = gpu_bridge::null_object});
+                    constexpr int32_t vk_error_initialization_failed = -3;
+                    return write_output(win_emu, context,
+                                        gpu_bridge::create_surface_response{.vk_result = vk_error_initialization_failed,
+                                                                            .reserved = 0,
+                                                                            .surface = gpu_bridge::null_object});
                 }
 
                 const uint64_t native_surface = win_emu.ui().create_vulkan_surface(static_cast<hwnd>(request.hwnd), native_instance);

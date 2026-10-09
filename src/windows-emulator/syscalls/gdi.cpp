@@ -2879,22 +2879,12 @@ namespace sogen
             }
 
             const auto old = it->second.selected_bitmap;
-            paint_trace::log("gdi.select-bitmap request hdc=0x%08" PRIx32 " old=0x%08" PRIx32 " requested=0x%08" PRIx32
-                             " memory=%d target=0x%08" PRIx32 " origin=[%d,%d]",
-                             static_cast<uint32_t>(dc), old, bitmap_handle, it->second.is_memory_dc ? 1 : 0,
-                             static_cast<uint32_t>(it->second.target_window), it->second.current_x, it->second.current_y);
-            trace_bitmap_owners("gdi.select-bitmap-before", c, bitmap_handle);
-
             if (bitmap_handle != c.proc.gdi_memory_dc_default_bitmap_handle)
             {
                 for (const auto& [other_dc, state] : c.proc.gdi_dc_states)
                 {
                     if (other_dc != static_cast<uint32_t>(dc) && state.selected_bitmap == bitmap_handle)
                     {
-                        paint_trace::log("gdi.select-bitmap hdc=0x%08" PRIx32 " bitmap=0x%08" PRIx32
-                                         " failed=already-selected other-hdc=0x%08" PRIx32,
-                                         static_cast<uint32_t>(dc), bitmap_handle, other_dc);
-                        trace_bitmap_owners("gdi.select-bitmap-conflict", c, bitmap_handle);
                         return 0;
                     }
                 }
@@ -3105,6 +3095,16 @@ namespace sogen
 
                 for (const auto& style : styles)
                 {
+                    gdi_font_signature signature{};
+                    for (const auto& supported_script : scripts)
+                    {
+                        const auto font_charset = supported_script.first;
+                        if (style.supports_arabic_and_hebrew || (font_charset != ARABIC_CHARSET && font_charset != HEBREW_CHARSET))
+                        {
+                            add_gdi_font_charset(signature, font_charset);
+                        }
+                    }
+
                     for (const auto& [font_charset, script] : scripts)
                     {
                         if ((!style.supports_arabic_and_hebrew && (font_charset == ARABIC_CHARSET || font_charset == HEBREW_CHARSET)) ||
@@ -3138,7 +3138,6 @@ namespace sogen
                         font.text_metric.ntmTm.ntmFlags =
                             (style.weight == FW_BOLD ? NTM_BOLD : NTM_REGULAR) | (style.italic ? NTM_ITALIC : 0);
 
-                        const auto signature = make_gdi_font_signature(font_charset);
                         std::ranges::copy(signature.unicode_subsets, font.text_metric.fsUsb);
                         std::ranges::copy(signature.code_pages, font.text_metric.fsCsb);
                     }
@@ -3657,6 +3656,13 @@ namespace sogen
                 !c.win_emu.memory.try_read_memory(second_attr, &second_rect, sizeof(second_rect)))
             {
                 return FALSE;
+            }
+
+            const auto first_empty = first_rect.left >= first_rect.right || first_rect.top >= first_rect.bottom;
+            const auto second_empty = second_rect.left >= second_rect.right || second_rect.top >= second_rect.bottom;
+            if (first_empty || second_empty)
+            {
+                return first_empty == second_empty ? TRUE : FALSE;
             }
 
             return first_rect.left == second_rect.left && first_rect.top == second_rect.top && first_rect.right == second_rect.right &&

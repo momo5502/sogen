@@ -159,11 +159,6 @@ namespace sogen
         return std::make_unique<dummy_port>(std::u16string(port));
     }
 
-    bool is_supported_port(const std::u16string_view port)
-    {
-        return dynamic_cast<dummy_port*>(create_port(port).get()) == nullptr;
-    }
-
     lpc_message_result port_container::handle_message(windows_emulator& win_emu, const lpc_message_context& c)
     {
         this->assert_validity();
@@ -260,7 +255,7 @@ namespace sogen
 
         if (!request_result.view_payload.empty())
         {
-            recv_header.native.u2.s2.Type |= LPC_CONTINUATION_REQUIRED;
+            recv_header.native.u2.s2.Type |= lpc_continuation_required;
         }
 
         if (header_size + payload_size > static_cast<ULONG>(std::numeric_limits<CSHORT>::max()))

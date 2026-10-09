@@ -24,7 +24,7 @@ namespace sogen
         emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine{};
         emulator_pointer apc_context{};
         emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block;
-        emulator_pointer wow64_x86_io_status_block{};
+        emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu32>>> wow64_io_status_block;
         ULONG io_control_code{};
         emulator_pointer input_buffer{};
         ULONG input_buffer_length{};
@@ -42,7 +42,8 @@ namespace sogen
         emulator_thread& thread() const;
 
         io_device_context(memory_interface& emu)
-            : io_status_block(emu)
+            : io_status_block(emu),
+              wow64_io_status_block(emu)
         {
         }
 
@@ -58,7 +59,7 @@ namespace sogen
             buffer.write(apc_routine);
             buffer.write(apc_context);
             buffer.write(io_status_block);
-            buffer.write(wow64_x86_io_status_block);
+            buffer.write(wow64_io_status_block);
             buffer.write(io_control_code);
             buffer.write(input_buffer);
             buffer.write(input_buffer_length);
@@ -76,7 +77,7 @@ namespace sogen
             buffer.read(apc_routine);
             buffer.read(apc_context);
             buffer.read(io_status_block);
-            buffer.read(wow64_x86_io_status_block);
+            buffer.read(wow64_io_status_block);
             buffer.read(io_control_code);
             buffer.read(input_buffer);
             buffer.read(input_buffer_length);
@@ -94,12 +95,6 @@ namespace sogen
         uint32_t length;
     };
 
-    struct device_completion_association
-    {
-        handle completion_port{};
-        uint64_t key{};
-    };
-
     inline NTSTATUS write_io_status(const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block, const NTSTATUS status,
                                     const bool clear_struct = false)
     {
@@ -113,6 +108,21 @@ namespace sogen
         });
 
         return status;
+    }
+
+    inline NTSTATUS write_io_status(const io_device_context& context, const NTSTATUS status, const bool clear_struct = false)
+    {
+        const auto result = write_io_status(context.io_status_block, status, clear_struct);
+        if (context.io_status_block && context.wow64_io_status_block)
+        {
+            const auto native_status = context.io_status_block.read();
+            context.wow64_io_status_block.access([&](IO_STATUS_BLOCK<EmulatorTraits<Emu32>>& status_block) {
+                status_block.Status = native_status.Status;
+                status_block.Information = static_cast<EmulatorTraits<Emu32>::ULONG_PTR>(native_status.Information);
+            });
+        }
+
+        return result;
     }
 
     struct io_device : ref_counted_object
@@ -161,19 +171,6 @@ namespace sogen
         virtual void work(windows_emulator& win_emu)
         {
             (void)win_emu;
-        }
-
-        virtual void release_references(process_context& process)
-        {
-            (void)process;
-        }
-
-        virtual bool cancel_io(windows_emulator& win_emu, handle file_handle, uint64_t io_status_block)
-        {
-            (void)win_emu;
-            (void)file_handle;
-            (void)io_status_block;
-            return false;
         }
 
         NTSTATUS execute_ioctl(windows_emulator& win_emu, const io_device_context& c);

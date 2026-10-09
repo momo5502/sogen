@@ -3665,6 +3665,15 @@ namespace sogen
 
             if (s.phase == window_create_phase::cbt_create)
             {
+                if (c.get_callback_result<lresult>() != 0)
+                {
+                    release_window_create_allocations();
+                    c.win_emu.ui().destroy_window(win->handle);
+                    c.proc.gdi_window_surfaces.erase(static_cast<uint32_t>(win->handle));
+                    (void)c.proc.windows.erase(s.handle);
+                    return 0;
+                }
+
                 s.phase = window_create_phase::creation_messages;
                 dispatch_next_message(c, callback_id::NtUserCreateWindowEx, std::move(s), *win, s.message_queue);
                 return {};
@@ -5080,11 +5089,26 @@ namespace sogen
                                                     const int height, const UINT flags, const uint32_t /*band*/, const BOOL /*use_band*/)
         {
             auto* batch = c.proc.deferred_window_position_batches.get(batch_handle);
-            if (!batch || !c.proc.windows.get(window))
+            if (!batch)
+            {
+                set_guest_last_error(c, 1405);
+                return 0;
+            }
+
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
             {
                 set_guest_last_error(c, 1400);
                 return 0;
             }
+
+            if (!batch->positions.empty() && batch->parent_handle != win->parent_handle)
+            {
+                set_guest_last_error(c, 1441);
+                return 0;
+            }
+
+            batch->parent_handle = win->parent_handle;
 
             batch->positions.push_back({
                 .hwnd = window,
@@ -5140,7 +5164,7 @@ namespace sogen
             auto* batch = c.proc.deferred_window_position_batches.get(batch_handle);
             if (!batch)
             {
-                set_guest_last_error(c, 1400);
+                set_guest_last_error(c, 1405);
                 return FALSE;
             }
 

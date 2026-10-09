@@ -218,6 +218,11 @@ namespace sogen
                 break;
             }
 
+            if (event.control)
+            {
+                record.control_key_state |= 0x0008;
+            }
+
             return record;
         }
 
@@ -300,6 +305,7 @@ namespace sogen
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
+
                 switch (static_cast<console_api>(message.api_number))
                 {
                 case console_api::get_console_mode: {
@@ -366,6 +372,8 @@ namespace sogen
                     return STATUS_SUCCESS;
                 }
                 case console_api::read_console_input: {
+                    constexpr uint16_t console_read_noremove = 0x0001;
+                    constexpr uint16_t console_read_nowait = 0x0002;
                     if (!is_input_endpoint(endpoint) || context.input_buffer_length < sizeof(console_ioctl_input_header) ||
                         header.input_count != 1 || header.output_count != 2 || message.data_size != sizeof(read_console_input_request))
                     {
@@ -379,15 +387,24 @@ namespace sogen
                         return STATUS_INVALID_PARAMETER;
                     }
 
-                    const auto event = win_emu.console().read_input_event();
+                    auto request = win_emu.emu().read_memory<read_console_input_request>(header.data);
+                    if ((request.flags & ~(console_read_noremove | console_read_nowait)) != 0)
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    const auto wait = (request.flags & console_read_nowait) == 0;
+                    const auto remove = (request.flags & console_read_noremove) == 0;
+                    const auto event = win_emu.console().read_input_event(wait, remove);
                     if (!event)
                     {
-                        return STATUS_END_OF_FILE;
+                        request.events_read = 0;
+                        win_emu.emu().write_memory(header.data, &request, sizeof(request));
+                        return wait ? STATUS_END_OF_FILE : STATUS_SUCCESS;
                     }
 
                     const auto record = make_console_input_record(*event);
 
-                    auto request = win_emu.emu().read_memory<read_console_input_request>(header.data);
                     request.events_read = 1;
                     win_emu.emu().write_memory(header.data, &request, sizeof(request));
                     win_emu.emu().write_memory(input_header.output_buffer, &record, sizeof(record));
