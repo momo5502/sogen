@@ -4371,12 +4371,18 @@ namespace sogen
         int32_t handle_NtUserGetUpdateRgn(const syscall_context& c, const hwnd hwnd, const handle region, const BOOL)
         {
             const auto* win = c.proc.windows.get(hwnd);
-            if (!win || !set_gdi_region_rect(c, region, win->update_pending ? win->update_rect : RECT{}))
+            if (!win)
             {
                 return 0;
             }
 
-            return win->update_pending ? 2 : 1;
+            const auto rect = win->update_pending ? win->update_rect : RECT{};
+            if (!set_gdi_region_rect(c, region, rect))
+            {
+                return 0;
+            }
+
+            return rect.left < rect.right && rect.top < rect.bottom ? 2 : 1;
         }
 
         void collect_pending_paint_tree(const syscall_context& c, window& win, std::vector<uint64_t>& order)
