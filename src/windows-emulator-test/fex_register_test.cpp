@@ -98,6 +98,61 @@ namespace sogen::test
         EXPECT_EQ(observed_operation, memory_operation::write);
         EXPECT_EQ(observed_type, memory_violation_type::protection);
     }
+
+    TEST(FexMemoryViolationTest, UnalignedLoadCrossingIntoUnmappedMemoryIsGuestViolation)
+    {
+        const auto emu = try_create_fex_emulator();
+        if (!emu)
+        {
+            GTEST_SKIP() << "FEX backend is not available";
+        }
+
+        memory_manager memory{*emu};
+        constexpr size_t page_size = 0x1000;
+        const uint64_t code = memory.allocate_memory(page_size, memory_permission::read_write);
+        const uint64_t target = memory.allocate_memory(page_size * 2, memory_permission::read_write);
+        const uint64_t gdt = memory.allocate_memory(page_size, memory_permission::read_write);
+        ASSERT_NE(code, 0u);
+        ASSERT_NE(target, 0u);
+        ASSERT_NE(gdt, 0u);
+        ASSERT_TRUE(memory.decommit_memory(target + page_size, page_size));
+
+        constexpr uint16_t long_mode_code_selector = 0x08;
+        constexpr uint64_t long_mode_code_descriptor = 0x00AF9B000000FFFF;
+        emu->write_memory<uint64_t>(gdt + long_mode_code_selector, long_mode_code_descriptor);
+        emu->load_gdt(gdt, page_size);
+        emu->reg<uint16_t>(x86_register::cs, long_mode_code_selector);
+
+        constexpr std::array<uint8_t, 4> guest_code = {0x48, 0x8B, 0x18, 0xF4};
+        memory.write_memory(code, guest_code.data(), guest_code.size());
+        ASSERT_TRUE(memory.protect_memory(code, page_size, memory_permission::read_exec));
+
+        bool observed = false;
+        uint64_t observed_address = 0;
+        size_t observed_size = 0;
+        memory_operation observed_operation = memory_operation::write;
+        memory_violation_type observed_type = memory_violation_type::protection;
+        emu->hook_memory_violation(
+            [&](cpu_interface& cpu, uint64_t address, size_t size, memory_operation operation, memory_violation_type type) {
+                observed = true;
+                observed_address = address;
+                observed_size = size;
+                observed_operation = operation;
+                observed_type = type;
+                cpu.stop();
+                return memory_violation_continuation::stop;
+            });
+
+        emu->reg(x86_register::rip, code);
+        emu->reg(x86_register::rax, target + page_size - 5);
+        emu->start(0);
+
+        EXPECT_TRUE(observed);
+        EXPECT_EQ(observed_address, target + page_size - 5);
+        EXPECT_EQ(observed_size, 8u);
+        EXPECT_EQ(observed_operation, memory_operation::read);
+        EXPECT_EQ(observed_type, memory_violation_type::unmapped);
+    }
 #endif
 
     TEST(FexRegisterTest, ExtendedGprSubRegisterWrites)
