@@ -1257,7 +1257,7 @@ namespace sogen
                                                           this->await_msg->filter_max, true))
             {
                 this->await_msg->message.write(*m);
-                this->current_message_time = m->time;
+                this->record_current_message(*m);
 
                 uint64_t active_handle = 0;
                 uint64_t active_window_ptr = 0;
