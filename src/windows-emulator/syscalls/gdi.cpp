@@ -3362,6 +3362,18 @@ namespace sogen
             return handle;
         }
 
+        bool set_gdi_region_rect(const syscall_context& c, const handle region, const RECT& rect)
+        {
+            uint64_t region_attr = 0;
+            if (!get_gdi_object_address(c, static_cast<uint32_t>(region.bits), k_gdi_region_type, region_attr))
+            {
+                return false;
+            }
+
+            c.emu.write_memory(region_attr, &rect, sizeof(rect));
+            return true;
+        }
+
         BOOL handle_NtGdiEqualRgn(const syscall_context& c, const handle first_region, const handle second_region)
         {
             uint64_t first_attr = 0;
