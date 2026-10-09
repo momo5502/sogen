@@ -5396,18 +5396,26 @@ namespace sogen
                                               const emulator_pointer glyph_indices, const uint32_t)
         {
             constexpr uint32_t gdi_error = 0xFFFFFFFF;
-            if (dc == 0 || text == 0 || glyph_indices == 0 || char_count < 0)
+            constexpr size_t max_glyph_count = 1 << 16;
+            if (dc == 0 || text == 0 || glyph_indices == 0 || char_count < 0 || static_cast<size_t>(char_count) > max_glyph_count)
             {
                 return gdi_error;
             }
 
-            std::vector<char16_t> characters(static_cast<size_t>(char_count));
-            c.emu.read_memory(text, characters.data(), characters.size() * sizeof(char16_t));
+            std::array<char16_t, 256> characters{};
+            const auto count = static_cast<size_t>(char_count);
+            for (size_t offset = 0; offset < count; offset += characters.size())
+            {
+                const auto chunk_count = std::min(characters.size(), count - offset);
+                const auto byte_count = chunk_count * sizeof(char16_t);
+                if (!c.win_emu.memory.try_read_memory(text + offset * sizeof(char16_t), characters.data(), byte_count) ||
+                    !c.win_emu.memory.try_write_memory(glyph_indices + offset * sizeof(char16_t), characters.data(), byte_count))
+                {
+                    return gdi_error;
+                }
+            }
 
-            std::vector<uint16_t> indices(characters.size());
-            std::ranges::transform(characters, indices.begin(), [](const char16_t character) { return static_cast<uint16_t>(character); });
-            c.emu.write_memory(glyph_indices, indices.data(), indices.size() * sizeof(uint16_t));
-            return static_cast<uint32_t>(indices.size());
+            return static_cast<uint32_t>(count);
         }
 
         BOOL handle_NtGdiPolyPolyDraw()
