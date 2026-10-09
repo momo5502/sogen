@@ -2042,10 +2042,30 @@ namespace sogen
                                           const uint32_t bits_pixel, const emulator_pointer bits)
         {
             gdi_bitmap_surface* surface = nullptr;
-            const auto handle_value = create_gdi_bitmap_surface(c, width, height, k_default_bitmap_fill, &surface);
+            const auto monochrome = planes == 1 && bits_pixel == 1;
+            const auto handle_value = create_gdi_bitmap_surface(c, width, height, monochrome ? 0 : k_default_bitmap_fill, &surface);
             if (surface != nullptr)
             {
-                if (bits != 0 && planes == 1 && bits_pixel == 32)
+                if (planes == 1 && bits_pixel != 0)
+                {
+                    surface->guest_bpp = bits_pixel;
+                }
+
+                if (bits != 0 && monochrome)
+                {
+                    const auto stride = ((static_cast<size_t>(width) + 15u) / 16u) * 2u;
+                    std::vector<uint8_t> input(stride * height);
+                    c.emu.read_memory(bits, input.data(), input.size());
+                    for (uint32_t y = 0; y < height; ++y)
+                    {
+                        for (uint32_t x = 0; x < width; ++x)
+                        {
+                            const auto bit = (input[static_cast<size_t>(y) * stride + x / 8u] >> (7u - (x & 7u))) & 1u;
+                            surface->pixels[static_cast<size_t>(y) * width + x] = bit == 0 ? 0xFF000000u : 0xFFFFFFFFu;
+                        }
+                    }
+                }
+                else if (bits != 0 && planes == 1 && bits_pixel == 32)
                 {
                     const auto byte_count = static_cast<size_t>(width) * static_cast<size_t>(height) * sizeof(uint32_t);
                     c.emu.read_memory(bits, surface->pixels.data(), byte_count);
@@ -2066,9 +2086,9 @@ namespace sogen
             auto& surface = it->second;
             sync_surface_from_guest_dib(c, surface);
 
-            const uint32_t bpp = surface.guest_bits != 0 ? surface.guest_bpp : 32;
+            const uint32_t bpp = surface.guest_bpp;
 
-            if (bpp != 24 && bpp != 32)
+            if (bpp != 1 && bpp != 24 && bpp != 32)
             {
                 c.win_emu.log.warn("NtGdiGetBitmapBits: Unsupported bitmap bit depth: %u bpp", bpp);
                 return 0;
@@ -2107,7 +2127,17 @@ namespace sogen
 
                 auto* destination = output.data() + static_cast<size_t>(y) * stride;
 
-                if (bpp == 32)
+                if (bpp == 1)
+                {
+                    for (uint32_t x = 0; x < surface.width; ++x)
+                    {
+                        if ((source[x] & 0x00FFFFFFu) != 0)
+                        {
+                            destination[x / 8u] |= static_cast<uint8_t>(0x80u >> (x & 7u));
+                        }
+                    }
+                }
+                else if (bpp == 32)
                 {
                     std::memcpy(destination, source, static_cast<size_t>(surface.width) * sizeof(uint32_t));
                 }
@@ -2207,10 +2237,6 @@ namespace sogen
             return handle_value;
         }
 
-        // GetDIBits: report a bitmap's geometry into the caller's BITMAPINFOHEADER and, when a pixel buffer is
-        // supplied, copy its contents out as a bottom-up 32bpp BI_RGB DIB. The emulator's GDI bitmaps are all
-        // stored as 32bpp BGRA surfaces, so that is the only format reported. D3D9/DX11 init queries this to
-        // probe a memory bitmap before deciding its presentation path.
         int handle_NtGdiGetDIBitsInternal(const syscall_context& c, const hdc /*dc*/, const handle bitmap, const uint32_t start_scan,
                                           const uint32_t scan_lines, const emulator_pointer bits, const emulator_pointer info,
                                           const uint32_t /*usage*/, const uint32_t max_bits, const uint32_t /*max_info*/)
@@ -2230,9 +2256,10 @@ namespace sogen
             const auto bi_width = static_cast<int32_t>(surface.width);
             const auto bi_height = static_cast<int32_t>(surface.height);
             const uint16_t planes = 1;
-            const uint16_t bit_count = 32;
+            const uint16_t bit_count = surface.guest_bpp == 1 ? 1 : 32;
             const uint32_t compression = 0; // BI_RGB
-            const uint32_t size_image = surface.width * surface.height * static_cast<uint32_t>(sizeof(uint32_t));
+            const auto stride = ((static_cast<size_t>(surface.width) * bit_count + 31u) / 32u) * 4u;
+            const auto size_image = static_cast<uint32_t>(stride * surface.height);
             c.emu.write_memory(info + 4, &bi_width, sizeof(bi_width));
             c.emu.write_memory(info + 8, &bi_height, sizeof(bi_height));
             c.emu.write_memory(info + 12, &planes, sizeof(planes));
@@ -2247,7 +2274,6 @@ namespace sogen
             }
 
             // Copy the requested scanlines as a bottom-up DIB (row 0 is the bottom image row).
-            const size_t stride = static_cast<size_t>(surface.width) * sizeof(uint32_t);
             uint32_t copied = 0;
             for (uint32_t row = 0; row < scan_lines; ++row)
             {
@@ -2262,7 +2288,23 @@ namespace sogen
                     break;
                 }
                 const uint32_t src_y = surface.height - 1 - dib_row;
-                c.emu.write_memory(bits + dst_offset, surface.pixels.data() + static_cast<size_t>(src_y) * surface.width, stride);
+                const auto* source = surface.pixels.data() + static_cast<size_t>(src_y) * surface.width;
+                if (bit_count == 1)
+                {
+                    std::vector<uint8_t> row(stride);
+                    for (uint32_t x = 0; x < surface.width; ++x)
+                    {
+                        if ((source[x] & 0x00FFFFFFu) != 0)
+                        {
+                            row[x / 8u] |= static_cast<uint8_t>(0x80u >> (x & 7u));
+                        }
+                    }
+                    c.emu.write_memory(bits + dst_offset, row.data(), row.size());
+                }
+                else
+                {
+                    c.emu.write_memory(bits + dst_offset, source, stride);
+                }
                 ++copied;
             }
 

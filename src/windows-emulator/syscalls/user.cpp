@@ -2744,7 +2744,7 @@ namespace sogen
                 return FALSE;
             }
 
-            const auto mask = handle_NtGdiCreateBitmap(c, 32, 64, 1, 32, 0);
+            const auto mask = handle_NtGdiCreateBitmap(c, 32, 32, 1, 1, 0);
             const auto color = handle_NtGdiCreateBitmap(c, 32, 32, 1, 32, 0);
             if (mask == 0 || color == 0)
             {
