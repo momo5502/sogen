@@ -1661,6 +1661,8 @@ namespace sogen
     namespace syscalls
     {
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
+        uint64_t handle_NtGdiCreateBitmap(const syscall_context& c, uint32_t width, uint32_t height, uint32_t planes, uint32_t bits_pixel,
+                                          emulator_pointer bits);
         hdc create_gdi_window_dc(const syscall_context& c, hwnd window);
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
         BOOL handle_NtGdiFlush(const syscall_context& c);
@@ -2695,9 +2697,9 @@ namespace sogen
             return TRUE;
         }
 
-        NTSTATUS handle_NtUserFindExistingCursorIcon()
+        hicon handle_NtUserFindExistingCursorIcon()
         {
-            return STATUS_NOT_SUPPORTED;
+            return make_pseudo_handle(0x100, handle_types::reserved).bits;
         }
 
         BOOL handle_NtUserDestroyCursor(const syscall_context&, const hicon icon, const DWORD /*flags*/)
@@ -2742,14 +2744,27 @@ namespace sogen
                 return FALSE;
             }
 
-            // The emulator's icons/cursors are bare pseudo-handles with no backing pixel data, so report a
-            // standard 32x32 icon with a centered hotspot and no mask/color bitmaps.
+            const auto mask = handle_NtGdiCreateBitmap(c, 32, 64, 1, 32, 0);
+            const auto color = handle_NtGdiCreateBitmap(c, 32, 32, 1, 32, 0);
+            if (mask == 0 || color == 0)
+            {
+                if (mask != 0)
+                {
+                    handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(mask));
+                }
+                if (color != 0)
+                {
+                    handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(color));
+                }
+                return FALSE;
+            }
+
             const EMU_ICONINFO info{
                 .fIcon = TRUE,
                 .xHotspot = 16,
                 .yHotspot = 16,
-                .hbmMask = 0,
-                .hbmColor = 0,
+                .hbmMask = mask,
+                .hbmColor = color,
             };
             icon_info.write(info);
 
