@@ -5378,6 +5378,62 @@ namespace sogen
         {
             return 1;
         }
+
+        COLORREF handle_NtGdiGetNearestColor(const syscall_context&, const hdc, const COLORREF color)
+        {
+            return static_cast<COLORREF>(color & 0x00FFFFFFu);
+        }
+
+        uint32_t handle_NtGdiSetBoundsRect(const syscall_context&, const hdc, const emulator_pointer, const uint32_t)
+        {
+            return 0;
+        }
+
+        BOOL handle_NtGdiGetAndSetDCDword(const syscall_context& c, const hdc dc, const uint32_t method, const uint32_t value,
+                                          const emulator_pointer result)
+        {
+            constexpr uint32_t set_map_mode = 8;
+            constexpr uint32_t text_map_mode = 1;
+
+            if (dc == 0 || result == 0 || method != set_map_mode || value != text_map_mode)
+            {
+                return FALSE;
+            }
+
+            c.emu.write_memory(result, &text_map_mode, sizeof(text_map_mode));
+            return TRUE;
+        }
+
+        uint32_t handle_NtGdiGetGlyphIndicesW(const syscall_context& c, const hdc dc, const emulator_pointer text, const int32_t char_count,
+                                              const emulator_pointer glyph_indices, const uint32_t)
+        {
+            constexpr uint32_t gdi_error = 0xFFFFFFFF;
+            constexpr size_t max_glyph_count = 1 << 16;
+            if (dc == 0 || text == 0 || glyph_indices == 0 || char_count < 0 || static_cast<size_t>(char_count) > max_glyph_count)
+            {
+                return gdi_error;
+            }
+
+            std::array<char16_t, 256> characters{};
+            const auto count = static_cast<size_t>(char_count);
+            for (size_t offset = 0; offset < count; offset += characters.size())
+            {
+                const auto chunk_count = std::min(characters.size(), count - offset);
+                const auto byte_count = chunk_count * sizeof(char16_t);
+                if (!c.win_emu.memory.try_read_memory(text + offset * sizeof(char16_t), characters.data(), byte_count) ||
+                    !c.win_emu.memory.try_write_memory(glyph_indices + offset * sizeof(char16_t), characters.data(), byte_count))
+                {
+                    return gdi_error;
+                }
+            }
+
+            return static_cast<uint32_t>(count);
+        }
+
+        BOOL handle_NtGdiPolyPolyDraw()
+        {
+            return TRUE;
+        }
     }
 
 } // namespace sogen

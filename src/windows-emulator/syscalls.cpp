@@ -772,6 +772,8 @@ namespace sogen
         NTSTATUS handle_NtGdiInit2(const syscall_context& c);
         uint32_t handle_NtGdiGetDeviceCaps(const syscall_context& c, hdc dc, uint32_t index);
         uint32_t handle_NtGdiGetDeviceCapsAll(const syscall_context& c, hdc dc, emulator_pointer caps);
+        COLORREF handle_NtGdiGetNearestColor(const syscall_context& c, hdc dc, COLORREF color);
+        uint32_t handle_NtGdiSetBoundsRect(const syscall_context& c, hdc dc, emulator_pointer rect, uint32_t flags);
         uint32_t handle_NtGdiComputeXformCoefficients(const syscall_context& c, hdc dc);
         BOOL handle_NtGdiFlush(const syscall_context& c);
         uint64_t handle_NtGdiCreateSolidBrush(const syscall_context& c, uint32_t color, uint64_t unused);
@@ -813,6 +815,7 @@ namespace sogen
         uint64_t handle_NtGdiSelectFont(const syscall_context& c, hdc dc, uint64_t font);
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
         BOOL handle_NtGdiGetDCDword(const syscall_context& c, hdc dc, uint32_t index, emulator_pointer result);
+        BOOL handle_NtGdiGetAndSetDCDword(const syscall_context& c, hdc dc, uint32_t method, uint32_t value, emulator_pointer result);
         BOOL handle_NtGdiSetBrushOrg(const syscall_context& c, hdc dc, int x, int y, emulator_pointer prev);
         uint64_t handle_NtGdiHfontCreate(const syscall_context& c, emulator_pointer logfont, uint32_t angle);
         uint32_t handle_NtGdiExtGetObjectW(const syscall_context& c, uint32_t handle_value, uint32_t size, emulator_pointer buffer);
@@ -851,6 +854,9 @@ namespace sogen
         int32_t handle_NtGdiExtSelectClipRgn(const syscall_context& c, hdc dc, uint64_t region, LONG mode);
         BOOL handle_NtGdiLineTo(const syscall_context& c, hdc dc, LONG x_end, LONG y_end);
         BOOL handle_NtGdiRectangle(const syscall_context& c, hdc dc, LONG left, LONG top, LONG right, LONG bottom);
+        uint32_t handle_NtGdiGetGlyphIndicesW(const syscall_context& c, hdc dc, emulator_pointer text, int32_t char_count,
+                                              emulator_pointer glyph_indices, uint32_t flags);
+        BOOL handle_NtGdiPolyPolyDraw();
         BOOL handle_NtGdiPatBlt(const syscall_context& c, hdc dc, LONG x, LONG y, LONG width, LONG height, DWORD rop);
         COLORREF handle_NtGdiSetPixel(const syscall_context& c, hdc dc, int x, int y, COLORREF color);
         COLORREF handle_NtGdiGetPixel(const syscall_context& c, hdc dc, int x, int y);
@@ -1519,6 +1525,8 @@ namespace sogen
         add_handler(NtGdiInit);
         add_handler(NtGdiGetDeviceCaps);
         add_handler(NtGdiGetDeviceCapsAll);
+        add_handler(NtGdiGetNearestColor);
+        add_handler(NtGdiSetBoundsRect);
         add_handler(NtGdiComputeXformCoefficients);
         add_handler(NtGdiFlush);
         add_handler(NtGdiCreateSolidBrush);
@@ -1540,6 +1548,7 @@ namespace sogen
         add_handler(NtGdiSelectBitmap);
         add_handler(NtGdiGetDCforBitmap);
         add_handler(NtGdiGetDCDword);
+        add_handler(NtGdiGetAndSetDCDword);
         add_handler(NtGdiSetBrushOrg);
         add_handler(NtGdiHfontCreate);
         add_handler(NtGdiExtGetObjectW);
@@ -1555,6 +1564,7 @@ namespace sogen
         add_handler(NtGdiGetCharWidthW);
         add_handler(NtGdiGetCharABCWidthsW);
         add_handler(NtGdiGetGlyphOutline);
+        add_handler(NtGdiGetGlyphIndicesW);
         add_handler(NtGdiCreateRectRgn);
         add_handler(NtGdiEqualRgn);
         add_handler(NtGdiGetRandomRgn);
@@ -1567,6 +1577,7 @@ namespace sogen
         add_handler(NtGdiExtSelectClipRgn);
         add_handler(NtGdiLineTo);
         add_handler(NtGdiRectangle);
+        add_handler(NtGdiPolyPolyDraw);
         add_handler(NtGdiPatBlt);
         add_handler(NtGdiBitBlt);
         add_handler(NtGdiStretchBlt);
