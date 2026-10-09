@@ -2291,15 +2291,15 @@ namespace sogen
                 const auto* source = surface.pixels.data() + static_cast<size_t>(src_y) * surface.width;
                 if (bit_count == 1)
                 {
-                    std::vector<uint8_t> row(stride);
+                    std::vector<uint8_t> packed_row(stride);
                     for (uint32_t x = 0; x < surface.width; ++x)
                     {
                         if ((source[x] & 0x00FFFFFFu) != 0)
                         {
-                            row[x / 8u] |= static_cast<uint8_t>(0x80u >> (x & 7u));
+                            packed_row[x / 8u] |= static_cast<uint8_t>(0x80u >> (x & 7u));
                         }
                     }
-                    c.emu.write_memory(bits + dst_offset, row.data(), row.size());
+                    c.emu.write_memory(bits + dst_offset, packed_row.data(), packed_row.size());
                 }
                 else
                 {
