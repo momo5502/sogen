@@ -757,6 +757,13 @@ namespace sogen
         BOOL handle_NtUserSetImeHotKey();
         int16_t handle_NtUserVkKeyScanEx();
         BOOL handle_NtUserSetLayeredWindowAttributes();
+        BOOL handle_NtUserUpdateClientRect(const syscall_context& c, hwnd window);
+        int32_t handle_NtUserScrollWindowEx();
+        BOOL handle_NtUserRedrawFrame(const syscall_context& c, hwnd window);
+        BOOL handle_NtUserThunkedMenuInfo(const syscall_context& c, hmenu menu, emulator_pointer menu_info);
+        BOOL handle_NtUserShowScrollBar();
+        BOOL handle_NtUserSetWindowPlacement(const syscall_context& c, hwnd window, emulator_pointer placement);
+        BOOL handle_NtUserIsChildWindowDpiMessageEnabled();
 
         // syscalls/gdi.cpp:
         NTSTATUS handle_NtDxgkIsFeatureEnabled();
@@ -1084,6 +1091,16 @@ namespace sogen
         NTSTATUS handle_NtUserSystemParametersInfo()
         {
             return STATUS_NOT_SUPPORTED;
+        }
+
+        BOOL handle_NtUserSystemParametersInfoForDpi()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserIsWindowBroadcastingDpiToChildren()
+        {
+            return FALSE;
         }
 
         NTSTATUS handle_NtUpdateWnfStateData()
@@ -1629,6 +1646,8 @@ namespace sogen
         add_handler(NtQueryDirectoryFileEx);
         add_handler(NtQueryDirectoryFile);
         add_handler(NtUserSystemParametersInfo);
+        add_handler(NtUserSystemParametersInfoForDpi);
+        add_handler(NtUserIsWindowBroadcastingDpiToChildren);
         add_handler(NtGetContextThread);
         add_handler(NtYieldExecution);
         add_handler(NtUserModifyUserStartupInfoFlags);
@@ -1725,12 +1744,15 @@ namespace sogen
         add_handler(NtUserTranslateMessage);
         add_handler(NtUserGetMessagePos);
         add_handler(NtUserGetMessage);
+        add_handler(NtUserUpdateClientRect);
+        add_handler(NtUserScrollWindowEx);
         add_handler(NtUserPeekMessage);
         add_handler(NtUserWaitMessage);
         add_handler(NtUserInvalidateRect);
         add_handler(NtUserValidateRect);
         add_handler(NtUserGetUpdateRect);
         add_handler(NtUserUpdateWindow);
+        add_handler(NtUserRedrawFrame);
         add_handler(NtUserGetCursorInfo);
         add_handler(NtUserMapVirtualKeyEx);
         add_handler(NtUserToUnicodeEx);
@@ -1878,6 +1900,7 @@ namespace sogen
         add_handler(NtGdiGetDCObject);
         add_handler(NtUserCreateMenu);
         add_handler(NtUserThunkedMenuItemInfo);
+        add_handler(NtUserThunkedMenuInfo);
         add_handler(NtUserIsTouchWindow);
         add_handler(NtUserGetTopLevelWindow);
         add_handler(NtUserCreatePopupMenu);
@@ -1891,6 +1914,7 @@ namespace sogen
         add_handler(NtUserCheckMenuItem);
         add_handler(NtUserSetWindowCompositionAttribute);
         add_handler(NtUserGetWindowPlacement);
+        add_handler(NtUserSetWindowPlacement);
         add_handler(NtUserCreateCaret);
         add_handler(NtUserDestroyCaret);
         add_handler(NtUserSetCaretPos);
@@ -1899,6 +1923,7 @@ namespace sogen
         add_handler(NtUserGetObjectInformation);
         add_handler(NtUserQueryWindow);
         add_handler(NtUserSetScrollInfo);
+        add_handler(NtUserShowScrollBar);
         add_handler(NtUserTrackMouseEvent);
         add_handler(NtGdiGetOutlineTextMetricsInternalW);
         add_handler(NtGdiSetPixel);
@@ -1940,6 +1965,7 @@ namespace sogen
         add_handler(NtUserSetImeHotKey);
         add_handler(NtUserVkKeyScanEx);
         add_handler(NtUserSetLayeredWindowAttributes);
+        add_handler(NtUserIsChildWindowDpiMessageEnabled);
 
 #undef add_handler
     }

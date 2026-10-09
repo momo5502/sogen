@@ -7106,6 +7106,41 @@ namespace sogen
         {
             return TRUE;
         }
+
+        BOOL handle_NtUserUpdateClientRect(const syscall_context&, const hwnd)
+        {
+            return TRUE;
+        }
+
+        int32_t handle_NtUserScrollWindowEx()
+        {
+            return 0;
+        }
+
+        BOOL handle_NtUserRedrawFrame(const syscall_context&, const hwnd)
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserThunkedMenuInfo(const syscall_context&, const hmenu, const emulator_pointer)
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserShowScrollBar()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetWindowPlacement(const syscall_context&, const hwnd, const emulator_pointer)
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserIsChildWindowDpiMessageEnabled()
+        {
+            return FALSE;
+        }
     }
 
 } // namespace sogen
