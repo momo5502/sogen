@@ -110,29 +110,27 @@ jobs:
         run: |
           mkdir -p corpus artifacts
           set +e
-          # -jobs/-workers=$(nproc): one long-lived fuzzer per core, all sharing the corpus dir. Unlike
-          # -fork (which respawns a short-lived child per micro-job and re-pays our expensive emulator
-          # construction + a full corpus replay every time), each worker builds the emulator once and then
-          # fuzzes continuously, so throughput stays high as the retained corpus grows. An OOM/timeout/crash
-          # in a worker aborts that worker and writes a reproducer to artifacts/ (detected below).
-          ./build/fuzz/artifacts/windows-emulator-fuzz \
-            corpus \
-            -jobs=$(nproc) \
-            -workers=$(nproc) \
-            -max_total_time=${DURATION} \
-            -use_value_profile=1 \
-            -print_final_stats=1 \
-            -artifact_prefix=artifacts/ \
-            2>&1 | tee fuzz.log
-          # In -jobs mode each worker logs to fuzz-<n>.log; fold them into fuzz.log for the artifact.
-          cat fuzz-*.log >> fuzz.log 2>/dev/null || true
-          # The launcher's exit code is unreliable, so detect a finding by the reproducer files libFuzzer
-          # writes to artifacts/ (crash-*/oom-*/timeout-*/leak-*). Any match is a failure.
-          if find artifacts -type f \( -name 'crash-*' -o -name 'oom-*' -o -name 'timeout-*' -o -name 'leak-*' \) | grep -q .; then
-            echo "fuzz_status=1" >> "$GITHUB_ENV"
-          else
-            echo "fuzz_status=0" >> "$GITHUB_ENV"
-          fi
+          remaining=${DURATION}
+          while (( remaining > 0 )); do
+            segment=$(( remaining < 600 ? remaining : 600 ))
+            rm -f fuzz-*.log
+            ./build/fuzz/artifacts/windows-emulator-fuzz \
+              corpus \
+              -jobs=$(nproc) \
+              -workers=$(nproc) \
+              -max_total_time=${segment} \
+              -use_value_profile=1 \
+              -print_final_stats=1 \
+              -artifact_prefix=artifacts/ \
+              2>&1 | tee -a fuzz.log
+            cat fuzz-*.log >> fuzz.log 2>/dev/null || true
+            if find artifacts -type f \( -name 'crash-*' -o -name 'oom-*' -o -name 'timeout-*' -o -name 'leak-*' \) | grep -q .; then
+              echo "fuzz_status=1" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            remaining=$((remaining - segment))
+          done
+          echo "fuzz_status=0" >> "$GITHUB_ENV"
           exit 0
 
       # Persist the grown corpus even when the fuzzer found a crash (the job fails below).
