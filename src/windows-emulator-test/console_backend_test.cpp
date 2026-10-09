@@ -2,6 +2,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstddef>
 
 #include <backend_selection.hpp>
 #include <io_device.hpp>
@@ -30,7 +31,7 @@ namespace sogen::test
             console_input_mode mode_{};
 
           protected:
-            void refill(int /*timeout_ms*/) override
+            void refill(int) override
             {
             }
         };
@@ -48,7 +49,7 @@ namespace sogen::test
                 return std::nullopt;
             }
 
-            std::string read_input(size_t /*length*/) override
+            std::string read_input(size_t) override
             {
                 return {};
             }
@@ -66,6 +67,21 @@ namespace sogen::test
 
             console_input_mode mode_{};
             size_t reset_count_{};
+        };
+
+        struct console_mode_request
+        {
+            uint64_t target_handle{};
+            uint32_t input_count{};
+            uint32_t output_count{};
+            uint32_t message_buffer_size{};
+            uint32_t padding{};
+            uint64_t message{};
+            uint64_t data_size{};
+            uint64_t data{};
+            uint32_t api_number{};
+            uint32_t message_data_size{};
+            uint32_t mode{};
         };
     }
 
@@ -128,8 +144,33 @@ namespace sogen::test
 
         auto* restored_console = emu.process.devices.get(console_handle);
         ASSERT_NE(restored_console, nullptr);
+
+        const auto request_address = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        ASSERT_NE(request_address, 0u);
+        console_mode_request request{};
+        request.target_handle = STDIN_HANDLE.h;
+        request.message_buffer_size = sizeof(request.api_number) + sizeof(request.message_data_size) + sizeof(request.mode);
+        request.message = request_address + offsetof(console_mode_request, api_number);
+        request.data_size = sizeof(request.mode);
+        request.data = request_address + offsetof(console_mode_request, mode);
+        request.api_number = 0x01000002;
+        request.message_data_size = sizeof(request.mode);
+
+        io_device_context context{emu.emu()};
+        context.source_handle = STDIN_HANDLE;
+        context.io_control_code = 0x500016;
+        context.input_buffer = request_address;
+        context.input_buffer_length = sizeof(request);
+
+        request.mode = 0x0001;
+        emu.emu().write_memory(request_address, &request, sizeof(request));
+        ASSERT_EQ(restored_console->io_control(emu, context), STATUS_SUCCESS);
         utils::buffer_serializer state{};
         restored_console->serialize(state);
+
+        request.mode = 0x0007;
+        emu.emu().write_memory(request_address, &request, sizeof(request));
+        ASSERT_EQ(restored_console->io_control(emu, context), STATUS_SUCCESS);
 
         utils::buffer_deserializer deserializer{state};
         restored_console->deserialize(deserializer);
@@ -140,7 +181,7 @@ namespace sogen::test
         emu.process.restore_after_state_restore(emu);
 
         EXPECT_TRUE(backend_ptr->mode_.processed);
-        EXPECT_TRUE(backend_ptr->mode_.line);
-        EXPECT_TRUE(backend_ptr->mode_.echo);
+        EXPECT_FALSE(backend_ptr->mode_.line);
+        EXPECT_FALSE(backend_ptr->mode_.echo);
     }
 } // namespace sogen::test
