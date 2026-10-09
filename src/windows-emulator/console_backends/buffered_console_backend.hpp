@@ -3,6 +3,7 @@
 #include <platform/console_backend.hpp>
 
 #include <deque>
+#include <vector>
 
 namespace sogen
 {
