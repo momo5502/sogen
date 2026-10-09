@@ -230,8 +230,13 @@ namespace sogen::py
             {
             }
 
-            std::vector<network::address> resolve_host(const std::string_view hostname, const std::optional<int> family) override
+            std::vector<network::address> resolve_host(const std::string_view hostname, const std::optional<int> family,
+                                                       std::optional<network::dns_lookup_failure>* failure) override
             {
+                if (failure)
+                {
+                    failure->reset();
+                }
                 const std::string host_str(hostname);
                 std::vector<network::address> results{};
                 bool fall_back = false;
@@ -282,7 +287,7 @@ namespace sogen::py
                 // Python watchdog thread keeps moving during a slow lookup.
                 if (fall_back)
                 {
-                    return network::dns_lookup::resolve_host(hostname, family);
+                    return network::dns_lookup::resolve_host(hostname, family, failure);
                 }
                 return results;
             }

@@ -124,7 +124,8 @@ namespace sogen
                                uint32_t& reverse_count) override
             {
                 thread_local std::vector<uint8_t> buffer(sb::max_callback_batch_bytes);
-                uint32_t normal_len = 0, rev_len = 0;
+                uint32_t normal_len = 0;
+                uint32_t rev_len = 0;
                 sogen_steam_backend_run_callbacks(pipe, buffer.data(), static_cast<uint32_t>(buffer.size()), &normal_len, &normal_count,
                                                   &rev_len, &reverse_count);
                 normal_bytes = normal_len;

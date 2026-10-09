@@ -18,6 +18,12 @@ namespace sogen
         obj.handler = nullptr;
     }
 
+    static bool should_log_syscall_return_values()
+    {
+        static const bool enabled = std::getenv("SOGEN_LOG_SYSCALL_RETVAL") != nullptr;
+        return enabled;
+    }
+
     void syscall_dispatcher::serialize(utils::buffer_serializer& buffer) const
     {
         buffer.write_map(this->handlers_);
@@ -113,6 +119,12 @@ namespace sogen
             }
 
             entry->second.handler(c);
+
+            if (should_log_syscall_return_values())
+            {
+                win_emu.log.force_print(color::dark_gray, "Syscall %s returned NTSTATUS 0x%08X\n", entry->second.name.c_str(),
+                                        c.emu.reg<uint32_t>(x86_register::eax));
+            }
 
             dispatch_callback(win_emu, entry->second.name);
         }

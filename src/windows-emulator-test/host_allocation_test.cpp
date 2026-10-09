@@ -359,6 +359,25 @@ namespace sogen::test
         ASSERT_TRUE(entry->second.committed_regions.empty());
     }
 
+    TEST(HostAllocationTest, CommitIntoReservedPagefileSectionViewSucceeds)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        constexpr uint64_t base = 0x90000000;
+        constexpr size_t size = 0x10000;
+        const auto permissions = nt_memory_permission{memory_permission::read_write};
+
+        ASSERT_TRUE(mm.allocate_memory(base, size, permissions, true, memory_region_kind::pagefile_section_view));
+        ASSERT_TRUE(mm.commit_memory(base, 0x1000, permissions));
+
+        const auto region = mm.get_region_info(base);
+        ASSERT_TRUE(region.is_committed);
+        ASSERT_EQ(region.start, base);
+        ASSERT_EQ(region.length, 0x1000);
+        ASSERT_EQ(region.kind, memory_region_kind::pagefile_section_view);
+    }
+
     // A decommitted range stays MEM_RESERVE'd, so its host claim must persist - a foreign host
     // allocation landing there would be clobbered by a later recommit. Only a genuine release hands the
     // claim back.

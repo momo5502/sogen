@@ -479,10 +479,12 @@ namespace sogen
 
             case ProcessDebugFlags:
             case ProcessWx86Information:
+                return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length,
+                                           [](ULONG& res) { res = 1; });
+
             case ProcessDefaultHardErrorMode:
-                return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length, [&](ULONG& res) {
-                    res = (info_class == ProcessDebugFlags ? 1 : 0); //
-                });
+                return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length,
+                                           [](ULONG& res) { res = 0; });
 
             case ProcessDebugPort:
                 c.win_emu.callbacks.on_suspicious_activity("Anti-debug check with ProcessDebugPort");

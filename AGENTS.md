@@ -12,10 +12,7 @@ For fast iterations during development, build the release preset:
 
 `cmake --build --preset=release`
 
-When fully done implementing a feature, make sure to build the tidy configuration, which includes clang-tidy.
-It's very slow, so only use it at the end:
-
-`cmake --build --preset=tidy`
+- Do not run the tidy preset in this environment. Never execute `cmake --build --preset=tidy` here.
 
 ## Smoke tests
 

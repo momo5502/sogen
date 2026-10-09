@@ -2,6 +2,7 @@
 #include "../emulated_display_adapter.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../paint_trace.hpp"
 #include "../win32k_userconnect.hpp"
 #include "../window_destroy_orchestrator.hpp"
 #include "../window_show_orchestrator.hpp"
@@ -404,6 +405,23 @@ namespace sogen
             return RECT{.left = win.x, .top = win.y, .right = win.x + win.width, .bottom = win.y + win.height};
         }
 
+        void trace_window_state(const char* stage, const window& win)
+        {
+            if (!paint_trace::enabled())
+            {
+                return;
+            }
+
+            const auto class_name = u16_to_u8(win.class_name);
+            paint_trace::log("%s hwnd=0x%" PRIx64 " parent=0x%" PRIx64 " class='%s' style=%08" PRIx32
+                             " rect=[%d,%d %dx%d] client=[%d,%d %dx%d]"
+                             " visible=%d host-surface=%d update=%d erase=%d internal=%d",
+                             stage, static_cast<uint64_t>(win.handle), static_cast<uint64_t>(win.parent_handle), class_name.c_str(),
+                             win.style, win.x, win.y, win.width, win.height, win.client_x(), win.client_y(), win.client_width(),
+                             win.client_height(), (win.style & WS_VISIBLE) != 0 ? 1 : 0, win.host_surface_window ? 1 : 0,
+                             win.update_pending ? 1 : 0, win.erase_pending ? 1 : 0, win.internal_paint_pending ? 1 : 0);
+        }
+
         ui_insets get_host_ui_client_insets(const window& win)
         {
             const auto insets = win.nonclient_insets();
@@ -439,6 +457,11 @@ namespace sogen
             if (win.host_surface_window)
             {
                 c.win_emu.ui().set_window_rect(win.handle, get_window_rect(win));
+            }
+
+            if (geometry_changed)
+            {
+                trace_window_state("user.geometry", win);
             }
 
             // Native SetWindowPos and MoveWindow do not create an update region when the requested geometry is unchanged.
@@ -684,6 +707,11 @@ namespace sogen
                 win.update_rect = union_update_rect(win.update_rect, new_rect);
             }
 
+            paint_trace::log("user.invalidate hwnd=0x%" PRIx64 " requested=[%d,%d-%d,%d] merged=[%d,%d-%d,%d] erase=%d visible=%d",
+                             static_cast<uint64_t>(win.handle), new_rect.left, new_rect.top, new_rect.right, new_rect.bottom,
+                             win.update_rect.left, win.update_rect.top, win.update_rect.right, win.update_rect.bottom, erase ? 1 : 0,
+                             c.proc.is_window_effectively_visible(win.handle) ? 1 : 0);
+
             if (win.host_surface_window)
             {
                 c.win_emu.ui().invalidate(win.handle, update_rect);
@@ -866,6 +894,10 @@ namespace sogen
             case WM_ERASEBKGND:
                 return TRUE;
 
+            case WM_NCPAINT:
+                // TODO: WM_NCPAINT reached this handler because the application expects Sogen to render the non-client frame.
+                return FALSE;
+
             case WM_PAINT:
                 validate_window(win);
                 return FALSE;
@@ -998,21 +1030,30 @@ namespace sogen
 
             if (!top_level || !top_level->host_surface_window)
             {
+                paint_trace::log("user.present-existing painted=0x%" PRIx64 " rejected=no-top-level-surface",
+                                 static_cast<uint64_t>(painted_window.handle));
                 return;
             }
 
             const auto surface_it = c.proc.gdi_window_surfaces.find(static_cast<uint32_t>(top_level->handle));
             if (surface_it == c.proc.gdi_window_surfaces.end())
             {
+                paint_trace::log("user.present-existing painted=0x%" PRIx64 " target=0x%" PRIx64 " rejected=no-surface",
+                                 static_cast<uint64_t>(painted_window.handle), static_cast<uint64_t>(top_level->handle));
                 return;
             }
 
             const auto& surface = surface_it->second;
             if (surface.width == 0 || surface.height == 0 || surface.pixels.empty())
             {
+                paint_trace::log("user.present-existing target=0x%" PRIx64 " rejected=empty-surface size=%ux%u pixels=%zu",
+                                 static_cast<uint64_t>(top_level->handle), surface.width, surface.height, surface.pixels.size());
                 return;
             }
 
+            paint_trace::log_surface("user.present-existing", static_cast<uint64_t>(top_level->handle), surface.pixels.data(),
+                                     static_cast<int>(surface.width), static_cast<int>(surface.height),
+                                     static_cast<int>(surface.width * sizeof(uint32_t)));
             c.win_emu.ui().present_surface(top_level->handle, ui_surface_desc{.width = static_cast<int>(surface.width),
                                                                               .height = static_cast<int>(surface.height),
                                                                               .stride = static_cast<int>(surface.width * sizeof(uint32_t)),
@@ -1661,8 +1702,11 @@ namespace sogen
     namespace syscalls
     {
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
+        uint64_t handle_NtGdiCreateBitmap(const syscall_context& c, uint32_t width, uint32_t height, uint32_t planes, uint32_t bits_pixel,
+                                          emulator_pointer bits);
         hdc create_gdi_window_dc(const syscall_context& c, hwnd window);
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
+        bool set_gdi_region_rect(const syscall_context& c, handle region, const RECT& rect);
         BOOL handle_NtGdiFlush(const syscall_context& c);
         BOOL handle_NtGdiPatBlt(const syscall_context& c, hdc dc, LONG x, LONG y, LONG width, LONG height, DWORD rop);
         uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, hdc dc, uint32_t brush, emulator_pointer old_brush_ptr);
@@ -2356,6 +2400,11 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserUpdateClientRect(const syscall_context& /*c*/, const hwnd /*window*/)
+        {
+            return TRUE;
+        }
+
         BOOL handle_NtUserBitBltSysBmp(const syscall_context& c, const hdc dc, const int x, const int y, const uint32_t bitmap_index)
         {
             (void)handle_NtGdiFlush(c);
@@ -2384,12 +2433,14 @@ namespace sogen
             auto* win = c.proc.windows.get(window);
             if (!win)
             {
+                paint_trace::log("user.beginpaint hwnd=0x%" PRIx64 " failed=no-window", static_cast<uint64_t>(window));
                 return 0;
             }
 
             const auto dc = handle_NtUserGetDCEx(c, window, 0, 0);
             if (!dc)
             {
+                paint_trace::log("user.beginpaint hwnd=0x%" PRIx64 " failed=no-dc", static_cast<uint64_t>(window));
                 return 0;
             }
 
@@ -2404,6 +2455,12 @@ namespace sogen
                 paint_struct.write(ps);
             }
 
+            paint_trace::log(
+                "user.beginpaint hwnd=0x%" PRIx64 " hdc=0x%" PRIx64 " paint-struct=0x%" PRIx64 " erase=%d update=[%d,%d-%d,%d]",
+                static_cast<uint64_t>(window), static_cast<uint64_t>(dc), static_cast<uint64_t>(paint_struct.value()),
+                win->erase_pending ? 1 : 0, win->update_pending ? win->update_rect.left : 0, win->update_pending ? win->update_rect.top : 0,
+                win->update_pending ? win->update_rect.right : 0, win->update_pending ? win->update_rect.bottom : 0);
+            trace_window_state("user.beginpaint-state", *win);
             validate_window(*win);
             win->internal_paint_pending = false;
             return dc;
@@ -2414,12 +2471,16 @@ namespace sogen
             auto* win = c.proc.windows.get(window);
             if (!win)
             {
+                paint_trace::log("user.endpaint hwnd=0x%" PRIx64 " failed=no-window", static_cast<uint64_t>(window));
                 return FALSE;
             }
 
             if (paint_struct)
             {
                 const auto ps = paint_struct.read();
+                paint_trace::log("user.endpaint hwnd=0x%" PRIx64 " hdc=0x%" PRIx64 " paint-struct=0x%" PRIx64,
+                                 static_cast<uint64_t>(window), static_cast<uint64_t>(ps.paint_hdc),
+                                 static_cast<uint64_t>(paint_struct.value()));
                 (void)handle_NtGdiFlush(c);
 
                 // Present the surface the guest just painted into. For child controls this resolves to the owning
@@ -2428,6 +2489,8 @@ namespace sogen
                 if (auto* surface = get_dc_present_surface(c, ps.paint_hdc, present_handle);
                     surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
                 {
+                    paint_trace::log_surface("user.endpaint", present_handle, surface->pixels.data(), static_cast<int>(surface->width),
+                                             static_cast<int>(surface->height), static_cast<int>(surface->width * sizeof(uint32_t)));
                     c.win_emu.ui().present_surface(present_handle,
                                                    ui_surface_desc{.width = static_cast<int>(surface->width),
                                                                    .height = static_cast<int>(surface->height),
@@ -2436,6 +2499,12 @@ namespace sogen
                                                                    .pixels = surface->pixels.data()});
                 }
 
+                else
+                {
+                    paint_trace::log("user.endpaint hwnd=0x%" PRIx64 " hdc=0x%" PRIx64
+                                     " rejected=no-presentable-surface target=0x%08" PRIx32,
+                                     static_cast<uint64_t>(window), static_cast<uint64_t>(ps.paint_hdc), present_handle);
+                }
                 // BeginPaint allocated a fresh GDI DC (handle table entry + DC_ATTR block) via
                 // GetDCEx; fully delete it here so repeated repaints don't leak GDI handles.
                 (void)handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(ps.paint_hdc));
@@ -2695,9 +2764,9 @@ namespace sogen
             return TRUE;
         }
 
-        NTSTATUS handle_NtUserFindExistingCursorIcon()
+        hicon handle_NtUserFindExistingCursorIcon()
         {
-            return STATUS_NOT_SUPPORTED;
+            return make_pseudo_handle(0x100, handle_types::reserved).bits;
         }
 
         BOOL handle_NtUserDestroyCursor(const syscall_context&, const hicon icon, const DWORD /*flags*/)
@@ -2742,14 +2811,27 @@ namespace sogen
                 return FALSE;
             }
 
-            // The emulator's icons/cursors are bare pseudo-handles with no backing pixel data, so report a
-            // standard 32x32 icon with a centered hotspot and no mask/color bitmaps.
+            const auto mask = handle_NtGdiCreateBitmap(c, 32, 64, 1, 32, 0);
+            const auto color = handle_NtGdiCreateBitmap(c, 32, 32, 1, 32, 0);
+            if (mask == 0 || color == 0)
+            {
+                if (mask != 0)
+                {
+                    handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(mask));
+                }
+                if (color != 0)
+                {
+                    handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(color));
+                }
+                return FALSE;
+            }
+
             const EMU_ICONINFO info{
                 .fIcon = TRUE,
                 .xHotspot = 16,
                 .yHotspot = 16,
-                .hbmMask = 0,
-                .hbmColor = 0,
+                .hbmMask = mask,
+                .hbmColor = color,
             };
             icon_info.write(info);
 
@@ -3645,6 +3727,7 @@ namespace sogen
                 }
             }
 
+            trace_window_state("user.create-complete", *win);
             c.emu.pop_stack(s.min_max_info_alloc);
             c.emu.pop_stack(s.window_rect_alloc);
             c.emu.pop_stack(s.create_struct_alloc);
@@ -3659,6 +3742,8 @@ namespace sogen
             {
                 return FALSE;
             }
+
+            trace_window_state("user.destroy", *win);
 
             if (win->thread_id != c.vcpu.active_thread->id)
             {
@@ -4255,6 +4340,11 @@ namespace sogen
             return FALSE;
         }
 
+        DWORD handle_NtUserGetMessagePos(const syscall_context& c)
+        {
+            return c.vcpu.active_thread ? c.vcpu.active_thread->current_message_position : 0;
+        }
+
         BOOL handle_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                      const UINT msg_filter_min, const UINT msg_filter_max)
         {
@@ -4263,7 +4353,7 @@ namespace sogen
             if (auto pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, true))
             {
                 message.write(*pending_msg);
-                t.current_message_time = pending_msg->time;
+                t.record_current_message(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
                 return pending_msg->message != WM_QUIT ? TRUE : FALSE;
             }
@@ -4285,7 +4375,7 @@ namespace sogen
             if (pending_msg)
             {
                 message.write(*pending_msg);
-                t.current_message_time = pending_msg->time;
+                t.record_current_message(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
                 return TRUE;
             }
@@ -4324,6 +4414,11 @@ namespace sogen
             return TRUE;
         }
 
+        int32_t handle_NtUserScrollWindowEx()
+        {
+            return 0;
+        }
+
         BOOL handle_NtUserValidateRect(const syscall_context& c, const hwnd hwnd, const emulator_object<RECT> /*rect*/)
         {
             auto* win = c.proc.windows.get(hwnd);
@@ -4350,6 +4445,17 @@ namespace sogen
             }
 
             return win->update_pending ? TRUE : FALSE;
+        }
+
+        int32_t handle_NtUserGetUpdateRgn(const syscall_context& c, const hwnd hwnd, const handle region, const BOOL /*erase*/)
+        {
+            const auto* win = c.proc.windows.get(hwnd);
+            if (!win || !set_gdi_region_rect(c, region, win->update_pending ? win->update_rect : RECT{}))
+            {
+                return 0;
+            }
+
+            return win->update_pending ? 2 : 1;
         }
 
         void collect_pending_paint_tree(const syscall_context& c, window& win, std::vector<uint64_t>& order)
@@ -4380,6 +4486,7 @@ namespace sogen
             {
                 if (auto* win = c.proc.windows.get(static_cast<hwnd>(state.pending.back())))
                 {
+                    trace_window_state("user.paint-dispatch", *win);
                     dispatch_window_message(c, callback_id::NtUserUpdateWindow, std::move(state), *win, WM_PAINT);
                     return {};
                 }
@@ -4393,21 +4500,33 @@ namespace sogen
             auto* win = c.proc.windows.get(hwnd);
             if (!win)
             {
+                paint_trace::log("user.update hwnd=0x%" PRIx64 " failed=no-window", static_cast<uint64_t>(hwnd));
                 return FALSE;
             }
 
             if (win->thread_id != c.vcpu.active_thread->id)
             {
+                trace_window_state("user.update-wrong-thread", *win);
                 return TRUE;
             }
 
+            trace_window_state("user.update", *win);
             std::vector<uint64_t> order;
             collect_pending_paint_tree(c, *win, order);
             if (order.empty())
             {
+                paint_trace::log("user.update hwnd=0x%" PRIx64 " pending=0", static_cast<uint64_t>(hwnd));
                 return TRUE;
             }
 
+            paint_trace::log("user.update hwnd=0x%" PRIx64 " pending=%zu", static_cast<uint64_t>(hwnd), order.size());
+            for (const auto pending : order)
+            {
+                if (const auto* pending_window = c.proc.windows.get(static_cast<::sogen::hwnd>(pending)))
+                {
+                    trace_window_state("user.update-pending", *pending_window);
+                }
+            }
             // back() is dispatched first, so reverse the parent-first paint order into the queue.
             window_update_state state{};
             state.pending.assign(order.rbegin(), order.rend());
@@ -4425,6 +4544,7 @@ namespace sogen
 
                 if (auto* win = c.proc.windows.get(static_cast<hwnd>(painted)))
                 {
+                    trace_window_state("user.paint-complete", *win);
                     (void)handle_NtGdiFlush(c);
                     present_existing_guest_window_surface(c, *win);
                 }
@@ -5401,6 +5521,11 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserRedrawFrame(const syscall_context&, const hwnd)
+        {
+            return TRUE;
+        }
+
         NTSTATUS handle_NtUserGetCPD()
         {
             return STATUS_SUCCESS;
@@ -5587,13 +5712,13 @@ namespace sogen
         ULONG handle_NtUserGetAtomName(const syscall_context& c, const RTL_ATOM atom,
                                        const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> atom_name)
         {
-            const auto name = c.proc.get_atom_name(atom);
-            if (!name || !atom_name)
+            const auto name = resolve_atom_name(c, atom);
+            if (name.empty() || !atom_name)
             {
                 return 0;
             }
 
-            const size_t name_length_bytes = name->size() * sizeof(char16_t);
+            const size_t name_length_bytes = name.size() * sizeof(char16_t);
 
             bool too_small = false;
             ULONG result = 0;
@@ -5611,7 +5736,7 @@ namespace sogen
 
                 if (copy_bytes)
                 {
-                    c.emu.write_memory(str.Buffer, name->data(), copy_bytes);
+                    c.emu.write_memory(str.Buffer, name.data(), copy_bytes);
                 }
 
                 constexpr char16_t terminator = 0;
@@ -6053,6 +6178,11 @@ namespace sogen
             return handle.bits;
         }
 
+        BOOL handle_NtUserThunkedMenuInfo(const syscall_context& /*c*/, const hmenu /*menu*/, const emulator_pointer /*menu_info*/)
+        {
+            return TRUE;
+        }
+
         BOOL handle_NtUserThunkedMenuItemInfo(const syscall_context& c, const hmenu menu, const UINT position, const BOOL by_position,
                                               const BOOL insert, const emulator_object<EMU_MENUITEMINFO> item_info,
                                               const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> item_text)
@@ -6403,6 +6533,11 @@ namespace sogen
             return 0;
         }
 
+        BOOL handle_NtUserShowScrollBar()
+        {
+            return TRUE;
+        }
+
         BOOL handle_NtUserIsTouchWindow()
         {
             return FALSE;
@@ -6470,6 +6605,11 @@ namespace sogen
                 return FALSE;
             }
 
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetWindowPlacement(const syscall_context&, const hwnd, const emulator_pointer)
+        {
             return TRUE;
         }
 
@@ -7070,6 +7210,11 @@ namespace sogen
         BOOL handle_NtUserEnableNonClientDpiScaling()
         {
             return TRUE;
+        }
+
+        BOOL handle_NtUserIsChildWindowDpiMessageEnabled()
+        {
+            return FALSE;
         }
 
         BOOL handle_NtUserSetImeHotKey()

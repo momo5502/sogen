@@ -130,6 +130,18 @@ namespace sogen
             }
         }
 
+        void seed_system_class_atoms(memory_interface& memory, const uint64_t serverinfo_base)
+        {
+            if (serverinfo_base == 0)
+            {
+                return;
+            }
+
+            constexpr uint64_t atom_sys_class_offset = 0x364;
+            constexpr std::array<uint16_t, 6> atoms = {1, 2, 3, 4, 5, 6};
+            memory.write_memory(serverinfo_base + atom_sys_class_offset, atoms.data(), sizeof(atoms));
+        }
+
         bool try_copy_client_pfn_arrays(memory_interface& memory, process_context& process, const client_pfn_arrays arrays)
         {
             if (arrays.ansi == 0 || arrays.wide == 0 || arrays.worker == 0)
@@ -149,7 +161,9 @@ namespace sogen
                 return false;
             }
 
-            seed_messagebox_button_strings(memory, process.user_handles.get_server_info().value());
+            const auto serverinfo_base = process.user_handles.get_server_info().value();
+            seed_system_class_atoms(memory, serverinfo_base);
+            seed_messagebox_button_strings(memory, serverinfo_base);
 
             refresh_dispatch_client_message(process);
             return true;

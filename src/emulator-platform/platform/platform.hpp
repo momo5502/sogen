@@ -23,6 +23,7 @@
 #include "memory.hpp"
 #include "file_management.hpp"
 #include "win_pefile.hpp"
+#include "win_pefile_debug.hpp"
 #include "synchronisation.hpp"
 #include "registry.hpp"
 #include "network.hpp"

@@ -10,6 +10,8 @@ namespace sogen
 {
     namespace
     {
+        constexpr ULONG DEFAULT_STACK_GUARANTEE = 0x4000;
+
         enum class wait_state
         {
             not_signaled,
@@ -449,8 +451,7 @@ namespace sogen
                 teb_obj.ClientId.UniqueProcess = context.process_id;
                 teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
                 teb_obj.DeallocationStack = this->stack_base;
-                // TODO: Proper GuaranteedStack implementation.
-                teb_obj.GuaranteedStackBytes = static_cast<ULONG>(this->stack_size);
+                teb_obj.GuaranteedStackBytes = DEFAULT_STACK_GUARANTEE;
                 teb_obj.NtTib.StackLimit = this->stack_base;
                 teb_obj.NtTib.StackBase = this->stack_base + this->stack_size;
                 teb_obj.NtTib.Self = this->teb64->value();
@@ -527,7 +528,7 @@ namespace sogen
             // Native 64-bit stack
             teb_obj.DeallocationStack = this->stack_base;
             // TODO: Proper GuaranteedStack implementation.
-            teb_obj.GuaranteedStackBytes = static_cast<ULONG>(this->stack_size);
+            teb_obj.GuaranteedStackBytes = DEFAULT_STACK_GUARANTEE;
             teb_obj.NtTib.StackLimit = this->stack_base;
             teb_obj.NtTib.StackBase = wow64_cpureserved_base;
             teb_obj.NtTib.Self = this->teb64->value();
@@ -585,7 +586,7 @@ namespace sogen
             // Set NT_TIB32 fields
             teb32_obj.DeallocationStack = static_cast<uint32_t>(nttib32_stack_limit);
             // TODO: Proper GuaranteedStack implementation.
-            teb32_obj.GuaranteedStackBytes = static_cast<ULONG>(this->wow64_stack_size.value());
+            teb32_obj.GuaranteedStackBytes = DEFAULT_STACK_GUARANTEE;
             teb32_obj.NtTib.Self = static_cast<uint32_t>(teb32_addr);                // Self pointer to 32-bit TEB
             teb32_obj.NtTib.StackBase = static_cast<uint32_t>(nttib32_stack_base);   // Top of 32-bit stack (High address)
             teb32_obj.NtTib.StackLimit = static_cast<uint32_t>(nttib32_stack_limit); // Bottom of 32-bit stack (Low address)
@@ -1257,7 +1258,7 @@ namespace sogen
                                                           this->await_msg->filter_max, true))
             {
                 this->await_msg->message.write(*m);
-                this->current_message_time = m->time;
+                this->record_current_message(*m);
 
                 uint64_t active_handle = 0;
                 uint64_t active_window_ptr = 0;

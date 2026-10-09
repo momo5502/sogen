@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <charconv>
 #include <utils/finally.hpp>
+
 #include <utils/wildcard.hpp>
 #include "utils/stat.hpp"
 
@@ -1152,17 +1153,16 @@ namespace sogen
                     return ret(STATUS_BUFFER_OVERFLOW);
                 }
 
-                const auto filepath = windows_path(filename);
-                if (filepath.is_relative())
+                auto [native_file_handle, status] = open_file(c.win_emu.file_sys, filename, u"r");
+                if (status != STATUS_SUCCESS)
                 {
-                    return ret(STATUS_OBJECT_NAME_NOT_FOUND);
+                    return ret(status);
                 }
 
-                const auto local_filename = c.win_emu.file_sys.translate(filepath);
                 struct compat_stat file_stat{};
-                if (!compat_stat(local_filename, &file_stat))
+                if (!compat_fstat(native_file_handle.file_descriptor(), &file_stat))
                 {
-                    return ret(STATUS_OBJECT_NAME_NOT_FOUND);
+                    return STATUS_INVALID_HANDLE;
                 }
 
                 const auto is_directory = (file_stat.st_mode & S_IFDIR) != 0;
@@ -1296,7 +1296,6 @@ namespace sogen
                 commit_file_data(data, c.emu, io_status_block, buffer);
                 return STATUS_SUCCESS;
             }
-
             std::string temp_buffer{};
             temp_buffer.resize(length);
 
@@ -1613,6 +1612,12 @@ namespace sogen
                     }
 
                     // Blocking lock completion is not modeled yet; surface the conflict immediately.
+                    c.win_emu.log.warn(
+                        "NtLockFile conflict: %s requested=0x%llX+0x%llX owner=0x%llX held=0x%llX+0x%llX fail_immediately=%u\n",
+                        u16_to_u8(f->host_path.u16string()).c_str(), static_cast<unsigned long long>(offset),
+                        static_cast<unsigned long long>(range_length), static_cast<unsigned long long>(existing.owner.bits),
+                        static_cast<unsigned long long>(existing.offset), static_cast<unsigned long long>(existing.length),
+                        fail_immediately);
                     (void)fail_immediately;
                     write_lock_io_status(io_status_block, STATUS_LOCK_NOT_GRANTED);
                     return STATUS_LOCK_NOT_GRANTED;
@@ -1662,6 +1667,10 @@ namespace sogen
             const auto lock_it = c.proc.file_locks.find(lock_key);
             if (lock_it == c.proc.file_locks.end())
             {
+                c.win_emu.log.warn("NtUnlockFile range not found for %s: handle 0x%" PRIx64 ", range 0x%" PRIx64 "+0x%" PRIx64
+                                   ", key 0x%X, no held ranges\n",
+                                   u16_to_u8(f->host_path.u16string()).c_str(), file_handle.bits, static_cast<uint64_t>(offset),
+                                   static_cast<uint64_t>(range_length), static_cast<unsigned int>(key));
                 write_lock_io_status(io_status_block, STATUS_RANGE_NOT_LOCKED);
                 return STATUS_RANGE_NOT_LOCKED;
             }
@@ -1673,6 +1682,15 @@ namespace sogen
 
             if (entry == locks.end())
             {
+                c.win_emu.log.warn("NtUnlockFile range not found for %s: handle 0x%" PRIx64 ", range 0x%" PRIx64 "+0x%" PRIx64
+                                   ", key 0x%X, held ranges %zu\n",
+                                   u16_to_u8(f->host_path.u16string()).c_str(), file_handle.bits, static_cast<uint64_t>(offset),
+                                   static_cast<uint64_t>(range_length), static_cast<unsigned int>(key), locks.size());
+                for (const auto& existing : locks)
+                {
+                    c.win_emu.log.warn("Held file lock: handle 0x%" PRIx64 ", range 0x%" PRIx64 "+0x%" PRIx64 ", key 0x%X\n",
+                                       existing.owner.bits, existing.offset, existing.length, static_cast<unsigned int>(existing.key));
+                }
                 write_lock_io_status(io_status_block, STATUS_RANGE_NOT_LOCKED);
                 return STATUS_RANGE_NOT_LOCKED;
             }
@@ -2338,6 +2356,10 @@ namespace sogen
 
             if (!is_named_pipe_path(filename) && !anonymous_pipe)
             {
+                c.win_emu.log.warn("NtCreateNamedPipeFile on unsupported path: %s (object attributes 0x%" PRIx64 ", name 0x%" PRIx64
+                                   ", root 0x%" PRIx64 ", desired access 0x%X)\n",
+                                   u16_to_u8(filename).c_str(), object_attributes.value(), attributes.ObjectName, attributes.RootDirectory,
+                                   static_cast<unsigned int>(desired_access));
                 return STATUS_NOT_SUPPORTED;
             }
 
@@ -2361,6 +2383,7 @@ namespace sogen
             }
             else
             {
+                c.win_emu.log.error("Named pipe device is unavailable for %s\n", u16_to_u8(filename).c_str());
                 return STATUS_NOT_SUPPORTED;
             }
 
