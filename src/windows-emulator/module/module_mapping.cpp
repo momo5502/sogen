@@ -16,6 +16,35 @@ namespace sogen
 
     namespace
     {
+        memory_permission get_section_permissions(const IMAGE_SECTION_HEADER& section, const PEMachineType machine)
+        {
+            auto permissions = memory_permission::none;
+
+            // ARM64EC images can mark the hybrid x64 entry/bootstrap
+            // range as CNT_CODE without setting MEM_EXECUTE.  Windows
+            // applies the CHPE code map when it creates the image VAD;
+            // Sogen's x64 backend needs the same treatment for file-backed
+            // mappings, otherwise a hybrid image entry remains
+            // non-executable and is never reached.
+            if ((section.Characteristics & IMAGE_SCN_MEM_EXECUTE) ||
+                (machine == PEMachineType::ARM64EC && (section.Characteristics & IMAGE_SCN_CNT_CODE)))
+            {
+                permissions |= memory_permission::exec;
+            }
+
+            if (section.Characteristics & IMAGE_SCN_MEM_READ)
+            {
+                permissions |= memory_permission::read;
+            }
+
+            if (section.Characteristics & IMAGE_SCN_MEM_WRITE)
+            {
+                permissions |= memory_permission::write;
+            }
+
+            return permissions;
+        }
+
         bool must_map_module_below_4gb(const std::string& module_name, const PEMachineType machine, const uint64_t image_base)
         {
             if (machine != PEMachineType::AMD64)
@@ -314,29 +343,7 @@ namespace sogen
                     memory.write_memory(target_ptr, source_ptr, size_of_data);
                 }
 
-                auto permissions = memory_permission::none;
-
-                // ARM64EC images can mark the hybrid x64 entry/bootstrap
-                // range as CNT_CODE without setting MEM_EXECUTE.  Windows
-                // applies the CHPE code map when it creates the image VAD;
-                // Sogen's x64 backend needs the same treatment for file-backed
-                // mappings, otherwise a hybrid image entry remains
-                // non-executable and is never reached.
-                if ((section.Characteristics & IMAGE_SCN_MEM_EXECUTE) ||
-                    (nt_headers.FileHeader.Machine == PEMachineType::ARM64EC && (section.Characteristics & IMAGE_SCN_CNT_CODE)))
-                {
-                    permissions |= memory_permission::exec;
-                }
-
-                if (section.Characteristics & IMAGE_SCN_MEM_READ)
-                {
-                    permissions |= memory_permission::read;
-                }
-
-                if (section.Characteristics & IMAGE_SCN_MEM_WRITE)
-                {
-                    permissions |= memory_permission::write;
-                }
+                const auto permissions = get_section_permissions(section, nt_headers.FileHeader.Machine);
 
                 mapped_section section_info{};
                 section_info.region.start = target_ptr;
@@ -582,26 +589,7 @@ namespace sogen
                 section_info.region.start = binary.image_base + section.VirtualAddress;
                 section_info.region.length = static_cast<size_t>(page_align_up(std::max(section.SizeOfRawData, section.Misc.VirtualSize)));
 
-                auto permissions = memory_permission::none;
-                // ARM64EC images can place the x64 exception/bootstrap range in
-                // a code section whose raw PE flags omit MEM_EXECUTE. Windows
-                // applies the hybrid code-map permissions at load time; treating
-                // CNT_CODE as executable for ARM64EC preserves that behavior on
-                // Sogen's x64 backend without enabling data sections.
-                if ((section.Characteristics & IMAGE_SCN_MEM_EXECUTE) ||
-                    (nt_headers.FileHeader.Machine == PEMachineType::ARM64EC && (section.Characteristics & IMAGE_SCN_CNT_CODE)))
-                {
-                    permissions |= memory_permission::exec;
-                }
-
-                if (section.Characteristics & IMAGE_SCN_MEM_READ)
-                {
-                    permissions |= memory_permission::read;
-                }
-                if (section.Characteristics & IMAGE_SCN_MEM_WRITE)
-                {
-                    permissions |= memory_permission::write;
-                }
+                const auto permissions = get_section_permissions(section, nt_headers.FileHeader.Machine);
 
                 section_info.region.permissions = permissions;
 
