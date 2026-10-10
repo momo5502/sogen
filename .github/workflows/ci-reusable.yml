@@ -640,6 +640,11 @@ jobs:
       - name: Copy Test Sample
         run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
 
+      # Built from the runner's own system files and kept out of the artifacts: it must never be published.
+      - name: Create macOS Emulation Root
+        if: ${{ runner.os == 'macOS' }}
+        run: src/tools/create-macos-root.sh "${{ runner.temp }}/macos-root"
+
       - name: CMake Test
         run: cd build/${{matrix.preset}} && ctest --verbose -j
         env:
@@ -647,6 +652,7 @@ jobs:
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
           ANALYSIS_SAMPLE: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/test-sample.exe
           LINUX_TEST_ROOT: ${{github.workspace}}/deps/sogen-linux-files/test/linux
+          MACOS_EMULATOR_ROOT: ${{ runner.temp }}/macos-root
 
       - name: Upload Serialization Mismatch Dumps
         if: always()
