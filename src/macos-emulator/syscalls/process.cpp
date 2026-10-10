@@ -1,6 +1,11 @@
 #include "macos_syscalls.hpp"
 #include "../macos_emulator.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <vector>
+
 namespace sogen
 {
     namespace
@@ -8,6 +13,8 @@ namespace sogen
         // Not 1: dyld and libSystem take launchd-only paths for pid 1.
         constexpr uint64_t PROCESS_ID = 100;
         constexpr uint64_t MAIN_THREAD_ID = 0x1000;
+        constexpr uint64_t PROCESS_UNIQUE_ID = 0x1000;
+        constexpr uint64_t PARENT_UNIQUE_ID = 0x1;
     }
 
     void sys_exit(const macos_syscall_context& c)
@@ -114,9 +121,50 @@ namespace sogen
 
     void sys_proc_info(const macos_syscall_context& c)
     {
+        constexpr uint64_t proc_info_call_pidinfo = 2;
         constexpr uint64_t proc_info_call_set_dyld_images = 15;
+        constexpr uint64_t proc_pid_uniqidentifierinfo = 17;
 
         const auto call = get_macos_syscall_argument(c.emu, 0);
+        const auto pid = get_macos_syscall_argument(c.emu, 1);
+        const auto flavor = get_macos_syscall_argument(c.emu, 2);
+        const auto buffer = get_macos_syscall_argument(c.emu, 4);
+        const auto buffer_size = get_macos_syscall_argument(c.emu, 5);
+
+        if (call == proc_info_call_pidinfo && flavor == proc_pid_uniqidentifierinfo && pid == PROCESS_ID)
+        {
+            struct proc_uniqidentifierinfo
+            {
+                std::array<uint8_t, 16> uuid;
+                uint64_t unique_id;
+                uint64_t parent_unique_id;
+                int32_t id_version;
+                uint32_t reserved2;
+                uint64_t reserved3;
+                uint64_t reserved4;
+            };
+
+            static_assert(sizeof(proc_uniqidentifierinfo) == 56);
+
+            const proc_uniqidentifierinfo info{
+                .uuid = c.emu_ref.executable_uuid,
+                .unique_id = PROCESS_UNIQUE_ID,
+                .parent_unique_id = PARENT_UNIQUE_ID,
+                .id_version = 0,
+                .reserved2 = 0,
+                .reserved3 = 0,
+                .reserved4 = 0,
+            };
+
+            if (buffer_size < sizeof(info) || !c.emu.try_write_memory(buffer, &info, sizeof(info)))
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_ENOMEM);
+                return;
+            }
+
+            write_macos_syscall_success(c, sizeof(info));
+            return;
+        }
 
         // dyld registers where its image list lives so debuggers can find it; nothing in the emulator reads it yet.
         if (call == proc_info_call_set_dyld_images)
@@ -126,8 +174,107 @@ namespace sogen
         }
 
         c.emu_ref.log.error("Unhandled proc_info(call %llu, pid %lld, flavor %llu)\n", static_cast<unsigned long long>(call),
-                            static_cast<long long>(get_macos_syscall_argument(c.emu, 1)),
-                            static_cast<unsigned long long>(get_macos_syscall_argument(c.emu, 2)));
+                            static_cast<long long>(pid), static_cast<unsigned long long>(flavor));
         c.emu_ref.stop();
+    }
+
+    // Values observed from the kernel for a process launched from a shell: the supported pthread features, the
+    // main thread's QoS, the default mutex policy, and Intel macOS' area for secondary thread stacks.
+    void sys_bsdthread_register(const macos_syscall_context& c)
+    {
+        constexpr uint64_t supported_features = 0x400011DF;
+        constexpr uint64_t main_thread_qos = 0x20FF;
+        constexpr uint64_t thread_stack_hint = 0x700000000000;
+        constexpr uint32_t mutex_default_policy = 0;
+
+        constexpr uint64_t main_qos_offset = 16;
+        constexpr uint64_t stack_addr_hint_offset = 36;
+        constexpr uint64_t mutex_default_policy_offset = 44;
+
+        const auto registration_data = get_macos_syscall_argument(c.emu, 3);
+        const auto registration_data_size = get_macos_syscall_argument(c.emu, 4);
+
+        if (registration_data != 0 && registration_data_size >= mutex_default_policy_offset + sizeof(mutex_default_policy))
+        {
+            if (!c.emu.try_write_memory(registration_data + main_qos_offset, &main_thread_qos, sizeof(main_thread_qos)) ||
+                !c.emu.try_write_memory(registration_data + stack_addr_hint_offset, &thread_stack_hint, sizeof(thread_stack_hint)) ||
+                !c.emu.try_write_memory(registration_data + mutex_default_policy_offset, &mutex_default_policy,
+                                        sizeof(mutex_default_policy)))
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+                return;
+            }
+        }
+
+        write_macos_syscall_success(c, supported_features);
+    }
+
+    // The status of an Apple platform binary as macOS reports it (measured on /bin/sleep, natively and under
+    // Rosetta): valid, signed, platform binary, restricted.
+    void sys_csops(const macos_syscall_context& c)
+    {
+        constexpr uint64_t cs_ops_status = 0;
+        constexpr uint32_t platform_binary_status = 0x26010801;
+
+        const auto pid = get_macos_syscall_argument(c.emu, 0);
+        const auto operation = get_macos_syscall_argument(c.emu, 1);
+        const auto buffer = get_macos_syscall_argument(c.emu, 2);
+        const auto size = get_macos_syscall_argument(c.emu, 3);
+
+        if (operation != cs_ops_status)
+        {
+            c.emu_ref.log.error("Unhandled csops(pid %lld, op %llu, size %llu)\n", static_cast<long long>(pid),
+                                static_cast<unsigned long long>(operation), static_cast<unsigned long long>(size));
+            c.emu_ref.stop();
+            return;
+        }
+
+        if (pid != 0 && pid != PROCESS_ID)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ESRCH);
+            return;
+        }
+
+        if (size < sizeof(platform_binary_status) ||
+            !c.emu.try_write_memory(buffer, &platform_binary_status, sizeof(platform_binary_status)))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+            return;
+        }
+
+        write_macos_syscall_success(c, 0);
+    }
+
+    void sys_issetugid(const macos_syscall_context& c)
+    {
+        write_macos_syscall_success(c, 0);
+    }
+
+    void sys_getentropy(const macos_syscall_context& c)
+    {
+        constexpr uint64_t max_entropy_size = 256;
+
+        const auto buffer = get_macos_syscall_argument(c.emu, 0);
+        const auto size = get_macos_syscall_argument(c.emu, 1);
+        if (size > max_entropy_size)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+            return;
+        }
+
+        std::vector<std::byte> data(static_cast<size_t>(size));
+        for (size_t offset = 0; offset < data.size(); offset += sizeof(uint64_t))
+        {
+            const auto value = c.emu_ref.next_entropy();
+            std::memcpy(data.data() + offset, &value, std::min(sizeof(value), data.size() - offset));
+        }
+
+        if (!c.emu.try_write_memory(buffer, data.data(), data.size()))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        write_macos_syscall_success(c, 0);
     }
 }

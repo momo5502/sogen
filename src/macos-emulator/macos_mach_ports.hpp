@@ -11,11 +11,14 @@ namespace sogen
         task,
         host,
         thread,
+        clock,
+        semaphore,
     };
 
     struct mach_port_entry
     {
         mach_port_object object{};
+        uint32_t object_id{};
         bool has_receive_right{};
         bool has_send_right{};
     };
@@ -44,6 +47,28 @@ namespace sogen
             return name;
         }
 
+        // A send right to a kernel object always has the same name in the task's IPC space.
+        uint32_t kernel_object_send_right(const mach_port_object object, const uint32_t object_id)
+        {
+            for (const auto& [name, entry] : this->ports_)
+            {
+                if (entry.object == object && entry.object_id == object_id)
+                {
+                    return name;
+                }
+            }
+
+            const auto name = this->next_name_;
+            this->next_name_ += NAME_INDEX_STEP;
+            this->ports_[name] = {.object = object, .object_id = object_id, .has_send_right = true};
+            return name;
+        }
+
+        uint32_t create_kernel_object(const mach_port_object object)
+        {
+            return this->kernel_object_send_right(object, this->next_object_id_++);
+        }
+
         const mach_port_entry* find(const uint32_t name) const
         {
             const auto it = this->ports_.find(name);
@@ -56,5 +81,6 @@ namespace sogen
 
         std::map<uint32_t, mach_port_entry> ports_{};
         uint32_t next_name_{0x303};
+        uint32_t next_object_id_{1};
     };
 }

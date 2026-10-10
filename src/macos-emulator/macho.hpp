@@ -19,6 +19,7 @@ namespace sogen::macho
 
     constexpr uint32_t LC_SEGMENT_64 = 0x19;
     constexpr uint32_t LC_UNIXTHREAD = 0x5;
+    constexpr uint32_t LC_UUID = 0x1B;
     constexpr uint32_t LC_LOAD_DYLINKER = 0xE;
     constexpr uint32_t LC_MAIN = 0x80000028;
 

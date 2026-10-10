@@ -12,6 +12,7 @@
 #include "macos_shared_region.hpp"
 #include "macos_syscall_dispatcher.hpp"
 
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <functional>
@@ -39,6 +40,9 @@ namespace sogen
         std::optional<macos_shared_region> shared_region{};
         std::optional<int> exit_status{};
         uint32_t signal_mask{};
+        std::array<uint8_t, 16> executable_uuid{};
+
+        uint64_t next_entropy();
 
         std::function<void(std::string_view data)> on_stdout{};
         std::function<void(std::string_view data)> on_stderr{};
@@ -65,6 +69,7 @@ namespace sogen
 
       private:
         bool should_stop_{false};
+        uint64_t entropy_state_{0x5EED5EED5EED5EED};
 
         void setup_hooks();
     };

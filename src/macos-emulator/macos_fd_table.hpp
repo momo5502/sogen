@@ -16,6 +16,7 @@ namespace sogen
         std::filesystem::path host_path{};
         std::ifstream stream{};
         uint64_t offset{};
+        bool is_socket{};
 
         size_t read_at(const uint64_t position, std::span<std::byte> buffer)
         {
@@ -41,6 +42,13 @@ namespace sogen
 
             const auto fd = this->lowest_free_descriptor();
             this->files_.emplace(fd, std::move(file));
+            return fd;
+        }
+
+        int open_socket()
+        {
+            const auto fd = this->lowest_free_descriptor();
+            this->files_.emplace(fd, macos_file{.is_socket = true});
             return fd;
         }
 

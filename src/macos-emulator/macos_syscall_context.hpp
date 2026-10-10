@@ -17,10 +17,16 @@ namespace sogen
     {
         constexpr uint64_t MACOS_EPERM = 1;
         constexpr uint64_t MACOS_ENOENT = 2;
+        constexpr uint64_t MACOS_ESRCH = 3;
         constexpr uint64_t MACOS_EBADF = 9;
         constexpr uint64_t MACOS_ENOMEM = 12;
+        constexpr uint64_t MACOS_EACCES = 13;
         constexpr uint64_t MACOS_EFAULT = 14;
         constexpr uint64_t MACOS_EINVAL = 22;
+        constexpr uint64_t MACOS_ENOTTY = 25;
+        constexpr uint64_t MACOS_ENOTSOCK = 38;
+        constexpr uint64_t MACOS_EAFNOSUPPORT = 47;
+        constexpr uint64_t MACOS_ENOTCONN = 57;
         constexpr uint64_t MACOS_ENOSPC = 28;
         constexpr uint64_t MACOS_EROFS = 30;
         constexpr uint64_t MACOS_ENAMETOOLONG = 63;
@@ -32,8 +38,12 @@ namespace sogen
         constexpr uint64_t KERN_INVALID_ADDRESS = 1;
         constexpr uint64_t KERN_NO_SPACE = 3;
         constexpr uint64_t KERN_INVALID_ARGUMENT = 4;
+        constexpr uint64_t KERN_FAILURE = 5;
         constexpr uint64_t KERN_INVALID_NAME = 15;
     }
+
+    // The wall-clock time the guest sees, fixed so runs are deterministic.
+    constexpr int64_t MACOS_EPOCH_SECONDS = 1700000000;
 
     struct macos_syscall_context
     {

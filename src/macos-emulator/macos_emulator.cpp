@@ -8,6 +8,7 @@
 #include <utils/string.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
@@ -122,6 +123,7 @@ namespace sogen
             uint64_t end_address{};
             std::optional<uint64_t> unixthread_entry_point{};
             std::optional<std::string> dylinker_path{};
+            std::array<uint8_t, 16> uuid{};
         };
 
         void map_segment(posix_memory_manager& memory, const std::span<const std::byte> image, const macho::segment_command_64& segment,
@@ -221,6 +223,9 @@ namespace sogen
                 }
                 case macho::LC_UNIXTHREAD:
                     result.unixthread_entry_point = read_unixthread_entry_point(image, offset) + slide;
+                    break;
+                case macho::LC_UUID:
+                    result.uuid = read_struct<std::array<uint8_t, 16>>(image, offset + sizeof(command));
                     break;
                 case macho::LC_LOAD_DYLINKER:
                     result.dylinker_path = read_dylinker_path(image.subspan(offset, command.cmdsize));
@@ -345,6 +350,8 @@ namespace sogen
     {
         const auto executable_image = map_image(this->memory, select_x86_64_slice(image), macho::MH_EXECUTE, 0);
 
+        this->executable_uuid = executable_image.uuid;
+
         std::optional<uint64_t> entry_point = executable_image.unixthread_entry_point;
         std::optional<uint64_t> main_header{};
 
@@ -387,7 +394,19 @@ namespace sogen
 
         while (!this->should_stop_)
         {
-            this->emu().start();
+            try
+            {
+                this->emu().start();
+            }
+            catch (const std::exception& e)
+            {
+                const auto rip = this->emu().read_instruction_pointer();
+                std::array<uint8_t, 8> code{};
+                this->emu().try_read_memory(rip, code.data(), code.size());
+                this->log.error("%s at 0x%" PRIx64 " (%02x %02x %02x %02x %02x %02x %02x %02x)\n", e.what(), rip, code[0], code[1], code[2],
+                                code[3], code[4], code[5], code[6], code[7]);
+                throw;
+            }
 
             if (!this->emu().has_violation())
             {
@@ -400,6 +419,16 @@ namespace sogen
     {
         this->should_stop_ = true;
         this->emu().stop();
+    }
+
+    // SplitMix64: entropy stays reproducible so emulation is deterministic.
+    uint64_t macos_emulator::next_entropy()
+    {
+        this->entropy_state_ += 0x9E3779B97F4A7C15;
+        auto value = this->entropy_state_;
+        value = (value ^ (value >> 30)) * 0xBF58476D1CE4E5B9;
+        value = (value ^ (value >> 27)) * 0x94D049BB133111EB;
+        return value ^ (value >> 31);
     }
 
     void macos_emulator::setup_hooks()

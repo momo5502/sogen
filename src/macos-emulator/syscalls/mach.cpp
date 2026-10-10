@@ -135,6 +135,11 @@ namespace sogen
         write_trap_result(c, c.emu_ref.mach_ports.allocate_receive_right());
     }
 
+    void mach_thread_self_trap(const macos_syscall_context& c)
+    {
+        write_trap_result(c, macos_mach_ports::THREAD_PORT_NAME);
+    }
+
     void mach_task_self_trap(const macos_syscall_context& c)
     {
         write_trap_result(c, macos_mach_ports::TASK_PORT_NAME);
@@ -195,6 +200,11 @@ namespace sogen
         }
 
         const auto reply = routine(c, request);
+        if (reply.empty())
+        {
+            c.emu_ref.stop();
+            return;
+        }
 
         if (options & mach64_rcv_msg)
         {

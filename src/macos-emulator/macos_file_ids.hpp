@@ -43,9 +43,9 @@ namespace sogen
             return it == this->paths_.end() ? nullptr : &it->second;
         }
 
-      private:
         static constexpr std::array<int32_t, 2> ROOT_FSID{0x1000004, 0x1A};
 
+      private:
         std::map<macos_file_id, std::string> paths_{};
         std::map<std::string, macos_file_id> ids_{};
         uint64_t next_object_id_{2};

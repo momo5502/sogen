@@ -47,16 +47,15 @@ namespace sogen
         static_assert(offsetof(macos_stat64, st_size) == 96);
         static_assert(offsetof(macos_stat64, st_blksize) == 112);
 
-        constexpr uint16_t S_IFCHR = 0020000;
+        constexpr uint16_t S_IFIFO = 0010000;
         constexpr uint16_t S_IFDIR = 0040000;
         constexpr uint16_t S_IFREG = 0100000;
         constexpr uint16_t S_IFLNK = 0120000;
-        constexpr uint16_t TERMINAL_PERMISSIONS = 0620;
+        constexpr uint16_t PIPE_PERMISSIONS = 0600;
         constexpr int32_t BLOCK_SIZE = 4096;
         constexpr int64_t STAT_BLOCK_UNIT = 512;
 
-        // A fixed timestamp keeps runs deterministic.
-        constexpr macos_timespec FILE_TIME{.seconds = 1700000000, .nanoseconds = 0};
+        constexpr macos_timespec FILE_TIME{.seconds = MACOS_EPOCH_SECONDS, .nanoseconds = 0};
 
         std::optional<macos_stat64> stat_host_path(macos_emulator& emu, const std::string& guest_path, const bool follow_symlinks)
         {
@@ -151,13 +150,15 @@ namespace sogen
         const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
         const auto buffer = get_macos_syscall_argument(c.emu, 1);
 
+        // The standard streams are presented as pipes, as when output is captured, so runs do not depend on whether
+        // the host has a terminal.
         if (fd >= 0 && fd <= 2)
         {
-            macos_stat64 terminal{};
-            terminal.st_mode = S_IFCHR | TERMINAL_PERMISSIONS;
-            terminal.st_nlink = 1;
-            terminal.st_blksize = BLOCK_SIZE;
-            write_stat_result(c, terminal, buffer);
+            macos_stat64 pipe{};
+            pipe.st_mode = S_IFIFO | PIPE_PERMISSIONS;
+            pipe.st_nlink = 1;
+            pipe.st_blksize = BLOCK_SIZE;
+            write_stat_result(c, pipe, buffer);
             return;
         }
 
@@ -169,5 +170,42 @@ namespace sogen
         }
 
         write_stat_result(c, stat_host_path(c.emu_ref, file->guest_path, true), buffer);
+    }
+
+    void sys_access(const macos_syscall_context& c)
+    {
+        constexpr uint64_t x_ok = 0x1;
+        constexpr uint64_t w_ok = 0x2;
+
+        const auto guest_path = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0));
+        const auto mode = get_macos_syscall_argument(c.emu, 1);
+        if (!guest_path)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        const auto result = stat_host_path(c.emu_ref, *guest_path, true);
+        c.emu_ref.log.log("access(%s, %llu)%s\n", guest_path->c_str(), static_cast<unsigned long long>(mode), result ? "" : " -> ENOENT");
+
+        if (!result)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+            return;
+        }
+
+        if (mode & w_ok)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EROFS);
+            return;
+        }
+
+        if ((mode & x_ok) && (result->st_mode & 0111) == 0)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EACCES);
+            return;
+        }
+
+        write_macos_syscall_success(c, 0);
     }
 }

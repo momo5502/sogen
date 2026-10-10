@@ -1,8 +1,10 @@
 #include "macos_syscalls.hpp"
 #include "../macos_emulator.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -165,5 +167,106 @@ namespace sogen
         }
 
         write_macos_syscall_success(c, length);
+    }
+
+    // POSIX shared memory objects are created by system daemons (notifyd, ...), which do not run in the emulator.
+    void sys_shm_open(const macos_syscall_context& c)
+    {
+        const auto name = read_guest_string(c.emu, get_macos_syscall_argument(c.emu, 0));
+        c.emu_ref.log.log("shm_open(%s) -> ENOENT\n", name ? name->c_str() : "?");
+        write_macos_syscall_error(c, name ? macos_errno::MACOS_ENOENT : macos_errno::MACOS_EFAULT);
+    }
+
+    // The standard streams behave like pipes (XNU's pipe_ioctl): non-blocking, async and readable-byte queries
+    // succeed, close-on-exec is handled by the syscall layer, and everything else is ENOTTY.
+    void sys_ioctl(const macos_syscall_context& c)
+    {
+        constexpr uint64_t fioclex = 0x20006601;
+        constexpr uint64_t fionclex = 0x20006602;
+        constexpr uint64_t fionread = 0x4004667F;
+        constexpr uint64_t fionbio = 0x8004667E;
+        constexpr uint64_t fioasync = 0x8004667D;
+
+        const auto fd = static_cast<int>(get_macos_syscall_argument(c.emu, 0));
+        const auto request = get_macos_syscall_argument(c.emu, 1);
+        const auto argument = get_macos_syscall_argument(c.emu, 2);
+
+        if (fd < 0 || fd > 2)
+        {
+            c.emu_ref.log.error("Unhandled ioctl(%d, 0x%llx)\n", fd, static_cast<unsigned long long>(request));
+            c.emu_ref.stop();
+            return;
+        }
+
+        switch (request)
+        {
+        case fioclex:
+        case fionclex:
+        case fionbio:
+        case fioasync:
+            write_macos_syscall_success(c, 0);
+            return;
+        case fionread: {
+            constexpr int32_t available = 0;
+            if (!c.emu.try_write_memory(argument, &available, sizeof(available)))
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+                return;
+            }
+
+            write_macos_syscall_success(c, 0);
+            return;
+        }
+        default:
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOTTY);
+            return;
+        }
+    }
+
+    // Local sockets can be created, but no daemon listens anywhere in the emulation root, so every address a
+    // guest tries to reach does not exist.
+    void sys_socket(const macos_syscall_context& c)
+    {
+        constexpr uint64_t af_unix = 1;
+
+        const auto domain = get_macos_syscall_argument(c.emu, 0);
+        if (domain != af_unix)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EAFNOSUPPORT);
+            return;
+        }
+
+        write_macos_syscall_success(c, static_cast<uint64_t>(c.emu_ref.fds.open_socket()));
+    }
+
+    void sys_connect(const macos_syscall_context& c)
+    {
+        const auto* file = c.emu_ref.fds.get(static_cast<int>(get_macos_syscall_argument(c.emu, 0)));
+        if (file == nullptr || !file->is_socket)
+        {
+            write_macos_syscall_error(c, file == nullptr ? macos_errno::MACOS_EBADF : macos_errno::MACOS_ENOTSOCK);
+            return;
+        }
+
+        write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+    }
+
+    void sys_sendto(const macos_syscall_context& c)
+    {
+        const auto* file = c.emu_ref.fds.get(static_cast<int>(get_macos_syscall_argument(c.emu, 0)));
+        if (file == nullptr || !file->is_socket)
+        {
+            write_macos_syscall_error(c, file == nullptr ? macos_errno::MACOS_EBADF : macos_errno::MACOS_ENOTSOCK);
+            return;
+        }
+
+        const auto buffer = get_macos_syscall_argument(c.emu, 1);
+        const auto size = std::min<uint64_t>(get_macos_syscall_argument(c.emu, 2), 512);
+        std::string message(static_cast<size_t>(size), '\0');
+        c.emu.try_read_memory(buffer, message.data(), message.size());
+        c.emu_ref.log.log("sendto: %s\n", message.c_str());
+
+        const auto address = get_macos_syscall_argument(c.emu, 4);
+        write_macos_syscall_error(c, address == 0 ? macos_errno::MACOS_ENOTCONN : macos_errno::MACOS_ENOENT);
     }
 }

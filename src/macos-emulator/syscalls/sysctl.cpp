@@ -27,6 +27,11 @@ namespace sogen
         {
             static const std::vector<named_sysctl> sysctls{
                 {
+                    .name = "kern.osversion",
+                    .oid = {1, 65},
+                    .value = std::string{"24H32"} + '\0',
+                },
+                {
                     .name = "kern.version",
                     .oid = {1, 4},
                     .value = std::string{"Darwin Kernel Version 24.6.0: Sun Aug 23 20:37:03 PDT 2026; "
