@@ -139,10 +139,12 @@ namespace sogen::macos_test
             return result;
         }
 
-        void load_image(const test_image& image)
+        void expect_rejected(const test_image& image)
         {
             const auto data = image.serialize();
-            const macos_emulator emu{create_x86_64_emulator_from_environment(), data, "/test", {"test"}, {}};
+            auto backend = create_x86_64_emulator_from_environment();
+
+            EXPECT_THROW(macos_emulator(std::move(backend), data, "/test", {"test"}, {}), std::runtime_error);
         }
     }
 
@@ -182,7 +184,7 @@ namespace sogen::macos_test
         auto image = make_test_image(HELLO_CODE);
         image.extra_commands.push_back({.cmd = macho::LC_LOAD_DYLINKER, .cmdsize = sizeof(macho::load_command)});
 
-        EXPECT_THROW(load_image(image), std::runtime_error);
+        expect_rejected(image);
     }
 
     TEST(MacosLoaderTest, RejectsNonX86_64Image)
@@ -190,7 +192,7 @@ namespace sogen::macos_test
         auto image = make_test_image(HELLO_CODE);
         image.header.cputype = CPU_TYPE_ARM64;
 
-        EXPECT_THROW(load_image(image), std::runtime_error);
+        expect_rejected(image);
     }
 
     TEST(MacosLoaderTest, RejectsSegmentExceedingFile)
@@ -198,7 +200,7 @@ namespace sogen::macos_test
         auto image = make_test_image(HELLO_CODE);
         image.text.filesize = IMAGE_SIZE;
 
-        EXPECT_THROW(load_image(image), std::runtime_error);
+        expect_rejected(image);
     }
 
     TEST(MacosLoaderTest, RejectsUnsupportedThreadStateFlavor)
@@ -206,6 +208,6 @@ namespace sogen::macos_test
         auto image = make_test_image(HELLO_CODE);
         image.thread.flavor = 1;
 
-        EXPECT_THROW(load_image(image), std::runtime_error);
+        expect_rejected(image);
     }
 }
