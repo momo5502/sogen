@@ -1267,6 +1267,21 @@ namespace
         return true;
     }
 
+    bool test_desktop_window_text()
+    {
+        const auto desktop = GetDesktopWindow();
+        if (desktop == nullptr)
+        {
+            return false;
+        }
+
+        std::array<char, 32> text{};
+        text.fill('x');
+
+        return GetWindowTextA(desktop, text.data(), static_cast<int>(text.size())) == 0 && text.front() == '\0' &&
+               GetWindowTextLengthA(desktop) == 0;
+    }
+
     bool test_message_queue()
     {
         thread_local UINT wnd_proc_num = 0;
@@ -2234,6 +2249,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
+    RUN_TEST(test_desktop_window_text, "Desktop Window Text")
     RUN_TEST(test_window_geometry, "Window Geometry")
     RUN_TEST(test_user_callback, "User Callback")
     RUN_TEST(test_mutable_callbacks, "Mutable User Callback")

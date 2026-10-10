@@ -3934,6 +3934,11 @@ namespace sogen
                 return write_message_call_result(c, result_info, result) ? TRUE : FALSE;
             }
 
+            if (win->wnd_proc == 0)
+            {
+                return handle_default_window_proc_message(c, *win, msg, w_param, l_param, ansi);
+            }
+
             if (win->thread_id != c.vcpu.active_thread->id)
             {
                 // TODO: This is a bit incorrect. We're supposed to wait until the message is received, but this is fine for a first
