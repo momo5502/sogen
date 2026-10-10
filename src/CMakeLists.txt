@@ -50,6 +50,7 @@ if(_SOGEN_BUILD_STANDALONE_TARGETS)
   endif()
   add_subdirectory(windows-emulator-test)
   add_subdirectory(linux-emulator-test)
+  add_subdirectory(macos-emulator-test)
 
   if((WIN32 OR LINUX) AND CMAKE_SIZEOF_VOID_P EQUAL 8)
     sogen_add_subdirectory_and_get_targets("tools" TOOL_TARGETS)

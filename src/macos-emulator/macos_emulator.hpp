@@ -4,10 +4,14 @@
 #include <hook_interface.hpp>
 #include <logger.hpp>
 
+#include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace sogen
@@ -18,8 +22,13 @@ namespace sogen
         logger log{};
         std::optional<int> exit_status{};
 
+        std::function<void(std::string_view data)> on_stdout{};
+        std::function<void(std::string_view data)> on_stderr{};
+
         macos_emulator(std::unique_ptr<x86_64_emulator> emu, const std::filesystem::path& executable, const std::vector<std::string>& argv,
                        const std::vector<std::string>& envp);
+        macos_emulator(std::unique_ptr<x86_64_emulator> emu, std::span<const std::byte> image, const std::string& executable_path,
+                       const std::vector<std::string>& argv, const std::vector<std::string>& envp);
 
         macos_emulator(const macos_emulator&) = delete;
         macos_emulator& operator=(const macos_emulator&) = delete;

@@ -193,19 +193,6 @@ namespace sogen
             return stack_pointer;
         }
 
-        FILE* get_output_stream(const uint64_t fd)
-        {
-            switch (fd)
-            {
-            case 1:
-                return stdout;
-            case 2:
-                return stderr;
-            default:
-                return nullptr;
-            }
-        }
-
         void set_syscall_result(x86_64_emulator& emu, const uint64_t value, const bool failed)
         {
             const auto rflags = emu.reg(x86_register::rflags);
@@ -217,13 +204,19 @@ namespace sogen
 
     macos_emulator::macos_emulator(std::unique_ptr<x86_64_emulator> emu, const std::filesystem::path& executable,
                                    const std::vector<std::string>& argv, const std::vector<std::string>& envp)
+        : macos_emulator(std::move(emu), read_executable(executable), executable.string(), argv, envp)
+    {
+    }
+
+    macos_emulator::macos_emulator(std::unique_ptr<x86_64_emulator> emu, const std::span<const std::byte> image,
+                                   const std::string& executable_path, const std::vector<std::string>& argv,
+                                   const std::vector<std::string>& envp)
         : emu_(std::move(emu))
     {
         macos_memory_manager memory{this->emu()};
 
-        const auto image = read_executable(executable);
         const auto entry_point = map_executable(this->emu(), memory, image);
-        const auto stack_pointer = setup_stack(this->emu(), memory, argv, envp, {"executable_path=" + executable.string()});
+        const auto stack_pointer = setup_stack(this->emu(), memory, argv, envp, {"executable_path=" + executable_path});
 
         this->emu().reg(x86_register::rip, entry_point);
         this->emu().reg(x86_register::rsp, stack_pointer);
@@ -293,8 +286,7 @@ namespace sogen
         const auto buffer = e.reg(x86_register::rsi);
         const auto size = static_cast<size_t>(e.reg(x86_register::rdx));
 
-        FILE* stream = get_output_stream(fd);
-        if (stream == nullptr)
+        if (fd != 1 && fd != 2)
         {
             set_syscall_result(e, MACOS_EBADF, true);
             return;
@@ -307,8 +299,17 @@ namespace sogen
             return;
         }
 
-        fwrite(data.data(), 1, size, stream);
-        fflush(stream);
+        const auto& callback = fd == 1 ? this->on_stdout : this->on_stderr;
+        if (callback)
+        {
+            callback(std::string_view{data.data(), size});
+        }
+        else
+        {
+            auto* stream = fd == 1 ? stdout : stderr;
+            fwrite(data.data(), 1, size, stream);
+            fflush(stream);
+        }
 
         set_syscall_result(e, size, false);
     }

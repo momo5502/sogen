@@ -40,7 +40,7 @@ namespace sogen
         try
         {
             const std::vector<std::string> guest_argv(application.begin(), application.end());
-            macos_emulator macos_emu(create_x86_64_emulator(), executable, guest_argv, {});
+            macos_emulator macos_emu(create_x86_64_emulator_from_environment(), executable, guest_argv, {});
 
             if (!verbose)
             {
