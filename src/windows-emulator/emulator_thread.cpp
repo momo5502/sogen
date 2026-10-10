@@ -1,4 +1,4 @@
-﻿#include "std_include.hpp"
+#include "std_include.hpp"
 #include "emulator_thread.hpp"
 
 #include "cpu_context.hpp"
@@ -711,13 +711,9 @@ namespace sogen
         this->await_io_completion = {};
         this->await_host_condition = {};
 
-        // TODO: Find out if this is correct
-        if (this->waiting_for_alert)
-        {
-            this->alerted = false;
-        }
-
+        this->alerted = !this->pending_alert_addresses.empty();
         this->waiting_for_alert = false;
+        this->wait_alert_address = std::nullopt;
     }
 
     user_timer* emulator_thread::find_user_timer(const hwnd hwnd, const uint64_t timer_id)
@@ -1088,8 +1084,20 @@ namespace sogen
 
         if (this->waiting_for_alert)
         {
-            if (this->alerted)
+            auto match_it = this->pending_alert_addresses.end();
+            for (auto it = this->pending_alert_addresses.begin(); it != this->pending_alert_addresses.end(); ++it)
             {
+                if (*it == 0 || (this->wait_alert_address.has_value() && *it == *this->wait_alert_address))
+                {
+                    match_it = it;
+                    break;
+                }
+            }
+
+            if (match_it != this->pending_alert_addresses.end())
+            {
+                this->pending_alert_addresses.erase(match_it);
+                this->alerted = !this->pending_alert_addresses.empty();
                 this->mark_as_ready(STATUS_ALERTED);
                 return true;
             }

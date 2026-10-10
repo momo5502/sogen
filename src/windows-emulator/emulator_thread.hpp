@@ -369,7 +369,9 @@ namespace sogen
         std::vector<handle> await_objects{};
         bool await_any{false};
         bool waiting_for_alert{false};
+        std::optional<uint64_t> wait_alert_address{};
         bool alerted{false};
+        std::vector<uint64_t> pending_alert_addresses{};
         uint32_t create_flags{0};
         uint32_t suspended{0};
         std::optional<std::chrono::steady_clock::time_point> await_time{};
@@ -510,7 +512,9 @@ namespace sogen
             buffer.write(this->await_any);
 
             buffer.write(this->waiting_for_alert);
+            buffer.write_optional(this->wait_alert_address);
             buffer.write(this->alerted);
+            buffer.write_vector(this->pending_alert_addresses);
 
             buffer.write(this->create_flags);
             buffer.write(this->suspended);
@@ -582,7 +586,9 @@ namespace sogen
             buffer.read(this->await_any);
 
             buffer.read(this->waiting_for_alert);
+            buffer.read_optional(this->wait_alert_address);
             buffer.read(this->alerted);
+            buffer.read_vector(this->pending_alert_addresses);
 
             buffer.read(this->create_flags);
             buffer.read(this->suspended);
