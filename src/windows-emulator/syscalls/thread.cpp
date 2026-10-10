@@ -643,16 +643,24 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtAlertThreadByThreadId(const syscall_context& c, const uint64_t thread_id)
+        NTSTATUS handle_NtAlertThreadByThreadIdEx(const syscall_context& c, const uint64_t thread_id,
+                                                  const emulator_object<EMU_RTL_SRWLOCK<EmulatorTraits<Emu64>>> lock)
         {
+            const uint64_t alert_key = lock.value();
+
             for (auto& t : c.proc.threads | std::views::values)
             {
                 if (t.id == thread_id)
                 {
-                    // The alert is sticky: it must be remembered even if the target is not waiting yet, so a
-                    // subsequent NtWaitForAlertByThreadId consumes it instead of blocking forever. This race-free
-                    // delivery is what ntdll's critical sections and SRW locks rely on.
-                    t.alerted = true;
+                    if (t.waiting_for_alert && (!alert_key || !t.wait_alert_address.has_value() || alert_key == *t.wait_alert_address))
+                    {
+                        t.mark_as_ready(STATUS_ALERTED);
+                    }
+                    else
+                    {
+                        t.pending_alert_addresses.push_back(alert_key);
+                        t.alerted = true;
+                    }
                     return STATUS_SUCCESS;
                 }
             }
@@ -660,32 +668,35 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtAlertThreadByThreadIdEx(const syscall_context& c, const uint64_t thread_id,
-                                                  const emulator_object<EMU_RTL_SRWLOCK<EmulatorTraits<Emu64>>> /*lock*/)
+        NTSTATUS handle_NtAlertThreadByThreadId(const syscall_context& c, const uint64_t thread_id)
         {
-            // TODO: Support lock
-            /*if (lock.value())
-            {
-                 c.win_emu.log.warn("NtAlertThreadByThreadIdEx with lock not supported yet!\n");
-                //  c.emu.stop();
-                //  return STATUS_NOT_SUPPORTED;
-            }*/
-
-            return handle_NtAlertThreadByThreadId(c, thread_id);
+            return handle_NtAlertThreadByThreadIdEx(c, thread_id, {});
         }
 
-        NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, const uint64_t, const emulator_object<LARGE_INTEGER> timeout)
+        NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, const uint64_t address,
+                                                 const emulator_object<LARGE_INTEGER> timeout)
         {
             auto& t = c.thread();
 
-            if (t.alerted)
+            auto match_it = t.pending_alert_addresses.end();
+            for (auto it = t.pending_alert_addresses.begin(); it != t.pending_alert_addresses.end(); ++it)
             {
-                // A pending alert was delivered before we started waiting; consume it without blocking.
-                t.alerted = false;
+                if (*it == 0 || *it == address)
+                {
+                    match_it = it;
+                    break;
+                }
+            }
+
+            if (match_it != t.pending_alert_addresses.end())
+            {
+                t.pending_alert_addresses.erase(match_it);
+                t.alerted = !t.pending_alert_addresses.empty();
                 return STATUS_ALERTED;
             }
 
             t.waiting_for_alert = true;
+            t.wait_alert_address = address;
 
             if (timeout.value() && !t.await_time.has_value())
             {

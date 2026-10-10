@@ -406,7 +406,7 @@ namespace sogen
         NTSTATUS handle_NtAlertThreadByThreadId(const syscall_context& c, uint64_t thread_id);
         NTSTATUS handle_NtAlertThreadByThreadIdEx(const syscall_context& c, uint64_t thread_id,
                                                   emulator_object<EMU_RTL_SRWLOCK<EmulatorTraits<Emu64>>> lock);
-        NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, uint64_t, emulator_object<LARGE_INTEGER> timeout);
+        NTSTATUS handle_NtWaitForAlertByThreadId(const syscall_context& c, uint64_t address, emulator_object<LARGE_INTEGER> timeout);
         NTSTATUS handle_NtYieldExecution(const syscall_context& c);
         NTSTATUS handle_NtSetThreadExecutionState(const syscall_context& c, ULONG new_flags, emulator_object<ULONG> previous_flags);
         NTSTATUS handle_NtSuspendThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
