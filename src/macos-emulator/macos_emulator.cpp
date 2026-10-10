@@ -1,5 +1,6 @@
 #include "macos_emulator.hpp"
 #include "macho.hpp"
+#include "macos_commpage.hpp"
 
 #include <address_utils.hpp>
 #include <utils/io.hpp>
@@ -399,6 +400,8 @@ namespace sogen
         {
             throw std::runtime_error("No LC_UNIXTHREAD entry point to start from");
         }
+
+        map_macos_commpage(this->memory);
 
         const auto stack_pointer = setup_stack(this->memory, main_header, argv, envp, make_apple_strings(executable_path));
 

@@ -57,6 +57,13 @@ namespace sogen::macos_test
             0x0F, 0x05,                   // syscall
         };
 
+        const std::vector<uint8_t> READ_COMMPAGE_PAGE_SHIFT_CODE{
+            0xA0, 0x4E, 0x00, 0xE0, 0xFF, 0xFF, 0x7F, 0x00, 0x00, // mov al, [0x7FFFFFE0004E] (user page shift)
+            0x0F, 0xB6, 0xF8,                                     // movzx edi, al
+            0xB8, 0x01, 0x00, 0x00, 0x02,                         // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                                           // syscall
+        };
+
         const std::vector<uint8_t> FAKE_DYLD_CODE{
             0x48, 0x8B, 0x04, 0x24,                                     // mov rax, [rsp]
             0x48, 0xB9, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, // mov rcx, 0x100000000
@@ -312,6 +319,13 @@ namespace sogen::macos_test
         const auto result = run_image(make_test_image(MACH_TRAP_CODE));
 
         EXPECT_FALSE(result.exit_status.has_value());
+    }
+
+    TEST(MacosEmulationTest, MapsCommpage)
+    {
+        const auto result = run_image(make_test_image(READ_COMMPAGE_PAGE_SHIFT_CODE));
+
+        EXPECT_EQ(result.exit_status, 12);
     }
 
     TEST(MacosEmulationTest, StartsDyldWithMainHeaderAndArguments)
