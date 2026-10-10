@@ -492,7 +492,7 @@ namespace sogen
                 const uint64_t view_address = section_entry->backing_address + aligned_offset;
                 base_address.write(view_address);
 
-                c.proc.views.store(view_address, view { section_entry->backing_address });
+                c.proc.views.store(view_address, view{section_entry->backing_address});
 
                 return STATUS_SUCCESS;
             }

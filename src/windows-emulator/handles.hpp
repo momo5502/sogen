@@ -594,7 +594,7 @@ namespace sogen
         value_map store_{};
         std::map<key_type, handle> handles_{};
     };
-    
+
     // - should handle_store add new template param for key_type?
     // - is ref_counted_object required here?
     template <typename T>
@@ -645,10 +645,10 @@ namespace sogen
             return &it->second;
         }
 
-        bool in_use(uint64_t backing_address) const {
-            return std::any_of(this->store_.begin(), this->store_.end(), [&](const auto& v) {
-                return v.second.backing_address == backing_address;
-            });
+        bool in_use(uint64_t backing_address) const
+        {
+            return std::any_of(this->store_.begin(), this->store_.end(),
+                               [&](const auto& v) { return v.second.backing_address == backing_address; });
         }
 
         size_t size() const
@@ -685,10 +685,25 @@ namespace sogen
             buffer.read_map(this->store_);
         }
 
-        iterator begin() { return this->store_.begin(); }
-        const_iterator begin() const { return this->store_.begin(); }
-        iterator end() { return this->store_.end(); }
-        const_iterator end() const { return this->store_.end(); }
+        iterator begin()
+        {
+            return this->store_.begin();
+        }
+
+        const_iterator begin() const
+        {
+            return this->store_.begin();
+        }
+
+        iterator end()
+        {
+            return this->store_.end();
+        }
+
+        const_iterator end() const
+        {
+            return this->store_.end();
+        }
 
       private:
         bool block_mutation_{false};

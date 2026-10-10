@@ -530,7 +530,7 @@ namespace sogen
         std::optional<emulator_object<RTL_USER_PROCESS_PARAMETERS32>> process_params32;
         std::optional<uint64_t> rtl_user_thread_start32{};
 
-        view_store<view> views {};
+        view_store<view> views{};
         user_handle_table user_handles;
         handle default_monitor_handle{};
         handle default_desktop_window_handle{};
