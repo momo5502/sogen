@@ -15,6 +15,7 @@
 
 namespace sogen
 {
+    inline constexpr uint16_t lpc_continuation_required = 0x2000;
 
     class windows_emulator;
     struct process_context;
@@ -246,6 +247,7 @@ namespace sogen
         NTSTATUS status{};
         std::optional<std::vector<uint8_t>> payload{};
         std::vector<alpc_reply_handle> handles{};
+        std::vector<uint8_t> view_payload{};
 
         lpc_request_result() = default;
 
@@ -273,6 +275,7 @@ namespace sogen
         lpc_port_message message{};
         std::vector<uint8_t> payload{};
         std::vector<alpc_reply_handle> handles{};
+        std::vector<uint8_t> view_payload{};
 
         [[nodiscard]] ULONG total_length() const
         {
@@ -290,6 +293,7 @@ namespace sogen
             buffer.write(message);
             buffer.write_vector(payload);
             buffer.write_vector(handles);
+            buffer.write_vector(view_payload);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -298,6 +302,7 @@ namespace sogen
             buffer.read(message);
             buffer.read_vector(payload);
             buffer.read_vector(handles);
+            buffer.read_vector(view_payload);
         }
     };
 
@@ -316,6 +321,8 @@ namespace sogen
         ULONG flags{};
         ULONG sequence_number{};
         bool disconnected{};
+        uint64_t next_security_context_handle{4};
+        std::vector<uint64_t> security_context_handles{};
 
         port() = default;
         ~port() override = default;
@@ -333,6 +340,8 @@ namespace sogen
             buffer.write(this->flags);
             buffer.write(this->sequence_number);
             buffer.write(this->disconnected);
+            buffer.write(this->next_security_context_handle);
+            buffer.write_vector(this->security_context_handles);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -342,6 +351,8 @@ namespace sogen
             buffer.read(this->flags);
             buffer.read(this->sequence_number);
             buffer.read(this->disconnected);
+            buffer.read(this->next_security_context_handle);
+            buffer.read_vector(this->security_context_handles);
         }
 
         virtual void create(windows_emulator& win_emu, const port_creation_data& data)
@@ -374,7 +385,32 @@ namespace sogen
             return true;
         }
 
+        uint64_t create_security_context()
+        {
+            const auto context_handle = this->next_security_context_handle;
+            this->next_security_context_handle += 4;
+            this->security_context_handles.push_back(context_handle);
+            return context_handle;
+        }
+
+        bool delete_security_context(const uint64_t context_handle)
+        {
+            const auto context = std::ranges::find(this->security_context_handles, context_handle);
+            if (context == this->security_context_handles.end())
+            {
+                return false;
+            }
+
+            this->security_context_handles.erase(context);
+            return true;
+        }
+
         virtual lpc_message_result handle_message(windows_emulator& win_emu, const lpc_message_context& c);
+
+        virtual bool accepts_send_only_messages() const
+        {
+            return false;
+        }
 
         virtual lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) = 0;
     };
@@ -382,6 +418,11 @@ namespace sogen
     struct rpc_port : port
     {
         lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) override;
+
+        bool accepts_send_only_messages() const override
+        {
+            return true;
+        }
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {

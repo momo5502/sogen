@@ -1,0 +1,136 @@
+namespace ProcessProtocol;
+
+enum ProcessError : ubyte {
+    None = 0,
+    InvalidProcess,
+    Unavailable,
+    PermissionDenied,
+    ResourceLimit,
+    CommunicationFailure,
+    InternalFailure,
+}
+
+enum MemoryPermission : ubyte {
+    None = 0,
+    Read = 1,
+    Write = 2,
+    ReadWrite = 3,
+    Execute = 4,
+    ReadExecute = 5,
+    WriteExecute = 6,
+    All = 7,
+    Guard = 8,
+    ReadGuard = 9,
+    WriteGuard = 10,
+    ReadWriteGuard = 11,
+    ExecuteGuard = 12,
+    ReadExecuteGuard = 13,
+    WriteExecuteGuard = 14,
+    AllGuard = 15,
+}
+
+table Hello {
+    token: string (required);
+}
+
+table EnvironmentVariable {
+    name: string (required);
+    value: string (required);
+}
+
+table ProcessCreateRequest {
+    application: string (required);
+    argument0: string (required);
+    working_directory: string (required);
+    arguments: [string];
+    environment: [EnvironmentVariable];
+    process_id: uint;
+    thread_id: uint;
+}
+
+table ProcessStarted {
+    native_environment: ulong;
+    compatibility_environment: ulong;
+    native_parameters: ulong;
+    compatibility_parameters: ulong;
+}
+
+table ProcessExited {
+    exit_code: ulong;
+}
+
+table ResumeProcessRequest {}
+
+table ResumeProcessResponse {
+    error: ProcessError = None;
+}
+
+table AllocateMemoryRequest {
+    address: ulong;
+    size: ulong;
+    permission: MemoryPermission = None;
+    reserve: bool;
+    commit: bool;
+}
+
+table FreeMemoryRequest {
+    address: ulong;
+    size: ulong;
+    release: bool;
+}
+
+table ProtectMemoryRequest {
+    address: ulong;
+    size: ulong;
+    permission: MemoryPermission = None;
+}
+
+table ReadMemoryRequest {
+    address: ulong;
+    size: ulong;
+}
+
+table WriteMemoryRequest {
+    address: ulong;
+    data: [ubyte];
+}
+
+table ProcessMemoryResponse {
+    error: ProcessError = None;
+    address: ulong;
+    size: ulong;
+    permission: MemoryPermission = None;
+}
+
+table ProcessErrorResponse {
+    error: ProcessError = None;
+}
+
+table ReadMemoryResponse {
+    error: ProcessError = None;
+    data: [ubyte];
+}
+
+union MessagePayload {
+    Hello,
+    ProcessCreateRequest,
+    ProcessStarted,
+    ProcessExited,
+    ResumeProcessRequest,
+    ResumeProcessResponse,
+    AllocateMemoryRequest,
+    FreeMemoryRequest,
+    ProtectMemoryRequest,
+    ReadMemoryRequest,
+    WriteMemoryRequest,
+    ProcessMemoryResponse,
+    ProcessErrorResponse,
+    ReadMemoryResponse,
+}
+
+table Message {
+    payload: MessagePayload;
+}
+
+root_type Message;
+file_identifier "SGPM";

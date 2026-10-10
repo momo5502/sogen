@@ -13,7 +13,8 @@ namespace sogen
         read_write = read | write,
         read_exec = read | exec,
         write_exec = write | exec,
-        all = read | write | exec
+        all = read | write | exec,
+        guard = 1 << 3
     };
 
     /*****************************************************************************

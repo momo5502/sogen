@@ -11,6 +11,7 @@ namespace sogen
     {
       public:
         static constexpr uint32_t MAX_HANDLES = 0xFFFF;
+        static constexpr uint32_t MAX_HANDLE_INDICES = MAX_HANDLES >> 2;
         static constexpr size_t CLIENT_MESSAGE_BITS_SIZE = 0xC8;
         static constexpr size_t WND_MESSAGE_BITS_COUNT = FNID_ARRAY_SIZE + 2;
         static constexpr size_t DEF_WINDOW_MSGS_INDEX = FNID_ARRAY_SIZE;
@@ -25,7 +26,7 @@ namespace sogen
         {
             this->is_wow64_process_ = is_wow64_process;
 
-            used_indices_.resize(MAX_HANDLES, false);
+            used_indices_.resize(MAX_HANDLE_INDICES, false);
             next_free_index_ = 1;
 
             const auto server_info_size = static_cast<size_t>(page_align_up(sizeof(USER_SERVERINFO)));
@@ -43,21 +44,31 @@ namespace sogen
                 srv.dpi96DialogBaseUnitHeight = 16;
                 srv.asyncKeyStateGeneration = 1;
                 srv.systemDpi = 96;
-                srv.systemMetrics[0] = 1920;  // SM_CXSCREEN
-                srv.systemMetrics[1] = 1080;  // SM_CYSCREEN
-                srv.systemMetrics[2] = 17;    // SM_CXVSCROLL
-                srv.systemMetrics[3] = 17;    // SM_CYHSCROLL
-                srv.systemMetrics[10] = 17;   // SM_CXHTHUMB
-                srv.systemMetrics[11] = 32;   // SM_CXICON
-                srv.systemMetrics[12] = 32;   // SM_CYICON
-                srv.systemMetrics[19] = 1;    // SM_MOUSEPRESENT
-                srv.systemMetrics[20] = 17;   // SM_CYVSCROLL
-                srv.systemMetrics[21] = 17;   // SM_CXHSCROLL
-                srv.systemMetrics[43] = 3;    // SM_CMOUSEBUTTONS
-                srv.systemMetrics[75] = 1;    // SM_MOUSEWHEELPRESENT
-                srv.systemMetrics[78] = 1920; // SM_CXVIRTUALSCREEN
-                srv.systemMetrics[79] = 1080; // SM_CYVIRTUALSCREEN
-                srv.systemMetrics[91] = 1;    // SM_MOUSEHORIZONTALWHEELPRESENT
+                srv.systemMetrics[0] = 1920;            // SM_CXSCREEN
+                srv.systemMetrics[1] = 1080;            // SM_CYSCREEN
+                srv.systemMetrics[2] = 17;              // SM_CXVSCROLL
+                srv.systemMetrics[3] = 17;              // SM_CYHSCROLL
+                srv.systemMetrics[10] = 17;             // SM_CXHTHUMB
+                srv.systemMetrics[11] = 32;             // SM_CXICON
+                srv.systemMetrics[12] = 32;             // SM_CYICON
+                srv.systemMetrics[13] = 32;             // SM_CXCURSOR
+                srv.systemMetrics[14] = 32;             // SM_CYCURSOR
+                srv.systemMetrics[15] = 19;             // SM_CYMENU
+                srv.dpiDependentSystemMetrics[13] = 32; // SM_CXCURSOR
+                srv.dpiDependentSystemMetrics[14] = 32; // SM_CYCURSOR
+                srv.dpiDependentSystemMetrics[15] = 19; // SM_CYMENU
+                srv.systemMetrics[19] = 1;              // SM_MOUSEPRESENT
+                srv.systemMetrics[20] = 17;             // SM_CYVSCROLL
+                srv.systemMetrics[21] = 17;             // SM_CXHSCROLL
+                srv.systemMetrics[43] = 3;              // SM_CMOUSEBUTTONS
+                srv.systemMetrics[49] = 16;             // SM_CXSMICON
+                srv.systemMetrics[50] = 16;             // SM_CYSMICON
+                srv.dpiDependentSystemMetrics[20] = 17; // SM_CYVSCROLL
+                srv.dpiDependentSystemMetrics[21] = 17; // SM_CXHSCROLL
+                srv.systemMetrics[75] = 1;              // SM_MOUSEWHEELPRESENT
+                srv.systemMetrics[78] = 1920;           // SM_CXVIRTUALSCREEN
+                srv.systemMetrics[79] = 1080;           // SM_CYVIRTUALSCREEN
+                srv.systemMetrics[91] = 1;              // SM_MOUSEHORIZONTALWHEELPRESENT
             });
 
             const auto handle_table_size = static_cast<size_t>(page_align_up(sizeof(USER_HANDLEENTRY) * MAX_HANDLES));
@@ -90,6 +101,13 @@ namespace sogen
         emulator_object<USER_HANDLEENTRY> get_handle_table() const
         {
             return {*memory_, handle_table_addr_};
+        }
+
+        // user32 indexes the shared aheList by the HANDLE's low 16 bits, not by our internal id.
+        // Handles are 4-aligned, so the id sits at bit 2 and the slot the guest computes is id << 2.
+        static constexpr uint32_t handle_index_to_ahe_slot(const uint32_t index)
+        {
+            return index << 2;
         }
 
         emulator_object<USER_DISPINFO> get_display_info() const
@@ -128,7 +146,7 @@ namespace sogen
                     entry.bType = get_native_type(type);
                     entry.wUniq = static_cast<uint16_t>(type << 7);
                 },
-                index);
+                handle_index_to_ahe_slot(index));
 
             used_indices_.at(index) = true;
 
@@ -141,7 +159,7 @@ namespace sogen
         void set_owner(const uint32_t index, const uint64_t owner)
         {
             const emulator_object<USER_HANDLEENTRY> handle_table_obj(*memory_, handle_table_addr_);
-            handle_table_obj.access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, index);
+            handle_table_obj.access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, handle_index_to_ahe_slot(index));
         }
 
         void free_index(uint32_t index)
@@ -159,7 +177,7 @@ namespace sogen
                     memory_->release_memory(entry.pHead, 0);
                     entry = {};
                 },
-                index);
+                handle_index_to_ahe_slot(index));
         }
 
         void serialize(utils::buffer_serializer& buffer) const
@@ -284,10 +302,10 @@ namespace sogen
 
         uint32_t find_free_index()
         {
-            for (uint32_t attempts = 0; attempts < MAX_HANDLES - 1; ++attempts)
+            for (uint32_t attempts = 0; attempts < MAX_HANDLE_INDICES - 1; ++attempts)
             {
                 const auto index = next_free_index_;
-                next_free_index_ = next_free_index_ + 1 < MAX_HANDLES ? next_free_index_ + 1 : 1;
+                next_free_index_ = next_free_index_ + 1 < MAX_HANDLE_INDICES ? next_free_index_ + 1 : 1;
 
                 if (!used_indices_.at(index))
                 {

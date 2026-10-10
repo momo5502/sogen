@@ -69,8 +69,8 @@ namespace sogen
                 return false;
             }
 
-            if (payload.user_connect_length != sizeof(WIN32K_USERCONNECT32) &&
-                payload.user_connect_length != (sizeof(WIN32K_USERCONNECT32) + win32k_userconnect::k_wow64_userconnect_header_size))
+            if (payload.user_connect_length != sizeof(USER_SHAREDINFO) &&
+                payload.user_connect_length != (sizeof(USER_SHAREDINFO) + win32k_userconnect::k_wow64_userconnect_header_size))
             {
                 return false;
             }
@@ -94,14 +94,9 @@ namespace sogen
                 return destination_status;
             }
 
-            WIN32K_USERCONNECT32 connect{};
-            const auto connect_status = win32k_userconnect::build_wow64_userconnect(win_emu.process, connect);
-            if (connect_status != STATUS_SUCCESS)
-            {
-                return connect_status;
-            }
-
-            if (!win32k_userconnect::try_write_wow64_userconnect(win_emu.memory, destination, connect))
+            // user32's UserClientDllInitialize raw-copies this reply verbatim into _gSharedInfo, and
+            // the WoW64 client slots SHAREDINFO the same way the 64-bit one does.
+            if (!win32k_userconnect::try_write_user_shared_info(win_emu.memory, destination, win_emu.process))
             {
                 return STATUS_INVALID_PARAMETER;
             }

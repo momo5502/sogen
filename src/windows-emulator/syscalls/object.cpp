@@ -24,7 +24,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (value.is_pseudo)
+            if (value.is_pseudo || h == GUEST_PROCESS_HANDLE)
             {
                 return STATUS_SUCCESS;
             }
@@ -44,6 +44,32 @@ namespace sogen
                 if (factory && factory->ref_count == 1)
                 {
                     io_completion_wait::release_handle_reference(c.proc, factory->io_completion_handle);
+                }
+            }
+
+            if (value.type == handle_types::device)
+            {
+                auto* device = c.proc.devices.get(h);
+                if (device && device->ref_count == 1)
+                {
+                    device->release_references(c.proc);
+                }
+            }
+
+            if (value.type == handle_types::port)
+            {
+                const auto* port = c.proc.ports.get(h);
+                if (port && port->ref_count == 1)
+                {
+                    const auto port_key = static_cast<uint32_t>(h.bits & 0xFFFFFFFF);
+                    if (const auto views = c.proc.pending_alpc_reply_views.find(port_key); views != c.proc.pending_alpc_reply_views.end())
+                    {
+                        for (const auto& view : views->second)
+                        {
+                            c.win_emu.memory.release_memory(view[0], static_cast<size_t>(view[1]));
+                        }
+                        c.proc.pending_alpc_reply_views.erase(views);
+                    }
                 }
             }
 
@@ -145,6 +171,7 @@ namespace sogen
             case handle_types::port:
                 return u"Port";
             case handle_types::thread:
+            case handle_types::managed_thread:
                 return u"Thread";
             case handle_types::registry:
                 return u"Registry";
@@ -164,6 +191,8 @@ namespace sogen
                 return u"WaitCompletionPacket";
             case handle_types::worker_factory:
                 return u"TpWorkerFactory";
+            case handle_types::job:
+                return u"Job";
             case handle_types::private_namespace:
                 return u"Directory";
             case handle_types::process:
@@ -293,6 +322,16 @@ namespace sogen
                     device_path = factory->name;
                     break;
                 }
+                case handle_types::job: {
+                    const auto* job = c.proc.jobs.get(effective_handle);
+                    if (!job)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    device_path = job->name;
+                    break;
+                }
                 case handle_types::private_namespace: {
                     const auto* ns = c.proc.private_namespaces.get(effective_handle);
                     if (!ns)
@@ -303,7 +342,7 @@ namespace sogen
                     break;
                 }
                 case handle_types::process: {
-                    if (effective_handle != GUEST_PROCESS_HANDLE)
+                    if (!c.proc.processes.get(effective_handle))
                     {
                         return STATUS_INVALID_HANDLE;
                     }
@@ -313,6 +352,14 @@ namespace sogen
                 case handle_types::thread: {
                     const auto* thread = c.proc.threads.get(effective_handle);
                     if (!thread)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    break;
+                }
+                case handle_types::managed_thread: {
+                    if (!c.proc.managed_threads.get(effective_handle))
                     {
                         return STATUS_INVALID_HANDLE;
                     }
@@ -500,7 +547,10 @@ namespace sogen
             {
             case handle_types::process:
                 // The synthetic Steam process never signals, so a liveness wait times out ("alive").
-                return (h == GUEST_PROCESS_HANDLE || h == STEAM_PROCESS_HANDLE) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+                return (h == STEAM_PROCESS_HANDLE || c.proc.processes.get(h)) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+
+            case handle_types::managed_thread:
+                return validate_handle_in_store(c.proc.managed_threads);
 
             case handle_types::file:
                 if (h.value.is_pseudo)

@@ -96,6 +96,8 @@ namespace sogen
                 is_signaled = entry->signaled;
             }
 
+            is_signaled = is_signaled || event_handle == LSA_AUTHENTICATION_INITIALIZED;
+
             event_information.access([&](EVENT_BASIC_INFORMATION& info) {
                 info.EventType = type;
                 info.EventState = is_signaled ? 1 : 0;

@@ -611,8 +611,9 @@ namespace sogen
             return false;
         }
 
-        if (memory_region_policy::is_section_kind(entry->second.kind) &&
-            !(allow_image_section && entry->second.kind == memory_region_kind::section_image))
+        const auto can_commit_section = entry->second.kind == memory_region_kind::pagefile_section_view ||
+                                        (allow_image_section && entry->second.kind == memory_region_kind::section_image);
+        if (memory_region_policy::is_section_kind(entry->second.kind) && !can_commit_section)
         {
             return false;
         }
@@ -757,7 +758,7 @@ namespace sogen
             return;
         }
 
-        this->memory_->release_guest_address_range(gap_start, static_cast<size_t>(gap_end - gap_start));
+        this->memory_->release_guest_address_range(gap_start, gap_end - gap_start);
     }
 
     bool memory_manager::release_memory(const uint64_t address, size_t size)

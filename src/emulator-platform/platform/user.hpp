@@ -49,7 +49,10 @@ namespace sogen
         uint64_t apfnClientWorker[FNID_ARRAY_SIZE];
         uint8_t pad_3c8[0x3A0];
         int32_t systemMetrics[0x61];
-        uint8_t pad_8ec[0x96C];
+        int32_t dpiDependentSystemMetrics[0x1E];
+        uint8_t pad_964[0x874];
+        uint32_t systemColors[USER_NUM_SYSCOLORS];
+        uint8_t pad_1254[0x4];
         uint64_t ahbrSystem[USER_SERVERINFO_BRUSH_SLOT_COUNT];
         uint8_t pad_1358[0x34];
         int32_t defaultFontHeightScale;
@@ -67,6 +70,8 @@ namespace sogen
 
     static_assert(offsetof(USER_SERVERINFO, apfnClientA) == 0x188);
     static_assert(offsetof(USER_SERVERINFO, systemMetrics) == 0x768);
+    static_assert(offsetof(USER_SERVERINFO, dpiDependentSystemMetrics) == 0x8EC);
+    static_assert(offsetof(USER_SERVERINFO, systemColors) == 0x11D8);
     static_assert(offsetof(USER_SERVERINFO, ahbrSystem) == 0x1258);
     static_assert(offsetof(USER_SERVERINFO, defaultFontHeightScale) == 0x138C);
     static_assert(offsetof(USER_SERVERINFO, defaultFontWidthScale) == 0x1390);
@@ -128,41 +133,7 @@ namespace sogen
     static_assert(offsetof(USER_SHAREDINFO, awmControl) == 0x98);
     static_assert(offsetof(USER_SHAREDINFO, DefWindowMsgs) == 0x218);
     static_assert(offsetof(USER_SHAREDINFO, DefWindowSpecMsgs) == 0x228);
-
-    // user32 reads fields after copying 0x238 payload to _gSharedInfo
-    struct WIN32K_USERCONNECT32
-    {
-        uint32_t psi;
-        uint32_t reserved0;
-        uint32_t ahe_list;
-        uint32_t reserved1;
-        uint32_t he_entry_size;
-        uint32_t reserved2;
-        uint32_t disp_info_low;
-        uint32_t reserved3;
-        uint8_t reserved4[0x10];
-        uint32_t monitor_info_low;
-        uint32_t reserved5;
-        uint32_t shared_delta_low;
-        uint32_t shared_delta_high;
-        uint8_t wndmsg_table[0xC8];
-        uint32_t wndmsg_count;
-        uint32_t reserved6;
-        uint32_t wndmsg_bits;
-        uint32_t reserved7;
-        uint32_t ime_msg_count;
-        uint32_t reserved8;
-        uint32_t ime_msg_bits;
-        uint8_t reserved9[0x114];
-    };
-
-    static_assert(offsetof(WIN32K_USERCONNECT32, ahe_list) == 0x8);
-    static_assert(offsetof(WIN32K_USERCONNECT32, he_entry_size) == 0x10);
-    static_assert(offsetof(WIN32K_USERCONNECT32, disp_info_low) == 0x18);
-    static_assert(offsetof(WIN32K_USERCONNECT32, monitor_info_low) == 0x30);
-    static_assert(offsetof(WIN32K_USERCONNECT32, wndmsg_count) == 0x108);
-    static_assert(offsetof(WIN32K_USERCONNECT32, ime_msg_count) == 0x118);
-    static_assert(sizeof(WIN32K_USERCONNECT32) == 0x238);
+    static_assert(sizeof(USER_SHAREDINFO) == 0x238);
 
     // WoW64 (32-bit) raw-input structures, as the guest's user32/win32u marshal them.
     struct RAWINPUTDEVICE32

@@ -670,6 +670,27 @@ namespace sogen
             return create_default_audio_backend();
         }
 
+        std::unique_ptr<crypt_protect_backend> get_crypt_protect_backend(emulator_interfaces& interfaces,
+                                                                         const std::filesystem::path& emulation_root)
+        {
+            if (interfaces.crypt_protect)
+            {
+                return std::move(interfaces.crypt_protect);
+            }
+
+            return create_default_crypt_protect_backend(emulation_root);
+        }
+
+        std::unique_ptr<console_backend> get_console_backend(emulator_interfaces& interfaces)
+        {
+            if (interfaces.console)
+            {
+                return std::move(interfaces.console);
+            }
+
+            return create_default_console_backend();
+        }
+
         // The guest must see at least as many logical processors as there are vCPUs, otherwise a
         // thread running on a higher-indexed vCPU would report a processor number the guest
         // considers out of range. The configured fake value still wins when it is larger (e.g. the
@@ -698,6 +719,10 @@ namespace sogen
           socket_factory_(get_socket_factory(interfaces)),
           ui_backend_(get_ui_backend(interfaces)),
           audio_backend_(get_audio_backend(interfaces)),
+          crypt_protect_backend_(get_crypt_protect_backend(
+              interfaces, settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root))),
+          process_manager_(interfaces.processes),
+          console_backend_(get_console_backend(interfaces)),
           emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
           fake_env(effective_fake_env(settings, static_cast<uint32_t>(this->emu_->vcpu_count()))),
           callbacks(std::move(callbacks)),
@@ -1364,6 +1389,7 @@ namespace sogen
 
         if (this->vcpu_count_ > 1)
         {
+            this->ui_backend_->pump_events();
             // One worker thread per vCPU; this thread pumps UI events until the run ends.
             active_workers = this->vcpu_count_;
             workers.reserve(this->vcpu_count_);
@@ -1768,6 +1794,9 @@ namespace sogen
         buffer.register_factory<window>([this] {
             return window{this->emu()}; //
         });
+
+        buffer.register_factory<menu>([this] { return menu{this->emu()}; });
+        buffer.register_factory<accelerator_table>([this] { return accelerator_table{this->emu()}; });
     }
 
     void windows_emulator::serialize(utils::buffer_serializer& buffer) const
@@ -1814,6 +1843,7 @@ namespace sogen
         this->clear_section_first_execution_hooks();
         this->ui().reset();
         this->audio().stop();
+        this->console().reset();
 
         // Match raw serialize() above; do not use backend snapshot mode here.
         this->emu().deserialize_state(buffer, false);
@@ -1870,6 +1900,7 @@ namespace sogen
         this->clear_section_first_execution_hooks();
         this->ui().reset();
         this->audio().stop();
+        this->console().reset();
 
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);

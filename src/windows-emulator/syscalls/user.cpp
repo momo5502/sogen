@@ -7,6 +7,7 @@
 #include "../window_show_orchestrator.hpp"
 #include "windows-emulator/user_callback_dispatch.hpp"
 #include <limits>
+#include <unordered_set>
 
 #ifdef msg
 #undef msg
@@ -30,8 +31,13 @@ namespace sogen
         constexpr uint32_t k_fn_in_lp_window_pos_callback_id = 0x11;
         constexpr uint32_t k_fn_inout_lp_point5_callback_id = 0x12;
         constexpr uint32_t k_fn_inout_nc_calc_size_callback_id = 0x15;
+        constexpr uint32_t k_fn_hk_in_lp_cbt_create_struct_callback_id = 0x2A;
+        constexpr int k_wh_cbt = 5;
+        constexpr int k_hcbt_createwnd = 3;
+
         constexpr size_t k_client_pfn_button_wndproc_index = 7;
         constexpr size_t k_client_pfn_dialog_wndproc_index = 10;
+        constexpr size_t k_client_pfn_edit_wndproc_index = 11;
         constexpr size_t k_client_pfn_static_wndproc_index = 14;
         constexpr uint32_t k_ctlcolor_edit = 1;
         constexpr uint32_t k_ctlcolor_listbox = 2;
@@ -41,6 +47,13 @@ namespace sogen
         constexpr uint32_t k_color_btnface = 15;
         constexpr auto k_user_timer_minimum = std::chrono::milliseconds{10};
         constexpr uint64_t k_hrgn_window = 1;
+        constexpr UINT k_cb_getcomboboxinfo = 0x0164;
+        constexpr uint16_t k_combo_lbox_system_atom = 0x8012;
+        constexpr uint32_t k_cbs_simple = 0x0001;
+        constexpr uint32_t k_cbs_type_mask = 0x0003;
+        constexpr uint32_t k_state_system_pressed = 0x00000008;
+        constexpr uint32_t k_state_system_invisible = 0x00008000;
+        constexpr size_t k_sm_cxvscroll_index = 2;
 
         struct send_message_callback_info
         {
@@ -79,6 +92,25 @@ namespace sogen
             pointer xParam{};
             pointer xpfnProc{};
         };
+
+        struct fn_hk_in_lp_cbt_create_struct_message
+        {
+            user_callback_capture_buffer captureBuffer{};
+            pointer pwnd{};
+            UINT msg{};
+            wparam wParam{};
+            EMU_CREATESTRUCT cs{};
+            hwnd hwndInsertAfter{};
+            pointer xpfnProc{};
+            BOOL ansi{};
+        };
+
+        static_assert(sizeof(fn_hk_in_lp_cbt_create_struct_message) == 0xA8);
+
+        static_assert(offsetof(fn_hk_in_lp_cbt_create_struct_message, cs) == 0x40);
+        static_assert(offsetof(fn_hk_in_lp_cbt_create_struct_message, hwndInsertAfter) == 0x90);
+        static_assert(offsetof(fn_hk_in_lp_cbt_create_struct_message, xpfnProc) == 0x98);
+        static_assert(offsetof(fn_hk_in_lp_cbt_create_struct_message, ansi) == 0xA0);
 
         struct fn_in_lp_window_pos_message
         {
@@ -163,7 +195,7 @@ namespace sogen
         bool is_builtin_window_class_name(const std::u16string_view class_name)
         {
             const auto normalized = normalize_builtin_window_class_name(class_name);
-            return normalized == builtin_dialog_class_name || normalized == u"Button" || normalized == u"Static";
+            return normalized == builtin_dialog_class_name || normalized == u"Button" || normalized == u"Edit" || normalized == u"Static";
         }
 
         uint16_t get_builtin_window_fnid(const std::u16string_view class_name)
@@ -176,6 +208,10 @@ namespace sogen
             if (normalized == builtin_dialog_class_name)
             {
                 return 0x02A4;
+            }
+            if (normalized == u"Edit")
+            {
+                return 0x02A5;
             }
             if (normalized == u"Static")
             {
@@ -228,6 +264,14 @@ namespace sogen
                         wnd_proc = server_info.apfnClientA[k_client_pfn_button_wndproc_index];
                     }
                 }
+                else if (normalized_name == u"Edit")
+                {
+                    wnd_proc = server_info.apfnClientW[k_client_pfn_edit_wndproc_index];
+                    if (wnd_proc == 0)
+                    {
+                        wnd_proc = server_info.apfnClientA[k_client_pfn_edit_wndproc_index];
+                    }
+                }
                 else if (normalized_name == u"Static")
                 {
                     wnd_proc = server_info.apfnClientW[k_client_pfn_static_wndproc_index];
@@ -246,7 +290,7 @@ namespace sogen
                 }
             });
 
-            if (normalized_name == u"Button" || normalized_name == u"Static")
+            if (normalized_name == u"Button" || normalized_name == u"Edit" || normalized_name == u"Static")
             {
                 wnd_extra = 8;
             }
@@ -340,12 +384,12 @@ namespace sogen
             }
 
             const auto index = static_cast<uint32_t>(h.value.id);
-            if (index == 0 || index >= user_handle_table::MAX_HANDLES)
+            if (index == 0 || index >= user_handle_table::MAX_HANDLE_INDICES)
             {
                 return;
             }
 
-            c.proc.user_handles.get_handle_table().access([&](USER_HANDLEENTRY& entry) { entry.pOwner = owner; }, index);
+            c.proc.user_handles.set_owner(index, owner);
         }
 
         void invalidate_window(const syscall_context& c, window& win, const std::optional<RECT>& update_rect, bool erase);
@@ -976,6 +1020,21 @@ namespace sogen
                                                                               .pixels = surface.pixels.data()});
         }
 
+        void dispatch_cbt_create_window(const syscall_context& c, window_create_state&& state, const window& win, const user_cbt_hook& hook)
+        {
+            fn_hk_in_lp_cbt_create_struct_message args{};
+            args.pwnd = win.guest.value();
+            args.msg = static_cast<UINT>(k_hcbt_createwnd | (k_wh_cbt << 16));
+            args.wParam = win.handle;
+            args.hwndInsertAfter = 0;
+            args.xpfnProc = hook.proc;
+            args.ansi = hook.ansi ? TRUE : FALSE;
+            c.emu.read_memory(state.create_struct_alloc.address(), &args.cs, sizeof(args.cs));
+
+            dispatch_user_callback(c, callback_id::NtUserCreateWindowEx, k_fn_hk_in_lp_cbt_create_struct_callback_id, std::move(state),
+                                   args);
+        }
+
         template <typename T>
         void dispatch_window_message(const syscall_context& c, callback_id id, T&& state, const window& win, uint32_t message,
                                      uint64_t w_param = 0, uint64_t l_param = 0)
@@ -1263,8 +1322,8 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            user_shared_info_ptr = c.proc.base_allocator.reserve(sizeof(WIN32K_USERCONNECT32), alignof(WIN32K_USERCONNECT32));
-            std::array<std::byte, sizeof(WIN32K_USERCONNECT32)> zeros{};
+            user_shared_info_ptr = c.proc.base_allocator.reserve(sizeof(USER_SHAREDINFO), alignof(USER_SHAREDINFO));
+            std::array<std::byte, sizeof(USER_SHAREDINFO)> zeros{};
             c.emu.write_memory(user_shared_info_ptr, zeros.data(), zeros.size());
 
             uint32_t user_shared_info_ptr32{};
@@ -1492,6 +1551,31 @@ namespace sogen
             return handle.bits;
         }
 
+        bool destroy_menu_tree(const syscall_context& c, const hmenu handle, std::unordered_set<hmenu>& visited)
+        {
+            if (!visited.insert(handle).second)
+            {
+                return false;
+            }
+
+            auto* menu_obj = c.proc.menus.get(handle);
+            if (!menu_obj)
+            {
+                return false;
+            }
+
+            for (const auto& item : menu_obj->items)
+            {
+                if (item.submenu != 0)
+                {
+                    destroy_menu_tree(c, item.submenu, visited);
+                }
+            }
+
+            menu_obj->release_guest_backing(c.win_emu.memory);
+            return c.proc.menus.erase(handle);
+        }
+
         std::u16string read_menu_item_text(const syscall_context& c, const EMU_MENUITEMINFO& mi,
                                            const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> item_text)
         {
@@ -1577,14 +1661,22 @@ namespace sogen
     namespace syscalls
     {
         hdc handle_NtGdiGetDCforBitmap(const syscall_context& c, handle bitmap);
+        uint64_t handle_NtGdiCreateBitmap(const syscall_context& c, uint32_t width, uint32_t height, uint32_t planes, uint32_t bits_pixel,
+                                          emulator_pointer bits);
         hdc create_gdi_window_dc(const syscall_context& c, hwnd window);
         uint32_t handle_NtGdiDeleteObjectApp(const syscall_context& c, uint32_t handle_value);
+        bool set_gdi_region_rect(const syscall_context& c, handle region, const RECT& rect);
         BOOL handle_NtGdiFlush(const syscall_context& c);
         BOOL handle_NtGdiPatBlt(const syscall_context& c, hdc dc, LONG x, LONG y, LONG width, LONG height, DWORD rop);
         uint64_t handle_NtGdiSelectBrushLocal(const syscall_context& c, hdc dc, uint32_t brush, emulator_pointer old_brush_ptr);
         gdi_bitmap_surface* get_dc_present_surface(const syscall_context& c, hdc dc, uint32_t& present_handle);
         void draw_system_button_glyph(const syscall_context& c, hdc dc, int x, int y, uint32_t index);
         BOOL handle_NtUserRemoveMenu(const syscall_context& c, hmenu menu, UINT position, UINT flags);
+        BOOL handle_NtUserSetDialogPointer(const syscall_context& c, hwnd hwnd, emulator_pointer ptr);
+        BOOL handle_NtUserSetDialogSystemMenu(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserSetMsgBox(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserUpdateWindow(const syscall_context& c, hwnd hwnd);
+        BOOL handle_NtUserPostQuitMessage(const syscall_context& c, int exit_code);
 
         NTSTATUS handle_NtUserTraceLoggingSendMixedModeTelemetry()
         {
@@ -1698,14 +1790,7 @@ namespace sogen
                 return destination_status;
             }
 
-            WIN32K_USERCONNECT32 connect_info{};
-            const auto connect_status = win32k_userconnect::build_wow64_userconnect(c.proc, connect_info);
-            if (connect_status != STATUS_SUCCESS)
-            {
-                return connect_status;
-            }
-
-            if (!win32k_userconnect::try_write_wow64_userconnect(c.emu, connect_destination, connect_info))
+            if (!win32k_userconnect::try_write_user_shared_info(c.emu, connect_destination, c.proc))
             {
                 return STATUS_INVALID_PARAMETER;
             }
@@ -1719,7 +1804,7 @@ namespace sogen
 
             if (user_shared_info_ptr != 0)
             {
-                if (!win32k_userconnect::try_write_wow64_userconnect(c.emu, user_shared_info_ptr, connect_info))
+                if (!win32k_userconnect::try_write_user_shared_info(c.emu, user_shared_info_ptr, c.proc))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -1877,8 +1962,21 @@ namespace sogen
             return result;
         }
 
-        BOOL handle_NtUserReleaseDC()
+        BOOL handle_NtUserReleaseDC(const syscall_context& c, const hdc dc)
         {
+            uint32_t present_handle = 0;
+            if (auto* surface = get_dc_present_surface(c, dc, present_handle);
+                surface && present_handle != 0 && surface->width > 0 && surface->height > 0 && !surface->pixels.empty())
+            {
+                c.win_emu.ui().present_surface(present_handle,
+                                               ui_surface_desc{.width = static_cast<int>(surface->width),
+                                                               .height = static_cast<int>(surface->height),
+                                                               .stride = static_cast<int>(surface->width * sizeof(uint32_t)),
+                                                               .format = ui_surface_format::bgra8,
+                                                               .pixels = surface->pixels.data()});
+            }
+
+            (void)handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(dc));
             return TRUE;
         }
 
@@ -2600,9 +2698,9 @@ namespace sogen
             return TRUE;
         }
 
-        NTSTATUS handle_NtUserFindExistingCursorIcon()
+        hicon handle_NtUserFindExistingCursorIcon()
         {
-            return STATUS_NOT_SUPPORTED;
+            return make_pseudo_handle(0x100, handle_types::reserved).bits;
         }
 
         BOOL handle_NtUserDestroyCursor(const syscall_context&, const hicon icon, const DWORD /*flags*/)
@@ -2647,14 +2745,27 @@ namespace sogen
                 return FALSE;
             }
 
-            // The emulator's icons/cursors are bare pseudo-handles with no backing pixel data, so report a
-            // standard 32x32 icon with a centered hotspot and no mask/color bitmaps.
+            const auto mask = handle_NtGdiCreateBitmap(c, 32, 32, 1, 1, 0);
+            const auto color = handle_NtGdiCreateBitmap(c, 32, 32, 1, 32, 0);
+            if (mask == 0 || color == 0)
+            {
+                if (mask != 0)
+                {
+                    handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(mask));
+                }
+                if (color != 0)
+                {
+                    handle_NtGdiDeleteObjectApp(c, static_cast<uint32_t>(color));
+                }
+                return FALSE;
+            }
+
             const EMU_ICONINFO info{
                 .fIcon = TRUE,
                 .xHotspot = 16,
                 .yHotspot = 16,
-                .hbmMask = 0,
-                .hbmColor = 0,
+                .hbmMask = mask,
+                .hbmColor = color,
             };
             icon_info.write(info);
 
@@ -2833,15 +2944,77 @@ namespace sogen
             return 1;
         }
 
+        // Routine numbers for the Win10 19041-19045 user-call table. Other Windows
+        // versions use different numbers, so the table is gated by guest build below.
+        constexpr uint32_t user_call_set_dialog_pointer = 99;
+        constexpr uint32_t user_call_set_dialog_system_menu = 111;
+        constexpr uint32_t user_call_update_window = 115;
+        constexpr uint32_t user_call_set_msg_box = 89;
+        constexpr uint32_t user_call_release_dc = 0x39;
+        constexpr uint32_t user_call_post_quit_message = 0x3B;
+
         uint64_t handle_NtUserCallHwndParam(const syscall_context& c, const hwnd hwnd, const uint64_t param, const uint32_t code)
         {
-            (void)hwnd;
-            (void)param;
+            if (c.win_emu.version.is_build_within(19041, 19046) && code == user_call_set_dialog_pointer)
+            {
+                return handle_NtUserSetDialogPointer(c, hwnd, param);
+            }
+
             if (c.win_emu.callbacks.on_generic_activity)
             {
                 c.win_emu.callbacks.on_generic_activity("NtUserCallHwndParam code=" + std::to_string(code));
             }
 
+            return 0;
+        }
+
+        BOOL handle_NtUserCallHwndLock(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_set_dialog_system_menu)
+                {
+                    return handle_NtUserSetDialogSystemMenu(c, hwnd);
+                }
+
+                if (routine == user_call_update_window)
+                {
+                    // user32!UpdateWindow is dispatched through NtUserCallHwndLock(115) on Win10.
+                    return handle_NtUserUpdateWindow(c, hwnd);
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwndLock routine: 0x%X\n", routine);
+            return FALSE;
+        }
+
+        uint64_t handle_NtUserCallHwnd(const syscall_context& c, const hwnd hwnd, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046) && routine == user_call_set_msg_box)
+            {
+                return handle_NtUserSetMsgBox(c, hwnd);
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallHwnd routine: 0x%X\n", routine);
+            return 0;
+        }
+
+        uint64_t handle_NtUserCallOneParam(const syscall_context& c, const uint64_t param, const uint32_t routine)
+        {
+            if (c.win_emu.version.is_build_within(19041, 19046))
+            {
+                if (routine == user_call_release_dc)
+                {
+                    return handle_NtUserReleaseDC(c, static_cast<hdc>(param));
+                }
+
+                if (routine == user_call_post_quit_message)
+                {
+                    return handle_NtUserPostQuitMessage(c, static_cast<int>(param));
+                }
+            }
+
+            c.win_emu.log.error("Unimplemented NtUserCallOneParam routine: 0x%X\n", routine);
             return 0;
         }
 
@@ -2873,6 +3046,10 @@ namespace sogen
 
             c.proc.classes.insert_or_assign(class_name_str, entry);
             c.proc.classes.insert_or_assign(make_atom_class_name(index), entry);
+            if (utils::string::equals_ignore_case(std::u16string_view{class_name_str}, std::u16string_view{u"ComboLBox"}))
+            {
+                c.proc.classes.insert_or_assign(make_atom_class_name(k_combo_lbox_system_atom), entry);
+            }
 
             return index;
         }
@@ -2979,14 +3156,40 @@ namespace sogen
             return static_cast<int>(copied_chars);
         }
 
-        NTSTATUS handle_NtUserSetWindowsHookEx()
+        uint64_t handle_NtUserSetWindowsHookEx(const syscall_context& c, const hinstance instance,
+                                               const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*module*/,
+                                               const DWORD thread_id, const int hook_id, const pointer proc, const BOOL ansi)
         {
-            return STATUS_NOT_SUPPORTED;
+            auto& thread = c.thread();
+            if (instance != 0 || thread_id != thread.id || hook_id != k_wh_cbt || proc == 0 || thread.cbt_hook)
+            {
+                return 0;
+            }
+
+            const auto handle = thread.next_cbt_hook_handle++;
+            thread.cbt_hook = user_cbt_hook{
+                .handle = handle,
+                .proc = proc,
+                .ansi = ansi != FALSE,
+            };
+            return handle;
         }
 
-        NTSTATUS handle_NtUserUnhookWindowsHookEx()
+        BOOL handle_NtUserUnhookWindowsHookEx(const syscall_context& c, const uint64_t hook)
         {
-            return STATUS_NOT_SUPPORTED;
+            auto& current = c.thread().cbt_hook;
+            if (!current || current->handle != hook)
+            {
+                return FALSE;
+            }
+
+            current.reset();
+            return TRUE;
+        }
+
+        lresult handle_NtUserCallNextHookEx(const syscall_context&, const int, const wparam, const lparam, const BOOL)
+        {
+            return 0;
         }
 
         hwnd handle_NtUserCreateWindowEx(const syscall_context& c, const DWORD ex_style, const emulator_object<LARGE_STRING> class_name,
@@ -3166,7 +3369,7 @@ namespace sogen
                 guest_win.dpiContext = USER_DEFAULT_WINDOW_DPI_CONTEXT;
                 guest_win.fnid = get_builtin_window_fnid(normalized_class);
                 guest_win.threadId = win.thread_id;
-                guest_win.processId = process_context::process_id;
+                guest_win.processId = c.proc.process_id;
 
                 win.host_surface_window = !is_message_only;
 
@@ -3356,6 +3559,14 @@ namespace sogen
                                                         utils::string::to_hex_number(handle.bits));
             }
 
+            if (const auto& hook = c.thread().cbt_hook)
+            {
+                state.phase = window_create_phase::cbt_create;
+                dispatch_cbt_create_window(c, std::move(state), win, *hook);
+                return {};
+            }
+
+            state.phase = window_create_phase::creation_messages;
             dispatch_next_message(c, callback_id::NtUserCreateWindowEx, std::move(state), win, state.message_queue);
             return {};
         }
@@ -3372,8 +3583,6 @@ namespace sogen
             auto* win = c.proc.windows.get(s.handle);
             auto show_orchestrator = window_show_orchestrator{s.show_data, c};
 
-            show_orchestrator.erase_background_completed(c.get_callback_result<uint64_t>());
-
             const auto release_window_create_allocations = [&] {
                 show_orchestrator.release();
 
@@ -3387,6 +3596,24 @@ namespace sogen
                 release_window_create_allocations();
                 return 0;
             }
+
+            if (s.phase == window_create_phase::cbt_create)
+            {
+                if (c.get_callback_result<lresult>() != 0)
+                {
+                    release_window_create_allocations();
+                    c.win_emu.ui().destroy_window(win->handle);
+                    c.proc.gdi_window_surfaces.erase(static_cast<uint32_t>(win->handle));
+                    (void)c.proc.windows.erase(s.handle);
+                    return 0;
+                }
+
+                s.phase = window_create_phase::creation_messages;
+                dispatch_next_message(c, callback_id::NtUserCreateWindowEx, std::move(s), *win, s.message_queue);
+                return {};
+            }
+
+            show_orchestrator.erase_background_completed(c.get_callback_result<uint64_t>());
 
             if (s.show_data.pending_window_pos_address != 0)
             {
@@ -3846,6 +4073,149 @@ namespace sogen
             return c.get_callback_result<uint64_t>();
         }
 
+        bool read_combo_box_info(const syscall_context& c, const emulator_pointer combo_box_info, const size_t required_size,
+                                 std::array<std::byte, 64>& data)
+        {
+            if (!c.win_emu.memory.try_read_memory(combo_box_info, data.data(), required_size))
+            {
+                set_guest_last_error(c, 998);
+                return false;
+            }
+
+            uint32_t cb_size{};
+            std::memcpy(&cb_size, data.data(), sizeof(cb_size));
+            if (cb_size != required_size)
+            {
+                set_guest_last_error(c, 87);
+                return false;
+            }
+
+            return true;
+        }
+
+        bool write_native_combo_box_info(const syscall_context& c, const window& combo_box, const emulator_pointer combo_box_info,
+                                         const size_t required_size, std::array<std::byte, 64>& data)
+        {
+            const window* item = nullptr;
+            const window* list = nullptr;
+            for (const auto& window_entry : c.proc.windows)
+            {
+                const auto& child = window_entry.second;
+                const auto class_name = std::u16string_view{child.class_name};
+                if (!list && (child.parent_handle == combo_box.handle || child.owner_handle == combo_box.handle) &&
+                    utils::string::equals_ignore_case(class_name, std::u16string_view{u"ComboLBox"}))
+                {
+                    list = &child;
+                }
+                else if (!item && child.parent_handle == combo_box.handle &&
+                         (utils::string::equals_ignore_case(class_name, std::u16string_view{u"Edit"}) ||
+                          utils::string::equals_ignore_case(class_name, std::u16string_view{u"Static"})))
+                {
+                    item = &child;
+                }
+            }
+
+            const auto client = get_client_rect(combo_box);
+            int32_t button_width{};
+            c.proc.user_handles.get_server_info().access(
+                [&](const USER_SERVERINFO& server_info) { button_width = std::max(0, server_info.systemMetrics[k_sm_cxvscroll_index]); });
+            const bool simple = (combo_box.style & k_cbs_type_mask) == k_cbs_simple;
+            const LONG button_left = simple ? client.right : std::max<LONG>(client.left, client.right - button_width);
+            const RECT button_rect{
+                .left = button_left,
+                .top = client.top,
+                .right = client.right,
+                .bottom = client.bottom,
+            };
+            RECT item_rect = item ? RECT{item->x, item->y, item->x + item->width, item->y + item->height}
+                                  : RECT{client.left, client.top, button_left, client.bottom};
+            item_rect.right = std::max(item_rect.left, std::min(item_rect.right, button_left));
+            uint32_t state_button = 0;
+            if (simple)
+            {
+                state_button = k_state_system_invisible;
+            }
+            else if (list && (list->style & WS_VISIBLE) != 0)
+            {
+                state_button = k_state_system_pressed;
+            }
+            const uint64_t hwnd_item = item ? item->handle : 0;
+            const uint64_t hwnd_list = list ? list->handle : 0;
+
+            std::memcpy(data.data() + 4, &item_rect, sizeof(item_rect));
+            std::memcpy(data.data() + 20, &button_rect, sizeof(button_rect));
+            std::memcpy(data.data() + 36, &state_button, sizeof(state_button));
+
+            if (c.proc.is_wow64_process)
+            {
+                const auto combo_handle = static_cast<uint32_t>(combo_box.handle);
+                const auto item_handle = static_cast<uint32_t>(hwnd_item);
+                const auto list_handle = static_cast<uint32_t>(hwnd_list);
+                std::memcpy(data.data() + 40, &combo_handle, sizeof(combo_handle));
+                std::memcpy(data.data() + 44, &item_handle, sizeof(item_handle));
+                std::memcpy(data.data() + 48, &list_handle, sizeof(list_handle));
+            }
+            else
+            {
+                std::memcpy(data.data() + 40, &combo_box.handle, sizeof(combo_box.handle));
+                std::memcpy(data.data() + 48, &hwnd_item, sizeof(hwnd_item));
+                std::memcpy(data.data() + 56, &hwnd_list, sizeof(hwnd_list));
+            }
+
+            if (!c.win_emu.memory.try_write_memory(combo_box_info, data.data(), required_size))
+            {
+                set_guest_last_error(c, 998);
+                return false;
+            }
+
+            return true;
+        }
+
+        BOOL handle_NtUserGetComboBoxInfo(const syscall_context& c, const hwnd combo_box, const emulator_pointer combo_box_info)
+        {
+            auto* win = c.proc.windows.get(combo_box);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400);
+                return FALSE;
+            }
+            if (combo_box_info == 0)
+            {
+                set_guest_last_error(c, 998);
+                return FALSE;
+            }
+
+            const size_t required_size = c.proc.is_wow64_process ? 52 : 64;
+            std::array<std::byte, 64> data{};
+            if (!read_combo_box_info(c, combo_box_info, required_size, data))
+            {
+                return FALSE;
+            }
+
+            const auto normalized_class = normalize_builtin_window_class_name(win->class_name);
+            if (utils::string::equals_ignore_case(normalized_class, std::u16string_view{u"ComboBox"}))
+            {
+                return write_native_combo_box_info(c, *win, combo_box_info, required_size, data) ? TRUE : FALSE;
+            }
+
+            if (!c.win_emu.memory.try_write_memory(combo_box_info, data.data(), required_size))
+            {
+                set_guest_last_error(c, 998);
+                return FALSE;
+            }
+
+            message_call_state state{};
+            state.window = combo_box;
+            state.message = k_cb_getcomboboxinfo;
+            dispatch_window_message(c, callback_id::NtUserGetComboBoxInfo, std::move(state), *win, k_cb_getcomboboxinfo, 0, combo_box_info);
+            return FALSE;
+        }
+
+        BOOL completion_NtUserGetComboBoxInfo(const syscall_context& c, const hwnd /*combo_box*/, const emulator_pointer /*combo_box_info*/)
+        {
+            return c.get_callback_result<uint64_t>() != 0 ? TRUE : FALSE;
+        }
+
         uint64_t handle_NtUserDispatchMessage(const syscall_context& c, const emulator_object<msg> message)
         {
             if (!message)
@@ -3901,6 +4271,11 @@ namespace sogen
             return FALSE;
         }
 
+        DWORD handle_NtUserGetMessagePos(const syscall_context& c)
+        {
+            return c.vcpu.active_thread ? c.vcpu.active_thread->current_message_position : 0;
+        }
+
         BOOL handle_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                      const UINT msg_filter_min, const UINT msg_filter_max)
         {
@@ -3909,7 +4284,7 @@ namespace sogen
             if (auto pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, true))
             {
                 message.write(*pending_msg);
-                t.current_message_time = pending_msg->time;
+                t.record_current_message(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
                 return pending_msg->message != WM_QUIT ? TRUE : FALSE;
             }
@@ -3931,7 +4306,7 @@ namespace sogen
             if (pending_msg)
             {
                 message.write(*pending_msg);
-                t.current_message_time = pending_msg->time;
+                t.record_current_message(*pending_msg);
                 set_thread_window_context(c, pending_msg->window);
                 return TRUE;
             }
@@ -3996,6 +4371,23 @@ namespace sogen
             }
 
             return win->update_pending ? TRUE : FALSE;
+        }
+
+        int32_t handle_NtUserGetUpdateRgn(const syscall_context& c, const hwnd hwnd, const handle region, const BOOL)
+        {
+            const auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                return 0;
+            }
+
+            const auto rect = win->update_pending ? win->update_rect : RECT{};
+            if (!set_gdi_region_rect(c, region, rect))
+            {
+                return 0;
+            }
+
+            return rect.left < rect.right && rect.top < rect.bottom ? 2 : 1;
         }
 
         void collect_pending_paint_tree(const syscall_context& c, window& win, std::vector<uint64_t>& order)
@@ -4359,14 +4751,14 @@ namespace sogen
                 return desktop->mapped_object;
             }
 
-            const auto index = handle.value.id;
+            const auto index = static_cast<uint32_t>(handle.value.id);
 
-            if (index == 0 || index >= user_handle_table::MAX_HANDLES)
+            if (index == 0 || index >= user_handle_table::MAX_HANDLE_INDICES)
             {
                 return 0;
             }
 
-            const auto handle_entry = c.proc.user_handles.get_handle_table().read(static_cast<size_t>(index));
+            const auto handle_entry = c.proc.user_handles.get_handle_table().read(user_handle_table::handle_index_to_ahe_slot(index));
             return handle_entry.pHead;
         }
 
@@ -4506,6 +4898,14 @@ namespace sogen
 
             unlink_from_parent();
 
+            const auto* previous_parent = c.proc.windows.get(old_parent);
+            if (effective_parent->handle == desktop && previous_parent &&
+                utils::string::equals_ignore_case(std::u16string_view{child->class_name}, std::u16string_view{u"ComboLBox"}) &&
+                normalize_builtin_window_class_name(previous_parent->class_name) == u"ComboBox")
+            {
+                child->owner_handle = previous_parent->handle;
+            }
+
             child->parent_handle = effective_parent->handle;
             child->guest.access([&](USER_WINDOW& guest_win) {
                 guest_win.spwndParent = effective_parent->guest.value();
@@ -4587,6 +4987,135 @@ namespace sogen
 
             release_window_position_allocations(c, state);
             return TRUE;
+        }
+
+        uint64_t handle_NtUserBeginDeferWindowPos(const syscall_context& c, const int count)
+        {
+            if (count < 0)
+            {
+                set_guest_last_error(c, 87);
+                return 0;
+            }
+
+            deferred_window_positions batch{};
+            batch.positions.reserve(static_cast<size_t>(count));
+            return c.proc.deferred_window_position_batches.store(std::move(batch)).bits;
+        }
+
+        uint64_t handle_NtUserDeferWindowPosAndBand(const syscall_context& c, const uint64_t batch_handle, const hwnd window,
+                                                    const hwnd window_insert_after, const int x, const int y, const int width,
+                                                    const int height, const UINT flags, const uint32_t /*band*/, const BOOL /*use_band*/)
+        {
+            auto* batch = c.proc.deferred_window_position_batches.get(batch_handle);
+            if (!batch)
+            {
+                set_guest_last_error(c, 1405);
+                return 0;
+            }
+
+            const auto* win = c.proc.windows.get(window);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400);
+                return 0;
+            }
+
+            if (!batch->positions.empty() && batch->parent_handle != win->parent_handle)
+            {
+                set_guest_last_error(c, 1441);
+                return 0;
+            }
+
+            batch->parent_handle = win->parent_handle;
+
+            batch->positions.push_back({
+                .hwnd = window,
+                .hwndInsertAfter = window_insert_after,
+                .x = x,
+                .y = y,
+                .cx = width,
+                .cy = height,
+                .flags = flags,
+            });
+            return batch_handle;
+        }
+
+        BOOL advance_deferred_window_positions(const syscall_context& c, deferred_window_position_state& state)
+        {
+            while (state.next_position < state.positions.size())
+            {
+                const auto& position = state.positions[state.next_position++];
+                auto* win = c.proc.windows.get(position.hwnd);
+                if (!win)
+                {
+                    continue;
+                }
+
+                state.current_window = position.hwnd;
+                state.window_pos_alloc = c.emu.push_stack(position);
+                state.changed_window_pos_alloc = {};
+                state.message_queue.clear();
+                state.position_applied = false;
+
+                if ((position.flags & SWP_NOSENDCHANGING) == 0)
+                {
+                    dispatch_window_message(c, callback_id::NtUserEndDeferWindowPosEx, std::move(state), *win, WM_WINDOWPOSCHANGING, 0,
+                                            state.window_pos_alloc.address());
+                    return {};
+                }
+
+                apply_set_window_position(c, *win, state, position);
+                if (!state.message_queue.empty())
+                {
+                    dispatch_next_message(c, callback_id::NtUserEndDeferWindowPosEx, std::move(state), *win, state.message_queue);
+                    return {};
+                }
+
+                release_window_position_allocations(c, state);
+            }
+
+            return TRUE;
+        }
+
+        BOOL handle_NtUserEndDeferWindowPosEx(const syscall_context& c, const uint64_t batch_handle, const BOOL /*async*/)
+        {
+            auto* batch = c.proc.deferred_window_position_batches.get(batch_handle);
+            if (!batch)
+            {
+                set_guest_last_error(c, 1405);
+                return FALSE;
+            }
+
+            deferred_window_position_state state{};
+            state.positions = std::move(batch->positions);
+            c.proc.deferred_window_position_batches.erase(batch_handle);
+            return advance_deferred_window_positions(c, state);
+        }
+
+        BOOL completion_NtUserEndDeferWindowPosEx(const syscall_context& c, const uint64_t /*batch_handle*/, const BOOL /*async*/)
+        {
+            auto& state = c.get_completion_state<deferred_window_position_state>();
+            auto* win = c.proc.windows.get(state.current_window);
+            if (!win)
+            {
+                release_window_position_allocations(c, state);
+                return advance_deferred_window_positions(c, state);
+            }
+
+            if (!state.position_applied)
+            {
+                const auto position = resolve_window_position_callback(c, state.window_pos_alloc.address());
+                apply_set_window_position(c, *win, state, position);
+            }
+
+            if (!state.message_queue.empty())
+            {
+                dispatch_next_message(c, callback_id::NtUserEndDeferWindowPosEx, std::move(state), *win, state.message_queue);
+                return {};
+            }
+
+            release_window_position_allocations(c, state);
+            return advance_deferred_window_positions(c, state);
         }
 
         NTSTATUS handle_NtUserSetForegroundWindow()
@@ -4978,6 +5507,41 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserSetSysMenu(const syscall_context& c, const hwnd hwnd, const hmenu menu)
+        {
+            auto* win = c.proc.windows.get(hwnd);
+            if (!win)
+            {
+                set_guest_last_error(c, 1400);
+                return FALSE;
+            }
+
+            if (menu == 0 || !c.proc.menus.get(menu))
+            {
+                set_guest_last_error(c, 1401);
+                return FALSE;
+            }
+
+            if ((win->style & WS_SYSMENU) == 0)
+            {
+                return FALSE;
+            }
+
+            if (win->system_menu_handle != 0 && win->system_menu_handle != menu)
+            {
+                std::unordered_set<hmenu> visited{menu};
+                destroy_menu_tree(c, win->system_menu_handle, visited);
+            }
+
+            win->system_menu_handle = menu;
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetSystemMenu(const syscall_context& c, const hwnd hwnd, const hmenu menu)
+        {
+            return handle_NtUserSetSysMenu(c, hwnd, menu);
+        }
+
         BOOL handle_NtUserSetMsgBox(const syscall_context& c, const hwnd hwnd)
         {
             auto* win = c.proc.windows.get(hwnd);
@@ -5037,13 +5601,17 @@ namespace sogen
                 return 0;
             }
 
-            if (revert != FALSE && win->system_menu_handle != 0)
+            if (revert != FALSE)
             {
-                if (auto* menu = c.proc.menus.get(win->system_menu_handle))
+                if (win->system_menu_handle != 0)
                 {
-                    menu->items.clear();
-                    menu->sync_guest_items(c.win_emu.memory);
+                    std::unordered_set<hmenu> visited;
+                    destroy_menu_tree(c, win->system_menu_handle, visited);
                 }
+
+                win->system_menu_handle = 0;
+                (void)ensure_system_menu(c, *win);
+                return 0;
             }
 
             return ensure_system_menu(c, *win);
@@ -5695,14 +6263,8 @@ namespace sogen
 
         BOOL handle_NtUserDestroyMenu(const syscall_context& c, const hmenu menu)
         {
-            auto* m = c.proc.menus.get(menu);
-            if (!m)
-            {
-                return FALSE;
-            }
-
-            m->release_guest_backing(c.win_emu.memory);
-            return c.proc.menus.erase(menu) ? TRUE : FALSE;
+            std::unordered_set<hmenu> visited;
+            return destroy_menu_tree(c, menu, visited) ? TRUE : FALSE;
         }
 
         BOOL handle_NtUserDrawMenuBar(const syscall_context& c, const hwnd hwnd)
@@ -5757,6 +6319,75 @@ namespace sogen
             return static_cast<int32_t>(previous_state);
         }
 
+        int32_t handle_NtUserCheckMenuItem(const syscall_context& c, const hmenu menu, const UINT item, const UINT check)
+        {
+            auto* menu_object = c.proc.menus.get(menu);
+            if (!menu_object)
+            {
+                return -1;
+            }
+
+            size_t index{};
+            if ((check & MF_BYPOSITION) != 0)
+            {
+                if (item >= menu_object->items.size())
+                {
+                    return -1;
+                }
+
+                index = item;
+            }
+            else
+            {
+                std::vector<hmenu> pending{menu};
+                std::unordered_set<hmenu> visited{};
+                bool found = false;
+
+                while (!pending.empty() && !found)
+                {
+                    const hmenu current_handle = pending.back();
+                    pending.pop_back();
+                    if (!visited.insert(current_handle).second)
+                    {
+                        continue;
+                    }
+
+                    auto* current_menu = c.proc.menus.get(current_handle);
+                    if (!current_menu)
+                    {
+                        continue;
+                    }
+
+                    for (size_t current_index = 0; current_index < current_menu->items.size(); ++current_index)
+                    {
+                        const auto& candidate = current_menu->items[current_index];
+                        if (candidate.submenu != 0)
+                        {
+                            pending.push_back(candidate.submenu);
+                        }
+                        else if (candidate.id == item)
+                        {
+                            menu_object = current_menu;
+                            index = current_index;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!found)
+                {
+                    return -1;
+                }
+            }
+
+            auto& menu_item = menu_object->items[index];
+            const UINT previous_state = menu_item.state & MF_CHECKED;
+            menu_item.state = (menu_item.state & ~MF_CHECKED) | (check & MF_CHECKED);
+            menu_object->sync_guest_item(c.win_emu.memory, index);
+            return static_cast<int32_t>(previous_state);
+        }
+
         BOOL handle_NtUserCreateCaret()
         {
             return TRUE;
@@ -5799,7 +6430,7 @@ namespace sogen
             // the thread.
             if (query_type == 0)
             {
-                return process_context::process_id;
+                return c.proc.process_id;
             }
 
             return win->thread_id;
@@ -5813,6 +6444,11 @@ namespace sogen
         BOOL handle_NtUserIsTouchWindow()
         {
             return FALSE;
+        }
+
+        uint64_t handle_NtUserGetTopLevelWindow(const syscall_context& c, const hwnd window)
+        {
+            return handle_NtUserGetAncestor(c, window, 2);
         }
 
         BOOL handle_NtUserGetWindowPlacement(const syscall_context& c, const hwnd window_handle, const emulator_pointer placement_address)
@@ -6487,6 +7123,41 @@ namespace sogen
         BOOL handle_NtUserSetLayeredWindowAttributes()
         {
             return TRUE;
+        }
+
+        BOOL handle_NtUserUpdateClientRect(const syscall_context&, const hwnd)
+        {
+            return TRUE;
+        }
+
+        int32_t handle_NtUserScrollWindowEx()
+        {
+            return 0;
+        }
+
+        BOOL handle_NtUserRedrawFrame(const syscall_context&, const hwnd)
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserThunkedMenuInfo(const syscall_context&, const hmenu, const emulator_pointer)
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserShowScrollBar()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserSetWindowPlacement(const syscall_context&, const hwnd, const emulator_pointer)
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserIsChildWindowDpiMessageEnabled()
+        {
+            return FALSE;
         }
     }
 

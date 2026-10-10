@@ -74,7 +74,7 @@ namespace sogen
         return emulator;
     }
 
-    std::unique_ptr<x86_64_emulator> create_x86_64_emulator_from_environment(const size_t vcpu_count)
+    backend_type get_x86_64_emulator_backend_from_environment()
     {
         auto backend = backend_type::unicorn;
 
@@ -113,6 +113,11 @@ namespace sogen
             }
         }
 
-        return create_x86_64_emulator(backend, vcpu_count);
+        return backend;
+    }
+
+    std::unique_ptr<x86_64_emulator> create_x86_64_emulator_from_environment(const size_t vcpu_count)
+    {
+        return create_x86_64_emulator(get_x86_64_emulator_backend_from_environment(), vcpu_count);
     }
 } // namespace sogen

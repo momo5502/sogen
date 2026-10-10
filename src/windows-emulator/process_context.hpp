@@ -391,6 +391,10 @@ namespace sogen
               kusd(memory, clock),
               user_handles(memory)
         {
+            emulator_process current_process{};
+            current_process.id = process_id;
+            [[maybe_unused]] const auto process_handle = this->processes.store(std::move(current_process));
+            assert(process_handle == GUEST_PROCESS_HANDLE);
         }
 
         void setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
@@ -465,6 +469,7 @@ namespace sogen
         uint64_t zw_callback_return{};
         uint64_t dispatch_client_message{};
         uint32_t gdi_default_dc_handle{};
+        uint32_t gdi_memory_dc_default_bitmap_handle{};
         std::map<uint32_t, gdi_dc_state> gdi_dc_states{};
         // Per-DC stack of states pushed by NtGdiSaveDC and popped by NtGdiRestoreDC.
         std::map<uint32_t, std::vector<gdi_dc_state>> gdi_dc_save_states{};
@@ -540,6 +545,7 @@ namespace sogen
         handle_store<handle_types::io_completion, io_completion> io_completions{};
         handle_store<handle_types::wait_completion_packet, wait_completion_packet> wait_completion_packets{};
         handle_store<handle_types::worker_factory, worker_factory> worker_factories{};
+        handle_store<handle_types::job, job_object> jobs{};
         handle_store<handle_types::port, port_container> ports{};
         handle_store<handle_types::mutant, mutant> mutants{};
         handle_store<handle_types::private_namespace, private_namespace> private_namespaces{};
@@ -549,7 +555,10 @@ namespace sogen
         user_handle_store<handle_types::type::menu, menu> menus{user_handles};
         handle_store<handle_types::timer, timer> timers{};
         user_handle_store<handle_types::accelerator_table, accelerator_table> accelerator_tables{user_handles};
+        handle_store<handle_types::deferred_window_positions, deferred_window_positions> deferred_window_position_batches{};
         handle_store<handle_types::registry, registry_key> registry_keys{};
+        handle_store<handle_types::process, emulator_process> processes{};
+        handle_store<handle_types::managed_thread, managed_process_thread> managed_threads{};
         std::map<uint32_t, handle> thread_handles_by_id{};
         std::map<uint16_t, atom_entry> atoms{};
         utils::insensitive_u16string_map<class_entry> classes{};
@@ -560,10 +569,9 @@ namespace sogen
 
         std::vector<std::byte> default_register_set{};
 
-        // Process and thread ids mimic Windows' PspCidTable: a single space of distinct multiples of 4.
-        // The process keeps id 4; threads take 8, 12, 16, ... Real Windows never hands out tiny or
-        // non-4-aligned ids, and some code (e.g. CEG-style anti-tamper) relies on that.
-        static constexpr uint32_t process_id = 4;
+        // Process and thread ids share Windows' 4-aligned client ID space.
+        uint32_t process_id{4};
+        uint32_t initial_thread_id{8};
         uint32_t spawned_thread_count{0};
         handle_store<handle_types::thread, emulator_thread> threads{};
 
@@ -571,6 +579,7 @@ namespace sogen
         // system-handle import retrieves them via NtAlpcQueryInformationMessage(AlpcMessageHandleInformation)
         // rather than reading the handle attribute directly. Transient (valid only until the next reply).
         std::vector<alpc_reply_handle> pending_alpc_message_handles{};
+        std::map<uint32_t, std::vector<std::array<uint64_t, 2>>> pending_alpc_reply_views{};
 
         // The guest event a WASAPI EVENTCALLBACK client registered via SetEventHandle on its render endpoint.
         // The audio render thread signals it at the device rate so the client's render loop wakes and refills the

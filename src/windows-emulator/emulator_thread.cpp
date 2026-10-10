@@ -8,7 +8,6 @@
 
 namespace sogen
 {
-
     namespace
     {
         enum class wait_state
@@ -69,8 +68,9 @@ namespace sogen
             }
         }
 
-        wait_state observe_object_signal(process_context& c, const handle h, const uint32_t current_thread_id)
+        wait_state observe_object_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id)
         {
+            auto& c = win_emu.process;
             const auto type = h.value.type;
 
             switch (type)
@@ -82,6 +82,27 @@ namespace sogen
                 if (h == GUEST_PROCESS_HANDLE && c.exit_status.has_value())
                 {
                     return wait_state::signaled;
+                }
+
+                if (const auto* process = c.processes.get(h); process && process->process && win_emu.processes())
+                {
+                    const auto status = win_emu.processes()->exit_status(process->process);
+                    if (status && status.status.has_value())
+                    {
+                        return wait_state::signaled;
+                    }
+                }
+
+                break;
+
+            case handle_types::managed_thread:
+                if (const auto* thread = c.managed_threads.get(h); thread && win_emu.processes())
+                {
+                    const auto status = win_emu.processes()->exit_status(thread->process);
+                    if (status && status.status.has_value())
+                    {
+                        return wait_state::signaled;
+                    }
                 }
 
                 break;
@@ -102,8 +123,11 @@ namespace sogen
             }
 
             case handle_types::file: {
-                // File I/O is synchronous in the emulator, so no operation is ever in flight when a
-                // wait is issued -- the file object's built-in event stays signaled.
+                if (h == STDIN_HANDLE)
+                {
+                    return win_emu.console().input_available() ? wait_state::signaled : wait_state::not_signaled;
+                }
+
                 if (h.value.is_pseudo || c.files.get(h))
                 {
                     return wait_state::signaled;
@@ -173,17 +197,36 @@ namespace sogen
             return wait_state::not_signaled;
         }
 
-        std::optional<wait_state> consume_object_signal(process_context& c, const handle h, const uint32_t current_thread_id)
+        std::optional<wait_state> consume_object_signal(windows_emulator& win_emu, const handle h, const uint32_t current_thread_id)
         {
+            auto& c = win_emu.process;
             switch (h.value.type)
             {
             case handle_types::process: {
-                if (h != GUEST_PROCESS_HANDLE || !c.exit_status.has_value())
+                if (h == GUEST_PROCESS_HANDLE)
+                {
+                    return c.exit_status.has_value() ? std::optional{wait_state::signaled} : std::nullopt;
+                }
+
+                const auto* process = c.processes.get(h);
+                if (!process || !process->process || !win_emu.processes())
                 {
                     return std::nullopt;
                 }
 
-                return wait_state::signaled;
+                const auto status = win_emu.processes()->exit_status(process->process);
+                return status && status.status.has_value() ? std::optional{wait_state::signaled} : std::nullopt;
+            }
+
+            case handle_types::managed_thread: {
+                const auto* thread = c.managed_threads.get(h);
+                if (!thread || !win_emu.processes())
+                {
+                    return std::nullopt;
+                }
+
+                const auto status = win_emu.processes()->exit_status(thread->process);
+                return status && status.status.has_value() ? std::optional{wait_state::signaled} : std::nullopt;
             }
 
             case handle_types::event: {
@@ -403,7 +446,7 @@ namespace sogen
                 // https://github.com/momo5502/emulator/issues/128
                 reinterpret_cast<uint8_t*>(&teb_obj)[0x179C] = 1;
 
-                teb_obj.ClientId.UniqueProcess = process_context::process_id;
+                teb_obj.ClientId.UniqueProcess = context.process_id;
                 teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
                 teb_obj.DeallocationStack = this->stack_base;
                 // TODO: Proper GuaranteedStack implementation.
@@ -478,7 +521,7 @@ namespace sogen
             // https://github.com/momo5502/emulator/issues/128
             reinterpret_cast<uint8_t*>(&teb_obj)[0x179C] = 1;
 
-            teb_obj.ClientId.UniqueProcess = process_context::process_id;
+            teb_obj.ClientId.UniqueProcess = context.process_id;
             teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
 
             // Native 64-bit stack
@@ -552,7 +595,7 @@ namespace sogen
             teb32_obj.NtTib.ArbitraryUserPointer = static_cast<uint32_t>(0x0);
 
             // Set ClientId for 32-bit TEB
-            teb32_obj.ClientId.UniqueProcess = process_context::process_id;
+            teb32_obj.ClientId.UniqueProcess = context.process_id;
             teb32_obj.ClientId.UniqueThread = this->id;
 
             // Set 32-bit PEB pointer
@@ -1066,7 +1109,7 @@ namespace sogen
                 {
                     const auto& obj = this->await_objects[i];
 
-                    const auto state = observe_object_signal(process, obj, this->id);
+                    const auto state = observe_object_signal(win_emu, obj, this->id);
                     const auto signaled = state != wait_state::not_signaled;
                     all_signaled &= signaled;
 
@@ -1077,7 +1120,7 @@ namespace sogen
 
                     if (signaled && this->await_any)
                     {
-                        const auto consumed_state = consume_object_signal(process, obj, this->id);
+                        const auto consumed_state = consume_object_signal(win_emu, obj, this->id);
                         if (!consumed_state.has_value())
                         {
                             throw std::runtime_error("Failed to consume object signal!");
@@ -1111,7 +1154,7 @@ namespace sogen
             {
                 for (const auto& obj : this->await_objects)
                 {
-                    const auto consumed_state = consume_object_signal(process, obj, this->id);
+                    const auto consumed_state = consume_object_signal(win_emu, obj, this->id);
                     if (!consumed_state.has_value())
                     {
                         throw std::runtime_error("Failed to consume object signal!");
@@ -1214,7 +1257,7 @@ namespace sogen
                                                           this->await_msg->filter_max, true))
             {
                 this->await_msg->message.write(*m);
-                this->current_message_time = m->time;
+                this->record_current_message(*m);
 
                 uint64_t active_handle = 0;
                 uint64_t active_window_ptr = 0;

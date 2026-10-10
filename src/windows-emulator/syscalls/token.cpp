@@ -2,6 +2,8 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+#include <limits>
+
 namespace sogen
 {
 
@@ -9,6 +11,10 @@ namespace sogen
     {
         namespace
         {
+            constexpr uint32_t token_authentication_id = 0x1000;
+            constexpr uint32_t token_id = 0x1001;
+            constexpr uint32_t token_modified_id = 0x1002;
+
             constexpr std::array<uint8_t, 12> interactive_sid = {
                 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x04, 0x00, 0x00, 0x00,
             };
@@ -326,7 +332,8 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            if (token_information_class == TokenIsAppContainer || token_information_class == TokenIsAppSilo)
+            if (token_information_class == TokenSandBoxInert || token_information_class == TokenHasRestrictions ||
+                token_information_class == TokenIsAppContainer || token_information_class == TokenIsAppSilo)
             {
                 constexpr auto required_size = sizeof(ULONG);
                 return_length.write(required_size);
@@ -365,17 +372,23 @@ namespace sogen
                 }
 
                 TOKEN_STATISTICS stats{};
+                stats.TokenId.LowPart = token_id;
+                stats.AuthenticationId.LowPart = token_authentication_id;
+                stats.ExpirationTime.QuadPart = std::numeric_limits<LONGLONG>::max();
                 stats.TokenType = get_token_type(token_handle);
                 stats.ImpersonationLevel = stats.TokenType == TokenImpersonation ? SecurityImpersonation : SecurityAnonymous;
                 stats.GroupCount = 2;
                 stats.PrivilegeCount = 0;
+                stats.ModifiedId.LowPart = token_modified_id;
 
                 c.emu.write_memory(token_information, stats);
 
                 return STATUS_SUCCESS;
             }
 
-            if (token_information_class == TokenSecurityAttributes)
+            if (token_information_class == TokenUserClaimAttributes || token_information_class == TokenDeviceClaimAttributes ||
+                token_information_class == TokenRestrictedUserClaimAttributes ||
+                token_information_class == TokenRestrictedDeviceClaimAttributes || token_information_class == TokenSecurityAttributes)
             {
                 constexpr auto required_size = sizeof(TOKEN_SECURITY_ATTRIBUTES_INFORMATION);
                 return_length.write(required_size);

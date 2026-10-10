@@ -14,15 +14,25 @@ SET EMU_FILESYS=%EMU_ROOT%\filesys
 SET EMU_WINDIR=%EMU_FILESYS%\c\windows
 SET EMU_SYSDIR=%EMU_WINDIR%\system32
 SET EMU_SYSDIR_WOW64=%EMU_WINDIR%\syswow64
+SET EMU_SYSTEMRESOURCESDIR=%EMU_WINDIR%\systemresources
 SET EMU_CURSORDIR=%EMU_WINDIR%\cursors
 SET EMU_SORTDIR=%EMU_WINDIR%\globalization\sorting
+SET EMU_WINSXSDIR=%EMU_WINDIR%\winsxs
+SET EMU_WINSXSMANIFESTDIR=%EMU_WINSXSDIR%\manifests
+SET EMU_WINSXSPOLICYDIR=%EMU_WINSXSDIR%\policies
 SET EMU_REGDIR=%EMU_ROOT%\registry
 SET EMU_STEAMDIR=%EMU_FILESYS%\c\steam
 
 MKDIR %EMU_SYSDIR%
 MKDIR %EMU_SYSDIR_WOW64%
 MKDIR %EMU_CURSORDIR%
+MKDIR %EMU_SYSDIR%\en-us
+MKDIR %EMU_SYSDIR_WOW64%\en-us
+MKDIR %EMU_SYSTEMRESOURCESDIR%
 MKDIR %EMU_SORTDIR%
+MKDIR %EMU_WINSXSDIR%
+MKDIR %EMU_WINSXSMANIFESTDIR%
+MKDIR %EMU_WINSXSPOLICYDIR%
 MKDIR %EMU_REGDIR%
 MKDIR %EMU_STEAMDIR%
 
@@ -43,7 +53,10 @@ CALL :collect coloradapterclient.dll
 CALL :collect combase.dll
 CALL :collect comctl32.dll
 CALL :collect comdlg32.dll
+CALL :collect_file "%WINDIR%\System32\en-US", comdlg32.dll.mui, %EMU_SYSDIR%\en-us
+CALL :collect_file "%WINDIR%\SysWOW64\en-US", comdlg32.dll.mui, %EMU_SYSDIR_WOW64%\en-us
 CALL :collect coremessaging.dll
+CALL :collect credssp.dll
 CALL :collect crypt32.dll
 CALL :collect cryptbase.dll
 CALL :collect cryptsp.dll
@@ -63,6 +76,7 @@ CALL :collect devobj.dll
 CALL :collect diagnosticdatasettings.dll
 CALL :collect dinput8.dll
 CALL :collect dnsapi.dll
+CALL :collect dpapi.dll
 CALL :collect dsound.dll
 CALL :collect dwmapi.dll
 CALL :collect dxcore.dll
@@ -84,6 +98,7 @@ CALL :collect kernel.appcore.dll
 CALL :collect kernel32.dll
 CALL :collect kernelbase.dll
 CALL :collect ktmw32.dll
+CALL :collect mfperfhelper.dll
 CALL :collect mfplat.dll
 CALL :collect mfreadwrite.dll
 CALL :collect mmdevapi.dll
@@ -97,6 +112,7 @@ CALL :collect msasn1.dll
 CALL :collect mscms.dll
 CALL :collect mscoree.dll
 CALL :collect msdmo.dll
+CALL :collect mskeyprotect.dll
 CALL :collect msvcp140.dll
 CALL :collect msvcp140d.dll
 CALL :collect msvcp60.dll
@@ -106,6 +122,8 @@ CALL :collect msvcrt.dll
 CALL :collect mswsock.dll
 CALL :collect napinsp.dll
 CALL :collect ncrypt.dll
+CALL :collect ncryptprov.dll
+CALL :collect ncryptsslp.dll
 CALL :collect netapi32.dll
 CALL :collect netmsg.dll
 CALL :collect netutils.dll
@@ -114,6 +132,7 @@ CALL :collect normaliz.dll
 CALL :collect nsi.dll
 CALL :collect ntasn1.dll
 CALL :collect ntdll.dll
+CALL :collect ntmarta.dll
 CALL :collect ole32.dll
 CALL :collect oleaut32.dll
 CALL :collect opengl32.dll
@@ -121,6 +140,7 @@ CALL :collect pdh.dll
 CALL :collect powrprof.dll
 CALL :collect profapi.dll
 CALL :collect propsys.dll
+CALL :collect_file "%WINDIR%\SystemResources", PROPSYS.dll.mun, %EMU_SYSTEMRESOURCESDIR%
 CALL :collect psapi.dll
 CALL :collect rasadhlp.dll
 CALL :collect resampledmo.dll
@@ -128,10 +148,15 @@ CALL :collect rpcrt4.dll
 CALL :collect rpcss.dll
 CALL :collect rstrtmgr.dll
 CALL :collect rsaenh.dll
+CALL :collect samlib.dll
+CALL :collect schannel.dll
 CALL :collect sechost.dll
+CALL :collect secur32.dll
 CALL :collect setupapi.dll
 CALL :collect shcore.dll
 CALL :collect shell32.dll
+CALL :collect_file "%WINDIR%\System32\en-US", shell32.dll.mui, %EMU_SYSDIR%\en-us
+CALL :collect_file "%WINDIR%\SysWOW64\en-US", shell32.dll.mui, %EMU_SYSDIR_WOW64%\en-us
 CALL :collect shlwapi.dll
 CALL :collect slwga.dll
 CALL :collect sppc.dll
@@ -165,6 +190,8 @@ CALL :collect wintrust.dll
 CALL :collect wintypes.dll
 CALL :collect wlanapi.dll
 CALL :collect wldap32.dll
+CALL :collect wmasf.dll
+CALL :collect wmvcore.dll
 CALL :collect wow64.dll
 CALL :collect wow64base.dll
 CALL :collect wow64con.dll
@@ -174,12 +201,15 @@ CALL :collect ws2_32.dll
 CALL :collect wshbth.dll
 CALL :collect wsock32.dll
 CALL :collect wtsapi32.dll
+CALL :collect xmllite.dll
 CALL :collect x3daudio1_7.dll
 CALL :collect xapofx1_5.dll
 CALL :collect xaudio2_9.dll
 CALL :collect xinput1_3.dll
 CALL :collect xinput1_4.dll
 CALL :collect xinput9_1_0.dll
+CALL :collect_file "%WINDIR%\System32\en-US", user32.dll.mui, %EMU_SYSDIR%\en-us
+CALL :collect_file "%WINDIR%\SysWOW64\en-US", user32.dll.mui, %EMU_SYSDIR_WOW64%\en-us
 
 CALL :collect locale.nls
 CALL :collect c_1252.nls
@@ -190,6 +220,23 @@ CALL :collect_file "%WINDIR%\Globalization\Sorting", sortdefault.nls, %EMU_SORTD
 CALL :collect wdmaud.drv
 
 CALL :collect_file "%WINDIR%\Cursors", aero_arrow.cur, %EMU_CURSORDIR%
+
+CALL :collect_winsxs_directories amd64_microsoft.windows.common-controls_*
+CALL :collect_winsxs_directories x86_microsoft.windows.common-controls_*
+CALL :collect_winsxs_directories amd64_microsoft.windows.c..-controls.resources_*
+CALL :collect_winsxs_directories x86_microsoft.windows.c..-controls.resources_*
+CALL :collect_winsxs_policy_directories amd64_policy.*.microsoft.windows.common-controls_*
+CALL :collect_winsxs_policy_directories x86_policy.*.microsoft.windows.common-controls_*
+CALL :collect_winsxs_policy_directories amd64_policy.*.microsoft.windows.c..-controls.resources_*
+CALL :collect_winsxs_policy_directories x86_policy.*.microsoft.windows.c..-controls.resources_*
+CALL :collect_winsxs_manifests amd64_microsoft.windows.common-controls_*
+CALL :collect_winsxs_manifests x86_microsoft.windows.common-controls_*
+CALL :collect_winsxs_manifests amd64_microsoft.windows.c..-controls.resources_*
+CALL :collect_winsxs_manifests x86_microsoft.windows.c..-controls.resources_*
+CALL :collect_winsxs_manifests amd64_policy.*.microsoft.windows.common-controls_*
+CALL :collect_winsxs_manifests x86_policy.*.microsoft.windows.common-controls_*
+CALL :collect_winsxs_manifests amd64_policy.*.microsoft.windows.c..-controls.resources_*
+CALL :collect_winsxs_manifests x86_policy.*.microsoft.windows.c..-controls.resources_*
 
 EXIT /B 0
 
@@ -210,5 +257,26 @@ EXIT /B
 :collect
 CALL :collect_file %SYSDIR%, %~1, %EMU_SYSDIR%
 CALL :collect_file %SYSDIR_WOW64%, %~1, %EMU_SYSDIR_WOW64%
+EXIT /B
+
+:collect_winsxs_directories
+FOR /D %%D IN ("%WINDIR%\WinSxS\%~1") DO (
+	ECHO %%~fD -^> %EMU_WINSXSDIR%\%%~nxD
+	XCOPY /E /I /Y "%%~fD" "%EMU_WINSXSDIR%\%%~nxD" >NUL
+)
+EXIT /B
+
+:collect_winsxs_policy_directories
+FOR /D %%D IN ("%WINDIR%\WinSxS\Policies\%~1") DO IF EXIST "%%~fD" (
+	ECHO %%~fD -^> %EMU_WINSXSPOLICYDIR%\%%~nxD
+	XCOPY /E /I /Y "%%~fD" "%EMU_WINSXSPOLICYDIR%\%%~nxD" >NUL
+)
+EXIT /B
+
+:collect_winsxs_manifests
+FOR %%F IN ("%WINDIR%\WinSxS\Manifests\%~1") DO IF EXIST "%%~fF" (
+	ECHO %%~fF -^> %EMU_WINSXSMANIFESTDIR%\%%~nxF
+	COPY /B /Y "%%~fF" "%EMU_WINSXSMANIFESTDIR%\%%~nxF" >NUL
+)
 EXIT /B
 

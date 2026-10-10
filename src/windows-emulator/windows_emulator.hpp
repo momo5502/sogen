@@ -2,6 +2,7 @@
 #include "std_include.hpp"
 
 #include <arch_emulator.hpp>
+#include "process_manager.hpp"
 
 #include <stop_reason.hpp>
 #include <utils/function.hpp>
@@ -16,8 +17,10 @@
 #include "network/dns_lookup.hpp"
 #include "network/socket_factory.hpp"
 #include "version/windows_version_manager.hpp"
-#include <platform/ui_backend.hpp>
 #include <platform/audio_backend.hpp>
+#include <platform/crypt_protect_backend.hpp>
+#include <platform/console_backend.hpp>
+#include <platform/ui_backend.hpp>
 
 namespace sogen
 {
@@ -54,24 +57,33 @@ namespace sogen
     struct application_settings
     {
         windows_path application{};
+        std::u16string argument0{};
         windows_path working_directory{};
         std::vector<std::u16string> arguments{};
         utils::unordered_insensitive_u16string_map<std::u16string> environment{};
+        uint32_t process_id{4};
+        uint32_t thread_id{8};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->application);
+            buffer.write(this->argument0);
             buffer.write(this->working_directory);
             buffer.write_vector(this->arguments);
             buffer.write_map(this->environment);
+            buffer.write(this->process_id);
+            buffer.write(this->thread_id);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
         {
             buffer.read(this->application);
+            buffer.read(this->argument0);
             buffer.read(this->working_directory);
             buffer.read_vector(this->arguments);
             buffer.read_map(this->environment);
+            buffer.read(this->process_id);
+            buffer.read(this->thread_id);
         }
     };
 
@@ -116,6 +128,9 @@ namespace sogen
         std::unique_ptr<network::socket_factory> socket_factory{};
         std::unique_ptr<ui_backend> ui{};
         std::unique_ptr<audio_backend> audio{};
+        std::unique_ptr<crypt_protect_backend> crypt_protect{};
+        process_manager* processes{};
+        std::unique_ptr<console_backend> console{};
     };
 
     // Per-vCPU scheduler state: the guest thread a virtual CPU is currently executing
@@ -149,6 +164,9 @@ namespace sogen
         std::unique_ptr<network::socket_factory> socket_factory_{};
         std::unique_ptr<ui_backend> ui_backend_{};
         std::unique_ptr<audio_backend> audio_backend_{};
+        std::unique_ptr<crypt_protect_backend> crypt_protect_backend_{};
+        process_manager* process_manager_{};
+        std::unique_ptr<console_backend> console_backend_{};
         bool setup_completed_{false};
 
       public:
@@ -236,6 +254,31 @@ namespace sogen
             return *this->audio_backend_;
         }
 
+        crypt_protect_backend& crypt_protect()
+        {
+            return *this->crypt_protect_backend_;
+        }
+
+        const crypt_protect_backend& crypt_protect() const
+        {
+            return *this->crypt_protect_backend_;
+        }
+
+        process_manager* processes() const
+        {
+            return this->process_manager_;
+        }
+
+        console_backend& console()
+        {
+            return *this->console_backend_;
+        }
+
+        const console_backend& console() const
+        {
+            return *this->console_backend_;
+        }
+
         void handle_ui_event(const ui_event& event);
         void deliver_raw_input(const process_context::raw_input_payload& payload, hwnd explicit_target);
         void deliver_raw_mouse_input(int32_t dx, int32_t dy, uint16_t button_flags, uint16_t button_data = 0);
@@ -268,6 +311,13 @@ namespace sogen
         {
             const std::scoped_lock lock(this->kernel_lock_);
             const scoped_dispatch dispatch(*this, this->vcpu(cpu.index()));
+            return std::forward<Function>(fn)();
+        }
+
+        template <typename Function>
+        auto synchronize(Function&& fn)
+        {
+            const std::scoped_lock lock(this->kernel_lock_);
             return std::forward<Function>(fn)();
         }
 

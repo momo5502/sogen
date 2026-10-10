@@ -6,6 +6,7 @@
 
 #include <functional>
 
+#include "process_manager.hpp"
 #include <utils/moved_marker.hpp>
 
 namespace sogen
@@ -52,6 +53,27 @@ namespace sogen
             buffer.read(this->is_system);
             buffer.read_optional(this->due_time);
             buffer.read(this->interval);
+        }
+    };
+
+    struct user_cbt_hook
+    {
+        uint64_t handle{};
+        uint64_t proc{};
+        bool ansi{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->handle);
+            buffer.write(this->proc);
+            buffer.write(this->ansi);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->handle);
+            buffer.read(this->proc);
+            buffer.read(this->ansi);
         }
     };
 
@@ -190,6 +212,8 @@ namespace sogen
         NtUserUpdateWindow,
         NtUserEnumDisplayMonitors,
         NtUserSetWindowPos,
+        NtUserGetComboBoxInfo,
+        NtUserEndDeferWindowPosEx,
     };
 
     struct callback_frame
@@ -240,12 +264,56 @@ namespace sogen
 
     class emulator_process : public ref_counted_object
     {
-        void serialize_object(utils::buffer_serializer&) const override
+      public:
+        managed_process process{};
+        uint32_t id{};
+        bool is_wow64_process{};
+        uint64_t native_environment{};
+        uint64_t compatibility_environment{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
         {
+            buffer.write(this->process.value);
+            buffer.write(this->id);
+            buffer.write(this->is_wow64_process);
+            buffer.write(this->native_environment);
+            buffer.write(this->compatibility_environment);
         }
 
-        void deserialize_object(utils::buffer_deserializer&) override
+        void deserialize_object(utils::buffer_deserializer& buffer) override
         {
+            buffer.read(this->process.value);
+            buffer.read(this->id);
+            buffer.read(this->is_wow64_process);
+            buffer.read(this->native_environment);
+            buffer.read(this->compatibility_environment);
+        }
+    };
+
+    class managed_process_thread : public ref_counted_object
+    {
+      public:
+        managed_process process{};
+        uint32_t process_id{};
+        uint32_t thread_id{};
+        bool resume_observed{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->process.value);
+            buffer.write(this->process_id);
+            buffer.write(this->thread_id);
+            buffer.write(this->resume_observed);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->process.value);
+            buffer.read(this->process_id);
+            buffer.read(this->thread_id);
+            buffer.read(this->resume_observed);
         }
     };
 
@@ -339,11 +407,14 @@ namespace sogen
 
         std::vector<callback_frame> callback_stack;
         std::optional<uint64_t> callback_return_rax{};
+        std::optional<user_cbt_hook> cbt_hook{};
+        uint64_t next_cbt_hook_handle{1};
 
         std::map<user_timer_key, user_timer> user_timers{};
         uint64_t next_user_timer_id{1};
         std::vector<msg> message_queue;
         DWORD current_message_time{};
+        DWORD current_message_position{};
         std::array<uint32_t, 32> message_queue_status_bit_counts{};
         uint32_t message_queue_status_bits{};
         uint32_t queue_status_changed_bits{};
@@ -359,6 +430,14 @@ namespace sogen
         bool has_pending_alertable_apc() const
         {
             return this->apc_alertable && !this->pending_apcs.empty();
+        }
+
+        void record_current_message(const msg& message)
+        {
+            this->current_message_time = message.time;
+            const auto x = static_cast<uint16_t>(message.pt.x);
+            const auto y = static_cast<uint16_t>(message.pt.y);
+            this->current_message_position = static_cast<DWORD>(x) | (static_cast<DWORD>(y) << 16);
         }
 
         user_timer* find_user_timer(hwnd hwnd, uint64_t timer_id);
@@ -463,11 +542,14 @@ namespace sogen
 
             buffer.write_vector(this->callback_stack);
             buffer.write_optional(this->callback_return_rax);
+            buffer.write_optional(this->cbt_hook);
+            buffer.write(this->next_cbt_hook_handle);
 
             buffer.write_map(this->user_timers);
             buffer.write(this->next_user_timer_id);
             buffer.write_vector(this->message_queue);
             buffer.write(this->current_message_time);
+            buffer.write(this->current_message_position);
             buffer.write(this->message_queue_status_bit_counts);
             buffer.write(this->message_queue_status_bits);
             buffer.write(this->queue_status_changed_bits);
@@ -532,11 +614,14 @@ namespace sogen
 
             buffer.read_vector(this->callback_stack);
             buffer.read_optional(this->callback_return_rax);
+            buffer.read_optional(this->cbt_hook);
+            buffer.read(this->next_cbt_hook_handle);
 
             buffer.read_map(this->user_timers);
             buffer.read(this->next_user_timer_id);
             buffer.read_vector(this->message_queue);
             buffer.read(this->current_message_time);
+            buffer.read(this->current_message_position);
             buffer.read(this->message_queue_status_bit_counts);
             buffer.read(this->message_queue_status_bits);
             buffer.read(this->queue_status_changed_bits);

@@ -29,6 +29,7 @@
 #include <knownfolders.h>
 #include <sddl.h>
 #include <bcrypt.h>
+#include <wincrypt.h>
 
 using namespace std::literals;
 
@@ -1859,6 +1860,58 @@ namespace
         return true;
     }
 
+    bool test_handle_tag_bits()
+    {
+        using nt_close_t = LONG(NTAPI*)(HANDLE);
+        const auto nt_close =
+            reinterpret_cast<nt_close_t>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtClose")));
+        if (!nt_close)
+        {
+            puts("ntdll!NtClose not found");
+            return false;
+        }
+
+        const auto open_file = [](const char* path) {
+            return CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        };
+
+        const auto is_open = [](const HANDLE file) {
+            char byte{};
+            DWORD read{};
+            return ReadFile(file, &byte, sizeof(byte), &read, nullptr) != FALSE;
+        };
+
+        bool valid = true;
+
+        for (uint32_t tag = 0; tag < 4; ++tag)
+        {
+            const HANDLE before = open_file(R"(C:\Windows\System32\ntdll.dll)");
+            const HANDLE target = open_file(R"(C:\Windows\System32\kernel32.dll)");
+            const HANDLE after = open_file(R"(C:\Windows\System32\kernelbase.dll)");
+
+            if (before == INVALID_HANDLE_VALUE || target == INVALID_HANDLE_VALUE || after == INVALID_HANDLE_VALUE)
+            {
+                puts("Failed to open the probe files");
+                return false;
+            }
+
+            auto* const tagged = reinterpret_cast<HANDLE>((reinterpret_cast<ULONG_PTR>(target) & ~ULONG_PTR{3}) | tag);
+            const auto status = nt_close(tagged);
+
+            if (status != 0 || !is_open(before) || is_open(target) || !is_open(after))
+            {
+                printf("NtClose(%p) with tag %u did not close exactly %p (status 0x%08lX)\n", tagged, tag, target, status);
+                valid = false;
+                CloseHandle(target);
+            }
+
+            CloseHandle(before);
+            CloseHandle(after);
+        }
+
+        return valid;
+    }
+
     bool test_gdi()
     {
         const wchar_t* cursor_path = L"C:\\Windows\\Cursors\\aero_arrow.cur";
@@ -1884,6 +1937,37 @@ namespace
         }
 
         DestroyCursor(cursor);
+        return true;
+    }
+
+    namespace
+    {
+        INT_PTR CALLBACK dialog_table_proc(const HWND hwnd, const UINT msg, const WPARAM wp, const LPARAM lp)
+        {
+            (void)hwnd;
+            (void)msg;
+            (void)wp;
+            (void)lp;
+            return FALSE;
+        }
+    }
+
+    bool test_dialog_table()
+    {
+        alignas(DWORD) static const std::array<uint8_t, 28> template_bytes = {
+            0x00, 0x00, 0xC8, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x64, 0x00, 0x3C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        };
+
+        const HWND hwnd = CreateDialogIndirectParamW(GetModuleHandleW(nullptr), reinterpret_cast<const DLGTEMPLATE*>(template_bytes.data()),
+                                                     nullptr, dialog_table_proc, 0);
+        if (!hwnd)
+        {
+            puts("CreateDialogIndirectParamW failed");
+            return false;
+        }
+
+        DestroyWindow(hwnd);
         return true;
     }
 
@@ -1924,6 +2008,171 @@ namespace
             {
                 printf("BCryptHash(%ls) failed: 0x%08lX\n", vector.algorithm, hash_status);
                 return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool test_crypt_protect()
+    {
+        auto roundtrip = [](const std::vector<BYTE>& plain, const std::vector<BYTE>& entropy, const LPCWSTR descr) {
+            DATA_BLOB input{};
+            BYTE empty{};
+            input.cbData = static_cast<DWORD>(plain.size());
+            // crypt32 returns ERROR_INVALID_PARAMETER when pbData is NULL, including cbData == 0.
+            input.pbData = plain.empty() ? &empty : const_cast<BYTE*>(plain.data());
+
+            DATA_BLOB entropy_blob{};
+            DATA_BLOB* entropy_ptr = nullptr;
+            if (!entropy.empty())
+            {
+                entropy_blob.cbData = static_cast<DWORD>(entropy.size());
+                entropy_blob.pbData = const_cast<BYTE*>(entropy.data());
+                entropy_ptr = &entropy_blob;
+            }
+
+            DATA_BLOB protected_blob{};
+            if (!CryptProtectData(&input, descr, entropy_ptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &protected_blob))
+            {
+                printf("CryptProtectData failed: %lu\n", GetLastError());
+                return false;
+            }
+
+            const auto free_protected = sogen::utils::finally([&] { LocalFree(protected_blob.pbData); });
+
+            LPWSTR out_descr = nullptr;
+            DATA_BLOB unprotected{};
+            if (!CryptUnprotectData(&protected_blob, descr ? &out_descr : nullptr, entropy_ptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN,
+                                    &unprotected))
+            {
+                printf("CryptUnprotectData failed: %lu\n", GetLastError());
+                return false;
+            }
+
+            const auto free_unprotected = sogen::utils::finally([&] { LocalFree(unprotected.pbData); });
+            const auto free_descr = sogen::utils::finally([&] { LocalFree(out_descr); });
+
+            if (unprotected.cbData != input.cbData)
+            {
+                puts("CryptUnprotectData length mismatch");
+                return false;
+            }
+
+            if (input.cbData != 0 && memcmp(unprotected.pbData, input.pbData, input.cbData) != 0)
+            {
+                puts("CryptUnprotectData data mismatch");
+                return false;
+            }
+
+            if (descr)
+            {
+                if (!out_descr || wcscmp(out_descr, descr) != 0)
+                {
+                    puts("CryptUnprotectData description mismatch");
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
+        if (!roundtrip({}, {}, nullptr))
+        {
+            return false;
+        }
+
+        if (!roundtrip({0x61, 0x62, 0x63}, {}, nullptr))
+        {
+            return false;
+        }
+
+        if (!roundtrip({0x61, 0x62, 0x63}, {0x01, 0x02, 0x03, 0x04}, nullptr))
+        {
+            return false;
+        }
+
+        if (!roundtrip({0x61, 0x62, 0x63}, {}, L"sogen-test"))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    bool test_set_dib_bits_to_device()
+    {
+        constexpr int width = 4;
+        constexpr int height = 1;
+
+        struct
+        {
+            BITMAPINFOHEADER header;
+            std::array<RGBQUAD, 4> colors;
+        } info{};
+
+        info.header.biSize = sizeof(BITMAPINFOHEADER);
+        info.header.biWidth = width;
+        info.header.biHeight = -height;
+        info.header.biPlanes = 1;
+        info.header.biCompression = BI_RGB;
+        info.header.biClrUsed = 4;
+        info.colors[0] = {.rgbBlue = 0, .rgbGreen = 0, .rgbRed = 255, .rgbReserved = 0};
+        info.colors[1] = {.rgbBlue = 0, .rgbGreen = 255, .rgbRed = 0, .rgbReserved = 0};
+        info.colors[2] = {.rgbBlue = 255, .rgbGreen = 0, .rgbRed = 0, .rgbReserved = 0};
+        info.colors[3] = {.rgbBlue = 255, .rgbGreen = 255, .rgbRed = 255, .rgbReserved = 0};
+
+        const std::array<COLORREF, 4> palette = {RGB(255, 0, 0), RGB(0, 255, 0), RGB(0, 0, 255), RGB(255, 255, 255)};
+
+        struct dib
+        {
+            WORD bpp;
+            std::array<uint8_t, 8> bits;
+            std::array<uint8_t, width> expected_index;
+        };
+
+        const std::array<dib, 4> dibs = {
+            dib{.bpp = 1, .bits = {0x50}, .expected_index = {0, 1, 0, 1}},
+            dib{.bpp = 4, .bits = {0x01, 0x23}, .expected_index = {0, 1, 2, 3}},
+            dib{.bpp = 8, .bits = {0, 1, 2, 3}, .expected_index = {0, 1, 2, 3}},
+            dib{.bpp = 16, .bits = {0x00, 0x7C, 0xE0, 0x03, 0x1F, 0x00, 0xFF, 0x7F}, .expected_index = {0, 1, 2, 3}},
+        };
+
+        const HDC dc = CreateCompatibleDC(nullptr);
+        const HBITMAP bitmap = CreateBitmap(width, height, 1, 32, nullptr);
+        const HGDIOBJ previous = SelectObject(dc, bitmap);
+        const auto cleanup = sogen::utils::finally([&] {
+            SelectObject(dc, previous);
+            DeleteObject(bitmap);
+            DeleteDC(dc);
+        });
+
+        for (const auto& d : dibs)
+        {
+            info.header.biBitCount = d.bpp;
+            for (int x = 0; x < width; ++x)
+            {
+                SetPixel(dc, x, 0, RGB(0, 0, 0));
+            }
+
+            const int copied = SetDIBitsToDevice(dc, 0, 0, width, height, 0, 0, 0, height, d.bits.data(),
+                                                 reinterpret_cast<const BITMAPINFO*>(&info), DIB_RGB_COLORS);
+            if (copied != height)
+            {
+                printf("SetDIBitsToDevice(%ubpp) copied %d scanlines\n", d.bpp, copied);
+                return false;
+            }
+
+            for (int x = 0; x < width; ++x)
+            {
+                const COLORREF actual = GetPixel(dc, x, 0);
+                const COLORREF expected = palette[d.expected_index[x]];
+                if (actual != expected)
+                {
+                    printf("SetDIBitsToDevice(%ubpp) pixel %d is %06lX, expected %06lX\n", d.bpp, x, static_cast<unsigned long>(actual),
+                           static_cast<unsigned long>(expected));
+                    return false;
+                }
             }
         }
 
@@ -1992,10 +2241,14 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_paint_message_queue, "Message Queue (Paint)")
     RUN_TEST(test_settimer, "User Timer")
     RUN_TEST(test_private_namespace, "Private Namespace")
+    RUN_TEST(test_handle_tag_bits, "Handle Tag Bits")
     RUN_TEST(test_actctx, "Activation Context")
     RUN_TEST(test_mmio, "MMIO")
     RUN_TEST(test_gdi, "GDI")
+    RUN_TEST(test_dialog_table, "Dialog Table")
     RUN_TEST(test_bcrypt_hash, "BCrypt Hash")
+    RUN_TEST(test_crypt_protect, "CryptProtect")
+    RUN_TEST(test_set_dib_bits_to_device, "GDI DIB")
 
     return valid ? 0 : 1;
 }

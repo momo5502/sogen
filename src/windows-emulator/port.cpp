@@ -7,7 +7,9 @@
 #include "ports/core_messaging_registrar.hpp"
 #include "ports/dns_resolver.hpp"
 #include "ports/lsa_policy_lookup.hpp"
+#include "ports/protected_storage.hpp"
 #include "ports/service_control.hpp"
+#include "ports/sspi_rpc.hpp"
 #include "binary_writer.hpp"
 
 #include <platform/unicode.hpp>
@@ -98,6 +100,11 @@ namespace sogen
             return create_api_port();
         }
 
+        if (port == u"\\RPC Control\\protected_storage")
+        {
+            return create_protected_storage_port();
+        }
+
         if (port == u"\\RPC Control\\DNSResolver")
         {
             return create_dns_resolver();
@@ -131,6 +138,11 @@ namespace sogen
             return create_service_control_port();
         }
 
+        if (port == u"\\RPC Control\\lsasspirpc")
+        {
+            return create_sspi_rpc_port();
+        }
+
         if (port == u"\\RPC Control\\umpo")
         {
             // User-Mode Power Orchestrator. The audio stack registers a power request here while starting a
@@ -156,7 +168,7 @@ namespace sogen
             return {.status = STATUS_PORT_DISCONNECTED};
         }
 
-        if (!c.receive_message)
+        if (!c.receive_message && !this->port_->accepts_send_only_messages())
         {
             return {.status = STATUS_INVALID_PARAMETER};
         }
@@ -182,6 +194,11 @@ namespace sogen
         }
 
         auto result = this->port_->handle_message(win_emu, c);
+
+        if (!c.receive_message)
+        {
+            return {.status = result.status};
+        }
 
         if (NT_SUCCESS(result.status) && c.receive_buffer_length < result.total_length())
         {
@@ -236,6 +253,11 @@ namespace sogen
         auto request_result = this->handle_request(win_emu, context);
         const auto payload_size = request_result.payload ? static_cast<ULONG>(request_result.payload->size()) : context.recv_buffer_length;
 
+        if (!request_result.view_payload.empty())
+        {
+            recv_header.native.u2.s2.Type |= lpc_continuation_required;
+        }
+
         if (header_size + payload_size > static_cast<ULONG>(std::numeric_limits<CSHORT>::max()))
         {
             throw std::runtime_error("Response payload too big");
@@ -250,6 +272,7 @@ namespace sogen
             result.payload = std::move(*request_result.payload);
         }
         result.handles = std::move(request_result.handles);
+        result.view_payload = std::move(request_result.view_payload);
 
         return result;
     }
@@ -311,6 +334,9 @@ namespace sogen
     lpc_request_result rpc_port::handle_rpc_call(windows_emulator& win_emu, const lpc_request_context& c)
     {
         constexpr ULONG rpc_call_send_header_size = 0x40;
+        constexpr ULONG rpc_call_immediate_response_header_size = 0x18;
+        constexpr ULONG rpc_call_large_response_header_size = 0x20;
+        constexpr ULONG rpc_call_max_immediate_ndr_size = 0xF00;
         constexpr ULONG rpc_call_id_offset = 12;
         constexpr ULONG rpc_call_opnum_offset = 20;
 
@@ -322,12 +348,12 @@ namespace sogen
         const auto call_id = win_emu.emu().read_memory<uint32_t>(c.send_buffer + rpc_call_id_offset);
         const auto procedure_id = win_emu.emu().read_memory<uint32_t>(c.send_buffer + rpc_call_opnum_offset);
 
-        std::array<uint8_t, 24> header = {0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-        std::memcpy(header.data() + 12, &call_id, sizeof(call_id));
-
         const auto pointer_size = win_emu.process.is_wow64_process ? utils::aligned_binary_writer::pointer_size_32
                                                                    : utils::aligned_binary_writer::pointer_size_64;
+
+        std::array<uint8_t, rpc_call_immediate_response_header_size> header{};
+        header[0] = 3;
+        std::memcpy(header.data() + rpc_call_id_offset, &call_id, sizeof(call_id));
 
         std::vector<uint8_t> payload;
         utils::aligned_binary_writer writer(payload, pointer_size);
@@ -336,16 +362,29 @@ namespace sogen
         lpc_request_context rpc_context{};
         rpc_context.send_buffer = c.send_buffer + rpc_call_send_header_size;
         rpc_context.send_buffer_length = c.send_buffer_length - rpc_call_send_header_size;
-        rpc_context.recv_buffer = c.recv_buffer + sizeof(header);
-        if (c.recv_buffer_length >= header.size())
+        rpc_context.recv_buffer = c.recv_buffer + rpc_call_immediate_response_header_size;
+        if (c.recv_buffer_length >= rpc_call_immediate_response_header_size)
         {
-            rpc_context.recv_buffer_length = c.recv_buffer_length - static_cast<DWORD>(header.size());
+            rpc_context.recv_buffer_length = c.recv_buffer_length - rpc_call_immediate_response_header_size;
         }
 
         std::vector<alpc_reply_handle> reply_handles;
         const auto status = this->handle_rpc(win_emu, procedure_id, rpc_context, writer, reply_handles);
 
+        std::vector<uint8_t> view_payload;
+        const auto ndr_size = payload.size() - rpc_call_immediate_response_header_size;
+        if (ndr_size > rpc_call_max_immediate_ndr_size)
+        {
+            view_payload.assign(payload.begin() + rpc_call_immediate_response_header_size, payload.end());
+            payload.resize(rpc_call_large_response_header_size);
+            utils::aligned_binary_writer header_writer(payload);
+            header_writer.write_at<uint32_t>(0x08, 4);
+            header_writer.write_at<uint32_t>(0x18, static_cast<uint32_t>(ndr_size));
+        }
+
         lpc_request_result result{status, std::move(payload)};
+        result.view_payload = std::move(view_payload);
+
         result.handles = std::move(reply_handles);
         return result;
     }
