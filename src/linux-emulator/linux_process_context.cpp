@@ -44,7 +44,7 @@ namespace sogen
         constexpr uint64_t STACK_TOP = 0x7ffffffde000;
 
         // Write a null-terminated string into emulator memory. Returns the address where it was written.
-        uint64_t write_string_to_memory(linux_memory_manager& memory, uint64_t& cursor, const std::string_view str)
+        uint64_t write_string_to_memory(posix_memory_manager& memory, uint64_t& cursor, const std::string_view str)
         {
             const auto addr = cursor;
             memory.write_memory(cursor, str.data(), str.size());
@@ -60,7 +60,7 @@ namespace sogen
 
     }
 
-    void linux_process_context::setup(x86_64_emulator& emu, linux_memory_manager& memory, const linux_mapped_module& exe,
+    void linux_process_context::setup(x86_64_emulator& emu, posix_memory_manager& memory, const linux_mapped_module& exe,
                                       const std::vector<std::string>& argv_values, const std::vector<std::string>& envp_values,
                                       std::string process_executable_path, const uint64_t interpreter_base, const uint64_t initial_rip,
                                       const uint64_t vdso_base)

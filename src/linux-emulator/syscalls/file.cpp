@@ -420,12 +420,12 @@ namespace sogen
 
             if (guest_path.starts_with('/') || guest_path.starts_with('\\'))
             {
-                return linux_file_system::normalize_guest_path_string(guest_path);
+                return posix_file_system::normalize_guest_path_string(guest_path);
             }
 
             if (dirfd == LINUX_AT_FDCWD)
             {
-                return linux_file_system::resolve_guest_path_string(c.proc.current_working_directory, guest_path);
+                return posix_file_system::resolve_guest_path_string(c.proc.current_working_directory, guest_path);
             }
 
             auto* fd_entry = c.proc.fds.get(dirfd);
@@ -445,7 +445,7 @@ namespace sogen
                 return std::nullopt;
             }
 
-            return linux_file_system::resolve_guest_path_string(fd_entry->guest_path, guest_path);
+            return posix_file_system::resolve_guest_path_string(fd_entry->guest_path, guest_path);
         }
 
         bool is_read_only_guest_path_at(const linux_syscall_context& c, const int dirfd, const std::string& guest_path)
@@ -462,7 +462,7 @@ namespace sogen
 
             if (guest_path.starts_with('/') || guest_path.starts_with('\\'))
             {
-                const auto normalized_guest = linux_file_system::normalize_guest_path_string(guest_path);
+                const auto normalized_guest = posix_file_system::normalize_guest_path_string(guest_path);
                 if (procfs::is_procfs_path(normalized_guest) || procfs::is_procfs_symlink(normalized_guest))
                 {
                     linux_error = LINUX_ENOENT;
@@ -473,7 +473,7 @@ namespace sogen
 
             if (dirfd == LINUX_AT_FDCWD)
             {
-                const auto normalized_guest = linux_file_system::resolve_guest_path_string(c.proc.current_working_directory, guest_path);
+                const auto normalized_guest = posix_file_system::resolve_guest_path_string(c.proc.current_working_directory, guest_path);
                 if (procfs::is_procfs_path(normalized_guest) || procfs::is_procfs_symlink(normalized_guest))
                 {
                     linux_error = LINUX_ENOENT;
@@ -501,7 +501,7 @@ namespace sogen
 
             if (!fd_entry->guest_path.empty())
             {
-                const auto normalized_guest = linux_file_system::resolve_guest_path_string(fd_entry->guest_path, guest_path);
+                const auto normalized_guest = posix_file_system::resolve_guest_path_string(fd_entry->guest_path, guest_path);
                 if (procfs::is_procfs_path(normalized_guest) || procfs::is_procfs_symlink(normalized_guest))
                 {
                     linux_error = LINUX_ENOENT;
@@ -1653,7 +1653,7 @@ namespace sogen
         const auto buf_addr = get_linux_syscall_argument(c.emu, 0);
         const auto size = static_cast<size_t>(get_linux_syscall_argument(c.emu, 1));
 
-        const auto cwd = linux_file_system::normalize_guest_path_string(c.proc.current_working_directory);
+        const auto cwd = posix_file_system::normalize_guest_path_string(c.proc.current_working_directory);
         const auto cwd_len = cwd.size() + 1;
 
         if (size < cwd_len)
@@ -1740,7 +1740,7 @@ namespace sogen
             return;
         }
 
-        c.proc.current_working_directory = linux_file_system::normalize_guest_path_string(fd_entry->guest_path);
+        c.proc.current_working_directory = posix_file_system::normalize_guest_path_string(fd_entry->guest_path);
         write_linux_syscall_result(c, 0);
     }
 

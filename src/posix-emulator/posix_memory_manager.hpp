@@ -1,12 +1,11 @@
 #pragma once
 
-#include "std_include.hpp"
-
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <map>
-#include <atomic>
-#include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include <memory_permission.hpp>
@@ -15,27 +14,19 @@
 #include <address_utils.hpp>
 #include <serialization.hpp>
 
-// --------------------------------------------------------------------------
-// Linux uses a simpler memory model than Windows: no separate reserve/commit,
-// no guard pages. This is a simplified memory_manager using plain
-// memory_permission rather than nt_memory_permission.
-// --------------------------------------------------------------------------
-
 namespace sogen
 {
-
-    constexpr uint64_t LINUX_PAGE_SIZE = 0x1000ULL;
-    constexpr uint64_t LINUX_ALLOCATION_GRANULARITY = 0x1000ULL;
-    constexpr uint64_t LINUX_MIN_MMAP_ADDRESS = 0x0000000000010000ULL;
-    // Allow higher virtual addresses used by modern Linux loaders/runtime setups
-    // (e.g. 5-level paging style layouts) instead of limiting to classic 47-bit.
-    constexpr uint64_t LINUX_MAX_MMAP_ADDRESS = 0x0000ffffffffffffULL;
-    constexpr uint64_t LINUX_MAX_MMAP_END_EXCL = LINUX_MAX_MMAP_ADDRESS + 1ULL;
-    constexpr uint64_t LINUX_DEFAULT_MMAP_BASE = 0x7f0000000000ULL;
+    struct memory_layout
+    {
+        uint64_t allocation_granularity{};
+        uint64_t min_mmap_address{};
+        uint64_t max_mmap_end{};
+        uint64_t default_mmap_base{};
+    };
 
     enum class memory_region_kind : uint8_t;
 
-    struct linux_memory_region_info : basic_memory_region<memory_permission>
+    struct posix_memory_region_info : basic_memory_region<memory_permission>
     {
         uint64_t allocation_base{};
         size_t allocation_length{};
@@ -44,21 +35,23 @@ namespace sogen
         memory_permission initial_permissions{};
         memory_region_kind kind{};
 
-        linux_memory_region_info();
+        posix_memory_region_info();
     };
 
-    struct linux_memory_stats
+    struct posix_memory_stats
     {
         uint64_t region_count{};
         uint64_t mapped_bytes{};
         uint64_t executable_bytes{};
     };
 
-    class linux_memory_manager : public memory_interface
+    class posix_memory_manager : public memory_interface
     {
       public:
-        linux_memory_manager(memory_interface& memory)
-            : memory_(&memory)
+        posix_memory_manager(memory_interface& memory, const memory_layout& layout)
+            : memory_(&memory),
+              layout_(layout),
+              mmap_base_(layout.default_mmap_base)
         {
         }
 
@@ -100,9 +93,9 @@ namespace sogen
             return this->mapped_regions_;
         }
 
-        std::vector<linux_memory_region_info> get_mapped_region_infos() const;
-        std::optional<linux_memory_region_info> get_region_info(uint64_t address) const;
-        linux_memory_stats compute_memory_stats() const;
+        std::vector<posix_memory_region_info> get_mapped_region_infos() const;
+        std::optional<posix_memory_region_info> get_region_info(uint64_t address) const;
+        posix_memory_stats compute_memory_stats() const;
 
         using memory_allocate_callback = std::function<void(uint64_t address, size_t size, memory_permission permissions, bool committed)>;
         using memory_protect_callback = std::function<void(uint64_t address, size_t size, memory_permission permissions)>;
@@ -128,8 +121,9 @@ namespace sogen
 
       private:
         memory_interface* memory_{};
+        memory_layout layout_{};
         mapped_region_map mapped_regions_{};
-        uint64_t mmap_base_{LINUX_DEFAULT_MMAP_BASE};
+        uint64_t mmap_base_{};
         uint64_t next_memory_callback_id_{1};
         std::vector<std::pair<uint64_t, memory_allocate_callback>> memory_allocate_callbacks_{};
         std::vector<std::pair<uint64_t, memory_protect_callback>> memory_protect_callbacks_{};

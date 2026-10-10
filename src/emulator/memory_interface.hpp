@@ -22,13 +22,13 @@ namespace sogen
     };
 
     class memory_manager;
-    class linux_memory_manager;
+    class posix_memory_manager;
 
     class memory_interface
     {
       public:
         friend memory_manager;
-        friend linux_memory_manager;
+        friend posix_memory_manager;
 
         virtual ~memory_interface() = default;
 

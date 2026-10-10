@@ -157,36 +157,36 @@ namespace sogen::py
             .def_prop_ro("active_thread", &sogen_linux_process_context::active_thread)
             .def_prop_ro("threads", &sogen_linux_process_context::threads);
 
-        nb::class_<linux_memory_region_info>(m, "MemoryRegionInfo")
-            .def_prop_ro("start", [](const linux_memory_region_info& self) { return self.start; })
-            .def_prop_ro("length", [](const linux_memory_region_info& self) { return self.length; })
-            .def_prop_ro("permissions", [](const linux_memory_region_info& self) { return self.permissions; })
-            .def_prop_ro("allocation_base", [](const linux_memory_region_info& self) { return self.allocation_base; })
-            .def_prop_ro("allocation_length", [](const linux_memory_region_info& self) { return self.allocation_length; })
-            .def_prop_ro("is_reserved", [](const linux_memory_region_info& self) { return self.is_reserved; })
-            .def_prop_ro("is_committed", [](const linux_memory_region_info& self) { return self.is_committed; })
-            .def_prop_ro("initial_permissions", [](const linux_memory_region_info& self) { return self.initial_permissions; })
-            .def_prop_ro("kind", [](const linux_memory_region_info& self) { return self.kind; });
+        nb::class_<posix_memory_region_info>(m, "MemoryRegionInfo")
+            .def_prop_ro("start", [](const posix_memory_region_info& self) { return self.start; })
+            .def_prop_ro("length", [](const posix_memory_region_info& self) { return self.length; })
+            .def_prop_ro("permissions", [](const posix_memory_region_info& self) { return self.permissions; })
+            .def_prop_ro("allocation_base", [](const posix_memory_region_info& self) { return self.allocation_base; })
+            .def_prop_ro("allocation_length", [](const posix_memory_region_info& self) { return self.allocation_length; })
+            .def_prop_ro("is_reserved", [](const posix_memory_region_info& self) { return self.is_reserved; })
+            .def_prop_ro("is_committed", [](const posix_memory_region_info& self) { return self.is_committed; })
+            .def_prop_ro("initial_permissions", [](const posix_memory_region_info& self) { return self.initial_permissions; })
+            .def_prop_ro("kind", [](const posix_memory_region_info& self) { return self.kind; });
 
-        nb::class_<linux_memory_manager>(m, "MemoryManager")
+        nb::class_<posix_memory_manager>(m, "MemoryManager")
             .def("read_memory",
-                 [](const linux_memory_manager& self, uint64_t address, size_t size) { return read_memory_bytes(self, address, size); })
+                 [](const posix_memory_manager& self, uint64_t address, size_t size) { return read_memory_bytes(self, address, size); })
             .def("write_memory",
-                 [](linux_memory_manager& self, uint64_t address, const nb::bytes& buffer) { write_memory_bytes(self, address, buffer); })
+                 [](posix_memory_manager& self, uint64_t address, const nb::bytes& buffer) { write_memory_bytes(self, address, buffer); })
             .def("allocate_memory",
-                 static_cast<uint64_t (linux_memory_manager::*)(size_t, memory_permission, uint64_t)>(
-                     &linux_memory_manager::allocate_memory),
+                 static_cast<uint64_t (posix_memory_manager::*)(size_t, memory_permission, uint64_t)>(
+                     &posix_memory_manager::allocate_memory),
                  nb::arg("size"), nb::arg("permissions"), nb::arg("start") = 0)
             .def("allocate_memory_at",
-                 static_cast<bool (linux_memory_manager::*)(uint64_t, size_t, memory_permission)>(&linux_memory_manager::allocate_memory),
+                 static_cast<bool (posix_memory_manager::*)(uint64_t, size_t, memory_permission)>(&posix_memory_manager::allocate_memory),
                  nb::arg("address"), nb::arg("size"), nb::arg("permissions"))
-            .def("protect_memory", &linux_memory_manager::protect_memory)
-            .def("release_memory", &linux_memory_manager::release_memory)
-            .def("find_free_allocation_base", &linux_memory_manager::find_free_allocation_base, nb::arg("size"), nb::arg("start") = 0)
-            .def("get_region_info", &linux_memory_manager::get_region_info)
-            .def("get_mapped_regions", &linux_memory_manager::get_mapped_region_infos)
+            .def("protect_memory", &posix_memory_manager::protect_memory)
+            .def("release_memory", &posix_memory_manager::release_memory)
+            .def("find_free_allocation_base", &posix_memory_manager::find_free_allocation_base, nb::arg("size"), nb::arg("start") = 0)
+            .def("get_region_info", &posix_memory_manager::get_region_info)
+            .def("get_mapped_regions", &posix_memory_manager::get_mapped_region_infos)
             .def("compute_memory_stats",
-                 [](const linux_memory_manager& self) {
+                 [](const posix_memory_manager& self) {
                      const auto stats = self.compute_memory_stats();
                      nb::dict result{};
                      set_dict_item(result, "region_count", stats.region_count);
@@ -194,8 +194,8 @@ namespace sogen::py
                      set_dict_item(result, "executable_bytes", stats.executable_bytes);
                      return result;
                  })
-            .def_prop_ro("mapped_regions", &linux_memory_manager::get_mapped_region_infos)
-            .def_prop_rw("mmap_base", &linux_memory_manager::get_mmap_base, &linux_memory_manager::set_mmap_base);
+            .def_prop_ro("mapped_regions", &posix_memory_manager::get_mapped_region_infos)
+            .def_prop_rw("mmap_base", &posix_memory_manager::get_mmap_base, &posix_memory_manager::set_mmap_base);
 
         nb::class_<linux_debug_facade>(m, "Debug")
             .def("set_breakpoint", &linux_debug_facade::set_breakpoint)

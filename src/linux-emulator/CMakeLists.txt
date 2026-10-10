@@ -14,7 +14,7 @@ if(NOT SOGEN_ENABLE_CLANG_TIDY)
   target_precompile_headers(linux-emulator PRIVATE std_include.hpp)
 endif()
 
-target_link_libraries(linux-emulator PUBLIC emulator)
+target_link_libraries(linux-emulator PUBLIC emulator posix-emulator)
 
 target_include_directories(linux-emulator INTERFACE "${CMAKE_CURRENT_LIST_DIR}")
 

@@ -492,7 +492,7 @@ namespace sogen::py
 
         sogen_linux_process_context process();
 
-        linux_memory_manager& memory() const;
+        posix_memory_manager& memory() const;
         nb::bytes read_memory(uint64_t address, size_t size) const;
         void write_memory(uint64_t address, const nb::bytes& buffer) const;
         uint64_t read_register(x86_register reg) const;
