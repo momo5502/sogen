@@ -27,4 +27,23 @@ namespace sogen
 
         write_macos_syscall_success(c, 0);
     }
+
+    void sys_shared_region_check_np(const macos_syscall_context& c)
+    {
+        if (!c.emu_ref.shared_region)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+            return;
+        }
+
+        const auto start_address_out = get_macos_syscall_argument(c.emu, 0);
+        const auto base_address = c.emu_ref.shared_region->base_address();
+        if (!c.emu.try_write_memory(start_address_out, &base_address, sizeof(base_address)))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        write_macos_syscall_success(c, 0);
+    }
 }

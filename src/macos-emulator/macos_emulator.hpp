@@ -6,6 +6,7 @@
 #include <posix_file_system.hpp>
 #include <posix_memory_manager.hpp>
 
+#include "macos_shared_region.hpp"
 #include "macos_syscall_dispatcher.hpp"
 
 #include <cstddef>
@@ -29,6 +30,7 @@ namespace sogen
         posix_memory_manager memory;
         posix_file_system file_system;
         macos_syscall_dispatcher dispatcher{};
+        std::optional<macos_shared_region> shared_region{};
         std::optional<int> exit_status{};
 
         std::function<void(std::string_view data)> on_stdout{};
@@ -58,6 +60,7 @@ namespace sogen
 
       private:
         uint32_t next_mach_port_name_{0x303};
+        bool should_stop_{false};
 
         void setup_hooks();
     };

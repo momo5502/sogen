@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <backend_selection.hpp>
+#include <dyld_cache_format.hpp>
 #include <macho.hpp>
 #include <macos_emulator.hpp>
 #include <macos_memory_protection.hpp>
@@ -76,6 +77,84 @@ namespace sogen::macos_test
             0xB8, 0x01, 0x00, 0x00, 0x02,                               // mov eax, 0x2000001 (exit)
             0x0F, 0x05,                                                 // syscall
         };
+
+        const std::vector<uint8_t> CHECK_REBASED_CACHE_POINTERS_CODE{
+            0x48, 0xA1, 0x00, 0x10, 0x00, 0x00, 0xF8, 0x7F, 0x00, 0x00, // mov rax, [0x7FF800001000]
+            0x48, 0xB9, 0x34, 0x12, 0x00, 0x00, 0xF8, 0x7F, 0x00, 0x00, // mov rcx, 0x7FF800001234
+            0x31, 0xFF,                                                 // xor edi, edi
+            0x48, 0x39, 0xC8,                                           // cmp rax, rcx
+            0x40, 0x0F, 0x94, 0xC7,                                     // sete dil
+            0x48, 0xA1, 0x08, 0x10, 0x00, 0x00, 0xF8, 0x7F, 0x00, 0x00, // mov rax, [0x7FF800001008]
+            0x48, 0xB9, 0x10, 0x00, 0x00, 0x00, 0xF8, 0x7F, 0x00, 0x00, // mov rcx, 0x7FF800000010
+            0x48, 0x39, 0xC8,                                           // cmp rax, rcx
+            0x0F, 0x94, 0xC0,                                           // sete al
+            0x0F, 0xB6, 0xC0,                                           // movzx eax, al
+            0x8D, 0x3C, 0x47,                                           // lea edi, [rdi + 2 * rax]
+            0xB8, 0x01, 0x00, 0x00, 0x02,                               // mov eax, 0x2000001 (exit)
+            0x0F, 0x05,                                                 // syscall
+        };
+
+        constexpr uint64_t SHARED_REGION_BASE = 0x7FF800000000;
+
+        template <typename T>
+        void write_at(std::vector<std::byte>& data, const size_t offset, const T& value)
+        {
+            std::memcpy(data.data() + offset, &value, sizeof(value));
+        }
+
+        // A one-file cache: a text mapping holding the header and a data mapping whose two pointers form a
+        // slide info v2 chain (delta in bits 40-55, scaled by 4).
+        std::vector<std::byte> make_synthetic_shared_cache()
+        {
+            constexpr uint64_t page_size = 0x1000;
+            constexpr uint64_t delta_mask = 0x00FFFF0000000000;
+            constexpr size_t header_size = 0x228;
+            constexpr size_t slide_info_offset = 2 * page_size;
+
+            std::vector<std::byte> data(slide_info_offset + sizeof(dyld_cache::slide_info_v2) + sizeof(uint16_t));
+            std::memcpy(data.data(), "dyld_v1  x86_64", 16);
+            write_at<uint64_t>(data, 0xE0, SHARED_REGION_BASE);
+            write_at<uint64_t>(data, 0xE8, 0x10000);
+            write_at<uint32_t>(data, 0x138, header_size);
+            write_at<uint32_t>(data, 0x13C, 2);
+            write_at<uint64_t>(data, 0x1F0, 0x8000);
+            write_at<uint64_t>(data, 0x1F8, 0x4000);
+
+            write_at(data, header_size,
+                     dyld_cache::mapping_and_slide_info{.address = SHARED_REGION_BASE,
+                                                        .size = page_size,
+                                                        .file_offset = 0,
+                                                        .slide_info_file_offset = 0,
+                                                        .slide_info_file_size = 0,
+                                                        .flags = 0,
+                                                        .max_prot = MACOS_PROT_READ | MACOS_PROT_EXECUTE,
+                                                        .init_prot = MACOS_PROT_READ | MACOS_PROT_EXECUTE});
+            write_at(data, header_size + sizeof(dyld_cache::mapping_and_slide_info),
+                     dyld_cache::mapping_and_slide_info{.address = SHARED_REGION_BASE + page_size,
+                                                        .size = page_size,
+                                                        .file_offset = page_size,
+                                                        .slide_info_file_offset = slide_info_offset,
+                                                        .slide_info_file_size = sizeof(dyld_cache::slide_info_v2) + sizeof(uint16_t),
+                                                        .flags = 0,
+                                                        .max_prot = MACOS_PROT_READ | MACOS_PROT_WRITE,
+                                                        .init_prot = MACOS_PROT_READ | MACOS_PROT_WRITE});
+
+            write_at<uint64_t>(data, page_size, (uint64_t{2} << 40) | 0x1234);
+            write_at<uint64_t>(data, page_size + 8, 0x10);
+
+            write_at(data, slide_info_offset,
+                     dyld_cache::slide_info_v2{.version = 2,
+                                               .page_size = page_size,
+                                               .page_starts_offset = sizeof(dyld_cache::slide_info_v2),
+                                               .page_starts_count = 1,
+                                               .page_extras_offset = sizeof(dyld_cache::slide_info_v2) + sizeof(uint16_t),
+                                               .page_extras_count = 0,
+                                               .delta_mask = delta_mask,
+                                               .value_add = SHARED_REGION_BASE});
+            write_at<uint16_t>(data, slide_info_offset + sizeof(dyld_cache::slide_info_v2), 0);
+
+            return data;
+        }
 
         struct test_image
         {
@@ -339,6 +418,19 @@ namespace sogen::macos_test
 
         EXPECT_TRUE(result.stdout_data.empty());
         EXPECT_EQ(result.exit_status, 2);
+    }
+
+    TEST(MacosEmulationTest, RebasesSharedCachePagesOnFirstAccess)
+    {
+        const temporary_root root{};
+        root.add_file("/usr/lib/dyld",
+                      make_test_image(CHECK_REBASED_CACHE_POINTERS_CODE, {.base = 0, .file_type = macho::MH_DYLINKER}).serialize());
+        root.add_file("/System/Library/dyld/dyld_shared_cache_x86_64", make_synthetic_shared_cache());
+
+        const auto executable = make_test_image(HELLO_CODE, {.extra_commands = {make_dylinker_command("/usr/lib/dyld")}});
+        const auto result = run_image(executable, {"test"}, root.path());
+
+        EXPECT_EQ(result.exit_status, 3);
     }
 
     TEST(MacosLoaderTest, RejectsDynamicExecutableWithoutDyld)

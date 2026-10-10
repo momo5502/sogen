@@ -5,6 +5,8 @@ namespace sogen
 {
     namespace
     {
+        // Not 1: dyld and libSystem take launchd-only paths for pid 1.
+        constexpr uint64_t PROCESS_ID = 100;
         constexpr uint64_t MAIN_THREAD_ID = 0x1000;
     }
 
@@ -17,5 +19,10 @@ namespace sogen
     void sys_thread_selfid(const macos_syscall_context& c)
     {
         write_macos_syscall_success(c, MAIN_THREAD_ID);
+    }
+
+    void sys_getpid(const macos_syscall_context& c)
+    {
+        write_macos_syscall_success(c, PROCESS_ID);
     }
 }

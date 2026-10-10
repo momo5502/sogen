@@ -26,6 +26,8 @@ namespace sogen
     {
         constexpr uint64_t KERN_SUCCESS = 0;
         constexpr uint64_t KERN_INVALID_ADDRESS = 1;
+        constexpr uint64_t KERN_NO_SPACE = 3;
+        constexpr uint64_t KERN_INVALID_ARGUMENT = 4;
     }
 
     struct macos_syscall_context

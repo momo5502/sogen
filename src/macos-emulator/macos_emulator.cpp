@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <span>
+#include <string_view>
 #include <stdexcept>
 
 namespace sogen
@@ -32,6 +33,8 @@ namespace sogen
         constexpr uint64_t STACK_RLIMIT = 0x7FC000;
 
         constexpr uint64_t INITIAL_RFLAGS = 0x202;
+
+        constexpr std::string_view SHARED_CACHE_PATH = "/System/Library/dyld/dyld_shared_cache_x86_64";
 
         std::vector<std::byte> read_binary_file(const std::filesystem::path& path)
         {
@@ -353,6 +356,12 @@ namespace sogen
 
             entry_point = dyld_image.unixthread_entry_point;
             main_header = executable_image.header_address;
+
+            const auto shared_cache_file = this->file_system.translate(SHARED_CACHE_PATH);
+            if (std::filesystem::exists(shared_cache_file))
+            {
+                this->shared_region.emplace(this->memory, shared_cache_file, std::string{SHARED_CACHE_PATH});
+            }
         }
 
         if (!entry_point)
@@ -373,11 +382,22 @@ namespace sogen
 
     void macos_emulator::start()
     {
-        this->emu().start();
+        this->should_stop_ = false;
+
+        while (!this->should_stop_)
+        {
+            this->emu().start();
+
+            if (!this->emu().has_violation())
+            {
+                break;
+            }
+        }
     }
 
     void macos_emulator::stop()
     {
+        this->should_stop_ = true;
         this->emu().stop();
     }
 
@@ -396,6 +416,11 @@ namespace sogen
 
         this->emu().hook_memory_violation(
             [this](cpu_interface&, const uint64_t address, const size_t size, memory_operation, const memory_violation_type type) {
+                if (type == memory_violation_type::unmapped && this->shared_region && this->shared_region->handle_fault(address))
+                {
+                    return memory_violation_continuation::restart;
+                }
+
                 this->log.error("%s memory access at 0x%" PRIx64 " (size %zu)\n",
                                 type == memory_violation_type::unmapped ? "Unmapped" : "Protected", address, size);
                 this->stop();
