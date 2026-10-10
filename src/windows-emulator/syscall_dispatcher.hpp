@@ -321,7 +321,7 @@ namespace sogen
                            const exported_symbols& win32u_exports, std::span<const std::byte> win32u_data);
 
         instruction_hook_continuation dispatch(windows_emulator& win_emu, vcpu_context& vcpu);
-        static void dispatch_callback(windows_emulator& win_emu, std::string& syscall_name);
+        static void dispatch_callback(windows_emulator& win_emu, std::string& syscall_name, const syscall_context& c);
         dispatch_result dispatch_completion(windows_emulator& win_emu, vcpu_context& vcpu, callback_id callback_id,
                                             completion_state* completion_state, const user_callback_result& callback_result);
 

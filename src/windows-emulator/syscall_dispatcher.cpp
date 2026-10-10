@@ -114,7 +114,7 @@ namespace sogen
 
             entry->second.handler(c);
 
-            dispatch_callback(win_emu, entry->second.name);
+            dispatch_callback(win_emu, entry->second.name, c);
 
             return c.instruction_pointer_finalized ? instruction_hook_continuation::finalized_instruction_pointer
                                                    : instruction_hook_continuation::skip_instruction;
@@ -139,7 +139,7 @@ namespace sogen
         return instruction_hook_continuation::skip_instruction;
     }
 
-    void syscall_dispatcher::dispatch_callback(windows_emulator& win_emu, std::string& syscall_name)
+    void syscall_dispatcher::dispatch_callback(windows_emulator& win_emu, std::string& syscall_name, const syscall_context& c)
     {
         // active_cpu(), not emu(): this runs under the syscall's scoped_dispatch, and with more than one
         // vCPU the instrumentation-callback redirect must rewrite the acting vCPU's RIP/r10, not vCPU 0's.
@@ -148,12 +148,10 @@ namespace sogen
 
         if (context.instrumentation_callback != 0 && syscall_name != "NtContinue")
         {
-            auto rip_old = emu.reg<uint64_t>(x86_register::rip);
+            const auto rip_old = emu.reg<uint64_t>(x86_register::rip);
 
-            // The increase in RIP caused by executing the syscall here has not yet occurred.
-            // If RIP is set directly, it will lead to an incorrect address, so the length of
-            // the syscall instruction needs to be subtracted.
-            emu.reg<uint64_t>(x86_register::rip, context.instrumentation_callback - 2);
+            emu.reg<uint64_t>(x86_register::rip, context.instrumentation_callback);
+            c.mark_instruction_pointer_finalized();
 
             emu.reg<uint64_t>(x86_register::r10, rip_old);
         }
