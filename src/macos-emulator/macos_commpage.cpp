@@ -28,6 +28,7 @@ namespace sogen
         constexpr size_t NT_SCALE_OFFSET = 0x058;
         constexpr size_t NT_SHIFT_OFFSET = 0x05C;
         constexpr size_t NT_GENERATION_OFFSET = 0x068;
+        constexpr size_t DYLD_FLAGS_OFFSET = 0x100;
 
         constexpr std::string_view SIGNATURE = "commpage 64-bit";
         constexpr uint16_t VERSION = 14;
@@ -48,6 +49,11 @@ namespace sogen
         constexpr uint32_t NT_SCALE = 0x80000000;
         constexpr uint32_t NT_SHIFT = 1;
         constexpr uint32_t NT_GENERATION = 1;
+
+        // forceCustomerCache (0x1) as on a real Mac, plus skipIgnition (0x8): libignition only locates the shared
+        // cache through cryptexes, which is pointless once the emulator has mapped it, and it aborts when the
+        // cryptex environment it expects is missing.
+        constexpr uint64_t DYLD_FLAGS = 0x9;
 
         template <typename T>
         void write_field(std::array<std::byte, COMMPAGE_SIZE>& page, const size_t offset, const T& value)
@@ -75,6 +81,7 @@ namespace sogen
             write_field(page, NT_SCALE_OFFSET, NT_SCALE);
             write_field(page, NT_SHIFT_OFFSET, NT_SHIFT);
             write_field(page, NT_GENERATION_OFFSET, NT_GENERATION);
+            write_field(page, DYLD_FLAGS_OFFSET, DYLD_FLAGS);
 
             return page;
         }
