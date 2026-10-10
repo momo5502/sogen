@@ -3,6 +3,7 @@
 #include <backend_selection.hpp>
 #include <macho.hpp>
 #include <macos_emulator.hpp>
+#include <macos_memory_protection.hpp>
 #include <utils/io.hpp>
 
 #include <cstring>
@@ -52,8 +53,8 @@ namespace sogen::macos_test
             0x0F, 0x05,                   // syscall
         };
 
-        const std::vector<uint8_t> MACH_TRAP_CODE{
-            0xB8, 0x1A, 0x00, 0x00, 0x01, // mov eax, 0x100001A (mach_reply_port)
+        const std::vector<uint8_t> INVALID_MACH_TRAP_CODE{
+            0xB8, 0x00, 0x00, 0x00, 0x01, // mov eax, 0x1000000 (Mach trap 0, kern_invalid)
             0x0F, 0x05,                   // syscall
         };
 
@@ -144,8 +145,8 @@ namespace sogen::macos_test
             image.text.vmaddr = options.base;
             image.text.vmsize = IMAGE_SIZE;
             image.text.filesize = code_offset + image.code.size();
-            image.text.maxprot = macho::VM_PROT_READ | macho::VM_PROT_EXECUTE;
-            image.text.initprot = macho::VM_PROT_READ | macho::VM_PROT_EXECUTE;
+            image.text.maxprot = MACOS_PROT_READ | MACOS_PROT_EXECUTE;
+            image.text.initprot = MACOS_PROT_READ | MACOS_PROT_EXECUTE;
 
             image.thread.cmd = macho::LC_UNIXTHREAD;
             image.thread.cmdsize = sizeof(image.thread) + sizeof(image.thread_state);
@@ -314,9 +315,9 @@ namespace sogen::macos_test
         EXPECT_EQ(result.exit_status, 3);
     }
 
-    TEST(MacosEmulationTest, StopsOnMachTrap)
+    TEST(MacosEmulationTest, StopsOnUnknownMachTrap)
     {
-        const auto result = run_image(make_test_image(MACH_TRAP_CODE));
+        const auto result = run_image(make_test_image(INVALID_MACH_TRAP_CODE));
 
         EXPECT_FALSE(result.exit_status.has_value());
     }

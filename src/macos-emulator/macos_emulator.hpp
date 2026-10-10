@@ -54,7 +54,11 @@ namespace sogen
         void start();
         void stop();
 
+        uint32_t allocate_mach_port_name();
+
       private:
+        uint32_t next_mach_port_name_{0x303};
+
         void setup_hooks();
     };
 }

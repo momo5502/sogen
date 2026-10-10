@@ -22,10 +22,6 @@ namespace sogen::macho
     constexpr uint32_t LC_LOAD_DYLINKER = 0xE;
     constexpr uint32_t LC_MAIN = 0x80000028;
 
-    constexpr uint32_t VM_PROT_READ = 0x1;
-    constexpr uint32_t VM_PROT_WRITE = 0x2;
-    constexpr uint32_t VM_PROT_EXECUTE = 0x4;
-
     constexpr uint32_t X86_THREAD_STATE64 = 4;
 
     struct mach_header_64

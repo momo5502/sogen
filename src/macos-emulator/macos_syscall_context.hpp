@@ -19,6 +19,15 @@ namespace sogen
         constexpr uint64_t MACOS_EINVAL = 22;
     }
 
+    // Fixed Mach port names until Mach IPC is modelled; 0x203 is what a real macOS process gets for its task port.
+    constexpr uint32_t MACOS_TASK_PORT_NAME = 0x203;
+
+    namespace macos_kern_return
+    {
+        constexpr uint64_t KERN_SUCCESS = 0;
+        constexpr uint64_t KERN_INVALID_ADDRESS = 1;
+    }
+
     struct macos_syscall_context
     {
         macos_emulator& emu_ref;
@@ -42,6 +51,12 @@ namespace sogen
 
         c.emu.reg(x86_register::rax, value);
         c.emu.reg(x86_register::rflags, failed ? (rflags | carry_flag) : (rflags & ~carry_flag));
+    }
+
+    // Mach traps and machine-dependent calls return their value in rax and leave the carry flag alone.
+    inline void write_trap_result(const macos_syscall_context& c, const uint64_t value)
+    {
+        c.emu.reg(x86_register::rax, value);
     }
 
     inline void write_macos_syscall_success(const macos_syscall_context& c, const uint64_t value)

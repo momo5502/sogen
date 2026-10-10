@@ -1,6 +1,7 @@
 #include "macos_emulator.hpp"
 #include "macho.hpp"
 #include "macos_commpage.hpp"
+#include "macos_memory_protection.hpp"
 
 #include <address_utils.hpp>
 #include <utils/io.hpp>
@@ -110,28 +111,6 @@ namespace sogen
             }
 
             throw std::runtime_error("Universal binary has no x86-64 slice");
-        }
-
-        memory_permission to_memory_permission(const uint32_t protection)
-        {
-            auto permission = memory_permission::none;
-
-            if (protection & macho::VM_PROT_READ)
-            {
-                permission |= memory_permission::read;
-            }
-
-            if (protection & macho::VM_PROT_WRITE)
-            {
-                permission |= memory_permission::write;
-            }
-
-            if (protection & macho::VM_PROT_EXECUTE)
-            {
-                permission |= memory_permission::exec;
-            }
-
-            return permission;
         }
 
         struct mapped_image
@@ -400,6 +379,14 @@ namespace sogen
     void macos_emulator::stop()
     {
         this->emu().stop();
+    }
+
+    // Mach port names encode a table index in the upper bits and a generation in the low byte.
+    uint32_t macos_emulator::allocate_mach_port_name()
+    {
+        const auto name = this->next_mach_port_name_;
+        this->next_mach_port_name_ += 0x100;
+        return name;
     }
 
     void macos_emulator::setup_hooks()

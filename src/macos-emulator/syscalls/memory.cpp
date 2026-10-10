@@ -1,39 +1,12 @@
 #include "macos_syscalls.hpp"
 #include "../macos_emulator.hpp"
 
+#include "../macos_memory_protection.hpp"
+
 #include <address_utils.hpp>
 
 namespace sogen
 {
-    namespace
-    {
-        constexpr uint64_t PROT_READ = 0x1;
-        constexpr uint64_t PROT_WRITE = 0x2;
-        constexpr uint64_t PROT_EXEC = 0x4;
-
-        memory_permission to_memory_permission(const uint64_t protection)
-        {
-            auto permission = memory_permission::none;
-
-            if (protection & PROT_READ)
-            {
-                permission |= memory_permission::read;
-            }
-
-            if (protection & PROT_WRITE)
-            {
-                permission |= memory_permission::write;
-            }
-
-            if (protection & PROT_EXEC)
-            {
-                permission |= memory_permission::exec;
-            }
-
-            return permission;
-        }
-    }
-
     void sys_mprotect(const macos_syscall_context& c)
     {
         const auto address = get_macos_syscall_argument(c.emu, 0);
