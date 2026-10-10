@@ -62,6 +62,7 @@ namespace sogen
         };
 
         using mapped_region_map = std::map<uint64_t, mapped_region>;
+        using reserved_range_map = std::map<uint64_t, uint64_t>;
 
         // memory_interface
         void read_memory(uint64_t address, void* data, size_t size) const override;
@@ -87,6 +88,9 @@ namespace sogen
 
         // Check if a region overlaps any existing mapping
         bool overlaps_mapped_region(uint64_t address, size_t size) const;
+
+        // Keep a range out of automatic placement without mapping it; explicit allocations inside it still succeed
+        bool reserve_memory(uint64_t address, size_t size);
 
         const mapped_region_map& get_mapped_regions() const
         {
@@ -123,11 +127,14 @@ namespace sogen
         memory_interface* memory_{};
         memory_layout layout_{};
         mapped_region_map mapped_regions_{};
+        reserved_range_map reserved_ranges_{};
         uint64_t mmap_base_{};
         uint64_t next_memory_callback_id_{1};
         std::vector<std::pair<uint64_t, memory_allocate_callback>> memory_allocate_callbacks_{};
         std::vector<std::pair<uint64_t, memory_protect_callback>> memory_protect_callbacks_{};
         std::vector<std::pair<uint64_t, memory_release_callback>> memory_release_callbacks_{};
+
+        std::optional<uint64_t> find_overlap_end(uint64_t address, size_t size) const;
 
         void notify_memory_allocate(uint64_t address, size_t size, memory_permission permissions, bool committed);
         void notify_memory_protect(uint64_t address, size_t size, memory_permission permissions);

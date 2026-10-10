@@ -54,6 +54,7 @@ namespace sogen
     {
         buffer.write(this->mmap_base_);
         buffer.write_map(this->mapped_regions_);
+        buffer.write_map(this->reserved_ranges_);
 
         std::vector<uint8_t> data{};
 
@@ -69,6 +70,7 @@ namespace sogen
     {
         const auto new_mmap_base = buffer.read<uint64_t>();
         auto new_regions = buffer.read_map<mapped_region_map>();
+        auto new_reserved_ranges = buffer.read_map<reserved_range_map>();
 
         std::vector<std::vector<uint8_t>> region_data{};
         region_data.reserve(new_regions.size());
@@ -82,6 +84,7 @@ namespace sogen
         this->unmap_all_memory();
         this->mmap_base_ = new_mmap_base;
         this->mapped_regions_.clear();
+        this->reserved_ranges_ = std::move(new_reserved_ranges);
 
         auto data_it = region_data.begin();
         for (const auto& [base, region] : new_regions)
@@ -420,29 +423,13 @@ namespace sogen
 
         while (start_address + size <= this->layout_.max_mmap_end)
         {
-            bool conflict = false;
-
-            for (const auto& region : this->mapped_regions_)
-            {
-                if (region.first + region.second.length <= start_address)
-                {
-                    continue;
-                }
-
-                if (region.first >= start_address + size)
-                {
-                    break;
-                }
-
-                conflict = true;
-                start_address = align_up(region.first + region.second.length, this->layout_.allocation_granularity);
-                break;
-            }
-
-            if (!conflict)
+            const auto overlap_end = this->find_overlap_end(start_address, size);
+            if (!overlap_end)
             {
                 return start_address;
             }
+
+            start_address = align_up(*overlap_end, this->layout_.allocation_granularity);
         }
 
         return 0;
@@ -450,15 +437,58 @@ namespace sogen
 
     bool posix_memory_manager::overlaps_mapped_region(const uint64_t address, const size_t size) const
     {
-        for (const auto& region : this->mapped_regions_)
+        auto it = this->mapped_regions_.upper_bound(address);
+        if (it != this->mapped_regions_.begin())
         {
-            if (regions_with_length_intersect(address, size, region.first, region.second.length))
+            const auto previous = std::prev(it);
+            if (regions_with_length_intersect(address, size, previous->first, previous->second.length))
             {
                 return true;
             }
         }
 
-        return false;
+        return it != this->mapped_regions_.end() && regions_with_length_intersect(address, size, it->first, it->second.length);
+    }
+
+    bool posix_memory_manager::reserve_memory(const uint64_t address, const size_t size)
+    {
+        if (size == 0 || address > std::numeric_limits<uint64_t>::max() - size || this->find_overlap_end(address, size))
+        {
+            return false;
+        }
+
+        this->reserved_ranges_[address] = size;
+        return true;
+    }
+
+    std::optional<uint64_t> posix_memory_manager::find_overlap_end(const uint64_t address, const size_t size) const
+    {
+        std::optional<uint64_t> overlap_end{};
+        const auto consider = [&](const uint64_t base, const uint64_t length) {
+            if (regions_with_length_intersect(address, size, base, length) && (!overlap_end || base + length < *overlap_end))
+            {
+                overlap_end = base + length;
+            }
+        };
+
+        const auto consider_neighbours = [&](const auto& ranges, const auto& length_of) {
+            auto it = ranges.upper_bound(address);
+            if (it != ranges.begin())
+            {
+                const auto previous = std::prev(it);
+                consider(previous->first, length_of(previous->second));
+            }
+
+            for (; it != ranges.end() && it->first < address + size; ++it)
+            {
+                consider(it->first, length_of(it->second));
+            }
+        };
+
+        consider_neighbours(this->mapped_regions_, [](const mapped_region& region) { return static_cast<uint64_t>(region.length); });
+        consider_neighbours(this->reserved_ranges_, [](const uint64_t length) { return length; });
+
+        return overlap_end;
     }
 
     void posix_memory_manager::read_memory(const uint64_t address, void* data, const size_t size) const
