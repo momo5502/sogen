@@ -4,6 +4,8 @@
 #include <hook_interface.hpp>
 
 #include <array>
+#include <optional>
+#include <string>
 #include <cstddef>
 #include <cstdint>
 
@@ -13,14 +15,18 @@ namespace sogen
 
     namespace macos_errno
     {
+        constexpr uint64_t MACOS_ENOENT = 2;
         constexpr uint64_t MACOS_EBADF = 9;
         constexpr uint64_t MACOS_ENOMEM = 12;
         constexpr uint64_t MACOS_EFAULT = 14;
         constexpr uint64_t MACOS_EINVAL = 22;
+        constexpr uint64_t MACOS_EROFS = 30;
+        constexpr uint64_t MACOS_ENAMETOOLONG = 63;
     }
 
     // Fixed Mach port names until Mach IPC is modelled; 0x203 is what a real macOS process gets for its task port.
     constexpr uint32_t MACOS_TASK_PORT_NAME = 0x203;
+    constexpr uint32_t MACOS_HOST_PORT_NAME = 0x107;
 
     namespace macos_kern_return
     {
@@ -43,6 +49,28 @@ namespace sogen
         constexpr std::array argument_registers{x86_register::rdi, x86_register::rsi, x86_register::rdx,
                                                 x86_register::r10, x86_register::r8,  x86_register::r9};
         return emu.reg(argument_registers.at(index));
+    }
+
+    inline std::optional<std::string> read_guest_string(x86_64_emulator& emu, const uint64_t address, const size_t max_length = 1024)
+    {
+        std::string value{};
+        for (size_t i = 0; i < max_length; ++i)
+        {
+            char character{};
+            if (!emu.try_read_memory(address + i, &character, sizeof(character)))
+            {
+                return std::nullopt;
+            }
+
+            if (character == '\0')
+            {
+                return value;
+            }
+
+            value.push_back(character);
+        }
+
+        return std::nullopt;
     }
 
     // BSD syscalls report failure through the carry flag, with the positive errno in rax.

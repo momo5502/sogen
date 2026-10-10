@@ -77,6 +77,20 @@ namespace sogen
         write_trap_result(c, macos_kern_return::KERN_SUCCESS);
     }
 
+    void mach_port_construct_trap(const macos_syscall_context& c)
+    {
+        const auto name_pointer = get_macos_syscall_argument(c.emu, 3);
+        const auto name = c.emu_ref.allocate_mach_port_name();
+
+        if (!c.emu.try_write_memory(name_pointer, &name, sizeof(name)))
+        {
+            write_trap_result(c, macos_kern_return::KERN_INVALID_ARGUMENT);
+            return;
+        }
+
+        write_trap_result(c, macos_kern_return::KERN_SUCCESS);
+    }
+
     void mach_reply_port(const macos_syscall_context& c)
     {
         write_trap_result(c, c.emu_ref.allocate_mach_port_name());
@@ -85,5 +99,27 @@ namespace sogen
     void mach_task_self_trap(const macos_syscall_context& c)
     {
         write_trap_result(c, MACOS_TASK_PORT_NAME);
+    }
+
+    void mach_host_self_trap(const macos_syscall_context& c)
+    {
+        write_trap_result(c, MACOS_HOST_PORT_NAME);
+    }
+
+    // mach_msg2 packs the header into register pairs: low 32 bits / high 32 bits of rdx (bits, send size),
+    // r10 (remote port, local port) and r8 (voucher, message id). Messages are not modelled yet, so the
+    // header is logged and emulation stops.
+    void mach_msg2_trap(const macos_syscall_context& c)
+    {
+        const auto options = get_macos_syscall_argument(c.emu, 1);
+        const auto bits_and_size = get_macos_syscall_argument(c.emu, 2);
+        const auto ports = get_macos_syscall_argument(c.emu, 3);
+        const auto voucher_and_id = get_macos_syscall_argument(c.emu, 4);
+
+        c.emu_ref.log.error("Unhandled mach_msg2: options 0x%llx, bits 0x%x, send size %u, remote 0x%x, local 0x%x, id %u\n",
+                            static_cast<unsigned long long>(options), static_cast<uint32_t>(bits_and_size),
+                            static_cast<uint32_t>(bits_and_size >> 32), static_cast<uint32_t>(ports), static_cast<uint32_t>(ports >> 32),
+                            static_cast<uint32_t>(voucher_and_id >> 32));
+        c.emu_ref.stop();
     }
 }

@@ -20,13 +20,19 @@ namespace sogen
         constexpr uint64_t MACH_VM_DEALLOCATE_TRAP = 12;
         constexpr uint64_t MACH_VM_PROTECT_TRAP = 14;
         constexpr uint64_t MACH_VM_MAP_TRAP = 15;
+        constexpr uint64_t MACH_PORT_CONSTRUCT_TRAP = 24;
         constexpr uint64_t MACH_REPLY_PORT = 26;
         constexpr uint64_t MACH_TASK_SELF_TRAP = 28;
+        constexpr uint64_t MACH_MSG2_TRAP = 47;
+        constexpr uint64_t MACH_HOST_SELF_TRAP = 29;
 
         constexpr uint64_t SYS_EXIT = 1;
         constexpr uint64_t SYS_WRITE = 4;
+        constexpr uint64_t SYS_OPEN = 5;
+        constexpr uint64_t SYS_CLOSE = 6;
         constexpr uint64_t SYS_GETPID = 20;
         constexpr uint64_t SYS_MPROTECT = 74;
+        constexpr uint64_t SYS_FCNTL = 92;
         constexpr uint64_t SYS_SHARED_REGION_CHECK_NP = 294;
         constexpr uint64_t SYS_THREAD_SELFID = 372;
     }
@@ -35,8 +41,11 @@ namespace sogen
     {
         this->register_unix_handler(SYS_EXIT, sys_exit, "exit");
         this->register_unix_handler(SYS_WRITE, sys_write, "write");
+        this->register_unix_handler(SYS_OPEN, sys_open, "open");
+        this->register_unix_handler(SYS_CLOSE, sys_close, "close");
         this->register_unix_handler(SYS_GETPID, sys_getpid, "getpid");
         this->register_unix_handler(SYS_MPROTECT, sys_mprotect, "mprotect");
+        this->register_unix_handler(SYS_FCNTL, sys_fcntl, "fcntl");
         this->register_unix_handler(SYS_SHARED_REGION_CHECK_NP, sys_shared_region_check_np, "shared_region_check_np");
         this->register_unix_handler(SYS_THREAD_SELFID, sys_thread_selfid, "thread_selfid");
 
@@ -46,8 +55,11 @@ namespace sogen
         this->register_mach_handler(MACH_VM_DEALLOCATE_TRAP, mach_vm_deallocate_trap, "_kernelrpc_mach_vm_deallocate_trap");
         this->register_mach_handler(MACH_VM_PROTECT_TRAP, mach_vm_protect_trap, "_kernelrpc_mach_vm_protect_trap");
         this->register_mach_handler(MACH_VM_MAP_TRAP, mach_vm_map_trap, "_kernelrpc_mach_vm_map_trap");
+        this->register_mach_handler(MACH_PORT_CONSTRUCT_TRAP, mach_port_construct_trap, "_kernelrpc_mach_port_construct_trap");
         this->register_mach_handler(MACH_REPLY_PORT, mach_reply_port, "mach_reply_port");
         this->register_mach_handler(MACH_TASK_SELF_TRAP, mach_task_self_trap, "task_self_trap");
+        this->register_mach_handler(MACH_HOST_SELF_TRAP, mach_host_self_trap, "host_self_trap");
+        this->register_mach_handler(MACH_MSG2_TRAP, mach_msg2_trap, "mach_msg2_trap");
     }
 
     void macos_syscall_dispatcher::register_unix_handler(const uint64_t number, const macos_syscall_handler handler,

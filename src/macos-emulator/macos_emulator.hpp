@@ -6,6 +6,7 @@
 #include <posix_file_system.hpp>
 #include <posix_memory_manager.hpp>
 
+#include "macos_fd_table.hpp"
 #include "macos_shared_region.hpp"
 #include "macos_syscall_dispatcher.hpp"
 
@@ -29,6 +30,7 @@ namespace sogen
         logger log{};
         posix_memory_manager memory;
         posix_file_system file_system;
+        macos_fd_table fds{};
         macos_syscall_dispatcher dispatcher{};
         std::optional<macos_shared_region> shared_region{};
         std::optional<int> exit_status{};
