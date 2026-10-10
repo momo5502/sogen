@@ -136,4 +136,34 @@ namespace sogen
             return;
         }
     }
+
+    void sys_fsgetpath(const macos_syscall_context& c)
+    {
+        const auto buffer = get_macos_syscall_argument(c.emu, 0);
+        const auto buffer_size = get_macos_syscall_argument(c.emu, 1);
+        const auto fsid_pointer = get_macos_syscall_argument(c.emu, 2);
+
+        macos_file_id id{.object_id = get_macos_syscall_argument(c.emu, 3)};
+        if (!c.emu.try_read_memory(fsid_pointer, id.fsid.data(), sizeof(id.fsid)))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        const auto* path = c.emu_ref.file_ids.find(id);
+        if (path == nullptr)
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+            return;
+        }
+
+        const auto length = path->size() + 1;
+        if (length > buffer_size || !c.emu.try_write_memory(buffer, path->c_str(), length))
+        {
+            write_macos_syscall_error(c, macos_errno::MACOS_ENOSPC);
+            return;
+        }
+
+        write_macos_syscall_success(c, length);
+    }
 }

@@ -111,4 +111,23 @@ namespace sogen
                             static_cast<unsigned long long>(reason_code), reason ? reason->c_str() : "?");
         c.emu_ref.stop();
     }
+
+    void sys_proc_info(const macos_syscall_context& c)
+    {
+        constexpr uint64_t proc_info_call_set_dyld_images = 15;
+
+        const auto call = get_macos_syscall_argument(c.emu, 0);
+
+        // dyld registers where its image list lives so debuggers can find it; nothing in the emulator reads it yet.
+        if (call == proc_info_call_set_dyld_images)
+        {
+            write_macos_syscall_success(c, 0);
+            return;
+        }
+
+        c.emu_ref.log.error("Unhandled proc_info(call %llu, pid %lld, flavor %llu)\n", static_cast<unsigned long long>(call),
+                            static_cast<long long>(get_macos_syscall_argument(c.emu, 1)),
+                            static_cast<unsigned long long>(get_macos_syscall_argument(c.emu, 2)));
+        c.emu_ref.stop();
+    }
 }

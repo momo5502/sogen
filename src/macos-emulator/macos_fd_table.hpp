@@ -5,6 +5,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 
 namespace sogen
@@ -15,6 +16,14 @@ namespace sogen
         std::filesystem::path host_path{};
         std::ifstream stream{};
         uint64_t offset{};
+
+        size_t read_at(const uint64_t position, std::span<std::byte> buffer)
+        {
+            this->stream.clear();
+            this->stream.seekg(static_cast<std::streamoff>(position));
+            this->stream.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
+            return static_cast<size_t>(this->stream.gcount());
+        }
     };
 
     // Descriptors 0-2 are the host's standard streams and are not tracked here.

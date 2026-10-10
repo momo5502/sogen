@@ -17,6 +17,7 @@ namespace sogen
         constexpr uint64_t PAGE_SIZE = 0x1000;
         constexpr std::string_view CACHE_MAGIC = "dyld_v1  x86_64";
         constexpr std::string_view DYNAMIC_REGION_MAGIC = "dyld_data    v3";
+        constexpr size_t DYNAMIC_REGION_FILE_ID_OFFSET = 0x10;
         constexpr size_t DYNAMIC_REGION_CACHE_PATH_OFFSET_FIELD = 0x24;
         constexpr uint32_t DYNAMIC_REGION_HEADER_SIZE = 0x50;
 
@@ -71,7 +72,7 @@ namespace sogen
     }
 
     macos_shared_region::macos_shared_region(posix_memory_manager& memory, const std::filesystem::path& main_cache_file,
-                                             const std::string& guest_cache_path)
+                                             const std::string& guest_cache_path, const macos_file_id& cache_file_id)
         : memory_(&memory)
     {
         this->load_cache_file(main_cache_file);
@@ -109,7 +110,7 @@ namespace sogen
             throw std::runtime_error("Failed to reserve the shared region");
         }
 
-        this->map_dynamic_region(this->base_address_ + dynamic_data_offset, dynamic_data_size, guest_cache_path);
+        this->map_dynamic_region(this->base_address_ + dynamic_data_offset, dynamic_data_size, guest_cache_path, cache_file_id);
     }
 
     void macos_shared_region::load_cache_file(const std::filesystem::path& path)
@@ -157,9 +158,10 @@ namespace sogen
         }
     }
 
-    // A zero FileIdTuple keeps dyld from restarting into its copy inside the cache; it stays on the dyld from disk,
-    // as it does under Rosetta.
-    void macos_shared_region::map_dynamic_region(const uint64_t address, const uint64_t size, const std::string& guest_cache_path)
+    // dyld requires a non-zero FileIdTuple, resolves the cache path from it with fsgetpath, and, outside Rosetta,
+    // restarts into its own copy inside the cache.
+    void macos_shared_region::map_dynamic_region(const uint64_t address, const uint64_t size, const std::string& guest_cache_path,
+                                                 const macos_file_id& cache_file_id)
     {
         std::vector<std::byte> region(static_cast<size_t>(size));
         if (DYNAMIC_REGION_HEADER_SIZE + guest_cache_path.size() + 1 > region.size())
@@ -168,6 +170,7 @@ namespace sogen
         }
 
         std::memcpy(region.data(), DYNAMIC_REGION_MAGIC.data(), DYNAMIC_REGION_MAGIC.size());
+        std::memcpy(region.data() + DYNAMIC_REGION_FILE_ID_OFFSET, &cache_file_id, sizeof(cache_file_id));
         std::memcpy(region.data() + DYNAMIC_REGION_CACHE_PATH_OFFSET_FIELD, &DYNAMIC_REGION_HEADER_SIZE,
                     sizeof(DYNAMIC_REGION_HEADER_SIZE));
         std::memcpy(region.data() + DYNAMIC_REGION_HEADER_SIZE, guest_cache_path.c_str(), guest_cache_path.size() + 1);

@@ -111,6 +111,11 @@ namespace sogen
                                                                         : macos_kern_return::KERN_INVALID_NAME);
     }
 
+    void mach_port_mod_refs_trap(const macos_syscall_context& c)
+    {
+        mach_port_deallocate_trap(c);
+    }
+
     void mach_port_construct_trap(const macos_syscall_context& c)
     {
         const auto name_pointer = get_macos_syscall_argument(c.emu, 3);

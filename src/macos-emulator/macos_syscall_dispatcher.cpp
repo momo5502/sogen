@@ -22,6 +22,7 @@ namespace sogen
         constexpr uint64_t MACH_VM_PROTECT_TRAP = 14;
         constexpr uint64_t MACH_VM_MAP_TRAP = 15;
         constexpr uint64_t MACH_PORT_DEALLOCATE_TRAP = 18;
+        constexpr uint64_t MACH_PORT_MOD_REFS_TRAP = 19;
         constexpr uint64_t MACH_PORT_CONSTRUCT_TRAP = 24;
         constexpr uint64_t MACH_REPLY_PORT = 26;
         constexpr uint64_t MACH_TASK_SELF_TRAP = 28;
@@ -34,11 +35,18 @@ namespace sogen
         constexpr uint64_t SYS_CLOSE = 6;
         constexpr uint64_t SYS_GETPID = 20;
         constexpr uint64_t SYS_SIGPROCMASK = 48;
+        constexpr uint64_t SYS_MUNMAP = 73;
         constexpr uint64_t SYS_MPROTECT = 74;
         constexpr uint64_t SYS_FCNTL = 92;
+        constexpr uint64_t SYS_MMAP = 197;
         constexpr uint64_t SYS_SYSCTL = 202;
         constexpr uint64_t SYS_SHARED_REGION_CHECK_NP = 294;
+        constexpr uint64_t SYS_PROC_INFO = 336;
+        constexpr uint64_t SYS_STAT64 = 338;
+        constexpr uint64_t SYS_FSTAT64 = 339;
+        constexpr uint64_t SYS_LSTAT64 = 340;
         constexpr uint64_t SYS_THREAD_SELFID = 372;
+        constexpr uint64_t SYS_FSGETPATH = 427;
         constexpr uint64_t SYS_MAC_SYSCALL = 381;
         constexpr uint64_t SYS_CSRCTL = 483;
         constexpr uint64_t SYS_ABORT_WITH_PAYLOAD = 521;
@@ -52,12 +60,19 @@ namespace sogen
         this->register_unix_handler(SYS_CLOSE, sys_close, "close");
         this->register_unix_handler(SYS_GETPID, sys_getpid, "getpid");
         this->register_unix_handler(SYS_SIGPROCMASK, sys_sigprocmask, "sigprocmask");
+        this->register_unix_handler(SYS_MUNMAP, sys_munmap, "munmap");
         this->register_unix_handler(SYS_MPROTECT, sys_mprotect, "mprotect");
         this->register_unix_handler(SYS_FCNTL, sys_fcntl, "fcntl");
+        this->register_unix_handler(SYS_MMAP, sys_mmap, "mmap");
         this->register_unix_handler(SYS_SYSCTL, sys_sysctl, "sysctl");
         this->register_unix_handler(SYS_SHARED_REGION_CHECK_NP, sys_shared_region_check_np, "shared_region_check_np");
+        this->register_unix_handler(SYS_PROC_INFO, sys_proc_info, "proc_info");
+        this->register_unix_handler(SYS_STAT64, sys_stat64, "stat64");
+        this->register_unix_handler(SYS_FSTAT64, sys_fstat64, "fstat64");
+        this->register_unix_handler(SYS_LSTAT64, sys_lstat64, "lstat64");
         this->register_unix_handler(SYS_THREAD_SELFID, sys_thread_selfid, "thread_selfid");
         this->register_unix_handler(SYS_MAC_SYSCALL, sys_mac_syscall, "__mac_syscall");
+        this->register_unix_handler(SYS_FSGETPATH, sys_fsgetpath, "fsgetpath");
         this->register_unix_handler(SYS_CSRCTL, sys_csrctl, "csrctl");
         this->register_unix_handler(SYS_ABORT_WITH_PAYLOAD, sys_abort_with_payload, "abort_with_payload");
 
@@ -69,6 +84,7 @@ namespace sogen
         this->register_mach_handler(MACH_VM_PROTECT_TRAP, mach_vm_protect_trap, "_kernelrpc_mach_vm_protect_trap");
         this->register_mach_handler(MACH_VM_MAP_TRAP, mach_vm_map_trap, "_kernelrpc_mach_vm_map_trap");
         this->register_mach_handler(MACH_PORT_DEALLOCATE_TRAP, mach_port_deallocate_trap, "_kernelrpc_mach_port_deallocate_trap");
+        this->register_mach_handler(MACH_PORT_MOD_REFS_TRAP, mach_port_mod_refs_trap, "_kernelrpc_mach_port_mod_refs_trap");
         this->register_mach_handler(MACH_PORT_CONSTRUCT_TRAP, mach_port_construct_trap, "_kernelrpc_mach_port_construct_trap");
         this->register_mach_handler(MACH_REPLY_PORT, mach_reply_port, "mach_reply_port");
         this->register_mach_handler(MACH_TASK_SELF_TRAP, mach_task_self_trap, "task_self_trap");

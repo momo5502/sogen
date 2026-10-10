@@ -360,7 +360,8 @@ namespace sogen
             const auto shared_cache_file = this->file_system.translate(SHARED_CACHE_PATH);
             if (std::filesystem::exists(shared_cache_file))
             {
-                this->shared_region.emplace(this->memory, shared_cache_file, std::string{SHARED_CACHE_PATH});
+                this->shared_region.emplace(this->memory, shared_cache_file, std::string{SHARED_CACHE_PATH},
+                                            this->file_ids.id_for(std::string{SHARED_CACHE_PATH}));
             }
         }
 

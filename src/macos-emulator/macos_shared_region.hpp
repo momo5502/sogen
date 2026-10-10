@@ -1,5 +1,7 @@
 #pragma once
 
+#include "macos_file_ids.hpp"
+
 #include <posix_memory_manager.hpp>
 
 #include <cstddef>
@@ -18,8 +20,8 @@ namespace sogen
     class macos_shared_region
     {
       public:
-        macos_shared_region(posix_memory_manager& memory, const std::filesystem::path& main_cache_file,
-                            const std::string& guest_cache_path);
+        macos_shared_region(posix_memory_manager& memory, const std::filesystem::path& main_cache_file, const std::string& guest_cache_path,
+                            const macos_file_id& cache_file_id);
 
         uint64_t base_address() const
         {
@@ -54,7 +56,7 @@ namespace sogen
         std::vector<mapping> mappings_{};
 
         void load_cache_file(const std::filesystem::path& path);
-        void map_dynamic_region(uint64_t address, uint64_t size, const std::string& guest_cache_path);
+        void map_dynamic_region(uint64_t address, uint64_t size, const std::string& guest_cache_path, const macos_file_id& cache_file_id);
         static void rebase_page(const slide_info& slide, size_t page_index, std::span<std::byte> page);
     };
 }
