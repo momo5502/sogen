@@ -62,6 +62,62 @@ namespace sogen
             return value;
         }
 
+        // Universal (fat) headers are stored big-endian regardless of the slices they describe.
+        uint64_t read_big_endian(const std::span<const std::byte> image, const uint64_t offset, const size_t size)
+        {
+            if (offset > image.size() || image.size() - offset < size)
+            {
+                throw std::runtime_error("Truncated universal binary header");
+            }
+
+            uint64_t value = 0;
+            for (const auto byte : image.subspan(offset, size))
+            {
+                value = (value << 8) | static_cast<uint8_t>(byte);
+            }
+
+            return value;
+        }
+
+        std::span<const std::byte> select_x86_64_slice(const std::span<const std::byte> image)
+        {
+            if (image.size() < sizeof(uint32_t))
+            {
+                return image;
+            }
+
+            const auto magic = read_big_endian(image, 0, sizeof(uint32_t));
+            if (magic != macho::FAT_MAGIC && magic != macho::FAT_MAGIC_64)
+            {
+                return image;
+            }
+
+            const auto is_fat_64 = magic == macho::FAT_MAGIC_64;
+            const auto arch_size = is_fat_64 ? macho::FAT_ARCH_64_SIZE : macho::FAT_ARCH_SIZE;
+            const auto field_size = is_fat_64 ? sizeof(uint64_t) : sizeof(uint32_t);
+            const auto arch_count = read_big_endian(image, sizeof(uint32_t), sizeof(uint32_t));
+
+            for (uint64_t i = 0; i < arch_count; ++i)
+            {
+                const auto arch_offset = macho::FAT_HEADER_SIZE + (i * arch_size);
+                if (read_big_endian(image, arch_offset, sizeof(uint32_t)) != macho::CPU_TYPE_X86_64)
+                {
+                    continue;
+                }
+
+                const auto slice_offset = read_big_endian(image, arch_offset + (2 * sizeof(uint32_t)), field_size);
+                const auto slice_size = read_big_endian(image, arch_offset + (2 * sizeof(uint32_t)) + field_size, field_size);
+                if (slice_offset > image.size() || image.size() - slice_offset < slice_size)
+                {
+                    throw std::runtime_error("Universal binary slice exceeds file bounds");
+                }
+
+                return image.subspan(slice_offset, slice_size);
+            }
+
+            throw std::runtime_error("Universal binary has no x86-64 slice");
+        }
+
         memory_permission to_memory_permission(const uint32_t protection)
         {
             auto permission = memory_permission::none;
@@ -227,7 +283,7 @@ namespace sogen
         : emu_(std::move(emu)),
           memory(*this->emu_, MACOS_MEMORY_LAYOUT)
     {
-        const auto entry_point = map_executable(this->memory, image);
+        const auto entry_point = map_executable(this->memory, select_x86_64_slice(image));
         const auto stack_pointer = setup_stack(this->memory, argv, envp, {"executable_path=" + executable_path});
 
         this->emu().reg(x86_register::rip, entry_point);

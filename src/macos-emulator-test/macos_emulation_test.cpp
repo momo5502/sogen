@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -123,9 +124,49 @@ namespace sogen::macos_test
             std::optional<int> exit_status{};
         };
 
-        run_result run_image(const test_image& image, const std::vector<std::string>& argv = {"test"})
+        struct universal_slice
         {
-            const auto data = image.serialize();
+            uint32_t cputype{};
+            std::vector<std::byte> data{};
+        };
+
+        std::vector<std::byte> make_universal_binary(const std::vector<universal_slice>& slices)
+        {
+            constexpr uint64_t slice_alignment = 0x1000;
+
+            std::vector<std::byte> data{};
+            const auto append_big_endian_u32 = [&data](const uint64_t value) {
+                for (int shift = 24; shift >= 0; shift -= 8)
+                {
+                    data.push_back(static_cast<std::byte>((value >> shift) & 0xFF));
+                }
+            };
+
+            append_big_endian_u32(macho::FAT_MAGIC);
+            append_big_endian_u32(slices.size());
+
+            uint64_t slice_offset = slice_alignment;
+            for (const auto& slice : slices)
+            {
+                append_big_endian_u32(slice.cputype);
+                append_big_endian_u32(0);
+                append_big_endian_u32(slice_offset);
+                append_big_endian_u32(slice.data.size());
+                append_big_endian_u32(12);
+                slice_offset += (slice.data.size() + slice_alignment - 1) & ~(slice_alignment - 1);
+            }
+
+            for (const auto& slice : slices)
+            {
+                data.resize((data.size() + slice_alignment - 1) & ~(slice_alignment - 1));
+                data.insert(data.end(), slice.data.begin(), slice.data.end());
+            }
+
+            return data;
+        }
+
+        run_result run_binary(const std::span<const std::byte> data, const std::vector<std::string>& argv = {"test"})
+        {
             macos_emulator emu{create_x86_64_emulator_from_environment(), data, "/test", argv, {}};
             emu.log.disable_output(true);
 
@@ -139,12 +180,21 @@ namespace sogen::macos_test
             return result;
         }
 
-        void expect_rejected(const test_image& image)
+        run_result run_image(const test_image& image, const std::vector<std::string>& argv = {"test"})
         {
-            const auto data = image.serialize();
+            return run_binary(image.serialize(), argv);
+        }
+
+        void expect_rejected(const std::span<const std::byte> data)
+        {
             auto backend = create_x86_64_emulator_from_environment();
 
             EXPECT_THROW(macos_emulator(std::move(backend), data, "/test", {"test"}, {}), std::runtime_error);
+        }
+
+        void expect_rejected(const test_image& image)
+        {
+            expect_rejected(image.serialize());
         }
     }
 
@@ -209,5 +259,23 @@ namespace sogen::macos_test
         image.thread.flavor = 1;
 
         expect_rejected(image);
+    }
+
+    TEST(MacosEmulationTest, RunsX86_64SliceOfUniversalBinary)
+    {
+        const auto data = make_universal_binary({
+            {.cputype = CPU_TYPE_ARM64, .data = std::vector<std::byte>(0x40)},
+            {.cputype = macho::CPU_TYPE_X86_64, .data = make_test_image(HELLO_CODE).serialize()},
+        });
+
+        const auto result = run_binary(data);
+
+        EXPECT_EQ(result.stdout_data, "hello\n");
+        EXPECT_EQ(result.exit_status, 7);
+    }
+
+    TEST(MacosLoaderTest, RejectsUniversalBinaryWithoutX86_64Slice)
+    {
+        expect_rejected(make_universal_binary({{.cputype = CPU_TYPE_ARM64, .data = std::vector<std::byte>(0x40)}}));
     }
 }

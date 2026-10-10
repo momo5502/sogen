@@ -3,9 +3,15 @@
 #include <array>
 #include <cstdint>
 
-// Layouts from XNU's <mach-o/loader.h> and <mach/i386/thread_status.h>.
+// Layouts from XNU's <mach-o/fat.h>, <mach-o/loader.h> and <mach/i386/thread_status.h>.
 namespace sogen::macho
 {
+    constexpr uint32_t FAT_MAGIC = 0xCAFEBABE;
+    constexpr uint32_t FAT_MAGIC_64 = 0xCAFEBABF;
+    constexpr uint64_t FAT_HEADER_SIZE = 8;
+    constexpr uint64_t FAT_ARCH_SIZE = 20;
+    constexpr uint64_t FAT_ARCH_64_SIZE = 32;
+
     constexpr uint32_t MH_MAGIC_64 = 0xFEEDFACF;
     constexpr uint32_t MH_EXECUTE = 0x2;
     constexpr uint32_t CPU_TYPE_X86_64 = 0x01000007;
