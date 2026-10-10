@@ -15,6 +15,7 @@ namespace sogen
 
     namespace macos_errno
     {
+        constexpr uint64_t MACOS_EPERM = 1;
         constexpr uint64_t MACOS_ENOENT = 2;
         constexpr uint64_t MACOS_EBADF = 9;
         constexpr uint64_t MACOS_ENOMEM = 12;
@@ -24,16 +25,13 @@ namespace sogen
         constexpr uint64_t MACOS_ENAMETOOLONG = 63;
     }
 
-    // Fixed Mach port names until Mach IPC is modelled; 0x203 is what a real macOS process gets for its task port.
-    constexpr uint32_t MACOS_TASK_PORT_NAME = 0x203;
-    constexpr uint32_t MACOS_HOST_PORT_NAME = 0x107;
-
     namespace macos_kern_return
     {
         constexpr uint64_t KERN_SUCCESS = 0;
         constexpr uint64_t KERN_INVALID_ADDRESS = 1;
         constexpr uint64_t KERN_NO_SPACE = 3;
         constexpr uint64_t KERN_INVALID_ARGUMENT = 4;
+        constexpr uint64_t KERN_INVALID_NAME = 15;
     }
 
     struct macos_syscall_context

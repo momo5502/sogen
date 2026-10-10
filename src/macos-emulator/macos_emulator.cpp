@@ -401,14 +401,6 @@ namespace sogen
         this->emu().stop();
     }
 
-    // Mach port names encode a table index in the upper bits and a generation in the low byte.
-    uint32_t macos_emulator::allocate_mach_port_name()
-    {
-        const auto name = this->next_mach_port_name_;
-        this->next_mach_port_name_ += 0x100;
-        return name;
-    }
-
     void macos_emulator::setup_hooks()
     {
         this->emu().hook_instruction(x86_hookable_instructions::syscall,

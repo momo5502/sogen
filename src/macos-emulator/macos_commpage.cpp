@@ -35,9 +35,7 @@ namespace sogen
         // MMX, SSE, SSE2, SSE3, Cache64, FastThreadLocalStorage, SSSE3, 64Bit, UP and one CPU. SSE4.x, AES and
         // AVX stay hidden, matching the CPU feature set Sogen exposes to Windows guests (see kusd_mmio.cpp).
         constexpr uint64_t CPU_CAPABILITIES = 0x183AF;
-        constexpr uint8_t CPU_COUNT = 1;
         constexpr uint16_t CACHE_LINESIZE = 64;
-        constexpr uint64_t MEMORY_SIZE = 0x200000000;
 
         // CPUFAMILY_INTEL_PENRYN. libsystem_platform picks its memmove/memset variants from the CPU family alone
         // and falls back to the AVX (Haswell) variants for an unknown family.
@@ -66,11 +64,11 @@ namespace sogen
             write_field(page, VERSION_OFFSET, VERSION);
             write_field(page, CPU_CAPABILITIES_OFFSET, static_cast<uint32_t>(CPU_CAPABILITIES));
             write_field(page, CACHE_LINESIZE_OFFSET, CACHE_LINESIZE);
-            write_field(page, ACTIVE_CPUS_OFFSET, CPU_COUNT);
-            write_field(page, PHYSICAL_CPUS_OFFSET, CPU_COUNT);
-            write_field(page, LOGICAL_CPUS_OFFSET, CPU_COUNT);
-            write_field(page, CPU_CLUSTERS_OFFSET, CPU_COUNT);
-            write_field(page, MEMORY_SIZE_OFFSET, MEMORY_SIZE);
+            write_field(page, ACTIVE_CPUS_OFFSET, MACOS_CPU_COUNT);
+            write_field(page, PHYSICAL_CPUS_OFFSET, MACOS_CPU_COUNT);
+            write_field(page, LOGICAL_CPUS_OFFSET, MACOS_CPU_COUNT);
+            write_field(page, CPU_CLUSTERS_OFFSET, MACOS_CPU_COUNT);
+            write_field(page, MEMORY_SIZE_OFFSET, MACOS_MEMORY_SIZE);
             write_field(page, CPUFAMILY_OFFSET, CPUFAMILY);
             write_field(page, KERNEL_PAGE_SHIFT_OFFSET, PAGE_SHIFT);
             write_field(page, USER_PAGE_SHIFT_64_OFFSET, PAGE_SHIFT);

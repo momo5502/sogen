@@ -7,6 +7,7 @@
 #include <posix_memory_manager.hpp>
 
 #include "macos_fd_table.hpp"
+#include "macos_mach_ports.hpp"
 #include "macos_shared_region.hpp"
 #include "macos_syscall_dispatcher.hpp"
 
@@ -31,9 +32,11 @@ namespace sogen
         posix_memory_manager memory;
         posix_file_system file_system;
         macos_fd_table fds{};
+        macos_mach_ports mach_ports{};
         macos_syscall_dispatcher dispatcher{};
         std::optional<macos_shared_region> shared_region{};
         std::optional<int> exit_status{};
+        uint32_t signal_mask{};
 
         std::function<void(std::string_view data)> on_stdout{};
         std::function<void(std::string_view data)> on_stderr{};
@@ -58,10 +61,7 @@ namespace sogen
         void start();
         void stop();
 
-        uint32_t allocate_mach_port_name();
-
       private:
-        uint32_t next_mach_port_name_{0x303};
         bool should_stop_{false};
 
         void setup_hooks();
