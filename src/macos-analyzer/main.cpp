@@ -17,7 +17,9 @@ namespace sogen
         argv = app.ensure_utf8(argv);
         app.prefix_command();
 
+        std::filesystem::path emulation_root{};
         bool verbose{false};
+        app.add_option("--root", emulation_root, "Set emulation root directory");
         app.add_flag("--verbose", verbose, "Enable verbose logging");
 
         CLI11_PARSE(app, argc, argv);
@@ -40,7 +42,7 @@ namespace sogen
         try
         {
             const std::vector<std::string> guest_argv(application.begin(), application.end());
-            macos_emulator macos_emu(create_x86_64_emulator_from_environment(), executable, guest_argv, {});
+            macos_emulator macos_emu(create_x86_64_emulator_from_environment(), emulation_root, executable, guest_argv, {});
 
             if (!verbose)
             {

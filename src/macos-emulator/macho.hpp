@@ -14,6 +14,7 @@ namespace sogen::macho
 
     constexpr uint32_t MH_MAGIC_64 = 0xFEEDFACF;
     constexpr uint32_t MH_EXECUTE = 0x2;
+    constexpr uint32_t MH_DYLINKER = 0x7;
     constexpr uint32_t CPU_TYPE_X86_64 = 0x01000007;
 
     constexpr uint32_t LC_SEGMENT_64 = 0x19;
@@ -83,6 +84,13 @@ namespace sogen::macho
         uint64_t cs;
         uint64_t fs;
         uint64_t gs;
+    };
+
+    struct dylinker_command
+    {
+        uint32_t cmd;
+        uint32_t cmdsize;
+        uint32_t name_offset;
     };
 
     struct thread_command

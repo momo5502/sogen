@@ -3,7 +3,9 @@
 
 #include <address_utils.hpp>
 #include <utils/io.hpp>
+#include <utils/string.hpp>
 
+#include <algorithm>
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
@@ -22,8 +24,12 @@ namespace sogen
             .default_mmap_base = 0x100000000,
         };
 
-        constexpr uint64_t STACK_TOP = 0x7FF7C0000000;
-        constexpr uint64_t STACK_SIZE = 0x800000;
+        // VM_USRSTACK64 and MAXSSIZ: XNU reserves 64 MiB for the main thread stack below this top.
+        constexpr uint64_t STACK_TOP = 0x7FF7BFF00000;
+        constexpr uint64_t STACK_SIZE = 0x4000000;
+        constexpr uint64_t STACK_RLIMIT = 0x7FC000;
+
+        constexpr uint64_t INITIAL_RFLAGS = 0x202;
 
         // XNU encodes the trap class in the top byte of rax: 1 = Mach, 2 = Unix (BSD), 3 = machine-dependent.
         constexpr uint64_t SYSCALL_CLASS_SHIFT = 24;
@@ -38,7 +44,7 @@ namespace sogen
 
         constexpr uint64_t RFLAGS_CF = 1;
 
-        std::vector<std::byte> read_executable(const std::filesystem::path& path)
+        std::vector<std::byte> read_binary_file(const std::filesystem::path& path)
         {
             std::vector<std::byte> image{};
             if (!utils::io::read_file(path, &image))
@@ -140,7 +146,16 @@ namespace sogen
             return permission;
         }
 
-        void map_segment(posix_memory_manager& memory, const std::span<const std::byte> image, const macho::segment_command_64& segment)
+        struct mapped_image
+        {
+            uint64_t header_address{};
+            uint64_t end_address{};
+            std::optional<uint64_t> unixthread_entry_point{};
+            std::optional<std::string> dylinker_path{};
+        };
+
+        void map_segment(posix_memory_manager& memory, const std::span<const std::byte> image, const macho::segment_command_64& segment,
+                         const uint64_t slide)
         {
             if (segment.vmsize == 0 || segment.initprot == 0)
             {
@@ -152,14 +167,15 @@ namespace sogen
                 throw std::runtime_error("Mach-O segment exceeds file bounds");
             }
 
+            const auto address = segment.vmaddr + slide;
             const auto size = page_align_up(segment.vmsize);
-            if (!memory.allocate_memory(segment.vmaddr, size, memory_permission::read_write))
+            if (!memory.allocate_memory(address, size, memory_permission::read_write))
             {
                 throw std::runtime_error("Mach-O segment overlaps existing memory");
             }
 
-            memory.write_memory(segment.vmaddr, image.data() + segment.fileoff, segment.filesize);
-            memory.protect_memory(segment.vmaddr, size, to_memory_permission(segment.initprot));
+            memory.write_memory(address, image.data() + segment.fileoff, segment.filesize);
+            memory.protect_memory(address, size, to_memory_permission(segment.initprot));
         }
 
         uint64_t read_unixthread_entry_point(const std::span<const std::byte> image, const uint64_t offset)
@@ -173,7 +189,30 @@ namespace sogen
             return read_struct<macho::x86_thread_state64>(image, offset + sizeof(thread)).rip;
         }
 
-        uint64_t map_executable(posix_memory_manager& memory, const std::span<const std::byte> image)
+        std::string read_dylinker_path(const std::span<const std::byte> command_data)
+        {
+            const auto command = read_struct<macho::dylinker_command>(command_data, 0);
+            if (command.name_offset >= command_data.size())
+            {
+                throw std::runtime_error("Invalid LC_LOAD_DYLINKER name offset");
+            }
+
+            std::string path{};
+            for (const auto byte : command_data.subspan(command.name_offset))
+            {
+                if (byte == std::byte{0})
+                {
+                    break;
+                }
+
+                path.push_back(static_cast<char>(byte));
+            }
+
+            return path;
+        }
+
+        mapped_image map_image(posix_memory_manager& memory, const std::span<const std::byte> image, const uint32_t expected_file_type,
+                               const uint64_t slide)
         {
             const auto header = read_struct<macho::mach_header_64>(image, 0);
             if (header.magic != macho::MH_MAGIC_64 || header.cputype != macho::CPU_TYPE_X86_64)
@@ -181,33 +220,41 @@ namespace sogen
                 throw std::runtime_error("Not an x86-64 Mach-O image");
             }
 
-            if (header.filetype != macho::MH_EXECUTE)
+            if (header.filetype != expected_file_type)
             {
-                throw std::runtime_error("Only MH_EXECUTE Mach-O images are supported");
+                throw std::runtime_error("Unexpected Mach-O file type");
             }
 
-            std::optional<uint64_t> entry_point{};
+            mapped_image result{};
+            std::optional<uint64_t> header_address{};
             uint64_t offset = sizeof(header);
 
             for (uint32_t i = 0; i < header.ncmds; ++i)
             {
                 const auto command = read_struct<macho::load_command>(image, offset);
-                if (command.cmdsize < sizeof(command))
+                if (command.cmdsize < sizeof(command) || command.cmdsize > image.size() - offset)
                 {
                     throw std::runtime_error("Invalid Mach-O load command size");
                 }
 
                 switch (command.cmd)
                 {
-                case macho::LC_SEGMENT_64:
-                    map_segment(memory, image, read_struct<macho::segment_command_64>(image, offset));
+                case macho::LC_SEGMENT_64: {
+                    const auto segment = read_struct<macho::segment_command_64>(image, offset);
+                    map_segment(memory, image, segment, slide);
+                    result.end_address = std::max(result.end_address, segment.vmaddr + slide + page_align_up(segment.vmsize));
+                    if (segment.fileoff == 0 && segment.filesize != 0)
+                    {
+                        header_address = segment.vmaddr + slide;
+                    }
                     break;
+                }
                 case macho::LC_UNIXTHREAD:
-                    entry_point = read_unixthread_entry_point(image, offset);
+                    result.unixthread_entry_point = read_unixthread_entry_point(image, offset) + slide;
                     break;
-                case macho::LC_MAIN:
                 case macho::LC_LOAD_DYLINKER:
-                    throw std::runtime_error("Dynamically linked Mach-O executables are not supported");
+                    result.dylinker_path = read_dylinker_path(image.subspan(offset, command.cmdsize));
+                    break;
                 default:
                     break;
                 }
@@ -215,48 +262,96 @@ namespace sogen
                 offset += command.cmdsize;
             }
 
-            if (!entry_point)
+            if (!header_address)
             {
-                throw std::runtime_error("Mach-O image has no LC_UNIXTHREAD");
+                throw std::runtime_error("Mach-O image has no segment mapping its header");
             }
 
-            return *entry_point;
+            result.header_address = *header_address;
+            return result;
         }
 
-        // XNU's exec_copyout_strings layout for executables without a dynamic linker:
-        // argc, argv[], NULL, envp[], NULL, apple[], NULL. Unlike Linux there is no auxiliary vector.
-        uint64_t setup_stack(posix_memory_manager& memory, const std::vector<std::string>& argv, const std::vector<std::string>& envp,
-                             const std::vector<std::string>& apple)
+        std::string to_hex(const uint64_t value)
+        {
+            return "0x" + utils::string::to_hex_number(value);
+        }
+
+        // XNU randomizes stack_guard, malloc_entropy and ptr_munge per process. Fixed values keep emulation
+        // deterministic; ptr_munge must be non-zero or libpthread aborts, and stack_guard keeps its second byte zero.
+        std::vector<std::string> make_apple_strings(const std::string& executable_path)
+        {
+            return {
+                "executable_path=" + executable_path,
+                "stack_guard=0x2f8b6c1d4e9a0057",
+                "malloc_entropy=0x6a09e667f3bcc908,0xbb67ae8584caa73b",
+                "ptr_munge=0x3c6ef372fe94f82b",
+                "main_stack=" + to_hex(STACK_TOP) + "," + to_hex(STACK_RLIMIT) + "," + to_hex(STACK_TOP - STACK_SIZE) + "," +
+                    to_hex(STACK_SIZE),
+                "security_config=0x0",
+            };
+        }
+
+        // XNU's exec_copyout_strings layout: [mach_header of the executable when a dynamic linker runs], argc,
+        // argv[], NULL, envp[], NULL, apple[], NULL, then the strings (apple[0] first) ending at the stack top.
+        // Unlike Linux there is no auxiliary vector.
+        uint64_t setup_stack(posix_memory_manager& memory, const std::optional<uint64_t> main_header, const std::vector<std::string>& argv,
+                             const std::vector<std::string>& envp, const std::vector<std::string>& apple)
         {
             if (!memory.allocate_memory(STACK_TOP - STACK_SIZE, STACK_SIZE, memory_permission::read_write))
             {
                 throw std::runtime_error("Failed to allocate the initial stack");
             }
 
-            auto stack_pointer = STACK_TOP;
-            const auto push_strings = [&](const std::vector<std::string>& strings) {
-                std::vector<uint64_t> pointers{};
-                for (const auto& string : strings)
+            std::vector<const std::string*> strings{};
+            strings.push_back(&apple.front());
+            for (const auto* group : {&argv, &envp})
+            {
+                for (const auto& string : *group)
                 {
-                    stack_pointer -= string.size() + 1;
-                    memory.write_memory(stack_pointer, string.c_str(), string.size() + 1);
-                    pointers.push_back(stack_pointer);
+                    strings.push_back(&string);
                 }
+            }
+            for (size_t i = 1; i < apple.size(); ++i)
+            {
+                strings.push_back(&apple[i]);
+            }
 
-                pointers.push_back(0);
-                return pointers;
-            };
+            uint64_t strings_size = 0;
+            for (const auto* string : strings)
+            {
+                strings_size += string->size() + 1;
+            }
 
-            const auto argv_pointers = push_strings(argv);
-            const auto envp_pointers = push_strings(envp);
-            const auto apple_pointers = push_strings(apple);
+            const auto strings_start = align_down(STACK_TOP - strings_size, sizeof(uint64_t));
 
-            std::vector<uint64_t> words{static_cast<uint64_t>(argv.size())};
-            words.insert(words.end(), argv_pointers.begin(), argv_pointers.end());
-            words.insert(words.end(), envp_pointers.begin(), envp_pointers.end());
-            words.insert(words.end(), apple_pointers.begin(), apple_pointers.end());
+            std::vector<uint64_t> string_addresses{};
+            auto string_address = strings_start;
+            for (const auto* string : strings)
+            {
+                memory.write_memory(string_address, string->c_str(), string->size() + 1);
+                string_addresses.push_back(string_address);
+                string_address += string->size() + 1;
+            }
 
-            stack_pointer = align_down(stack_pointer - (words.size() * sizeof(uint64_t)), 16);
+            const auto argv_addresses = std::span{string_addresses}.subspan(1, argv.size());
+            const auto envp_addresses = std::span{string_addresses}.subspan(1 + argv.size(), envp.size());
+
+            std::vector<uint64_t> words{};
+            if (main_header)
+            {
+                words.push_back(*main_header);
+            }
+
+            words.push_back(argv.size());
+            words.insert(words.end(), argv_addresses.begin(), argv_addresses.end());
+            words.push_back(0);
+            words.insert(words.end(), envp_addresses.begin(), envp_addresses.end());
+            words.push_back(0);
+            words.push_back(string_addresses.front());
+            words.insert(words.end(), string_addresses.end() - static_cast<ptrdiff_t>(apple.size() - 1), string_addresses.end());
+            words.push_back(0);
+
+            const auto stack_pointer = strings_start - (words.size() * sizeof(uint64_t));
             memory.write_memory(stack_pointer, words.data(), words.size() * sizeof(uint64_t));
 
             return stack_pointer;
@@ -271,23 +366,45 @@ namespace sogen
         }
     }
 
-    macos_emulator::macos_emulator(std::unique_ptr<x86_64_emulator> emu, const std::filesystem::path& executable,
-                                   const std::vector<std::string>& argv, const std::vector<std::string>& envp)
-        : macos_emulator(std::move(emu), read_executable(executable), executable.string(), argv, envp)
+    macos_emulator::macos_emulator(std::unique_ptr<x86_64_emulator> emu, std::filesystem::path emulation_root,
+                                   const std::filesystem::path& executable, const std::vector<std::string>& argv,
+                                   const std::vector<std::string>& envp)
+        : macos_emulator(std::move(emu), std::move(emulation_root), read_binary_file(executable), executable.string(), argv, envp)
     {
     }
 
-    macos_emulator::macos_emulator(std::unique_ptr<x86_64_emulator> emu, const std::span<const std::byte> image,
-                                   const std::string& executable_path, const std::vector<std::string>& argv,
-                                   const std::vector<std::string>& envp)
+    macos_emulator::macos_emulator(std::unique_ptr<x86_64_emulator> emu, std::filesystem::path emulation_root,
+                                   const std::span<const std::byte> image, const std::string& executable_path,
+                                   const std::vector<std::string>& argv, const std::vector<std::string>& envp)
         : emu_(std::move(emu)),
-          memory(*this->emu_, MACOS_MEMORY_LAYOUT)
+          memory(*this->emu_, MACOS_MEMORY_LAYOUT),
+          file_system(std::move(emulation_root))
     {
-        const auto entry_point = map_executable(this->memory, select_x86_64_slice(image));
-        const auto stack_pointer = setup_stack(this->memory, argv, envp, {"executable_path=" + executable_path});
+        const auto executable_image = map_image(this->memory, select_x86_64_slice(image), macho::MH_EXECUTE, 0);
 
-        this->emu().reg(x86_register::rip, entry_point);
+        std::optional<uint64_t> entry_point = executable_image.unixthread_entry_point;
+        std::optional<uint64_t> main_header{};
+
+        if (executable_image.dylinker_path)
+        {
+            const auto dyld_file = read_binary_file(this->file_system.translate(*executable_image.dylinker_path));
+            const auto dyld_slide = page_align_up(executable_image.end_address);
+            const auto dyld_image = map_image(this->memory, select_x86_64_slice(dyld_file), macho::MH_DYLINKER, dyld_slide);
+
+            entry_point = dyld_image.unixthread_entry_point;
+            main_header = executable_image.header_address;
+        }
+
+        if (!entry_point)
+        {
+            throw std::runtime_error("No LC_UNIXTHREAD entry point to start from");
+        }
+
+        const auto stack_pointer = setup_stack(this->memory, main_header, argv, envp, make_apple_strings(executable_path));
+
+        this->emu().reg(x86_register::rip, *entry_point);
         this->emu().reg(x86_register::rsp, stack_pointer);
+        this->emu().reg(x86_register::rflags, INITIAL_RFLAGS);
 
         this->setup_hooks();
     }
