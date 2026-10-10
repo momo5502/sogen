@@ -293,6 +293,20 @@ namespace sogen::test
         EXPECT_EQ(std::vector(value->data.begin(), value->data.end()), data);
     }
 
+    TEST_F(RegistryFileTest, ResolvesOverlayOnlyKeysForExactPaths)
+    {
+        const std::filesystem::path path{uR"(\Registry\Machine\Software\Vendor\Overlay)"};
+        ASSERT_FALSE(registry().get_key(utils::path_key{path}).has_value());
+        ASSERT_TRUE(registry().create_key(path).has_value());
+        EXPECT_TRUE(registry().get_key(utils::path_key{path}).has_value());
+
+        const std::filesystem::path deeper{path / "Child"};
+        EXPECT_FALSE(registry().get_key(utils::path_key{deeper}).has_value());
+
+        const std::filesystem::path sibling{uR"(\Registry\Machine\Software\Vendor\Missing)"};
+        EXPECT_FALSE(registry().get_key(utils::path_key{sibling}).has_value());
+    }
+
     TEST_F(RegistryFileTest, CreateKeyIsIdempotent)
     {
         const std::filesystem::path path{uR"(\Registry\Machine\Software\Vendor\Once)"};

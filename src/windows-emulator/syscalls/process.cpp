@@ -393,12 +393,14 @@ namespace sogen
 
             if (info_class == ProcessDefaultHardErrorMode)
             {
-                if (process_information_length >= sizeof(ULONG))
+                if (process_information_length < sizeof(ULONG))
                 {
-                    ULONG mode{};
-                    c.emu.read_memory(process_information, &mode, sizeof(mode));
-                    c.proc.hard_error_mode = mode;
+                    return STATUS_INFO_LENGTH_MISMATCH;
                 }
+
+                ULONG mode{};
+                c.emu.read_memory(process_information, &mode, sizeof(mode));
+                c.proc.hard_error_mode = mode;
                 return STATUS_SUCCESS;
             }
 

@@ -308,10 +308,7 @@ namespace sogen
 
         if (!entry)
         {
-            if (!this->overlay_values_.contains(registry_manager::get_full_key_path(reg_key)))
-            {
-                return std::nullopt;
-            }
+            return std::nullopt;
         }
 
         return {std::move(reg_key)};
