@@ -453,9 +453,10 @@ namespace sogen
                     cookie = 0x01234567; //
                 });
 
-            case ProcessDebugObjectHandle:
-
-                c.win_emu.callbacks.on_suspicious_activity("Anti-debug check with ProcessDebugObjectHandle");
+            case ProcessDebugObjectHandle: {
+                const auto& proc_name = c.win_emu.mod_manager.executable->name;
+                c.win_emu.callbacks.on_suspicious_activity(std::string("Anti-debug check with ProcessDebugObjectHandle [") + proc_name +
+                                                           "]");
 
                 if ((process_information & 3) != 0)
                 {
@@ -476,21 +477,27 @@ namespace sogen
                     h = NULL_HANDLE;
                     return STATUS_PORT_NOT_SET;
                 });
+            }
 
             case ProcessDebugFlags:
             case ProcessWx86Information:
-            case ProcessDefaultHardErrorMode:
                 return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length, [&](ULONG& res) {
                     res = (info_class == ProcessDebugFlags ? 1 : 0); //
                 });
 
-            case ProcessDebugPort:
-                c.win_emu.callbacks.on_suspicious_activity("Anti-debug check with ProcessDebugPort");
+            case ProcessDefaultHardErrorMode:
+                return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length,
+                                           [&](ULONG& res) { res = c.proc.hard_error_mode; });
+
+            case ProcessDebugPort: {
+                const auto& proc_name = c.win_emu.mod_manager.executable->name;
+                c.win_emu.callbacks.on_suspicious_activity(std::string("Anti-debug check with ProcessDebugPort [") + proc_name + "]");
 
                 return handle_query<EmulatorTraits<Emu64>::PVOID>(c.emu, process_information, process_information_length, return_length,
                                                                   [](EmulatorTraits<Emu64>::PVOID& ptr) {
                                                                       ptr = 0; //
                                                                   });
+            }
 
             case ProcessDeviceMap:
                 return handle_query<EmulatorTraits<Emu64>::PVOID>(c.emu, process_information, process_information_length, return_length,
@@ -702,7 +709,6 @@ namespace sogen
             if (info_class == ProcessSchedulerSharedData                     //
                 || info_class == ProcessConsoleHostProcess                   //
                 || info_class == ProcessFaultInformation                     //
-                || info_class == ProcessDefaultHardErrorMode                 //
                 || info_class == ProcessRaiseUMExceptionOnInvalidHandleClose //
                 || info_class == ProcessDynamicFunctionTableInformation      //
                 || info_class == ProcessPriorityBoost                        //
@@ -712,6 +718,19 @@ namespace sogen
                 || info_class == ProcessAffinityMask                         //
                 || info_class == ProcessTelemetryCoverage)
             {
+                return STATUS_SUCCESS;
+            }
+
+            if (info_class == ProcessDefaultHardErrorMode)
+            {
+                if (process_information_length < sizeof(ULONG))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                ULONG mode{};
+                c.emu.read_memory(process_information, &mode, sizeof(mode));
+                c.proc.hard_error_mode = mode;
                 return STATUS_SUCCESS;
             }
 
