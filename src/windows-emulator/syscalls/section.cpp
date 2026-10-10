@@ -488,7 +488,12 @@ namespace sogen
                 {
                     view_size.write(backing_size - aligned_offset);
                 }
-                base_address.write(section_entry->backing_address + aligned_offset);
+
+                const uint64_t view_address = section_entry->backing_address + aligned_offset;
+                base_address.write(view_address);
+
+                c.proc.views.store(view_address, view{section_entry->backing_address});
+
                 return STATUS_SUCCESS;
             }
 
@@ -687,7 +692,14 @@ namespace sogen
                 // when the last section handle is closed.
                 if (region_info.kind == memory_region_kind::pagefile_section_view)
                 {
-                    return STATUS_SUCCESS;
+                    // remove the view from memory
+                    c.proc.views.erase(base_address);
+
+                    if (c.proc.views.in_use(region_info.allocation_base))
+                    {
+                        // do not release the memory if in use by any other view
+                        return STATUS_SUCCESS;
+                    }
                 }
 
                 if (c.win_emu.memory.release_memory(region_info.allocation_base, 0))

@@ -595,6 +595,121 @@ namespace sogen
         std::map<key_type, handle> handles_{};
     };
 
+    // - should handle_store add new template param for key_type?
+    // - is ref_counted_object required here?
+    template <typename T>
+        requires(utils::Serializable<T> /* && std::is_base_of_v<ref_counted_object, T> */)
+    class view_store
+    {
+      public:
+        using key_type = uint64_t;
+        using value_map = std::map<key_type, T>;
+        using iterator = typename value_map::iterator;
+        using const_iterator = typename value_map::const_iterator;
+
+        bool block_mutation(bool blocked)
+        {
+            std::swap(this->block_mutation_, blocked);
+            return blocked;
+        }
+
+        T* store(const key_type address, T value)
+        {
+            if (this->block_mutation_)
+            {
+                throw std::runtime_error("Mutation of view store is blocked!");
+            }
+
+            // Emplace directly using the 64-bit virtual address as the key
+            const auto [it, inserted] = this->store_.emplace(address, std::move(value));
+            return &it->second;
+        }
+
+        T* get(const key_type address)
+        {
+            const auto it = this->store_.find(address);
+            if (it == this->store_.end())
+            {
+                return nullptr;
+            }
+            return &it->second;
+        }
+
+        const T* get(const key_type address) const
+        {
+            const auto it = this->store_.find(address);
+            if (it == this->store_.end())
+            {
+                return nullptr;
+            }
+            return &it->second;
+        }
+
+        bool in_use(uint64_t backing_address) const
+        {
+            return std::any_of(this->store_.begin(), this->store_.end(),
+                               [&](const auto& v) { return v.second.backing_address == backing_address; });
+        }
+
+        size_t size() const
+        {
+            return this->store_.size();
+        }
+
+        bool erase(const key_type address)
+        {
+            if (this->block_mutation_)
+            {
+                throw std::runtime_error("Mutation of view store is blocked!");
+            }
+
+            const auto it = this->store_.find(address);
+            if (it == this->store_.end())
+            {
+                return false;
+            }
+
+            this->store_.erase(it);
+            return true;
+        }
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->block_mutation_);
+            buffer.write_map(this->store_);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->block_mutation_);
+            buffer.read_map(this->store_);
+        }
+
+        iterator begin()
+        {
+            return this->store_.begin();
+        }
+
+        const_iterator begin() const
+        {
+            return this->store_.begin();
+        }
+
+        iterator end()
+        {
+            return this->store_.end();
+        }
+
+        const_iterator end() const
+        {
+            return this->store_.end();
+        }
+
+      private:
+        bool block_mutation_{false};
+        value_map store_{};
+    };
+
     constexpr auto NULL_HANDLE = make_handle(0ULL);
 
     constexpr auto KNOWN_DLLS_DIRECTORY = make_pseudo_handle(0x1, handle_types::directory);

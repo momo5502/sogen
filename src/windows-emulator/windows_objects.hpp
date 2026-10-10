@@ -857,6 +857,21 @@ namespace sogen
         }
     };
 
+    struct view /* : public ref_counted_object ? */
+    {
+        uint64_t backing_address{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->backing_address);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->backing_address);
+        }
+    };
+
     struct semaphore : ref_counted_object
     {
         std::u16string name{};

@@ -100,7 +100,12 @@ namespace sogen
                 auto* section = c.proc.sections.get(h);
                 if (section && section->ref_count == 1)
                 {
-                    section_backing_address = section->backing_address;
+                    if (!c.proc.views.in_use(section->backing_address))
+                    {
+                        // only release memory if the backing address isn't in
+                        // use by any other view
+                        section_backing_address = section->backing_address;
+                    }
                 }
             }
 
