@@ -2189,7 +2189,7 @@ namespace
     // These functions can be called in any order."
     //
     // https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw#remarks
-    bool test_file_map_obj_persist()
+    bool test_file_mapped_object_lifetime()
     {
         auto CreateView = [](HANDLE handle, unsigned __int64 offset, size_t length) {
             return static_cast<unsigned char*>(MapViewOfFile(handle, FILE_MAP_WRITE, offset >> 32, offset & 0xFFFFFFFF, length));
@@ -2361,7 +2361,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_bcrypt_hash, "BCrypt Hash")
     RUN_TEST(test_crypt_protect, "CryptProtect")
     RUN_TEST(test_set_dib_bits_to_device, "GDI DIB")
-    RUN_TEST(test_file_map_obj_persist, "File Mapping Object")
+    RUN_TEST(test_file_mapped_object_lifetime, "File Mapping Object")
 
     return valid ? 0 : 1;
 }
