@@ -2181,114 +2181,14 @@ namespace
 
     // Tests that backing memory persists until all references to it are released (see #1400)
     //
-    // "Mapped views of a file mapping object maintain internal
-    // references to the object, and a file mapping object does not close until all
-    // references to it are released. Therefore, to fully close a file mapping object,
-    // an application must unmap all mapped views of the file mapping object by calling
-    // UnmapViewOfFile and close the file mapping object handle by calling CloseHandle.
-    // These functions can be called in any order."
+    // "Mapped views of a file mapping object maintain internal references to
+    // the object, and a file mapping object does not close until all references
+    // to it are released. Therefore, to fully close a file mapping object,
+    // an application must unmap all mapped views of the file mapping object
+    // by calling UnmapViewOfFile and close the file mapping object handle by
+    // calling CloseHandle. These functions can be called in any order."
     //
     // https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw#remarks
-    // bool test_file_mapped_object_lifetime()
-    // {
-    //     auto CreateView = [](HANDLE handle, uint64 offset, size_t length) {
-    //         return static_cast<unsigned char*>(MapViewOfFile(handle, FILE_MAP_WRITE, offset >> 32, offset & 0xFFFFFFFF, length));
-    //     };
-
-    //     constexpr uint64 MAP_SZ = 0x20000;                             // 128 KB
-    //     auto* const mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, // backed by pagefile
-    //                                              nullptr,              // default security, no inherit
-    //                                              PAGE_READWRITE,       // rw-
-    //                                              MAP_SZ >> 32,         // 0x0    if sz < 4GB (HIDWORD)
-    //                                              MAP_SZ & 0xFFFFFFFF,  // MAP_SZ if sz < 4GB (LODWORD)
-    //                                              nullptr);             // TODO: check name collision
-    //     if (!mapping)
-    //     {
-    //         printf("CreateFileMappingW failed: %lu\n", GetLastError());
-    //         return false;
-    //     }
-
-    //     // map first view at offset 0 (size: 4KB)
-    //     auto const* view1 = CreateView(mapping, 0, 0x1000);
-    //     if (!view1)
-    //     {
-    //         printf("First MapViewOfFile failed: %lu\n", GetLastError());
-    //         CloseHandle(mapping);
-    //         return false;
-    //     }
-
-    //     // map second view at offset: 65536 (size: 4KB)
-    //     auto const* view2 = CreateView(mapping, 0x10000, 0x01000);
-    //     if (!view2)
-    //     {
-    //         printf("Second MapViewOfFile failed: %lu\n", GetLastError());
-    //         UnmapViewOfFile(view1);
-    //         CloseHandle(mapping);
-    //         return false;
-    //     }
-
-    //     // invalidate ONLY the handle to the mapping
-    //     //
-    //     // TODO: suppress _Post_ptr_invalid_ warning
-    //     if (!CloseHandle(mapping))
-    //     {
-    //         printf("CloseHandle failed: %lu\n", GetLastError());
-    //         return false;
-    //     }
-
-    //     auto const* invalid = CreateView(mapping, 0, 4096);
-    //     if (invalid != nullptr)
-    //     {
-    //         puts("Section handle valid after CloseHandle!\n");
-    //         UnmapViewOfFile(invalid);
-    //         return false;
-    //     }
-
-    //     const auto error = GetLastError();
-    //     if (error != ERROR_INVALID_HANDLE)
-    //     {
-    //         printf("GetLastError() returned %lu, expected ERROR_INVALID_HANDLE\n", error);
-    //         return false;
-    //     }
-
-    //     // ensure first view validity after handle to mapping is closed
-    //     memset(view1, 0x5a, 64);
-    //     if (view1[0] != 0x5a || view1[63] != 0x5a)
-    //     {
-    //         return false;
-    //     }
-
-    //     // ensure second view validity after handle to mapping is closed
-    //     memset(view2, 0xa5, 64);
-    //     if (view2[0] != 0xa5 || view2[63] != 0xa5)
-    //     {
-    //         return false;
-    //     }
-
-    //     // unmapping the first view must also not free the backing memory
-    //     if (!UnmapViewOfFile(view1))
-    //     {
-    //         std::printf("UnmapViewOfFile (view1) failed: %lu\n", GetLastError());
-    //         return false;
-    //     }
-
-    //     // ensure second view validity after first view is unmapped
-    //     memset(view2, 0xa5, 64);
-    //     if (view2[0] != 0xa5 || view2[63] != 0xa5)
-    //     {
-    //         return false;
-    //     }
-
-    //     // finally, free the backing memory (no references to original mapping)
-    //     if (!UnmapViewOfFile(view2))
-    //     {
-    //         printf("UnmapViewOfFile (view2) failed: %lu\n", GetLastError());
-    //         return false;
-    //     }
-
-    //     return true;
-    // }
-
     bool test_file_mapped_object_lifetime()
     {
         auto CreateView = [](HANDLE handle, uint64_t offset, size_t length) {
