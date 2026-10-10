@@ -32,19 +32,6 @@ namespace sogen
 
         constexpr uint64_t INITIAL_RFLAGS = 0x202;
 
-        // XNU encodes the trap class in the top byte of rax: 1 = Mach, 2 = Unix (BSD), 3 = machine-dependent.
-        constexpr uint64_t SYSCALL_CLASS_SHIFT = 24;
-        constexpr uint64_t SYSCALL_NUMBER_MASK = 0xFFFFFF;
-        constexpr uint64_t SYSCALL_CLASS_UNIX = 2;
-
-        constexpr uint64_t SYS_EXIT = 1;
-        constexpr uint64_t SYS_WRITE = 4;
-
-        constexpr uint64_t MACOS_EBADF = 9;
-        constexpr uint64_t MACOS_EFAULT = 14;
-
-        constexpr uint64_t RFLAGS_CF = 1;
-
         std::vector<std::byte> read_binary_file(const std::filesystem::path& path)
         {
             std::vector<std::byte> image{};
@@ -358,13 +345,6 @@ namespace sogen
             return stack_pointer;
         }
 
-        void set_syscall_result(x86_64_emulator& emu, const uint64_t value, const bool failed)
-        {
-            const auto rflags = emu.reg(x86_register::rflags);
-
-            emu.reg(x86_register::rax, value);
-            emu.reg(x86_register::rflags, failed ? (rflags | RFLAGS_CF) : (rflags & ~RFLAGS_CF));
-        }
     }
 
     macos_emulator::macos_emulator(std::unique_ptr<x86_64_emulator> emu, std::filesystem::path emulation_root,
@@ -425,7 +405,7 @@ namespace sogen
     void macos_emulator::setup_hooks()
     {
         this->emu().hook_instruction(x86_hookable_instructions::syscall,
-                                     [this](cpu_interface&, uint64_t) { return this->handle_syscall(); });
+                                     [this](cpu_interface&, uint64_t) { return this->dispatcher.dispatch(*this); });
 
         this->emu().hook_memory_violation(
             [this](cpu_interface&, const uint64_t address, const size_t size, memory_operation, const memory_violation_type type) {
@@ -434,71 +414,5 @@ namespace sogen
                 this->stop();
                 return memory_violation_continuation::stop;
             });
-    }
-
-    instruction_hook_continuation macos_emulator::handle_syscall()
-    {
-        const auto rax = this->emu().reg(x86_register::rax);
-        const auto syscall_class = rax >> SYSCALL_CLASS_SHIFT;
-        const auto number = rax & SYSCALL_NUMBER_MASK;
-
-        if (syscall_class != SYSCALL_CLASS_UNIX)
-        {
-            this->log.error("Unsupported syscall class %" PRIu64 " (rax=0x%" PRIx64 ")\n", syscall_class, rax);
-            this->stop();
-            return instruction_hook_continuation::skip_instruction;
-        }
-
-        switch (number)
-        {
-        case SYS_EXIT:
-            this->exit_status = static_cast<int>(this->emu().reg(x86_register::rdi));
-            this->stop();
-            break;
-        case SYS_WRITE:
-            this->handle_write();
-            break;
-        default:
-            this->log.error("Unimplemented syscall %" PRIu64 "\n", number);
-            this->stop();
-            break;
-        }
-
-        return instruction_hook_continuation::skip_instruction;
-    }
-
-    void macos_emulator::handle_write()
-    {
-        auto& e = this->emu();
-        const auto fd = e.reg(x86_register::rdi);
-        const auto buffer = e.reg(x86_register::rsi);
-        const auto size = static_cast<size_t>(e.reg(x86_register::rdx));
-
-        if (fd != 1 && fd != 2)
-        {
-            set_syscall_result(e, MACOS_EBADF, true);
-            return;
-        }
-
-        std::vector<char> data(size);
-        if (!e.try_read_memory(buffer, data.data(), size))
-        {
-            set_syscall_result(e, MACOS_EFAULT, true);
-            return;
-        }
-
-        const auto& callback = fd == 1 ? this->on_stdout : this->on_stderr;
-        if (callback)
-        {
-            callback(std::string_view{data.data(), size});
-        }
-        else
-        {
-            auto* stream = fd == 1 ? stdout : stderr;
-            fwrite(data.data(), 1, size, stream);
-            fflush(stream);
-        }
-
-        set_syscall_result(e, size, false);
     }
 }

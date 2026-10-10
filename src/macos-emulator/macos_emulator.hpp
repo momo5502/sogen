@@ -6,6 +6,8 @@
 #include <posix_file_system.hpp>
 #include <posix_memory_manager.hpp>
 
+#include "macos_syscall_dispatcher.hpp"
+
 #include <cstddef>
 #include <filesystem>
 #include <functional>
@@ -26,6 +28,7 @@ namespace sogen
         logger log{};
         posix_memory_manager memory;
         posix_file_system file_system;
+        macos_syscall_dispatcher dispatcher{};
         std::optional<int> exit_status{};
 
         std::function<void(std::string_view data)> on_stdout{};
@@ -53,7 +56,5 @@ namespace sogen
 
       private:
         void setup_hooks();
-        instruction_hook_continuation handle_syscall();
-        void handle_write();
     };
 }
