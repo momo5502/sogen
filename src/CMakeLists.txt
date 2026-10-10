@@ -64,6 +64,7 @@ if(_SOGEN_BUILD_STANDALONE_TARGETS)
 
   if(APPLE)
     add_subdirectory(samples/macos-hello-sample)
+    add_subdirectory(macos-dyld-test)
   endif()
 
   # The tools baked into the emulation root, grouped so CI builds one target. Each is included only when it
