@@ -1,6 +1,5 @@
 #include "macos_emulator.hpp"
 #include "macho.hpp"
-#include "macos_memory_manager.hpp"
 
 #include <address_utils.hpp>
 #include <utils/io.hpp>
@@ -15,6 +14,14 @@ namespace sogen
 {
     namespace
     {
+        // MACH_VM_MAX_ADDRESS for x86-64; the commpage starts right above it.
+        constexpr memory_layout MACOS_MEMORY_LAYOUT{
+            .allocation_granularity = 0x1000,
+            .min_mmap_address = 0x100000000,
+            .max_mmap_end = 0x7FFFFFE00000,
+            .default_mmap_base = 0x100000000,
+        };
+
         constexpr uint64_t STACK_TOP = 0x7FF7C0000000;
         constexpr uint64_t STACK_SIZE = 0x800000;
 
@@ -77,8 +84,7 @@ namespace sogen
             return permission;
         }
 
-        void map_segment(x86_64_emulator& emu, macos_memory_manager& memory, const std::span<const std::byte> image,
-                         const macho::segment_command_64& segment)
+        void map_segment(posix_memory_manager& memory, const std::span<const std::byte> image, const macho::segment_command_64& segment)
         {
             if (segment.vmsize == 0 || segment.initprot == 0)
             {
@@ -91,9 +97,13 @@ namespace sogen
             }
 
             const auto size = page_align_up(segment.vmsize);
-            memory.map(segment.vmaddr, size, memory_permission::read_write);
-            emu.write_memory(segment.vmaddr, image.data() + segment.fileoff, segment.filesize);
-            memory.protect(segment.vmaddr, size, to_memory_permission(segment.initprot));
+            if (!memory.allocate_memory(segment.vmaddr, size, memory_permission::read_write))
+            {
+                throw std::runtime_error("Mach-O segment overlaps existing memory");
+            }
+
+            memory.write_memory(segment.vmaddr, image.data() + segment.fileoff, segment.filesize);
+            memory.protect_memory(segment.vmaddr, size, to_memory_permission(segment.initprot));
         }
 
         uint64_t read_unixthread_entry_point(const std::span<const std::byte> image, const uint64_t offset)
@@ -107,7 +117,7 @@ namespace sogen
             return read_struct<macho::x86_thread_state64>(image, offset + sizeof(thread)).rip;
         }
 
-        uint64_t map_executable(x86_64_emulator& emu, macos_memory_manager& memory, const std::span<const std::byte> image)
+        uint64_t map_executable(posix_memory_manager& memory, const std::span<const std::byte> image)
         {
             const auto header = read_struct<macho::mach_header_64>(image, 0);
             if (header.magic != macho::MH_MAGIC_64 || header.cputype != macho::CPU_TYPE_X86_64)
@@ -134,7 +144,7 @@ namespace sogen
                 switch (command.cmd)
                 {
                 case macho::LC_SEGMENT_64:
-                    map_segment(emu, memory, image, read_struct<macho::segment_command_64>(image, offset));
+                    map_segment(memory, image, read_struct<macho::segment_command_64>(image, offset));
                     break;
                 case macho::LC_UNIXTHREAD:
                     entry_point = read_unixthread_entry_point(image, offset);
@@ -159,10 +169,13 @@ namespace sogen
 
         // XNU's exec_copyout_strings layout for executables without a dynamic linker:
         // argc, argv[], NULL, envp[], NULL, apple[], NULL. Unlike Linux there is no auxiliary vector.
-        uint64_t setup_stack(x86_64_emulator& emu, macos_memory_manager& memory, const std::vector<std::string>& argv,
-                             const std::vector<std::string>& envp, const std::vector<std::string>& apple)
+        uint64_t setup_stack(posix_memory_manager& memory, const std::vector<std::string>& argv, const std::vector<std::string>& envp,
+                             const std::vector<std::string>& apple)
         {
-            memory.map(STACK_TOP - STACK_SIZE, STACK_SIZE, memory_permission::read_write);
+            if (!memory.allocate_memory(STACK_TOP - STACK_SIZE, STACK_SIZE, memory_permission::read_write))
+            {
+                throw std::runtime_error("Failed to allocate the initial stack");
+            }
 
             auto stack_pointer = STACK_TOP;
             const auto push_strings = [&](const std::vector<std::string>& strings) {
@@ -170,7 +183,7 @@ namespace sogen
                 for (const auto& string : strings)
                 {
                     stack_pointer -= string.size() + 1;
-                    emu.write_memory(stack_pointer, string.c_str(), string.size() + 1);
+                    memory.write_memory(stack_pointer, string.c_str(), string.size() + 1);
                     pointers.push_back(stack_pointer);
                 }
 
@@ -188,7 +201,7 @@ namespace sogen
             words.insert(words.end(), apple_pointers.begin(), apple_pointers.end());
 
             stack_pointer = align_down(stack_pointer - (words.size() * sizeof(uint64_t)), 16);
-            emu.write_memory(stack_pointer, words.data(), words.size() * sizeof(uint64_t));
+            memory.write_memory(stack_pointer, words.data(), words.size() * sizeof(uint64_t));
 
             return stack_pointer;
         }
@@ -211,12 +224,11 @@ namespace sogen
     macos_emulator::macos_emulator(std::unique_ptr<x86_64_emulator> emu, const std::span<const std::byte> image,
                                    const std::string& executable_path, const std::vector<std::string>& argv,
                                    const std::vector<std::string>& envp)
-        : emu_(std::move(emu))
+        : emu_(std::move(emu)),
+          memory(*this->emu_, MACOS_MEMORY_LAYOUT)
     {
-        macos_memory_manager memory{this->emu()};
-
-        const auto entry_point = map_executable(this->emu(), memory, image);
-        const auto stack_pointer = setup_stack(this->emu(), memory, argv, envp, {"executable_path=" + executable_path});
+        const auto entry_point = map_executable(this->memory, image);
+        const auto stack_pointer = setup_stack(this->memory, argv, envp, {"executable_path=" + executable_path});
 
         this->emu().reg(x86_register::rip, entry_point);
         this->emu().reg(x86_register::rsp, stack_pointer);

@@ -3,6 +3,7 @@
 #include <arch_emulator.hpp>
 #include <hook_interface.hpp>
 #include <logger.hpp>
+#include <posix_memory_manager.hpp>
 
 #include <cstddef>
 #include <filesystem>
@@ -18,8 +19,11 @@ namespace sogen
 {
     class macos_emulator
     {
+        std::unique_ptr<x86_64_emulator> emu_{};
+
       public:
         logger log{};
+        posix_memory_manager memory;
         std::optional<int> exit_status{};
 
         std::function<void(std::string_view data)> on_stdout{};
@@ -46,8 +50,6 @@ namespace sogen
         void stop();
 
       private:
-        std::unique_ptr<x86_64_emulator> emu_{};
-
         void setup_hooks();
         instruction_hook_continuation handle_syscall();
         void handle_write();
