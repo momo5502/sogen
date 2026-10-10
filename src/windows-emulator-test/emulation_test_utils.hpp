@@ -70,8 +70,13 @@ namespace sogen::test
 
         struct sample_dns_lookup final : network::dns_lookup
         {
-            std::vector<network::address> resolve_host(const std::string_view hostname, const std::optional<int> family) override
+            std::vector<network::address> resolve_host(const std::string_view hostname, const std::optional<int> family,
+                                                       std::optional<network::dns_lookup_failure>* failure) override
             {
+                if (failure)
+                {
+                    failure->reset();
+                }
                 if (hostname != "google.com")
                 {
                     return {};
