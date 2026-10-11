@@ -46,6 +46,12 @@ namespace sogen::test
           protected:
             void SetUp() override
             {
+#ifdef __EMSCRIPTEN__
+                if (GetParam())
+                {
+                    GTEST_SKIP() << "Native TCP pipe transfer is unavailable in WebAssembly";
+                }
+#endif
                 auto pair = utils::host_pipe::create_pair(false, 4);
                 this->reader = this->endpoint(std::move(pair.first));
                 this->writer = this->endpoint(std::move(pair.second));
@@ -66,6 +72,17 @@ namespace sogen::test
             std::vector<utils::host_pipe_transfer> transfers;
             std::shared_ptr<utils::host_pipe> reader;
             std::shared_ptr<utils::host_pipe> writer;
+        };
+
+        class HostPipeTransferTest : public testing::Test
+        {
+          protected:
+            void SetUp() override
+            {
+#ifdef __EMSCRIPTEN__
+                GTEST_SKIP() << "Native TCP pipe transfer is unavailable in WebAssembly";
+#endif
+            }
         };
     }
 
@@ -155,6 +172,9 @@ namespace sogen::test
 
     TEST_P(HostPipeTest, TransferredEndpointCanBeInheritedAgain)
     {
+#ifdef __EMSCRIPTEN__
+        GTEST_SKIP() << "Native TCP pipe transfer is unavailable in WebAssembly";
+#endif
         auto transfer = this->writer->export_endpoint();
         auto grandchild = utils::host_pipe::connect(transfer.port(), transfer.token());
         this->writer.reset();
@@ -224,7 +244,7 @@ namespace sogen::test
         EXPECT_EQ(remaining->data(), "age");
     }
 
-    TEST(HostPipeTransferTest, InvalidAuthenticationDoesNotConsumeTheTransfer)
+    TEST_F(HostPipeTransferTest, InvalidAuthenticationDoesNotConsumeTheTransfer)
     {
         auto pair = utils::host_pipe::create_pair(false, 4);
         auto transfer = pair.second->export_endpoint();
@@ -239,7 +259,7 @@ namespace sogen::test
         EXPECT_EQ(read->data(), "data");
     }
 
-    TEST(HostPipeTransferTest, StoppingTransferDisconnectsIdleClient)
+    TEST_F(HostPipeTransferTest, StoppingTransferDisconnectsIdleClient)
     {
         auto pair = utils::host_pipe::create_pair(false, 4);
         std::shared_ptr<utils::host_pipe> remote;
@@ -251,7 +271,7 @@ namespace sogen::test
         EXPECT_EQ(finish(*write).status, utils::pipe_io_status::broken);
     }
 
-    TEST(HostPipeTransferTest, UnclaimedTransferCanBeDestroyed)
+    TEST_F(HostPipeTransferTest, UnclaimedTransferCanBeDestroyed)
     {
         auto pair = utils::host_pipe::create_pair(false, 4);
         {
@@ -269,7 +289,7 @@ namespace sogen::test
         EXPECT_EQ(finish(*read).status, utils::pipe_io_status::broken);
     }
 
-    TEST(HostPipeTransferTest, AbruptPeerDisconnectReleasesEndpointWhileTransferLives)
+    TEST_F(HostPipeTransferTest, AbruptPeerDisconnectReleasesEndpointWhileTransferLives)
     {
         auto pair = utils::host_pipe::create_pair(false, 4);
         auto transfer = pair.second->export_endpoint();
@@ -283,7 +303,7 @@ namespace sogen::test
         EXPECT_EQ(finish(*read).status, utils::pipe_io_status::broken);
     }
 
-    TEST(HostPipeTransferTest, PendingChecksDoNotWaitForStalledPeer)
+    TEST_F(HostPipeTransferTest, PendingChecksDoNotWaitForStalledPeer)
     {
         network::tcp_server_socket server{AF_INET};
         ASSERT_TRUE(server.bind(network::address{"127.0.0.1", 0}));
@@ -345,7 +365,7 @@ namespace sogen::test
         EXPECT_LT(std::chrono::steady_clock::now() - close_start, std::chrono::milliseconds(250));
     }
 
-    TEST(HostPipeTransferTest, StalledAuthenticationDoesNotHoldTheListenerForFiveSeconds)
+    TEST_F(HostPipeTransferTest, StalledAuthenticationDoesNotHoldTheListenerForFiveSeconds)
     {
         auto pair = utils::host_pipe::create_pair(false, 4);
         auto transfer = pair.second->export_endpoint();
@@ -437,7 +457,7 @@ namespace sogen::test
         EXPECT_EQ(restored_read.data(), "ok");
     }
 
-    TEST(HostPipeSnapshotTest, RejectsRemoteAndActivelyExportedState)
+    TEST_F(HostPipeTransferTest, SnapshotRejectsRemoteAndActivelyExportedState)
     {
         auto pair = utils::host_pipe::create_pair(false, 4);
         auto transfer = pair.second->export_endpoint();

@@ -1,5 +1,4 @@
-#include <backend_selection.hpp>
-#include <windows_emulator.hpp>
+#include "emulation_test_utils.hpp"
 
 #include <array>
 #include <gtest/gtest.h>
@@ -57,7 +56,10 @@ namespace sogen::test
                 observers.on_rdtsc = stop;
                 observers.on_rdtscp = stop;
                 windows_emulator emu{std::move(this->backend),
-                                     emulator_settings{.disable_logging = true, .use_relative_time = relative_time, .load_registry = false},
+                                     emulator_settings{.disable_logging = true,
+                                                       .use_relative_time = relative_time,
+                                                       .emulation_root = get_emulator_root(),
+                                                       .load_registry = false},
                                      std::move(observers), std::move(interfaces)};
                 active_clock = &emu.clock();
                 emulator_thread thread{emu.memory, emu.process, 0, 0, 0x100000, 0, 8, true};

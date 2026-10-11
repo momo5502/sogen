@@ -1,4 +1,4 @@
-#include <backend_selection.hpp>
+#include "emulation_test_utils.hpp"
 #include <syscall_utils.hpp>
 #include <gtest/gtest.h>
 
@@ -25,9 +25,10 @@ namespace sogen::test
                 interfaces.ui = std::make_unique<null_ui_backend>();
                 interfaces.audio = std::make_unique<null_audio_backend>();
                 interfaces.console = std::make_unique<null_console_backend>();
-                this->emu = std::make_unique<windows_emulator>(create_x86_64_emulator_from_environment(),
-                                                               emulator_settings{.disable_logging = true, .load_registry = false},
-                                                               emulator_callbacks{}, std::move(interfaces));
+                this->emu = std::make_unique<windows_emulator>(
+                    create_x86_64_emulator_from_environment(),
+                    emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                    emulator_callbacks{}, std::move(interfaces));
                 this->storage = this->emu->memory.allocate_memory(0x10000, memory_permission::read_write);
             }
 

@@ -1,4 +1,4 @@
-#include <backend_selection.hpp>
+#include "emulation_test_utils.hpp"
 #include <devices/named_pipe.hpp>
 #include <emulator_utils.hpp>
 #include <io_completion_wait.hpp>
@@ -98,9 +98,10 @@ namespace sogen::test
                 interfaces.ui = std::make_unique<null_ui_backend>();
                 interfaces.audio = std::make_unique<null_audio_backend>();
                 interfaces.console = std::make_unique<null_console_backend>();
-                this->emu = std::make_unique<windows_emulator>(create_x86_64_emulator_from_environment(),
-                                                               emulator_settings{.disable_logging = true, .load_registry = false},
-                                                               emulator_callbacks{}, std::move(interfaces));
+                this->emu = std::make_unique<windows_emulator>(
+                    create_x86_64_emulator_from_environment(),
+                    emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                    emulator_callbacks{}, std::move(interfaces));
                 const auto thread =
                     this->emu->process.threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true});
                 this->emu->vcpu(0).active_thread = this->emu->process.threads.get(thread);
@@ -216,6 +217,19 @@ namespace sogen::test
             handle reader{};
             handle writer{};
             uint64_t storage{};
+        };
+
+        class InheritedPipeTest : public NamedPipeTest
+        {
+          protected:
+            void SetUp() override
+            {
+#ifdef __EMSCRIPTEN__
+                GTEST_SKIP() << "Native TCP pipe transfer is unavailable in WebAssembly";
+#else
+                NamedPipeTest::SetUp();
+#endif
+            }
         };
     }
 
@@ -461,7 +475,7 @@ namespace sogen::test
         EXPECT_TRUE(restored_original.is_last_file_reference());
     }
 
-    TEST_F(NamedPipeTest, InheritedAliasesKeepSharedFileIdentityAndCancellation)
+    TEST_F(InheritedPipeTest, InheritedAliasesKeepSharedFileIdentityAndCancellation)
     {
         const auto alias = this->duplicate(this->reader, FILE_WRITE_DATA, OBJ_INHERIT);
         this->emu->process.devices.get(this->reader)->set_completion_notification_flags(1);
@@ -554,7 +568,7 @@ namespace sogen::test
         EXPECT_EQ(this->manager.request->standard_error, 0u);
     }
 
-    TEST_F(NamedPipeTest, GeneralInheritanceSelectsOnlyInheritableHandles)
+    TEST_F(InheritedPipeTest, GeneralInheritanceSelectsOnlyInheritableHandles)
     {
         this->emu->process.devices.get(this->writer)->inherit = true;
         this->create_child(4);
@@ -565,7 +579,7 @@ namespace sogen::test
         EXPECT_EQ(this->manager.request->standard_error, this->writer.bits);
     }
 
-    TEST_F(NamedPipeTest, ExplicitHandleListExcludesOtherStdio)
+    TEST_F(InheritedPipeTest, ExplicitHandleListExcludesOtherStdio)
     {
         this->emu->process.devices.get(this->reader)->inherit = true;
         this->emu->process.devices.get(this->writer)->inherit = true;
