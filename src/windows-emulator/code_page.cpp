@@ -4,6 +4,7 @@
 #include "windows_emulator.hpp"
 #include "registry/registry_utils.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <utils/io.hpp>
 
