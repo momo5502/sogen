@@ -96,7 +96,10 @@ namespace sogen
             win_emu.memory.read_memory(context.input_buffer, data.data(), data.size());
             operation = this->endpoint->write(data);
         }
-        pending_operation pending{context, std::move(operation), win_emu.process.threads.find_handle(&context.thread()), reading};
+        pending_operation pending{.context = context,
+                                  .operation = std::move(operation),
+                                  .issuing_thread = win_emu.process.threads.find_handle(&context.thread()),
+                                  .reading = reading};
         const auto result = pending.operation->check_completion();
         if (result.status != utils::pipe_io_status::pending)
         {
@@ -122,7 +125,7 @@ namespace sogen
             *references[i] = retained_references[i];
         }
         pending.context.vcpu = nullptr;
-        context.io_status_block.write({.Status = STATUS_PENDING});
+        context.io_status_block.write({.Status = STATUS_PENDING, .Information = 0});
         write_io_status(context, STATUS_PENDING);
         if (auto* event = win_emu.process.events.get(context.event))
         {
@@ -155,7 +158,7 @@ namespace sogen
                 continue;
             }
             this->complete(win_emu, *it, result, true);
-            this->release_operation(win_emu.process, *it);
+            release_operation(win_emu.process, *it);
             it = this->pending_.erase(it);
         }
     }
@@ -173,7 +176,7 @@ namespace sogen
             }
             it->operation->cancel();
             this->complete(win_emu, *it, it->operation->check_completion(), true);
-            this->release_operation(win_emu.process, *it);
+            release_operation(win_emu.process, *it);
             it = this->pending_.erase(it);
             cancelled = true;
         }
@@ -185,7 +188,7 @@ namespace sogen
         for (auto& operation : this->pending_)
         {
             operation.operation->cancel();
-            this->release_operation(process, operation);
+            release_operation(process, operation);
         }
         this->pending_.clear();
     }

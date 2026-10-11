@@ -104,7 +104,7 @@ namespace sogen
         uint64_t standard_input{};
         uint64_t standard_output{};
         uint64_t standard_error{};
-        std::vector<process_inherited_pipe> inherited_pipes;
+        std::vector<process_inherited_pipe> inherited_pipes{};
     };
 
     struct process_create_result

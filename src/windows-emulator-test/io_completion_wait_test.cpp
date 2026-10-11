@@ -8,7 +8,8 @@ namespace sogen::syscalls
 {
     NTSTATUS handle_NtAssociateWaitCompletionPacket(const syscall_context& c, handle wait_completion_packet_handle,
                                                     handle io_completion_handle, handle target_object_handle, emulator_pointer key_context,
-                                                    emulator_pointer apc_context, NTSTATUS io_status, ULONG_PTR io_status_information,
+                                                    emulator_pointer apc_context, NTSTATUS io_status,
+                                                    EmulatorTraits<Emu64>::ULONG_PTR io_status_information,
                                                     emulator_object<BOOLEAN> already_signaled);
     NTSTATUS handle_NtClose(const syscall_context& c, handle h);
 }

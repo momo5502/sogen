@@ -161,9 +161,9 @@ namespace sogen::utils
                 buffer.erase(buffer.begin(), buffer.begin() + static_cast<ptrdiff_t>(count));
                 if (count || !size)
                 {
-                    return {pipe_io_status::success, static_cast<uint32_t>(count)};
+                    return {.status = pipe_io_status::success, .transferred = static_cast<uint32_t>(count)};
                 }
-                return {this->state->open[1 - this->side] ? pipe_io_status::pending : pipe_io_status::broken, 0};
+                return {.status = this->state->open[1 - this->side] ? pipe_io_status::pending : pipe_io_status::broken, .transferred = 0};
             }
 
             pipe_io_result write(const std::string_view data) override
@@ -171,7 +171,7 @@ namespace sogen::utils
                 const std::scoped_lock lock(this->state->mutex);
                 if (!this->state->open[1 - this->side])
                 {
-                    return {pipe_io_status::broken, 0};
+                    return {.status = pipe_io_status::broken, .transferred = 0};
                 }
                 auto& buffer = this->state->buffers[1 - this->side];
                 const auto available = this->state->quota - std::min(static_cast<size_t>(this->state->quota), buffer.size());
@@ -181,7 +181,8 @@ namespace sogen::utils
                     count = buffer.empty() || data.size() <= available ? data.size() : 0;
                 }
                 buffer.insert(buffer.end(), data.begin(), data.begin() + static_cast<ptrdiff_t>(count));
-                return {count || data.empty() ? pipe_io_status::success : pipe_io_status::pending, static_cast<uint32_t>(count)};
+                return {.status = count || data.empty() ? pipe_io_status::success : pipe_io_status::pending,
+                        .transferred = static_cast<uint32_t>(count)};
             }
 
             pipe_io_result peek(std::string& data, const uint32_t capacity, uint32_t& available) override
@@ -191,8 +192,8 @@ namespace sogen::utils
                 available = static_cast<uint32_t>(buffer.size());
                 const auto count = std::min(static_cast<size_t>(capacity), buffer.size());
                 data.assign(buffer.begin(), buffer.begin() + static_cast<ptrdiff_t>(count));
-                return {buffer.empty() && !this->state->open[1 - this->side] ? pipe_io_status::broken : pipe_io_status::success,
-                        static_cast<uint32_t>(count)};
+                return {.status = buffer.empty() && !this->state->open[1 - this->side] ? pipe_io_status::broken : pipe_io_status::success,
+                        .transferred = static_cast<uint32_t>(count)};
             }
         };
 
@@ -227,15 +228,15 @@ namespace sogen::utils
                 if (!this->socket || !send_words(this->socket, std::array{static_cast<uint32_t>(operation), size}, input))
                 {
                     this->socket.close();
-                    return {pipe_io_status::broken, 0};
+                    return {.status = pipe_io_status::broken, .transferred = 0};
                 }
                 const auto response = receive_words<3>(this->socket, deadline);
                 if (!response || (*response)[0] > static_cast<uint32_t>(pipe_io_status::failed) || (*response)[1] > size)
                 {
                     this->socket.close();
-                    return {pipe_io_status::broken, 0};
+                    return {.status = pipe_io_status::broken, .transferred = 0};
                 }
-                const pipe_io_result result{static_cast<pipe_io_status>((*response)[0]), (*response)[1]};
+                const pipe_io_result result{.status = static_cast<pipe_io_status>((*response)[0]), .transferred = (*response)[1]};
                 available = (*response)[2];
                 if (operation != pipe_request::write)
                 {
@@ -243,7 +244,7 @@ namespace sogen::utils
                     if (!data)
                     {
                         this->socket.close();
-                        return {pipe_io_status::broken, 0};
+                        return {.status = pipe_io_status::broken, .transferred = 0};
                     }
                     output = std::move(*data);
                 }

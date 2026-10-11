@@ -79,7 +79,7 @@ namespace sogen
         void complete(windows_emulator& win_emu, const pending_operation& operation, utils::pipe_io_result result, bool was_pending);
         static void release_operation(process_context& process, pending_operation& operation);
 
-        NTSTATUS peek(windows_emulator& win_emu, const io_device_context& c)
+        NTSTATUS peek(windows_emulator& win_emu, const io_device_context& c) const
         {
             constexpr auto header_size = static_cast<ULONG>(sizeof(file_pipe_peek_buffer));
             if (!c.output_buffer || c.output_buffer_length < header_size)

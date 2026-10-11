@@ -22,26 +22,44 @@ namespace sogen::test
         class TimestampCounterTest : public testing::TestWithParam<bool>
         {
           protected:
-            static uint64_t execute(const bool relative_time, std::unique_ptr<utils::clock> clock = {})
+            void SetUp() override
             {
-                auto backend = create_x86_64_emulator_from_environment();
-                auto& cpu = *backend;
+                this->backend = create_x86_64_emulator_from_environment();
+                const auto instruction = GetParam() ? x86_hookable_instructions::rdtscp : x86_hookable_instructions::rdtsc;
+                auto* hook = this->backend->hook_instruction(instruction, [] { return instruction_hook_continuation::run_instruction; });
+                if (!hook)
+                {
+                    GTEST_SKIP() << "Backend does not support timestamp instruction hooks";
+                }
+                this->backend->delete_hook(hook);
+            }
+
+            uint64_t execute(const bool relative_time, std::unique_ptr<utils::clock> clock = {})
+            {
+                auto& cpu = *this->backend;
                 emulator_interfaces interfaces{};
                 interfaces.clock = std::move(clock);
                 interfaces.ui = std::make_unique<null_ui_backend>();
                 interfaces.audio = std::make_unique<null_audio_backend>();
                 interfaces.console = std::make_unique<null_console_backend>();
                 size_t callbacks = 0;
+                utils::clock* active_clock = nullptr;
+                uint64_t expected_timestamp = 0;
                 emulator_callbacks observers{};
                 const auto stop = [&] {
                     ++callbacks;
+                    if (relative_time)
+                    {
+                        expected_timestamp = active_clock->timestamp_counter();
+                    }
                     cpu.stop();
                 };
                 observers.on_rdtsc = stop;
                 observers.on_rdtscp = stop;
-                windows_emulator emu{std::move(backend),
+                windows_emulator emu{std::move(this->backend),
                                      emulator_settings{.disable_logging = true, .use_relative_time = relative_time, .load_registry = false},
                                      std::move(observers), std::move(interfaces)};
+                active_clock = &emu.clock();
                 emulator_thread thread{emu.memory, emu.process, 0, 0, 0x100000, 0, 8, true};
                 emu.vcpu(0).active_thread = &thread;
                 const auto code = emu.memory.allocate_memory(0x1000, memory_permission::all);
@@ -65,10 +83,12 @@ namespace sogen::test
                 const auto timestamp = cpu.reg(x86_register::rax) | (cpu.reg(x86_register::rdx) << 32);
                 if (relative_time)
                 {
-                    EXPECT_EQ(timestamp, emu.clock().timestamp_counter());
+                    EXPECT_EQ(timestamp, expected_timestamp);
                 }
                 return timestamp;
             }
+
+            std::unique_ptr<x86_64_emulator> backend{};
         };
     }
 

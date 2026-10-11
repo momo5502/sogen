@@ -194,7 +194,10 @@ namespace sogen::test
             emulator_allocator allocator{this->emu->memory, this->storage + 0x30000, 0x10000};
             const auto name = allocator.make_unicode_string(alias);
             const auto attributes = allocator.reserve<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>();
-            attributes.write({.Length = sizeof(OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>), .ObjectName = name.value()});
+            OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>> object_attributes{};
+            object_attributes.Length = sizeof(object_attributes);
+            object_attributes.ObjectName = name.value();
+            attributes.write(object_attributes);
             const auto output = allocator.reserve<handle>();
             const auto iosb = allocator.reserve<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>();
             ASSERT_EQ(syscalls::handle_NtOpenFile(syscall, output, GENERIC_READ, attributes, iosb, 3, 0), STATUS_SUCCESS);
