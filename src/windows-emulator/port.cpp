@@ -29,7 +29,7 @@ namespace sogen
             lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context&) override
             {
                 (void)win_emu;
-                //win_emu.log.error("!!! BAD PORT: %s\n", u16_to_u8(name_).c_str());
+                // win_emu.log.error("!!! BAD PORT: %s\n", u16_to_u8(name_).c_str());
                 return STATUS_NOT_SUPPORTED;
             }
 
