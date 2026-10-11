@@ -28,7 +28,7 @@ namespace sogen
             return this->base_address_;
         }
 
-        bool handle_fault(uint64_t address);
+        bool handle_fault(uint64_t address, size_t size);
 
       private:
         struct slide_info
@@ -55,6 +55,7 @@ namespace sogen
         std::vector<std::ifstream> files_{};
         std::vector<mapping> mappings_{};
 
+        bool map_page(uint64_t address);
         void load_cache_file(const std::filesystem::path& path);
         void map_dynamic_region(uint64_t address, uint64_t size, const std::string& guest_cache_path, const macos_file_id& cache_file_id);
         static void rebase_page(const slide_info& slide, size_t page_index, std::span<std::byte> page);

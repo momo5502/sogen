@@ -184,7 +184,23 @@ namespace sogen
         this->memory_->protect_memory(address, region.size(), memory_permission::read);
     }
 
-    bool macos_shared_region::handle_fault(const uint64_t address)
+    // A fault reports where the access starts, which may be the last bytes of a page that is already present while the
+    // rest of an instruction or operand lies on the next one, so every page the access can touch is brought in.
+    bool macos_shared_region::handle_fault(const uint64_t address, const size_t size)
+    {
+        constexpr size_t max_instruction_length = 15;
+
+        const auto last_address = address + std::max(size, max_instruction_length) - 1;
+        bool mapped_any = false;
+        for (auto page = page_align_down(address); page <= page_align_down(last_address); page += PAGE_SIZE)
+        {
+            mapped_any |= this->map_page(page);
+        }
+
+        return mapped_any;
+    }
+
+    bool macos_shared_region::map_page(const uint64_t address)
     {
         if (address < this->base_address_ || address - this->base_address_ >= this->size_)
         {

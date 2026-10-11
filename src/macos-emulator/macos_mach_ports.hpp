@@ -13,6 +13,8 @@ namespace sogen
         thread,
         clock,
         semaphore,
+        // A port whose receive right nobody holds, such as the bootstrap port without launchd.
+        dead,
     };
 
     struct mach_port_entry
@@ -31,12 +33,14 @@ namespace sogen
         static constexpr uint32_t TASK_PORT_NAME = 0x203;
         static constexpr uint32_t HOST_PORT_NAME = 0x107;
         static constexpr uint32_t THREAD_PORT_NAME = 0x103;
+        static constexpr uint32_t BOOTSTRAP_PORT_NAME = 0x707;
 
         macos_mach_ports()
         {
             this->ports_[TASK_PORT_NAME] = {.object = mach_port_object::task, .has_send_right = true};
             this->ports_[HOST_PORT_NAME] = {.object = mach_port_object::host, .has_send_right = true};
             this->ports_[THREAD_PORT_NAME] = {.object = mach_port_object::thread, .has_send_right = true};
+            this->ports_[BOOTSTRAP_PORT_NAME] = {.object = mach_port_object::dead, .has_send_right = true};
         }
 
         uint32_t allocate_receive_right()

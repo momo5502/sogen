@@ -351,6 +351,7 @@ namespace sogen
         const auto executable_image = map_image(this->memory, select_x86_64_slice(image), macho::MH_EXECUTE, 0);
 
         this->executable_uuid = executable_image.uuid;
+        this->process_name = std::filesystem::path{executable_path}.filename().string();
 
         std::optional<uint64_t> entry_point = executable_image.unixthread_entry_point;
         std::optional<uint64_t> main_header{};
@@ -438,7 +439,10 @@ namespace sogen
 
         this->emu().hook_memory_violation(
             [this](cpu_interface&, const uint64_t address, const size_t size, memory_operation, const memory_violation_type type) {
-                if (type == memory_violation_type::unmapped && this->shared_region && this->shared_region->handle_fault(address))
+                // Backends disagree on how they report a fetch from a page that is not mapped yet (Icicle reports a
+                // protection fault), so any fault inside the shared region is offered to it; it declines pages that are
+                // already mapped.
+                if (this->shared_region && this->shared_region->handle_fault(address, size))
                 {
                     return memory_violation_continuation::restart;
                 }

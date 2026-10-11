@@ -46,6 +46,7 @@ namespace sogen
         constexpr uint64_t SYS_GETTIMEOFDAY = 116;
         constexpr uint64_t SYS_SENDTO = 133;
         constexpr uint64_t SYS_CSOPS = 169;
+        constexpr uint64_t SYS_CSOPS_AUDITTOKEN = 170;
         constexpr uint64_t SYS_MMAP = 197;
         constexpr uint64_t SYS_SYSCTL = 202;
         constexpr uint64_t SYS_GETATTRLIST = 220;
@@ -58,6 +59,8 @@ namespace sogen
         constexpr uint64_t SYS_LSTAT64 = 340;
         constexpr uint64_t SYS_GETFSSTAT64 = 347;
         constexpr uint64_t SYS_BSDTHREAD_REGISTER = 366;
+        constexpr uint64_t SYS_WRITE_NOCANCEL = 397;
+        constexpr uint64_t SYS_OPEN_NOCANCEL = 398;
         constexpr uint64_t SYS_THREAD_SELFID = 372;
         constexpr uint64_t SYS_FSGETPATH = 427;
         constexpr uint64_t SYS_MAC_SYSCALL = 381;
@@ -85,6 +88,7 @@ namespace sogen
         this->register_unix_handler(SYS_SENDTO, sys_sendto, "sendto");
         this->register_unix_handler(SYS_GETTIMEOFDAY, sys_gettimeofday, "gettimeofday");
         this->register_unix_handler(SYS_CSOPS, sys_csops, "csops");
+        this->register_unix_handler(SYS_CSOPS_AUDITTOKEN, sys_csops_audittoken, "csops_audittoken");
         this->register_unix_handler(SYS_MMAP, sys_mmap, "mmap");
         this->register_unix_handler(SYS_SYSCTL, sys_sysctl, "sysctl");
         this->register_unix_handler(SYS_GETATTRLIST, sys_getattrlist, "getattrlist");
@@ -97,6 +101,8 @@ namespace sogen
         this->register_unix_handler(SYS_LSTAT64, sys_lstat64, "lstat64");
         this->register_unix_handler(SYS_GETFSSTAT64, sys_getfsstat64, "getfsstat64");
         this->register_unix_handler(SYS_BSDTHREAD_REGISTER, sys_bsdthread_register, "bsdthread_register");
+        this->register_unix_handler(SYS_WRITE_NOCANCEL, sys_write, "write_nocancel");
+        this->register_unix_handler(SYS_OPEN_NOCANCEL, sys_open, "open_nocancel");
         this->register_unix_handler(SYS_THREAD_SELFID, sys_thread_selfid, "thread_selfid");
         this->register_unix_handler(SYS_MAC_SYSCALL, sys_mac_syscall, "__mac_syscall");
         this->register_unix_handler(SYS_FSGETPATH, sys_fsgetpath, "fsgetpath");

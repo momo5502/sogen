@@ -11,6 +11,7 @@ namespace sogen
     void sys_mac_syscall(const macos_syscall_context& c);
     void sys_csrctl(const macos_syscall_context& c);
     void sys_csops(const macos_syscall_context& c);
+    void sys_csops_audittoken(const macos_syscall_context& c);
     void sys_issetugid(const macos_syscall_context& c);
     void sys_getentropy(const macos_syscall_context& c);
     void sys_proc_info(const macos_syscall_context& c);

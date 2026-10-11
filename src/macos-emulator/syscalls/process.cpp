@@ -10,10 +10,9 @@ namespace sogen
 {
     namespace
     {
-        // Not 1: dyld and libSystem take launchd-only paths for pid 1.
-        constexpr uint64_t PROCESS_ID = 100;
         constexpr uint64_t MAIN_THREAD_ID = 0x1000;
         constexpr uint64_t PROCESS_UNIQUE_ID = 0x1000;
+        constexpr uint32_t PARENT_PROCESS_ID = 1;
         constexpr uint64_t PARENT_UNIQUE_ID = 0x1;
     }
 
@@ -30,7 +29,7 @@ namespace sogen
 
     void sys_getpid(const macos_syscall_context& c)
     {
-        write_macos_syscall_success(c, PROCESS_ID);
+        write_macos_syscall_success(c, MACOS_PROCESS_ID);
     }
 
     // Two policy calls are answered. AMFI's dyld policy query takes { uint64_t input_flags; uint64_t* output_flags }
@@ -123,6 +122,7 @@ namespace sogen
     {
         constexpr uint64_t proc_info_call_pidinfo = 2;
         constexpr uint64_t proc_info_call_set_dyld_images = 15;
+        constexpr uint64_t proc_pidt_shortbsdinfo = 13;
         constexpr uint64_t proc_pid_uniqidentifierinfo = 17;
 
         const auto call = get_macos_syscall_argument(c.emu, 0);
@@ -131,7 +131,51 @@ namespace sogen
         const auto buffer = get_macos_syscall_argument(c.emu, 4);
         const auto buffer_size = get_macos_syscall_argument(c.emu, 5);
 
-        if (call == proc_info_call_pidinfo && flavor == proc_pid_uniqidentifierinfo && pid == PROCESS_ID)
+        if (call == proc_info_call_pidinfo && flavor == proc_pidt_shortbsdinfo && pid == MACOS_PROCESS_ID)
+        {
+            struct proc_bsdshortinfo
+            {
+                uint32_t pid;
+                uint32_t parent_pid;
+                uint32_t process_group;
+                uint32_t status;
+                std::array<char, 16> command;
+                uint32_t flags;
+                std::array<uint32_t, 6> identities;
+                uint32_t reserved;
+            };
+
+            static_assert(sizeof(proc_bsdshortinfo) == 64);
+
+            // A native (not translated) 64-bit process that has exec'd, as measured on a shell-launched process.
+            constexpr uint32_t process_flags = 0x1404010;
+            constexpr uint32_t status_running = 2;
+
+            proc_bsdshortinfo info{
+                .pid = MACOS_PROCESS_ID,
+                .parent_pid = PARENT_PROCESS_ID,
+                .process_group = MACOS_PROCESS_ID,
+                .status = status_running,
+                .command = {},
+                .flags = process_flags,
+                .identities = {USER_ID, GROUP_ID, USER_ID, GROUP_ID, USER_ID, GROUP_ID},
+                .reserved = 0,
+            };
+
+            const auto name = c.emu_ref.process_name;
+            std::copy_n(name.begin(), std::min(name.size(), info.command.size() - 1), info.command.begin());
+
+            if (buffer_size < sizeof(info) || !c.emu.try_write_memory(buffer, &info, sizeof(info)))
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_ENOMEM);
+                return;
+            }
+
+            write_macos_syscall_success(c, sizeof(info));
+            return;
+        }
+
+        if (call == proc_info_call_pidinfo && flavor == proc_pid_uniqidentifierinfo && pid == MACOS_PROCESS_ID)
         {
             struct proc_uniqidentifierinfo
             {
@@ -150,7 +194,7 @@ namespace sogen
                 .uuid = c.emu_ref.executable_uuid,
                 .unique_id = PROCESS_UNIQUE_ID,
                 .parent_unique_id = PARENT_UNIQUE_ID,
-                .id_version = 0,
+                .id_version = static_cast<int32_t>(MACOS_PROCESS_ID_VERSION),
                 .reserved2 = 0,
                 .reserved3 = 0,
                 .reserved4 = 0,
@@ -209,40 +253,74 @@ namespace sogen
         write_macos_syscall_success(c, supported_features);
     }
 
-    // The status of an Apple platform binary as macOS reports it (measured on /bin/sleep, natively and under
-    // Rosetta): valid, signed, platform binary, restricted.
+    namespace
+    {
+        // The status of an Apple platform binary as macOS reports it (measured on /bin/sleep, natively and under
+        // Rosetta): valid, signed, platform binary, restricted. Its DER entitlements query succeeds without
+        // writing anything, as XNU does when a binary has none.
+        void code_signing_operation(const macos_syscall_context& c)
+        {
+            constexpr uint64_t cs_ops_status = 0;
+            constexpr uint64_t cs_ops_der_entitlements_blob = 16;
+            constexpr uint32_t platform_binary_status = 0x26010801;
+
+            const auto pid = get_macos_syscall_argument(c.emu, 0);
+            const auto operation = get_macos_syscall_argument(c.emu, 1);
+            const auto buffer = get_macos_syscall_argument(c.emu, 2);
+            const auto size = get_macos_syscall_argument(c.emu, 3);
+
+            if (pid != 0 && pid != MACOS_PROCESS_ID)
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_ESRCH);
+                return;
+            }
+
+            switch (operation)
+            {
+            case cs_ops_status:
+                if (size < sizeof(platform_binary_status) ||
+                    !c.emu.try_write_memory(buffer, &platform_binary_status, sizeof(platform_binary_status)))
+                {
+                    write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
+                    return;
+                }
+
+                write_macos_syscall_success(c, 0);
+                return;
+            case cs_ops_der_entitlements_blob:
+                write_macos_syscall_success(c, 0);
+                return;
+            default:
+                c.emu_ref.log.error("Unhandled csops(pid %lld, op %llu, size %llu)\n", static_cast<long long>(pid),
+                                    static_cast<unsigned long long>(operation), static_cast<unsigned long long>(size));
+                c.emu_ref.stop();
+                return;
+            }
+        }
+    }
+
     void sys_csops(const macos_syscall_context& c)
     {
-        constexpr uint64_t cs_ops_status = 0;
-        constexpr uint32_t platform_binary_status = 0x26010801;
+        code_signing_operation(c);
+    }
 
-        const auto pid = get_macos_syscall_argument(c.emu, 0);
-        const auto operation = get_macos_syscall_argument(c.emu, 1);
-        const auto buffer = get_macos_syscall_argument(c.emu, 2);
-        const auto size = get_macos_syscall_argument(c.emu, 3);
-
-        if (operation != cs_ops_status)
+    // XNU first checks that the audit token names this very process (pid and pid version).
+    void sys_csops_audittoken(const macos_syscall_context& c)
+    {
+        std::array<uint32_t, 8> token{};
+        if (!c.emu.try_read_memory(get_macos_syscall_argument(c.emu, 4), token.data(), sizeof(token)))
         {
-            c.emu_ref.log.error("Unhandled csops(pid %lld, op %llu, size %llu)\n", static_cast<long long>(pid),
-                                static_cast<unsigned long long>(operation), static_cast<unsigned long long>(size));
-            c.emu_ref.stop();
+            write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
             return;
         }
 
-        if (pid != 0 && pid != PROCESS_ID)
+        if (token[5] != MACOS_PROCESS_ID || token[7] != MACOS_PROCESS_ID_VERSION)
         {
             write_macos_syscall_error(c, macos_errno::MACOS_ESRCH);
             return;
         }
 
-        if (size < sizeof(platform_binary_status) ||
-            !c.emu.try_write_memory(buffer, &platform_binary_status, sizeof(platform_binary_status)))
-        {
-            write_macos_syscall_error(c, macos_errno::MACOS_EINVAL);
-            return;
-        }
-
-        write_macos_syscall_success(c, 0);
+        code_signing_operation(c);
     }
 
     void sys_issetugid(const macos_syscall_context& c)

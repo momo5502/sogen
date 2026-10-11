@@ -41,6 +41,7 @@ namespace sogen
         std::optional<int> exit_status{};
         uint32_t signal_mask{};
         std::array<uint8_t, 16> executable_uuid{};
+        std::string process_name{};
 
         uint64_t next_entropy();
 

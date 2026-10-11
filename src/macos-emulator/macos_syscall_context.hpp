@@ -42,6 +42,16 @@ namespace sogen
         constexpr uint64_t KERN_INVALID_NAME = 15;
     }
 
+    // Not 1: dyld and libSystem take launchd-only paths for pid 1.
+    constexpr uint32_t MACOS_PROCESS_ID = 100;
+
+    // Distinguishes successive processes that reuse a pid; libxpc rejects an audit token whose version is zero.
+    constexpr uint32_t MACOS_PROCESS_ID_VERSION = 1;
+
+    // The identity of a standard first user account on macOS (staff group).
+    constexpr uint32_t USER_ID = 501;
+    constexpr uint32_t GROUP_ID = 20;
+
     // The wall-clock time the guest sees, fixed so runs are deterministic.
     constexpr int64_t MACOS_EPOCH_SECONDS = 1700000000;
 

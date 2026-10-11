@@ -38,6 +38,8 @@ namespace sogen
     std::vector<std::byte> mig_semaphore_create(const macos_syscall_context& c, std::span<const std::byte> request);
     std::vector<std::byte> mig_task_restartable_ranges_register(const macos_syscall_context& c, std::span<const std::byte> request);
     std::vector<std::byte> mig_task_get_special_port(const macos_syscall_context& c, std::span<const std::byte> request);
+    std::vector<std::byte> mig_task_set_special_port(const macos_syscall_context& c, std::span<const std::byte> request);
+    std::vector<std::byte> mig_task_info(const macos_syscall_context& c, std::span<const std::byte> request);
 
     template <typename T>
     T read_mig_field(const std::span<const std::byte> message, const size_t offset)

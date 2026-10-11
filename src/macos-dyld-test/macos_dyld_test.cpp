@@ -50,8 +50,7 @@ namespace sogen::macos_dyld_test
         }
     }
 
-    // Disabled until Mach messages are modelled: libSystem's initialization stops at its first mach_msg2 (host_info).
-    TEST(MacosDyldTest, DISABLED_RunsEcho)
+    TEST(MacosDyldTest, RunsEcho)
     {
         const auto result = run_root_binary("/bin/echo", {"/bin/echo", "hello"});
 

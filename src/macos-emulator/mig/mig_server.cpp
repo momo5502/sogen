@@ -6,7 +6,9 @@ namespace sogen
     {
         constexpr int32_t HOST_INFO_ID = 200;
         constexpr int32_t HOST_GET_CLOCK_SERVICE_ID = 206;
+        constexpr int32_t TASK_INFO_ID = 3405;
         constexpr int32_t TASK_GET_SPECIAL_PORT_ID = 3409;
+        constexpr int32_t TASK_SET_SPECIAL_PORT_ID = 3410;
         constexpr int32_t SEMAPHORE_CREATE_ID = 3418;
         constexpr int32_t TASK_RESTARTABLE_RANGES_REGISTER_ID = 8000;
     }
@@ -30,8 +32,12 @@ namespace sogen
         {
             switch (id)
             {
+            case TASK_INFO_ID:
+                return mig_task_info;
             case TASK_GET_SPECIAL_PORT_ID:
                 return mig_task_get_special_port;
+            case TASK_SET_SPECIAL_PORT_ID:
+                return mig_task_set_special_port;
             case SEMAPHORE_CREATE_ID:
                 return mig_semaphore_create;
             case TASK_RESTARTABLE_RANGES_REGISTER_ID:

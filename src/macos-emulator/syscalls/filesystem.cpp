@@ -5,6 +5,9 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <filesystem>
+#include <string>
+#include <vector>
 #include <string_view>
 
 namespace sogen
@@ -67,12 +70,48 @@ namespace sogen
         }
     }
 
+    namespace
+    {
+        // The full path comes back as an attrreference (offset from the reference, length including the NUL) after
+        // the leading length, followed by the string padded to four bytes.
+        void write_full_path_attribute(const macos_syscall_context& c, const std::string& guest_path)
+        {
+            if (!std::filesystem::exists(c.emu_ref.file_system.translate(guest_path)))
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_ENOENT);
+                return;
+            }
+
+            constexpr uint32_t reference_size = 2 * sizeof(uint32_t);
+            const auto path_length = static_cast<uint32_t>(guest_path.size() + 1);
+            const auto total_length = static_cast<uint32_t>(sizeof(uint32_t) + reference_size + ((path_length + 3) & ~3U));
+
+            std::vector<std::byte> data(total_length);
+            std::memcpy(data.data(), &total_length, sizeof(total_length));
+            std::memcpy(data.data() + sizeof(uint32_t), &reference_size, sizeof(reference_size));
+            std::memcpy(data.data() + sizeof(uint32_t) + sizeof(int32_t), &path_length, sizeof(path_length));
+            std::memcpy(data.data() + sizeof(uint32_t) + reference_size, guest_path.c_str(), path_length);
+
+            const auto buffer = get_macos_syscall_argument(c.emu, 2);
+            const auto buffer_size = get_macos_syscall_argument(c.emu, 3);
+            const auto written = std::min<uint64_t>(buffer_size, data.size());
+            if (!c.emu.try_write_memory(buffer, data.data(), static_cast<size_t>(written)))
+            {
+                write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+                return;
+            }
+
+            write_macos_syscall_success(c, 0);
+        }
+    }
+
     // Only the volume query dyld's FileManager makes on the root volume is answered: device and fsid, then the
     // volume capabilities and UUID, packed in attribute bit order after a leading length.
     void sys_getattrlist(const macos_syscall_context& c)
     {
         constexpr uint32_t attr_cmn_devid = 0x2;
         constexpr uint32_t attr_cmn_fsid = 0x4;
+        constexpr uint32_t attr_cmn_fullpath = 0x08000000;
         constexpr uint32_t attr_vol_info = 0x80000000;
         constexpr uint32_t attr_vol_capabilities = 0x20000;
         constexpr uint32_t attr_vol_uuid = 0x40000;
@@ -110,6 +149,12 @@ namespace sogen
         if (!path || !c.emu.try_read_memory(get_macos_syscall_argument(c.emu, 1), &request, sizeof(request)))
         {
             write_macos_syscall_error(c, macos_errno::MACOS_EFAULT);
+            return;
+        }
+
+        if (request.common == attr_cmn_fullpath && request.volume == 0 && request.directory == 0 && request.file == 0)
+        {
+            write_full_path_attribute(c, *path);
             return;
         }
 

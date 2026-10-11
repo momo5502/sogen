@@ -184,7 +184,8 @@ namespace sogen
         const auto header = read_mig_field<mach_msg_header>(request, 0);
 
         const auto* destination = c.emu_ref.mach_ports.find(header.remote_port);
-        if (destination == nullptr)
+        c.emu_ref.log.log("  message %d to port 0x%x\n", header.id, header.remote_port);
+        if (destination == nullptr || destination->object == mach_port_object::dead)
         {
             write_trap_result(c, mach_send_invalid_dest);
             return;
