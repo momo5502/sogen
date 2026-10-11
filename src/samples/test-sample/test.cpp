@@ -1971,6 +1971,29 @@ namespace
         return true;
     }
 
+    bool test_bcrypt_random()
+    {
+        std::array<UCHAR, 8192> first{};
+        std::array<UCHAR, 8192> second{};
+        const auto status = BCryptGenRandom(nullptr, first.data(), static_cast<ULONG>(first.size()), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+        if (!BCRYPT_SUCCESS(status))
+        {
+            printf("BCryptGenRandom failed: 0x%08lX\n", status);
+            return false;
+        }
+
+        BCRYPT_ALG_HANDLE algorithm{};
+        const auto open_status = BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_RNG_ALGORITHM, nullptr, 0);
+        if (!BCRYPT_SUCCESS(open_status))
+        {
+            printf("BCryptOpenAlgorithmProvider(RNG) failed: 0x%08lX\n", open_status);
+            return false;
+        }
+        const auto close_algorithm = sogen::utils::finally([&] { BCryptCloseAlgorithmProvider(algorithm, 0); });
+        const auto second_status = BCryptGenRandom(algorithm, second.data(), static_cast<ULONG>(second.size()), 0);
+        return BCRYPT_SUCCESS(second_status) && first != second && std::ranges::any_of(first, [](UCHAR value) { return value != 0; });
+    }
+
     bool test_bcrypt_hash()
     {
         struct hash_vector
@@ -2247,6 +2270,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_gdi, "GDI")
     RUN_TEST(test_dialog_table, "Dialog Table")
     RUN_TEST(test_bcrypt_hash, "BCrypt Hash")
+    RUN_TEST(test_bcrypt_random, "BCrypt Random")
     RUN_TEST(test_crypt_protect, "CryptProtect")
     RUN_TEST(test_set_dib_bits_to_device, "GDI DIB")
 

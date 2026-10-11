@@ -5,6 +5,7 @@
 #include "devices/afd_endpoint.hpp"
 #include "devices/mount_point_manager.hpp"
 #include "devices/security_support_provider.hpp"
+#include "devices/cryptography.hpp"
 #include "devices/named_pipe.hpp"
 #include "devices/network_store_interface.hpp"
 #include "devices/gpu_bridge.hpp"
@@ -86,7 +87,6 @@ namespace sogen
 
         static const std::map<std::u16string_view, device_factory> registry = {
             // Dummy
-            {u"CNG"sv, create_dummy_device},
             {u"RasAcd"sv, create_dummy_device},
             {u"PcwDrv"sv, create_dummy_device},
             {u"DeviceApi\\CMApi"sv, create_dummy_device},
@@ -102,6 +102,7 @@ namespace sogen
             {u"Nsi"sv, create_network_store_interface},
             {u"MountPointManager"sv, create_mount_point_manager},
             {u"KsecDD"sv, create_security_support_provider},
+            {u"CNG"sv, create_cryptography_device},
             {u"NamedPipe"sv, create_named_pipe_device},
             {u"SogenGpu"sv, create_gpu_bridge},
             {u"SogenSteam"sv, create_steam_bridge},
