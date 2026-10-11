@@ -28,6 +28,7 @@ namespace sogen
         ~managed_process_connection();
 
         const process_create_request& request() const;
+        std::vector<process_inherited_pipe> take_inherited_pipes();
         bool wait_for_resume(managed_process_target& target);
         bool notify_exit(uint64_t exit_code);
         void disconnect();

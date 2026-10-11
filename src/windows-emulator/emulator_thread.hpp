@@ -376,6 +376,7 @@ namespace sogen
         std::optional<pending_msg> await_msg{};
         std::optional<DWORD> await_msg_mask{};
         std::optional<pending_io_completion_wait> await_io_completion{};
+        std::optional<emulator_pointer> await_file_io{};
 
         // When set, the thread is parked until this host-side predicate returns true. Used by the GPU
         // bridge to wait on a Vulkan semaphore cooperatively (other guest threads run while the GPU works)
@@ -518,6 +519,7 @@ namespace sogen
             buffer.write_optional(this->await_msg);
             buffer.write_optional(this->await_msg_mask);
             buffer.write_optional(this->await_io_completion);
+            buffer.write_optional(this->await_file_io);
 
             buffer.write(this->apc_alertable);
             buffer.write_vector(this->pending_apcs);
@@ -590,6 +592,7 @@ namespace sogen
             buffer.read_optional(this->await_msg, [this] { return pending_msg{*this->memory_ptr}; });
             buffer.read_optional(this->await_msg_mask);
             buffer.read_optional(this->await_io_completion, [] { return pending_io_completion_wait{}; });
+            buffer.read_optional(this->await_file_io);
 
             buffer.read(this->apc_alertable);
             buffer.read_vector(this->pending_apcs);

@@ -350,7 +350,7 @@ namespace sogen
         {
             for (const auto& thread_entry : process.threads)
             {
-                if (thread_entry.second.await_host_condition)
+                if (thread_entry.second.await_host_condition || thread_entry.second.await_file_io)
                 {
                     return true;
                 }
@@ -714,6 +714,8 @@ namespace sogen
     windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings,
                                        emulator_callbacks callbacks, emulator_interfaces interfaces)
         : emu_(std::move(emu)),
+          use_native_timestamp_counter_(!interfaces.clock && !settings.use_relative_time &&
+                                        this->emu_->supports_native_timestamp_counter()),
           clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
           dns_lookup_(get_dns_lookup(interfaces)),
           socket_factory_(get_socket_factory(interfaces)),
@@ -1120,6 +1122,11 @@ namespace sogen
             auto& acting = vcpu.cpu;
             this->callbacks.on_rdtscp();
 
+            if (this->use_native_timestamp_counter_)
+            {
+                return instruction_hook_continuation::run_instruction;
+            }
+
             const auto ticks = this->clock_->timestamp_counter();
             acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
             acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
@@ -1137,6 +1144,11 @@ namespace sogen
             const scoped_dispatch dispatch(*this, vcpu);
             auto& acting = vcpu.cpu;
             this->callbacks.on_rdtsc();
+
+            if (this->use_native_timestamp_counter_)
+            {
+                return instruction_hook_continuation::run_instruction;
+            }
 
             const auto ticks = this->clock_->timestamp_counter();
             acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));

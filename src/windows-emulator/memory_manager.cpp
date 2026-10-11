@@ -606,7 +606,7 @@ namespace sogen
             return false;
         }
 
-        if (entry->second.kind == memory_region_kind::host_reserved)
+        if (entry->second.kind == memory_region_kind::host_reserved || entry->second.kind == memory_region_kind::placeholder)
         {
             return false;
         }
@@ -759,6 +759,94 @@ namespace sogen
         }
 
         this->memory_->release_guest_address_range(gap_start, gap_end - gap_start);
+    }
+
+    bool memory_manager::split_placeholder(const uint64_t address, const size_t size)
+    {
+        const auto entry = this->reserved_regions_.find(address);
+        if (entry == this->reserved_regions_.end() || entry->second.kind != memory_region_kind::placeholder || !size ||
+            size >= entry->second.length || address != page_align_down(address) || size != page_align_up(size))
+        {
+            return false;
+        }
+        reserved_region remaining{.length = entry->second.length - size, .kind = memory_region_kind::placeholder};
+        this->reserved_regions_.emplace(address + size, std::move(remaining));
+        entry->second.length = size;
+        this->update_layout_version();
+        return true;
+    }
+
+    bool memory_manager::coalesce_placeholders(const uint64_t address, const size_t size)
+    {
+        if (!size || address > MAX_ALLOCATION_END_EXCL || size > MAX_ALLOCATION_END_EXCL - address)
+        {
+            return false;
+        }
+        const auto first = this->reserved_regions_.find(address);
+        auto end = first;
+        auto next_address = address;
+        while (end != this->reserved_regions_.end() && next_address < address + size)
+        {
+            if (end->first != next_address || end->second.kind != memory_region_kind::placeholder ||
+                end->second.length > address + size - next_address)
+            {
+                return false;
+            }
+            next_address += end->second.length;
+            ++end;
+        }
+        if (next_address != address + size || first == end || std::next(first) == end)
+        {
+            return false;
+        }
+        first->second.length = size;
+        this->reserved_regions_.erase(std::next(first), end);
+        this->update_layout_version();
+        return true;
+    }
+
+    bool memory_manager::replace_placeholder(const uint64_t address, const size_t size, const nt_memory_permission permissions,
+                                             const bool commit)
+    {
+        const auto entry = this->reserved_regions_.find(address);
+        if (entry == this->reserved_regions_.end() || entry->second.kind != memory_region_kind::placeholder || entry->second.length != size)
+        {
+            return false;
+        }
+        entry->second.kind = memory_region_kind::placeholder_backed_allocation;
+        if (commit && !this->commit_memory(address, size, permissions))
+        {
+            entry->second.kind = memory_region_kind::placeholder;
+            return false;
+        }
+        entry->second.initial_permission = permissions.flattened();
+        this->update_layout_version();
+        return true;
+    }
+
+    bool memory_manager::preserve_placeholder(const uint64_t address, const size_t size)
+    {
+        const auto entry = this->reserved_regions_.find(address);
+        if (entry == this->reserved_regions_.end())
+        {
+            return false;
+        }
+        if (entry->second.kind == memory_region_kind::placeholder)
+        {
+            return this->split_placeholder(address, size);
+        }
+        if (entry->second.kind != memory_region_kind::placeholder_backed_allocation || (size && size != entry->second.length))
+        {
+            return false;
+        }
+        if (!this->decommit_memory(address, entry->second.length))
+        {
+            return false;
+        }
+        entry->second.kind = memory_region_kind::placeholder;
+        entry->second.initial_permission = memory_permission::none;
+        this->update_layout_version();
+        return true;
     }
 
     bool memory_manager::release_memory(const uint64_t address, size_t size)

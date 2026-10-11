@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../devices/named_pipe.hpp"
 
 #include <utils/finally.hpp>
 
@@ -143,7 +144,7 @@ namespace sogen
                                             const ACCESS_MASK /*thread_desired_access*/,
                                             const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*process_object_attributes*/,
                                             const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*thread_object_attributes*/,
-                                            const ULONG /*process_flags*/, const ULONG /*thread_flags*/,
+                                            const ULONG process_flags, const ULONG /*thread_flags*/,
                                             const emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_parameters,
                                             const emulator_object<PS_CREATE_INFO<EmulatorTraits<Emu64>>> create_info,
                                             const emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list)
@@ -179,14 +180,74 @@ namespace sogen
                 attribute_count = static_cast<size_t>((total_length - header_size) / entry_size);
             }
 
-            auto command_line = parse_command_line(read_unicode_string(c.emu, parameters.CommandLine));
+            const auto original_command_line = read_unicode_string(c.emu, parameters.CommandLine);
+            auto command_line = parse_command_line(original_command_line);
 
             process_create_request request{};
+            request.command_line = u16_to_u8(original_command_line);
             const windows_path application_path{read_unicode_string(c.emu, parameters.ImagePathName)};
             request.application = u16_to_u8(application_path.u16string());
             request.working_directory =
                 u16_to_u8(windows_path(read_unicode_string(c.emu, parameters.CurrentDirectory.DosPath)).u16string());
             request.environment = read_environment(c, parameters);
+            request.standard_input = parameters.StandardInput;
+            request.standard_output = parameters.StandardOutput;
+            request.standard_error = parameters.StandardError;
+            const auto inherit_pipe = [&](const handle h) {
+                if (std::ranges::any_of(request.inherited_pipes, [&](const auto& entry) { return entry.guest_handle == h.bits; }))
+                {
+                    return;
+                }
+                const auto* container = c.proc.devices.get(h);
+                const auto* pipe = container ? container->get_internal_device<named_pipe>() : nullptr;
+                if (pipe && pipe->endpoint)
+                {
+                    request.inherited_pipes.push_back({.guest_handle = h.bits,
+                                                       .endpoint = pipe->endpoint,
+                                                       .name = u16_to_u8(pipe->name),
+                                                       .access = pipe->access,
+                                                       .pipe_type = pipe->pipe_type,
+                                                       .read_mode = pipe->read_mode,
+                                                       .completion_mode = pipe->completion_mode,
+                                                       .create_options = pipe->create_options,
+                                                       .inherit = pipe->inherit});
+                }
+            };
+            bool explicit_handle_list{};
+            for (size_t i = 0; i < attribute_count; ++i)
+            {
+                const emulator_object<PS_ATTRIBUTE<EmulatorTraits<Emu64>>> attributes{
+                    c.emu, attribute_list.value() + offsetof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>, Attributes)};
+                const auto attribute = attributes.read(i);
+                if ((attribute.Attribute & PS_ATTRIBUTE_NUMBER_MASK) != PsAttributeHandleList)
+                {
+                    continue;
+                }
+                explicit_handle_list = true;
+                if (attribute.Size % sizeof(handle) != 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const emulator_object<handle> handles{c.emu, attribute.ValuePtr};
+                for (size_t j = 0; j < attribute.Size / sizeof(handle); ++j)
+                {
+                    inherit_pipe(handles.read(j));
+                }
+            }
+            if (!explicit_handle_list && (process_flags & 4))
+            {
+                for (const auto& [index, device] : c.proc.devices)
+                {
+                    if (const auto* pipe = device.get_internal_device<named_pipe>(); pipe && pipe->inherit)
+                    {
+                        inherit_pipe(c.proc.devices.make_handle(index));
+                    }
+                }
+            }
+            for (const auto h : {request.standard_input, request.standard_output, request.standard_error})
+            {
+                inherit_pipe(make_handle(h));
+            }
 
             if (!command_line.empty())
             {

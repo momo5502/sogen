@@ -60,6 +60,7 @@ namespace sogen
         std::u16string argument0{};
         windows_path working_directory{};
         std::vector<std::u16string> arguments{};
+        std::optional<std::u16string> command_line{};
         utils::unordered_insensitive_u16string_map<std::u16string> environment{};
         uint32_t process_id{4};
         uint32_t thread_id{8};
@@ -70,6 +71,7 @@ namespace sogen
             buffer.write(this->argument0);
             buffer.write(this->working_directory);
             buffer.write_vector(this->arguments);
+            buffer.write_optional(this->command_line);
             buffer.write_map(this->environment);
             buffer.write(this->process_id);
             buffer.write(this->thread_id);
@@ -81,6 +83,7 @@ namespace sogen
             buffer.read(this->argument0);
             buffer.read(this->working_directory);
             buffer.read_vector(this->arguments);
+            buffer.read_optional(this->command_line);
             buffer.read_map(this->environment);
             buffer.read(this->process_id);
             buffer.read(this->thread_id);
@@ -159,6 +162,7 @@ namespace sogen
         application_settings application_settings_{};
 
         std::unique_ptr<x86_64_emulator> emu_{};
+        bool use_native_timestamp_counter_{};
         std::unique_ptr<utils::clock> clock_{};
         std::unique_ptr<network::dns_lookup> dns_lookup_{};
         std::unique_ptr<network::socket_factory> socket_factory_{};
