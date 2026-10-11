@@ -3,6 +3,7 @@
 #include "../io_completion_wait.hpp"
 #include "../syscall_utils.hpp"
 #include "../devices/named_pipe.hpp"
+#include <utils/io.hpp>
 
 namespace sogen
 {
@@ -910,7 +911,7 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, const handle /*h*/, const SECURITY_INFORMATION security_information,
+        NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, const handle h, const SECURITY_INFORMATION security_information,
                                               const emulator_pointer security_descriptor, const ULONG length,
                                               const emulator_object<ULONG> length_needed)
         {
@@ -920,9 +921,20 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            // Owner SID: S-1-5-32-544 (Administrators)
-            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-            const uint8_t owner_sid[] = {0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x20, 0x00, 0x00, 0x00, 0x20, 0x02, 0x00, 0x00};
+            std::vector<uint8_t> owner_sid = {0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05,
+                                              0x20, 0x00, 0x00, 0x00, 0x20, 0x02, 0x00, 0x00};
+#ifdef OS_WINDOWS
+            if (const auto* f = c.proc.files.get(h); f && (security_information & OWNER_SECURITY_INFORMATION))
+            {
+                owner_sid = utils::io::get_file_owner(f->host_path);
+                if (owner_sid.empty())
+                {
+                    return STATUS_ACCESS_DENIED;
+                }
+            }
+#else
+            (void)h;
+#endif
 
             // Group SID: S-1-5-18 (Local System)
             // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
@@ -949,7 +961,7 @@ namespace sogen
 
             if (security_information & OWNER_SECURITY_INFORMATION)
             {
-                total_size += sizeof(owner_sid);
+                total_size += static_cast<ULONG>(owner_sid.size());
             }
 
             if (security_information & GROUP_SECURITY_INFORMATION)
@@ -988,8 +1000,8 @@ namespace sogen
             if (security_information & OWNER_SECURITY_INFORMATION)
             {
                 sd.Owner = current_offset;
-                c.emu.write_memory(security_descriptor + current_offset, owner_sid);
-                current_offset += sizeof(owner_sid);
+                c.emu.write_memory(security_descriptor + current_offset, owner_sid.data(), owner_sid.size());
+                current_offset += static_cast<ULONG>(owner_sid.size());
             }
 
             if (security_information & GROUP_SECURITY_INFORMATION)

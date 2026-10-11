@@ -3,6 +3,7 @@
 #include <span>
 #include <vector>
 #include <filesystem>
+#include <cstdint>
 
 namespace sogen
 {
@@ -16,6 +17,7 @@ namespace sogen
         bool read_file(const std::filesystem::path& file, std::vector<std::byte>* data);
         std::vector<std::byte> read_file(const std::filesystem::path& file);
         size_t file_size(const std::filesystem::path& file);
+        std::vector<uint8_t> get_file_owner(const std::filesystem::path& file);
         bool create_directory(const std::filesystem::path& directory);
         bool directory_exists(const std::filesystem::path& directory);
         bool directory_is_empty(const std::filesystem::path& directory);

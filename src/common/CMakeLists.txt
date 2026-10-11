@@ -22,5 +22,6 @@ target_link_libraries(emulator-common PUBLIC
 if(WIN)
   target_link_libraries(emulator-common PUBLIC
     ws2_32
+    advapi32
   )
 endif()
