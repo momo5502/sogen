@@ -1,6 +1,7 @@
 #include <windows_emulator.hpp>
 #include <subprocess_process_manager.hpp>
 #include <emulator_process_target.hpp>
+#include <inherited_pipes.hpp>
 #include <registry/registry_file.hpp>
 #include <utils/finally.hpp>
 #include <utils/executable_path.hpp>
@@ -78,6 +79,7 @@ namespace sogen::sandbox
             {
                 const auto& request = managed_connection->request();
                 app_settings.argument0 = u8_to_u16(request.argument0);
+                app_settings.command_line = u8_to_u16(request.command_line);
                 app_settings.process_id = request.process_id;
                 app_settings.thread_id = request.thread_id;
                 if (!request.working_directory.empty())
@@ -164,6 +166,7 @@ namespace sogen::sandbox
             if (managed_connection)
             {
                 win_emu.setup_process_if_necessary();
+                install_inherited_pipes(win_emu, managed_connection->request(), managed_connection->take_inherited_pipes());
                 managed_target = std::make_unique<emulator_process_target>(win_emu);
                 if (!managed_connection->wait_for_resume(*managed_target))
                 {

@@ -361,13 +361,15 @@ namespace sogen
             const auto application_str = app_settings.application.u16string();
 
             const auto& argument0 = app_settings.argument0.empty() ? application_str : app_settings.argument0;
-            std::u16string command_line{};
-            append_command_line_argument(command_line, argument0);
-
-            for (const auto& arg : app_settings.arguments)
+            auto command_line = app_settings.command_line.value_or(std::u16string{});
+            if (!app_settings.command_line)
             {
-                command_line.push_back(u' ');
-                append_command_line_argument(command_line, arg);
+                append_command_line_argument(command_line, argument0);
+                for (const auto& arg : app_settings.arguments)
+                {
+                    command_line.push_back(u' ');
+                    append_command_line_argument(command_line, arg);
+                }
             }
 
             allocator.make_unicode_string(proc_params.CommandLine, command_line);

@@ -8,6 +8,10 @@ namespace sogen::network
     tcp_client_socket::tcp_client_socket(const int af)
         : socket(af, SOCK_STREAM, IPPROTO_TCP)
     {
+#ifdef SO_NOSIGPIPE
+        const int enabled = 1;
+        setsockopt(this->get_socket(), SOL_SOCKET, SO_NOSIGPIPE, reinterpret_cast<const char*>(&enabled), sizeof(enabled));
+#endif
     }
 
     tcp_client_socket::tcp_client_socket(SOCKET s, const address& target)
@@ -15,6 +19,10 @@ namespace sogen::network
     {
         (void)target;
         assert(this->get_target() == target);
+#ifdef SO_NOSIGPIPE
+        const int enabled = 1;
+        setsockopt(this->get_socket(), SOL_SOCKET, SO_NOSIGPIPE, reinterpret_cast<const char*>(&enabled), sizeof(enabled));
+#endif
     }
 
     tcp_client_socket::~tcp_client_socket()
@@ -29,21 +37,40 @@ namespace sogen::network
 
     bool tcp_client_socket::send(std::string_view data) const
     {
+        return this->send(data, std::chrono::steady_clock::time_point::max(), nullptr);
+    }
+
+    bool tcp_client_socket::send(std::string_view data, const std::chrono::steady_clock::time_point deadline,
+                                 const std::atomic_bool* stopping) const
+    {
         while (!data.empty())
         {
-            const auto res = ::send(this->get_socket(), data.data(), static_cast<send_size>(data.size()), 0);
+            if ((stopping && *stopping) || std::chrono::steady_clock::now() >= deadline)
+            {
+                return false;
+            }
+#ifdef MSG_NOSIGNAL
+            constexpr int send_flags = MSG_NOSIGNAL;
+#else
+            constexpr int send_flags = 0;
+#endif
+            const auto res = ::send(this->get_socket(), data.data(), static_cast<send_size>(data.size()), send_flags);
             if (res < 0)
             {
+                if (GET_SOCKET_ERROR() == SERR(EINTR))
+                {
+                    continue;
+                }
                 if (GET_SOCKET_ERROR() != SERR(EWOULDBLOCK))
                 {
                     break;
                 }
 
-                this->sleep(std::chrono::milliseconds(10), true);
+                this->sleep(std::chrono::milliseconds(10), false);
                 continue;
             }
 
-            if (static_cast<size_t>(res) > data.size())
+            if (res == 0 || static_cast<size_t>(res) > data.size())
             {
                 break;
             }

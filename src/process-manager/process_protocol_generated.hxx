@@ -23,6 +23,10 @@ struct EnvironmentVariable;
 struct EnvironmentVariableBuilder;
 struct EnvironmentVariableT;
 
+struct InheritedPipe;
+struct InheritedPipeBuilder;
+struct InheritedPipeT;
+
 struct ProcessCreateRequest;
 struct ProcessCreateRequestBuilder;
 struct ProcessCreateRequestT;
@@ -678,6 +682,215 @@ inline ::flatbuffers::Offset<EnvironmentVariable> CreateEnvironmentVariableDirec
 
 ::flatbuffers::Offset<EnvironmentVariable> CreateEnvironmentVariable(::flatbuffers::FlatBufferBuilder &_fbb, const EnvironmentVariableT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
 
+struct InheritedPipeT : public ::flatbuffers::NativeTable {
+  typedef InheritedPipe TableType;
+  uint64_t guest_handle = 0;
+  uint16_t port = 0;
+  std::string token{};
+  std::string name{};
+  uint32_t access = 0;
+  uint32_t pipe_type = 0;
+  uint32_t read_mode = 0;
+  uint32_t completion_mode = 0;
+  uint32_t create_options = 0;
+  bool inherit = false;
+  uint64_t file_id = 0;
+  uint32_t completion_notification_flags = 0;
+};
+
+struct InheritedPipe FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
+  typedef InheritedPipeT NativeTableType;
+  typedef InheritedPipeBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_GUEST_HANDLE = 4,
+    VT_PORT = 6,
+    VT_TOKEN = 8,
+    VT_NAME = 10,
+    VT_ACCESS = 12,
+    VT_PIPE_TYPE = 14,
+    VT_READ_MODE = 16,
+    VT_COMPLETION_MODE = 18,
+    VT_CREATE_OPTIONS = 20,
+    VT_INHERIT = 22,
+    VT_FILE_ID = 24,
+    VT_COMPLETION_NOTIFICATION_FLAGS = 26
+  };
+  uint64_t guest_handle() const {
+    return GetField<uint64_t>(VT_GUEST_HANDLE, 0);
+  }
+  uint16_t port() const {
+    return GetField<uint16_t>(VT_PORT, 0);
+  }
+  const ::flatbuffers::String *token() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_TOKEN);
+  }
+  const ::flatbuffers::String *name() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_NAME);
+  }
+  uint32_t access() const {
+    return GetField<uint32_t>(VT_ACCESS, 0);
+  }
+  uint32_t pipe_type() const {
+    return GetField<uint32_t>(VT_PIPE_TYPE, 0);
+  }
+  uint32_t read_mode() const {
+    return GetField<uint32_t>(VT_READ_MODE, 0);
+  }
+  uint32_t completion_mode() const {
+    return GetField<uint32_t>(VT_COMPLETION_MODE, 0);
+  }
+  uint32_t create_options() const {
+    return GetField<uint32_t>(VT_CREATE_OPTIONS, 0);
+  }
+  bool inherit() const {
+    return GetField<uint8_t>(VT_INHERIT, 0) != 0;
+  }
+  uint64_t file_id() const {
+    return GetField<uint64_t>(VT_FILE_ID, 0);
+  }
+  uint32_t completion_notification_flags() const {
+    return GetField<uint32_t>(VT_COMPLETION_NOTIFICATION_FLAGS, 0);
+  }
+  template <bool B = false>
+  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<uint64_t>(verifier, VT_GUEST_HANDLE, 8) &&
+           VerifyField<uint16_t>(verifier, VT_PORT, 2) &&
+           VerifyOffsetRequired(verifier, VT_TOKEN) &&
+           verifier.VerifyString(token()) &&
+           VerifyOffset(verifier, VT_NAME) &&
+           verifier.VerifyString(name()) &&
+           VerifyField<uint32_t>(verifier, VT_ACCESS, 4) &&
+           VerifyField<uint32_t>(verifier, VT_PIPE_TYPE, 4) &&
+           VerifyField<uint32_t>(verifier, VT_READ_MODE, 4) &&
+           VerifyField<uint32_t>(verifier, VT_COMPLETION_MODE, 4) &&
+           VerifyField<uint32_t>(verifier, VT_CREATE_OPTIONS, 4) &&
+           VerifyField<uint8_t>(verifier, VT_INHERIT, 1) &&
+           VerifyField<uint64_t>(verifier, VT_FILE_ID, 8) &&
+           VerifyField<uint32_t>(verifier, VT_COMPLETION_NOTIFICATION_FLAGS, 4) &&
+           verifier.EndTable();
+  }
+  InheritedPipeT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  void UnPackTo(InheritedPipeT *_o, const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
+  static ::flatbuffers::Offset<InheritedPipe> Pack(::flatbuffers::FlatBufferBuilder &_fbb, const InheritedPipeT* _o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+};
+
+struct InheritedPipeBuilder {
+  typedef InheritedPipe Table;
+  ::flatbuffers::FlatBufferBuilder &fbb_;
+  ::flatbuffers::uoffset_t start_;
+  void add_guest_handle(uint64_t guest_handle) {
+    fbb_.AddElement<uint64_t>(InheritedPipe::VT_GUEST_HANDLE, guest_handle, 0);
+  }
+  void add_port(uint16_t port) {
+    fbb_.AddElement<uint16_t>(InheritedPipe::VT_PORT, port, 0);
+  }
+  void add_token(::flatbuffers::Offset<::flatbuffers::String> token) {
+    fbb_.AddOffset(InheritedPipe::VT_TOKEN, token);
+  }
+  void add_name(::flatbuffers::Offset<::flatbuffers::String> name) {
+    fbb_.AddOffset(InheritedPipe::VT_NAME, name);
+  }
+  void add_access(uint32_t access) {
+    fbb_.AddElement<uint32_t>(InheritedPipe::VT_ACCESS, access, 0);
+  }
+  void add_pipe_type(uint32_t pipe_type) {
+    fbb_.AddElement<uint32_t>(InheritedPipe::VT_PIPE_TYPE, pipe_type, 0);
+  }
+  void add_read_mode(uint32_t read_mode) {
+    fbb_.AddElement<uint32_t>(InheritedPipe::VT_READ_MODE, read_mode, 0);
+  }
+  void add_completion_mode(uint32_t completion_mode) {
+    fbb_.AddElement<uint32_t>(InheritedPipe::VT_COMPLETION_MODE, completion_mode, 0);
+  }
+  void add_create_options(uint32_t create_options) {
+    fbb_.AddElement<uint32_t>(InheritedPipe::VT_CREATE_OPTIONS, create_options, 0);
+  }
+  void add_inherit(bool inherit) {
+    fbb_.AddElement<uint8_t>(InheritedPipe::VT_INHERIT, static_cast<uint8_t>(inherit), 0);
+  }
+  void add_file_id(uint64_t file_id) {
+    fbb_.AddElement<uint64_t>(InheritedPipe::VT_FILE_ID, file_id, 0);
+  }
+  void add_completion_notification_flags(uint32_t completion_notification_flags) {
+    fbb_.AddElement<uint32_t>(InheritedPipe::VT_COMPLETION_NOTIFICATION_FLAGS, completion_notification_flags, 0);
+  }
+  explicit InheritedPipeBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  ::flatbuffers::Offset<InheritedPipe> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = ::flatbuffers::Offset<InheritedPipe>(end);
+    fbb_.Required(o, InheritedPipe::VT_TOKEN);
+    return o;
+  }
+};
+
+inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipe(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t guest_handle = 0,
+    uint16_t port = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> token = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> name = 0,
+    uint32_t access = 0,
+    uint32_t pipe_type = 0,
+    uint32_t read_mode = 0,
+    uint32_t completion_mode = 0,
+    uint32_t create_options = 0,
+    bool inherit = false,
+    uint64_t file_id = 0,
+    uint32_t completion_notification_flags = 0) {
+  InheritedPipeBuilder builder_(_fbb);
+  builder_.add_file_id(file_id);
+  builder_.add_guest_handle(guest_handle);
+  builder_.add_completion_notification_flags(completion_notification_flags);
+  builder_.add_create_options(create_options);
+  builder_.add_completion_mode(completion_mode);
+  builder_.add_read_mode(read_mode);
+  builder_.add_pipe_type(pipe_type);
+  builder_.add_access(access);
+  builder_.add_name(name);
+  builder_.add_token(token);
+  builder_.add_port(port);
+  builder_.add_inherit(inherit);
+  return builder_.Finish();
+}
+
+inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipeDirect(
+    ::flatbuffers::FlatBufferBuilder &_fbb,
+    uint64_t guest_handle = 0,
+    uint16_t port = 0,
+    const char *token = nullptr,
+    const char *name = nullptr,
+    uint32_t access = 0,
+    uint32_t pipe_type = 0,
+    uint32_t read_mode = 0,
+    uint32_t completion_mode = 0,
+    uint32_t create_options = 0,
+    bool inherit = false,
+    uint64_t file_id = 0,
+    uint32_t completion_notification_flags = 0) {
+  auto token__ = token ? _fbb.CreateString(token) : 0;
+  auto name__ = name ? _fbb.CreateString(name) : 0;
+  return ProcessProtocol::CreateInheritedPipe(
+      _fbb,
+      guest_handle,
+      port,
+      token__,
+      name__,
+      access,
+      pipe_type,
+      read_mode,
+      completion_mode,
+      create_options,
+      inherit,
+      file_id,
+      completion_notification_flags);
+}
+
+::flatbuffers::Offset<InheritedPipe> CreateInheritedPipe(::flatbuffers::FlatBufferBuilder &_fbb, const InheritedPipeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
+
 struct ProcessCreateRequestT : public ::flatbuffers::NativeTable {
   typedef ProcessCreateRequest TableType;
   std::string application{};
@@ -687,6 +900,11 @@ struct ProcessCreateRequestT : public ::flatbuffers::NativeTable {
   std::vector<std::unique_ptr<ProcessProtocol::EnvironmentVariableT>> environment{};
   uint32_t process_id = 0;
   uint32_t thread_id = 0;
+  uint64_t standard_input = 0;
+  uint64_t standard_output = 0;
+  uint64_t standard_error = 0;
+  std::vector<std::unique_ptr<ProcessProtocol::InheritedPipeT>> inherited_pipes{};
+  std::string command_line{};
   ProcessCreateRequestT() = default;
   ProcessCreateRequestT(const ProcessCreateRequestT &o);
   ProcessCreateRequestT(ProcessCreateRequestT&&) FLATBUFFERS_NOEXCEPT = default;
@@ -703,7 +921,12 @@ struct ProcessCreateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
     VT_ARGUMENTS = 10,
     VT_ENVIRONMENT = 12,
     VT_PROCESS_ID = 14,
-    VT_THREAD_ID = 16
+    VT_THREAD_ID = 16,
+    VT_STANDARD_INPUT = 18,
+    VT_STANDARD_OUTPUT = 20,
+    VT_STANDARD_ERROR = 22,
+    VT_INHERITED_PIPES = 24,
+    VT_COMMAND_LINE = 26
   };
   const ::flatbuffers::String *application() const {
     return GetPointer<const ::flatbuffers::String *>(VT_APPLICATION);
@@ -726,6 +949,21 @@ struct ProcessCreateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
   uint32_t thread_id() const {
     return GetField<uint32_t>(VT_THREAD_ID, 0);
   }
+  uint64_t standard_input() const {
+    return GetField<uint64_t>(VT_STANDARD_INPUT, 0);
+  }
+  uint64_t standard_output() const {
+    return GetField<uint64_t>(VT_STANDARD_OUTPUT, 0);
+  }
+  uint64_t standard_error() const {
+    return GetField<uint64_t>(VT_STANDARD_ERROR, 0);
+  }
+  const ::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>> *inherited_pipes() const {
+    return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>> *>(VT_INHERITED_PIPES);
+  }
+  const ::flatbuffers::String *command_line() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_COMMAND_LINE);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -743,6 +981,14 @@ struct ProcessCreateRequest FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Tab
            verifier.VerifyVectorOfTables(environment()) &&
            VerifyField<uint32_t>(verifier, VT_PROCESS_ID, 4) &&
            VerifyField<uint32_t>(verifier, VT_THREAD_ID, 4) &&
+           VerifyField<uint64_t>(verifier, VT_STANDARD_INPUT, 8) &&
+           VerifyField<uint64_t>(verifier, VT_STANDARD_OUTPUT, 8) &&
+           VerifyField<uint64_t>(verifier, VT_STANDARD_ERROR, 8) &&
+           VerifyOffset(verifier, VT_INHERITED_PIPES) &&
+           verifier.VerifyVector(inherited_pipes()) &&
+           verifier.VerifyVectorOfTables(inherited_pipes()) &&
+           VerifyOffsetRequired(verifier, VT_COMMAND_LINE) &&
+           verifier.VerifyString(command_line()) &&
            verifier.EndTable();
   }
   ProcessCreateRequestT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -775,6 +1021,21 @@ struct ProcessCreateRequestBuilder {
   void add_thread_id(uint32_t thread_id) {
     fbb_.AddElement<uint32_t>(ProcessCreateRequest::VT_THREAD_ID, thread_id, 0);
   }
+  void add_standard_input(uint64_t standard_input) {
+    fbb_.AddElement<uint64_t>(ProcessCreateRequest::VT_STANDARD_INPUT, standard_input, 0);
+  }
+  void add_standard_output(uint64_t standard_output) {
+    fbb_.AddElement<uint64_t>(ProcessCreateRequest::VT_STANDARD_OUTPUT, standard_output, 0);
+  }
+  void add_standard_error(uint64_t standard_error) {
+    fbb_.AddElement<uint64_t>(ProcessCreateRequest::VT_STANDARD_ERROR, standard_error, 0);
+  }
+  void add_inherited_pipes(::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>>> inherited_pipes) {
+    fbb_.AddOffset(ProcessCreateRequest::VT_INHERITED_PIPES, inherited_pipes);
+  }
+  void add_command_line(::flatbuffers::Offset<::flatbuffers::String> command_line) {
+    fbb_.AddOffset(ProcessCreateRequest::VT_COMMAND_LINE, command_line);
+  }
   explicit ProcessCreateRequestBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -785,6 +1046,7 @@ struct ProcessCreateRequestBuilder {
     fbb_.Required(o, ProcessCreateRequest::VT_APPLICATION);
     fbb_.Required(o, ProcessCreateRequest::VT_ARGUMENT0);
     fbb_.Required(o, ProcessCreateRequest::VT_WORKING_DIRECTORY);
+    fbb_.Required(o, ProcessCreateRequest::VT_COMMAND_LINE);
     return o;
   }
 };
@@ -797,8 +1059,18 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<::flatbuffers::String>>> arguments = 0,
     ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::EnvironmentVariable>>> environment = 0,
     uint32_t process_id = 0,
-    uint32_t thread_id = 0) {
+    uint32_t thread_id = 0,
+    uint64_t standard_input = 0,
+    uint64_t standard_output = 0,
+    uint64_t standard_error = 0,
+    ::flatbuffers::Offset<::flatbuffers::Vector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>>> inherited_pipes = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> command_line = 0) {
   ProcessCreateRequestBuilder builder_(_fbb);
+  builder_.add_standard_error(standard_error);
+  builder_.add_standard_output(standard_output);
+  builder_.add_standard_input(standard_input);
+  builder_.add_command_line(command_line);
+  builder_.add_inherited_pipes(inherited_pipes);
   builder_.add_thread_id(thread_id);
   builder_.add_process_id(process_id);
   builder_.add_environment(environment);
@@ -817,12 +1089,19 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequestDir
     const std::vector<::flatbuffers::Offset<::flatbuffers::String>> *arguments = nullptr,
     const std::vector<::flatbuffers::Offset<ProcessProtocol::EnvironmentVariable>> *environment = nullptr,
     uint32_t process_id = 0,
-    uint32_t thread_id = 0) {
+    uint32_t thread_id = 0,
+    uint64_t standard_input = 0,
+    uint64_t standard_output = 0,
+    uint64_t standard_error = 0,
+    const std::vector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>> *inherited_pipes = nullptr,
+    const char *command_line = nullptr) {
   auto application__ = application ? _fbb.CreateString(application) : 0;
   auto argument0__ = argument0 ? _fbb.CreateString(argument0) : 0;
   auto working_directory__ = working_directory ? _fbb.CreateString(working_directory) : 0;
   auto arguments__ = arguments ? _fbb.CreateVector<::flatbuffers::Offset<::flatbuffers::String>>(*arguments) : 0;
   auto environment__ = environment ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::EnvironmentVariable>>(*environment) : 0;
+  auto inherited_pipes__ = inherited_pipes ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>>(*inherited_pipes) : 0;
+  auto command_line__ = command_line ? _fbb.CreateString(command_line) : 0;
   return ProcessProtocol::CreateProcessCreateRequest(
       _fbb,
       application__,
@@ -831,7 +1110,12 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequestDir
       arguments__,
       environment__,
       process_id,
-      thread_id);
+      thread_id,
+      standard_input,
+      standard_output,
+      standard_error,
+      inherited_pipes__,
+      command_line__);
 }
 
 ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ProcessCreateRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -1888,15 +2172,80 @@ inline ::flatbuffers::Offset<EnvironmentVariable> EnvironmentVariable::Pack(::fl
       _value);
 }
 
+inline InheritedPipeT *InheritedPipe::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {
+  auto _o = std::unique_ptr<InheritedPipeT>(new InheritedPipeT());
+  UnPackTo(_o.get(), _resolver);
+  return _o.release();
+}
+
+inline void InheritedPipe::UnPackTo(InheritedPipeT *_o, const ::flatbuffers::resolver_function_t *_resolver) const {
+  (void)_o;
+  (void)_resolver;
+  { auto _e = guest_handle(); _o->guest_handle = _e; }
+  { auto _e = port(); _o->port = _e; }
+  { auto _e = token(); if (_e) _o->token = _e->str(); }
+  { auto _e = name(); if (_e) _o->name = _e->str(); }
+  { auto _e = access(); _o->access = _e; }
+  { auto _e = pipe_type(); _o->pipe_type = _e; }
+  { auto _e = read_mode(); _o->read_mode = _e; }
+  { auto _e = completion_mode(); _o->completion_mode = _e; }
+  { auto _e = create_options(); _o->create_options = _e; }
+  { auto _e = inherit(); _o->inherit = _e; }
+  { auto _e = file_id(); _o->file_id = _e; }
+  { auto _e = completion_notification_flags(); _o->completion_notification_flags = _e; }
+}
+
+inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipe(::flatbuffers::FlatBufferBuilder &_fbb, const InheritedPipeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  return InheritedPipe::Pack(_fbb, _o, _rehasher);
+}
+
+inline ::flatbuffers::Offset<InheritedPipe> InheritedPipe::Pack(::flatbuffers::FlatBufferBuilder &_fbb, const InheritedPipeT* _o, const ::flatbuffers::rehasher_function_t *_rehasher) {
+  (void)_rehasher;
+  (void)_o;
+  struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const InheritedPipeT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
+  auto _guest_handle = _o->guest_handle;
+  auto _port = _o->port;
+  auto _token = _fbb.CreateString(_o->token);
+  auto _name = _o->name.empty() ? 0 : _fbb.CreateString(_o->name);
+  auto _access = _o->access;
+  auto _pipe_type = _o->pipe_type;
+  auto _read_mode = _o->read_mode;
+  auto _completion_mode = _o->completion_mode;
+  auto _create_options = _o->create_options;
+  auto _inherit = _o->inherit;
+  auto _file_id = _o->file_id;
+  auto _completion_notification_flags = _o->completion_notification_flags;
+  return ProcessProtocol::CreateInheritedPipe(
+      _fbb,
+      _guest_handle,
+      _port,
+      _token,
+      _name,
+      _access,
+      _pipe_type,
+      _read_mode,
+      _completion_mode,
+      _create_options,
+      _inherit,
+      _file_id,
+      _completion_notification_flags);
+}
+
 inline ProcessCreateRequestT::ProcessCreateRequestT(const ProcessCreateRequestT &o)
       : application(o.application),
         argument0(o.argument0),
         working_directory(o.working_directory),
         arguments(o.arguments),
         process_id(o.process_id),
-        thread_id(o.thread_id) {
+        thread_id(o.thread_id),
+        standard_input(o.standard_input),
+        standard_output(o.standard_output),
+        standard_error(o.standard_error),
+        command_line(o.command_line) {
   environment.reserve(o.environment.size());
   for (const auto &environment_ : o.environment) { environment.emplace_back((environment_) ? new ProcessProtocol::EnvironmentVariableT(*environment_) : nullptr); }
+  inherited_pipes.reserve(o.inherited_pipes.size());
+  for (const auto &inherited_pipes_ : o.inherited_pipes) { inherited_pipes.emplace_back((inherited_pipes_) ? new ProcessProtocol::InheritedPipeT(*inherited_pipes_) : nullptr); }
 }
 
 inline ProcessCreateRequestT &ProcessCreateRequestT::operator=(ProcessCreateRequestT o) FLATBUFFERS_NOEXCEPT {
@@ -1907,6 +2256,11 @@ inline ProcessCreateRequestT &ProcessCreateRequestT::operator=(ProcessCreateRequ
   std::swap(environment, o.environment);
   std::swap(process_id, o.process_id);
   std::swap(thread_id, o.thread_id);
+  std::swap(standard_input, o.standard_input);
+  std::swap(standard_output, o.standard_output);
+  std::swap(standard_error, o.standard_error);
+  std::swap(inherited_pipes, o.inherited_pipes);
+  std::swap(command_line, o.command_line);
   return *this;
 }
 
@@ -1926,6 +2280,11 @@ inline void ProcessCreateRequest::UnPackTo(ProcessCreateRequestT *_o, const ::fl
   { auto _e = environment(); if (_e) { _o->environment.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->environment[_i]) { _e->Get(_i)->UnPackTo(_o->environment[_i].get(), _resolver); } else { _o->environment[_i] = std::unique_ptr<ProcessProtocol::EnvironmentVariableT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->environment.resize(0); } }
   { auto _e = process_id(); _o->process_id = _e; }
   { auto _e = thread_id(); _o->thread_id = _e; }
+  { auto _e = standard_input(); _o->standard_input = _e; }
+  { auto _e = standard_output(); _o->standard_output = _e; }
+  { auto _e = standard_error(); _o->standard_error = _e; }
+  { auto _e = inherited_pipes(); if (_e) { _o->inherited_pipes.resize(_e->size()); for (::flatbuffers::uoffset_t _i = 0; _i < _e->size(); _i++) { if(_o->inherited_pipes[_i]) { _e->Get(_i)->UnPackTo(_o->inherited_pipes[_i].get(), _resolver); } else { _o->inherited_pipes[_i] = std::unique_ptr<ProcessProtocol::InheritedPipeT>(_e->Get(_i)->UnPack(_resolver)); } } } else { _o->inherited_pipes.resize(0); } }
+  { auto _e = command_line(); if (_e) _o->command_line = _e->str(); }
 }
 
 inline ::flatbuffers::Offset<ProcessCreateRequest> CreateProcessCreateRequest(::flatbuffers::FlatBufferBuilder &_fbb, const ProcessCreateRequestT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -1943,6 +2302,11 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> ProcessCreateRequest::Pack(::
   auto _environment = _o->environment.size() ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::EnvironmentVariable>> (_o->environment.size(), [](size_t i, _VectorArgs *__va) { return ProcessProtocol::CreateEnvironmentVariable(*__va->__fbb, __va->__o->environment[i].get(), __va->__rehasher); }, &_va ) : 0;
   auto _process_id = _o->process_id;
   auto _thread_id = _o->thread_id;
+  auto _standard_input = _o->standard_input;
+  auto _standard_output = _o->standard_output;
+  auto _standard_error = _o->standard_error;
+  auto _inherited_pipes = _o->inherited_pipes.size() ? _fbb.CreateVector<::flatbuffers::Offset<ProcessProtocol::InheritedPipe>> (_o->inherited_pipes.size(), [](size_t i, _VectorArgs *__va) { return ProcessProtocol::CreateInheritedPipe(*__va->__fbb, __va->__o->inherited_pipes[i].get(), __va->__rehasher); }, &_va ) : 0;
+  auto _command_line = _fbb.CreateString(_o->command_line);
   return ProcessProtocol::CreateProcessCreateRequest(
       _fbb,
       _application,
@@ -1951,7 +2315,12 @@ inline ::flatbuffers::Offset<ProcessCreateRequest> ProcessCreateRequest::Pack(::
       _arguments,
       _environment,
       _process_id,
-      _thread_id);
+      _thread_id,
+      _standard_input,
+      _standard_output,
+      _standard_error,
+      _inherited_pipes,
+      _command_line);
 }
 
 inline ProcessStartedT *ProcessStarted::UnPack(const ::flatbuffers::resolver_function_t *_resolver) const {

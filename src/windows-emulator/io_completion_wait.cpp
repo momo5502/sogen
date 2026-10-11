@@ -1,5 +1,6 @@
 #include "std_include.hpp"
 #include "io_completion_wait.hpp"
+#include "windows_emulator.hpp"
 #include "worker_factory_support.hpp"
 
 namespace sogen
@@ -9,12 +10,33 @@ namespace sogen
     {
         namespace
         {
-            bool is_wait_completion_target_signaled(process_context& process, const handle target_object_handle)
+            bool is_wait_completion_target_signaled(windows_emulator& win_emu, const handle target_object_handle)
             {
+                auto& process = win_emu.process;
                 switch (target_object_handle.value.type)
                 {
-                case handle_types::process:
-                    return target_object_handle == GUEST_PROCESS_HANDLE && process.exit_status.has_value();
+                case handle_types::process: {
+                    if (target_object_handle == GUEST_PROCESS_HANDLE)
+                    {
+                        return process.exit_status.has_value();
+                    }
+                    const auto* entry = process.processes.get(target_object_handle);
+                    if (!entry || !entry->process || !win_emu.processes())
+                    {
+                        return false;
+                    }
+                    const auto status = win_emu.processes()->exit_status(entry->process);
+                    return status && status.status.has_value();
+                }
+                case handle_types::managed_thread: {
+                    const auto* entry = process.managed_threads.get(target_object_handle);
+                    if (!entry || !win_emu.processes())
+                    {
+                        return false;
+                    }
+                    const auto status = win_emu.processes()->exit_status(entry->process);
+                    return status && status.status.has_value();
+                }
 
                 case handle_types::event: {
                     const auto* e = process.events.get(target_object_handle);
@@ -116,6 +138,7 @@ namespace sogen
             case handle_types::process:
             case handle_types::event:
             case handle_types::thread:
+            case handle_types::managed_thread:
             case handle_types::semaphore:
             case handle_types::port:
             case handle_types::mutant:
@@ -224,8 +247,9 @@ namespace sogen
             wait_packet->queued_completion = false;
         }
 
-        void materialize_signaled_wait_packets(process_context& process, const handle io_completion_handle)
+        void materialize_signaled_wait_packets(windows_emulator& win_emu, const handle io_completion_handle)
         {
+            auto& process = win_emu.process;
             auto* completion = process.io_completions.get(io_completion_handle);
             if (!completion)
             {
@@ -244,7 +268,7 @@ namespace sogen
                     continue;
                 }
 
-                if (!is_wait_completion_target_signaled(process, wait_packet.target_object_handle))
+                if (!is_wait_completion_target_signaled(win_emu, wait_packet.target_object_handle))
                 {
                     continue;
                 }
@@ -256,15 +280,16 @@ namespace sogen
             }
         }
 
-        bool dequeue_io_completion_message(process_context& process, const handle io_completion_handle, io_completion_message& out_message)
+        bool dequeue_io_completion_message(windows_emulator& win_emu, const handle io_completion_handle, io_completion_message& out_message)
         {
+            auto& process = win_emu.process;
             auto* completion = process.io_completions.get(io_completion_handle);
             if (!completion)
             {
                 return false;
             }
 
-            materialize_signaled_wait_packets(process, io_completion_handle);
+            materialize_signaled_wait_packets(win_emu, io_completion_handle);
 
             if (!completion->dequeue(out_message))
             {
@@ -276,10 +301,11 @@ namespace sogen
             return true;
         }
 
-        ULONG dequeue_io_completion_entries(process_context& process, const handle io_completion_handle,
+        ULONG dequeue_io_completion_entries(windows_emulator& win_emu, const handle io_completion_handle,
                                             const emulator_object<FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>> out_entries,
                                             const ULONG max_count)
         {
+            auto& process = win_emu.process;
             if (max_count == 0 || !out_entries)
             {
                 return 0;
@@ -291,7 +317,7 @@ namespace sogen
                 return 0;
             }
 
-            materialize_signaled_wait_packets(process, io_completion_handle);
+            materialize_signaled_wait_packets(win_emu, io_completion_handle);
 
             ULONG removed = 0;
             for (; removed < max_count; ++removed)

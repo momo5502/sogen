@@ -1185,7 +1185,28 @@ namespace sogen
                     }
                 }
 
-                if (std::ranges::none_of(poll_data, [](const network::poll_entry& entry) { return entry.revents != 0; }))
+                std::vector<ULONG> afd_events(poll_data.size());
+                for (size_t index = 0; index < poll_data.size(); ++index)
+                {
+                    const auto& pfd = poll_data[index];
+                    if (pfd.revents == 0)
+                    {
+                        continue;
+                    }
+
+                    const auto* endpoint = endpoints[index];
+                    const bool is_connecting =
+                        endpoint->connect_failed_ ||
+                        (endpoint->delayed_ioctl_ && _AFD_REQUEST(endpoint->delayed_ioctl_->io_control_code) == AFD_CONNECT);
+
+                    afd_events[index] =
+                        map_socket_response_events_to_afd(pfd.revents, handles[index].PollEvents, pfd.s->is_listening(), is_connecting);
+                }
+
+                // Host readiness that maps to none of the requested AFD events (e.g. a connected socket being writable while
+                // only CONNECT_FAIL is requested) must keep the poll pending; completing it would make IOCP-driven
+                // pollers like mio re-arm in a busy loop.
+                if (std::ranges::none_of(afd_events, [](const ULONG events) { return events != 0; }))
                 {
                     return STATUS_PENDING;
                 }
@@ -1195,24 +1216,15 @@ namespace sogen
 
                 size_t current_index = 0;
 
-                for (size_t source_index = 0; source_index < poll_data.size(); ++source_index)
+                for (size_t source_index = 0; source_index < afd_events.size(); ++source_index)
                 {
-                    const auto& pfd = poll_data.at(source_index);
-                    const auto* endpoint = endpoints.subspan(source_index, 1).front();
-                    const auto& handle = handles.subspan(source_index, 1).front();
-
-                    if (pfd.revents == 0)
+                    if (afd_events[source_index] == 0)
                     {
                         continue;
                     }
 
-                    const bool is_connecting =
-                        endpoint->connect_failed_ ||
-                        (endpoint->delayed_ioctl_ && _AFD_REQUEST(endpoint->delayed_ioctl_->io_control_code) == AFD_CONNECT);
-
                     auto entry = handle_info_obj.read(source_index);
-                    entry.PollEvents =
-                        map_socket_response_events_to_afd(pfd.revents, handle.PollEvents, pfd.s->is_listening(), is_connecting);
+                    entry.PollEvents = afd_events[source_index];
                     entry.Status = STATUS_SUCCESS;
 
                     handle_info_obj.write(entry, current_index++);

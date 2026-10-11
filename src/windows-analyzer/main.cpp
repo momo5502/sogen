@@ -4,6 +4,7 @@
 
 #include <windows_emulator.hpp>
 #include <emulator_process_target.hpp>
+#include <inherited_pipes.hpp>
 #include <backend_selection.hpp>
 #include <win_x86_64_gdb_stub_handler.hpp>
 #include <minidump_loader.hpp>
@@ -686,6 +687,7 @@ namespace sogen
             if (options.managed_process)
             {
                 win_emu->setup_process_if_necessary();
+                install_inherited_pipes(*win_emu, options.managed_process->request(), options.managed_process->take_inherited_pipes());
                 managed_target = std::make_unique<emulator_process_target>(*win_emu);
                 if (!options.managed_process->wait_for_resume(*managed_target))
                 {

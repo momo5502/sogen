@@ -148,7 +148,7 @@ namespace sogen
             }
 
             io_completion_message message{};
-            if (io_completion_wait::dequeue_io_completion_message(c.proc, io_completion_handle, message))
+            if (io_completion_wait::dequeue_io_completion_message(c.win_emu, io_completion_handle, message))
             {
                 key_context.write_if_valid(message.key_context);
                 apc_context.write_if_valid(message.apc_context);
@@ -209,7 +209,7 @@ namespace sogen
             }
 
             const auto removed =
-                io_completion_wait::dequeue_io_completion_entries(c.proc, io_completion_handle, io_completion_information, count);
+                io_completion_wait::dequeue_io_completion_entries(c.win_emu, io_completion_handle, io_completion_information, count);
             num_entries_removed.write_if_valid(removed);
             if (removed > 0)
             {
@@ -318,7 +318,9 @@ namespace sogen
                 switch (resolved_target_handle.value.type)
                 {
                 case handle_types::process:
-                    return resolved_target_handle == GUEST_PROCESS_HANDLE;
+                    return c.proc.processes.get(resolved_target_handle) != nullptr;
+                case handle_types::managed_thread:
+                    return c.proc.managed_threads.get(resolved_target_handle) != nullptr;
                 case handle_types::event:
                     return c.proc.events.get(resolved_target_handle) != nullptr;
                 case handle_types::thread:
@@ -369,7 +371,7 @@ namespace sogen
             wait_packet->io_status_information = io_status_information;
             wait_packet->associated = true;
 
-            io_completion_wait::materialize_signaled_wait_packets(c.proc, io_completion_handle);
+            io_completion_wait::materialize_signaled_wait_packets(c.win_emu, io_completion_handle);
             already_signaled.write_if_valid(wait_packet->queued_completion ? TRUE : FALSE);
 
             return STATUS_SUCCESS;

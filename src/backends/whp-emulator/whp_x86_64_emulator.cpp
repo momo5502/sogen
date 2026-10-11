@@ -1915,6 +1915,11 @@ namespace sogen::whp
                 return true;
             }
 
+            bool supports_native_timestamp_counter() const override
+            {
+                return true;
+            }
+
             bool supports_global_memory_execution_hooks() const override
             {
                 return false;

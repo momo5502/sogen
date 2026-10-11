@@ -13,6 +13,7 @@
 
 #include <network/address.hpp>
 #include <network/tcp_server_socket.hpp>
+#include <utils/host_pipe.hpp>
 
 #ifdef poll
 #undef poll
@@ -197,15 +198,45 @@ namespace sogen
                     .error = decode_error(result.error)};
         }
 
-        ProcessProtocol::ProcessCreateRequestT encode_create_request(const process_create_request& request)
+        ProcessProtocol::ProcessCreateRequestT encode_create_request(const process_create_request& request,
+                                                                     std::vector<utils::host_pipe_transfer>& transfers)
         {
             ProcessProtocol::ProcessCreateRequestT result{};
             result.application = request.application;
             result.argument0 = request.argument0;
+            result.command_line = request.command_line;
             result.working_directory = request.working_directory;
             result.arguments = request.arguments;
             result.process_id = request.process_id;
             result.thread_id = request.thread_id;
+            result.standard_input = request.standard_input;
+            result.standard_output = request.standard_output;
+            result.standard_error = request.standard_error;
+            std::unordered_map<uint64_t, std::pair<uint16_t, std::string>> exported_files;
+            for (const auto& pipe : request.inherited_pipes)
+            {
+                auto inherited = std::make_unique<ProcessProtocol::InheritedPipeT>();
+                inherited->guest_handle = pipe.guest_handle;
+                inherited->file_id = pipe.file_id ? pipe.file_id : pipe.guest_handle;
+                auto [file, inserted] = exported_files.try_emplace(inherited->file_id);
+                if (inserted)
+                {
+                    auto transfer = pipe.endpoint->export_endpoint();
+                    file->second = {transfer.port(), transfer.token()};
+                    transfers.push_back(std::move(transfer));
+                }
+                inherited->port = file->second.first;
+                inherited->token = file->second.second;
+                inherited->name = pipe.name;
+                inherited->access = pipe.access;
+                inherited->pipe_type = pipe.pipe_type;
+                inherited->read_mode = pipe.read_mode;
+                inherited->completion_mode = pipe.completion_mode;
+                inherited->create_options = pipe.create_options;
+                inherited->completion_notification_flags = pipe.completion_notification_flags;
+                inherited->inherit = pipe.inherit;
+                result.inherited_pipes.push_back(std::move(inherited));
+            }
             result.environment.reserve(request.environment.size());
             for (const auto& [name, value] : request.environment)
             {
@@ -221,10 +252,35 @@ namespace sogen
         {
             process_create_request result{.application = std::move(request.application),
                                           .argument0 = std::move(request.argument0),
+                                          .command_line = std::move(request.command_line),
                                           .working_directory = std::move(request.working_directory),
                                           .arguments = std::move(request.arguments),
                                           .process_id = request.process_id,
                                           .thread_id = request.thread_id};
+            result.standard_input = request.standard_input;
+            result.standard_output = request.standard_output;
+            result.standard_error = request.standard_error;
+            std::unordered_map<uint64_t, std::shared_ptr<utils::host_pipe>> imported_files;
+            for (const auto& pipe : request.inherited_pipes)
+            {
+                const auto file_id = pipe->file_id ? pipe->file_id : pipe->guest_handle;
+                auto [file, inserted] = imported_files.try_emplace(file_id);
+                if (inserted)
+                {
+                    file->second = utils::host_pipe::connect(pipe->port, pipe->token);
+                }
+                result.inherited_pipes.push_back({.guest_handle = pipe->guest_handle,
+                                                  .file_id = file_id,
+                                                  .endpoint = file->second,
+                                                  .name = pipe->name,
+                                                  .access = pipe->access,
+                                                  .pipe_type = pipe->pipe_type,
+                                                  .read_mode = pipe->read_mode,
+                                                  .completion_mode = pipe->completion_mode,
+                                                  .create_options = pipe->create_options,
+                                                  .completion_notification_flags = pipe->completion_notification_flags,
+                                                  .inherit = pipe->inherit});
+            }
             result.environment.reserve(request.environment.size());
             for (auto& variable : request.environment)
             {
@@ -273,6 +329,7 @@ namespace sogen
     {
         reproc::process process{};
         network::tcp_client_socket control{};
+        std::vector<utils::host_pipe_transfer> pipe_transfers{};
         std::thread output_thread{};
         mutable std::mutex control_mutex{};
         mutable std::mutex state_mutex{};
@@ -329,6 +386,11 @@ namespace sogen
     const process_create_request& managed_process_connection::request() const
     {
         return this->request_;
+    }
+
+    std::vector<process_inherited_pipe> managed_process_connection::take_inherited_pipes()
+    {
+        return std::exchange(this->request_.inherited_pipes, {});
     }
 
     bool managed_process_connection::wait_for_resume(managed_process_target& target)
@@ -663,7 +725,17 @@ namespace sogen
             }
         }
 
-        if (!entry->control || !send_message(entry->control, encode_create_request(request)))
+        bool sent{};
+        try
+        {
+            sent = entry->control && send_message(entry->control, encode_create_request(request, entry->pipe_transfers));
+        }
+        catch (const std::exception&)
+        {
+            entry->kill_requested = true;
+            return {.error = process_error::communication_failure};
+        }
+        if (!sent)
         {
             entry->kill_requested = true;
             return {.error = process_error::communication_failure};

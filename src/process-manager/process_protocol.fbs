@@ -38,6 +38,21 @@ table EnvironmentVariable {
     value: string (required);
 }
 
+table InheritedPipe {
+    guest_handle: ulong;
+    port: ushort;
+    token: string (required);
+    name: string;
+    access: uint;
+    pipe_type: uint;
+    read_mode: uint;
+    completion_mode: uint;
+    create_options: uint;
+    inherit: bool;
+    file_id: ulong;
+    completion_notification_flags: uint;
+}
+
 table ProcessCreateRequest {
     application: string (required);
     argument0: string (required);
@@ -46,6 +61,11 @@ table ProcessCreateRequest {
     environment: [EnvironmentVariable];
     process_id: uint;
     thread_id: uint;
+    standard_input: ulong;
+    standard_output: ulong;
+    standard_error: ulong;
+    inherited_pipes: [InheritedPipe];
+    command_line: string (required);
 }
 
 table ProcessStarted {

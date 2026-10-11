@@ -448,7 +448,7 @@ namespace sogen
             }
 
             const auto removed =
-                io_completion_wait::dequeue_io_completion_entries(c.proc, factory->io_completion_handle, mini_packets, count);
+                io_completion_wait::dequeue_io_completion_entries(c.win_emu, factory->io_completion_handle, mini_packets, count);
             packets_returned.write_if_valid(removed);
             if (removed > 0)
             {

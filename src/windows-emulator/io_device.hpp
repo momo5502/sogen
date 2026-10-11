@@ -33,6 +33,7 @@ namespace sogen
         handle completion_port{};
         uint64_t completion_key{};
         ULONG completion_notification_flags{};
+        ACCESS_MASK granted_access{};
 
         // The vCPU whose thread issued this I/O request. Set on syscall-originated ioctls;
         // null (and not serialized) for deserialized delayed ioctls re-executed from the
@@ -68,6 +69,7 @@ namespace sogen
             buffer.write(completion_port);
             buffer.write(completion_key);
             buffer.write(completion_notification_flags);
+            buffer.write(granted_access);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -86,6 +88,7 @@ namespace sogen
             buffer.read(completion_port);
             buffer.read(completion_key);
             buffer.read(completion_notification_flags);
+            buffer.read(granted_access);
         }
     };
 
@@ -227,7 +230,18 @@ namespace sogen
               device_name_(std::move(device))
         {
             this->setup();
-            this->device_->create(win_emu, data);
+            this->file_->device->create(win_emu, data);
+        }
+
+        ACCESS_MASK granted_access{GENERIC_ALL};
+        bool inherit{};
+        bool protect_from_close{};
+
+        io_device_container duplicate(ACCESS_MASK access, bool inheritable) const;
+
+        bool is_last_file_reference() const
+        {
+            return this->file_.use_count() == 1;
         }
 
         void work(windows_emulator& win_emu) override;
@@ -248,7 +262,7 @@ namespace sogen
         T* get_internal_device() const
         {
             this->assert_validity();
-            auto* value = this->device_.get();
+            auto* value = this->file_->device.get();
             return dynamic_cast<T*>(value);
         }
 
@@ -267,19 +281,26 @@ namespace sogen
       private:
         bool is_32_bit_{};
         std::u16string device_name_{};
-        std::unique_ptr<io_device> device_{};
-        std::optional<device_completion_association> completion_association_{};
-        ULONG completion_notification_flags_{};
+
+        struct file_state
+        {
+            std::unique_ptr<io_device> device{};
+            std::optional<device_completion_association> completion_association{};
+            ULONG completion_notification_flags{};
+        };
+
+        std::shared_ptr<file_state> file_{};
 
         void setup()
         {
             const device_creation_context context{.is_32_bit = this->is_32_bit_};
-            this->device_ = create_device(this->device_name_, context);
+            this->file_ = std::make_shared<file_state>();
+            this->file_->device = create_device(this->device_name_, context);
         }
 
         void assert_validity() const
         {
-            if (!this->device_)
+            if (!this->file_ || !this->file_->device)
             {
                 throw std::runtime_error("Device not created!");
             }
