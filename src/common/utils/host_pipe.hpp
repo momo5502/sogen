@@ -8,6 +8,8 @@
 
 namespace sogen::utils
 {
+    class buffer_serializer;
+    class buffer_deserializer;
     class host_pipe_transfer;
 
     enum class pipe_io_status
@@ -31,6 +33,7 @@ namespace sogen::utils
         struct implementation;
 
         explicit host_pipe_operation(std::unique_ptr<implementation> implementation);
+        explicit host_pipe_operation(buffer_deserializer& buffer);
         ~host_pipe_operation();
         host_pipe_operation(const host_pipe_operation&) = delete;
         host_pipe_operation& operator=(const host_pipe_operation&) = delete;
@@ -38,6 +41,7 @@ namespace sogen::utils
         pipe_io_result check_completion();
         void cancel();
         std::string_view data() const;
+        void serialize(buffer_serializer& buffer) const;
 
       private:
         std::unique_ptr<implementation> implementation_;
@@ -60,8 +64,11 @@ namespace sogen::utils
         std::unique_ptr<host_pipe_operation> read(uint32_t size);
         std::unique_ptr<host_pipe_operation> write(std::string_view data);
         pipe_io_result peek(std::string& data, uint32_t capacity, uint32_t& available) const;
+        void serialize(buffer_serializer& buffer) const;
+        static std::shared_ptr<host_pipe> deserialize(buffer_deserializer& buffer);
 
       private:
+        friend class host_pipe_operation;
         std::shared_ptr<implementation> implementation_;
     };
 

@@ -1,7 +1,7 @@
 #include <windows_emulator.hpp>
 #include <subprocess_process_manager.hpp>
 #include <emulator_process_target.hpp>
-#include <devices/named_pipe.hpp>
+#include <inherited_pipes.hpp>
 #include <registry/registry_file.hpp>
 #include <utils/finally.hpp>
 #include <utils/executable_path.hpp>
@@ -166,37 +166,7 @@ namespace sogen::sandbox
             if (managed_connection)
             {
                 win_emu.setup_process_if_necessary();
-                const auto& request = managed_connection->request();
-                for (auto& inherited : managed_connection->take_inherited_pipes())
-                {
-                    io_device_container container{u"NamedPipe", win_emu, {}};
-                    auto* pipe = container.get_internal_device<named_pipe>();
-                    pipe->name = u8_to_u16(inherited.name);
-                    pipe->endpoint = std::move(inherited.endpoint);
-                    container.granted_access = inherited.access;
-                    pipe->pipe_type = inherited.pipe_type;
-                    pipe->read_mode = inherited.read_mode;
-                    pipe->completion_mode = inherited.completion_mode;
-                    pipe->create_options = inherited.create_options;
-                    container.inherit = inherited.inherit;
-                    if (!win_emu.process.devices.store_at(make_handle(inherited.guest_handle), std::move(container)))
-                    {
-                        throw std::runtime_error("Inherited guest pipe handle conflicts with child setup");
-                    }
-                }
-                win_emu.process.process_params64.access([&](RTL_USER_PROCESS_PARAMETERS64& parameters) {
-                    parameters.StandardInput = request.standard_input;
-                    parameters.StandardOutput = request.standard_output;
-                    parameters.StandardError = request.standard_error;
-                });
-                if (win_emu.process.process_params32)
-                {
-                    win_emu.process.process_params32->access([&](RTL_USER_PROCESS_PARAMETERS32& parameters) {
-                        parameters.StandardInput = static_cast<uint32_t>(request.standard_input);
-                        parameters.StandardOutput = static_cast<uint32_t>(request.standard_output);
-                        parameters.StandardError = static_cast<uint32_t>(request.standard_error);
-                    });
-                }
+                install_inherited_pipes(win_emu, managed_connection->request(), managed_connection->take_inherited_pipes());
                 managed_target = std::make_unique<emulator_process_target>(win_emu);
                 if (!managed_connection->wait_for_resume(*managed_target))
                 {

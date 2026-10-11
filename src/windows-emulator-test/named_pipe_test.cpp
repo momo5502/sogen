@@ -2,6 +2,7 @@
 #include <devices/named_pipe.hpp>
 #include <emulator_utils.hpp>
 #include <io_completion_wait.hpp>
+#include <inherited_pipes.hpp>
 #include <syscall_utils.hpp>
 #include <gtest/gtest.h>
 
@@ -458,6 +459,88 @@ namespace sogen::test
         EXPECT_EQ(buffer.get_buffer(), roundtrip.get_buffer());
         restored_duplicate = {};
         EXPECT_TRUE(restored_original.is_last_file_reference());
+    }
+
+    TEST_F(NamedPipeTest, InheritedAliasesKeepSharedFileIdentityAndCancellation)
+    {
+        const auto alias = this->duplicate(this->reader, FILE_WRITE_DATA, OBJ_INHERIT);
+        this->emu->process.devices.get(this->reader)->set_completion_notification_flags(1);
+        this->create_child(4, std::vector{this->reader, alias});
+        ASSERT_EQ(this->manager.request->inherited_pipes.size(), 2u);
+        const auto& pipes = this->manager.request->inherited_pipes;
+        EXPECT_EQ(pipes.front().file_id, pipes.back().file_id);
+        EXPECT_EQ(pipes.front().completion_notification_flags, 1u);
+        ASSERT_EQ(this->close(this->reader), STATUS_SUCCESS);
+        ASSERT_EQ(this->close(alias), STATUS_SUCCESS);
+        this->emu->process.process_params64.set_address(this->storage + 0x30000);
+        this->emu->process.process_params64.write({});
+        this->emu->process.process_params32.emplace(this->emu->memory, this->storage + 0x32000);
+        this->emu->process.process_params32->write({});
+        install_inherited_pipes(*this->emu, *this->manager.request, std::move(this->manager.request->inherited_pipes));
+        EXPECT_EQ(&this->pipe(this->reader), &this->pipe(alias));
+        EXPECT_EQ(this->emu->process.devices.get(alias)->granted_access, FILE_WRITE_DATA);
+        EXPECT_TRUE(this->emu->process.devices.get(alias)->inherit);
+        EXPECT_EQ(this->emu->process.process_params64.read().StandardInput, this->reader.bits);
+        EXPECT_EQ(this->emu->process.process_params32->read().StandardInput, static_cast<uint32_t>(this->reader.bits));
+        EXPECT_EQ(this->request(alias, 4).completion_notification_flags, 1u);
+        const auto pending = this->request(this->reader, 4);
+        ASSERT_EQ(this->pipe(this->reader).start_io(*this->emu, pending, true), STATUS_PENDING);
+        EXPECT_FALSE(this->pipe(alias).signaled);
+        EXPECT_TRUE(this->emu->process.devices.get(alias)->cancel_io(*this->emu, pending.io_status_block.value()));
+        EXPECT_TRUE(this->pipe(this->reader).signaled);
+        EXPECT_EQ(pending.io_status_block.read().Status, STATUS_CANCELLED);
+    }
+
+    TEST_F(NamedPipeTest, ListeningLocalPipeSnapshotRestoresPeerAndConfiguration)
+    {
+        io_device_container original{u"NamedPipe", *this->emu, {}};
+        auto* pipe = original.get_internal_device<named_pipe>();
+        auto pair = utils::host_pipe::create_pair(false, 4);
+        pipe->endpoint = pair.first;
+        pipe->unopened_peer = pair.second;
+        pipe->name = u"snapshot";
+        pipe->max_instances = 1;
+        pipe->inbound_quota = 4;
+        pipe->outbound_quota = 4;
+        pipe->default_timeout.QuadPart = -1000;
+        utils::buffer_serializer snapshot;
+        original.serialize(snapshot);
+        utils::buffer_deserializer input{snapshot};
+        io_device_container restored;
+        restored.deserialize(input);
+        auto* restored_pipe = restored.get_internal_device<named_pipe>();
+        ASSERT_NE(restored_pipe->endpoint, nullptr);
+        ASSERT_NE(restored_pipe->unopened_peer, nullptr);
+        EXPECT_EQ(restored_pipe->name, u"snapshot");
+        EXPECT_EQ(restored_pipe->max_instances, 1u);
+        EXPECT_EQ(restored_pipe->default_timeout.QuadPart, -1000);
+        auto write = restored_pipe->unopened_peer->write("hi");
+        EXPECT_EQ(write->check_completion().status, utils::pipe_io_status::success);
+        auto read = restored_pipe->endpoint->read(4);
+        EXPECT_EQ(read->check_completion().transferred, 2u);
+        EXPECT_EQ(read->data(), "hi");
+    }
+
+    TEST_F(NamedPipeTest, LocalPipeSnapshotRestoresPendingIoAndCompletionReferences)
+    {
+        const auto event = this->emu->process.events.store(sogen::event{});
+        auto pending = this->request(this->reader, 4);
+        pending.event = event;
+        ASSERT_EQ(this->pipe(this->reader).start_io(*this->emu, pending, true), STATUS_PENDING);
+        utils::buffer_serializer snapshot;
+        this->emu->process.devices.get(this->reader)->serialize(snapshot);
+        this->emu->process.devices.get(this->writer)->serialize(snapshot);
+        utils::buffer_deserializer input{snapshot};
+        input.register_factory<x64_emulator_wrapper>([&] { return x64_emulator_wrapper{this->emu->emu()}; });
+        this->emu->process.devices.get(this->reader)->deserialize(input);
+        this->emu->process.devices.get(this->writer)->deserialize(input);
+        EXPECT_FALSE(this->pipe(this->reader).signaled);
+        ASSERT_EQ(this->write("ok"), STATUS_SUCCESS);
+        this->pipe(this->reader).work(*this->emu);
+        EXPECT_EQ(pending.io_status_block.read().Status, STATUS_SUCCESS);
+        EXPECT_EQ(this->read_output(2), "ok");
+        EXPECT_TRUE(this->emu->process.events.get(event)->signaled);
+        EXPECT_EQ(this->emu->process.events.get(event)->ref_count, 1u);
     }
 
     TEST_F(NamedPipeTest, StdioDoesNotBypassDisabledInheritance)

@@ -212,20 +212,28 @@ namespace sogen
             result.standard_input = request.standard_input;
             result.standard_output = request.standard_output;
             result.standard_error = request.standard_error;
+            std::unordered_map<uint64_t, std::pair<uint16_t, std::string>> exported_files;
             for (const auto& pipe : request.inherited_pipes)
             {
                 auto inherited = std::make_unique<ProcessProtocol::InheritedPipeT>();
                 inherited->guest_handle = pipe.guest_handle;
-                auto transfer = pipe.endpoint->export_endpoint();
-                inherited->port = transfer.port();
-                inherited->token = transfer.token();
-                transfers.push_back(std::move(transfer));
+                inherited->file_id = pipe.file_id ? pipe.file_id : pipe.guest_handle;
+                auto [file, inserted] = exported_files.try_emplace(inherited->file_id);
+                if (inserted)
+                {
+                    auto transfer = pipe.endpoint->export_endpoint();
+                    file->second = {transfer.port(), transfer.token()};
+                    transfers.push_back(std::move(transfer));
+                }
+                inherited->port = file->second.first;
+                inherited->token = file->second.second;
                 inherited->name = pipe.name;
                 inherited->access = pipe.access;
                 inherited->pipe_type = pipe.pipe_type;
                 inherited->read_mode = pipe.read_mode;
                 inherited->completion_mode = pipe.completion_mode;
                 inherited->create_options = pipe.create_options;
+                inherited->completion_notification_flags = pipe.completion_notification_flags;
                 inherited->inherit = pipe.inherit;
                 result.inherited_pipes.push_back(std::move(inherited));
             }
@@ -252,16 +260,25 @@ namespace sogen
             result.standard_input = request.standard_input;
             result.standard_output = request.standard_output;
             result.standard_error = request.standard_error;
+            std::unordered_map<uint64_t, std::shared_ptr<utils::host_pipe>> imported_files;
             for (const auto& pipe : request.inherited_pipes)
             {
+                const auto file_id = pipe->file_id ? pipe->file_id : pipe->guest_handle;
+                auto [file, inserted] = imported_files.try_emplace(file_id);
+                if (inserted)
+                {
+                    file->second = utils::host_pipe::connect(pipe->port, pipe->token);
+                }
                 result.inherited_pipes.push_back({.guest_handle = pipe->guest_handle,
-                                                  .endpoint = utils::host_pipe::connect(pipe->port, pipe->token),
+                                                  .file_id = file_id,
+                                                  .endpoint = file->second,
                                                   .name = pipe->name,
                                                   .access = pipe->access,
                                                   .pipe_type = pipe->pipe_type,
                                                   .read_mode = pipe->read_mode,
                                                   .completion_mode = pipe->completion_mode,
                                                   .create_options = pipe->create_options,
+                                                  .completion_notification_flags = pipe->completion_notification_flags,
                                                   .inherit = pipe->inherit});
             }
             result.environment.reserve(request.environment.size());

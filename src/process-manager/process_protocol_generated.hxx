@@ -694,6 +694,8 @@ struct InheritedPipeT : public ::flatbuffers::NativeTable {
   uint32_t completion_mode = 0;
   uint32_t create_options = 0;
   bool inherit = false;
+  uint64_t file_id = 0;
+  uint32_t completion_notification_flags = 0;
 };
 
 struct InheritedPipe FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
@@ -709,7 +711,9 @@ struct InheritedPipe FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
     VT_READ_MODE = 16,
     VT_COMPLETION_MODE = 18,
     VT_CREATE_OPTIONS = 20,
-    VT_INHERIT = 22
+    VT_INHERIT = 22,
+    VT_FILE_ID = 24,
+    VT_COMPLETION_NOTIFICATION_FLAGS = 26
   };
   uint64_t guest_handle() const {
     return GetField<uint64_t>(VT_GUEST_HANDLE, 0);
@@ -741,6 +745,12 @@ struct InheritedPipe FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool inherit() const {
     return GetField<uint8_t>(VT_INHERIT, 0) != 0;
   }
+  uint64_t file_id() const {
+    return GetField<uint64_t>(VT_FILE_ID, 0);
+  }
+  uint32_t completion_notification_flags() const {
+    return GetField<uint32_t>(VT_COMPLETION_NOTIFICATION_FLAGS, 0);
+  }
   template <bool B = false>
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
@@ -756,6 +766,8 @@ struct InheritedPipe FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
            VerifyField<uint32_t>(verifier, VT_COMPLETION_MODE, 4) &&
            VerifyField<uint32_t>(verifier, VT_CREATE_OPTIONS, 4) &&
            VerifyField<uint8_t>(verifier, VT_INHERIT, 1) &&
+           VerifyField<uint64_t>(verifier, VT_FILE_ID, 8) &&
+           VerifyField<uint32_t>(verifier, VT_COMPLETION_NOTIFICATION_FLAGS, 4) &&
            verifier.EndTable();
   }
   InheritedPipeT *UnPack(const ::flatbuffers::resolver_function_t *_resolver = nullptr) const;
@@ -797,6 +809,12 @@ struct InheritedPipeBuilder {
   void add_inherit(bool inherit) {
     fbb_.AddElement<uint8_t>(InheritedPipe::VT_INHERIT, static_cast<uint8_t>(inherit), 0);
   }
+  void add_file_id(uint64_t file_id) {
+    fbb_.AddElement<uint64_t>(InheritedPipe::VT_FILE_ID, file_id, 0);
+  }
+  void add_completion_notification_flags(uint32_t completion_notification_flags) {
+    fbb_.AddElement<uint32_t>(InheritedPipe::VT_COMPLETION_NOTIFICATION_FLAGS, completion_notification_flags, 0);
+  }
   explicit InheritedPipeBuilder(::flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
@@ -820,9 +838,13 @@ inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipe(
     uint32_t read_mode = 0,
     uint32_t completion_mode = 0,
     uint32_t create_options = 0,
-    bool inherit = false) {
+    bool inherit = false,
+    uint64_t file_id = 0,
+    uint32_t completion_notification_flags = 0) {
   InheritedPipeBuilder builder_(_fbb);
+  builder_.add_file_id(file_id);
   builder_.add_guest_handle(guest_handle);
+  builder_.add_completion_notification_flags(completion_notification_flags);
   builder_.add_create_options(create_options);
   builder_.add_completion_mode(completion_mode);
   builder_.add_read_mode(read_mode);
@@ -846,7 +868,9 @@ inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipeDirect(
     uint32_t read_mode = 0,
     uint32_t completion_mode = 0,
     uint32_t create_options = 0,
-    bool inherit = false) {
+    bool inherit = false,
+    uint64_t file_id = 0,
+    uint32_t completion_notification_flags = 0) {
   auto token__ = token ? _fbb.CreateString(token) : 0;
   auto name__ = name ? _fbb.CreateString(name) : 0;
   return ProcessProtocol::CreateInheritedPipe(
@@ -860,7 +884,9 @@ inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipeDirect(
       read_mode,
       completion_mode,
       create_options,
-      inherit);
+      inherit,
+      file_id,
+      completion_notification_flags);
 }
 
 ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipe(::flatbuffers::FlatBufferBuilder &_fbb, const InheritedPipeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher = nullptr);
@@ -2165,6 +2191,8 @@ inline void InheritedPipe::UnPackTo(InheritedPipeT *_o, const ::flatbuffers::res
   { auto _e = completion_mode(); _o->completion_mode = _e; }
   { auto _e = create_options(); _o->create_options = _e; }
   { auto _e = inherit(); _o->inherit = _e; }
+  { auto _e = file_id(); _o->file_id = _e; }
+  { auto _e = completion_notification_flags(); _o->completion_notification_flags = _e; }
 }
 
 inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipe(::flatbuffers::FlatBufferBuilder &_fbb, const InheritedPipeT *_o, const ::flatbuffers::rehasher_function_t *_rehasher) {
@@ -2185,6 +2213,8 @@ inline ::flatbuffers::Offset<InheritedPipe> InheritedPipe::Pack(::flatbuffers::F
   auto _completion_mode = _o->completion_mode;
   auto _create_options = _o->create_options;
   auto _inherit = _o->inherit;
+  auto _file_id = _o->file_id;
+  auto _completion_notification_flags = _o->completion_notification_flags;
   return ProcessProtocol::CreateInheritedPipe(
       _fbb,
       _guest_handle,
@@ -2196,7 +2226,9 @@ inline ::flatbuffers::Offset<InheritedPipe> InheritedPipe::Pack(::flatbuffers::F
       _read_mode,
       _completion_mode,
       _create_options,
-      _inherit);
+      _inherit,
+      _file_id,
+      _completion_notification_flags);
 }
 
 inline ProcessCreateRequestT::ProcessCreateRequestT(const ProcessCreateRequestT &o)

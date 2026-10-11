@@ -81,6 +81,7 @@ namespace sogen
     struct process_inherited_pipe
     {
         uint64_t guest_handle{};
+        uint64_t file_id{};
         std::shared_ptr<utils::host_pipe> endpoint;
         std::string name;
         uint32_t access{};
@@ -88,6 +89,7 @@ namespace sogen
         uint32_t read_mode{};
         uint32_t completion_mode{};
         uint32_t create_options{};
+        uint32_t completion_notification_flags{};
         bool inherit{};
     };
 

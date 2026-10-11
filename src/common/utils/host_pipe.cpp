@@ -1,4 +1,6 @@
 #include "host_pipe.hpp"
+#include "serialization.hpp"
+#include "finally.hpp"
 
 #include "../network/tcp_server_socket.hpp"
 
@@ -129,6 +131,14 @@ namespace sogen::utils
         virtual pipe_io_result write(std::string_view data) = 0;
         virtual pipe_io_result peek(std::string& data, uint32_t capacity, uint32_t& available) = 0;
 
+        virtual void begin_transfer()
+        {
+        }
+
+        virtual void end_transfer()
+        {
+        }
+
         virtual std::future<pipe_response> submit(const bool reading, const std::string_view data, const uint32_t size)
         {
             std::promise<pipe_response> promise;
@@ -146,8 +156,11 @@ namespace sogen::utils
             std::mutex mutex;
             std::array<std::deque<char>, 2> buffers;
             std::array<bool, 2> open{true, true};
-            uint32_t quota;
-            bool message_type;
+            uint32_t quota{};
+            bool message_type{};
+            size_t transfers{};
+
+            pipe_state() = default;
 
             pipe_state(const uint32_t quota, const bool message_type)
                 : quota(quota ? quota : 4096),
@@ -159,7 +172,9 @@ namespace sogen::utils
         struct local_endpoint final : host_pipe::implementation
         {
             std::shared_ptr<pipe_state> state;
-            size_t side;
+            size_t side{};
+
+            local_endpoint() = default;
 
             local_endpoint(std::shared_ptr<pipe_state> state, const size_t side)
                 : state(std::move(state)),
@@ -169,8 +184,24 @@ namespace sogen::utils
 
             ~local_endpoint() override
             {
+                if (!this->state)
+                {
+                    return;
+                }
                 const std::scoped_lock lock(this->state->mutex);
                 this->state->open.at(this->side) = false;
+            }
+
+            void begin_transfer() override
+            {
+                const std::scoped_lock lock(this->state->mutex);
+                ++this->state->transfers;
+            }
+
+            void end_transfer() override
+            {
+                const std::scoped_lock lock(this->state->mutex);
+                --this->state->transfers;
             }
 
             pipe_io_result read(std::string& data, const uint32_t size) override
@@ -230,6 +261,8 @@ namespace sogen::utils
             std::mutex queue_mutex;
             std::condition_variable queued;
             std::deque<std::packaged_task<pipe_response()>> requests;
+            std::mutex peek_mutex;
+            std::future<pipe_response> pending_peek;
             std::atomic_bool stopping{};
             std::thread worker;
 
@@ -334,17 +367,26 @@ namespace sogen::utils
 
             pipe_io_result peek(std::string& data, const uint32_t capacity, uint32_t& available) override
             {
-                auto response = this->enqueue([this, capacity] {
+                const std::scoped_lock lock(this->peek_mutex);
+                if (this->pending_peek.valid())
+                {
+                    if (this->pending_peek.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+                    {
+                        return {.status = pipe_io_status::failed, .transferred = 0};
+                    }
+                    (void)this->pending_peek.get();
+                }
+                this->pending_peek = this->enqueue([this, capacity] {
                     pipe_response result;
                     result.result =
                         this->request(pipe_request::peek, std::min(capacity, maximum_payload_size), {}, result.data, result.available);
                     return result;
                 });
-                if (response.wait_for(std::chrono::milliseconds(100)) != std::future_status::ready)
+                if (this->pending_peek.wait_for(std::chrono::milliseconds(100)) != std::future_status::ready)
                 {
                     return {.status = pipe_io_status::failed, .transferred = 0};
                 }
-                auto result = response.get();
+                auto result = this->pending_peek.get();
                 data = std::move(result.data);
                 available = result.available;
                 return result.result;
@@ -395,7 +437,10 @@ namespace sogen::utils
             }
             server.listen();
             this->port = server.get_port();
+            endpoint->begin_transfer();
+            auto rollback_transfer = finally([endpoint] { endpoint->end_transfer(); });
             this->worker = std::thread([this, server = std::move(server), endpoint = std::move(endpoint)]() mutable {
+                const auto release_transfer = finally([endpoint] { endpoint->end_transfer(); });
                 while (!this->stopping)
                 {
                     if (!server.is_ready(true))
@@ -428,6 +473,7 @@ namespace sogen::utils
                     break;
                 }
             });
+            rollback_transfer.cancel();
         }
 
         ~implementation()
@@ -543,6 +589,66 @@ namespace sogen::utils
         return host_pipe_transfer{this->implementation_};
     }
 
+    void host_pipe::serialize(buffer_serializer& buffer) const
+    {
+        const auto endpoint = std::dynamic_pointer_cast<local_endpoint>(this->implementation_);
+        if (!endpoint)
+        {
+            throw std::runtime_error("Cannot serialize a remote host pipe");
+        }
+        const std::scoped_lock lock(endpoint->state->mutex);
+        if (endpoint->state->transfers)
+        {
+            throw std::runtime_error("Cannot serialize an externally transferred host pipe");
+        }
+        buffer.write_shared(endpoint, [&](const local_endpoint& local) {
+            buffer.write(static_cast<uint32_t>(local.side));
+            buffer.write_shared(local.state, [&](const pipe_state& state) {
+                buffer.write(state.quota);
+                buffer.write(state.message_type);
+                for (const auto open : state.open)
+                {
+                    buffer.write(open);
+                }
+                for (const auto& data : state.buffers)
+                {
+                    buffer.write_string(std::string(data.begin(), data.end()));
+                }
+            });
+        });
+    }
+
+    std::shared_ptr<host_pipe> host_pipe::deserialize(buffer_deserializer& buffer)
+    {
+        std::shared_ptr<local_endpoint> endpoint;
+        buffer.read_shared(endpoint, [&](local_endpoint& local) {
+            const auto side = buffer.read<uint32_t>();
+            if (side > 1)
+            {
+                throw std::runtime_error("Invalid host pipe endpoint side");
+            }
+            local.side = side;
+            buffer.read_shared(local.state, [&](pipe_state& state) {
+                buffer.read(state.quota);
+                buffer.read(state.message_type);
+                for (auto& open : state.open)
+                {
+                    buffer.read(open);
+                }
+                for (auto& data : state.buffers)
+                {
+                    const auto bytes = buffer.read<std::string>();
+                    data.assign(bytes.begin(), bytes.end());
+                }
+            });
+        });
+        if (!endpoint || !endpoint->state)
+        {
+            throw std::runtime_error("Invalid host pipe endpoint state");
+        }
+        return std::make_shared<host_pipe>(std::move(endpoint));
+    }
+
     std::unique_ptr<host_pipe_operation> host_pipe::read(const uint32_t size)
     {
         auto operation = std::make_unique<host_pipe_operation::implementation>();
@@ -590,6 +696,35 @@ namespace sogen::utils
     }
 
     host_pipe_operation::~host_pipe_operation() = default;
+
+    host_pipe_operation::host_pipe_operation(buffer_deserializer& buffer)
+        : implementation_(std::make_unique<implementation>())
+    {
+        auto& operation = *this->implementation_;
+        operation.pipe = host_pipe::deserialize(buffer)->implementation_;
+        buffer.read(operation.buffer);
+        buffer.read(operation.size);
+        buffer.read(operation.reading);
+        buffer.read(operation.result.status);
+        buffer.read(operation.result.transferred);
+        buffer.read(operation.cancelled);
+    }
+
+    void host_pipe_operation::serialize(buffer_serializer& buffer) const
+    {
+        const auto& operation = *this->implementation_;
+        if (operation.response.valid())
+        {
+            throw std::runtime_error("Cannot serialize an in-flight host pipe operation");
+        }
+        host_pipe{operation.pipe}.serialize(buffer);
+        buffer.write(operation.buffer);
+        buffer.write(operation.size);
+        buffer.write(operation.reading);
+        buffer.write(operation.result.status);
+        buffer.write(operation.result.transferred);
+        buffer.write(operation.cancelled);
+    }
 
     pipe_io_result host_pipe_operation::check_completion()
     {

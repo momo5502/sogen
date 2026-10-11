@@ -219,15 +219,59 @@ namespace sogen
 
     void named_pipe::serialize_object(utils::buffer_serializer& buffer) const
     {
-        if (this->endpoint)
-        {
-            throw std::runtime_error("Cannot serialize a connected host pipe");
-        }
         buffer.write(this->name);
+        buffer.write(this->pipe_type);
+        buffer.write(this->read_mode);
+        buffer.write(this->completion_mode);
+        buffer.write(this->max_instances);
+        buffer.write(this->inbound_quota);
+        buffer.write(this->outbound_quota);
+        buffer.write(this->create_options);
+        buffer.write(this->signaled);
+        buffer.write(this->default_timeout);
+        for (const auto& pipe : {this->endpoint, this->unopened_peer})
+        {
+            buffer.write(static_cast<bool>(pipe));
+            if (pipe)
+            {
+                pipe->serialize(buffer);
+            }
+        }
+        buffer.write(static_cast<uint64_t>(this->pending_.size()));
+        for (const auto& pending : this->pending_)
+        {
+            buffer.write(pending.context);
+            pending.operation->serialize(buffer);
+            buffer.write(pending.issuing_thread);
+            buffer.write(pending.reading);
+        }
     }
 
     void named_pipe::deserialize_object(utils::buffer_deserializer& buffer)
     {
         buffer.read(this->name);
+        buffer.read(this->pipe_type);
+        buffer.read(this->read_mode);
+        buffer.read(this->completion_mode);
+        buffer.read(this->max_instances);
+        buffer.read(this->inbound_quota);
+        buffer.read(this->outbound_quota);
+        buffer.read(this->create_options);
+        buffer.read(this->signaled);
+        buffer.read(this->default_timeout);
+        for (auto* pipe : {&this->endpoint, &this->unopened_peer})
+        {
+            *pipe = buffer.read<bool>() ? utils::host_pipe::deserialize(buffer) : nullptr;
+        }
+        this->pending_.clear();
+        const auto count = buffer.read<uint64_t>();
+        for (uint64_t i = 0; i < count; ++i)
+        {
+            pending_operation pending{.context = buffer.read<io_device_context>(),
+                                      .operation = std::make_unique<utils::host_pipe_operation>(buffer)};
+            buffer.read(pending.issuing_thread);
+            buffer.read(pending.reading);
+            this->pending_.push_back(std::move(pending));
+        }
     }
 }

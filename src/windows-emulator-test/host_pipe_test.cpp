@@ -1,4 +1,6 @@
 #include <utils/host_pipe.hpp>
+#include <utils/finally.hpp>
+#include <utils/serialization.hpp>
 #include <network/tcp_server_socket.hpp>
 #include <gtest/gtest.h>
 
@@ -8,6 +10,7 @@
 #include <vector>
 #include <future>
 #include <array>
+#include <atomic>
 
 namespace sogen::test
 {
@@ -287,7 +290,8 @@ namespace sogen::test
         server.listen();
         std::promise<void> request_received;
         auto received = request_received.get_future();
-        std::jthread peer([&](const std::stop_token& stop) {
+        std::atomic_bool stopping{};
+        std::thread peer([&] {
             auto socket = server.accept();
             size_t remaining = 32;
             while (remaining)
@@ -305,10 +309,14 @@ namespace sogen::test
                 return;
             }
             request_received.set_value();
-            while (!stop.stop_requested())
+            while (!stopping)
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
+        });
+        const auto join_peer = utils::finally([&] {
+            stopping = true;
+            peer.join();
         });
         auto endpoint = utils::host_pipe::connect(server.get_port(), std::string(32, '0'));
         auto read = endpoint->read(16);
@@ -322,6 +330,15 @@ namespace sogen::test
             EXPECT_EQ(read->check_completion().status, utils::pipe_io_status::pending);
         }
         EXPECT_LT(std::chrono::steady_clock::now() - poll_start, std::chrono::milliseconds(100));
+        std::string data;
+        uint32_t available{};
+        EXPECT_EQ(endpoint->peek(data, 16, available).status, utils::pipe_io_status::failed);
+        const auto peek_start = std::chrono::steady_clock::now();
+        for (size_t i = 0; i < 1000; ++i)
+        {
+            EXPECT_EQ(endpoint->peek(data, 16, available).status, utils::pipe_io_status::failed);
+        }
+        EXPECT_LT(std::chrono::steady_clock::now() - peek_start, std::chrono::milliseconds(100));
         read.reset();
         const auto close_start = std::chrono::steady_clock::now();
         endpoint.reset();
@@ -339,6 +356,96 @@ namespace sogen::test
         EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(2));
         auto write = endpoint->write("ok");
         ASSERT_EQ(finish(*write).status, utils::pipe_io_status::success);
+    }
+
+    TEST(HostPipeSnapshotTest, RestoresBuffersQuotaAndEndpointAliases)
+    {
+        auto pair = utils::host_pipe::create_pair(false, 4);
+        auto alias = pair.second->duplicate();
+        ASSERT_EQ(finish(*pair.second->write("abc")).status, utils::pipe_io_status::success);
+        utils::buffer_serializer snapshot;
+        pair.first->serialize(snapshot);
+        pair.second->serialize(snapshot);
+        alias->serialize(snapshot);
+        utils::buffer_deserializer input{snapshot};
+        auto reader = utils::host_pipe::deserialize(input);
+        auto writer = utils::host_pipe::deserialize(input);
+        auto restored_alias = utils::host_pipe::deserialize(input);
+        auto read = reader->read(8);
+        ASSERT_EQ(finish(*read).transferred, 3u);
+        EXPECT_EQ(read->data(), "abc");
+        auto write = writer->write("12345");
+        EXPECT_EQ(progress(*write, 4).transferred, 4u);
+        ASSERT_EQ(finish(*reader->read(4)).transferred, 4u);
+        ASSERT_EQ(finish(*write).status, utils::pipe_io_status::success);
+        ASSERT_EQ(finish(*reader->read(1)).transferred, 1u);
+        write.reset();
+        writer.reset();
+        auto pending = reader->read(1);
+        EXPECT_EQ(pending->check_completion().status, utils::pipe_io_status::pending);
+        restored_alias.reset();
+        EXPECT_EQ(finish(*pending).status, utils::pipe_io_status::broken);
+    }
+
+    TEST(HostPipeSnapshotTest, RestoresBufferedDataBeforeClosedPeerEof)
+    {
+        auto pair = utils::host_pipe::create_pair(false, 4);
+        ASSERT_EQ(finish(*pair.second->write("end")).status, utils::pipe_io_status::success);
+        pair.second.reset();
+        utils::buffer_serializer snapshot;
+        pair.first->serialize(snapshot);
+        utils::buffer_deserializer input{snapshot};
+        auto reader = utils::host_pipe::deserialize(input);
+        auto read = reader->read(8);
+        EXPECT_EQ(finish(*read).status, utils::pipe_io_status::success);
+        EXPECT_EQ(read->data(), "end");
+        EXPECT_EQ(finish(*reader->read(1)).status, utils::pipe_io_status::broken);
+    }
+
+    TEST(HostPipeSnapshotTest, RestoresPartialWriteAndPendingRead)
+    {
+        auto pair = utils::host_pipe::create_pair(false, 4);
+        auto write = pair.second->write("12345");
+        ASSERT_EQ(progress(*write, 4).transferred, 4u);
+        utils::buffer_serializer snapshot;
+        pair.first->serialize(snapshot);
+        pair.second->serialize(snapshot);
+        write->serialize(snapshot);
+        utils::buffer_deserializer input{snapshot};
+        auto reader = utils::host_pipe::deserialize(input);
+        auto writer = utils::host_pipe::deserialize(input);
+        utils::host_pipe_operation restored_write{input};
+        auto read = reader->read(4);
+        ASSERT_EQ(finish(*read).transferred, 4u);
+        EXPECT_EQ(read->data(), "1234");
+        EXPECT_EQ(finish(restored_write).transferred, 5u);
+        auto tail = reader->read(4);
+        EXPECT_EQ(finish(*tail).transferred, 1u);
+        EXPECT_EQ(tail->data(), "5");
+        auto pending = reader->read(4);
+        ASSERT_EQ(pending->check_completion().status, utils::pipe_io_status::pending);
+        utils::buffer_serializer waiting;
+        reader->serialize(waiting);
+        writer->serialize(waiting);
+        pending->serialize(waiting);
+        utils::buffer_deserializer waiting_input{waiting};
+        auto waiting_reader = utils::host_pipe::deserialize(waiting_input);
+        auto waiting_writer = utils::host_pipe::deserialize(waiting_input);
+        utils::host_pipe_operation restored_read{waiting_input};
+        ASSERT_EQ(finish(*waiting_writer->write("ok")).status, utils::pipe_io_status::success);
+        EXPECT_EQ(finish(restored_read).transferred, 2u);
+        EXPECT_EQ(restored_read.data(), "ok");
+    }
+
+    TEST(HostPipeSnapshotTest, RejectsRemoteAndActivelyExportedState)
+    {
+        auto pair = utils::host_pipe::create_pair(false, 4);
+        auto transfer = pair.second->export_endpoint();
+        utils::buffer_serializer snapshot;
+        EXPECT_THROW(pair.first->serialize(snapshot), std::runtime_error);
+        EXPECT_THROW(pair.second->serialize(snapshot), std::runtime_error);
+        auto remote = utils::host_pipe::connect(transfer.port(), transfer.token());
+        EXPECT_THROW(remote->serialize(snapshot), std::runtime_error);
     }
 
     INSTANTIATE_TEST_SUITE_P(LocalAndTransferred, HostPipeTest, testing::Bool());

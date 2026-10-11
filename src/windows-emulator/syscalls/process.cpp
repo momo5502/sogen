@@ -194,6 +194,7 @@ namespace sogen
             request.standard_input = parameters.StandardInput;
             request.standard_output = parameters.StandardOutput;
             request.standard_error = parameters.StandardError;
+            std::unordered_map<const io_device*, uint64_t> inherited_files;
             const auto inherit_pipe = [&](const handle h) -> NTSTATUS {
                 if (std::ranges::any_of(request.inherited_pipes, [&](const auto& entry) { return entry.guest_handle == h.bits; }))
                 {
@@ -207,15 +208,20 @@ namespace sogen
                     {
                         return STATUS_NOT_SUPPORTED;
                     }
-                    request.inherited_pipes.push_back({.guest_handle = h.bits,
-                                                       .endpoint = pipe->endpoint,
-                                                       .name = u16_to_u8(pipe->name),
-                                                       .access = container->granted_access,
-                                                       .pipe_type = pipe->pipe_type,
-                                                       .read_mode = pipe->read_mode,
-                                                       .completion_mode = pipe->completion_mode,
-                                                       .create_options = pipe->create_options,
-                                                       .inherit = container->inherit});
+                    const auto [file, inserted] = inherited_files.try_emplace(pipe, h.bits);
+                    request.inherited_pipes.push_back(
+                        {.guest_handle = h.bits,
+                         .file_id = file->second,
+                         .endpoint = pipe->endpoint,
+                         .name = u16_to_u8(pipe->name),
+                         .access = container->granted_access,
+                         .pipe_type = pipe->pipe_type,
+                         .read_mode = pipe->read_mode,
+                         .completion_mode = pipe->completion_mode,
+                         .create_options = pipe->create_options,
+                         .completion_notification_flags =
+                             container->prepare_io_context(io_device_context{c.emu}).completion_notification_flags,
+                         .inherit = container->inherit});
                 }
                 return STATUS_SUCCESS;
             };

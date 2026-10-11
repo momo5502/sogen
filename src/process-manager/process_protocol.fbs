@@ -49,6 +49,8 @@ table InheritedPipe {
     completion_mode: uint;
     create_options: uint;
     inherit: bool;
+    file_id: ulong;
+    completion_notification_flags: uint;
 }
 
 table ProcessCreateRequest {
