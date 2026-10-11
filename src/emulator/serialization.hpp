@@ -11,6 +11,8 @@
 #include <functional>
 #include <typeindex>
 #include <atomic>
+#include <memory>
+#include <unordered_map>
 
 namespace sogen
 {
@@ -291,9 +293,26 @@ namespace sogen
                 }
             }
 
+            template <typename T, typename F>
+            void write_shared(const std::shared_ptr<T>& object, F serialize_object)
+            {
+                if (!object)
+                {
+                    this->write(uint64_t{0});
+                    return;
+                }
+                const auto [entry, inserted] = this->shared_objects_.try_emplace(object.get(), this->shared_objects_.size() + 1);
+                this->write(entry->second);
+                if (inserted)
+                {
+                    serialize_object(*object);
+                }
+            }
+
           private:
             std::vector<std::byte> buffer_{};
             std::optional<size_t> break_offset_{};
+            std::unordered_map<const void*, uint64_t> shared_objects_{};
         };
 
         class buffer_deserializer
@@ -555,10 +574,43 @@ namespace sogen
                 this->factories_[std::type_index(typeid(T))] = [f = std::move(factory)]() -> T* { return new T(f()); };
             }
 
+            template <typename T, typename F>
+            void read_shared(std::shared_ptr<T>& object, F deserialize_object)
+            {
+                const auto id = this->read<uint64_t>();
+                if (!id)
+                {
+                    object.reset();
+                    return;
+                }
+                const auto entry = this->shared_objects_.find(id);
+                if (entry != this->shared_objects_.end())
+                {
+                    if (entry->second.first != std::type_index(typeid(T)))
+                    {
+                        throw std::runtime_error("Shared object type mismatch");
+                    }
+                    object = std::static_pointer_cast<T>(entry->second.second.lock());
+                    if (!object)
+                    {
+                        throw std::runtime_error("Expired shared object reference");
+                    }
+                    return;
+                }
+                if (id != this->shared_objects_.size() + 1)
+                {
+                    throw std::runtime_error("Invalid shared object reference");
+                }
+                object = std::make_shared<T>();
+                this->shared_objects_.emplace(id, std::pair{std::type_index(typeid(T)), std::weak_ptr<void>{object}});
+                deserialize_object(*object);
+            }
+
           private:
             size_t offset_{0};
             std::span<const std::byte> buffer_{};
             std::unordered_map<std::type_index, std::function<void*()>> factories_{};
+            std::unordered_map<uint64_t, std::pair<std::type_index, std::weak_ptr<void>>> shared_objects_{};
 
             template <typename T>
             T construct_object()

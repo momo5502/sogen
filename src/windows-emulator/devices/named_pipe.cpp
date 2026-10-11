@@ -2,6 +2,7 @@
 #include "named_pipe.hpp"
 #include "../windows_emulator.hpp"
 #include "../io_completion_wait.hpp"
+#include <utils/finally.hpp>
 
 namespace sogen
 {
@@ -28,7 +29,6 @@ namespace sogen
     void named_pipe::copy_configuration(const named_pipe& source)
     {
         this->name = source.name;
-        this->access = source.access;
         this->pipe_type = source.pipe_type;
         this->read_mode = source.read_mode;
         this->completion_mode = source.completion_mode;
@@ -80,11 +80,19 @@ namespace sogen
         }
         const auto required_access =
             reading ? (FILE_READ_DATA | GENERIC_READ | GENERIC_ALL) : (FILE_WRITE_DATA | GENERIC_WRITE | GENERIC_ALL);
-        if (!(this->access & required_access))
+        if (!(context.granted_access & required_access))
         {
             return STATUS_ACCESS_DENIED;
         }
-        this->signaled = false;
+        if (reading && this->read_mode != 0)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+        if ((context.event.bits && !win_emu.process.events.get(context.event)) ||
+            (context.completion_port.bits && !win_emu.process.io_completions.get(context.completion_port)))
+        {
+            return STATUS_INVALID_HANDLE;
+        }
         std::unique_ptr<utils::host_pipe_operation> operation;
         if (reading)
         {
@@ -100,12 +108,6 @@ namespace sogen
                                   .operation = std::move(operation),
                                   .issuing_thread = win_emu.process.threads.find_handle(&context.thread()),
                                   .reading = reading};
-        const auto result = pending.operation->check_completion();
-        if (result.status != utils::pipe_io_status::pending)
-        {
-            this->complete(win_emu, pending, result, false);
-            return translate_pipe_status(result.status);
-        }
         std::array<handle, 3> retained_references{};
         const std::array<handle*, 3> references{&pending.context.event, &pending.context.completion_port, &pending.issuing_thread};
         for (size_t i = 0; i < references.size(); ++i)
@@ -124,6 +126,20 @@ namespace sogen
         {
             *references[i] = retained_references[i];
         }
+        bool queued{};
+        const auto cleanup = utils::finally([&] {
+            if (!queued)
+            {
+                release_operation(win_emu.process, pending);
+            }
+        });
+        this->signaled = false;
+        const auto result = pending.operation->check_completion();
+        if (result.status != utils::pipe_io_status::pending)
+        {
+            this->complete(win_emu, pending, result, false);
+            return translate_pipe_status(result.status);
+        }
         pending.context.vcpu = nullptr;
         context.io_status_block.write({.Status = STATUS_PENDING, .Information = 0});
         write_io_status(context, STATUS_PENDING);
@@ -132,6 +148,7 @@ namespace sogen
             event->signaled = false;
         }
         this->pending_.push_back(std::move(pending));
+        queued = true;
         if (this->create_options & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT))
         {
             context.thread().await_file_io = context.io_status_block.value();
@@ -175,7 +192,14 @@ namespace sogen
                 continue;
             }
             it->operation->cancel();
-            this->complete(win_emu, *it, it->operation->check_completion(), true);
+            const auto result = it->operation->check_completion();
+            if (result.status == utils::pipe_io_status::pending)
+            {
+                cancelled = true;
+                ++it;
+                continue;
+            }
+            this->complete(win_emu, *it, result, true);
             release_operation(win_emu.process, *it);
             it = this->pending_.erase(it);
             cancelled = true;
@@ -200,12 +224,10 @@ namespace sogen
             throw std::runtime_error("Cannot serialize a connected host pipe");
         }
         buffer.write(this->name);
-        buffer.write(this->access);
     }
 
     void named_pipe::deserialize_object(utils::buffer_deserializer& buffer)
     {
         buffer.read(this->name);
-        buffer.read(this->access);
     }
 }

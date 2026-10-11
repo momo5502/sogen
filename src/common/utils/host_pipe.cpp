@@ -6,8 +6,10 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <deque>
+#include <future>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -21,6 +23,8 @@ namespace sogen::utils
         constexpr uint32_t maximum_payload_size = 64U << 20;
         constexpr auto response_timeout = std::chrono::seconds(5);
         constexpr size_t token_size = 32;
+        constexpr auto authentication_timeout = std::chrono::milliseconds(250);
+        constexpr auto idle_poll_interval = std::chrono::milliseconds(25);
 
         enum class pipe_request : uint32_t
         {
@@ -28,6 +32,13 @@ namespace sogen::utils
             write,
             peek,
             close,
+        };
+
+        struct pipe_response
+        {
+            pipe_io_result result{};
+            std::string data{};
+            uint32_t available{};
         };
 
         std::string make_token()
@@ -41,7 +52,7 @@ namespace sogen::utils
                 auto value = random();
                 for (size_t j = 0; j < 8; ++j)
                 {
-                    token.push_back(digits[value & 15]);
+                    token.push_back(digits.at(value & 15));
                     value >>= 4;
                 }
             }
@@ -98,7 +109,8 @@ namespace sogen::utils
         }
 
         template <size_t N>
-        bool send_words(network::tcp_client_socket& socket, std::array<uint32_t, N> words, const std::string_view data = {})
+        bool send_words(network::tcp_client_socket& socket, std::array<uint32_t, N> words, const std::string_view data = {},
+                        const std::atomic_bool* stopping = nullptr)
         {
             for (auto& word : words)
             {
@@ -106,7 +118,7 @@ namespace sogen::utils
             }
             std::string message(reinterpret_cast<const char*>(words.data()), sizeof(words));
             message.append(data);
-            return socket.send(message);
+            return socket.send(message, std::chrono::steady_clock::now() + response_timeout, stopping);
         }
     }
 
@@ -116,6 +128,15 @@ namespace sogen::utils
         virtual pipe_io_result read(std::string& data, uint32_t size) = 0;
         virtual pipe_io_result write(std::string_view data) = 0;
         virtual pipe_io_result peek(std::string& data, uint32_t capacity, uint32_t& available) = 0;
+
+        virtual std::future<pipe_response> submit(const bool reading, const std::string_view data, const uint32_t size)
+        {
+            std::promise<pipe_response> promise;
+            pipe_response response;
+            response.result = reading ? this->read(response.data, size) : this->write(data);
+            promise.set_value(std::move(response));
+            return promise.get_future();
+        }
     };
 
     namespace
@@ -149,31 +170,36 @@ namespace sogen::utils
             ~local_endpoint() override
             {
                 const std::scoped_lock lock(this->state->mutex);
-                this->state->open[this->side] = false;
+                this->state->open.at(this->side) = false;
             }
 
             pipe_io_result read(std::string& data, const uint32_t size) override
             {
                 const std::scoped_lock lock(this->state->mutex);
-                auto& buffer = this->state->buffers[this->side];
+                auto& buffer = this->state->buffers.at(this->side);
                 const auto count = std::min(static_cast<size_t>(size), buffer.size());
+                if (!size && !this->state->open.at(1 - this->side))
+                {
+                    return {.status = pipe_io_status::broken, .transferred = 0};
+                }
                 data.assign(buffer.begin(), buffer.begin() + static_cast<ptrdiff_t>(count));
                 buffer.erase(buffer.begin(), buffer.begin() + static_cast<ptrdiff_t>(count));
                 if (count || !size)
                 {
                     return {.status = pipe_io_status::success, .transferred = static_cast<uint32_t>(count)};
                 }
-                return {.status = this->state->open[1 - this->side] ? pipe_io_status::pending : pipe_io_status::broken, .transferred = 0};
+                return {.status = this->state->open.at(1 - this->side) ? pipe_io_status::pending : pipe_io_status::broken,
+                        .transferred = 0};
             }
 
             pipe_io_result write(const std::string_view data) override
             {
                 const std::scoped_lock lock(this->state->mutex);
-                if (!this->state->open[1 - this->side])
+                if (!this->state->open.at(1 - this->side))
                 {
                     return {.status = pipe_io_status::broken, .transferred = 0};
                 }
-                auto& buffer = this->state->buffers[1 - this->side];
+                auto& buffer = this->state->buffers.at(1 - this->side);
                 const auto available = this->state->quota - std::min(static_cast<size_t>(this->state->quota), buffer.size());
                 auto count = std::min(data.size(), available);
                 if (this->state->message_type)
@@ -188,11 +214,12 @@ namespace sogen::utils
             pipe_io_result peek(std::string& data, const uint32_t capacity, uint32_t& available) override
             {
                 const std::scoped_lock lock(this->state->mutex);
-                const auto& buffer = this->state->buffers[this->side];
+                const auto& buffer = this->state->buffers.at(this->side);
                 available = static_cast<uint32_t>(buffer.size());
                 const auto count = std::min(static_cast<size_t>(capacity), buffer.size());
                 data.assign(buffer.begin(), buffer.begin() + static_cast<ptrdiff_t>(count));
-                return {.status = buffer.empty() && !this->state->open[1 - this->side] ? pipe_io_status::broken : pipe_io_status::success,
+                return {.status =
+                            buffer.empty() && !this->state->open.at(1 - this->side) ? pipe_io_status::broken : pipe_io_status::success,
                         .transferred = static_cast<uint32_t>(count)};
             }
         };
@@ -200,15 +227,42 @@ namespace sogen::utils
         struct remote_endpoint final : host_pipe::implementation
         {
             network::tcp_client_socket socket;
-            std::mutex mutex;
+            std::mutex queue_mutex;
+            std::condition_variable queued;
+            std::deque<std::packaged_task<pipe_response()>> requests;
+            std::atomic_bool stopping{};
+            std::thread worker;
 
             explicit remote_endpoint(network::tcp_client_socket socket)
                 : socket(std::move(socket))
             {
+                this->worker = std::thread([this] {
+                    for (;;)
+                    {
+                        std::packaged_task<pipe_response()> task;
+                        {
+                            std::unique_lock lock(this->queue_mutex);
+                            this->queued.wait(lock, [&] { return this->stopping || !this->requests.empty(); });
+                            if (this->stopping)
+                            {
+                                return;
+                            }
+                            task = std::move(this->requests.front());
+                            this->requests.pop_front();
+                        }
+                        task();
+                    }
+                });
             }
 
             ~remote_endpoint() override
             {
+                {
+                    const std::scoped_lock lock(this->queue_mutex);
+                    this->stopping = true;
+                }
+                this->queued.notify_one();
+                this->worker.join();
                 try
                 {
                     std::string output;
@@ -223,24 +277,25 @@ namespace sogen::utils
             pipe_io_result request(const pipe_request operation, const uint32_t size, const std::string_view input, std::string& output,
                                    uint32_t& available)
             {
-                const std::scoped_lock lock(this->mutex);
-                const auto deadline = std::chrono::steady_clock::now() + response_timeout;
-                if (!this->socket || !send_words(this->socket, std::array{static_cast<uint32_t>(operation), size}, input))
+                const auto timeout = operation == pipe_request::close ? std::chrono::milliseconds(100) : response_timeout;
+                const auto deadline = std::chrono::steady_clock::now() + timeout;
+                const auto* stop = operation == pipe_request::close ? nullptr : &this->stopping;
+                if (!this->socket || !send_words(this->socket, std::array{static_cast<uint32_t>(operation), size}, input, stop))
                 {
                     this->socket.close();
                     return {.status = pipe_io_status::broken, .transferred = 0};
                 }
-                const auto response = receive_words<3>(this->socket, deadline);
-                if (!response || (*response)[0] > static_cast<uint32_t>(pipe_io_status::failed) || (*response)[1] > size)
+                const auto response = receive_words<3>(this->socket, deadline, stop);
+                if (!response || response->at(0) > static_cast<uint32_t>(pipe_io_status::failed) || response->at(1) > size)
                 {
                     this->socket.close();
                     return {.status = pipe_io_status::broken, .transferred = 0};
                 }
-                const pipe_io_result result{.status = static_cast<pipe_io_status>((*response)[0]), .transferred = (*response)[1]};
-                available = (*response)[2];
+                const pipe_io_result result{.status = static_cast<pipe_io_status>(response->at(0)), .transferred = response->at(1)};
+                available = response->at(2);
                 if (operation != pipe_request::write)
                 {
-                    auto data = receive_exact(this->socket, result.transferred, deadline);
+                    auto data = receive_exact(this->socket, result.transferred, deadline, stop);
                     if (!data)
                     {
                         this->socket.close();
@@ -253,21 +308,73 @@ namespace sogen::utils
 
             pipe_io_result read(std::string& data, const uint32_t size) override
             {
-                uint32_t available{};
-                return this->request(pipe_request::read, std::min(size, maximum_payload_size), {}, data, available);
+                auto response = this->enqueue([this, size] {
+                                        pipe_response result;
+                                        result.result = this->request(pipe_request::read, std::min(size, maximum_payload_size), {},
+                                                                      result.data, result.available);
+                                        return result;
+                                    })
+                                    .get();
+                data = std::move(response.data);
+                return response.result;
             }
 
             pipe_io_result write(const std::string_view data) override
             {
-                std::string output;
-                uint32_t available{};
-                const auto part = data.substr(0, maximum_payload_size);
-                return this->request(pipe_request::write, static_cast<uint32_t>(part.size()), part, output, available);
+                return this
+                    ->enqueue([this, data = std::string(data.substr(0, maximum_payload_size))] {
+                        pipe_response result;
+                        result.result =
+                            this->request(pipe_request::write, static_cast<uint32_t>(data.size()), data, result.data, result.available);
+                        return result;
+                    })
+                    .get()
+                    .result;
             }
 
             pipe_io_result peek(std::string& data, const uint32_t capacity, uint32_t& available) override
             {
-                return this->request(pipe_request::peek, std::min(capacity, maximum_payload_size), {}, data, available);
+                auto response = this->enqueue([this, capacity] {
+                    pipe_response result;
+                    result.result =
+                        this->request(pipe_request::peek, std::min(capacity, maximum_payload_size), {}, result.data, result.available);
+                    return result;
+                });
+                if (response.wait_for(std::chrono::milliseconds(100)) != std::future_status::ready)
+                {
+                    return {.status = pipe_io_status::failed, .transferred = 0};
+                }
+                auto result = response.get();
+                data = std::move(result.data);
+                available = result.available;
+                return result.result;
+            }
+
+            template <typename F>
+            std::future<pipe_response> enqueue(F callback)
+            {
+                std::packaged_task<pipe_response()> task(std::move(callback));
+                auto result = task.get_future();
+                {
+                    const std::scoped_lock lock(this->queue_mutex);
+                    this->requests.push_back(std::move(task));
+                }
+                this->queued.notify_one();
+                return result;
+            }
+
+            std::future<pipe_response> submit(const bool reading, const std::string_view data, const uint32_t size) override
+            {
+                return this->enqueue([this, reading, data = std::string(data), size] {
+                    pipe_response result;
+                    const auto operation = reading ? pipe_request::read : pipe_request::write;
+                    const auto length = reading ? std::min(size, maximum_payload_size)
+                                                : static_cast<uint32_t>(std::min(data.size(), static_cast<size_t>(maximum_payload_size)));
+                    result.result =
+                        this->request(operation, length, reading ? std::string_view{} : std::string_view(data).substr(0, length),
+                                      result.data, result.available);
+                    return result;
+                });
             }
         };
     }
@@ -293,7 +400,7 @@ namespace sogen::utils
                 {
                     if (!server.is_ready(true))
                     {
-                        server.sleep(std::chrono::milliseconds(1), true);
+                        server.sleep(idle_poll_interval, true);
                         continue;
                     }
                     auto socket = server.accept();
@@ -301,13 +408,13 @@ namespace sogen::utils
                     {
                         continue;
                     }
-                    const auto deadline = std::chrono::steady_clock::now() + response_timeout;
+                    const auto deadline = std::chrono::steady_clock::now() + authentication_timeout;
                     const auto authentication = receive_exact(socket, token_size, deadline, &this->stopping);
                     if (!authentication || *authentication != this->token)
                     {
                         continue;
                     }
-                    if (send_words(socket, std::array{uint32_t{1}}))
+                    if (send_words(socket, std::array{uint32_t{1}}, {}, &this->stopping))
                     {
                         server.close();
                         try
@@ -338,17 +445,17 @@ namespace sogen::utils
             {
                 if (!socket.is_ready(true))
                 {
-                    socket.sleep(std::chrono::milliseconds(1), true);
+                    socket.sleep(idle_poll_interval, true);
                     continue;
                 }
                 const auto deadline = std::chrono::steady_clock::now() + response_timeout;
                 const auto request = receive_words<2>(socket, deadline, &this->stopping);
-                if (!request || (*request)[1] > maximum_payload_size)
+                if (!request || request->at(1) > maximum_payload_size)
                 {
                     return;
                 }
-                const auto operation = static_cast<pipe_request>((*request)[0]);
-                const auto size = (*request)[1];
+                const auto operation = static_cast<pipe_request>(request->at(0));
+                const auto size = request->at(1);
                 std::string data;
                 pipe_io_result result;
                 uint32_t available{};
@@ -376,7 +483,8 @@ namespace sogen::utils
                 default:
                     return;
                 }
-                if (!send_words(socket, std::array{static_cast<uint32_t>(result.status), result.transferred, available}, data))
+                if (!send_words(socket, std::array{static_cast<uint32_t>(result.status), result.transferred, available}, data,
+                                &this->stopping))
                 {
                     return;
                 }
@@ -391,6 +499,8 @@ namespace sogen::utils
         uint32_t size{};
         bool reading{};
         pipe_io_result result;
+        std::future<pipe_response> response;
+        bool cancelled{};
     };
 
     std::pair<std::shared_ptr<host_pipe>, std::shared_ptr<host_pipe>> host_pipe::create_pair(const bool message_type, const uint32_t quota)
@@ -409,7 +519,7 @@ namespace sogen::utils
             throw std::runtime_error("Connecting transferred pipe endpoint");
         }
         const auto authenticated = receive_words<1>(socket, std::chrono::steady_clock::now() + response_timeout);
-        if (!authenticated || (*authenticated)[0] != 1)
+        if (!authenticated || authenticated->at(0) != 1)
         {
             throw std::runtime_error("Authenticating transferred pipe endpoint");
         }
@@ -488,19 +598,41 @@ namespace sogen::utils
         {
             return operation.result;
         }
+        if (!operation.response.valid())
+        {
+            if (operation.cancelled)
+            {
+                operation.result.status = pipe_io_status::cancelled;
+                return operation.result;
+            }
+            operation.response = operation.pipe->submit(
+                operation.reading,
+                operation.reading ? std::string_view{} : std::string_view(operation.buffer).substr(operation.result.transferred),
+                operation.size);
+        }
+        if (operation.response.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+        {
+            return operation.result;
+        }
+        auto response = operation.response.get();
         if (operation.reading)
         {
-            operation.result = operation.pipe->read(operation.buffer, operation.size);
+            operation.buffer = std::move(response.data);
+            operation.result = response.result;
         }
         else
         {
-            const auto part = operation.pipe->write(std::string_view(operation.buffer).substr(operation.result.transferred));
+            const auto part = response.result;
             operation.result.transferred += part.transferred;
             operation.result.status = part.status;
             if (part.status == pipe_io_status::success && operation.result.transferred < operation.buffer.size())
             {
                 operation.result.status = pipe_io_status::pending;
             }
+        }
+        if (operation.cancelled && operation.result.status == pipe_io_status::pending)
+        {
+            operation.result.status = pipe_io_status::cancelled;
         }
         return operation.result;
     }
@@ -509,7 +641,7 @@ namespace sogen::utils
     {
         if (this->implementation_->result.status == pipe_io_status::pending)
         {
-            this->implementation_->result.status = pipe_io_status::cancelled;
+            this->implementation_->cancelled = true;
         }
     }
 

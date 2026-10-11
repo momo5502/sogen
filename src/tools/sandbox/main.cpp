@@ -173,12 +173,12 @@ namespace sogen::sandbox
                     auto* pipe = container.get_internal_device<named_pipe>();
                     pipe->name = u8_to_u16(inherited.name);
                     pipe->endpoint = std::move(inherited.endpoint);
-                    pipe->access = inherited.access;
+                    container.granted_access = inherited.access;
                     pipe->pipe_type = inherited.pipe_type;
                     pipe->read_mode = inherited.read_mode;
                     pipe->completion_mode = inherited.completion_mode;
                     pipe->create_options = inherited.create_options;
-                    pipe->inherit = inherited.inherit;
+                    container.inherit = inherited.inherit;
                     if (!win_emu.process.devices.store_at(make_handle(inherited.guest_handle), std::move(container)))
                     {
                         throw std::runtime_error("Inherited guest pipe handle conflicts with child setup");

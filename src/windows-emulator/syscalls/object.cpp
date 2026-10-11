@@ -14,6 +14,9 @@ namespace sogen
         NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, handle semaphore_handle, ULONG release_count,
                                            emulator_object<LONG> previous_count);
 
+        constexpr ULONG duplicate_close_source = 1;
+        constexpr ULONG duplicate_same_access = 2;
+
         NTSTATUS handle_NtClose(const syscall_context& c, const handle h)
         {
             const auto value = h.value;
@@ -53,14 +56,14 @@ namespace sogen
                 auto* device = c.proc.devices.get(h);
                 if (device)
                 {
-                    if (const auto* pipe = device->get_internal_device<named_pipe>(); pipe && pipe->protect_from_close)
+                    if (device->protect_from_close)
                     {
                         return STATUS_HANDLE_NOT_CLOSABLE;
                     }
                 }
                 if (device && device->ref_count == 1)
                 {
-                    if (device->get_internal_device<named_pipe>())
+                    if (device->is_last_file_reference() && device->get_internal_device<named_pipe>())
                     {
                         device->cancel_io(c.win_emu, 0);
                     }
@@ -149,17 +152,12 @@ namespace sogen
             auto* store = c.proc.get_handle_store(resolved_source_handle);
             if (const auto* source = c.proc.devices.get(resolved_source_handle))
             {
-                if (const auto* pipe = source->get_internal_device<named_pipe>(); pipe && pipe->endpoint)
+                if (source->get_internal_device<named_pipe>())
                 {
-                    io_device_container duplicate{u"NamedPipe", c.win_emu, {}};
-                    auto* destination = duplicate.get_internal_device<named_pipe>();
-                    destination->copy_configuration(*pipe);
-                    destination->endpoint = pipe->endpoint->duplicate();
-                    destination->unopened_peer = pipe->unopened_peer;
-                    destination->access = (options & 2) ? pipe->access : desired_access;
-                    destination->inherit = (handle_attributes & OBJ_INHERIT) != 0;
+                    auto duplicate = source->duplicate((options & duplicate_same_access) ? source->granted_access : desired_access,
+                                                       (handle_attributes & OBJ_INHERIT) != 0);
                     target_handle.write(c.proc.devices.store(std::move(duplicate)));
-                    if (options & 1)
+                    if (options & duplicate_close_source)
                     {
                         return handle_NtClose(c, resolved_source_handle);
                     }
@@ -488,13 +486,12 @@ namespace sogen
 
             if (object_information_class == ObjectHandleFlagInformation)
             {
-                return handle_query<OBJECT_HANDLE_FLAG_INFORMATION>(
-                    c.emu, object_information, object_information_length, return_length, [&](OBJECT_HANDLE_FLAG_INFORMATION& info) {
-                        const auto* device = c.proc.devices.get(effective_handle);
-                        const auto* pipe = device ? device->get_internal_device<named_pipe>() : nullptr;
-                        info.Inherit = pipe && pipe->inherit;
-                        info.ProtectFromClose = pipe && pipe->protect_from_close;
-                    });
+                return handle_query<OBJECT_HANDLE_FLAG_INFORMATION>(c.emu, object_information, object_information_length, return_length,
+                                                                    [&](OBJECT_HANDLE_FLAG_INFORMATION& info) {
+                                                                        const auto* device = c.proc.devices.get(effective_handle);
+                                                                        info.Inherit = device && device->inherit;
+                                                                        info.ProtectFromClose = device && device->protect_from_close;
+                                                                    });
             }
 
             c.win_emu.log.error("Unsupported object info class: %X\n", object_information_class);
@@ -904,13 +901,10 @@ namespace sogen
 
             const emulator_object<OBJECT_HANDLE_FLAG_INFORMATION> info{c.emu, object_information};
             const auto flags = info.read();
-            if (const auto* device = c.proc.devices.get(effective_handle))
+            if (auto* device = c.proc.devices.get(effective_handle))
             {
-                if (auto* pipe = device->get_internal_device<named_pipe>())
-                {
-                    pipe->inherit = flags.Inherit != 0;
-                    pipe->protect_from_close = flags.ProtectFromClose != 0;
-                }
+                device->inherit = flags.Inherit != 0;
+                device->protect_from_close = flags.ProtectFromClose != 0;
             }
 
             return STATUS_SUCCESS;

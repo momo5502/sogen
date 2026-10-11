@@ -112,4 +112,54 @@ namespace sogen::test
         invalid = 0;
         EXPECT_EQ(this->allocate(invalid, 0x10000, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_READWRITE), STATUS_INVALID_PARAMETER);
     }
+
+    TEST_F(PlaceholderMemoryTest, ReplacementNotifiesAllocationObserversOnlyOnSuccess)
+    {
+        uint64_t base{};
+        ASSERT_EQ(this->allocate(base, 0x20000, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER), STATUS_SUCCESS);
+        size_t notifications{};
+        this->emu->callbacks.on_memory_allocate = [&](const uint64_t address, const uint64_t size, const memory_permission protection,
+                                                      const bool committed) {
+            ++notifications;
+            EXPECT_EQ(address, base);
+            EXPECT_EQ(size, 0x20000u);
+            EXPECT_EQ(protection, memory_permission::read_write);
+            EXPECT_TRUE(committed);
+        };
+        auto replacement = base;
+        EXPECT_EQ(this->allocate(replacement, 0x10000, MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE),
+                  STATUS_CONFLICTING_ADDRESSES);
+        EXPECT_EQ(notifications, 0u);
+        replacement = base;
+        EXPECT_EQ(this->allocate(replacement, 0x20000, MEM_RESERVE | MEM_COMMIT | MEM_REPLACE_PLACEHOLDER, PAGE_READWRITE), STATUS_SUCCESS);
+        EXPECT_EQ(notifications, 1u);
+    }
+
+    TEST_F(PlaceholderMemoryTest, ReservedReplacementReportsUncommittedAllocation)
+    {
+        uint64_t base{};
+        ASSERT_EQ(this->allocate(base, 0x10000, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER), STATUS_SUCCESS);
+        size_t notifications{};
+        this->emu->callbacks.on_memory_allocate = [&](const uint64_t address, const uint64_t size, const memory_permission protection,
+                                                      const bool committed) {
+            ++notifications;
+            EXPECT_EQ(address, base);
+            EXPECT_EQ(size, 0x10000u);
+            EXPECT_EQ(protection, memory_permission::none);
+            EXPECT_FALSE(committed);
+        };
+        auto replacement = base;
+        EXPECT_EQ(this->allocate(replacement, 0x10000, MEM_RESERVE | MEM_REPLACE_PLACEHOLDER), STATUS_SUCCESS);
+        EXPECT_EQ(notifications, 1u);
+    }
+
+    TEST_F(PlaceholderMemoryTest, PreservingUntouchedPlaceholderRequiresAPartialSize)
+    {
+        uint64_t base{};
+        ASSERT_EQ(this->allocate(base, 0x20000, MEM_RESERVE | MEM_RESERVE_PLACEHOLDER), STATUS_SUCCESS);
+        EXPECT_EQ(this->free(base, 0, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER), STATUS_INVALID_PARAMETER_3);
+        EXPECT_EQ(this->free(base, 0x20000, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER), STATUS_CONFLICTING_ADDRESSES);
+        EXPECT_EQ(this->emu->memory.get_region_info(base).allocation_length, 0x20000u);
+        EXPECT_EQ(this->free(base, 0x10000, MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER), STATUS_SUCCESS);
+    }
 }

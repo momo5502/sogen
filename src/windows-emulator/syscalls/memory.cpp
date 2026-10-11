@@ -610,9 +610,12 @@ namespace sogen
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
-                return c.win_emu.memory.replace_placeholder(potential_base, static_cast<size_t>(allocation_bytes), *protection, commit)
-                           ? STATUS_SUCCESS
-                           : STATUS_CONFLICTING_ADDRESSES;
+                if (!c.win_emu.memory.replace_placeholder(potential_base, static_cast<size_t>(allocation_bytes), *protection, commit))
+                {
+                    return STATUS_CONFLICTING_ADDRESSES;
+                }
+                c.win_emu.callbacks.on_memory_allocate(potential_base, allocation_bytes, *protection, commit);
+                return STATUS_SUCCESS;
             }
 
             if (commit && !reserve && c.win_emu.memory.commit_memory(potential_base, static_cast<size_t>(allocation_bytes), *protection))
@@ -683,6 +686,11 @@ namespace sogen
                     if (free_type != (MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) && free_type != (MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS))
                     {
                         return STATUS_INVALID_PARAMETER_4;
+                    }
+                    if ((free_type & MEM_PRESERVE_PLACEHOLDER) && allocation_size == 0 &&
+                        c.win_emu.memory.get_region_kind(allocation_base) == memory_region_kind::placeholder)
+                    {
+                        return STATUS_INVALID_PARAMETER_3;
                     }
                     const auto success =
                         free_type & MEM_PRESERVE_PLACEHOLDER

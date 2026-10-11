@@ -1,10 +1,13 @@
 #include <utils/host_pipe.hpp>
+#include <network/tcp_server_socket.hpp>
 #include <gtest/gtest.h>
 
 #include <chrono>
 #include <stdexcept>
 #include <thread>
 #include <vector>
+#include <future>
+#include <array>
 
 namespace sogen::test
 {
@@ -15,6 +18,19 @@ namespace sogen::test
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
             auto result = operation.check_completion();
             while (result.status == utils::pipe_io_status::pending && std::chrono::steady_clock::now() < deadline)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                result = operation.check_completion();
+            }
+            return result;
+        }
+
+        utils::pipe_io_result progress(utils::host_pipe_operation& operation, const uint32_t transferred)
+        {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            auto result = operation.check_completion();
+            while (result.status == utils::pipe_io_status::pending && result.transferred < transferred &&
+                   std::chrono::steady_clock::now() < deadline)
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 result = operation.check_completion();
@@ -63,7 +79,7 @@ namespace sogen::test
     TEST_P(HostPipeTest, BackpressurePreservesPartialWriteProgress)
     {
         auto write = this->writer->write("abcdef");
-        const auto pending = write->check_completion();
+        const auto pending = progress(*write, 4);
         EXPECT_EQ(pending.status, utils::pipe_io_status::pending);
         EXPECT_EQ(pending.transferred, 4u);
         auto first = this->reader->read(2);
@@ -119,7 +135,7 @@ namespace sogen::test
         auto read = this->reader->read(16);
         ASSERT_EQ(read->check_completion().status, utils::pipe_io_status::pending);
         read->cancel();
-        EXPECT_EQ(read->check_completion().status, utils::pipe_io_status::cancelled);
+        EXPECT_EQ(finish(*read).status, utils::pipe_io_status::cancelled);
         auto write = this->writer->write("next");
         ASSERT_EQ(finish(*write).status, utils::pipe_io_status::success);
         auto next = this->reader->read(16);
@@ -178,7 +194,7 @@ namespace sogen::test
     TEST_P(HostPipeTest, CancellingPartialWriteRetainsOnlyAlreadyTransferredBytes)
     {
         auto write = this->writer->write("abcdef");
-        ASSERT_EQ(write->check_completion().status, utils::pipe_io_status::pending);
+        ASSERT_EQ(progress(*write, 4).status, utils::pipe_io_status::pending);
         write->cancel();
         const auto cancelled = write->check_completion();
         EXPECT_EQ(cancelled.status, utils::pipe_io_status::cancelled);
@@ -241,6 +257,88 @@ namespace sogen::test
         }
         auto read = pair.first->read(1);
         EXPECT_EQ(finish(*read).status, utils::pipe_io_status::broken);
+    }
+
+    TEST_P(HostPipeTest, ZeroLengthReadReportsClosedPeer)
+    {
+        this->writer.reset();
+        auto read = this->reader->read(0);
+        EXPECT_EQ(finish(*read).status, utils::pipe_io_status::broken);
+    }
+
+    TEST(HostPipeTransferTest, AbruptPeerDisconnectReleasesEndpointWhileTransferLives)
+    {
+        auto pair = utils::host_pipe::create_pair(false, 4);
+        auto transfer = pair.second->export_endpoint();
+        pair.second.reset();
+        network::tcp_client_socket peer{AF_INET};
+        ASSERT_TRUE(peer.connect(network::address{"127.0.0.1", transfer.port()}));
+        ASSERT_TRUE(peer.send(transfer.token()));
+        ASSERT_TRUE(peer.receive(sizeof(uint32_t)).has_value());
+        peer.close();
+        auto read = pair.first->read(1);
+        EXPECT_EQ(finish(*read).status, utils::pipe_io_status::broken);
+    }
+
+    TEST(HostPipeTransferTest, PendingChecksDoNotWaitForStalledPeer)
+    {
+        network::tcp_server_socket server{AF_INET};
+        ASSERT_TRUE(server.bind(network::address{"127.0.0.1", 0}));
+        server.listen();
+        std::promise<void> request_received;
+        auto received = request_received.get_future();
+        std::jthread peer([&](const std::stop_token& stop) {
+            auto socket = server.accept();
+            size_t remaining = 32;
+            while (remaining)
+            {
+                const auto token = socket.receive(remaining);
+                if (!token)
+                {
+                    return;
+                }
+                remaining -= token->size();
+            }
+            const auto accepted = htonl(1);
+            if (!socket.send(&accepted, sizeof(accepted)) || !socket.receive().has_value())
+            {
+                return;
+            }
+            request_received.set_value();
+            while (!stop.stop_requested())
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
+        auto endpoint = utils::host_pipe::connect(server.get_port(), std::string(32, '0'));
+        auto read = endpoint->read(16);
+        const auto start = std::chrono::steady_clock::now();
+        EXPECT_EQ(read->check_completion().status, utils::pipe_io_status::pending);
+        EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::milliseconds(100));
+        ASSERT_EQ(received.wait_for(std::chrono::seconds(2)), std::future_status::ready);
+        const auto poll_start = std::chrono::steady_clock::now();
+        for (size_t i = 0; i < 1000; ++i)
+        {
+            EXPECT_EQ(read->check_completion().status, utils::pipe_io_status::pending);
+        }
+        EXPECT_LT(std::chrono::steady_clock::now() - poll_start, std::chrono::milliseconds(100));
+        read.reset();
+        const auto close_start = std::chrono::steady_clock::now();
+        endpoint.reset();
+        EXPECT_LT(std::chrono::steady_clock::now() - close_start, std::chrono::milliseconds(250));
+    }
+
+    TEST(HostPipeTransferTest, StalledAuthenticationDoesNotHoldTheListenerForFiveSeconds)
+    {
+        auto pair = utils::host_pipe::create_pair(false, 4);
+        auto transfer = pair.second->export_endpoint();
+        network::tcp_client_socket stalled{AF_INET};
+        ASSERT_TRUE(stalled.connect(network::address{"127.0.0.1", transfer.port()}));
+        const auto start = std::chrono::steady_clock::now();
+        auto endpoint = utils::host_pipe::connect(transfer.port(), transfer.token());
+        EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(2));
+        auto write = endpoint->write("ok");
+        ASSERT_EQ(finish(*write).status, utils::pipe_io_status::success);
     }
 
     INSTANTIATE_TEST_SUITE_P(LocalAndTransferred, HostPipeTest, testing::Bool());

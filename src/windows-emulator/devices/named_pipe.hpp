@@ -7,6 +7,7 @@ namespace sogen
 {
     // FSCTL_PIPE_PEEK = CTL_CODE(FILE_DEVICE_NAMED_PIPE, 3, METHOD_BUFFERED, FILE_READ_DATA)
     constexpr ULONG FSCTL_PIPE_PEEK = 0x11400C;
+    constexpr ULONG FSCTL_PIPE_LISTEN = 0x110008;
     constexpr ULONG FILE_PIPE_CONNECTED_STATE = 3;
 
     // Header of FILE_PIPE_PEEK_BUFFER; the peeked data follows immediately after.
@@ -24,7 +25,6 @@ namespace sogen
         std::u16string name;
         std::shared_ptr<utils::host_pipe> endpoint;
         std::shared_ptr<utils::host_pipe> unopened_peer;
-        ACCESS_MASK access = 0;
         ULONG pipe_type{};
         ULONG read_mode{};
         ULONG completion_mode{};
@@ -32,8 +32,6 @@ namespace sogen
         ULONG inbound_quota{};
         ULONG outbound_quota{};
         ULONG create_options{};
-        bool inherit{};
-        bool protect_from_close{};
         bool signaled{true};
         LARGE_INTEGER default_timeout{};
 
@@ -49,7 +47,7 @@ namespace sogen
 
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& c) override
         {
-            if (c.io_control_code == 0x110008)
+            if (c.io_control_code == FSCTL_PIPE_LISTEN)
             {
                 return this->endpoint && !this->unopened_peer ? STATUS_PIPE_CONNECTED : STATUS_PIPE_LISTENING;
             }

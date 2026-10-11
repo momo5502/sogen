@@ -37,8 +37,18 @@ namespace sogen::network
 
     bool tcp_client_socket::send(std::string_view data) const
     {
+        return this->send(data, std::chrono::steady_clock::time_point::max(), nullptr);
+    }
+
+    bool tcp_client_socket::send(std::string_view data, const std::chrono::steady_clock::time_point deadline,
+                                 const std::atomic_bool* stopping) const
+    {
         while (!data.empty())
         {
+            if ((stopping && *stopping) || std::chrono::steady_clock::now() >= deadline)
+            {
+                return false;
+            }
 #ifdef MSG_NOSIGNAL
             constexpr int send_flags = MSG_NOSIGNAL;
 #else

@@ -200,33 +200,34 @@ namespace sogen
     NTSTATUS io_device_container::io_control(windows_emulator& win_emu, const io_device_context& context)
     {
         this->assert_validity();
-        win_emu.callbacks.on_ioctrl(*this->device_, this->device_name_, context.io_control_code);
-        return this->device_->io_control(win_emu, context);
+        win_emu.callbacks.on_ioctrl(*this->file_->device, this->device_name_, context.io_control_code);
+        return this->file_->device->io_control(win_emu, context);
     }
 
     io_device_context io_device_container::prepare_io_context(const io_device_context& context) const
     {
         auto request = context;
-        if (this->completion_association_)
+        if (this->file_->completion_association)
         {
-            request.completion_port = this->completion_association_->completion_port;
-            request.completion_key = this->completion_association_->key;
+            request.completion_port = this->file_->completion_association->completion_port;
+            request.completion_key = this->file_->completion_association->key;
         }
-        request.completion_notification_flags = this->completion_notification_flags_;
+        request.completion_notification_flags = this->file_->completion_notification_flags;
+        request.granted_access = this->granted_access;
         return request;
     }
 
     bool io_device_container::cancel_io(windows_emulator& win_emu, const uint64_t io_status_block)
     {
         this->assert_validity();
-        return this->device_->cancel_io(win_emu, io_status_block);
+        return this->file_->device->cancel_io(win_emu, io_status_block);
     }
 
     NTSTATUS io_device_container::set_completion_association(process_context& process, const emulator_thread* active_thread,
                                                              const handle completion_port, const uint64_t key)
     {
         this->assert_validity();
-        if (this->completion_association_)
+        if (this->file_->completion_association)
         {
             return STATUS_INVALID_PARAMETER;
         }
@@ -243,37 +244,41 @@ namespace sogen
             return STATUS_INVALID_HANDLE;
         }
 
-        this->completion_association_ = device_completion_association{.completion_port = retained_port, .key = key};
+        this->file_->completion_association = device_completion_association{.completion_port = retained_port, .key = key};
         return STATUS_SUCCESS;
     }
 
     void io_device_container::set_completion_notification_flags(const ULONG flags)
     {
         this->assert_validity();
-        this->completion_notification_flags_ = flags;
+        this->file_->completion_notification_flags = flags;
     }
 
     void io_device_container::release_references(process_context& process)
     {
         this->assert_validity();
-        this->device_->release_references(process);
-        if (this->completion_association_)
+        if (!this->is_last_file_reference())
         {
-            io_completion_wait::release_handle_reference(process, this->completion_association_->completion_port);
-            this->completion_association_.reset();
+            return;
+        }
+        this->file_->device->release_references(process);
+        if (this->file_->completion_association)
+        {
+            io_completion_wait::release_handle_reference(process, this->file_->completion_association->completion_port);
+            this->file_->completion_association.reset();
         }
     }
 
     void io_device_container::work(windows_emulator& win_emu)
     {
         this->assert_validity();
-        this->device_->work(win_emu);
+        this->file_->device->work(win_emu);
     }
 
     void io_device_container::restore_after_state_restore(windows_emulator& win_emu)
     {
         this->assert_validity();
-        this->device_->restore_after_state_restore(win_emu);
+        this->file_->device->restore_after_state_restore(win_emu);
     }
 
     void io_device_container::serialize_object(utils::buffer_serializer& buffer) const
@@ -282,20 +287,41 @@ namespace sogen
 
         buffer.write(this->is_32_bit_);
         buffer.write_string(this->device_name_);
-        buffer.write_optional(this->completion_association_);
-        buffer.write(this->completion_notification_flags_);
-        this->device_->serialize(buffer);
+        buffer.write(this->granted_access);
+        buffer.write(this->inherit);
+        buffer.write(this->protect_from_close);
+        buffer.write_shared(this->file_, [&](const file_state& file) {
+            buffer.write_optional(file.completion_association);
+            buffer.write(file.completion_notification_flags);
+            file.device->serialize(buffer);
+        });
     }
 
     void io_device_container::deserialize_object(utils::buffer_deserializer& buffer)
     {
         buffer.read(this->is_32_bit_);
         buffer.read_string(this->device_name_);
-        buffer.read_optional(this->completion_association_);
-        buffer.read(this->completion_notification_flags_);
+        buffer.read(this->granted_access);
+        buffer.read(this->inherit);
+        buffer.read(this->protect_from_close);
+        buffer.read_shared(this->file_, [&](file_state& file) {
+            buffer.read_optional(file.completion_association);
+            buffer.read(file.completion_notification_flags);
+            file.device = create_device(this->device_name_, {.is_32_bit = this->is_32_bit_});
+            file.device->deserialize(buffer);
+        });
+    }
 
-        this->setup();
-        this->device_->deserialize(buffer);
+    io_device_container io_device_container::duplicate(const ACCESS_MASK access, const bool inheritable) const
+    {
+        this->assert_validity();
+        io_device_container result;
+        result.is_32_bit_ = this->is_32_bit_;
+        result.device_name_ = this->device_name_;
+        result.file_ = this->file_;
+        result.granted_access = access;
+        result.inherit = inheritable;
+        return result;
     }
 
 } // namespace sogen

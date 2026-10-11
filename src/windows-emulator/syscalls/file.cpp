@@ -674,7 +674,7 @@ namespace sogen
                     case FileModeInformation:
                         return write_information(FILE_MODE_INFORMATION{pipe->create_options & FILE_MODE_MASK});
                     case FileAccessInformation:
-                        return write_information(FILE_ACCESS_INFORMATION{pipe->access});
+                        return write_information(FILE_ACCESS_INFORMATION{container->granted_access});
                     case FilePipeInformation:
                         return write_information(std::array<ULONG, 2>{pipe->read_mode, pipe->completion_mode});
                     case FileStandardInformation: {
@@ -1817,9 +1817,9 @@ namespace sogen
             if (auto* pipe_device = container.get_internal_device<named_pipe>())
             {
                 pipe_device->name = normalize_named_pipe_path(filename);
-                pipe_device->access = desired_access;
+                container.granted_access = desired_access;
                 pipe_device->create_options = create_options;
-                pipe_device->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+                container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
                 for (const auto& [index, existing] : c.proc.devices)
                 {
                     (void)index;
@@ -1827,7 +1827,7 @@ namespace sogen
                     if (server && server->unopened_peer && windows_path(server->name) == windows_path(pipe_device->name))
                     {
                         pipe_device->copy_configuration(*server);
-                        pipe_device->access = desired_access;
+                        container.granted_access = desired_access;
                         pipe_device->create_options = create_options;
                         pipe_device->endpoint = std::move(server->unopened_peer);
                         break;
@@ -1887,9 +1887,9 @@ namespace sogen
                         return STATUS_PIPE_NOT_AVAILABLE;
                     }
                     pipe_device->copy_configuration(*root_pipe);
-                    pipe_device->access = desired_access;
+                    container.granted_access = desired_access;
                     pipe_device->create_options = create_options;
-                    pipe_device->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+                    container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
                     pipe_device->endpoint = std::move(root_pipe->unopened_peer);
 
                     file_handle.write(c.proc.devices.store(std::move(container)));
@@ -2402,7 +2402,7 @@ namespace sogen
             if (auto* pipe_device = container.get_internal_device<named_pipe>())
             {
                 pipe_device->name = normalize_named_pipe_path(pipe_name);
-                pipe_device->access = desired_access;
+                container.granted_access = desired_access;
                 pipe_device->pipe_type = named_pipe_type;
                 pipe_device->read_mode = read_mode;
                 pipe_device->completion_mode = completion_mode;
@@ -2410,7 +2410,7 @@ namespace sogen
                 pipe_device->inbound_quota = inbound_quota;
                 pipe_device->outbound_quota = outbound_quota;
                 pipe_device->create_options = create_options;
-                pipe_device->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+                container.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
                 pipe_device->default_timeout = default_timeout.read();
                 auto endpoints =
                     utils::host_pipe::create_pair(named_pipe_type != 0, std::max<ULONG>({inbound_quota, outbound_quota, 4096}));

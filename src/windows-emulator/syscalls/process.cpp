@@ -14,6 +14,7 @@ namespace sogen
         {
             constexpr ULONG windows_cui_subsystem = 3;
             constexpr USHORT executable_large_address_aware_image = 0x0022;
+            constexpr ULONG process_create_flags_inherit_handles = 4;
 
             std::vector<std::u16string> parse_command_line(const std::u16string_view command_line)
             {
@@ -193,25 +194,30 @@ namespace sogen
             request.standard_input = parameters.StandardInput;
             request.standard_output = parameters.StandardOutput;
             request.standard_error = parameters.StandardError;
-            const auto inherit_pipe = [&](const handle h) {
+            const auto inherit_pipe = [&](const handle h) -> NTSTATUS {
                 if (std::ranges::any_of(request.inherited_pipes, [&](const auto& entry) { return entry.guest_handle == h.bits; }))
                 {
-                    return;
+                    return STATUS_SUCCESS;
                 }
                 const auto* container = c.proc.devices.get(h);
                 const auto* pipe = container ? container->get_internal_device<named_pipe>() : nullptr;
                 if (pipe && pipe->endpoint)
                 {
+                    if (pipe->read_mode != 0)
+                    {
+                        return STATUS_NOT_SUPPORTED;
+                    }
                     request.inherited_pipes.push_back({.guest_handle = h.bits,
                                                        .endpoint = pipe->endpoint,
                                                        .name = u16_to_u8(pipe->name),
-                                                       .access = pipe->access,
+                                                       .access = container->granted_access,
                                                        .pipe_type = pipe->pipe_type,
                                                        .read_mode = pipe->read_mode,
                                                        .completion_mode = pipe->completion_mode,
                                                        .create_options = pipe->create_options,
-                                                       .inherit = pipe->inherit});
+                                                       .inherit = container->inherit});
                 }
+                return STATUS_SUCCESS;
             };
             bool explicit_handle_list{};
             for (size_t i = 0; i < attribute_count; ++i)
@@ -223,6 +229,10 @@ namespace sogen
                 {
                     continue;
                 }
+                if (!(process_flags & process_create_flags_inherit_handles))
+                {
+                    continue;
+                }
                 explicit_handle_list = true;
                 if (attribute.Size % sizeof(handle) != 0)
                 {
@@ -231,22 +241,35 @@ namespace sogen
                 const emulator_object<handle> handles{c.emu, attribute.ValuePtr};
                 for (size_t j = 0; j < attribute.Size / sizeof(handle); ++j)
                 {
-                    inherit_pipe(handles.read(j));
-                }
-            }
-            if (!explicit_handle_list && (process_flags & 4))
-            {
-                for (const auto& [index, device] : c.proc.devices)
-                {
-                    if (const auto* pipe = device.get_internal_device<named_pipe>(); pipe && pipe->inherit)
+                    const auto status = inherit_pipe(handles.read(j));
+                    if (!NT_SUCCESS(status))
                     {
-                        inherit_pipe(c.proc.devices.make_handle(index));
+                        return status;
                     }
                 }
             }
-            for (const auto h : {request.standard_input, request.standard_output, request.standard_error})
+            if (!explicit_handle_list && (process_flags & process_create_flags_inherit_handles))
             {
-                inherit_pipe(make_handle(h));
+                for (const auto& [index, device] : c.proc.devices)
+                {
+                    if (device.get_internal_device<named_pipe>() && device.inherit)
+                    {
+                        const auto status = inherit_pipe(c.proc.devices.make_handle(index));
+                        if (!NT_SUCCESS(status))
+                        {
+                            return status;
+                        }
+                    }
+                }
+            }
+            for (auto* standard : {&request.standard_input, &request.standard_output, &request.standard_error})
+            {
+                const auto* device = c.proc.devices.get(*standard);
+                if (device && device->get_internal_device<named_pipe>() &&
+                    std::ranges::none_of(request.inherited_pipes, [&](const auto& pipe) { return pipe.guest_handle == *standard; }))
+                {
+                    *standard = 0;
+                }
             }
 
             if (!command_line.empty())
