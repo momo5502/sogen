@@ -1,5 +1,6 @@
 #include "std_include.hpp"
 #include "process_context.hpp"
+#include "code_page.hpp"
 
 #include "emulator_utils.hpp"
 #include "registry/registry_utils.hpp"
@@ -574,6 +575,7 @@ namespace sogen
         this->default_register_set = emu.save_registers();
 
         this->user_handles.setup(is_wow64_process);
+        initialize_user_code_page_tables(win_emu);
 
         auto [mh, monitor_obj] = this->user_handles.allocate_object<USER_MONITOR>(handle_types::monitor);
         this->default_monitor_handle = mh;

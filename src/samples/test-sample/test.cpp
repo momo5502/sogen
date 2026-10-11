@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <string_view>
 #include <array>
+#include <algorithm>
 
 #include "../../common/utils/finally.hpp"
 
@@ -1775,6 +1776,7 @@ namespace
         auto* ctx = CreateActCtxA(&actctx);
         if (ctx == INVALID_HANDLE_VALUE)
         {
+            printf("CreateActCtxA failed: %lu\n", GetLastError());
             return false;
         }
 
@@ -1969,6 +1971,32 @@ namespace
 
         DestroyWindow(hwnd);
         return true;
+    }
+
+    bool test_ansi_oem_translation()
+    {
+        std::array<char, 256> source{};
+        std::array<char, 256> converted{};
+        for (size_t i = 0; i < source.size(); ++i)
+        {
+            source[i] = static_cast<char>(i);
+        }
+        if (!CharToOemBuffA(source.data(), converted.data(), static_cast<DWORD>(source.size())))
+        {
+            return false;
+        }
+        for (size_t i = 0; i < source.size(); ++i)
+        {
+            wchar_t wide{};
+            char expected{};
+            if (!MultiByteToWideChar(CP_ACP, 0, &source[i], 1, &wide, 1) ||
+                !WideCharToMultiByte(CP_OEMCP, 0, &wide, 1, &expected, 1, nullptr, nullptr) || converted[i] != expected)
+            {
+                return false;
+            }
+        }
+        auto inplace = std::to_array("shell-arguments");
+        return CharToOemA(inplace.data(), inplace.data()) && std::string_view{inplace.data()} == "shell-arguments";
     }
 
     bool test_bcrypt_random()
@@ -2271,6 +2299,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_dialog_table, "Dialog Table")
     RUN_TEST(test_bcrypt_hash, "BCrypt Hash")
     RUN_TEST(test_bcrypt_random, "BCrypt Random")
+    RUN_TEST(test_ansi_oem_translation, "ANSI/OEM Translation")
     RUN_TEST(test_crypt_protect, "CryptProtect")
     RUN_TEST(test_set_dib_bits_to_device, "GDI DIB")
 

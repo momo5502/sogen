@@ -15,14 +15,22 @@ namespace sogen::test
           protected:
             void SetUp() override
             {
+                this->initialize(false);
+            }
+
+            void initialize(bool reproducible)
+            {
+                this->emu.reset();
                 emulator_interfaces interfaces{};
                 interfaces.ui = std::make_unique<null_ui_backend>();
                 interfaces.audio = std::make_unique<null_audio_backend>();
                 interfaces.console = std::make_unique<null_console_backend>();
-                this->emu = std::make_unique<windows_emulator>(
-                    create_x86_64_emulator_from_environment(),
-                    emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
-                    emulator_callbacks{}, std::move(interfaces));
+                this->emu = std::make_unique<windows_emulator>(create_x86_64_emulator_from_environment(),
+                                                               emulator_settings{.disable_logging = true,
+                                                                                 .use_relative_time = reproducible,
+                                                                                 .emulation_root = get_emulator_root(),
+                                                                                 .load_registry = false},
+                                                               emulator_callbacks{}, std::move(interfaces));
                 this->storage = this->emu->memory.allocate_memory(0x10000, memory_permission::read_write);
             }
 
@@ -61,6 +69,39 @@ namespace sogen::test
         EXPECT_NE(first, second);
         EXPECT_EQ(guard, (emulator_object<uint8_t>{this->emu->memory, context.output_buffer - 1}.read()));
         EXPECT_EQ(guard, (emulator_object<uint8_t>{this->emu->memory, context.output_buffer + first.size()}.read()));
+    }
+
+    TEST_F(CryptographyTest, ReproducibleRandomSequenceSurvivesStateRestore)
+    {
+        this->initialize(true);
+        io_device_container device{u"CNG", *this->emu, {}};
+        const auto context = this->request(8192);
+        std::array<uint8_t, 8192> first{};
+        std::array<uint8_t, 8192> second{};
+        std::array<uint8_t, 8192> replay{};
+        auto* generator = device.get_internal_device();
+        utils::buffer_serializer initial{};
+        generator->serialize(initial);
+
+        ASSERT_EQ(STATUS_SUCCESS, device.execute_ioctl(*this->emu, context));
+        this->emu->memory.read_memory(context.output_buffer, first.data(), first.size());
+        utils::buffer_serializer after_first{};
+        generator->serialize(after_first);
+        ASSERT_EQ(STATUS_SUCCESS, device.execute_ioctl(*this->emu, context));
+        this->emu->memory.read_memory(context.output_buffer, second.data(), second.size());
+        EXPECT_NE(first, second);
+
+        utils::buffer_deserializer restore_first{initial};
+        generator->deserialize(restore_first);
+        ASSERT_EQ(STATUS_SUCCESS, device.execute_ioctl(*this->emu, context));
+        this->emu->memory.read_memory(context.output_buffer, replay.data(), replay.size());
+        EXPECT_EQ(first, replay);
+
+        utils::buffer_deserializer restore_second{after_first};
+        generator->deserialize(restore_second);
+        ASSERT_EQ(STATUS_SUCCESS, device.execute_ioctl(*this->emu, context));
+        this->emu->memory.read_memory(context.output_buffer, replay.data(), replay.size());
+        EXPECT_EQ(second, replay);
     }
 
     TEST_F(CryptographyTest, RejectsUnsupportedControlCodes)

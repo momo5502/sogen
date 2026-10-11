@@ -7,14 +7,27 @@
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <limits>
 
 namespace sogen
 {
     namespace
     {
-        class cryptography_device final : public stateless_device
+        class cryptography_device final : public io_device
         {
+            uint64_t request_index_{};
+
+            void serialize_object(utils::buffer_serializer& buffer) const override
+            {
+                buffer.write(this->request_index_);
+            }
+
+            void deserialize_object(utils::buffer_deserializer& buffer) override
+            {
+                buffer.read(this->request_index_);
+            }
+
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
             {
                 if (context.io_control_code != 0x390008)
@@ -42,7 +55,28 @@ namespace sogen
                     mbedtls_ctr_drbg_free(&random);
                     mbedtls_entropy_free(&entropy);
                 });
-                const auto seed_result = mbedtls_ctr_drbg_seed(&random, mbedtls_entropy_func, &entropy, nullptr, 0);
+                std::array<uint8_t, MBEDTLS_CTR_DRBG_ENTROPY_LEN> deterministic_seed{};
+                auto entropy_function = mbedtls_entropy_func;
+                void* entropy_context = &entropy;
+                if (win_emu.uses_relative_time())
+                {
+                    // Reproducible analysis must replay RNG output after restoring a snapshot, too.
+                    const auto instructions = win_emu.get_executed_instructions();
+                    const auto request_index = this->request_index_++;
+                    std::memcpy(deterministic_seed.data(), &instructions, sizeof(instructions));
+                    std::memcpy(deterministic_seed.data() + sizeof(instructions), &request_index, sizeof(request_index));
+                    entropy_context = &deterministic_seed;
+                    entropy_function = [](void* seed, unsigned char* output, const size_t size) {
+                        const auto& bytes = *static_cast<std::array<uint8_t, MBEDTLS_CTR_DRBG_ENTROPY_LEN>*>(seed);
+                        if (size > bytes.size())
+                        {
+                            return MBEDTLS_ERR_ENTROPY_SOURCE_FAILED;
+                        }
+                        std::memcpy(output, bytes.data(), size);
+                        return 0;
+                    };
+                }
+                const auto seed_result = mbedtls_ctr_drbg_seed(&random, entropy_function, entropy_context, nullptr, 0);
                 if (seed_result != 0)
                 {
                     return STATUS_UNSUCCESSFUL;
