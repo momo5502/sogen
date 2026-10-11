@@ -685,7 +685,8 @@ inline ::flatbuffers::Offset<EnvironmentVariable> CreateEnvironmentVariableDirec
 struct InheritedPipeT : public ::flatbuffers::NativeTable {
   typedef InheritedPipe TableType;
   uint64_t guest_handle = 0;
-  uint64_t native_handle = 0;
+  uint16_t port = 0;
+  std::string token{};
   std::string name{};
   uint32_t access = 0;
   uint32_t pipe_type = 0;
@@ -700,20 +701,24 @@ struct InheritedPipe FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef InheritedPipeBuilder Builder;
   enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
     VT_GUEST_HANDLE = 4,
-    VT_NATIVE_HANDLE = 6,
-    VT_NAME = 8,
-    VT_ACCESS = 10,
-    VT_PIPE_TYPE = 12,
-    VT_READ_MODE = 14,
-    VT_COMPLETION_MODE = 16,
-    VT_CREATE_OPTIONS = 18,
-    VT_INHERIT = 20
+    VT_PORT = 6,
+    VT_TOKEN = 8,
+    VT_NAME = 10,
+    VT_ACCESS = 12,
+    VT_PIPE_TYPE = 14,
+    VT_READ_MODE = 16,
+    VT_COMPLETION_MODE = 18,
+    VT_CREATE_OPTIONS = 20,
+    VT_INHERIT = 22
   };
   uint64_t guest_handle() const {
     return GetField<uint64_t>(VT_GUEST_HANDLE, 0);
   }
-  uint64_t native_handle() const {
-    return GetField<uint64_t>(VT_NATIVE_HANDLE, 0);
+  uint16_t port() const {
+    return GetField<uint16_t>(VT_PORT, 0);
+  }
+  const ::flatbuffers::String *token() const {
+    return GetPointer<const ::flatbuffers::String *>(VT_TOKEN);
   }
   const ::flatbuffers::String *name() const {
     return GetPointer<const ::flatbuffers::String *>(VT_NAME);
@@ -740,7 +745,9 @@ struct InheritedPipe FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint64_t>(verifier, VT_GUEST_HANDLE, 8) &&
-           VerifyField<uint64_t>(verifier, VT_NATIVE_HANDLE, 8) &&
+           VerifyField<uint16_t>(verifier, VT_PORT, 2) &&
+           VerifyOffsetRequired(verifier, VT_TOKEN) &&
+           verifier.VerifyString(token()) &&
            VerifyOffset(verifier, VT_NAME) &&
            verifier.VerifyString(name()) &&
            VerifyField<uint32_t>(verifier, VT_ACCESS, 4) &&
@@ -763,8 +770,11 @@ struct InheritedPipeBuilder {
   void add_guest_handle(uint64_t guest_handle) {
     fbb_.AddElement<uint64_t>(InheritedPipe::VT_GUEST_HANDLE, guest_handle, 0);
   }
-  void add_native_handle(uint64_t native_handle) {
-    fbb_.AddElement<uint64_t>(InheritedPipe::VT_NATIVE_HANDLE, native_handle, 0);
+  void add_port(uint16_t port) {
+    fbb_.AddElement<uint16_t>(InheritedPipe::VT_PORT, port, 0);
+  }
+  void add_token(::flatbuffers::Offset<::flatbuffers::String> token) {
+    fbb_.AddOffset(InheritedPipe::VT_TOKEN, token);
   }
   void add_name(::flatbuffers::Offset<::flatbuffers::String> name) {
     fbb_.AddOffset(InheritedPipe::VT_NAME, name);
@@ -794,6 +804,7 @@ struct InheritedPipeBuilder {
   ::flatbuffers::Offset<InheritedPipe> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = ::flatbuffers::Offset<InheritedPipe>(end);
+    fbb_.Required(o, InheritedPipe::VT_TOKEN);
     return o;
   }
 };
@@ -801,7 +812,8 @@ struct InheritedPipeBuilder {
 inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipe(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t guest_handle = 0,
-    uint64_t native_handle = 0,
+    uint16_t port = 0,
+    ::flatbuffers::Offset<::flatbuffers::String> token = 0,
     ::flatbuffers::Offset<::flatbuffers::String> name = 0,
     uint32_t access = 0,
     uint32_t pipe_type = 0,
@@ -810,7 +822,6 @@ inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipe(
     uint32_t create_options = 0,
     bool inherit = false) {
   InheritedPipeBuilder builder_(_fbb);
-  builder_.add_native_handle(native_handle);
   builder_.add_guest_handle(guest_handle);
   builder_.add_create_options(create_options);
   builder_.add_completion_mode(completion_mode);
@@ -818,6 +829,8 @@ inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipe(
   builder_.add_pipe_type(pipe_type);
   builder_.add_access(access);
   builder_.add_name(name);
+  builder_.add_token(token);
+  builder_.add_port(port);
   builder_.add_inherit(inherit);
   return builder_.Finish();
 }
@@ -825,7 +838,8 @@ inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipe(
 inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipeDirect(
     ::flatbuffers::FlatBufferBuilder &_fbb,
     uint64_t guest_handle = 0,
-    uint64_t native_handle = 0,
+    uint16_t port = 0,
+    const char *token = nullptr,
     const char *name = nullptr,
     uint32_t access = 0,
     uint32_t pipe_type = 0,
@@ -833,11 +847,13 @@ inline ::flatbuffers::Offset<InheritedPipe> CreateInheritedPipeDirect(
     uint32_t completion_mode = 0,
     uint32_t create_options = 0,
     bool inherit = false) {
+  auto token__ = token ? _fbb.CreateString(token) : 0;
   auto name__ = name ? _fbb.CreateString(name) : 0;
   return ProcessProtocol::CreateInheritedPipe(
       _fbb,
       guest_handle,
-      native_handle,
+      port,
+      token__,
       name__,
       access,
       pipe_type,
@@ -2140,7 +2156,8 @@ inline void InheritedPipe::UnPackTo(InheritedPipeT *_o, const ::flatbuffers::res
   (void)_o;
   (void)_resolver;
   { auto _e = guest_handle(); _o->guest_handle = _e; }
-  { auto _e = native_handle(); _o->native_handle = _e; }
+  { auto _e = port(); _o->port = _e; }
+  { auto _e = token(); if (_e) _o->token = _e->str(); }
   { auto _e = name(); if (_e) _o->name = _e->str(); }
   { auto _e = access(); _o->access = _e; }
   { auto _e = pipe_type(); _o->pipe_type = _e; }
@@ -2159,7 +2176,8 @@ inline ::flatbuffers::Offset<InheritedPipe> InheritedPipe::Pack(::flatbuffers::F
   (void)_o;
   struct _VectorArgs { ::flatbuffers::FlatBufferBuilder *__fbb; const InheritedPipeT* __o; const ::flatbuffers::rehasher_function_t *__rehasher; } _va = { &_fbb, _o, _rehasher}; (void)_va;
   auto _guest_handle = _o->guest_handle;
-  auto _native_handle = _o->native_handle;
+  auto _port = _o->port;
+  auto _token = _fbb.CreateString(_o->token);
   auto _name = _o->name.empty() ? 0 : _fbb.CreateString(_o->name);
   auto _access = _o->access;
   auto _pipe_type = _o->pipe_type;
@@ -2170,7 +2188,8 @@ inline ::flatbuffers::Offset<InheritedPipe> InheritedPipe::Pack(::flatbuffers::F
   return ProcessProtocol::CreateInheritedPipe(
       _fbb,
       _guest_handle,
-      _native_handle,
+      _port,
+      _token,
       _name,
       _access,
       _pipe_type,

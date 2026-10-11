@@ -198,7 +198,8 @@ namespace sogen
                     .error = decode_error(result.error)};
         }
 
-        ProcessProtocol::ProcessCreateRequestT encode_create_request(const process_create_request& request, const uint32_t host_process_id)
+        ProcessProtocol::ProcessCreateRequestT encode_create_request(const process_create_request& request,
+                                                                     std::vector<utils::host_pipe_transfer>& transfers)
         {
             ProcessProtocol::ProcessCreateRequestT result{};
             result.application = request.application;
@@ -215,7 +216,10 @@ namespace sogen
             {
                 auto inherited = std::make_unique<ProcessProtocol::InheritedPipeT>();
                 inherited->guest_handle = pipe.guest_handle;
-                inherited->native_handle = pipe.endpoint->duplicate_into(host_process_id);
+                auto transfer = pipe.endpoint->export_endpoint();
+                inherited->port = transfer.port();
+                inherited->token = transfer.token();
+                transfers.push_back(std::move(transfer));
                 inherited->name = pipe.name;
                 inherited->access = pipe.access;
                 inherited->pipe_type = pipe.pipe_type;
@@ -251,7 +255,7 @@ namespace sogen
             for (const auto& pipe : request.inherited_pipes)
             {
                 result.inherited_pipes.push_back({.guest_handle = pipe->guest_handle,
-                                                  .endpoint = utils::host_pipe::adopt(pipe->native_handle),
+                                                  .endpoint = utils::host_pipe::connect(pipe->port, pipe->token),
                                                   .name = pipe->name,
                                                   .access = pipe->access,
                                                   .pipe_type = pipe->pipe_type,
@@ -308,6 +312,7 @@ namespace sogen
     {
         reproc::process process{};
         network::tcp_client_socket control{};
+        std::vector<utils::host_pipe_transfer> pipe_transfers{};
         std::thread output_thread{};
         mutable std::mutex control_mutex{};
         mutable std::mutex state_mutex{};
@@ -706,12 +711,12 @@ namespace sogen
         bool sent{};
         try
         {
-            sent = entry->control && send_message(entry->control, encode_create_request(request, static_cast<uint32_t>(host_process_id)));
+            sent = entry->control && send_message(entry->control, encode_create_request(request, entry->pipe_transfers));
         }
-        catch (const std::system_error&)
+        catch (const std::exception&)
         {
             entry->kill_requested = true;
-            return {.error = process_error::permission_denied};
+            return {.error = process_error::communication_failure};
         }
         if (!sent)
         {

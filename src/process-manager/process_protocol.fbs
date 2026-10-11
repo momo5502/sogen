@@ -40,7 +40,8 @@ table EnvironmentVariable {
 
 table InheritedPipe {
     guest_handle: ulong;
-    native_handle: ulong;
+    port: ushort;
+    token: string (required);
     name: string;
     access: uint;
     pipe_type: uint;

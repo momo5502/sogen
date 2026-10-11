@@ -8,6 +8,8 @@
 
 namespace sogen::utils
 {
+    class host_pipe_transfer;
+
     enum class pipe_io_status
     {
         success,
@@ -47,20 +49,38 @@ namespace sogen::utils
         struct implementation;
 
         static std::pair<std::shared_ptr<host_pipe>, std::shared_ptr<host_pipe>> create_pair(bool message_type, uint32_t quota);
-        static std::shared_ptr<host_pipe> adopt(uint64_t native_handle);
+        static std::shared_ptr<host_pipe> connect(uint16_t port, const std::string& token);
         explicit host_pipe(std::shared_ptr<implementation> implementation);
         ~host_pipe();
         host_pipe(const host_pipe&) = delete;
         host_pipe& operator=(const host_pipe&) = delete;
 
         std::shared_ptr<host_pipe> duplicate() const;
-        uint64_t duplicate_into(uint32_t process_id) const;
-        uint64_t native_handle() const;
+        host_pipe_transfer export_endpoint() const;
         std::unique_ptr<host_pipe_operation> read(uint32_t size);
         std::unique_ptr<host_pipe_operation> write(std::string_view data);
         pipe_io_result peek(std::string& data, uint32_t capacity, uint32_t& available) const;
 
       private:
         std::shared_ptr<implementation> implementation_;
+    };
+
+    class host_pipe_transfer
+    {
+      public:
+        struct implementation;
+
+        explicit host_pipe_transfer(std::shared_ptr<host_pipe::implementation> endpoint);
+        ~host_pipe_transfer();
+        host_pipe_transfer(host_pipe_transfer&&) noexcept;
+        host_pipe_transfer& operator=(host_pipe_transfer&&) noexcept;
+        host_pipe_transfer(const host_pipe_transfer&) = delete;
+        host_pipe_transfer& operator=(const host_pipe_transfer&) = delete;
+
+        uint16_t port() const;
+        const std::string& token() const;
+
+      private:
+        std::unique_ptr<implementation> implementation_;
     };
 }
