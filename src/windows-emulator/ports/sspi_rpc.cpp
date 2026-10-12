@@ -6,6 +6,7 @@
 
 #include "binary_writer.hpp"
 #include "../windows_emulator.hpp"
+#include "../registry/registry_utils.hpp"
 
 namespace sogen
 {
@@ -78,12 +79,45 @@ namespace sogen
                     return handle_process_security_context(win_emu, c, writer);
                 case 7:
                     return handle_delete_security_context(win_emu, c, writer);
+                case 15:
+                    return handle_get_user_name(win_emu, c, writer);
                 default:
                     return STATUS_NOT_SUPPORTED;
                 }
             }
 
           private:
+            static NTSTATUS handle_get_user_name(windows_emulator& win_emu, const lpc_request_context& c,
+                                                 utils::aligned_binary_writer& writer)
+            {
+                if (c.send_buffer_length < 0x2c)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const auto format = win_emu.memory.read_memory<uint32_t>(c.send_buffer + 0x28);
+                if ((format & ~0x10000u) != 2)
+                {
+                    writer.write<uint16_t>(0);
+                    writer.write<uint16_t>(0);
+                    writer.write_ndr_pointer(false);
+                    writer.write<uint32_t>(0);
+                    writer.write(STATUS_NOT_SUPPORTED);
+                    return STATUS_SUCCESS;
+                }
+                auto name = registry_utils::get_user_name(win_emu.registry);
+                if ((format & 0x10000) == 0)
+                {
+                    name = registry_utils::get_account_domain(win_emu.registry) + u"\\" + name;
+                }
+                writer.write(static_cast<uint16_t>(name.size() * sizeof(char16_t)));
+                writer.write(static_cast<uint16_t>((name.size() + 1) * sizeof(char16_t)));
+                writer.write_ndr_pointer(true);
+                writer.write_ndr_u16string(name, false);
+                writer.write<uint32_t>(0);
+                writer.write(STATUS_SUCCESS);
+                return STATUS_SUCCESS;
+            }
+
             struct security_handle
             {
                 uint64_t lower{};
