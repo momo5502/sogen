@@ -947,7 +947,7 @@ namespace sogen
             left_region.write_watch = region.write_watch;
             if (region.write_watch)
             {
-                const auto page_count = static_cast<size_t>((aligned_start - reserved_start) / 0x1000);
+                const auto page_count = static_cast<std::ptrdiff_t>((aligned_start - reserved_start) / 0x1000);
                 left_region.written_pages.assign(region.written_pages.begin(), region.written_pages.begin() + page_count);
             }
             this->reserved_regions_.try_emplace(reserved_start, std::move(left_region));
@@ -964,7 +964,7 @@ namespace sogen
             right_region.write_watch = region.write_watch;
             if (region.write_watch)
             {
-                const auto first_page = static_cast<size_t>((aligned_end - reserved_start) / 0x1000);
+                const auto first_page = static_cast<std::ptrdiff_t>((aligned_end - reserved_start) / 0x1000);
                 right_region.written_pages.assign(region.written_pages.begin() + first_page, region.written_pages.end());
             }
             this->reserved_regions_.try_emplace(aligned_end, std::move(right_region));
@@ -1108,8 +1108,8 @@ namespace sogen
         }
         const auto start = page_align_down(address);
         const auto end = page_align_up(address + size);
-        const auto first = static_cast<size_t>((start - entry->first) / 0x1000);
-        const auto last = static_cast<size_t>((end - entry->first) / 0x1000);
+        const auto first = static_cast<std::ptrdiff_t>((start - entry->first) / 0x1000);
+        const auto last = static_cast<std::ptrdiff_t>((end - entry->first) / 0x1000);
         std::fill(entry->second.written_pages.begin() + first, entry->second.written_pages.begin() + last, false);
         for (const auto& [base, committed] : entry->second.committed_regions)
         {
@@ -1597,8 +1597,8 @@ namespace sogen
         const auto entry = this->find_reserved_region(address);
         if (entry != this->reserved_regions_.end() && entry->second.write_watch)
         {
-            const auto first = static_cast<size_t>((address - entry->first) / 0x1000);
-            const auto last = first + size / 0x1000;
+            const auto first = static_cast<std::ptrdiff_t>((address - entry->first) / 0x1000);
+            const auto last = first + static_cast<std::ptrdiff_t>(size / 0x1000);
             std::fill(entry->second.written_pages.begin() + first, entry->second.written_pages.begin() + last, false);
         }
         this->memory_->unmap_memory(address, size);
