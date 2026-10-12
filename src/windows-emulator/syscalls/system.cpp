@@ -494,7 +494,6 @@ namespace sogen
 
             case SystemFlushInformation:
             case SystemSecureBootPolicyInformation:
-            case SystemCodeIntegrityPolicyInformation:
             case SystemCodeIntegrityPoliciesFullInformation:
             case SystemHypervisorSharedPageInformation:
             case SystemFeatureConfigurationInformation:
@@ -867,6 +866,32 @@ namespace sogen
                                                                           ci.Length = sizeof(ci);
                                                                           ci.CodeIntegrityOptions = CODEINTEGRITY_OPTION_ENABLED;
                                                                       });
+            }
+
+            case SystemCodeIntegrityPolicyInformation: {
+                struct system_code_integrity_policy_information
+                {
+                    ULONG options;
+                    ULONG hvci_options;
+                    ULONGLONG version;
+                    GUID policy_guid;
+                };
+
+                static_assert(sizeof(system_code_integrity_policy_information) == 32);
+                if (return_length)
+                {
+                    if (!return_length.try_write(sizeof(system_code_integrity_policy_information)))
+                    {
+                        return STATUS_ACCESS_VIOLATION;
+                    }
+                }
+                if (system_information_length != sizeof(system_code_integrity_policy_information))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                const system_code_integrity_policy_information information{};
+                return c.emu.try_write_memory(system_information, &information, sizeof(information)) ? STATUS_SUCCESS
+                                                                                                     : STATUS_ACCESS_VIOLATION;
             }
 
             case SystemBootEnvironmentInformation:
