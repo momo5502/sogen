@@ -253,6 +253,28 @@ namespace sogen
 
             switch (info_class)
             {
+            case WorkerFactoryStackInformation: {
+                struct stack_information
+                {
+                    uint64_t reserve;
+                    uint64_t commit;
+                };
+
+                if (worker_factory_information_length != sizeof(stack_information))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                stack_information information{};
+                if (!c.emu.try_read_memory(worker_factory_information, &information, sizeof(information)))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+                factory->stack_reserve = information.reserve;
+                factory->stack_commit = information.commit;
+                return STATUS_SUCCESS;
+            }
+
             case WorkerFactoryTimeout:
             case WorkerFactoryRetryTimeout:
             case WorkerFactoryIdleTimeout: {
