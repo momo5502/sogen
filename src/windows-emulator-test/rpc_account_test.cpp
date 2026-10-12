@@ -99,11 +99,13 @@ namespace sogen::test
             ASSERT_EQ(STATUS_SUCCESS, result.status);
             ASSERT_TRUE(result.payload.has_value());
             const auto& payload = *result.payload;
-            auto expected = registry_utils::get_user_name(this->emu->registry);
+            std::u16string expected{};
             if (format == 2)
             {
-                expected = registry_utils::get_account_domain(this->emu->registry) + u"\\" + expected;
+                expected = registry_utils::get_account_domain(this->emu->registry);
+                expected.push_back(u'\\');
             }
+            expected += registry_utils::get_user_name(this->emu->registry);
             EXPECT_EQ(expected.size() * sizeof(char16_t), read<uint16_t>(payload, 24));
             EXPECT_EQ(expected.size() + 1, read<uint64_t>(payload, 40));
             EXPECT_EQ(expected.size(), read<uint64_t>(payload, 56));
