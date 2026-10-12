@@ -115,7 +115,10 @@ namespace sogen::test
         const emulator_object<handle> out{this->emu->memory, this->storage + 0x400};
         for (const auto flags : {0u, static_cast<uint32_t>(OBJ_INHERIT)})
         {
-            attributes.write({.Length = sizeof(OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>), .Attributes = flags});
+            OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>> values{};
+            values.Length = sizeof(values);
+            values.Attributes = flags;
+            attributes.write(values);
             ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCreateEvent(this->context(), out, 0, attributes, NotificationEvent, FALSE));
             this->expect_flags(out.read(), flags != 0, false);
             EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), out.read()));
