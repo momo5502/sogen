@@ -289,8 +289,6 @@ namespace sogen
         buffer.write(this->is_32_bit_);
         buffer.write_string(this->device_name_);
         buffer.write(this->granted_access);
-        buffer.write(this->inherit);
-        buffer.write(this->protect_from_close);
         buffer.write_shared(this->file_, [&](const file_state& file) {
             buffer.write_optional(file.completion_association);
             buffer.write(file.completion_notification_flags);
@@ -303,8 +301,6 @@ namespace sogen
         buffer.read(this->is_32_bit_);
         buffer.read_string(this->device_name_);
         buffer.read(this->granted_access);
-        buffer.read(this->inherit);
-        buffer.read(this->protect_from_close);
         buffer.read_shared(this->file_, [&](file_state& file) {
             buffer.read_optional(file.completion_association);
             buffer.read(file.completion_notification_flags);

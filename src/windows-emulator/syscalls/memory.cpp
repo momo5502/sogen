@@ -432,6 +432,10 @@ namespace sogen
                                                   const emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters,
                                                   const ULONG extended_parameter_count)
         {
+            if (allocation_type & MEM_WRITE_WATCH)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
             auto allocation_bytes = bytes_to_allocate.read();
 
             if (allocation_bytes == 0)
@@ -467,7 +471,7 @@ namespace sogen
                 }
                 const bool reserve = allocation_type & MEM_RESERVE;
                 const bool commit = allocation_type & MEM_COMMIT;
-                if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN | MEM_WRITE_WATCH)) || (!commit && !reserve))
+                if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN)) || (!commit && !reserve))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -597,8 +601,7 @@ namespace sogen
 
             const bool placeholder = allocation_type & MEM_RESERVE_PLACEHOLDER;
             const bool replace_placeholder = allocation_type & MEM_REPLACE_PLACEHOLDER;
-            if ((allocation_type &
-                 ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN | MEM_WRITE_WATCH | MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER)) ||
+            if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN | MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER)) ||
                 (!commit && !reserve) || (placeholder && (commit || replace_placeholder || !reserve || page_protection != PAGE_NOACCESS)))
             {
                 return STATUS_INVALID_PARAMETER;
@@ -627,9 +630,11 @@ namespace sogen
             c.win_emu.callbacks.on_memory_allocate(potential_base, allocation_bytes, *protection, false);
 
             const auto kind = placeholder ? memory_region_kind::placeholder : memory_region_kind::private_allocation;
-            return c.win_emu.memory.allocate_memory(potential_base, static_cast<size_t>(allocation_bytes), *protection, !commit, kind)
-                       ? STATUS_SUCCESS
-                       : STATUS_MEMORY_NOT_ALLOCATED;
+            if (!c.win_emu.memory.allocate_memory(potential_base, static_cast<size_t>(allocation_bytes), *protection, !commit, kind))
+            {
+                return STATUS_MEMORY_NOT_ALLOCATED;
+            }
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtAllocateVirtualMemory(const syscall_context& c, const handle process_handle,
@@ -790,8 +795,8 @@ namespace sogen
         }
 
         NTSTATUS handle_NtReadVirtualMemory(const syscall_context& c, const handle process_handle, const emulator_pointer base_address,
-                                            const emulator_pointer buffer, const ULONG number_of_bytes_to_read,
-                                            const emulator_object<ULONG> number_of_bytes_read)
+                                            const emulator_pointer buffer, const uint64_t number_of_bytes_to_read,
+                                            const emulator_object<uint64_t> number_of_bytes_read)
         {
             number_of_bytes_read.try_write(0);
 
@@ -807,14 +812,14 @@ namespace sogen
             };
 
             std::vector<uint8_t> memory(page_size, 0);
-            size_t bytes_read = 0;
+            uint64_t bytes_read = 0;
             while (bytes_read < number_of_bytes_to_read)
             {
                 const auto current_base = static_cast<uint64_t>(base_address) + bytes_read;
                 const auto current_buffer = static_cast<uint64_t>(buffer) + bytes_read;
-                const auto bytes_remaining = static_cast<size_t>(number_of_bytes_to_read) - bytes_read;
-                const auto chunk_size =
-                    std::min({bytes_remaining, bytes_until_page_boundary(current_base), bytes_until_page_boundary(current_buffer)});
+                const auto bytes_remaining = number_of_bytes_to_read - bytes_read;
+                const auto chunk_size = static_cast<size_t>(std::min<uint64_t>(
+                    {bytes_remaining, bytes_until_page_boundary(current_base), bytes_until_page_boundary(current_buffer)}));
 
                 if (c.proc.is_current_process_handle(process_handle))
                 {
@@ -847,7 +852,7 @@ namespace sogen
                 bytes_read += chunk_size;
             }
 
-            number_of_bytes_read.try_write(static_cast<ULONG>(bytes_read));
+            number_of_bytes_read.try_write(bytes_read);
             if (bytes_read == number_of_bytes_to_read)
             {
                 return STATUS_SUCCESS;
@@ -857,8 +862,8 @@ namespace sogen
         }
 
         NTSTATUS handle_NtWriteVirtualMemory(const syscall_context& c, const handle process_handle, const emulator_pointer base_address,
-                                             const emulator_pointer buffer, const ULONG number_of_bytes_to_write,
-                                             const emulator_object<ULONG> number_of_bytes_write)
+                                             const emulator_pointer buffer, const uint64_t number_of_bytes_to_write,
+                                             const emulator_object<uint64_t> number_of_bytes_write)
         {
             number_of_bytes_write.try_write(0);
 
@@ -874,14 +879,14 @@ namespace sogen
             };
 
             std::vector<uint8_t> memory(page_size, 0);
-            size_t bytes_written = 0;
+            uint64_t bytes_written = 0;
             while (bytes_written < number_of_bytes_to_write)
             {
                 const auto current_buffer = static_cast<uint64_t>(buffer) + bytes_written;
                 const auto current_base = static_cast<uint64_t>(base_address) + bytes_written;
-                const auto bytes_remaining = static_cast<size_t>(number_of_bytes_to_write) - bytes_written;
-                const auto chunk_size =
-                    std::min({bytes_remaining, bytes_until_page_boundary(current_buffer), bytes_until_page_boundary(current_base)});
+                const auto bytes_remaining = number_of_bytes_to_write - bytes_written;
+                const auto chunk_size = static_cast<size_t>(std::min<uint64_t>(
+                    {bytes_remaining, bytes_until_page_boundary(current_buffer), bytes_until_page_boundary(current_base)}));
 
                 if (!c.emu.try_read_memory(current_buffer, memory.data(), chunk_size))
                 {
@@ -913,13 +918,24 @@ namespace sogen
                 bytes_written += chunk_size;
             }
 
-            number_of_bytes_write.try_write(static_cast<ULONG>(bytes_written));
+            number_of_bytes_write.try_write(bytes_written);
             if (bytes_written == number_of_bytes_to_write)
             {
                 return STATUS_SUCCESS;
             }
 
             return bytes_written == 0 ? STATUS_INVALID_ADDRESS : STATUS_PARTIAL_COPY;
+        }
+
+        NTSTATUS handle_NtGetWriteWatch(const syscall_context&, handle, ULONG, uint64_t, uint64_t, uint64_t, emulator_object<uint64_t>,
+                                        emulator_object<ULONG>)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        NTSTATUS handle_NtResetWriteWatch(const syscall_context&, handle, uint64_t, uint64_t)
+        {
+            return STATUS_NOT_SUPPORTED;
         }
 
         NTSTATUS handle_NtSetInformationVirtualMemory()

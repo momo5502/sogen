@@ -152,7 +152,8 @@ namespace sogen
             }
 
             case handle_types::timer: {
-                return wait_state::signaled; // TODO
+                auto* entry = c.timers.get(h);
+                return entry && entry->is_signaled(win_emu.clock().steady_now()) ? wait_state::signaled : wait_state::not_signaled;
             }
 
             case handle_types::semaphore: {
@@ -284,8 +285,15 @@ namespace sogen
                 return *acquired ? wait_state::abandoned : wait_state::signaled;
             }
 
-            case handle_types::timer:
-                return wait_state::signaled; // TODO
+            case handle_types::timer: {
+                auto* entry = c.timers.get(h);
+                if (!entry || !entry->is_signaled(win_emu.clock().steady_now()))
+                {
+                    return std::nullopt;
+                }
+                entry->consume_signal();
+                return wait_state::signaled;
+            }
 
             case handle_types::semaphore: {
                 auto* semaphore = c.semaphores.get(h);
@@ -451,11 +459,6 @@ namespace sogen
             this->teb64 = this->gs_segment->reserve<TEB64>();
 
             this->teb64->access([&](TEB64& teb_obj) {
-                // Skips GetCurrentNlsCache
-                // This hack can be removed once this is fixed:
-                // https://github.com/momo5502/emulator/issues/128
-                reinterpret_cast<uint8_t*>(&teb_obj)[0x179C] = 1;
-
                 teb_obj.ClientId.UniqueProcess = context.process_id;
                 teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
                 teb_obj.DeallocationStack = this->stack_base;

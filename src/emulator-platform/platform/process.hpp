@@ -966,6 +966,9 @@ namespace sogen
     };
 
 #ifndef OS_WINDOWS
+#define ACL_REVISION            2
+#define ACCESS_ALLOWED_ACE_TYPE 0
+
     struct ACL
     {
         BYTE AclRevision;

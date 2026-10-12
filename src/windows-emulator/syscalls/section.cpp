@@ -204,6 +204,7 @@ namespace sogen
             if (object_attributes)
             {
                 const auto attributes = object_attributes.read();
+                s.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
                 if (attributes.ObjectName)
                 {
                     auto name = read_unicode_string(c.emu, attributes.ObjectName);
@@ -321,7 +322,8 @@ namespace sogen
                     return STATUS_OBJECT_NAME_NOT_FOUND;
                 }
 
-                section_handle.write(c.proc.sections.store(section.value()));
+                section->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
+                section_handle.write(c.proc.sections.store(std::move(*section)));
                 return STATUS_SUCCESS;
             }
 

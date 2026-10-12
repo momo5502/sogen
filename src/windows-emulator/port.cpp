@@ -6,7 +6,9 @@
 #include "ports/audio_service.hpp"
 #include "ports/core_messaging_registrar.hpp"
 #include "ports/dns_resolver.hpp"
+#include "ports/event_log.hpp"
 #include "ports/lsa_policy_lookup.hpp"
+#include "ports/local_object_exporter.hpp"
 #include "ports/protected_storage.hpp"
 #include "ports/service_control.hpp"
 #include "ports/sspi_rpc.hpp"
@@ -114,6 +116,16 @@ namespace sogen
         if (port == u"\\RPC Control\\LSARPC_ENDPOINT" || port == u"\\RPC Control\\lsapolicylookup")
         {
             return create_lsa_policy_lookup_port();
+        }
+
+        if (port == u"\\RPC Control\\eventlog")
+        {
+            return create_event_log_port();
+        }
+
+        if (port == u"\\RPC Control\\epmapper")
+        {
+            return create_local_object_exporter_port();
         }
 
         if (port == u"\\RPC Control\\Audiosrv" || port == u"\\RPC Control\\AudioClientRpc" || port == u"\\RPC Control\\AudioSrvServiceRpc")
@@ -303,7 +315,8 @@ namespace sogen
     lpc_request_result rpc_port::handle_handshake(windows_emulator& win_emu, const lpc_request_context& c)
     {
         constexpr ULONG rpc_handshake_state_offset = 32;
-        constexpr ULONG required_handshake_read_bytes = rpc_handshake_state_offset + sizeof(uint32_t);
+        constexpr ULONG rpc_handshake_context_offset = 36;
+        constexpr ULONG required_handshake_read_bytes = rpc_handshake_context_offset + sizeof(uint32_t);
 
         if (c.send_buffer_length < required_handshake_read_bytes || c.recv_buffer_length < c.send_buffer_length)
         {
@@ -319,12 +332,21 @@ namespace sogen
         }
 
         std::vector<uint8_t> payload(c.send_buffer_length, 0);
-        win_emu.emu().read_memory(c.recv_buffer, payload.data(), payload.size());
+        win_emu.emu().read_memory(c.send_buffer, payload.data(), payload.size());
 
         utils::aligned_binary_writer writer(payload);
         writer.write_at<uint32_t>(8, 0);
 
-        if (win_emu.emu().read_memory<uint32_t>(c.send_buffer + rpc_handshake_state_offset) == 3)
+        const auto syntax = win_emu.emu().read_memory<uint32_t>(c.send_buffer + rpc_handshake_state_offset);
+        if (syntax == 0 || (syntax & ~uint32_t{3}) != 0)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+        const auto ndr64 = (syntax & 2) != 0;
+        const auto context_offset = rpc_handshake_context_offset + (ndr64 ? sizeof(uint16_t) : 0);
+        const auto context_id = win_emu.emu().read_memory<uint16_t>(c.send_buffer + context_offset);
+        this->bindings_.insert_or_assign(context_id, rpc_binding{.interface_id = this->bound_interface_, .ndr64 = ndr64});
+        if (ndr64)
         {
             writer.write_at<uint32_t>(rpc_handshake_state_offset, 2);
         }
@@ -348,9 +370,15 @@ namespace sogen
 
         const auto call_id = win_emu.emu().read_memory<uint32_t>(c.send_buffer + rpc_call_id_offset);
         const auto procedure_id = win_emu.emu().read_memory<uint32_t>(c.send_buffer + rpc_call_opnum_offset);
-
-        const auto pointer_size = win_emu.process.is_wow64_process ? utils::aligned_binary_writer::pointer_size_32
-                                                                   : utils::aligned_binary_writer::pointer_size_64;
+        const auto context_id = win_emu.emu().read_memory<uint16_t>(c.send_buffer + 16);
+        const auto binding = this->bindings_.find(context_id);
+        if (binding == this->bindings_.end())
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+        this->bound_interface_ = binding->second.interface_id;
+        const auto pointer_size =
+            binding->second.ndr64 ? utils::aligned_binary_writer::pointer_size_64 : utils::aligned_binary_writer::pointer_size_32;
 
         std::array<uint8_t, rpc_call_immediate_response_header_size> header{};
         header[0] = 3;

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -428,12 +429,14 @@ namespace sogen
         {
             port::serialize_object(buffer);
             buffer.write(this->bound_interface_);
+            buffer.write_map(this->bindings_);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             port::deserialize_object(buffer);
             buffer.read(this->bound_interface_);
+            buffer.read_map(this->bindings_);
         }
 
         virtual NTSTATUS handle_rpc(windows_emulator& win_emu, uint32_t procedure_id, const lpc_request_context& c,
@@ -450,6 +453,26 @@ namespace sogen
         std::array<uint8_t, 16> bound_interface_{};
 
       private:
+        struct rpc_binding
+        {
+            std::array<uint8_t, 16> interface_id{};
+            bool ndr64{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->interface_id);
+                buffer.write(this->ndr64);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->interface_id);
+                buffer.read(this->ndr64);
+            }
+        };
+
+        std::map<uint16_t, rpc_binding> bindings_{};
+
         lpc_request_result handle_handshake(windows_emulator& win_emu, const lpc_request_context& c);
         lpc_request_result handle_rpc_call(windows_emulator& win_emu, const lpc_request_context& c);
     };

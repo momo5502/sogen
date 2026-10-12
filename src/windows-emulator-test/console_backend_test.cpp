@@ -10,6 +10,7 @@
 #include <utils/finally.hpp>
 
 #include <gtest/gtest.h>
+#include "emulation_test_utils.hpp"
 
 namespace sogen::test
 {
@@ -83,6 +84,205 @@ namespace sogen::test
             uint32_t message_data_size{};
             uint32_t mode{};
         };
+
+        struct console_font_request
+        {
+            uint8_t maximum_window{};
+            std::array<uint8_t, 3> padding{};
+            uint32_t index{};
+            int16_t width{};
+            int16_t height{};
+            uint32_t family{};
+            uint32_t weight{};
+            std::array<char16_t, 32> face_name{};
+        };
+
+        static_assert(sizeof(console_font_request) == 84);
+
+        struct console_text_request
+        {
+            uint32_t bytes_written{};
+            uint8_t unicode{};
+            std::array<uint8_t, 3> padding{};
+        };
+
+        struct console_title_request
+        {
+            uint32_t length{};
+            uint8_t unicode{};
+            uint8_t original{};
+            std::array<uint8_t, 2> padding{};
+        };
+
+        class ConsoleProtocolTest : public testing::Test
+        {
+          protected:
+            void SetUp() override
+            {
+                emulator_interfaces interfaces{};
+                interfaces.audio = std::make_unique<null_audio_backend>();
+                interfaces.console = std::make_unique<null_console_backend>();
+                interfaces.ui = std::make_unique<null_ui_backend>();
+                this->emu = std::make_unique<windows_emulator>(
+                    create_x86_64_emulator_from_environment(),
+                    emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                    emulator_callbacks{}, std::move(interfaces));
+                this->console_handle = this->emu->process.devices.store(io_device_container{u"Console", *this->emu, {}});
+                this->emu->process.console_handle = this->console_handle;
+                this->storage = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+            }
+
+            template <typename T>
+            NTSTATUS invoke(uint32_t api, T& data, handle endpoint = STDOUT_HANDLE)
+            {
+                console_mode_request request{};
+                request.target_handle = endpoint.h;
+                request.message_buffer_size = 8 + sizeof(T);
+                request.message = this->storage + 0x100;
+                request.data_size = sizeof(T);
+                request.data = request.message + 8;
+                this->emu->emu().write_memory(this->storage, request);
+                this->emu->emu().write_memory(request.message, api);
+                this->emu->emu().write_memory(request.message + 4, static_cast<uint32_t>(sizeof(T)));
+                this->emu->emu().write_memory(request.data, data);
+                io_device_context context{this->emu->emu()};
+                context.source_handle = endpoint;
+                context.io_control_code = 0x500016;
+                context.input_buffer = this->storage;
+                context.input_buffer_length = 48;
+                const auto status = this->emu->process.devices.get(this->console_handle)->io_control(*this->emu, context);
+                data = this->emu->emu().read_memory<T>(request.data);
+                return status;
+            }
+
+            template <typename T>
+            NTSTATUS invoke_text(uint32_t api, T& data, uint64_t text_size, bool output = false, handle endpoint = STDOUT_HANDLE)
+            {
+                console_mode_request request{};
+                request.target_handle = endpoint.h;
+                request.input_count = output ? 1 : 2;
+                request.output_count = output ? 2 : 1;
+                request.message_buffer_size = 8 + sizeof(T);
+                request.message = this->storage + 0x100;
+                request.data_size = output ? sizeof(T) : text_size;
+                request.data = output ? request.message + 8 : this->storage + 0x200;
+                this->emu->emu().write_memory(this->storage, request);
+                this->emu->emu().write_memory(this->storage + 48, static_cast<uint64_t>(output ? text_size : sizeof(T)));
+                this->emu->emu().write_memory(this->storage + 56, output ? this->storage + 0x200 : request.message + 8);
+                this->emu->emu().write_memory(request.message, api);
+                this->emu->emu().write_memory(request.message + 4, static_cast<uint32_t>(sizeof(T)));
+                this->emu->emu().write_memory(request.message + 8, data);
+                io_device_context context{this->emu->emu()};
+                context.source_handle = endpoint;
+                context.io_control_code = 0x500016;
+                context.input_buffer = this->storage;
+                context.input_buffer_length = 64;
+                context.io_status_block = {this->emu->memory, this->storage + 0x300};
+                const auto status = this->emu->process.devices.get(this->console_handle)->io_control(*this->emu, context);
+                data = this->emu->emu().read_memory<T>(request.message + 8);
+                return status;
+            }
+
+            std::unique_ptr<windows_emulator> emu{};
+            handle console_handle{};
+            uint64_t storage{};
+        };
+    }
+
+    TEST_F(ConsoleProtocolTest, FontUpdatesSurviveSerialization)
+    {
+        console_font_request font{};
+        ASSERT_EQ(STATUS_SUCCESS, this->invoke(0x03000004, font));
+        EXPECT_GT(font.width, 0);
+        EXPECT_GT(font.height, 0);
+        EXPECT_EQ(u"Consolas", std::u16string(font.face_name.data()));
+        font.width = 12;
+        font.height = 24;
+        font.weight = 700;
+        ASSERT_EQ(STATUS_SUCCESS, this->invoke(0x0300002C, font));
+        auto* console = this->emu->process.devices.get(this->console_handle);
+        utils::buffer_serializer state{};
+        console->serialize(state);
+        font.width = 8;
+        ASSERT_EQ(STATUS_SUCCESS, this->invoke(0x0300002C, font));
+        utils::buffer_deserializer reader{state};
+        console->deserialize(reader);
+        font = {};
+        ASSERT_EQ(STATUS_SUCCESS, this->invoke(0x03000004, font));
+        EXPECT_EQ(12, font.width);
+        EXPECT_EQ(24, font.height);
+        EXPECT_EQ(700u, font.weight);
+    }
+
+    TEST_F(ConsoleProtocolTest, WritesUnicodeAndAnsiTextUsingSeparateInputAndDescriptorBuffers)
+    {
+        std::string output;
+        this->emu->callbacks.on_stdout = [&](std::string_view text) { output.append(text); };
+        constexpr std::array<char16_t, 3> wide{u'A', u'\u03bb', u'B'};
+        this->emu->emu().write_memory(this->storage + 0x200, wide.data(), sizeof(wide));
+        console_text_request request{.unicode = 1};
+        ASSERT_EQ(STATUS_SUCCESS, this->invoke_text(0x01000006, request, sizeof(wide)));
+        EXPECT_EQ("A\xCE\xBB"
+                  "B",
+                  output);
+        EXPECT_EQ(sizeof(wide), request.bytes_written);
+        constexpr std::string_view narrow = "plain-output";
+        this->emu->emu().write_memory(this->storage + 0x200, narrow.data(), narrow.size());
+        request = {};
+        ASSERT_EQ(STATUS_SUCCESS, this->invoke_text(0x01000006, request, narrow.size()));
+        EXPECT_EQ("A\xCE\xBB"
+                  "Bplain-output",
+                  output);
+        EXPECT_EQ(narrow.size(), request.bytes_written);
+    }
+
+    TEST_F(ConsoleProtocolTest, RejectsOddUnicodeTextLengthAndInputEndpoint)
+    {
+        console_text_request request{.unicode = 1};
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->invoke_text(0x01000006, request, 3));
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->invoke_text(0x01000006, request, 2, false, STDIN_HANDLE));
+        EXPECT_EQ(0u, request.bytes_written);
+    }
+
+    TEST_F(ConsoleProtocolTest, ConsoleTitleRoundTripsAndSurvivesSerialization)
+    {
+        constexpr std::array<char16_t, 3> title{u'A', u'\u03bb', u'B'};
+        this->emu->emu().write_memory(this->storage + 0x200, title.data(), sizeof(title));
+        uint8_t unicode = 1;
+        ASSERT_EQ(STATUS_SUCCESS, this->invoke_text(0x02000015, unicode, sizeof(title)));
+        auto* console = this->emu->process.devices.get(this->console_handle);
+        utils::buffer_serializer state{};
+        console->serialize(state);
+        ASSERT_EQ(STATUS_SUCCESS, this->invoke_text(0x02000015, unicode, 0));
+        utils::buffer_deserializer reader{state};
+        console->deserialize(reader);
+        console_title_request request{.unicode = 1};
+        ASSERT_EQ(STATUS_SUCCESS, this->invoke_text(0x02000014, request, 8, true));
+        EXPECT_EQ(3u, request.length);
+        EXPECT_EQ((std::array<char16_t, 4>{u'A', u'\u03bb', u'B', u'\0'}),
+                  (this->emu->emu().read_memory<std::array<char16_t, 4>>(this->storage + 0x200)));
+        EXPECT_EQ(6u, (this->emu->emu().read_memory<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>(this->storage + 0x300).Information));
+        ASSERT_EQ(STATUS_SUCCESS, this->invoke_text(0x02000014, request, 4, true));
+        EXPECT_EQ(3u, request.length);
+        EXPECT_EQ((std::array<char16_t, 2>{u'A', u'\0'}), (this->emu->emu().read_memory<std::array<char16_t, 2>>(this->storage + 0x200)));
+    }
+
+    TEST_F(ConsoleProtocolTest, FontRequestsRejectInputHandlesAndInvalidSizes)
+    {
+        console_font_request font{};
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->invoke(0x03000004, font, STDIN_HANDLE));
+        font.width = -1;
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->invoke(0x0300002C, font));
+        uint32_t truncated{};
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->invoke(0x03000004, truncated));
+    }
+
+    TEST_F(ConsoleProtocolTest, LargestWindowMatchesScreenBufferDimensions)
+    {
+        std::array<int16_t, 2> size{};
+        ASSERT_EQ(STATUS_SUCCESS, this->invoke(0x0200000B, size));
+        EXPECT_EQ(80, size[0]);
+        EXPECT_EQ(25, size[1]);
     }
 
     TEST(ConsoleBackendTest, EventsAndByteReadsShareBufferedInput)

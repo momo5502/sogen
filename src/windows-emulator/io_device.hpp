@@ -234,8 +234,6 @@ namespace sogen
         }
 
         ACCESS_MASK granted_access{GENERIC_ALL};
-        bool inherit{};
-        bool protect_from_close{};
 
         io_device_container duplicate(ACCESS_MASK access, bool inheritable) const;
 

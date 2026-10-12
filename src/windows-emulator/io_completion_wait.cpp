@@ -62,8 +62,10 @@ namespace sogen
                     return mutant && mutant->locked_count == 0;
                 }
 
-                case handle_types::timer:
-                    return false;
+                case handle_types::timer: {
+                    auto* entry = process.timers.get(target_object_handle);
+                    return entry && entry->is_signaled(win_emu.clock().steady_now());
+                }
 
                 default:
                     return false;
@@ -96,8 +98,16 @@ namespace sogen
                     break;
                 }
 
+                case handle_types::timer: {
+                    if (auto* entry = process.timers.get(target_object_handle))
+                    {
+                        entry->consume_signal();
+                    }
+                    break;
+                }
+
                 default:
-                    // process/thread/timer are level-triggered or terminal; ports and mutants are left
+                    // process/thread are terminal; ports and mutants are left
                     // untouched (a wait packet does not take mutant ownership).
                     break;
                 }

@@ -125,6 +125,11 @@ namespace sogen
                                         ULONG output_buffer_length);
         NTSTATUS handle_NtFlushBuffersFile(const syscall_context& c, handle file_handle,
                                            emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/);
+        NTSTATUS handle_NtGetCachedSigningLevel(const syscall_context& c, handle file_handle, emulator_object<ULONG> flags,
+                                                emulator_object<UCHAR> signing_level, uint64_t thumbprint,
+                                                emulator_object<ULONG> thumbprint_size, emulator_object<ULONG> thumbprint_algorithm);
+        NTSTATUS handle_NtCompareSigningLevels(const syscall_context& c, UCHAR current_level, UCHAR required_level);
+        NTSTATUS handle_NtSetCachedSigningLevel();
 
         // syscalls/locale.cpp:
         NTSTATUS handle_NtInitializeNlsFiles(const syscall_context& c, emulator_object<uint64_t> base_address,
@@ -164,12 +169,16 @@ namespace sogen
         NTSTATUS handle_NtFreeVirtualMemory(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
                                             emulator_object<uint64_t> bytes_to_allocate, uint32_t free_type);
         NTSTATUS handle_NtReadVirtualMemory(const syscall_context& c, handle process_handle, emulator_pointer base_address,
-                                            emulator_pointer buffer, ULONG number_of_bytes_to_read,
-                                            emulator_object<ULONG> number_of_bytes_read);
+                                            emulator_pointer buffer, uint64_t number_of_bytes_to_read,
+                                            emulator_object<uint64_t> number_of_bytes_read);
         NTSTATUS handle_NtWriteVirtualMemory(const syscall_context& c, handle process_handle, emulator_pointer base_address,
-                                             emulator_pointer buffer, ULONG number_of_bytes_to_write,
-                                             emulator_object<ULONG> number_of_bytes_write);
+                                             emulator_pointer buffer, uint64_t number_of_bytes_to_write,
+                                             emulator_object<uint64_t> number_of_bytes_write);
         NTSTATUS handle_NtSetInformationVirtualMemory();
+        NTSTATUS handle_NtGetWriteWatch(const syscall_context& c, handle process_handle, ULONG flags, uint64_t base_address,
+                                        uint64_t region_size, uint64_t addresses, emulator_object<uint64_t> count,
+                                        emulator_object<ULONG> granularity);
+        NTSTATUS handle_NtResetWriteWatch(const syscall_context& c, handle process_handle, uint64_t base_address, uint64_t region_size);
         BOOL handle_NtLockVirtualMemory();
         NTSTATUS handle_NtUnlockVirtualMemory();
         NTSTATUS handle_NtFlushVirtualMemory(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
@@ -442,19 +451,25 @@ namespace sogen
         NTSTATUS handle_NtSetTimerResolution(const syscall_context&, ULONG /*desired_resolution*/, BOOLEAN set_resolution,
                                              emulator_object<ULONG> current_resolution);
         NTSTATUS handle_NtCreateTimer2(const syscall_context& c, emulator_object<handle> timer_handle, uint64_t reserved,
-                                       emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG attributes,
-                                       ACCESS_MASK desired_access);
+                                       uint64_t reserved2, ULONG attributes, ACCESS_MASK desired_access);
         NTSTATUS handle_NtCreateTimer(const syscall_context& c, emulator_object<handle> timer_handle, ACCESS_MASK desired_access,
                                       emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG timer_type);
         NTSTATUS handle_NtOpenTimer(const syscall_context& c, emulator_object<handle> timer_handle, ACCESS_MASK desired_access,
                                     emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
-        NTSTATUS handle_NtSetTimer();
-        NTSTATUS handle_NtSetTimer2();
+        NTSTATUS handle_NtSetTimer(const syscall_context& c, handle timer_handle, emulator_object<LARGE_INTEGER> due_time,
+                                   uint64_t apc_routine, uint64_t apc_context, BOOLEAN resume_timer, LONG period,
+                                   emulator_object<BOOLEAN> previous_state);
+        NTSTATUS handle_NtSetTimer2(const syscall_context& c, handle timer_handle, emulator_object<LARGE_INTEGER> due_time,
+                                    emulator_object<LARGE_INTEGER> period, uint64_t parameters);
         NTSTATUS handle_NtSetTimerEx(const syscall_context& c, handle timer_handle, uint32_t timer_set_info_class,
                                      uint64_t timer_set_information, ULONG timer_set_information_length);
-        NTSTATUS handle_NtCancelTimer();
+        NTSTATUS handle_NtCancelTimer(const syscall_context& c, handle timer_handle, emulator_object<BOOLEAN> current_state);
+        NTSTATUS handle_NtCancelTimer2(const syscall_context& c, handle timer_handle, uint64_t parameters);
+        NTSTATUS handle_NtQueryTimer(const syscall_context& c, handle timer_handle, ULONG information_class, uint64_t information,
+                                     ULONG information_length, emulator_object<ULONG> return_length);
 
         // syscalls/token.cpp:
+        NTSTATUS handle_NtImpersonateAnonymousToken(const syscall_context& c, handle thread_handle);
         NTSTATUS
         handle_NtDuplicateToken(const syscall_context&, handle existing_token_handle, ACCESS_MASK /*desired_access*/,
                                 emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>
@@ -695,6 +710,7 @@ namespace sogen
         BOOL handle_NtUserValidateTimerCallback(const syscall_context& c, uint64_t timer_proc);
         uint32_t handle_NtUserGetQueueStatusReadonly(const syscall_context& c, UINT flags);
         uint32_t handle_NtUserGetQueueStatus(const syscall_context& c, UINT flags);
+        BOOL handle_NtUserThreadMessageQueueAttached(const syscall_context& c, DWORD thread_id);
         uint64_t handle_NtUserCreateAcceleratorTable(const syscall_context& c, emulator_pointer entries, int32_t entry_count);
         BOOL handle_NtUserDestroyAcceleratorTable(const syscall_context& c, handle accelerator_table);
         int32_t handle_NtUserCopyAcceleratorTable();
@@ -717,7 +733,8 @@ namespace sogen
         BOOL handle_NtUserSetCaretPos();
         BOOL handle_NtUserShowCaret();
         BOOL handle_NtUserHideCaret();
-        BOOL handle_NtUserGetObjectInformation();
+        BOOL handle_NtUserGetObjectInformation(const syscall_context& c, handle object, int index, emulator_pointer information,
+                                               DWORD length, emulator_object<DWORD> needed);
         uint64_t handle_NtUserQueryWindow(const syscall_context& c, hwnd window_handle, uint32_t query_type);
         int handle_NtUserSetScrollInfo();
         BOOL handle_NtUserIsTouchWindow();
@@ -1441,10 +1458,13 @@ namespace sogen
         add_handler(NtQueryInformationProcess);
         add_handler(NtSetInformationProcess);
         add_handler(NtSetInformationVirtualMemory);
+        add_handler(NtGetWriteWatch);
+        add_handler(NtResetWriteWatch);
         add_handler(NtFreeVirtualMemory);
         add_handler(NtQueryVirtualMemory);
         add_handler(NtOpenThread);
         add_handler(NtOpenThreadToken);
+        add_handler(NtImpersonateAnonymousToken);
         add_handler(NtOpenThreadTokenEx);
         add_handler(NtQueryPerformanceCounter);
         add_handler(NtQuerySystemInformation);
@@ -1736,6 +1756,9 @@ namespace sogen
         add_handler(NtFsControlFile);
         add_handler(NtQueryFullAttributesFile);
         add_handler(NtFlushBuffersFile);
+        add_handler(NtGetCachedSigningLevel);
+        add_handler(NtSetCachedSigningLevel);
+        add_handler(NtCompareSigningLevels);
         add_handler(NtAreMappedFilesTheSame);
         add_handler(NtUserGetProcessWindowStation);
         add_handler(NtUserCallHwndParam);
@@ -1798,6 +1821,8 @@ namespace sogen
         add_handler(NtSetTimer2);
         add_handler(NtSetTimerEx);
         add_handler(NtCancelTimer);
+        add_handler(NtCancelTimer2);
+        add_handler(NtQueryTimer);
         add_handler(NtAssociateWaitCompletionPacket);
         add_handler(NtCancelWaitCompletionPacket);
         add_handler(NtSetWnfProcessNotificationEvent);
@@ -1900,6 +1925,7 @@ namespace sogen
         add_handler(NtUserMsgWaitForMultipleObjectsEx);
         add_handler(NtUserGetQueueStatusReadonly);
         add_handler(NtUserGetQueueStatus);
+        add_handler(NtUserThreadMessageQueueAttached);
         add_handler(NtUserScheduleDispatchNotification);
         add_handler(NtGdiExtCreateRegion);
         add_handler(NtUserSetWindowRgn);

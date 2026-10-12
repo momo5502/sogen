@@ -33,6 +33,13 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            auto* handle_store = c.proc.get_handle_store(h);
+            const auto* object = handle_store ? handle_store->get_object(h) : nullptr;
+            if (object && object->protect_from_close)
+            {
+                return STATUS_HANDLE_NOT_CLOSABLE;
+            }
+
             if (value.type == handle_types::wait_completion_packet)
             {
                 auto* wait_packet = c.proc.wait_completion_packets.get(h);
@@ -54,13 +61,6 @@ namespace sogen
             if (value.type == handle_types::device)
             {
                 auto* device = c.proc.devices.get(h);
-                if (device)
-                {
-                    if (device->protect_from_close)
-                    {
-                        return STATUS_HANDLE_NOT_CLOSABLE;
-                    }
-                }
                 if (device && device->ref_count == 1)
                 {
                     if (device->is_last_file_reference() && device->get_internal_device<named_pipe>())
@@ -119,7 +119,6 @@ namespace sogen
                 }
             }
 
-            auto* handle_store = c.proc.get_handle_store(h);
             if (handle_store && handle_store->erase(h))
             {
                 if (section_backing_address != 0)
@@ -486,12 +485,13 @@ namespace sogen
 
             if (object_information_class == ObjectHandleFlagInformation)
             {
-                return handle_query<OBJECT_HANDLE_FLAG_INFORMATION>(c.emu, object_information, object_information_length, return_length,
-                                                                    [&](OBJECT_HANDLE_FLAG_INFORMATION& info) {
-                                                                        const auto* device = c.proc.devices.get(effective_handle);
-                                                                        info.Inherit = device && device->inherit;
-                                                                        info.ProtectFromClose = device && device->protect_from_close;
-                                                                    });
+                return handle_query<OBJECT_HANDLE_FLAG_INFORMATION>(
+                    c.emu, object_information, object_information_length, return_length, [&](OBJECT_HANDLE_FLAG_INFORMATION& info) {
+                        auto* store = c.proc.get_handle_store(effective_handle);
+                        const auto* object = store ? store->get_object(effective_handle) : nullptr;
+                        info.Inherit = object && object->inherit;
+                        info.ProtectFromClose = object && object->protect_from_close;
+                    });
             }
 
             c.win_emu.log.error("Unsupported object info class: %X\n", object_information_class);
@@ -894,18 +894,17 @@ namespace sogen
             }
 
             const auto effective_handle = c.proc.resolve_object_pseudo_handle(handle, c.vcpu.active_thread);
-            if (!c.proc.get_handle_store(effective_handle))
+            auto* store = c.proc.get_handle_store(effective_handle);
+            auto* object = store ? store->get_object(effective_handle) : nullptr;
+            if (object == nullptr)
             {
                 return STATUS_INVALID_HANDLE;
             }
 
             const emulator_object<OBJECT_HANDLE_FLAG_INFORMATION> info{c.emu, object_information};
             const auto flags = info.read();
-            if (auto* device = c.proc.devices.get(effective_handle))
-            {
-                device->inherit = flags.Inherit != 0;
-                device->protect_from_close = flags.ProtectFromClose != 0;
-            }
+            object->inherit = flags.Inherit != 0;
+            object->protect_from_close = flags.ProtectFromClose != 0;
 
             return STATUS_SUCCESS;
         }

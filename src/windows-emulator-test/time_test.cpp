@@ -1,7 +1,36 @@
 #include "emulation_test_utils.hpp"
+#include <syscall_utils.hpp>
+
+namespace sogen::syscalls
+{
+    NTSTATUS handle_NtQuerySystemInformation(const syscall_context& c, uint32_t info_class, uint64_t system_information,
+                                             uint32_t system_information_length, emulator_object<uint32_t> return_length);
+}
 
 namespace sogen::test
 {
+    TEST(TimeTest, LeapSecondQueryReportsUnadjustedClockWithExactBufferSize)
+    {
+        emulator_interfaces interfaces{};
+        interfaces.ui = std::make_unique<null_ui_backend>();
+        interfaces.audio = std::make_unique<null_audio_backend>();
+        interfaces.console = std::make_unique<null_console_backend>();
+        windows_emulator emu(create_x86_64_emulator_from_environment(),
+                             emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
+                             emulator_callbacks{}, std::move(interfaces));
+        const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const syscall_context context{.win_emu = emu, .emu = emu.emu(), .vcpu = emu.vcpu(0), .proc = emu.process};
+        for (const auto size : {0u, 4u, 8u, 16u})
+        {
+            emulator_object<uint64_t>{emu.memory, storage + 0x100}.write(0x1122334455667788);
+            EXPECT_EQ(size == 8 ? STATUS_SUCCESS : STATUS_INFO_LENGTH_MISMATCH,
+                      syscalls::handle_NtQuerySystemInformation(context, SystemLeapSecondInformation, storage + 0x100, size,
+                                                                {emu.memory, storage}));
+            EXPECT_EQ(8, (emulator_object<uint32_t>{emu.memory, storage}.read()));
+            EXPECT_EQ(size == 8 ? 0 : 0x1122334455667788, (emulator_object<uint64_t>{emu.memory, storage + 0x100}.read()));
+        }
+    }
+
     TEST(TimeTest, SystemTimeIsAccurate)
     {
         std::string output_buffer{};

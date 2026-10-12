@@ -7,6 +7,7 @@
 #include <string_view>
 #include <serialization_helper.hpp>
 #include <utils/file_handle.hpp>
+#include <utils/time.hpp>
 #include <platform/synchronisation.hpp>
 #include <platform/win_pefile.hpp>
 #include <platform/window.hpp>
@@ -35,15 +36,66 @@ namespace sogen
     struct timer : ref_counted_object
     {
         std::u16string name{};
+        bool extended{};
+        bool synchronization{};
+        bool signaled{};
+        std::optional<std::chrono::steady_clock::time_point> due_time{};
+        int64_t period_nanoseconds{};
+
+        bool is_signaled(const std::chrono::steady_clock::time_point now)
+        {
+            if (this->due_time && *this->due_time <= now)
+            {
+                this->signaled = true;
+                if (this->period_nanoseconds > 0)
+                {
+                    const auto period = std::chrono::nanoseconds(this->period_nanoseconds);
+                    const auto elapsed = now - *this->due_time;
+                    const auto remaining = period - elapsed % period;
+                    *this->due_time = remaining > std::chrono::steady_clock::time_point::max() - now
+                                          ? std::chrono::steady_clock::time_point::max()
+                                          : now + remaining;
+                }
+                else
+                {
+                    this->due_time.reset();
+                }
+            }
+            return this->signaled;
+        }
+
+        void consume_signal()
+        {
+            if (this->synchronization)
+            {
+                this->signaled = false;
+            }
+        }
+
+        void cancel()
+        {
+            this->due_time.reset();
+            this->period_nanoseconds = 0;
+        }
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
             buffer.write(this->name);
+            buffer.write(this->extended);
+            buffer.write(this->synchronization);
+            buffer.write(this->signaled);
+            buffer.write_optional(this->due_time);
+            buffer.write(this->period_nanoseconds);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
         {
             buffer.read(this->name);
+            buffer.read(this->extended);
+            buffer.read(this->synchronization);
+            buffer.read(this->signaled);
+            buffer.read_optional(this->due_time);
+            buffer.read(this->period_nanoseconds);
         }
     };
 

@@ -6413,9 +6413,78 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtUserGetObjectInformation()
+        BOOL handle_NtUserGetObjectInformation(const syscall_context& c, const handle object, const int index,
+                                               const emulator_pointer information, const DWORD length, const emulator_object<DWORD> needed)
         {
-            return FALSE;
+            constexpr uint32_t error_invalid_handle = 6;
+            constexpr uint32_t error_invalid_parameter = 87;
+            constexpr uint32_t error_insufficient_buffer = 122;
+            constexpr uint32_t error_no_access = 998;
+            const auto fail = [&](uint32_t error) {
+                set_guest_last_error(c, error);
+                return FALSE;
+            };
+            const bool window_station = object.bits == 1;
+            const auto* desktop_object = c.proc.desktops.get(object);
+            if (!window_station && !desktop_object)
+            {
+                return fail(error_invalid_handle);
+            }
+            const auto write = [&](const void* data, DWORD size) {
+                if (needed && !needed.try_write(size))
+                {
+                    return fail(error_no_access);
+                }
+                if (length < size)
+                {
+                    return fail(error_insufficient_buffer);
+                }
+                if (!information || !c.win_emu.memory.try_write_memory(information, data, size))
+                {
+                    return fail(error_no_access);
+                }
+                return TRUE;
+            };
+            switch (index)
+            {
+            case 1: {
+                struct user_object_flags
+                {
+                    BOOL inherit;
+                    BOOL reserved;
+                    DWORD flags;
+                };
+
+                const user_object_flags flags{
+                    .inherit = desktop_object && desktop_object->inherit, .reserved = FALSE, .flags = window_station ? 1u : 0u};
+                return write(&flags, sizeof(flags));
+            }
+            case 2:
+            case 3: {
+                std::u16string_view name = u"WinSta0";
+                if (!window_station)
+                {
+                    name = desktop_object->name;
+                }
+                if (index == 3)
+                {
+                    name = window_station ? u"WindowStation" : u"Desktop";
+                }
+                return write(name.data(), static_cast<DWORD>((name.size() + 1) * sizeof(char16_t)));
+            }
+            case 4:
+                return write(c.proc.sid.data(), static_cast<DWORD>(c.proc.sid.size()));
+            case 6: {
+                if (window_station)
+                {
+                    return fail(error_invalid_parameter);
+                }
+                const BOOL receives_input = object == c.proc.default_desktop;
+                return write(&receives_input, sizeof(receives_input));
+            }
+            default:
+                return fail(error_invalid_parameter);
+            }
         }
 
         uint64_t handle_NtUserQueryWindow(const syscall_context& c, const hwnd window_handle, const uint32_t query_type)
@@ -7031,6 +7100,23 @@ namespace sogen
         uint64_t handle_NtUserAttachThreadInput()
         {
             return 0;
+        }
+
+        BOOL handle_NtUserThreadMessageQueueAttached(const syscall_context& c, const DWORD thread_id)
+        {
+            const auto thread_info = ensure_win32_thread_info(c);
+            publish_win32_thread_info(c, thread_info);
+            if (thread_id == 0)
+            {
+                return FALSE;
+            }
+            const auto* thread = c.proc.find_thread_by_id(thread_id);
+            if (thread == nullptr || thread->is_terminated())
+            {
+                set_guest_last_error(c, 87);
+                return FALSE;
+            }
+            return thread->win32k_thread_info != 0;
         }
 
         BOOL handle_NtUserRegisterTouchHitTestingWindow()

@@ -138,6 +138,17 @@ namespace sogen
             }
         }
 
+        NTSTATUS handle_NtGetCachedSigningLevel(const syscall_context&, handle, emulator_object<ULONG>, emulator_object<UCHAR>, uint64_t,
+                                                emulator_object<ULONG>, emulator_object<ULONG>)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        NTSTATUS handle_NtSetCachedSigningLevel()
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
         NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const handle file_handle,
                                              const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                              const uint64_t file_information, const ULONG length, const FILE_INFORMATION_CLASS info_class)
@@ -1968,6 +1979,7 @@ namespace sogen
 
             file f{};
             f.access_mask = desired_access;
+            f.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
             f.file_mode = create_options & FILE_MODE_MASK;
             f.name = std::move(filename);
 
