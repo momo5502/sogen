@@ -15,6 +15,7 @@
 #include "binary_writer.hpp"
 
 #include <platform/unicode.hpp>
+#include <utils/finally.hpp>
 
 namespace sogen
 {
@@ -94,6 +95,153 @@ namespace sogen
             }
         };
 
+    }
+
+    NTSTATUS port::create_section(const uint64_t size, uint64_t& section_handle, uint64_t& actual_size)
+    {
+        if (size == 0 || size > std::numeric_limits<uint64_t>::max() - (ALLOCATION_GRANULARITY - 1))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+        actual_size = align_up(size, ALLOCATION_GRANULARITY);
+        if (this->next_section_handle > std::numeric_limits<uint64_t>::max() - 4)
+        {
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        const auto id = this->next_section_handle;
+        this->sections.emplace(id, alpc_port_section{.size = actual_size});
+        this->next_section_handle += 4;
+        section_handle = id;
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS port::delete_section(const uint64_t section_handle)
+    {
+        const auto section = this->sections.find(section_handle);
+        if (section == this->sections.end() || section->second.closed)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+        if (section->second.views.empty())
+        {
+            this->sections.erase(section);
+        }
+        else
+        {
+            section->second.closed = true;
+        }
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS port::create_section_view(windows_emulator& win_emu, const uint64_t section_handle, const uint64_t requested_size,
+                                       uint64_t& result_base, uint64_t& actual_size)
+    {
+        const auto section = this->sections.find(section_handle);
+        if (section == this->sections.end() || section->second.closed)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+        if (requested_size == 0 || requested_size > std::numeric_limits<uint64_t>::max() - (ALLOCATION_GRANULARITY - 1))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+        const auto size = page_align_up(requested_size);
+        // ALPC reserves allocation-granularity slots even for page-sized views.
+        const auto reserved_size = align_up(size, ALLOCATION_GRANULARITY);
+        uint64_t offset{};
+        for (const auto& [view_offset, view] : section->second.views)
+        {
+            if (view_offset >= offset && reserved_size <= view_offset - offset)
+            {
+                break;
+            }
+            offset = view_offset + view.reserved_size;
+        }
+        if (offset > section->second.size || reserved_size > section->second.size - offset)
+        {
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        if (size > std::numeric_limits<size_t>::max())
+        {
+            return STATUS_NO_MEMORY;
+        }
+        const auto start = win_emu.process.is_wow64_process ? DEFAULT_ALLOCATION_ADDRESS_32BIT : 0;
+        const auto base = win_emu.memory.allocate_memory(static_cast<size_t>(size), memory_permission::read_write, false, start,
+                                                         memory_region_kind::pagefile_section_view);
+        if (base == 0)
+        {
+            return STATUS_NO_MEMORY;
+        }
+        auto rollback = utils::finally([&] { win_emu.memory.release_memory(base, static_cast<size_t>(size)); });
+        for (const auto& [page_offset, page] : section->second.saved_pages)
+        {
+            if (page_offset >= offset && page_offset - offset < size)
+            {
+                win_emu.memory.write_memory(base + page_offset - offset, page.data(), page.size());
+            }
+        }
+        section->second.views.emplace(offset, alpc_section_view{.base = base, .size = size, .reserved_size = reserved_size});
+        result_base = base;
+        actual_size = size;
+        rollback.cancel();
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS port::delete_section_view(windows_emulator& win_emu, const uint64_t address)
+    {
+        for (auto section = this->sections.begin(); section != this->sections.end(); ++section)
+        {
+            auto& state = section->second;
+            const auto view = std::ranges::find_if(state.views, [&](const auto& entry) { return entry.second.base == address; });
+            if (view == state.views.end())
+            {
+                continue;
+            }
+            if (!state.closed)
+            {
+                std::map<uint64_t, std::array<uint8_t, 0x1000>> saved;
+                for (uint64_t offset = 0; offset < view->second.size; offset += 0x1000)
+                {
+                    std::array<uint8_t, 0x1000> page{};
+                    if (!win_emu.memory.try_read_memory(address + offset, page.data(), page.size()))
+                    {
+                        return STATUS_ACCESS_VIOLATION;
+                    }
+                    saved.emplace(view->first + offset, page);
+                }
+                for (auto& [offset, page] : saved)
+                {
+                    const auto existing = state.saved_pages.find(offset);
+                    if (existing != state.saved_pages.end())
+                    {
+                        existing->second = page;
+                    }
+                }
+                state.saved_pages.merge(saved);
+            }
+            win_emu.memory.release_memory(address, static_cast<size_t>(view->second.size));
+            state.views.erase(view);
+            if (state.closed && state.views.empty())
+            {
+                this->sections.erase(section);
+            }
+            return STATUS_SUCCESS;
+        }
+        return STATUS_INVALID_HANDLE;
+    }
+
+    void port::release_sections(windows_emulator& win_emu)
+    {
+        for (const auto& [section_handle, section] : this->sections)
+        {
+            (void)section_handle;
+            for (const auto& [offset, view] : section.views)
+            {
+                (void)offset;
+                win_emu.memory.release_memory(view.base, static_cast<size_t>(view.size));
+            }
+        }
+        this->sections.clear();
     }
 
     std::unique_ptr<port> create_port(const std::u16string_view port)

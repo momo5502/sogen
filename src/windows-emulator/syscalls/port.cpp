@@ -8,6 +8,164 @@ namespace sogen
 
     namespace syscalls
     {
+        NTSTATUS handle_NtAlpcCreatePortSection(const syscall_context& c, const handle port_handle, const ULONG flags,
+                                                const handle section_handle, const uint64_t section_size,
+                                                const emulator_object<handle> alpc_section_handle,
+                                                const emulator_object<uint64_t> actual_section_size)
+        {
+            if ((flags & ~ULONG{0x40000}) != 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            auto* container = c.proc.ports.get(port_handle);
+            if (!container)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+            auto* port = container->get_internal_port();
+            if (port->disconnected)
+            {
+                return STATUS_PORT_DISCONNECTED;
+            }
+            if (section_handle != 0)
+            {
+                return c.proc.sections.get(section_handle) ? STATUS_NOT_SUPPORTED : STATUS_INVALID_HANDLE;
+            }
+            if (!alpc_section_handle || !actual_section_size)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+            uint64_t id{};
+            uint64_t size{};
+            try
+            {
+                const auto status = port->create_section(section_size, id, size);
+                if (!NT_SUCCESS(status))
+                {
+                    return status;
+                }
+                if (!alpc_section_handle.try_write(make_handle(id)) || !actual_section_size.try_write(size))
+                {
+                    port->delete_section(id);
+                    return STATUS_ACCESS_VIOLATION;
+                }
+                return STATUS_SUCCESS;
+            }
+            catch (const std::bad_alloc&)
+            {
+                return STATUS_NO_MEMORY;
+            }
+        }
+
+        NTSTATUS handle_NtAlpcDeletePortSection(const syscall_context& c, const handle port_handle, const ULONG flags,
+                                                const handle section_handle)
+        {
+            if (flags != 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            auto* container = c.proc.ports.get(port_handle);
+            if (!container)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+            auto* port = container->get_internal_port();
+            return port->disconnected ? STATUS_PORT_DISCONNECTED : port->delete_section(section_handle.bits);
+        }
+
+        NTSTATUS handle_NtAlpcCreateSectionView(const syscall_context& c, const handle port_handle, const ULONG flags,
+                                                const emulator_object<ALPC_DATA_VIEW_ATTR<EmulatorTraits<Emu64>>> view_attributes)
+        {
+            if (flags != 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            auto* container = c.proc.ports.get(port_handle);
+            if (!container)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+            auto* port = container->get_internal_port();
+            if (port->disconnected)
+            {
+                return STATUS_PORT_DISCONNECTED;
+            }
+            auto attributes = view_attributes.try_read();
+            if (!attributes)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+            if (attributes->Flags != 0 || attributes->ViewBase != 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            try
+            {
+                uint64_t base{};
+                uint64_t size{};
+                const auto status = port->create_section_view(c.win_emu, attributes->SectionHandle, attributes->ViewSize, base, size);
+                if (!NT_SUCCESS(status))
+                {
+                    return status;
+                }
+                attributes->ViewBase = base;
+                attributes->ViewSize = size;
+                if (!view_attributes.try_write(*attributes))
+                {
+                    port->delete_section_view(c.win_emu, base);
+                    return STATUS_ACCESS_VIOLATION;
+                }
+                return STATUS_SUCCESS;
+            }
+            catch (const std::bad_alloc&)
+            {
+                return STATUS_NO_MEMORY;
+            }
+        }
+
+        NTSTATUS handle_NtAlpcDeleteSectionView(const syscall_context& c, const handle port_handle, const ULONG flags,
+                                                const uint64_t view_base)
+        {
+            if (flags != 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            auto* container = c.proc.ports.get(port_handle);
+            if (!container)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+            auto* port = container->get_internal_port();
+            if (port->disconnected)
+            {
+                return STATUS_PORT_DISCONNECTED;
+            }
+            const auto key = static_cast<uint32_t>(port_handle.bits & 0xffffffff);
+            const auto replies = c.proc.pending_alpc_reply_views.find(key);
+            if (replies != c.proc.pending_alpc_reply_views.end())
+            {
+                const auto view = std::ranges::find_if(replies->second, [&](const auto& entry) { return entry[0] == view_base; });
+                if (view != replies->second.end())
+                {
+                    c.win_emu.memory.release_memory(view_base, static_cast<size_t>((*view)[1]));
+                    replies->second.erase(view);
+                    if (replies->second.empty())
+                    {
+                        c.proc.pending_alpc_reply_views.erase(replies);
+                    }
+                    return STATUS_SUCCESS;
+                }
+            }
+            try
+            {
+                return port->delete_section_view(c.win_emu, view_base);
+            }
+            catch (const std::bad_alloc&)
+            {
+                return STATUS_NO_MEMORY;
+            }
+        }
+
         NTSTATUS handle_NtConnectPort(const syscall_context& c, const emulator_object<handle> client_port_handle,
                                       const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
                                       const emulator_object<SECURITY_QUALITY_OF_SERVICE> /*security_qos*/,

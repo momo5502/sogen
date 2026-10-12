@@ -315,6 +315,51 @@ namespace sogen
         ULONG sequence_number{};
     };
 
+    struct alpc_section_view
+    {
+        uint64_t base{};
+        uint64_t size{};
+        uint64_t reserved_size{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->base);
+            buffer.write(this->size);
+            buffer.write(this->reserved_size);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->base);
+            buffer.read(this->size);
+            buffer.read(this->reserved_size);
+        }
+    };
+
+    struct alpc_port_section
+    {
+        uint64_t size{};
+        bool closed{};
+        std::map<uint64_t, alpc_section_view> views{};
+        std::map<uint64_t, std::array<uint8_t, 0x1000>> saved_pages{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->size);
+            buffer.write(this->closed);
+            buffer.write_map(this->views);
+            buffer.write_map(this->saved_pages);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->size);
+            buffer.read(this->closed);
+            buffer.read_map(this->views);
+            buffer.read_map(this->saved_pages);
+        }
+    };
+
     struct port : ref_counted_object
     {
         uint64_t view_base{};
@@ -324,6 +369,8 @@ namespace sogen
         bool disconnected{};
         uint64_t next_security_context_handle{4};
         std::vector<uint64_t> security_context_handles{};
+        uint64_t next_section_handle{0x10};
+        std::map<uint64_t, alpc_port_section> sections{};
 
         port() = default;
         ~port() override = default;
@@ -343,6 +390,8 @@ namespace sogen
             buffer.write(this->disconnected);
             buffer.write(this->next_security_context_handle);
             buffer.write_vector(this->security_context_handles);
+            buffer.write(this->next_section_handle);
+            buffer.write_map(this->sections);
         }
 
         void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -354,6 +403,8 @@ namespace sogen
             buffer.read(this->disconnected);
             buffer.read(this->next_security_context_handle);
             buffer.read_vector(this->security_context_handles);
+            buffer.read(this->next_section_handle);
+            buffer.read_map(this->sections);
         }
 
         virtual void create(windows_emulator& win_emu, const port_creation_data& data)
@@ -405,6 +456,13 @@ namespace sogen
             this->security_context_handles.erase(context);
             return true;
         }
+
+        NTSTATUS create_section(uint64_t size, uint64_t& section_handle, uint64_t& actual_size);
+        NTSTATUS delete_section(uint64_t section_handle);
+        NTSTATUS create_section_view(windows_emulator& win_emu, uint64_t section_handle, uint64_t requested_size, uint64_t& result_base,
+                                     uint64_t& actual_size);
+        NTSTATUS delete_section_view(windows_emulator& win_emu, uint64_t address);
+        void release_sections(windows_emulator& win_emu);
 
         virtual lpc_message_result handle_message(windows_emulator& win_emu, const lpc_message_context& c);
 
