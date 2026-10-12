@@ -74,7 +74,7 @@ namespace sogen
         struct pending_operation
         {
             io_device_context context;
-            std::unique_ptr<utils::host_pipe_operation> operation;
+            std::unique_ptr<utils::host_pipe_operation> operation{};
             handle issuing_thread{};
             operation_kind kind{};
         };
