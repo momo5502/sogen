@@ -361,6 +361,7 @@ namespace sogen
         uint32_t id{};
 
         uint64_t current_ip{0};
+        handle impersonation_token{};
         uint64_t previous_ip{0};
 
         std::u16string name{};
@@ -502,6 +503,7 @@ namespace sogen
             buffer.write(this->setup_done);
             buffer.write(this->id);
             buffer.write(this->current_ip);
+            buffer.write(this->impersonation_token);
             buffer.write(this->previous_ip);
 
             buffer.write_string(this->name);
@@ -575,6 +577,7 @@ namespace sogen
             buffer.read(this->setup_done);
             buffer.read(this->id);
             buffer.read(this->current_ip);
+            buffer.read(this->impersonation_token);
             buffer.read(this->previous_ip);
 
             buffer.read_string(this->name);

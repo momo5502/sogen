@@ -653,6 +653,7 @@ namespace sogen
     constexpr auto NUL_HANDLE = make_pseudo_handle(0x4, handle_types::file);
 
     constexpr auto DUMMY_IMPERSONATION_TOKEN = make_pseudo_handle(0x1, handle_types::token);
+    constexpr auto ANONYMOUS_IMPERSONATION_TOKEN = make_pseudo_handle(0x2, handle_types::token);
 
     constexpr auto GUEST_PROCESS_HANDLE = make_handle(0x1, handle_types::process, false);
 

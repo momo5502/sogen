@@ -459,11 +459,6 @@ namespace sogen
             this->teb64 = this->gs_segment->reserve<TEB64>();
 
             this->teb64->access([&](TEB64& teb_obj) {
-                // Skips GetCurrentNlsCache
-                // This hack can be removed once this is fixed:
-                // https://github.com/momo5502/emulator/issues/128
-                reinterpret_cast<uint8_t*>(&teb_obj)[0x179C] = 1;
-
                 teb_obj.ClientId.UniqueProcess = context.process_id;
                 teb_obj.ClientId.UniqueThread = static_cast<uint64_t>(this->id);
                 teb_obj.DeallocationStack = this->stack_base;

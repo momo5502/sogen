@@ -468,6 +468,7 @@ namespace sogen
                                      ULONG information_length, emulator_object<ULONG> return_length);
 
         // syscalls/token.cpp:
+        NTSTATUS handle_NtImpersonateAnonymousToken(const syscall_context& c, handle thread_handle);
         NTSTATUS
         handle_NtDuplicateToken(const syscall_context&, handle existing_token_handle, ACCESS_MASK /*desired_access*/,
                                 emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>
@@ -708,6 +709,7 @@ namespace sogen
         BOOL handle_NtUserValidateTimerCallback(const syscall_context& c, uint64_t timer_proc);
         uint32_t handle_NtUserGetQueueStatusReadonly(const syscall_context& c, UINT flags);
         uint32_t handle_NtUserGetQueueStatus(const syscall_context& c, UINT flags);
+        BOOL handle_NtUserThreadMessageQueueAttached(const syscall_context& c, DWORD thread_id);
         uint64_t handle_NtUserCreateAcceleratorTable(const syscall_context& c, emulator_pointer entries, int32_t entry_count);
         BOOL handle_NtUserDestroyAcceleratorTable(const syscall_context& c, handle accelerator_table);
         int32_t handle_NtUserCopyAcceleratorTable();
@@ -730,7 +732,8 @@ namespace sogen
         BOOL handle_NtUserSetCaretPos();
         BOOL handle_NtUserShowCaret();
         BOOL handle_NtUserHideCaret();
-        BOOL handle_NtUserGetObjectInformation();
+        BOOL handle_NtUserGetObjectInformation(const syscall_context& c, handle object, int index, emulator_pointer information,
+                                               DWORD length, emulator_object<DWORD> needed);
         uint64_t handle_NtUserQueryWindow(const syscall_context& c, hwnd window_handle, uint32_t query_type);
         int handle_NtUserSetScrollInfo();
         BOOL handle_NtUserIsTouchWindow();
@@ -1460,6 +1463,7 @@ namespace sogen
         add_handler(NtQueryVirtualMemory);
         add_handler(NtOpenThread);
         add_handler(NtOpenThreadToken);
+        add_handler(NtImpersonateAnonymousToken);
         add_handler(NtOpenThreadTokenEx);
         add_handler(NtQueryPerformanceCounter);
         add_handler(NtQuerySystemInformation);
@@ -1919,6 +1923,7 @@ namespace sogen
         add_handler(NtUserMsgWaitForMultipleObjectsEx);
         add_handler(NtUserGetQueueStatusReadonly);
         add_handler(NtUserGetQueueStatus);
+        add_handler(NtUserThreadMessageQueueAttached);
         add_handler(NtUserScheduleDispatchNotification);
         add_handler(NtGdiExtCreateRegion);
         add_handler(NtUserSetWindowRgn);
