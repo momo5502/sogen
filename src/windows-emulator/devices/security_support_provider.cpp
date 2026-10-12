@@ -11,6 +11,8 @@ namespace sogen
     namespace
     {
         constexpr std::size_t ksec_operation_offset = 0x06;
+        constexpr std::size_t ksec_interface_offset = 0x10;
+        constexpr uint32_t ksec_rng_interface = 6;
         constexpr std::size_t ksec_algorithm_name_offset = 0x30;
         constexpr std::size_t ksec_algorithm_request_min_size = ksec_algorithm_name_offset;
 
@@ -357,6 +359,13 @@ namespace sogen
 
                 if (algorithm_name.empty())
                 {
+                    uint32_t interface_id{};
+                    std::memcpy(&interface_id, request.data() + ksec_interface_offset, sizeof(interface_id));
+                    if (interface_id == ksec_rng_interface)
+                    {
+                        return write_response(rng_output_data);
+                    }
+
                     constexpr std::array<std::uint32_t, 2> overflow_response{
                         static_cast<std::uint32_t>(STATUS_BUFFER_TOO_SMALL),
                         static_cast<std::uint32_t>(ksecdd_data::provider_enumeration_response.size()),

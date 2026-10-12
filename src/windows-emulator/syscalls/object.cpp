@@ -910,7 +910,7 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, const handle /*h*/, const SECURITY_INFORMATION security_information,
+        NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, const handle, const SECURITY_INFORMATION security_information,
                                               const emulator_pointer security_descriptor, const ULONG length,
                                               const emulator_object<ULONG> length_needed)
         {
@@ -920,13 +920,8 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            // Owner SID: S-1-5-32-544 (Administrators)
-            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-            const uint8_t owner_sid[] = {0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x20, 0x00, 0x00, 0x00, 0x20, 0x02, 0x00, 0x00};
-
-            // Group SID: S-1-5-18 (Local System)
-            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-            const uint8_t group_sid[] = {0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00};
+            const auto& owner_sid = c.proc.sid;
+            const auto& group_sid = c.proc.sid;
 
             // DACL structure
             // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
@@ -949,12 +944,12 @@ namespace sogen
 
             if (security_information & OWNER_SECURITY_INFORMATION)
             {
-                total_size += sizeof(owner_sid);
+                total_size += static_cast<ULONG>(owner_sid.size());
             }
 
             if (security_information & GROUP_SECURITY_INFORMATION)
             {
-                total_size += sizeof(group_sid);
+                total_size += static_cast<ULONG>(group_sid.size());
             }
 
             if (security_information & DACL_SECURITY_INFORMATION)
@@ -988,15 +983,15 @@ namespace sogen
             if (security_information & OWNER_SECURITY_INFORMATION)
             {
                 sd.Owner = current_offset;
-                c.emu.write_memory(security_descriptor + current_offset, owner_sid);
-                current_offset += sizeof(owner_sid);
+                c.emu.write_memory(security_descriptor + current_offset, owner_sid.data(), owner_sid.size());
+                current_offset += static_cast<ULONG>(owner_sid.size());
             }
 
             if (security_information & GROUP_SECURITY_INFORMATION)
             {
                 sd.Group = current_offset;
-                c.emu.write_memory(security_descriptor + current_offset, group_sid);
-                current_offset += sizeof(group_sid);
+                c.emu.write_memory(security_descriptor + current_offset, group_sid.data(), group_sid.size());
+                current_offset += static_cast<ULONG>(group_sid.size());
             }
 
             if (security_information & DACL_SECURITY_INFORMATION)

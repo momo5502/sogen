@@ -107,6 +107,18 @@ namespace sogen
 
             const auto& sid = c.proc.sid;
 
+            if (token_information_class == TokenPrivileges)
+            {
+                constexpr auto required_size = sizeof(ULONG);
+                return_length.write(required_size);
+                if (token_information_length < required_size)
+                {
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                emulator_object<ULONG>{c.emu, token_information}.write(0);
+                return STATUS_SUCCESS;
+            }
+
             if (token_information_class == TokenUser)
             {
                 const auto required_size = sizeof(TOKEN_USER64) + sid.size();
@@ -399,7 +411,7 @@ namespace sogen
                 }
 
                 c.emu.write_memory(token_information, TOKEN_SECURITY_ATTRIBUTES_INFORMATION{
-                                                          .Version = 0,
+                                                          .Version = 1,
                                                           .Reserved = {},
                                                           .AttributeCount = 0,
                                                           .Attribute = {},
@@ -613,7 +625,7 @@ namespace sogen
             }
 
             c.emu.write_memory(buffer, TOKEN_SECURITY_ATTRIBUTES_INFORMATION{
-                                           .Version = 0,
+                                           .Version = 1,
                                            .Reserved = {},
                                            .AttributeCount = 0,
                                            .Attribute = {},
