@@ -89,6 +89,8 @@ namespace sogen
             buffer.write(region.initial_permission);
             buffer.write<uint64_t>(region.length);
             buffer.write_map(region.committed_regions);
+            buffer.write(region.write_watch);
+            buffer.write_vector(region.written_pages);
         }
 
         static void deserialize(buffer_deserializer& buffer, memory_manager::reserved_region& region)
@@ -98,6 +100,8 @@ namespace sogen
             buffer.read(region.initial_permission);
             region.length = static_cast<size_t>(buffer.read<uint64_t>());
             buffer.read_map(region.committed_regions);
+            buffer.read(region.write_watch);
+            buffer.read_vector(region.written_pages);
         }
     }
 
@@ -235,7 +239,7 @@ namespace sogen
 
                 const auto effective_permission = this->get_effective_permissions(region.second.permissions);
                 this->map_memory(region.first, region.second.length, effective_permission);
-                this->write_memory(region.first, data.data(), region.second.length);
+                this->memory_->write_memory_impl(region.first, data.data(), region.second.length);
             }
         }
     }
@@ -940,6 +944,12 @@ namespace sogen
             left_region.kind = region.kind;
             left_region.mapped_filename = region.mapped_filename;
             left_region.committed_regions = std::move(left_committed);
+            left_region.write_watch = region.write_watch;
+            if (region.write_watch)
+            {
+                const auto page_count = static_cast<size_t>((aligned_start - reserved_start) / 0x1000);
+                left_region.written_pages.assign(region.written_pages.begin(), region.written_pages.begin() + page_count);
+            }
             this->reserved_regions_.try_emplace(reserved_start, std::move(left_region));
         }
 
@@ -951,11 +961,166 @@ namespace sogen
             right_region.kind = region.kind;
             right_region.mapped_filename = region.mapped_filename;
             right_region.committed_regions = std::move(right_committed);
+            right_region.write_watch = region.write_watch;
+            if (region.write_watch)
+            {
+                const auto first_page = static_cast<size_t>((aligned_end - reserved_start) / 0x1000);
+                right_region.written_pages.assign(region.written_pages.begin() + first_page, region.written_pages.end());
+            }
             this->reserved_regions_.try_emplace(aligned_end, std::move(right_region));
         }
 
         this->release_host_claims(aligned_end);
         this->update_layout_version();
+        return true;
+    }
+
+    bool memory_manager::enable_write_watch(const uint64_t address)
+    {
+        const auto entry = this->reserved_regions_.find(address);
+        if (entry == this->reserved_regions_.end() || entry->second.kind != memory_region_kind::private_allocation)
+        {
+            return false;
+        }
+        auto& region = entry->second;
+        region.write_watch = true;
+        region.written_pages.resize(region.length / 0x1000, false);
+        for (const auto& [base, committed] : region.committed_regions)
+        {
+            this->apply_memory_protection(base, committed.length, this->get_effective_permissions(committed.permissions));
+        }
+        return true;
+    }
+
+    void memory_manager::apply_write_watch_protection(const uint64_t address, const size_t size, const memory_permission permissions)
+    {
+        if ((permissions & memory_permission::write) == memory_permission::none)
+        {
+            return;
+        }
+        const auto entry = this->find_reserved_region(address);
+        if (entry == this->reserved_regions_.end() || !entry->second.write_watch)
+        {
+            return;
+        }
+        const auto& written = entry->second.written_pages;
+        const auto end = address + size;
+        for (auto cursor = address; cursor < end;)
+        {
+            const auto index = static_cast<size_t>((cursor - entry->first) / 0x1000);
+            if (written[index])
+            {
+                cursor += 0x1000;
+                continue;
+            }
+            const auto start = cursor;
+            do
+            {
+                cursor += 0x1000;
+            } while (cursor < end && !written[static_cast<size_t>((cursor - entry->first) / 0x1000)]);
+            this->memory_->apply_memory_protection(start, static_cast<size_t>(cursor - start), permissions & ~memory_permission::write);
+        }
+    }
+
+    void memory_manager::record_memory_write(const uint64_t address, const size_t size)
+    {
+        if (size == 0 || address > std::numeric_limits<uint64_t>::max() - size)
+        {
+            return;
+        }
+        const auto end = address + size;
+        for (auto page = page_align_down(address); page < end; page += 0x1000)
+        {
+            const auto entry = this->find_reserved_region(page);
+            if (entry == this->reserved_regions_.end() || !entry->second.write_watch)
+            {
+                continue;
+            }
+            const auto info = this->get_region_info(page);
+            if (!info.is_committed)
+            {
+                continue;
+            }
+            const auto index = static_cast<size_t>((page - entry->first) / 0x1000);
+            if (!entry->second.written_pages[index])
+            {
+                entry->second.written_pages[index] = true;
+                this->memory_->apply_memory_protection(page, 0x1000, this->get_effective_permissions(info.permissions));
+            }
+        }
+    }
+
+    bool memory_manager::handle_write_watch_fault(const uint64_t address)
+    {
+        const auto entry = this->find_reserved_region(address);
+        if (entry == this->reserved_regions_.end() || !entry->second.write_watch)
+        {
+            return false;
+        }
+        const auto info = this->get_region_info(address);
+        const auto index = static_cast<size_t>((address - entry->first) / 0x1000);
+        if (!info.is_committed || info.permissions.is_guarded() ||
+            (info.permissions.common & memory_permission::write) == memory_permission::none || entry->second.written_pages[index])
+        {
+            return false;
+        }
+        this->record_memory_write(address, 1);
+        return true;
+    }
+
+    bool memory_manager::query_write_watch(const uint64_t address, const size_t size, const size_t capacity, const bool reset,
+                                           std::vector<uint64_t>& pages)
+    {
+        const auto entry = this->find_reserved_region(address);
+        if (entry == this->reserved_regions_.end() || !entry->second.write_watch || size == 0 ||
+            size > entry->second.length - static_cast<size_t>(address - entry->first))
+        {
+            return false;
+        }
+        pages.clear();
+        const auto end = address + size;
+        for (auto page = page_align_down(address); page < end && pages.size() < capacity; page += 0x1000)
+        {
+            const auto index = static_cast<size_t>((page - entry->first) / 0x1000);
+            if (entry->second.written_pages[index])
+            {
+                pages.push_back(page);
+            }
+        }
+        if (reset)
+        {
+            // Windows resets only the pages returned when the caller's array is too small.
+            for (const auto page : pages)
+            {
+                this->reset_write_watch(page, 0x1000);
+            }
+        }
+        return true;
+    }
+
+    bool memory_manager::reset_write_watch(const uint64_t address, const size_t size)
+    {
+        const auto entry = this->find_reserved_region(address);
+        if (entry == this->reserved_regions_.end() || !entry->second.write_watch || size == 0 ||
+            size > entry->second.length - static_cast<size_t>(address - entry->first))
+        {
+            return false;
+        }
+        const auto start = page_align_down(address);
+        const auto end = page_align_up(address + size);
+        const auto first = static_cast<size_t>((start - entry->first) / 0x1000);
+        const auto last = static_cast<size_t>((end - entry->first) / 0x1000);
+        std::fill(entry->second.written_pages.begin() + first, entry->second.written_pages.begin() + last, false);
+        for (const auto& [base, committed] : entry->second.committed_regions)
+        {
+            const auto protect_start = std::max(start, base);
+            const auto protect_end = std::min(end, base + committed.length);
+            if (protect_start < protect_end)
+            {
+                this->apply_memory_protection(protect_start, static_cast<size_t>(protect_end - protect_start),
+                                              this->get_effective_permissions(committed.permissions));
+            }
+        }
         return true;
     }
 
@@ -1384,12 +1549,12 @@ namespace sogen
         }
     }
 
-    void memory_manager::write_memory(const uint64_t address, const void* data, const size_t size)
+    void memory_manager::write_memory_impl(const uint64_t address, const void* data, const size_t size)
     {
         this->memory_->write_memory(address, data, size);
     }
 
-    bool memory_manager::try_write_memory(const uint64_t address, const void* data, const size_t size)
+    bool memory_manager::try_write_memory_impl(const uint64_t address, const void* data, const size_t size)
     {
         try
         {
@@ -1409,6 +1574,7 @@ namespace sogen
     void memory_manager::map_memory(const uint64_t address, const size_t size, const memory_permission permissions)
     {
         this->memory_->map_memory(address, size, permissions);
+        this->apply_write_watch_protection(address, size, permissions);
     }
 
     void memory_manager::map_host_memory(const uint64_t address, const size_t size, void* host_pointer, const memory_permission permissions)
@@ -1428,12 +1594,20 @@ namespace sogen
 
     void memory_manager::unmap_memory(const uint64_t address, const size_t size)
     {
+        const auto entry = this->find_reserved_region(address);
+        if (entry != this->reserved_regions_.end() && entry->second.write_watch)
+        {
+            const auto first = static_cast<size_t>((address - entry->first) / 0x1000);
+            const auto last = first + size / 0x1000;
+            std::fill(entry->second.written_pages.begin() + first, entry->second.written_pages.begin() + last, false);
+        }
         this->memory_->unmap_memory(address, size);
     }
 
     void memory_manager::apply_memory_protection(const uint64_t address, const size_t size, const memory_permission permissions)
     {
         this->memory_->apply_memory_protection(address, size, permissions);
+        this->apply_write_watch_protection(address, size, permissions);
     }
 
 } // namespace sogen

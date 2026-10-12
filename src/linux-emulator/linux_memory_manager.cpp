@@ -478,12 +478,12 @@ namespace sogen
         }
     }
 
-    void linux_memory_manager::write_memory(const uint64_t address, const void* data, const size_t size)
+    void linux_memory_manager::write_memory_impl(const uint64_t address, const void* data, const size_t size)
     {
         this->memory_->write_memory(address, data, size);
     }
 
-    bool linux_memory_manager::try_write_memory(const uint64_t address, const void* data, const size_t size)
+    bool linux_memory_manager::try_write_memory_impl(const uint64_t address, const void* data, const size_t size)
     {
         try
         {

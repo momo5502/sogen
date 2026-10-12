@@ -1678,7 +1678,7 @@ namespace sogen::whp
                 }
             }
 
-            bool try_write_memory(const uint64_t address, const void* data, const size_t size) override
+            bool try_write_memory_impl(const uint64_t address, const void* data, const size_t size) override
             {
                 // Exclusive: the breakpoint overlay below may update patched-breakpoint bookkeeping.
                 std::unique_lock lock(this->partition_mutex_);
@@ -1692,9 +1692,9 @@ namespace sogen::whp
                 return true;
             }
 
-            void write_memory(const uint64_t address, const void* data, const size_t size) override
+            void write_memory_impl(const uint64_t address, const void* data, const size_t size) override
             {
-                if (!this->try_write_memory(address, data, size))
+                if (!this->try_write_memory_impl(address, data, size))
                 {
                     throw std::runtime_error("Failed to write WHP guest memory");
                 }

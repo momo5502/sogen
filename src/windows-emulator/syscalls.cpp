@@ -125,6 +125,10 @@ namespace sogen
                                         ULONG output_buffer_length);
         NTSTATUS handle_NtFlushBuffersFile(const syscall_context& c, handle file_handle,
                                            emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> /*io_status_block*/);
+        NTSTATUS handle_NtGetCachedSigningLevel(const syscall_context& c, handle file_handle, emulator_object<ULONG> flags,
+                                                emulator_object<UCHAR> signing_level, uint64_t thumbprint,
+                                                emulator_object<ULONG> thumbprint_size, emulator_object<ULONG> thumbprint_algorithm);
+        NTSTATUS handle_NtCompareSigningLevels(const syscall_context& c, UCHAR current_level, UCHAR required_level);
 
         // syscalls/locale.cpp:
         NTSTATUS handle_NtInitializeNlsFiles(const syscall_context& c, emulator_object<uint64_t> base_address,
@@ -170,6 +174,10 @@ namespace sogen
                                              emulator_pointer buffer, ULONG number_of_bytes_to_write,
                                              emulator_object<ULONG> number_of_bytes_write);
         NTSTATUS handle_NtSetInformationVirtualMemory();
+        NTSTATUS handle_NtGetWriteWatch(const syscall_context& c, handle process_handle, ULONG flags, uint64_t base_address,
+                                        uint64_t region_size, uint64_t addresses, emulator_object<uint64_t> count,
+                                        emulator_object<ULONG> granularity);
+        NTSTATUS handle_NtResetWriteWatch(const syscall_context& c, handle process_handle, uint64_t base_address, uint64_t region_size);
         BOOL handle_NtLockVirtualMemory();
         NTSTATUS handle_NtUnlockVirtualMemory();
         NTSTATUS handle_NtFlushVirtualMemory(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
@@ -1441,6 +1449,8 @@ namespace sogen
         add_handler(NtQueryInformationProcess);
         add_handler(NtSetInformationProcess);
         add_handler(NtSetInformationVirtualMemory);
+        add_handler(NtGetWriteWatch);
+        add_handler(NtResetWriteWatch);
         add_handler(NtFreeVirtualMemory);
         add_handler(NtQueryVirtualMemory);
         add_handler(NtOpenThread);
@@ -1736,6 +1746,8 @@ namespace sogen
         add_handler(NtFsControlFile);
         add_handler(NtQueryFullAttributesFile);
         add_handler(NtFlushBuffersFile);
+        add_handler(NtGetCachedSigningLevel);
+        add_handler(NtCompareSigningLevels);
         add_handler(NtAreMappedFilesTheSame);
         add_handler(NtUserGetProcessWindowStation);
         add_handler(NtUserCallHwndParam);

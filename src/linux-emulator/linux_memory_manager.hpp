@@ -73,8 +73,8 @@ namespace sogen
         // memory_interface
         void read_memory(uint64_t address, void* data, size_t size) const override;
         bool try_read_memory(uint64_t address, void* data, size_t size) const override;
-        void write_memory(uint64_t address, const void* data, size_t size) override;
-        bool try_write_memory(uint64_t address, const void* data, size_t size) override;
+        void write_memory_impl(uint64_t address, const void* data, size_t size) override;
+        bool try_write_memory_impl(uint64_t address, const void* data, size_t size) override;
 
         // Allocate and map a region
         bool allocate_memory(uint64_t address, size_t size, memory_permission permissions);

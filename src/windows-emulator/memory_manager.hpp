@@ -62,6 +62,14 @@ namespace sogen
         memory_manager(memory_interface& memory)
             : memory_(&memory)
         {
+            this->memory_->memory_write_callback_ = [this](const uint64_t address, const size_t size) {
+                this->record_memory_write(address, size);
+            };
+        }
+
+        ~memory_manager() override
+        {
+            this->memory_->memory_write_callback_ = {};
         }
 
         struct committed_region
@@ -79,6 +87,8 @@ namespace sogen
             committed_region_map committed_regions{};
             memory_region_kind kind{memory_region_kind::private_allocation};
             std::u16string mapped_filename{};
+            bool write_watch{};
+            std::vector<bool> written_pages{};
         };
 
         using reserved_region_map = std::map<uint64_t, reserved_region>;
@@ -87,8 +97,8 @@ namespace sogen
 
         void read_memory(uint64_t address, void* data, size_t size) const final;
         bool try_read_memory(uint64_t address, void* data, size_t size) const final;
-        void write_memory(uint64_t address, const void* data, size_t size) final;
-        bool try_write_memory(uint64_t address, const void* data, size_t size) final;
+        void write_memory_impl(uint64_t address, const void* data, size_t size) final;
+        bool try_write_memory_impl(uint64_t address, const void* data, size_t size) final;
 
         bool protect_memory(uint64_t address, size_t size, nt_memory_permission permissions,
                             nt_memory_permission* old_permissions = nullptr);
@@ -130,6 +140,11 @@ namespace sogen
         bool decommit_memory(uint64_t address, size_t size);
 
         bool release_memory(uint64_t address, size_t size);
+
+        bool enable_write_watch(uint64_t address);
+        bool handle_write_watch_fault(uint64_t address);
+        bool query_write_watch(uint64_t address, size_t size, size_t capacity, bool reset, std::vector<uint64_t>& pages);
+        bool reset_write_watch(uint64_t address, size_t size);
 
         bool split_placeholder(uint64_t address, size_t size);
         bool coalesce_placeholders(uint64_t address, size_t size);
@@ -214,6 +229,8 @@ namespace sogen
         void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) final;
 
         void update_layout_version();
+        void record_memory_write(uint64_t address, size_t size);
+        void apply_write_watch_protection(uint64_t address, size_t size, memory_permission permissions);
         bool commit_memory(uint64_t address, size_t size, nt_memory_permission permissions, bool allow_image_section);
         memory_permission get_effective_permissions(nt_memory_permission permissions) const;
 

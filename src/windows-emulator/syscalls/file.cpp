@@ -8,6 +8,7 @@
 #include <utils/finally.hpp>
 #include <utils/wildcard.hpp>
 #include "utils/stat.hpp"
+#include "utils/file_signing.hpp"
 
 #include <sys/stat.h>
 
@@ -136,6 +137,52 @@ namespace sogen
                     return {fh{}, STATUS_NOT_SUPPORTED};
                 }
             }
+        }
+
+        NTSTATUS handle_NtGetCachedSigningLevel(const syscall_context& c, const handle file_handle, const emulator_object<ULONG> flags,
+                                                const emulator_object<UCHAR> signing_level, const uint64_t thumbprint,
+                                                const emulator_object<ULONG> thumbprint_size,
+                                                const emulator_object<ULONG> thumbprint_algorithm)
+        {
+            const auto* file = c.proc.files.get(file_handle);
+            if (!file || !file->handle)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+            utils::cached_signing_level info{};
+            const auto status = utils::query_cached_signing_level(file->handle.file_descriptor(), info);
+            if (status != STATUS_SUCCESS)
+            {
+                return status;
+            }
+            if (!c.emu.try_write_memory(flags.value(), &info.flags, sizeof(info.flags)) ||
+                !c.emu.try_write_memory(signing_level.value(), &info.level, sizeof(info.level)))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+            if (thumbprint_algorithm &&
+                !c.emu.try_write_memory(thumbprint_algorithm.value(), &info.thumbprint_algorithm, sizeof(info.thumbprint_algorithm)))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+            if (thumbprint_size)
+            {
+                const auto capacity = thumbprint_size.read();
+                const auto size = static_cast<ULONG>(info.thumbprint.size());
+                thumbprint_size.write(size);
+                if (thumbprint != 0)
+                {
+                    if (capacity < size)
+                    {
+                        return STATUS_BUFFER_TOO_SMALL;
+                    }
+                    if (!c.emu.try_write_memory(thumbprint, info.thumbprint.data(), size))
+                    {
+                        return STATUS_ACCESS_VIOLATION;
+                    }
+                }
+            }
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const handle file_handle,

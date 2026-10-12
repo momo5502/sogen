@@ -34,10 +34,37 @@ namespace sogen
 
         virtual void read_memory(uint64_t address, void* data, size_t size) const = 0;
         virtual bool try_read_memory(uint64_t address, void* data, size_t size) const = 0;
-        virtual void write_memory(uint64_t address, const void* data, size_t size) = 0;
-        virtual bool try_write_memory(uint64_t address, const void* data, size_t size) = 0;
+
+        void write_memory(uint64_t address, const void* data, size_t size)
+        {
+            this->write_memory_impl(address, data, size);
+            this->notify_memory_write(address, size);
+        }
+
+        bool try_write_memory(uint64_t address, const void* data, size_t size)
+        {
+            if (!this->try_write_memory_impl(address, data, size))
+            {
+                return false;
+            }
+            this->notify_memory_write(address, size);
+            return true;
+        }
 
       private:
+        std::function<void(uint64_t, size_t)> memory_write_callback_{};
+
+        void notify_memory_write(uint64_t address, size_t size)
+        {
+            if (size != 0 && this->memory_write_callback_)
+            {
+                this->memory_write_callback_(address, size);
+            }
+        }
+
+        virtual void write_memory_impl(uint64_t address, const void* data, size_t size) = 0;
+        virtual bool try_write_memory_impl(uint64_t address, const void* data, size_t size) = 0;
+
         virtual void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) = 0;
         virtual void map_memory(uint64_t address, size_t size, memory_permission permissions) = 0;
         virtual void unmap_memory(uint64_t address, size_t size) = 0;

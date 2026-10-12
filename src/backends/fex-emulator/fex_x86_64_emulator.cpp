@@ -1556,9 +1556,9 @@ namespace sogen::fex
             return true;
         }
 
-        void write_memory(uint64_t address, const void* data, size_t size) override
+        void write_memory_impl(uint64_t address, const void* data, size_t size) override
         {
-            if (!this->try_write_memory(address, data, size))
+            if (!this->try_write_memory_impl(address, data, size))
             {
                 char buf[128];
                 snprintf(buf, sizeof(buf), "Failed to write FEX guest memory at 0x%llx size=0x%zx",
@@ -1567,7 +1567,7 @@ namespace sogen::fex
             }
         }
 
-        bool try_write_memory(uint64_t address, const void* data, size_t size) override
+        bool try_write_memory_impl(uint64_t address, const void* data, size_t size) override
         {
             if (!this->is_range_mapped(address, size))
             {

@@ -79,4 +79,37 @@ namespace sogen::test
         EXPECT_EQ(0, claims.AttributeCount);
     }
 
+    TEST_F(TokenInformationTest, DesktopTokenDoesNotHavePackageClaims)
+    {
+        const std::array<std::u16string, 2> names{u"WIN://SYSAPPID", u"WIN://PKG"};
+        auto address = this->storage + 0x200;
+        for (size_t index = 0; index < names.size(); ++index)
+        {
+            const auto length = static_cast<USHORT>(names[index].size() * sizeof(char16_t));
+            this->emu->memory.write_memory(address, names[index].data(), length);
+            emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>>{this->emu->memory, this->storage + 0x100}.write(
+                {.Length = length, .MaximumLength = length, .Buffer = address}, index);
+            address += length;
+        }
+        for (const auto size : {0UL, 1024UL})
+        {
+            emulator_object<ULONG>{this->emu->memory, this->storage}.write(0x12345678);
+            EXPECT_EQ(STATUS_NOT_FOUND, syscalls::handle_NtQuerySecurityAttributesToken(
+                                            this->context(), CURRENT_PROCESS_TOKEN, {this->emu->memory, this->storage + 0x100}, 2,
+                                            this->storage + 0x400, size, {this->emu->memory, this->storage}));
+            EXPECT_EQ(0, (emulator_object<ULONG>{this->emu->memory, this->storage}.read()));
+        }
+    }
+
+    TEST_F(TokenInformationTest, RejectsInconsistentAttributeArrayAndCount)
+    {
+        for (const auto count : {0UL, 1UL})
+        {
+            EXPECT_EQ(STATUS_INVALID_PARAMETER,
+                      syscalls::handle_NtQuerySecurityAttributesToken(this->context(), CURRENT_PROCESS_TOKEN,
+                                                                      {this->emu->memory, count == 0 ? this->storage + 0x100 : 0}, count,
+                                                                      this->storage + 0x400, 1024, {this->emu->memory, this->storage}));
+        }
+    }
+
 }

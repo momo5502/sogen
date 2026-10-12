@@ -1251,6 +1251,10 @@ namespace sogen
             }
 
             auto region = this->memory.get_region_info(address);
+            if (operation == memory_operation::write && this->memory.handle_write_watch_fault(address))
+            {
+                return memory_violation_continuation::restart;
+            }
             if (region.permissions.is_guarded())
             {
                 // Unset the GUARD_PAGE flag and dispatch a STATUS_GUARD_PAGE_VIOLATION

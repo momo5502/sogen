@@ -678,7 +678,7 @@ namespace sogen::sxs
             return identity;
         }
 
-        std::string decode_manifest_text(const std::vector<std::byte>& data)
+        std::string decode_manifest_text(const std::span<const std::byte> data)
         {
             const auto is_utf16_little_endian = data.size() >= 2 && data[0] == std::byte{0xff} && data[1] == std::byte{0xfe};
             const auto is_utf16_big_endian = data.size() >= 2 && data[0] == std::byte{0xfe} && data[1] == std::byte{0xff};
@@ -1571,95 +1571,119 @@ namespace sogen::sxs
             result.write(header_offset, header);
             return result.release();
         }
+
+        std::vector<std::byte> build_activation_context_from_documents(const file_system& file_system, const mapped_module& executable,
+                                                                       const source_document& manifest_source,
+                                                                       const std::optional<source_document>& config,
+                                                                       const windows_path& system_root,
+                                                                       const std::string_view preferred_language)
+        {
+            auto manifest = parse_manifest(manifest_source.contents);
+            const auto winsxs_path = system_root / windows_path(u"WinSxS");
+            const auto manifests_path = winsxs_path / windows_path(u"Manifests");
+
+            resolved_assembly root{};
+            if (manifest.identity)
+            {
+                root.identity = *manifest.identity;
+            }
+            root.manifest_path = manifest_source.path;
+            if (config)
+            {
+                root.policy_path = config->path;
+            }
+            root.files = std::move(manifest.files);
+            root.flags = assembly_information_root | assembly_information_private;
+
+            std::vector<resolved_assembly> assemblies{};
+            assemblies.push_back(std::move(root));
+            std::deque<assembly_dependency> pending_dependencies(manifest.dependencies.begin(), manifest.dependencies.end());
+            while (!pending_dependencies.empty())
+            {
+                auto dependency = std::move(pending_dependencies.front());
+                pending_dependencies.pop_front();
+                auto& identity = dependency.identity;
+                if (identity.processor_architecture.empty() || identity.processor_architecture == "*")
+                {
+                    identity.processor_architecture = architecture_name(identity, executable);
+                }
+
+                if (!config || allows_publisher_policy(config->contents, identity))
+                {
+                    apply_system_policy(file_system, manifests_path, identity, executable);
+                }
+                if (config)
+                {
+                    apply_binding_redirects(config->contents, identity);
+                }
+
+                auto resolved = resolve_private_assembly(executable, identity);
+                if (!resolved)
+                {
+                    resolved = resolve_winsxs_assembly(file_system, manifests_path, winsxs_path, identity, executable, preferred_language);
+                }
+                if (!resolved)
+                {
+                    if (dependency.optional)
+                    {
+                        continue;
+                    }
+                    throw std::runtime_error("Unable to resolve side-by-side assembly: " + identity.name +
+                                             ", version=" + identity.version_text);
+                }
+                if (std::ranges::any_of(assemblies.begin() + 1, assemblies.end(), [&](const resolved_assembly& assembly) {
+                        return identity_matches(assembly.identity, resolved->identity, true) ||
+                               (!assembly.manifest_path.empty() && assembly.manifest_path == resolved->manifest_path);
+                    }))
+                {
+                    continue;
+                }
+                for (auto& nested_dependency : resolved->dependencies)
+                {
+                    pending_dependencies.push_back(std::move(nested_dependency));
+                }
+                resolved->pseudokey = hash_string(u8_to_u16(resolved->identity.name));
+                assemblies.push_back(std::move(*resolved));
+            }
+
+            if (assemblies.size() > 2)
+            {
+                std::ranges::stable_sort(assemblies.begin() + 1, assemblies.end(), {}, &resolved_assembly::pseudokey);
+            }
+
+            auto application_directory = executable.module_path.parent().u16string();
+            if (!application_directory.empty() && application_directory.back() != u'\\')
+            {
+                application_directory.push_back(u'\\');
+            }
+            return build_blob(assemblies, application_directory);
+        }
     }
 
     std::vector<std::byte> build_process_activation_context(const file_system& file_system, const mapped_module& executable,
                                                             const windows_path& system_root, const std::string_view preferred_language)
     {
-        const auto manifest_source = read_application_manifest(executable);
-        if (!manifest_source)
+        const auto manifest = read_application_manifest(executable);
+        if (!manifest)
         {
             return {};
         }
-        auto manifest = parse_manifest(manifest_source->contents);
-        const auto config = read_application_config(executable);
-        const auto winsxs_path = system_root / windows_path(u"WinSxS");
-        const auto manifests_path = winsxs_path / windows_path(u"Manifests");
+        return build_activation_context_from_documents(file_system, executable, *manifest, read_application_config(executable), system_root,
+                                                       preferred_language);
+    }
 
-        resolved_assembly root{};
-        if (manifest.identity)
-        {
-            root.identity = *manifest.identity;
-        }
-        root.manifest_path = manifest_source->path;
+    std::vector<std::byte> build_activation_context(const file_system& file_system, const mapped_module& executable,
+                                                    const activation_context_source& manifest,
+                                                    const std::optional<activation_context_source>& config, const windows_path& system_root,
+                                                    const std::string_view preferred_language)
+    {
+        const source_document manifest_document{.contents = decode_manifest_text(manifest.contents), .path = manifest.path.u16string()};
+        std::optional<source_document> config_document{};
         if (config)
         {
-            root.policy_path = config->path;
+            config_document = source_document{.contents = decode_manifest_text(config->contents), .path = config->path.u16string()};
         }
-        root.files = std::move(manifest.files);
-        root.flags = assembly_information_root | assembly_information_private;
-
-        std::vector<resolved_assembly> assemblies{};
-        assemblies.push_back(std::move(root));
-        std::deque<assembly_dependency> pending_dependencies(manifest.dependencies.begin(), manifest.dependencies.end());
-        while (!pending_dependencies.empty())
-        {
-            auto dependency = std::move(pending_dependencies.front());
-            pending_dependencies.pop_front();
-            auto& identity = dependency.identity;
-            if (identity.processor_architecture.empty() || identity.processor_architecture == "*")
-            {
-                identity.processor_architecture = architecture_name(identity, executable);
-            }
-
-            if (!config || allows_publisher_policy(config->contents, identity))
-            {
-                apply_system_policy(file_system, manifests_path, identity, executable);
-            }
-            if (config)
-            {
-                apply_binding_redirects(config->contents, identity);
-            }
-
-            auto resolved = resolve_private_assembly(executable, identity);
-            if (!resolved)
-            {
-                resolved = resolve_winsxs_assembly(file_system, manifests_path, winsxs_path, identity, executable, preferred_language);
-            }
-            if (!resolved)
-            {
-                if (dependency.optional)
-                {
-                    continue;
-                }
-                throw std::runtime_error("Unable to resolve side-by-side assembly: " + identity.name +
-                                         ", version=" + identity.version_text);
-            }
-            if (std::ranges::any_of(assemblies.begin() + 1, assemblies.end(), [&](const resolved_assembly& assembly) {
-                    return identity_matches(assembly.identity, resolved->identity, true) ||
-                           (!assembly.manifest_path.empty() && assembly.manifest_path == resolved->manifest_path);
-                }))
-            {
-                continue;
-            }
-            for (auto& nested_dependency : resolved->dependencies)
-            {
-                pending_dependencies.push_back(std::move(nested_dependency));
-            }
-            resolved->pseudokey = hash_string(u8_to_u16(resolved->identity.name));
-            assemblies.push_back(std::move(*resolved));
-        }
-
-        if (assemblies.size() > 2)
-        {
-            std::ranges::stable_sort(assemblies.begin() + 1, assemblies.end(), {}, &resolved_assembly::pseudokey);
-        }
-
-        auto application_directory = executable.module_path.parent().u16string();
-        if (!application_directory.empty() && application_directory.back() != u'\\')
-        {
-            application_directory.push_back(u'\\');
-        }
-        return build_blob(assemblies, application_directory);
+        return build_activation_context_from_documents(file_system, executable, manifest_document, config_document, system_root,
+                                                       preferred_language);
     }
 }

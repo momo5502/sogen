@@ -514,6 +514,27 @@ namespace sogen
             case SystemModuleInformationEx:
                 return handle_system_module_information_ex(c, system_information, system_information_length, return_length);
 
+            case SystemLeapSecondInformation: {
+                struct system_leap_second_information
+                {
+                    BOOLEAN enabled;
+                    std::array<uint8_t, 3> reserved;
+                    ULONG flags;
+                };
+
+                static_assert(sizeof(system_leap_second_information) == 8);
+                if (return_length)
+                {
+                    return_length.write(sizeof(system_leap_second_information));
+                }
+                if (system_information_length != sizeof(system_leap_second_information))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                c.emu.write_memory(system_information, system_leap_second_information{});
+                return STATUS_SUCCESS;
+            }
+
             case SystemTimeOfDayInformation:
                 return handle_query<SYSTEM_TIMEOFDAY_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
                                                                     [&](SYSTEM_TIMEOFDAY_INFORMATION64& info) {
