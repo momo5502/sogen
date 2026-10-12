@@ -409,6 +409,9 @@ namespace sogen
             // p.AnsiCodePageData = allocator.reserve<CPTABLEINFO>().value();
             // p.OemCodePageData = allocator.reserve<CPTABLEINFO>().value();
             p.UnicodeCaseTableData = allocator.reserve<NLSTABLEINFO>().value();
+
+            // ntdll only requests the l_intl.nls case tables (NtGetNlsSectionPtr type 14) when this is non-zero.
+            p.UseCaseMapping = 1;
         });
 
         if (this->is_wow64_process)
@@ -502,6 +505,7 @@ namespace sogen
                 // Initialize NLS tables for 32-bit processes
                 // These need to be in 32-bit addressable space
                 p32.UnicodeCaseTableData = static_cast<uint32_t>(allocator.reserve<NLSTABLEINFO>().value());
+                p32.UseCaseMapping = 1;
 
                 // TODO: Initialize other PEB32 fields as needed
             });
