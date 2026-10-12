@@ -1,5 +1,6 @@
 #include "file_signing.hpp"
 #include <array>
+#include <bit>
 
 #ifdef OS_WINDOWS
 #include <windows.h>
@@ -12,8 +13,7 @@ namespace sogen::utils
     {
 #ifdef OS_WINDOWS
         using compare_type = LONG(NTAPI*)(UCHAR, UCHAR);
-        static const auto compare =
-            reinterpret_cast<compare_type>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtCompareSigningLevels"));
+        static const auto compare = std::bit_cast<compare_type>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtCompareSigningLevels"));
         if (compare != nullptr)
         {
             return compare(current_level, required_level);
@@ -31,21 +31,21 @@ namespace sogen::utils
     {
 #ifdef OS_WINDOWS
         using query_type = LONG(NTAPI*)(HANDLE, ULONG*, UCHAR*, UCHAR*, ULONG*, ULONG*);
-        static const auto query = reinterpret_cast<query_type>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtGetCachedSigningLevel"));
+        static const auto query = std::bit_cast<query_type>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtGetCachedSigningLevel"));
         if (query == nullptr)
         {
             return STATUS_NOT_SUPPORTED;
         }
-        const auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(file_descriptor));
+        auto* const handle = reinterpret_cast<HANDLE>(_get_osfhandle(file_descriptor));
         ULONG size{};
-        auto status = query(handle, &result.flags, &result.level, nullptr, &size, &result.thumbprint_algorithm);
+        auto status = static_cast<NTSTATUS>(query(handle, &result.flags, &result.level, nullptr, &size, &result.thumbprint_algorithm));
         if (status != STATUS_BUFFER_TOO_SMALL && status != STATUS_SUCCESS)
         {
             return status;
         }
         result.thumbprint.resize(size);
-        status = query(handle, &result.flags, &result.level, reinterpret_cast<UCHAR*>(result.thumbprint.data()), &size,
-                       &result.thumbprint_algorithm);
+        status = static_cast<NTSTATUS>(query(handle, &result.flags, &result.level, reinterpret_cast<UCHAR*>(result.thumbprint.data()),
+                                             &size, &result.thumbprint_algorithm));
         if (status == STATUS_SUCCESS)
         {
             result.thumbprint.resize(size);
