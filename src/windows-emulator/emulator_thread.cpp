@@ -152,7 +152,8 @@ namespace sogen
             }
 
             case handle_types::timer: {
-                return wait_state::signaled; // TODO
+                auto* entry = c.timers.get(h);
+                return entry && entry->is_signaled(win_emu.clock().steady_now()) ? wait_state::signaled : wait_state::not_signaled;
             }
 
             case handle_types::semaphore: {
@@ -284,8 +285,15 @@ namespace sogen
                 return *acquired ? wait_state::abandoned : wait_state::signaled;
             }
 
-            case handle_types::timer:
-                return wait_state::signaled; // TODO
+            case handle_types::timer: {
+                auto* entry = c.timers.get(h);
+                if (!entry || !entry->is_signaled(win_emu.clock().steady_now()))
+                {
+                    return std::nullopt;
+                }
+                entry->consume_signal();
+                return wait_state::signaled;
+            }
 
             case handle_types::semaphore: {
                 auto* semaphore = c.semaphores.get(h);

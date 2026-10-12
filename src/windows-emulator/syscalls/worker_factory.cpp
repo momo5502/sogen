@@ -186,6 +186,7 @@ namespace sogen
 
             worker_factory factory{};
             factory.name = name;
+            factory.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
 
             handle retained_io_completion_handle{};
             if (!io_completion_wait::retain_handle_reference(c.proc, c.vcpu.active_thread, io_completion_handle,

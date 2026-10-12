@@ -24,6 +24,9 @@ namespace sogen
             set_console_cursor_position = 0x0200000A,
             set_console_text_attribute = 0x0200000D,
             get_console_screen_buffer_info = 0x02000007,
+            get_largest_console_window_size = 0x0200000B,
+            get_current_console_font = 0x03000004,
+            set_current_console_font = 0x0300002C,
         };
 
         constexpr uint32_t default_input_mode = 0x00F7;
@@ -74,6 +77,30 @@ namespace sogen
         };
 
         static_assert(sizeof(console_screen_buffer_info_response) == 92);
+
+        struct console_font_info_response
+        {
+            uint8_t maximum_window;
+            std::array<uint8_t, 3> padding;
+            uint32_t index;
+            console_coordinate size;
+            uint32_t family;
+            uint32_t weight;
+            std::array<char16_t, 32> face_name;
+        };
+
+        static_assert(sizeof(console_font_info_response) == 84);
+
+        console_font_info_response default_console_font()
+        {
+            console_font_info_response font{};
+            font.size = {8, 16};
+            font.family = 0x36;
+            font.weight = 400;
+            constexpr std::u16string_view face = u"Consolas";
+            std::ranges::copy(face, font.face_name.begin());
+            return font;
+        }
 
         struct console_ioctl_header
         {
@@ -257,6 +284,7 @@ namespace sogen
                 buffer.write(cursor_position_);
                 buffer.write(input_mode_);
                 buffer.write(output_mode_);
+                buffer.write(font_info_);
             }
 
             void deserialize_object(utils::buffer_deserializer& buffer) override
@@ -265,6 +293,7 @@ namespace sogen
                 buffer.read(cursor_position_);
                 buffer.read(input_mode_);
                 buffer.read(output_mode_);
+                buffer.read(font_info_);
             }
 
             void restore_after_state_restore(windows_emulator& win_emu) override
@@ -484,6 +513,49 @@ namespace sogen
                     return STATUS_SUCCESS;
                 }
 
+                case console_api::get_current_console_font: {
+                    if (is_input_endpoint(endpoint) || message.data_size != sizeof(console_font_info_response))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    win_emu.emu().write_memory(header.data, font_info_);
+                    return STATUS_SUCCESS;
+                }
+
+                case console_api::set_current_console_font: {
+                    if (is_input_endpoint(endpoint) || message.data_size != sizeof(console_font_info_response))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    auto font = win_emu.emu().read_memory<console_font_info_response>(header.data);
+                    if (font.size.x < 0 || font.size.y < 0)
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    font.size.x = font.size.x == 0 ? font_info_.size.x : font.size.x;
+                    font.size.y = font.size.y == 0 ? font_info_.size.y : font.size.y;
+                    font.family = font.family == 0 ? font_info_.family : font.family;
+                    font.weight = font.weight == 0 ? font_info_.weight : font.weight;
+                    if (font.face_name.front() == u'\0')
+                    {
+                        font.face_name = font_info_.face_name;
+                    }
+                    font.face_name.back() = u'\0';
+                    font_info_ = font;
+                    win_emu.emu().write_memory(header.data, font_info_);
+                    return STATUS_SUCCESS;
+                }
+
+                case console_api::get_largest_console_window_size: {
+                    if (is_input_endpoint(endpoint) || message.data_size != sizeof(console_coordinate))
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    constexpr console_coordinate size{80, 25};
+                    win_emu.emu().write_memory(header.data, size);
+                    return STATUS_SUCCESS;
+                }
+
                 case console_api::get_console_screen_buffer_info: {
                     if (is_input_endpoint(endpoint) || message.data_size != sizeof(console_screen_buffer_info_response))
                     {
@@ -519,6 +591,7 @@ namespace sogen
             uint32_t input_mode_{default_input_mode};
             uint32_t output_mode_{default_output_mode};
             console_coordinate cursor_position_{};
+            console_font_info_response font_info_{default_console_font()};
         };
     }
 

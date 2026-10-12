@@ -35,6 +35,7 @@ namespace sogen
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
 
+            entry->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
             const auto handle = c.proc.registry_keys.store(std::move(entry.value()));
             key_handle.write(handle);
 
@@ -463,6 +464,7 @@ namespace sogen
                 return STATUS_OBJECT_PATH_NOT_FOUND;
             }
 
+            entry->inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
             const auto new_handle = c.proc.registry_keys.store(std::move(entry.value()));
             key_handle.write(new_handle);
 

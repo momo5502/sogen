@@ -168,11 +168,11 @@ namespace sogen
         NTSTATUS handle_NtFreeVirtualMemory(const syscall_context& c, handle process_handle, emulator_object<uint64_t> base_address,
                                             emulator_object<uint64_t> bytes_to_allocate, uint32_t free_type);
         NTSTATUS handle_NtReadVirtualMemory(const syscall_context& c, handle process_handle, emulator_pointer base_address,
-                                            emulator_pointer buffer, ULONG number_of_bytes_to_read,
-                                            emulator_object<ULONG> number_of_bytes_read);
+                                            emulator_pointer buffer, uint64_t number_of_bytes_to_read,
+                                            emulator_object<uint64_t> number_of_bytes_read);
         NTSTATUS handle_NtWriteVirtualMemory(const syscall_context& c, handle process_handle, emulator_pointer base_address,
-                                             emulator_pointer buffer, ULONG number_of_bytes_to_write,
-                                             emulator_object<ULONG> number_of_bytes_write);
+                                             emulator_pointer buffer, uint64_t number_of_bytes_to_write,
+                                             emulator_object<uint64_t> number_of_bytes_write);
         NTSTATUS handle_NtSetInformationVirtualMemory();
         NTSTATUS handle_NtGetWriteWatch(const syscall_context& c, handle process_handle, ULONG flags, uint64_t base_address,
                                         uint64_t region_size, uint64_t addresses, emulator_object<uint64_t> count,
@@ -450,17 +450,22 @@ namespace sogen
         NTSTATUS handle_NtSetTimerResolution(const syscall_context&, ULONG /*desired_resolution*/, BOOLEAN set_resolution,
                                              emulator_object<ULONG> current_resolution);
         NTSTATUS handle_NtCreateTimer2(const syscall_context& c, emulator_object<handle> timer_handle, uint64_t reserved,
-                                       emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG attributes,
-                                       ACCESS_MASK desired_access);
+                                       uint64_t reserved2, ULONG attributes, ACCESS_MASK desired_access);
         NTSTATUS handle_NtCreateTimer(const syscall_context& c, emulator_object<handle> timer_handle, ACCESS_MASK desired_access,
                                       emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG timer_type);
         NTSTATUS handle_NtOpenTimer(const syscall_context& c, emulator_object<handle> timer_handle, ACCESS_MASK desired_access,
                                     emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes);
-        NTSTATUS handle_NtSetTimer();
-        NTSTATUS handle_NtSetTimer2();
+        NTSTATUS handle_NtSetTimer(const syscall_context& c, handle timer_handle, emulator_object<LARGE_INTEGER> due_time,
+                                   uint64_t apc_routine, uint64_t apc_context, BOOLEAN resume_timer, LONG period,
+                                   emulator_object<BOOLEAN> previous_state);
+        NTSTATUS handle_NtSetTimer2(const syscall_context& c, handle timer_handle, emulator_object<LARGE_INTEGER> due_time,
+                                    emulator_object<LARGE_INTEGER> period, uint64_t parameters);
         NTSTATUS handle_NtSetTimerEx(const syscall_context& c, handle timer_handle, uint32_t timer_set_info_class,
                                      uint64_t timer_set_information, ULONG timer_set_information_length);
-        NTSTATUS handle_NtCancelTimer();
+        NTSTATUS handle_NtCancelTimer(const syscall_context& c, handle timer_handle, emulator_object<BOOLEAN> current_state);
+        NTSTATUS handle_NtCancelTimer2(const syscall_context& c, handle timer_handle, uint64_t parameters);
+        NTSTATUS handle_NtQueryTimer(const syscall_context& c, handle timer_handle, ULONG information_class, uint64_t information,
+                                     ULONG information_length, emulator_object<ULONG> return_length);
 
         // syscalls/token.cpp:
         NTSTATUS
@@ -1810,6 +1815,8 @@ namespace sogen
         add_handler(NtSetTimer2);
         add_handler(NtSetTimerEx);
         add_handler(NtCancelTimer);
+        add_handler(NtCancelTimer2);
+        add_handler(NtQueryTimer);
         add_handler(NtAssociateWaitCompletionPacket);
         add_handler(NtCancelWaitCompletionPacket);
         add_handler(NtSetWnfProcessNotificationEvent);

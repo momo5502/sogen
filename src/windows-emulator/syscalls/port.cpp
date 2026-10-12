@@ -85,6 +85,7 @@ namespace sogen
                 data.flags |= port_attributes.read().Flags;
             }
             port_container container{std::move(port_name), c.win_emu, data};
+            container.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
 
             const auto new_handle = c.proc.ports.store(std::move(container));
             port_handle.write(new_handle);
@@ -94,7 +95,7 @@ namespace sogen
 
         NTSTATUS handle_NtAlpcConnectPort(const syscall_context& c, const emulator_object<handle> port_handle,
                                           const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
-                                          const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                          const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                           const emulator_object<ALPC_PORT_ATTRIBUTES<EmulatorTraits<Emu64>>> port_attributes,
                                           const ULONG /*flags*/, const emulator_pointer /*required_server_sid*/,
                                           const emulator_pointer /*connection_message*/,
@@ -113,6 +114,7 @@ namespace sogen
             }
             data.sequence_number = 1;
             port_container container{std::u16string(port_name), c.win_emu, data};
+            container.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
 
             const auto handle = c.proc.ports.store(std::move(container));
             port_handle.write(handle);
@@ -123,7 +125,7 @@ namespace sogen
         NTSTATUS handle_NtAlpcConnectPortEx(
             const syscall_context& c, const emulator_object<handle> port_handle,
             const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> connection_port_object_attributes,
-            const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*client_port_object_attributes*/,
+            const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> client_port_object_attributes,
             const emulator_object<ALPC_PORT_ATTRIBUTES<EmulatorTraits<Emu64>>> port_attributes, const ULONG flags,
             const emulator_pointer /*server_security_requirements*/, const emulator_pointer connection_message,
             const emulator_object<EmulatorTraits<Emu64>::SIZE_T> buffer_length, const emulator_pointer out_message_attributes,
@@ -141,7 +143,7 @@ namespace sogen
             }
 
             emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> port_name{c.emu, attributes.ObjectName};
-            return handle_NtAlpcConnectPort(c, port_handle, port_name, connection_port_object_attributes, port_attributes, flags, {},
+            return handle_NtAlpcConnectPort(c, port_handle, port_name, client_port_object_attributes, port_attributes, flags, {},
                                             connection_message, buffer_length, out_message_attributes, in_message_attributes, timeout);
         }
 

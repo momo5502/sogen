@@ -927,7 +927,7 @@ namespace sogen
 
         NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<handle> thread_handle,
                                          const ACCESS_MASK /*desired_access*/,
-                                         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                          const handle process_handle, const uint64_t start_routine, const uint64_t argument,
                                          const ULONG create_flags, const EmulatorTraits<Emu64>::SIZE_T /*zero_bits*/,
                                          const EmulatorTraits<Emu64>::SIZE_T stack_size,
@@ -981,6 +981,7 @@ namespace sogen
             actual_stack_size = align_up(actual_stack_size, ALLOCATION_GRANULARITY);
 
             const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, actual_stack_size, create_flags);
+            c.proc.threads.get(h)->inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
 
             thread_handle.write(h);
 

@@ -802,8 +802,8 @@ namespace sogen
         }
 
         NTSTATUS handle_NtReadVirtualMemory(const syscall_context& c, const handle process_handle, const emulator_pointer base_address,
-                                            const emulator_pointer buffer, const ULONG number_of_bytes_to_read,
-                                            const emulator_object<ULONG> number_of_bytes_read)
+                                            const emulator_pointer buffer, const uint64_t number_of_bytes_to_read,
+                                            const emulator_object<uint64_t> number_of_bytes_read)
         {
             number_of_bytes_read.try_write(0);
 
@@ -819,14 +819,14 @@ namespace sogen
             };
 
             std::vector<uint8_t> memory(page_size, 0);
-            size_t bytes_read = 0;
+            uint64_t bytes_read = 0;
             while (bytes_read < number_of_bytes_to_read)
             {
                 const auto current_base = static_cast<uint64_t>(base_address) + bytes_read;
                 const auto current_buffer = static_cast<uint64_t>(buffer) + bytes_read;
-                const auto bytes_remaining = static_cast<size_t>(number_of_bytes_to_read) - bytes_read;
-                const auto chunk_size =
-                    std::min({bytes_remaining, bytes_until_page_boundary(current_base), bytes_until_page_boundary(current_buffer)});
+                const auto bytes_remaining = number_of_bytes_to_read - bytes_read;
+                const auto chunk_size = static_cast<size_t>(std::min<uint64_t>(
+                    {bytes_remaining, bytes_until_page_boundary(current_base), bytes_until_page_boundary(current_buffer)}));
 
                 if (c.proc.is_current_process_handle(process_handle))
                 {
@@ -859,7 +859,7 @@ namespace sogen
                 bytes_read += chunk_size;
             }
 
-            number_of_bytes_read.try_write(static_cast<ULONG>(bytes_read));
+            number_of_bytes_read.try_write(bytes_read);
             if (bytes_read == number_of_bytes_to_read)
             {
                 return STATUS_SUCCESS;
@@ -869,8 +869,8 @@ namespace sogen
         }
 
         NTSTATUS handle_NtWriteVirtualMemory(const syscall_context& c, const handle process_handle, const emulator_pointer base_address,
-                                             const emulator_pointer buffer, const ULONG number_of_bytes_to_write,
-                                             const emulator_object<ULONG> number_of_bytes_write)
+                                             const emulator_pointer buffer, const uint64_t number_of_bytes_to_write,
+                                             const emulator_object<uint64_t> number_of_bytes_write)
         {
             number_of_bytes_write.try_write(0);
 
@@ -886,14 +886,14 @@ namespace sogen
             };
 
             std::vector<uint8_t> memory(page_size, 0);
-            size_t bytes_written = 0;
+            uint64_t bytes_written = 0;
             while (bytes_written < number_of_bytes_to_write)
             {
                 const auto current_buffer = static_cast<uint64_t>(buffer) + bytes_written;
                 const auto current_base = static_cast<uint64_t>(base_address) + bytes_written;
-                const auto bytes_remaining = static_cast<size_t>(number_of_bytes_to_write) - bytes_written;
-                const auto chunk_size =
-                    std::min({bytes_remaining, bytes_until_page_boundary(current_buffer), bytes_until_page_boundary(current_base)});
+                const auto bytes_remaining = number_of_bytes_to_write - bytes_written;
+                const auto chunk_size = static_cast<size_t>(std::min<uint64_t>(
+                    {bytes_remaining, bytes_until_page_boundary(current_buffer), bytes_until_page_boundary(current_base)}));
 
                 if (!c.emu.try_read_memory(current_buffer, memory.data(), chunk_size))
                 {
@@ -925,7 +925,7 @@ namespace sogen
                 bytes_written += chunk_size;
             }
 
-            number_of_bytes_write.try_write(static_cast<ULONG>(bytes_written));
+            number_of_bytes_write.try_write(bytes_written);
             if (bytes_written == number_of_bytes_to_write)
             {
                 return STATUS_SUCCESS;

@@ -62,7 +62,7 @@ namespace sogen
         std::vector<std::u16string> arguments{};
         std::optional<std::u16string> command_line{};
         utils::unordered_insensitive_u16string_map<std::u16string> environment{};
-        uint32_t process_id{4};
+        uint32_t process_id{default_guest_process_id};
         uint32_t thread_id{8};
 
         void serialize(utils::buffer_serializer& buffer) const

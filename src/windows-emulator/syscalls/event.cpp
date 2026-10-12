@@ -156,6 +156,7 @@ namespace sogen
             e.type = event_type;
             e.signaled = initial_state != FALSE;
             e.name = std::move(name);
+            e.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
 
             const auto handle = c.proc.events.store(std::move(e));
             event_handle.write(handle);

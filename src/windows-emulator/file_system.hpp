@@ -62,6 +62,19 @@ namespace sogen
             return drives;
         }
 
+        uint8_t drive_type(const char drive) const
+        {
+#ifdef OS_WINDOWS
+            if (this->root_.empty())
+            {
+                const std::array<wchar_t, 4> path{static_cast<wchar_t>(drive), L':', L'\\', L'\0'};
+                return static_cast<uint8_t>(GetDriveTypeW(path.data()));
+            }
+#endif
+            constexpr uint8_t fixed_drive_type = 3;
+            return fixed_drive_type;
+        }
+
         std::filesystem::path translate(const windows_path& win_path) const
         {
             if (!win_path.is_absolute())

@@ -440,7 +440,12 @@ namespace sogen::utils
             endpoint->begin_transfer();
             auto rollback_transfer = finally([endpoint] { endpoint->end_transfer(); });
             this->worker = std::thread([this, server = std::move(server), endpoint = std::move(endpoint)]() mutable {
-                const auto release_transfer = finally([endpoint] { endpoint->end_transfer(); });
+                const auto release_transfer = finally([&endpoint] {
+                    if (endpoint)
+                    {
+                        endpoint->end_transfer();
+                    }
+                });
                 while (!this->stopping)
                 {
                     if (!server.is_ready(true))
@@ -523,6 +528,7 @@ namespace sogen::utils
                     result = endpoint->peek(data, size, available);
                     break;
                 case pipe_request::close:
+                    endpoint->end_transfer();
                     endpoint.reset();
                     (void)send_words(socket, std::array{static_cast<uint32_t>(pipe_io_status::success), uint32_t{0}, uint32_t{0}});
                     return;

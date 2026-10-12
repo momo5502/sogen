@@ -8,6 +8,14 @@ namespace sogen::syscalls
                                   emulator_pointer information, ULONG information_length, emulator_object<ULONG> return_length);
     NTSTATUS handle_NtSetInformationObject(const syscall_context& c, handle h, OBJECT_INFORMATION_CLASS information_class,
                                            emulator_pointer information, ULONG information_length);
+    NTSTATUS handle_NtCreateEvent(const syscall_context& c, emulator_object<handle> event_handle, ACCESS_MASK desired_access,
+                                  emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, EVENT_TYPE event_type,
+                                  BOOLEAN initial_state);
+    NTSTATUS handle_NtCreateMutant(const syscall_context& c, emulator_object<handle> mutant_handle, ACCESS_MASK desired_access,
+                                   emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, BOOLEAN initial_owner);
+    NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, emulator_object<handle> semaphore_handle, ACCESS_MASK desired_access,
+                                      emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes, ULONG initial_count,
+                                      ULONG maximum_count);
 }
 
 namespace sogen::test
@@ -99,5 +107,24 @@ namespace sogen::test
         this->emu->process.events.deserialize(reader);
         this->expect_flags(h, true, true);
         EXPECT_EQ(STATUS_HANDLE_NOT_CLOSABLE, syscalls::handle_NtClose(this->context(), h));
+    }
+
+    TEST_F(HandleFlagsTest, KernelObjectCreationHonorsInheritAttribute)
+    {
+        const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> attributes{this->emu->memory, this->storage + 0x300};
+        const emulator_object<handle> out{this->emu->memory, this->storage + 0x400};
+        for (const auto flags : {0u, static_cast<uint32_t>(OBJ_INHERIT)})
+        {
+            attributes.write({.Length = sizeof(OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>), .Attributes = flags});
+            ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCreateEvent(this->context(), out, 0, attributes, NotificationEvent, FALSE));
+            this->expect_flags(out.read(), flags != 0, false);
+            EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), out.read()));
+            ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCreateMutant(this->context(), out, 0, attributes, FALSE));
+            this->expect_flags(out.read(), flags != 0, false);
+            EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), out.read()));
+            ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCreateSemaphore(this->context(), out, 0, attributes, 0, 1));
+            this->expect_flags(out.read(), flags != 0, false);
+            EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), out.read()));
+        }
     }
 }

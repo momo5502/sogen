@@ -13,6 +13,9 @@
 
 namespace sogen
 {
+    // PID 4 is Windows' System process; runtimes refuse user-process operations on it.
+    inline constexpr uint32_t default_guest_process_id = 0x1000;
+
     namespace utils
     {
         class host_pipe;
@@ -101,7 +104,7 @@ namespace sogen
         std::string working_directory{};
         std::vector<std::string> arguments{};
         std::unordered_map<std::string, std::string> environment{};
-        uint32_t process_id{4};
+        uint32_t process_id{default_guest_process_id};
         uint32_t thread_id{8};
         uint64_t standard_input{};
         uint64_t standard_output{};

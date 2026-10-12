@@ -582,11 +582,50 @@ namespace sogen
                                                                       ptr = 0; //
                                                                   });
 
-            case ProcessDeviceMap:
-                return handle_query<EmulatorTraits<Emu64>::PVOID>(c.emu, process_information, process_information_length, return_length,
-                                                                  [](EmulatorTraits<Emu64>::PVOID& ptr) {
-                                                                      ptr = 0; //
-                                                                  });
+            case ProcessDeviceMap: {
+                struct device_map_query
+                {
+                    ULONG drive_map;
+                    std::array<uint8_t, 32> drive_types;
+                };
+
+                struct device_map_query_ex
+                {
+                    device_map_query query;
+                    ULONG reserved;
+                    ULONG flags;
+                    ULONG padding;
+                };
+
+                static_assert(sizeof(device_map_query) == 36);
+                static_assert(sizeof(device_map_query_ex) == 48);
+                if (process_information_length != sizeof(device_map_query) && process_information_length != sizeof(device_map_query_ex))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                device_map_query_ex response{};
+                if (process_information_length == sizeof(response))
+                {
+                    response.flags = emulator_object<ULONG>{c.emu, process_information + offsetof(device_map_query_ex, flags)}.read();
+                    if (response.flags & ~1u)
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                }
+                for (const auto drive : c.win_emu.file_sys.list_drives())
+                {
+                    if (drive < 'a' || drive > 'z')
+                    {
+                        continue;
+                    }
+                    const auto index = static_cast<size_t>(drive - 'a');
+                    response.query.drive_map |= 1u << index;
+                    response.query.drive_types[index] = c.win_emu.file_sys.drive_type(drive);
+                }
+                c.emu.write_memory(process_information, &response, process_information_length);
+                return_length.write_if_valid(process_information_length);
+                return STATUS_SUCCESS;
+            }
 
             case ProcessEnableAlignmentFaultFixup:
                 return handle_query<BOOLEAN>(c.emu, process_information, process_information_length, return_length, [](BOOLEAN& b) {

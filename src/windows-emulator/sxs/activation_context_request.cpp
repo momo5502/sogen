@@ -2,6 +2,7 @@
 #include "activation_context_request.hpp"
 #include "activation_context.hpp"
 #include <address_utils.hpp>
+#include <utils/finally.hpp>
 #include "../windows_emulator.hpp"
 
 namespace sogen::sxs
@@ -16,7 +17,7 @@ namespace sogen::sxs
             uint32_t reserved;
             unicode_string path;
             uint64_t file_handle;
-            int64_t file_offset;
+            uint64_t section_handle;
             uint64_t address;
             uint64_t size;
         };
@@ -46,15 +47,26 @@ namespace sogen::sxs
         static_assert(offsetof(create_activation_context_request, output_address) == 0xb8);
         static_assert(offsetof(create_activation_context_request, result_flags) == 0xcc);
 
-        bool read_stream(memory_manager& memory, const sxs_stream& stream, std::vector<std::byte>& contents)
+        bool read_stream(windows_emulator& win_emu, const sxs_stream& stream, std::vector<std::byte>& contents)
         {
             constexpr uint64_t maximum_manifest_size = 16 * 1024 * 1024;
-            if (stream.size == 0 || stream.size > maximum_manifest_size || stream.address == 0)
+            if (stream.size == 0 || stream.size > maximum_manifest_size)
             {
                 return false;
             }
             contents.resize(static_cast<size_t>(stream.size));
-            return memory.try_read_memory(stream.address, contents.data(), contents.size());
+            if (stream.address != 0)
+            {
+                return win_emu.memory.try_read_memory(stream.address, contents.data(), contents.size());
+            }
+            auto* file = win_emu.process.files.get(stream.file_handle);
+            if (!file || !file->handle)
+            {
+                return false;
+            }
+            const auto position = file->handle.tell();
+            const auto restore = utils::finally([&] { file->handle.seek_to(position); });
+            return file->handle.seek_to(0) && fread(contents.data(), 1, contents.size(), file->handle) == contents.size();
         }
 
         bool read_string(const memory_manager& memory, const unicode_string& string, std::u16string& value)
@@ -78,18 +90,25 @@ namespace sogen::sxs
             return {STATUS_INVALID_PARAMETER, lpc_request_result::reply_in_place};
         }
 
-        const auto machine = data.processor_architecture == PROCESSOR_ARCHITECTURE_AMD64   ? IMAGE_FILE_MACHINE_AMD64
-                             : data.processor_architecture == PROCESSOR_ARCHITECTURE_INTEL ? IMAGE_FILE_MACHINE_I386
-                                                                                           : 0;
-        if (machine == 0)
+        uint16_t machine{};
+        switch (data.processor_architecture)
         {
+        case PROCESSOR_ARCHITECTURE_AMD64:
+            machine = IMAGE_FILE_MACHINE_AMD64;
+            break;
+        case PROCESSOR_ARCHITECTURE_INTEL:
+        case PROCESSOR_ARCHITECTURE_IA32_ON_WIN64:
+            machine = IMAGE_FILE_MACHINE_I386;
+            break;
+        default:
+            win_emu.log.warn("Unsupported activation context architecture: %u\n", data.processor_architecture);
             return {STATUS_NOT_SUPPORTED, lpc_request_result::reply_in_place};
         }
 
         std::vector<std::byte> manifest_contents{};
         std::vector<std::byte> policy_contents{};
-        if (!read_stream(win_emu.memory, data.manifest, manifest_contents) ||
-            (data.policy.size != 0 && !read_stream(win_emu.memory, data.policy, policy_contents)))
+        if (!read_stream(win_emu, data.manifest, manifest_contents) ||
+            (data.policy.size != 0 && !read_stream(win_emu, data.policy, policy_contents)))
         {
             return {STATUS_INVALID_PARAMETER, lpc_request_result::reply_in_place};
         }
@@ -125,8 +144,21 @@ namespace sogen::sxs
         {
             language.resize(separator);
         }
-        const auto blob = build_activation_context(win_emu.file_sys, executable, manifest, config,
-                                                   windows_path(win_emu.version.get_system_root()), u16_to_u8(language));
+        std::vector<std::byte> blob{};
+        try
+        {
+            blob = build_activation_context(win_emu.file_sys, executable, manifest, config, windows_path(win_emu.version.get_system_root()),
+                                            u16_to_u8(language));
+        }
+        catch (const std::runtime_error& error)
+        {
+            win_emu.log.warn("Unable to create activation context: %s\n", error.what());
+            return {STATUS_SXS_CANT_GEN_ACTCTX, lpc_request_result::reply_in_place};
+        }
+        catch (const std::bad_alloc&)
+        {
+            return {STATUS_NO_MEMORY, lpc_request_result::reply_in_place};
+        }
         const auto address = win_emu.memory.allocate_memory(static_cast<size_t>(page_align_up(blob.size())), memory_permission::read, false,
                                                             0, memory_region_kind::file_section_view);
         if (address == 0)

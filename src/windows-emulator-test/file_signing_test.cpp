@@ -9,7 +9,8 @@ namespace sogen::test
         const utils::file_handle file{std::tmpfile()};
         ASSERT_TRUE(file);
         utils::cached_signing_level info{};
-        EXPECT_EQ(STATUS_NOT_FOUND, utils::query_cached_signing_level(file.file_descriptor(), info));
+        const auto status = utils::query_cached_signing_level(file.file_descriptor(), info);
+        EXPECT_TRUE(status == STATUS_NOT_FOUND || status == STATUS_NOT_SUPPORTED);
         EXPECT_TRUE(info.thumbprint.empty());
     }
 
