@@ -71,6 +71,21 @@ namespace sogen::test
         EXPECT_EQ(guard, (emulator_object<uint8_t>{this->emu->memory, context.output_buffer + first.size()}.read()));
     }
 
+    TEST_F(CryptographyTest, NormalModeUsesFreshEntropyAcrossDeviceInstances)
+    {
+        ASSERT_FALSE(this->emu->uses_relative_time());
+        io_device_container first_device{u"CNG", *this->emu, {}};
+        io_device_container second_device{u"CNG", *this->emu, {}};
+        const auto context = this->request(8192);
+        std::array<uint8_t, 8192> first{};
+        std::array<uint8_t, 8192> second{};
+        ASSERT_EQ(STATUS_SUCCESS, first_device.execute_ioctl(*this->emu, context));
+        this->emu->memory.read_memory(context.output_buffer, first.data(), first.size());
+        ASSERT_EQ(STATUS_SUCCESS, second_device.execute_ioctl(*this->emu, context));
+        this->emu->memory.read_memory(context.output_buffer, second.data(), second.size());
+        EXPECT_NE(first, second);
+    }
+
     TEST_F(CryptographyTest, ReproducibleRandomSequenceSurvivesStateRestore)
     {
         this->initialize(true);

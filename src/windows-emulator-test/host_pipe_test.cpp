@@ -16,12 +16,21 @@ namespace sogen::test
 {
     namespace
     {
-        utils::pipe_io_result finish(utils::host_pipe_operation& operation)
+        utils::pipe_io_result finish(utils::host_pipe_operation& operation, utils::host_pipe_operation* concurrent_operation = nullptr)
         {
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
             auto result = operation.check_completion();
             while (result.status == utils::pipe_io_status::pending && std::chrono::steady_clock::now() < deadline)
             {
+                if (concurrent_operation)
+                {
+                    const auto concurrent_result = concurrent_operation->check_completion();
+                    if (concurrent_result.status != utils::pipe_io_status::pending &&
+                        concurrent_result.status != utils::pipe_io_status::success)
+                    {
+                        return concurrent_result;
+                    }
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 result = operation.check_completion();
             }
@@ -206,12 +215,28 @@ namespace sogen::test
             const auto progress = write->check_completion();
             ASSERT_TRUE(progress.status == utils::pipe_io_status::pending || progress.status == utils::pipe_io_status::success);
             auto read = large_reader->read(16381);
-            ASSERT_EQ(finish(*read).status, utils::pipe_io_status::success);
+            ASSERT_EQ(finish(*read, write.get()).status, utils::pipe_io_status::success);
             ASSERT_FALSE(read->data().empty());
             output.append(read->data());
         }
         EXPECT_EQ(finish(*write).status, utils::pipe_io_status::success);
         EXPECT_EQ(output, input);
+    }
+
+    TEST_P(HostPipeTest, PartialWritesContinueAfterTheReaderDrainsTheQuota)
+    {
+        auto write = this->writer->write("abcdefgh");
+        ASSERT_EQ(progress(*write, 4).transferred, 4u);
+        auto first = this->reader->read(4);
+        ASSERT_EQ(finish(*first).status, utils::pipe_io_status::success);
+        EXPECT_EQ(first->data(), "abcd");
+
+        auto remaining = this->reader->read(4);
+        ASSERT_EQ(remaining->check_completion().status, utils::pipe_io_status::pending);
+        ASSERT_EQ(finish(*remaining, write.get()).status, utils::pipe_io_status::success);
+        EXPECT_EQ(remaining->data(), "efgh");
+        ASSERT_EQ(finish(*write).status, utils::pipe_io_status::success);
+        EXPECT_EQ(write->check_completion().transferred, 8u);
     }
 
     TEST_P(HostPipeTest, CancellingPartialWriteRetainsOnlyAlreadyTransferredBytes)

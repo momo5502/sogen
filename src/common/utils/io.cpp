@@ -1,5 +1,4 @@
 #include "io.hpp"
-#include <platform/platform.hpp>
 #include <fstream>
 #include <sstream>
 #include <utility>
@@ -10,34 +9,6 @@ namespace sogen
 
     namespace utils::io
     {
-        std::vector<uint8_t> get_file_owner(const std::filesystem::path& file)
-        {
-#ifdef OS_WINDOWS
-            DWORD size{};
-            if (GetFileSecurityW(file.c_str(), OWNER_SECURITY_INFORMATION, nullptr, 0, &size) ||
-                GetLastError() != ERROR_INSUFFICIENT_BUFFER)
-            {
-                return {};
-            }
-            std::vector<uint8_t> descriptor(size);
-            if (!GetFileSecurityW(file.c_str(), OWNER_SECURITY_INFORMATION, descriptor.data(), size, &size))
-            {
-                return {};
-            }
-            PSID owner{};
-            BOOL defaulted{};
-            if (!GetSecurityDescriptorOwner(descriptor.data(), &owner, &defaulted) || !owner || !IsValidSid(owner))
-            {
-                return {};
-            }
-            const auto* bytes = static_cast<const uint8_t*>(owner);
-            return {bytes, bytes + GetLengthSid(owner)};
-#else
-            (void)file;
-            return {};
-#endif
-        }
-
         bool remove_file(const std::filesystem::path& file)
         {
             std::error_code ec{};

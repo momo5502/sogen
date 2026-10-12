@@ -27,7 +27,9 @@ namespace sogen
         {
             constexpr size_t header_size = 13 * sizeof(uint16_t);
             constexpr size_t unicode_table_size = 0x10000;
-            if (data.size() < header_size || read_word(data, 4) != 1)
+            constexpr size_t maximum_character_size_offset = 2 * sizeof(uint16_t);
+            constexpr uint16_t single_byte_character_size = 1;
+            if (data.size() < header_size || read_word(data, maximum_character_size_offset) != single_byte_character_size)
             {
                 return std::nullopt;
             }
@@ -99,6 +101,7 @@ namespace sogen
         const auto oem_page = get_code_page(win_emu.registry, "OEMCP", 437);
         if (!ansi_page || !oem_page)
         {
+            win_emu.log.warn("Cannot initialize ANSI/OEM character tables: invalid code-page configuration\n");
             return;
         }
 
@@ -108,6 +111,9 @@ namespace sogen
         const auto tables = build_ansi_oem_tables(ansi, oem);
         if (!tables)
         {
+            win_emu.log.warn(
+                "Cannot initialize ANSI/OEM character tables for code pages %u/%u: missing, invalid or unsupported NLS files\n", *ansi_page,
+                *oem_page);
             return;
         }
 
