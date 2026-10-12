@@ -64,15 +64,15 @@ namespace sogen::mock
             return true;
         }
 
-        void write_memory_impl(uint64_t address, const void* data, size_t size) override
+        void write_memory(uint64_t address, const void* data, size_t size) override
         {
-            if (!this->try_write_memory_impl(address, data, size))
+            if (!this->try_write_memory(address, data, size))
             {
                 throw std::runtime_error("mock: write to unmapped guest memory");
             }
         }
 
-        bool try_write_memory_impl(uint64_t address, const void* data, size_t size) override
+        bool try_write_memory(uint64_t address, const void* data, size_t size) override
         {
             const region* r = nullptr;
             size_t off = 0;

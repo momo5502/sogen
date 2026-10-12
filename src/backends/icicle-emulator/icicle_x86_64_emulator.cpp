@@ -304,14 +304,14 @@ namespace sogen::icicle
             ice(res, "Failed to read memory");
         }
 
-        bool try_write_memory_impl(const uint64_t address, const void* data, const size_t size) override
+        bool try_write_memory(const uint64_t address, const void* data, const size_t size) override
         {
             return icicle_write_memory(this->emu_, address, data, size);
         }
 
-        void write_memory_impl(const uint64_t address, const void* data, const size_t size) override
+        void write_memory(const uint64_t address, const void* data, const size_t size) override
         {
-            const auto res = this->try_write_memory_impl(address, data, size);
+            const auto res = try_write_memory(address, data, size);
             ice(res, "Failed to write memory");
         }
 

@@ -1,5 +1,4 @@
 #include "../std_include.hpp"
-#include <utils/file_signing.hpp>
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
@@ -664,9 +663,9 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtCompareSigningLevels(const syscall_context&, const UCHAR current_level, const UCHAR required_level)
+        NTSTATUS handle_NtCompareSigningLevels(const syscall_context&, UCHAR, UCHAR)
         {
-            return utils::compare_signing_levels(current_level, required_level);
+            return STATUS_NOT_SUPPORTED;
         }
 
         NTSTATUS handle_NtAdjustPrivilegesToken()
