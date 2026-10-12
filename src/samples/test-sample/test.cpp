@@ -2251,7 +2251,7 @@ namespace
             }
 
             // Backing memory must stay alive for view2
-            UnmapViewOfFile(view1);
+            UnmapViewOfFile(view1 + VIEW_SZ / 2);
 
             // Ensure view2 successfully survives view1 unmapping
             memset(view2, 0xa5, 64);
@@ -2268,7 +2268,7 @@ namespace
             memset(view1, 0x5a, 64);
 
             // Unmap view1 while handle remains wide open
-            if (!UnmapViewOfFile(view1))
+            if (!UnmapViewOfFile(view1 + VIEW_SZ / 2))
             {
                 printf("UnmapViewOfFile (view1) failed: %lu\n", GetLastError());
                 return false;

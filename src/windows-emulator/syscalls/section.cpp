@@ -700,7 +700,10 @@ namespace sogen
                 if (region_info.kind == memory_region_kind::pagefile_section_view)
                 {
                     // remove the view from memory
-                    c.proc.views.erase(base_address);
+                    if (!c.proc.views.erase(base_address))
+                    {
+                        return STATUS_NOT_MAPPED_VIEW;
+                    }
 
                     const auto address = region_info.allocation_base;
                     if (is_backing_alive(c.proc.sections, address) || is_backing_alive(c.proc.views, address))
