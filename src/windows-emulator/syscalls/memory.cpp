@@ -432,6 +432,10 @@ namespace sogen
                                                   const emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters,
                                                   const ULONG extended_parameter_count)
         {
+            if (allocation_type & MEM_WRITE_WATCH)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
             auto allocation_bytes = bytes_to_allocate.read();
 
             if (allocation_bytes == 0)
@@ -441,12 +445,6 @@ namespace sogen
 
             const auto requested_base = base_address.read();
             const auto requested_allocation_bytes = allocation_bytes;
-
-            if ((allocation_type & MEM_WRITE_WATCH) &&
-                (!(allocation_type & MEM_RESERVE) || (allocation_type & (MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER))))
-            {
-                return STATUS_INVALID_PARAMETER;
-            }
 
             allocation_bytes = page_align_up(allocation_bytes);
             bytes_to_allocate.write(allocation_bytes);
@@ -467,13 +465,13 @@ namespace sogen
             {
                 const auto* process = get_managed_process(c, process_handle);
                 auto* manager = c.win_emu.processes();
-                if (!process || !manager || extended_parameter_count != 0 || (allocation_type & MEM_WRITE_WATCH))
+                if (!process || !manager || extended_parameter_count != 0)
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
                 const bool reserve = allocation_type & MEM_RESERVE;
                 const bool commit = allocation_type & MEM_COMMIT;
-                if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN | MEM_WRITE_WATCH)) || (!commit && !reserve))
+                if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN)) || (!commit && !reserve))
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -603,8 +601,7 @@ namespace sogen
 
             const bool placeholder = allocation_type & MEM_RESERVE_PLACEHOLDER;
             const bool replace_placeholder = allocation_type & MEM_REPLACE_PLACEHOLDER;
-            if ((allocation_type &
-                 ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN | MEM_WRITE_WATCH | MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER)) ||
+            if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN | MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER)) ||
                 (!commit && !reserve) || (placeholder && (commit || replace_placeholder || !reserve || page_protection != PAGE_NOACCESS)))
             {
                 return STATUS_INVALID_PARAMETER;
@@ -636,10 +633,6 @@ namespace sogen
             if (!c.win_emu.memory.allocate_memory(potential_base, static_cast<size_t>(allocation_bytes), *protection, !commit, kind))
             {
                 return STATUS_MEMORY_NOT_ALLOCATED;
-            }
-            if (allocation_type & MEM_WRITE_WATCH)
-            {
-                c.win_emu.memory.enable_write_watch(potential_base);
             }
             return STATUS_SUCCESS;
         }
@@ -934,69 +927,15 @@ namespace sogen
             return bytes_written == 0 ? STATUS_INVALID_ADDRESS : STATUS_PARTIAL_COPY;
         }
 
-        NTSTATUS handle_NtGetWriteWatch(const syscall_context& c, const handle process_handle, const ULONG flags,
-                                        const uint64_t base_address, const uint64_t region_size, const uint64_t addresses,
-                                        const emulator_object<uint64_t> count, const emulator_object<ULONG> granularity)
+        NTSTATUS handle_NtGetWriteWatch(const syscall_context&, handle, ULONG, uint64_t, uint64_t, uint64_t, emulator_object<uint64_t>,
+                                        emulator_object<ULONG>)
         {
-            if (!c.proc.is_current_process_handle(process_handle))
-            {
-                return STATUS_NOT_SUPPORTED;
-            }
-            if (flags & ~WRITE_WATCH_FLAG_RESET)
-            {
-                return STATUS_INVALID_PARAMETER_2;
-            }
-            if (region_size == 0 || region_size > std::numeric_limits<size_t>::max())
-            {
-                return STATUS_INVALID_PARAMETER_4;
-            }
-            uint64_t capacity{};
-            if (!c.emu.try_read_memory(count.value(), &capacity, sizeof(capacity)))
-            {
-                return STATUS_ACCESS_VIOLATION;
-            }
-            if (capacity == 0)
-            {
-                return STATUS_INVALID_PARAMETER_5;
-            }
-            std::vector<uint64_t> pages{};
-            if (!c.win_emu.memory.query_write_watch(base_address, static_cast<size_t>(region_size),
-                                                    static_cast<size_t>(std::min<uint64_t>(capacity, std::numeric_limits<size_t>::max())),
-                                                    false, pages))
-            {
-                return STATUS_INVALID_PARAMETER_1;
-            }
-            const auto page_count = static_cast<uint64_t>(pages.size());
-            constexpr ULONG page_size = 0x1000;
-            if ((!pages.empty() && !c.emu.try_write_memory(addresses, pages.data(), pages.size() * sizeof(uint64_t))) ||
-                !c.emu.try_write_memory(count.value(), &page_count, sizeof(page_count)) ||
-                !c.emu.try_write_memory(granularity.value(), &page_size, sizeof(page_size)))
-            {
-                return STATUS_ACCESS_VIOLATION;
-            }
-            if (flags & WRITE_WATCH_FLAG_RESET)
-            {
-                for (const auto page : pages)
-                {
-                    c.win_emu.memory.reset_write_watch(page, page_size);
-                }
-            }
-            return STATUS_SUCCESS;
+            return STATUS_NOT_SUPPORTED;
         }
 
-        NTSTATUS handle_NtResetWriteWatch(const syscall_context& c, const handle process_handle, const uint64_t base_address,
-                                          const uint64_t region_size)
+        NTSTATUS handle_NtResetWriteWatch(const syscall_context&, handle, uint64_t, uint64_t)
         {
-            if (!c.proc.is_current_process_handle(process_handle))
-            {
-                return STATUS_NOT_SUPPORTED;
-            }
-            if (region_size == 0 || region_size > std::numeric_limits<size_t>::max())
-            {
-                return STATUS_INVALID_PARAMETER_3;
-            }
-            return c.win_emu.memory.reset_write_watch(base_address, static_cast<size_t>(region_size)) ? STATUS_SUCCESS
-                                                                                                      : STATUS_INVALID_PARAMETER_1;
+            return STATUS_NOT_SUPPORTED;
         }
 
         NTSTATUS handle_NtSetInformationVirtualMemory()

@@ -66,11 +66,11 @@ namespace sogen::test
             return true;
         }
 
-        void write_memory_impl(uint64_t, const void*, size_t) override
+        void write_memory(uint64_t, const void*, size_t) override
         {
         }
 
-        bool try_write_memory_impl(uint64_t, const void*, size_t) override
+        bool try_write_memory(uint64_t, const void*, size_t) override
         {
             return false;
         }

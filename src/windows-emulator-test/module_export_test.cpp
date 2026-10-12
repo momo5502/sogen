@@ -44,15 +44,15 @@ namespace sogen::test
                 return true;
             }
 
-            void write_memory_impl(const uint64_t address, const void* data, const size_t size) override
+            void write_memory(const uint64_t address, const void* data, const size_t size) override
             {
-                if (!this->try_write_memory_impl(address, data, size))
+                if (!this->try_write_memory(address, data, size))
                 {
                     throw std::runtime_error{"unmapped guest write"};
                 }
             }
 
-            bool try_write_memory_impl(const uint64_t address, const void* data, const size_t size) override
+            bool try_write_memory(const uint64_t address, const void* data, const size_t size) override
             {
                 const auto* source = static_cast<const std::byte*>(data);
 

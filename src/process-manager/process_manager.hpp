@@ -13,7 +13,6 @@
 
 namespace sogen
 {
-    // PID 4 is Windows' System process; runtimes refuse user-process operations on it.
     inline constexpr uint32_t default_guest_process_id = 0x1000;
 
     namespace utils

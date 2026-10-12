@@ -129,6 +129,7 @@ namespace sogen
                                                 emulator_object<UCHAR> signing_level, uint64_t thumbprint,
                                                 emulator_object<ULONG> thumbprint_size, emulator_object<ULONG> thumbprint_algorithm);
         NTSTATUS handle_NtCompareSigningLevels(const syscall_context& c, UCHAR current_level, UCHAR required_level);
+        NTSTATUS handle_NtSetCachedSigningLevel();
 
         // syscalls/locale.cpp:
         NTSTATUS handle_NtInitializeNlsFiles(const syscall_context& c, emulator_object<uint64_t> base_address,
@@ -1763,6 +1764,7 @@ namespace sogen
         add_handler(NtQueryFullAttributesFile);
         add_handler(NtFlushBuffersFile);
         add_handler(NtGetCachedSigningLevel);
+        add_handler(NtSetCachedSigningLevel);
         add_handler(NtCompareSigningLevels);
         add_handler(NtAreMappedFilesTheSame);
         add_handler(NtUserGetProcessWindowStation);

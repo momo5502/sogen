@@ -112,11 +112,11 @@ namespace sogen::test
         expected_message.write(std::u16string{u"powershell-event-ok"});
         const auto& message_bytes = expected_message.get_buffer();
         const auto& snapshot = state.get_buffer();
-        EXPECT_NE(snapshot.end(), std::search(snapshot.begin(), snapshot.end(), message_bytes.begin(), message_bytes.end()));
+        EXPECT_FALSE(std::ranges::search(snapshot, message_bytes).empty());
         utils::buffer_serializer expected_data;
         expected_data.write_vector(std::vector<uint8_t>{0xde, 0xad, 0xfe});
         const auto& event_data = expected_data.get_buffer();
-        EXPECT_NE(snapshot.end(), std::search(snapshot.begin(), snapshot.end(), event_data.begin(), event_data.end()));
+        EXPECT_FALSE(std::ranges::search(snapshot, event_data).empty());
         utils::buffer_deserializer reader{state};
         this->endpoint->deserialize(reader);
         result = this->call(4, context);
