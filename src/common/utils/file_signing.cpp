@@ -1,6 +1,5 @@
 #include "file_signing.hpp"
 #include <array>
-#include <bit>
 
 #ifdef OS_WINDOWS
 #include <windows.h>
@@ -9,11 +8,22 @@
 
 namespace sogen::utils
 {
+#ifdef OS_WINDOWS
+    namespace
+    {
+        template <typename Function>
+        Function resolve_nt_function(const char* name)
+        {
+            return reinterpret_cast<Function>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), name)));
+        }
+    }
+#endif
+
     NTSTATUS compare_signing_levels(const UCHAR current_level, const UCHAR required_level)
     {
 #ifdef OS_WINDOWS
         using compare_type = LONG(NTAPI*)(UCHAR, UCHAR);
-        static const auto compare = std::bit_cast<compare_type>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtCompareSigningLevels"));
+        static const auto compare = resolve_nt_function<compare_type>("NtCompareSigningLevels");
         if (compare != nullptr)
         {
             return compare(current_level, required_level);
@@ -31,7 +41,7 @@ namespace sogen::utils
     {
 #ifdef OS_WINDOWS
         using query_type = LONG(NTAPI*)(HANDLE, ULONG*, UCHAR*, UCHAR*, ULONG*, ULONG*);
-        static const auto query = std::bit_cast<query_type>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtGetCachedSigningLevel"));
+        static const auto query = resolve_nt_function<query_type>("NtGetCachedSigningLevel");
         if (query == nullptr)
         {
             return STATUS_NOT_SUPPORTED;
