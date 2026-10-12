@@ -11,6 +11,12 @@ namespace sogen::syscalls
                                             emulator_object<ALPC_DATA_VIEW_ATTR<EmulatorTraits<Emu64>>> view_attributes);
     NTSTATUS handle_NtAlpcDeleteSectionView(const syscall_context& c, handle port_handle, ULONG flags, uint64_t view_base);
     NTSTATUS handle_NtClose(const syscall_context& c, handle handle);
+    NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, handle port_handle, ULONG flags,
+                                              emulator_object<PORT_MESSAGE64> send_message,
+                                              emulator_object<ALPC_MESSAGE_ATTRIBUTES> send_message_attributes,
+                                              emulator_object<PORT_MESSAGE64> receive_message, emulator_object<uint64_t> buffer_length,
+                                              emulator_object<ALPC_MESSAGE_ATTRIBUTES> receive_message_attributes,
+                                              emulator_object<LARGE_INTEGER> timeout);
 }
 
 namespace sogen::test
@@ -36,8 +42,7 @@ namespace sogen::test
             NTSTATUS create_section(uint64_t size, ULONG flags = 0)
             {
                 return syscalls::handle_NtAlpcCreatePortSection(this->context(), this->port_handle, flags, {}, size,
-                                                                {this->emu->memory, this->storage},
-                                                                {this->emu->memory, this->storage + 8});
+                                                                {this->emu->memory, this->storage}, {this->emu->memory, this->storage + 8});
             }
 
             handle section_handle() const
@@ -65,6 +70,27 @@ namespace sogen::test
             }
 
             handle port_handle{};
+
+            template <typename Traits>
+            NTSTATUS send_view(const ALPC_DATA_VIEW_ATTR<Traits>& view, ULONG allocated = ALPC_MESSAGE_VIEW_ATTRIBUTE,
+                               ULONG valid = ALPC_MESSAGE_VIEW_ATTRIBUTE)
+            {
+                emulator_object<ALPC_MESSAGE_ATTRIBUTES>{this->emu->memory, this->storage + 0x200}.write({allocated, valid});
+                const auto offset =
+                    sizeof(ALPC_MESSAGE_ATTRIBUTES) +
+                    ((allocated & ALPC_MESSAGE_SECURITY_ATTRIBUTE) != 0 ? (sizeof(typename Traits::PVOID) == 4 ? 12 : 32) : 0);
+                emulator_object<ALPC_DATA_VIEW_ATTR<Traits>>{this->emu->memory, this->storage + 0x200 + offset}.write(view);
+                PORT_MESSAGE64 message{};
+                message.u1.s1.DataLength = 8;
+                message.u1.s1.TotalLength = sizeof(message) + 8;
+                emulator_object<PORT_MESSAGE64>{this->emu->memory, this->storage + 0x400}.write(message);
+                this->emu->memory.set_memory(this->storage + 0x400 + sizeof(message), 0, 8);
+                emulator_object<uint64_t>{this->emu->memory, this->storage + 0x300}.write(0x100);
+                return syscalls::handle_NtAlpcSendWaitReceivePort(
+                    this->context(), this->port_handle, 0, {this->emu->memory, this->storage + 0x400},
+                    {this->emu->memory, this->storage + 0x200}, {this->emu->memory, this->storage + 0x800},
+                    {this->emu->memory, this->storage + 0x300}, {this->emu->memory}, {this->emu->memory});
+            }
         };
     }
 
@@ -121,15 +147,13 @@ namespace sogen::test
         view_attributes view{}, extra{};
         ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, view));
         this->emu->memory.write_memory(view.ViewBase, uint32_t{123});
-        ASSERT_EQ(STATUS_SUCCESS,
-                  syscalls::handle_NtAlpcDeletePortSection(this->context(), this->port_handle, 0, section));
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtAlpcDeletePortSection(this->context(), this->port_handle, 0, section));
         EXPECT_EQ(123u, this->emu->memory.read_memory<uint32_t>(view.ViewBase));
         EXPECT_EQ(STATUS_INVALID_HANDLE, this->create_view(1, extra));
-        EXPECT_EQ(STATUS_INVALID_HANDLE,
-                  syscalls::handle_NtAlpcDeletePortSection(this->context(), this->port_handle, 0, section));
+        EXPECT_EQ(STATUS_INVALID_HANDLE, syscalls::handle_NtAlpcDeletePortSection(this->context(), this->port_handle, 0, section));
         ASSERT_EQ(STATUS_SUCCESS, this->delete_view(view.ViewBase));
         EXPECT_TRUE(this->inner_port()->sections.empty());
-        EXPECT_EQ(STATUS_INVALID_HANDLE, this->delete_view(view.ViewBase));
+        EXPECT_EQ(STATUS_INVALID_ADDRESS, this->delete_view(view.ViewBase));
     }
 
     TEST_F(AlpcSectionTest, RejectsInvalidInputsWithoutAllocatingViewsOrSections)
@@ -138,21 +162,19 @@ namespace sogen::test
         EXPECT_EQ(STATUS_INVALID_PARAMETER, this->create_section(std::numeric_limits<uint64_t>::max()));
         EXPECT_EQ(STATUS_INVALID_PARAMETER, this->create_section(1, 1));
         EXPECT_TRUE(this->inner_port()->sections.empty());
-        EXPECT_EQ(STATUS_ACCESS_VIOLATION,
-                  syscalls::handle_NtAlpcCreatePortSection(this->context(), this->port_handle, 0, {}, 1, {}, {}));
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, syscalls::handle_NtAlpcCreatePortSection(this->context(), this->port_handle, 0, {}, 1,
+                                                                                    {this->emu->memory}, {this->emu->memory}));
         ASSERT_EQ(STATUS_SUCCESS, this->create_section(1));
         view_attributes view{};
         EXPECT_EQ(STATUS_INVALID_PARAMETER, this->create_view(0, view));
         EXPECT_EQ(STATUS_INSUFFICIENT_RESOURCES, this->create_view(0x10001, view));
         EXPECT_EQ(STATUS_ACCESS_VIOLATION,
-                  syscalls::handle_NtAlpcCreateSectionView(this->context(), this->port_handle, 0, {}));
+                  syscalls::handle_NtAlpcCreateSectionView(this->context(), this->port_handle, 0, {this->emu->memory}));
         emulator_object<view_attributes> output{this->emu->memory, this->storage + 0x100};
         output.write({.Flags = 0x40000, .SectionHandle = this->section_handle().bits, .ViewSize = 1});
-        EXPECT_EQ(STATUS_INVALID_PARAMETER,
-                  syscalls::handle_NtAlpcCreateSectionView(this->context(), this->port_handle, 0, output));
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, syscalls::handle_NtAlpcCreateSectionView(this->context(), this->port_handle, 0, output));
         output.write({.SectionHandle = this->section_handle().bits, .ViewBase = 0x123450000, .ViewSize = 1});
-        EXPECT_EQ(STATUS_INVALID_PARAMETER,
-                  syscalls::handle_NtAlpcCreateSectionView(this->context(), this->port_handle, 0, output));
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, syscalls::handle_NtAlpcCreateSectionView(this->context(), this->port_handle, 0, output));
         EXPECT_TRUE(this->inner_port()->sections.begin()->second.views.empty());
     }
 
@@ -186,5 +208,45 @@ namespace sogen::test
         EXPECT_NE(second.ViewBase, replacement.ViewBase);
         EXPECT_EQ(STATUS_SUCCESS, this->delete_view(second.ViewBase));
         EXPECT_EQ(STATUS_SUCCESS, this->delete_view(replacement.ViewBase));
+    }
+
+    TEST_F(AlpcSectionTest, SendValidatesViewOwnershipBoundsAndAttributeMasks)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->create_section(0x10000));
+        view_attributes view{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, view));
+        view.Flags = 0x40000;
+        EXPECT_EQ(STATUS_SUCCESS, this->send_view(view));
+        EXPECT_EQ(STATUS_SUCCESS, this->send_view(view, ALPC_MESSAGE_VIEW_ATTRIBUTE | ALPC_MESSAGE_SECURITY_ATTRIBUTE));
+        auto invalid = view;
+        ++invalid.SectionHandle;
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->send_view(invalid));
+        invalid = view;
+        ++invalid.ViewBase;
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->send_view(invalid));
+        invalid = view;
+        ++invalid.ViewSize;
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->send_view(invalid));
+        invalid = view;
+        invalid.Flags = 1;
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->send_view(invalid));
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->send_view(view, 0));
+        EXPECT_EQ(STATUS_SUCCESS, this->send_view(invalid, ALPC_MESSAGE_VIEW_ATTRIBUTE, 0));
+        ASSERT_EQ(STATUS_SUCCESS, this->delete_view(view.ViewBase));
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->send_view(view));
+    }
+
+    TEST_F(AlpcSectionTest, SendReadsWow64ViewAttributesAtWow64SecurityOffset)
+    {
+        this->emu->process.is_wow64_process = true;
+        ASSERT_EQ(STATUS_SUCCESS, this->create_section(0x10000));
+        view_attributes view{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, view));
+        const ALPC_DATA_VIEW_ATTR<EmulatorTraits<Emu32>> narrow{.Flags = 0x40000,
+                                                                .SectionHandle = static_cast<uint32_t>(view.SectionHandle),
+                                                                .ViewBase = static_cast<uint32_t>(view.ViewBase),
+                                                                .ViewSize = static_cast<uint32_t>(view.ViewSize)};
+        EXPECT_EQ(STATUS_SUCCESS, this->send_view(narrow));
+        EXPECT_EQ(STATUS_SUCCESS, this->send_view(narrow, ALPC_MESSAGE_VIEW_ATTRIBUTE | ALPC_MESSAGE_SECURITY_ATTRIBUTE));
     }
 }

@@ -159,6 +159,8 @@ namespace sogen
         emulator_object<PORT_MESSAGE64> receive_message;
         EmulatorTraits<Emu64>::SIZE_T receive_buffer_length{};
         uint64_t send_handle{}; // handle delivered by a client->server ALPC HANDLE attribute (0 = none)
+        uint64_t send_view_base{};
+        uint64_t send_view_size{};
 
         lpc_message_context(memory_interface& emu)
             : send_message(emu),
@@ -176,6 +178,9 @@ namespace sogen
             buffer.write(send_message);
             buffer.write(receive_message);
             buffer.write(receive_buffer_length);
+            buffer.write(send_handle);
+            buffer.write(send_view_base);
+            buffer.write(send_view_size);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -183,6 +188,9 @@ namespace sogen
             buffer.read(send_message);
             buffer.read(receive_message);
             buffer.read(receive_buffer_length);
+            buffer.read(send_handle);
+            buffer.read(send_view_base);
+            buffer.read(send_view_size);
         }
     };
 
@@ -193,6 +201,8 @@ namespace sogen
         emulator_pointer recv_buffer{};
         ULONG recv_buffer_length{};
         uint64_t send_handle{}; // handle delivered by a client->server ALPC HANDLE attribute (0 = none)
+        uint64_t send_view_base{};
+        uint64_t send_view_size{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
@@ -201,6 +211,8 @@ namespace sogen
             buffer.write(recv_buffer);
             buffer.write(recv_buffer_length);
             buffer.write(send_handle);
+            buffer.write(send_view_base);
+            buffer.write(send_view_size);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -210,6 +222,8 @@ namespace sogen
             buffer.read(recv_buffer);
             buffer.read(recv_buffer_length);
             buffer.read(send_handle);
+            buffer.read(send_view_base);
+            buffer.read(send_view_size);
         }
     };
 
@@ -462,6 +476,7 @@ namespace sogen
         NTSTATUS create_section_view(windows_emulator& win_emu, uint64_t section_handle, uint64_t requested_size, uint64_t& result_base,
                                      uint64_t& actual_size);
         NTSTATUS delete_section_view(windows_emulator& win_emu, uint64_t address);
+        bool owns_section_view(uint64_t section_handle, uint64_t address, uint64_t size) const;
         void release_sections(windows_emulator& win_emu);
 
         virtual lpc_message_result handle_message(windows_emulator& win_emu, const lpc_message_context& c);

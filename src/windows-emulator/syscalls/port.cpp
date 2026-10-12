@@ -483,7 +483,12 @@ namespace sogen
                 return 0;
             }
 
-            const auto attr_base = find_handle_attribute(c, attributes, attributes.read().AllocatedAttributes);
+            const auto header = attributes.read();
+            if ((header.ValidAttributes & ALPC_MESSAGE_HANDLE_ATTRIBUTE) == 0)
+            {
+                return 0;
+            }
+            const auto attr_base = find_handle_attribute(c, attributes, header.AllocatedAttributes);
             if (!attr_base)
             {
                 return 0;
@@ -491,6 +496,50 @@ namespace sogen
 
             return c.proc.is_wow64_process ? handle_attribute_at<EmulatorTraits<Emu32>>(c, *attr_base).read().Handle
                                            : handle_attribute_at<EmulatorTraits<Emu64>>(c, *attr_base).read().Handle;
+        }
+
+        NTSTATUS read_send_view_attribute(const syscall_context& c, const port& destination,
+                                          const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes, lpc_message_context& context)
+        {
+            if (!attributes)
+            {
+                return STATUS_SUCCESS;
+            }
+            const auto header = attributes.try_read();
+            if (!header)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+            if ((header->ValidAttributes & ~header->AllocatedAttributes) != 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            if ((header->ValidAttributes & ALPC_MESSAGE_VIEW_ATTRIBUTE) == 0)
+            {
+                return STATUS_SUCCESS;
+            }
+            const auto address = find_view_attribute(c, attributes, header->AllocatedAttributes);
+            if (!address)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            const auto read_attribute = [&]<typename Traits>() -> NTSTATUS {
+                const auto view = view_attribute_at<Traits>(c, *address).try_read();
+                if (!view)
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+                if ((view->Flags & ~ULONG{0x40000}) != 0 ||
+                    !destination.owns_section_view(view->SectionHandle, view->ViewBase, view->ViewSize))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                context.send_view_base = view->ViewBase;
+                context.send_view_size = view->ViewSize;
+                return STATUS_SUCCESS;
+            };
+            return c.proc.is_wow64_process ? read_attribute.template operator()<EmulatorTraits<Emu32>>()
+                                           : read_attribute.template operator()<EmulatorTraits<Emu64>>();
         }
 
         NTSTATUS handle_NtAlpcSendWaitReceivePort(const syscall_context& c, const handle port_handle, const ULONG /*flags*/,
@@ -521,6 +570,14 @@ namespace sogen
             context.send_message = send_message;
             context.receive_message = receive_message;
             context.receive_buffer_length = buffer_length ? buffer_length.read() : 0;
+            if (send_message)
+            {
+                const auto status = read_send_view_attribute(c, *port->get_internal_port(), send_message_attributes, context);
+                if (!NT_SUCCESS(status))
+                {
+                    return status;
+                }
+            }
             context.send_handle = read_send_handle_attribute(c, send_message_attributes);
 
             auto result = port->handle_message(c.win_emu, context);

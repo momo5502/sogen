@@ -227,7 +227,18 @@ namespace sogen
             }
             return STATUS_SUCCESS;
         }
-        return STATUS_INVALID_HANDLE;
+        return STATUS_INVALID_ADDRESS;
+    }
+
+    bool port::owns_section_view(const uint64_t section_handle, const uint64_t address, const uint64_t size) const
+    {
+        const auto section = this->sections.find(section_handle);
+        if (section == this->sections.end() || section->second.closed || size == 0)
+        {
+            return false;
+        }
+        return std::ranges::any_of(section->second.views,
+                                   [&](const auto& entry) { return entry.second.base == address && size <= entry.second.size; });
     }
 
     void port::release_sections(windows_emulator& win_emu)
@@ -410,6 +421,8 @@ namespace sogen
         context.recv_buffer_length =
             c.receive_buffer_length >= header_size ? static_cast<ULONG>(c.receive_buffer_length - header_size) : data_length;
         context.send_handle = c.send_handle;
+        context.send_view_base = c.send_view_base;
+        context.send_view_size = c.send_view_size;
 
         auto request_result = this->handle_request(win_emu, context);
         const auto payload_size = request_result.payload ? static_cast<ULONG>(request_result.payload->size()) : context.recv_buffer_length;
@@ -539,6 +552,23 @@ namespace sogen
         lpc_request_context rpc_context{};
         rpc_context.send_buffer = c.send_buffer + rpc_call_send_header_size;
         rpc_context.send_buffer_length = c.send_buffer_length - rpc_call_send_header_size;
+        const auto call_flags = win_emu.emu().read_memory<uint32_t>(c.send_buffer + 8);
+        if ((call_flags & 4) != 0)
+        {
+            constexpr ULONG rpc_call_view_header_size = rpc_call_send_header_size + sizeof(uint64_t);
+            if (c.send_buffer_length < rpc_call_view_header_size || c.send_view_base == 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            const auto view_length = win_emu.emu().read_memory<uint32_t>(c.send_buffer + rpc_call_send_header_size);
+            if (view_length > c.send_view_size)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            rpc_context.send_buffer = c.send_view_base;
+            rpc_context.send_buffer_length = view_length;
+        }
+        rpc_context.send_handle = c.send_handle;
         rpc_context.recv_buffer = c.recv_buffer + rpc_call_immediate_response_header_size;
         if (c.recv_buffer_length >= rpc_call_immediate_response_header_size)
         {
