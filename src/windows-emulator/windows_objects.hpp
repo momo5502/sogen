@@ -860,15 +860,18 @@ namespace sogen
     struct view /* : public ref_counted_object ? */
     {
         uint64_t backing_address{};
+        uint64_t size{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->backing_address);
+            buffer.write(this->size);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
         {
             buffer.read(this->backing_address);
+            buffer.read(this->size);
         }
     };
 

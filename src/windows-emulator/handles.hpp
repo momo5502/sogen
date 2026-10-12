@@ -663,13 +663,18 @@ namespace sogen
                 throw std::runtime_error("Mutation of view store is blocked!");
             }
 
-            const auto it = this->store_.find(address);
-            if (it == this->store_.end())
+            for (auto it = this->store_.begin(); it != this->store_.end(); ++it)
             {
-                return false;
+                const auto view_base = it->first;
+                const auto view_size = it->second.size;
+
+                if (address >= view_base && address < (view_base + view_size))
+                {
+                    this->store_.erase(it);
+                    return true;
+                }
             }
 
-            this->store_.erase(it);
             return true;
         }
 
