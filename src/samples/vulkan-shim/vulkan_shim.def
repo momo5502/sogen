@@ -12,7 +12,9 @@ EXPORTS
     vkAllocateMemory
     vkBeginCommandBuffer
     vkBindBufferMemory
+    vkBindBufferMemory2
     vkBindImageMemory
+    vkBindImageMemory2
     vkCmdBeginRenderPass
     vkCmdBeginTransformFeedbackEXT
     vkCmdBeginRendering
@@ -34,6 +36,7 @@ EXPORTS
     vkCmdBeginQuery
     vkCmdBeginQueryIndexedEXT
     vkCmdCopyBuffer
+    vkCmdCopyBuffer2
     vkCmdCopyQueryPoolResults
     vkCmdCopyBufferToImage
     vkCmdCopyBufferToImage2
@@ -58,7 +61,13 @@ EXPORTS
     vkCmdEndQuery
     vkCmdEndQueryIndexedEXT
     vkCmdEndTransformFeedbackEXT
+    vkCmdResetEvent
+    vkCmdResetEvent2
     vkCmdResetQueryPool
+    vkCmdSetEvent
+    vkCmdSetEvent2
+    vkCmdWaitEvents
+    vkCmdWaitEvents2
     vkCmdWriteTimestamp
     vkCmdWriteTimestamp2
     vkCmdWriteTimestamp2KHR
@@ -70,6 +79,7 @@ EXPORTS
     vkCmdFillBuffer
     vkCmdInsertDebugUtilsLabelEXT
     vkCmdPipelineBarrier
+    vkCmdPipelineBarrier2
     vkCmdPushConstants
     vkCmdPushConstants2KHR
     vkCmdSetBlendConstants
@@ -99,11 +109,14 @@ EXPORTS
     vkCreateBuffer
     vkCreateBufferView
     vkCreateCommandPool
+    vkCreateComputePipelines
     vkCreateQueryPool
     vkCreateDebugUtilsMessengerEXT
     vkCreateDescriptorPool
     vkCreateDescriptorSetLayout
+    vkCreateDescriptorUpdateTemplate
     vkCreateDevice
+    vkCreateEvent
     vkCreateFence
     vkCreateFramebuffer
     vkCreateGraphicsPipelines
@@ -114,6 +127,7 @@ EXPORTS
     vkCreatePipelineCache
     vkCreateRenderPass
     vkCreateSampler
+    vkCreateSemaphore
     vkCreateShaderModule
     vkCreateSwapchainKHR
     vkCreateWin32SurfaceKHR
@@ -124,7 +138,9 @@ EXPORTS
     vkDestroyDebugUtilsMessengerEXT
     vkDestroyDescriptorPool
     vkDestroyDescriptorSetLayout
+    vkDestroyDescriptorUpdateTemplate
     vkDestroyDevice
+    vkDestroyEvent
     vkDestroyFence
     vkDestroyFramebuffer
     vkDestroyImage
@@ -135,6 +151,7 @@ EXPORTS
     vkDestroyPipelineLayout
     vkDestroyRenderPass
     vkDestroySampler
+    vkDestroySemaphore
     vkDestroyShaderModule
     vkDestroySurfaceKHR
     vkDestroySwapchainKHR
@@ -151,22 +168,32 @@ EXPORTS
     vkFreeCommandBuffers
     vkFreeDescriptorSets
     vkFreeMemory
+    vkGetBufferDeviceAddress
     vkGetBufferMemoryRequirements
+    vkGetBufferMemoryRequirements2
     vkGetDeviceProcAddr
     vkGetDeviceQueue
+    vkGetDeviceBufferMemoryRequirements
+    vkGetDeviceImageMemoryRequirements
+    vkGetDeviceImageSubresourceLayoutKHR
     vkGetDeviceImageSparseMemoryRequirements
     vkGetDeviceMemoryCommitment
     vkGetDescriptorSetLayoutSupport
     vkGetDescriptorSetLayoutSupportKHR
+    vkGetEventStatus
     vkGetFenceStatus
     vkGetImageMemoryRequirements
+    vkGetImageMemoryRequirements2
     vkGetImageSparseMemoryRequirements
     vkGetImageSparseMemoryRequirements2
     vkGetImageSparseMemoryRequirements2KHR
     vkGetImageSubresourceLayout
+    vkGetImageSubresourceLayout2KHR
     vkGetInstanceProcAddr
+    vkGetMemoryWin32HandleKHR
     vkGetPipelineCacheData
     vkGetQueryPoolResults
+    vkGetSemaphoreCounterValue
     vkGetShaderModuleCreateInfoIdentifierEXT
     vkGetShaderModuleIdentifierEXT
     vkGetPhysicalDeviceExternalSemaphoreProperties
@@ -204,15 +231,21 @@ EXPORTS
     vkQueuePresentKHR
     vkQueueBindSparse
     vkQueueSubmit
+    vkQueueSubmit2
     vkQueueWaitIdle
     vkReleaseSwapchainImagesEXT
     vkResetCommandBuffer
     vkResetCommandPool
     vkResetDescriptorPool
+    vkResetEvent
     vkResetQueryPool
     vkResetFences
+    vkSetEvent
+    vkSignalSemaphore
     vkSubmitDebugUtilsMessageEXT
     vkUnmapMemory
     vkUpdateDescriptorSets
+    vkUpdateDescriptorSetWithTemplate
     vkWaitForFences
+    vkWaitSemaphores
     vk_icdGetInstanceProcAddr
