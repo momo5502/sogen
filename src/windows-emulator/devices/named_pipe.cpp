@@ -104,8 +104,7 @@ namespace sogen
             win_emu.memory.read_memory(context.input_buffer, data.data(), data.size());
             operation = this->endpoint->write(data);
         }
-        return this->enqueue_operation(win_emu, std::move(context), std::move(operation),
-                                       reading ? operation_kind::read : operation_kind::write);
+        return this->enqueue_operation(win_emu, context, std::move(operation), reading ? operation_kind::read : operation_kind::write);
     }
 
     NTSTATUS named_pipe::start_listen(windows_emulator& win_emu, io_device_context context)
@@ -122,7 +121,7 @@ namespace sogen
         {
             return STATUS_PIPE_LISTENING;
         }
-        return this->enqueue_operation(win_emu, std::move(context), nullptr, operation_kind::listen);
+        return this->enqueue_operation(win_emu, context, nullptr, operation_kind::listen);
     }
 
     NTSTATUS named_pipe::enqueue_operation(windows_emulator& win_emu, io_device_context context,
