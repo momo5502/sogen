@@ -1914,6 +1914,24 @@ namespace
         return valid;
     }
 
+    bool test_unicode_case_mapping()
+    {
+        using rtl_case_unicode_char_t = WCHAR(NTAPI*)(WCHAR);
+        auto* const ntdll = GetModuleHandleA("ntdll.dll");
+        const auto upcase =
+            reinterpret_cast<rtl_case_unicode_char_t>(reinterpret_cast<void*>(GetProcAddress(ntdll, "RtlUpcaseUnicodeChar")));
+        const auto downcase =
+            reinterpret_cast<rtl_case_unicode_char_t>(reinterpret_cast<void*>(GetProcAddress(ntdll, "RtlDowncaseUnicodeChar")));
+        if (!upcase || !downcase)
+        {
+            puts("ntdll case mapping functions not found");
+            return false;
+        }
+
+        return upcase(L'a') == L'A' && upcase(0x00E4) == 0x00C4 && upcase(0x0430) == 0x0410 && downcase(0x00C4) == 0x00E4 &&
+               downcase(0x0410) == 0x0430;
+    }
+
     bool test_gdi()
     {
         const wchar_t* cursor_path = L"C:\\Windows\\Cursors\\aero_arrow.cur";
@@ -2293,6 +2311,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_settimer, "User Timer")
     RUN_TEST(test_private_namespace, "Private Namespace")
     RUN_TEST(test_handle_tag_bits, "Handle Tag Bits")
+    RUN_TEST(test_unicode_case_mapping, "Unicode Case Mapping")
     RUN_TEST(test_actctx, "Activation Context")
     RUN_TEST(test_mmio, "MMIO")
     RUN_TEST(test_gdi, "GDI")

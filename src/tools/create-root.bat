@@ -216,6 +216,7 @@ CALL :collect_file "%WINDIR%\System32\en-US", user32.dll.mui, %EMU_SYSDIR%\en-us
 CALL :collect_file "%WINDIR%\SysWOW64\en-US", user32.dll.mui, %EMU_SYSDIR_WOW64%\en-us
 
 CALL :collect locale.nls
+CALL :collect l_intl.nls
 CALL :collect c_1252.nls
 CALL :collect c_437.nls
 CALL :collect c_850.nls
