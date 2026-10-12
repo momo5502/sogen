@@ -389,7 +389,8 @@ namespace sogen
         port() = default;
         ~port() override = default;
 
-        port(port&&) = default;
+        // MSVC's std::map move constructor allocates a replacement sentinel and can throw.
+        port(port&&) noexcept(false) = default;
         port& operator=(port&&) = default;
 
         port(const port&) = delete;

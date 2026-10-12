@@ -220,6 +220,27 @@ namespace sogen::test
         EXPECT_EQ(STATUS_SUCCESS, this->delete_view(replacement.ViewBase));
     }
 
+    TEST_F(AlpcSectionTest, MovingPortPreservesActiveViewsAndSavedPages)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->create_section(0x20000));
+        view_attributes first{};
+        view_attributes second{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, first));
+        ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, second));
+        this->emu->memory.write_memory(first.ViewBase, uint32_t{0xabcdef01});
+        this->emu->memory.write_memory(second.ViewBase, uint32_t{0x12345678});
+        ASSERT_EQ(STATUS_SUCCESS, this->delete_view(first.ViewBase));
+        auto* stored = this->emu->process.ports.get(this->port_handle);
+        port_container moved{std::move(*stored)};
+        EXPECT_TRUE(moved.get_internal_port()->owns_section_view(this->section_handle().bits, second.ViewBase, second.ViewSize));
+        EXPECT_EQ(0x12345678u, this->emu->memory.read_memory<uint32_t>(second.ViewBase));
+        *stored = std::move(moved);
+        ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, first));
+        EXPECT_EQ(0xabcdef01u, this->emu->memory.read_memory<uint32_t>(first.ViewBase));
+        EXPECT_EQ(STATUS_SUCCESS, this->delete_view(first.ViewBase));
+        EXPECT_EQ(STATUS_SUCCESS, this->delete_view(second.ViewBase));
+    }
+
     TEST_F(AlpcSectionTest, SendValidatesViewOwnershipBoundsAndAttributeMasks)
     {
         ASSERT_EQ(STATUS_SUCCESS, this->create_section(0x10000));
