@@ -145,9 +145,10 @@ namespace sogen::test
             this->bind(0, syntax, 0x11);
             ASSERT_EQ(STATUS_SUCCESS, this->call(0).status);
             std::vector<uint8_t> data(0x5000);
-            for (size_t i = 0; i < data.size(); ++i)
+            uint8_t value{};
+            for (auto& byte : data)
             {
-                data[i] = static_cast<uint8_t>(i);
+                byte = value++;
             }
             const auto view = this->emu->memory.allocate_memory(data.size(), memory_permission::read_write);
             this->emu->memory.write_memory(view, data.data(), data.size());

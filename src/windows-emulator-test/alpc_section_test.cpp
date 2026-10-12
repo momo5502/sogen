@@ -53,7 +53,7 @@ namespace sogen::test
             NTSTATUS create_view(uint64_t size, view_attributes& result)
             {
                 emulator_object<view_attributes> output{this->emu->memory, this->storage + 0x100};
-                output.write({.SectionHandle = this->section_handle().bits, .ViewSize = size});
+                output.write({.Flags = 0, .SectionHandle = this->section_handle().bits, .ViewBase = 0, .ViewSize = size});
                 const auto status = syscalls::handle_NtAlpcCreateSectionView(this->context(), this->port_handle, 0, output);
                 result = output.read();
                 return status;
@@ -75,10 +75,13 @@ namespace sogen::test
             NTSTATUS send_view(const ALPC_DATA_VIEW_ATTR<Traits>& view, ULONG allocated = ALPC_MESSAGE_VIEW_ATTRIBUTE,
                                ULONG valid = ALPC_MESSAGE_VIEW_ATTRIBUTE)
             {
-                emulator_object<ALPC_MESSAGE_ATTRIBUTES>{this->emu->memory, this->storage + 0x200}.write({allocated, valid});
-                const auto offset =
-                    sizeof(ALPC_MESSAGE_ATTRIBUTES) +
-                    ((allocated & ALPC_MESSAGE_SECURITY_ATTRIBUTE) != 0 ? (sizeof(typename Traits::PVOID) == 4 ? 12 : 32) : 0);
+                emulator_object<ALPC_MESSAGE_ATTRIBUTES>{this->emu->memory, this->storage + 0x200}.write(
+                    {.AllocatedAttributes = allocated, .ValidAttributes = valid});
+                uint64_t offset = sizeof(ALPC_MESSAGE_ATTRIBUTES);
+                if ((allocated & ALPC_MESSAGE_SECURITY_ATTRIBUTE) != 0)
+                {
+                    offset += sizeof(typename Traits::PVOID) == 4 ? 12 : 32;
+                }
                 emulator_object<ALPC_DATA_VIEW_ATTR<Traits>>{this->emu->memory, this->storage + 0x200 + offset}.write(view);
                 PORT_MESSAGE64 message{};
                 message.u1.s1.DataLength = 8;
@@ -109,7 +112,9 @@ namespace sogen::test
     TEST_F(AlpcSectionTest, PageSizedViewsConsumeDisjointAllocationGranularitySlots)
     {
         ASSERT_EQ(STATUS_SUCCESS, this->create_section(0x20000));
-        view_attributes first{}, second{}, extra{};
+        view_attributes first{};
+        view_attributes second{};
+        view_attributes extra{};
         ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, first));
         ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, second));
         EXPECT_NE(first.ViewBase, second.ViewBase);
@@ -125,7 +130,8 @@ namespace sogen::test
     TEST_F(AlpcSectionTest, ReusingFreedSlotPreservesDataAcrossPageSizedAndLargerViews)
     {
         ASSERT_EQ(STATUS_SUCCESS, this->create_section(0x10000));
-        view_attributes first{}, replacement{};
+        view_attributes first{};
+        view_attributes replacement{};
         ASSERT_EQ(STATUS_SUCCESS, this->create_view(0x2000, first));
         this->emu->memory.write_memory(first.ViewBase, uint32_t{0xabcdef01});
         this->emu->memory.write_memory(first.ViewBase + 0x1000, uint32_t{0x12345678});
@@ -144,7 +150,8 @@ namespace sogen::test
     {
         ASSERT_EQ(STATUS_SUCCESS, this->create_section(1));
         const auto section = this->section_handle();
-        view_attributes view{}, extra{};
+        view_attributes view{};
+        view_attributes extra{};
         ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, view));
         this->emu->memory.write_memory(view.ViewBase, uint32_t{123});
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtAlpcDeletePortSection(this->context(), this->port_handle, 0, section));
@@ -171,9 +178,9 @@ namespace sogen::test
         EXPECT_EQ(STATUS_ACCESS_VIOLATION,
                   syscalls::handle_NtAlpcCreateSectionView(this->context(), this->port_handle, 0, {this->emu->memory}));
         emulator_object<view_attributes> output{this->emu->memory, this->storage + 0x100};
-        output.write({.Flags = 0x40000, .SectionHandle = this->section_handle().bits, .ViewSize = 1});
+        output.write({.Flags = 0x40000, .SectionHandle = this->section_handle().bits, .ViewBase = 0, .ViewSize = 1});
         EXPECT_EQ(STATUS_INVALID_PARAMETER, syscalls::handle_NtAlpcCreateSectionView(this->context(), this->port_handle, 0, output));
-        output.write({.SectionHandle = this->section_handle().bits, .ViewBase = 0x123450000, .ViewSize = 1});
+        output.write({.Flags = 0, .SectionHandle = this->section_handle().bits, .ViewBase = 0x123450000, .ViewSize = 1});
         EXPECT_EQ(STATUS_INVALID_PARAMETER, syscalls::handle_NtAlpcCreateSectionView(this->context(), this->port_handle, 0, output));
         EXPECT_TRUE(this->inner_port()->sections.begin()->second.views.empty());
     }
@@ -181,7 +188,8 @@ namespace sogen::test
     TEST_F(AlpcSectionTest, ClosingPortReleasesAllActiveViews)
     {
         ASSERT_EQ(STATUS_SUCCESS, this->create_section(0x20000));
-        view_attributes first{}, second{};
+        view_attributes first{};
+        view_attributes second{};
         ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, first));
         ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, second));
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtClose(this->context(), this->port_handle));
@@ -193,7 +201,9 @@ namespace sogen::test
     TEST_F(AlpcSectionTest, PortSerializationPreservesFreedPageContentsAndActiveViewAllocation)
     {
         ASSERT_EQ(STATUS_SUCCESS, this->create_section(0x20000));
-        view_attributes first{}, second{}, replacement{};
+        view_attributes first{};
+        view_attributes second{};
+        view_attributes replacement{};
         ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, first));
         ASSERT_EQ(STATUS_SUCCESS, this->create_view(1, second));
         this->emu->memory.write_memory(first.ViewBase, uint32_t{0xabcdef01});
