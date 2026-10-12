@@ -45,7 +45,7 @@ namespace sogen
         const auto& context = operation.context;
         const auto status = translate_pipe_status(result.status);
         this->signaled = true;
-        if (operation.reading && result.transferred)
+        if (operation.kind == operation_kind::read && result.transferred)
         {
             win_emu.memory.write_memory(context.output_buffer, operation.operation->data().data(), result.transferred);
         }
@@ -104,10 +104,34 @@ namespace sogen
             win_emu.memory.read_memory(context.input_buffer, data.data(), data.size());
             operation = this->endpoint->write(data);
         }
+        return this->enqueue_operation(win_emu, std::move(context), std::move(operation),
+                                       reading ? operation_kind::read : operation_kind::write);
+    }
+
+    NTSTATUS named_pipe::start_listen(windows_emulator& win_emu, io_device_context context)
+    {
+        if (!this->endpoint || !context.io_status_block)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+        if (!this->unopened_peer)
+        {
+            return STATUS_PIPE_CONNECTED;
+        }
+        if (this->completion_mode != 0)
+        {
+            return STATUS_PIPE_LISTENING;
+        }
+        return this->enqueue_operation(win_emu, std::move(context), nullptr, operation_kind::listen);
+    }
+
+    NTSTATUS named_pipe::enqueue_operation(windows_emulator& win_emu, io_device_context context,
+                                           std::unique_ptr<utils::host_pipe_operation> operation, const operation_kind kind)
+    {
         pending_operation pending{.context = context,
                                   .operation = std::move(operation),
                                   .issuing_thread = win_emu.process.threads.find_handle(&context.thread()),
-                                  .reading = reading};
+                                  .kind = kind};
         std::array<handle, 3> retained_references{};
         const std::array<handle*, 3> references{&pending.context.event, &pending.context.completion_port, &pending.issuing_thread};
         for (size_t i = 0; i < references.size(); ++i)
@@ -134,7 +158,8 @@ namespace sogen
             }
         });
         this->signaled = false;
-        const auto result = pending.operation->check_completion();
+        const auto result =
+            pending.operation ? pending.operation->check_completion() : utils::pipe_io_result{.status = utils::pipe_io_status::pending};
         if (result.status != utils::pipe_io_status::pending)
         {
             this->complete(win_emu, pending, result, false);
@@ -168,7 +193,10 @@ namespace sogen
     {
         for (auto it = this->pending_.begin(); it != this->pending_.end();)
         {
-            const auto result = it->operation->check_completion();
+            const auto result =
+                it->kind == operation_kind::listen
+                    ? utils::pipe_io_result{.status = this->unopened_peer ? utils::pipe_io_status::pending : utils::pipe_io_status::success}
+                    : it->operation->check_completion();
             if (result.status == utils::pipe_io_status::pending)
             {
                 ++it;
@@ -191,8 +219,12 @@ namespace sogen
                 ++it;
                 continue;
             }
-            it->operation->cancel();
-            const auto result = it->operation->check_completion();
+            if (it->operation)
+            {
+                it->operation->cancel();
+            }
+            const auto result =
+                it->operation ? it->operation->check_completion() : utils::pipe_io_result{.status = utils::pipe_io_status::cancelled};
             if (result.status == utils::pipe_io_status::pending)
             {
                 cancelled = true;
@@ -211,7 +243,10 @@ namespace sogen
     {
         for (auto& operation : this->pending_)
         {
-            operation.operation->cancel();
+            if (operation.operation)
+            {
+                operation.operation->cancel();
+            }
             release_operation(process, operation);
         }
         this->pending_.clear();
@@ -241,9 +276,13 @@ namespace sogen
         for (const auto& pending : this->pending_)
         {
             buffer.write(pending.context);
-            pending.operation->serialize(buffer);
+            buffer.write(static_cast<bool>(pending.operation));
+            if (pending.operation)
+            {
+                pending.operation->serialize(buffer);
+            }
             buffer.write(pending.issuing_thread);
-            buffer.write(pending.reading);
+            buffer.write(pending.kind);
         }
     }
 
@@ -267,10 +306,13 @@ namespace sogen
         const auto count = buffer.read<uint64_t>();
         for (uint64_t i = 0; i < count; ++i)
         {
-            pending_operation pending{.context = buffer.read<io_device_context>(),
-                                      .operation = std::make_unique<utils::host_pipe_operation>(buffer)};
+            pending_operation pending{.context = buffer.read<io_device_context>()};
+            if (buffer.read<bool>())
+            {
+                pending.operation = std::make_unique<utils::host_pipe_operation>(buffer);
+            }
             buffer.read(pending.issuing_thread);
-            buffer.read(pending.reading);
+            buffer.read(pending.kind);
             this->pending_.push_back(std::move(pending));
         }
     }

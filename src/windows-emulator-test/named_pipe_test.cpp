@@ -34,6 +34,14 @@ namespace sogen::syscalls
 
 namespace sogen::test
 {
+    TEST(NamedPipeStatusTest, ListeningAndConnectedAreNativeErrorStatuses)
+    {
+        EXPECT_EQ(0xC00000B3u, STATUS_PIPE_LISTENING);
+        EXPECT_EQ(0xC00000B2u, STATUS_PIPE_CONNECTED);
+        EXPECT_FALSE(NT_SUCCESS(STATUS_PIPE_LISTENING));
+        EXPECT_FALSE(NT_SUCCESS(STATUS_PIPE_CONNECTED));
+    }
+
     namespace
     {
         class capturing_process_manager final : public process_manager
@@ -231,6 +239,82 @@ namespace sogen::test
 #endif
             }
         };
+    }
+
+    TEST_F(NamedPipeTest, ListenRemainsPendingUntilClientConnects)
+    {
+        auto& server = this->pipe(this->reader);
+        server.unopened_peer = this->pipe(this->writer).endpoint;
+        const auto event_handle = this->emu->process.events.store(event{});
+        const auto completion = this->emu->process.io_completions.store(io_completion{});
+        ASSERT_EQ(STATUS_SUCCESS, this->emu->process.devices.get(this->reader)
+                                      ->set_completion_association(this->emu->process, this->emu->vcpu(0).active_thread, completion, 42));
+        auto context = this->request(this->reader, 0);
+        context.io_control_code = FSCTL_PIPE_LISTEN;
+        context.event = event_handle;
+        context.apc_context = 123;
+        EXPECT_EQ(STATUS_PENDING, this->emu->process.devices.get(this->reader)->execute_ioctl(*this->emu, context));
+        server.work(*this->emu);
+        EXPECT_EQ(STATUS_PENDING, context.io_status_block.read().Status);
+        EXPECT_FALSE(this->emu->process.events.get(event_handle)->signaled);
+        io_completion_message message{};
+        EXPECT_FALSE(io_completion_wait::dequeue_io_completion_message(*this->emu, completion, message));
+        auto client = std::move(server.unopened_peer);
+        server.work(*this->emu);
+        EXPECT_EQ(STATUS_SUCCESS, context.io_status_block.read().Status);
+        EXPECT_TRUE(this->emu->process.events.get(event_handle)->signaled);
+        ASSERT_TRUE(io_completion_wait::dequeue_io_completion_message(*this->emu, completion, message));
+        EXPECT_EQ(42u, message.key_context);
+        EXPECT_EQ(123u, message.apc_context);
+        server.work(*this->emu);
+        EXPECT_FALSE(io_completion_wait::dequeue_io_completion_message(*this->emu, completion, message));
+        EXPECT_EQ(STATUS_PIPE_CONNECTED, server.io_control(*this->emu, context));
+    }
+
+    TEST_F(NamedPipeTest, CancellingPendingListenSignalsCompletion)
+    {
+        auto& server = this->pipe(this->reader);
+        server.unopened_peer = this->pipe(this->writer).endpoint;
+        auto context = this->request(this->reader, 0);
+        context.io_control_code = FSCTL_PIPE_LISTEN;
+        const auto event_handle = this->emu->process.events.store(event{});
+        context.event = event_handle;
+        ASSERT_EQ(STATUS_PENDING, server.io_control(*this->emu, context));
+        EXPECT_TRUE(server.cancel_io(*this->emu, context.io_status_block.value()));
+        EXPECT_EQ(STATUS_CANCELLED, context.io_status_block.read().Status);
+        EXPECT_TRUE(this->emu->process.events.get(event_handle)->signaled);
+        server.work(*this->emu);
+        EXPECT_EQ(STATUS_CANCELLED, context.io_status_block.read().Status);
+    }
+
+    TEST_F(NamedPipeTest, NonblockingListenReturnsNativeListeningStatus)
+    {
+        auto& server = this->pipe(this->reader);
+        server.unopened_peer = this->pipe(this->writer).endpoint;
+        server.completion_mode = 1;
+        auto context = this->request(this->reader, 0);
+        context.io_control_code = FSCTL_PIPE_LISTEN;
+        EXPECT_EQ(STATUS_PIPE_LISTENING, server.io_control(*this->emu, context));
+        EXPECT_FALSE(server.cancel_io(*this->emu, 0));
+    }
+
+    TEST_F(NamedPipeTest, SerializationPreservesPendingListen)
+    {
+        this->pipe(this->reader).unopened_peer = this->pipe(this->writer).endpoint;
+        auto context = this->request(this->reader, 0);
+        context.io_control_code = FSCTL_PIPE_LISTEN;
+        ASSERT_EQ(STATUS_PENDING, this->pipe(this->reader).io_control(*this->emu, context));
+        utils::buffer_serializer snapshot;
+        this->emu->process.devices.get(this->reader)->serialize(snapshot);
+        utils::buffer_deserializer input{snapshot};
+        input.register_factory<x64_emulator_wrapper>([&] { return x64_emulator_wrapper{this->emu->emu()}; });
+        this->emu->process.devices.get(this->reader)->deserialize(input);
+        auto& restored = this->pipe(this->reader);
+        restored.work(*this->emu);
+        EXPECT_EQ(STATUS_PENDING, context.io_status_block.read().Status);
+        auto client = std::move(restored.unopened_peer);
+        restored.work(*this->emu);
+        EXPECT_EQ(STATUS_SUCCESS, context.io_status_block.read().Status);
     }
 
     TEST_F(NamedPipeTest, PendingReadCompletesWithEventAndCompletionPort)

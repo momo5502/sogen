@@ -49,7 +49,7 @@ namespace sogen
         {
             if (c.io_control_code == FSCTL_PIPE_LISTEN)
             {
-                return this->endpoint && !this->unopened_peer ? STATUS_PIPE_CONNECTED : STATUS_PIPE_LISTENING;
+                return this->start_listen(win_emu, c);
             }
             if (c.io_control_code == FSCTL_PIPE_PEEK)
             {
@@ -64,15 +64,26 @@ namespace sogen
         void deserialize_object(utils::buffer_deserializer& buffer) override;
 
       private:
+        enum class operation_kind
+        {
+            read,
+            write,
+            listen,
+        };
+
         struct pending_operation
         {
             io_device_context context;
             std::unique_ptr<utils::host_pipe_operation> operation;
             handle issuing_thread{};
-            bool reading{};
+            operation_kind kind{};
         };
 
         std::vector<pending_operation> pending_;
+
+        NTSTATUS start_listen(windows_emulator& win_emu, io_device_context context);
+        NTSTATUS enqueue_operation(windows_emulator& win_emu, io_device_context context,
+                                   std::unique_ptr<utils::host_pipe_operation> operation, operation_kind kind);
 
         void complete(windows_emulator& win_emu, const pending_operation& operation, utils::pipe_io_result result, bool was_pending);
         static void release_operation(process_context& process, pending_operation& operation);
