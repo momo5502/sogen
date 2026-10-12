@@ -153,16 +153,22 @@ namespace sogen
         virtual ~ref_counted_object() = default;
 
         uint32_t ref_count{1};
+        bool inherit{};
+        bool protect_from_close{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->ref_count);
+            buffer.write(this->inherit);
+            buffer.write(this->protect_from_close);
             this->serialize_object(buffer);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
         {
             buffer.read(this->ref_count);
+            buffer.read(this->inherit);
+            buffer.read(this->protect_from_close);
             this->deserialize_object(buffer);
         }
 
@@ -185,6 +191,11 @@ namespace sogen
         virtual ~generic_handle_store() = default;
         virtual bool erase(handle h) = 0;
         virtual std::optional<handle> duplicate(handle h) = 0;
+
+        virtual ref_counted_object* get_object(handle)
+        {
+            return nullptr;
+        }
     };
 
     template <handle_types::type Type, typename T>
@@ -247,6 +258,11 @@ namespace sogen
         T* get_by_index(const uint32_t index)
         {
             return this->get(this->make_handle(index));
+        }
+
+        ref_counted_object* get_object(const handle h) override
+        {
+            return this->get(h);
         }
 
         T* get(const handle_value h)
@@ -476,6 +492,11 @@ namespace sogen
 
                 this->handles_.emplace(key, h);
             }
+        }
+
+        ref_counted_object* get_object(const handle h) override
+        {
+            return this->get(h);
         }
 
         T* get(const handle_value h)

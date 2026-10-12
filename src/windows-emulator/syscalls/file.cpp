@@ -2015,6 +2015,7 @@ namespace sogen
 
             file f{};
             f.access_mask = desired_access;
+            f.inherit = (attributes.Attributes & OBJ_INHERIT) != 0;
             f.file_mode = create_options & FILE_MODE_MASK;
             f.name = std::move(filename);
 
