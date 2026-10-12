@@ -96,6 +96,13 @@ namespace sogen
                 return loader_list_contains_image<uint64_t>(c, ldr, module.image_base);
             }
 
+            template <typename T>
+            bool is_backing_alive(const T& container, uint64_t address)
+            {
+                return std::any_of(container.begin(), container.end(),
+                                   [&](const auto& pair) { return static_cast<uint64_t>(pair.second.backing_address) == address; });
+            }
+
             NTSTATUS initialize_shared_section_base_static_server_data_mapping(const syscall_context& c,
                                                                                const uint64_t shared_section_address,
                                                                                const uint64_t shared_section_size, uint64_t& obj_address)
@@ -695,9 +702,10 @@ namespace sogen
                     // remove the view from memory
                     c.proc.views.erase(base_address);
 
-                    if (c.proc.views.in_use(region_info.allocation_base))
+                    const auto address = region_info.allocation_base;
+                    if (is_backing_alive(c.proc.sections, address) || is_backing_alive(c.proc.views, address))
                     {
-                        // do not release the memory if in use by any other view
+                        // do not release the memory if in use by any other section or view
                         return STATUS_SUCCESS;
                     }
                 }
