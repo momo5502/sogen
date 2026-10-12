@@ -64,6 +64,12 @@ namespace sogen
 
         uint8_t drive_type(const char drive) const
         {
+            const auto drives = this->list_drives();
+            if (std::ranges::find(drives, drive) == drives.end())
+            {
+                constexpr uint8_t no_root_directory = 1;
+                return no_root_directory;
+            }
 #ifdef OS_WINDOWS
             if (this->root_.empty())
             {

@@ -94,7 +94,7 @@ namespace sogen
         console_font_info_response default_console_font()
         {
             console_font_info_response font{};
-            font.size = {8, 16};
+            font.size = {.x = 8, .y = 16};
             font.family = 0x36;
             font.weight = 400;
             constexpr std::u16string_view face = u"Consolas";
@@ -551,7 +551,7 @@ namespace sogen
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
-                    constexpr console_coordinate size{80, 25};
+                    constexpr console_coordinate size{.x = 80, .y = 25};
                     win_emu.emu().write_memory(header.data, size);
                     return STATUS_SUCCESS;
                 }
