@@ -1,7 +1,5 @@
 #include "dns_lookup.hpp"
 
-#include <cstdio>
-
 #include <utils/finally.hpp>
 
 namespace sogen
@@ -27,13 +25,6 @@ namespace sogen
             const auto status = getaddrinfo(hostname_string.c_str(), nullptr, &hints, &result);
             if (status != 0)
             {
-#ifdef _WIN32
-                std::fprintf(stderr, "dns_lookup::resolve_host failed: host=%s family=%d status=%d wsa_error=%d message=%s\n",
-                             hostname_string.c_str(), family.value_or(AF_UNSPEC), status, WSAGetLastError(), gai_strerrorA(status));
-#else
-                std::fprintf(stderr, "dns_lookup::resolve_host failed: host=%s family=%d status=%d message=%s\n", hostname_string.c_str(),
-                             family.value_or(AF_UNSPEC), status, gai_strerror(status));
-#endif
                 return {};
             }
 
