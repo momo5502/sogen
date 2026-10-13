@@ -499,7 +499,8 @@ namespace sogen
                 const uint64_t view_address = section_entry->backing_address + aligned_offset;
                 base_address.write(view_address);
 
-                c.proc.views.store(view_address, view{.backing_address = section_entry->backing_address, .size = backing_size});
+                view entry(section_entry->backing_address, backing_size);
+                c.proc.views.store(view_address, std::move(entry));
 
                 return STATUS_SUCCESS;
             }
@@ -700,15 +701,17 @@ namespace sogen
                 if (region_info.kind == memory_region_kind::pagefile_section_view)
                 {
                     // remove the view from memory
-                    if (!c.proc.views.erase(base_address))
+                    bool no_references = false;
+                    if (!c.proc.views.erase(base_address, no_references))
                     {
+                        // no view contains this address
                         return STATUS_NOT_MAPPED_VIEW;
                     }
 
-                    const auto address = region_info.allocation_base;
-                    if (is_backing_alive(c.proc.sections, address) || is_backing_alive(c.proc.views, address))
+                    // if there are other view or section references
+                    if (!no_references || is_backing_alive(c.proc.sections, region_info.allocation_base))
                     {
-                        // do not release the memory if in use by any other section or view
+                        // do not release the memory
                         return STATUS_SUCCESS;
                     }
                 }

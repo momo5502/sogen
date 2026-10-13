@@ -598,7 +598,7 @@ namespace sogen
     // - should handle_store add new template param for key_type?
     // - is ref_counted_object required here?
     template <typename T>
-        requires(utils::Serializable<T> /* && std::is_base_of_v<ref_counted_object, T> */)
+        requires(utils::Serializable<T> && std::is_base_of_v<ref_counted_object, T>)
     class view_store
     {
       public:
@@ -620,8 +620,12 @@ namespace sogen
                 throw std::runtime_error("Mutation of view store is blocked!");
             }
 
-            // Emplace directly using the 64-bit virtual address as the key
             const auto [it, inserted] = this->store_.emplace(address, std::move(value));
+            if (!inserted)
+            {
+                it->second.ref_count++;
+            }
+
             return &it->second;
         }
 
@@ -656,12 +660,14 @@ namespace sogen
             return this->store_.size();
         }
 
-        bool erase(const key_type address)
+        bool erase(const key_type address, bool& wiped)
         {
             if (this->block_mutation_)
             {
                 throw std::runtime_error("Mutation of view store is blocked!");
             }
+
+            wiped = false;
 
             for (auto it = this->store_.begin(); it != this->store_.end(); ++it)
             {
@@ -670,7 +676,13 @@ namespace sogen
 
                 if (address >= view_base && address < (view_base + view_size))
                 {
-                    this->store_.erase(it);
+                    wiped = ref_counted_object::deleter(it->second);
+
+                    if (wiped)
+                    {
+                        this->store_.erase(it);
+                    }
+
                     return true;
                 }
             }
