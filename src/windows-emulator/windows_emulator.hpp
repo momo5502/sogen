@@ -486,6 +486,8 @@ namespace sogen
         bool instruction_precision_{true};
         uint32_t vcpu_count_{1};
         std::atomic_bool should_stop{false};
+        std::mutex idle_mutex_{};
+        std::condition_variable idle_condition_{};
 
         // The emulator kernel lock: held by all code touching shared kernel state,
         // released while guest code executes (docs/multi-vcpu-design.md, section 7).

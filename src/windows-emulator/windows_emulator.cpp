@@ -22,6 +22,8 @@ namespace sogen
 
     namespace
     {
+        constexpr auto idle_poll_interval = std::chrono::milliseconds(1);
+
         void adjust_working_directory(application_settings& app_settings)
         {
             if (!app_settings.working_directory.empty())
@@ -344,19 +346,6 @@ namespace sogen
             }
 
             return {.window = top_level, .x = x, .y = y};
-        }
-
-        bool has_pending_host_wait(const process_context& process)
-        {
-            for (const auto& thread_entry : process.threads)
-            {
-                if (thread_entry.second.await_host_condition || thread_entry.second.await_file_io)
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         vcpu_context* find_vcpu_running_thread(windows_emulator& win_emu, const emulator_thread& thread);
@@ -864,8 +853,6 @@ namespace sogen
                 vcpu.active_thread = nullptr;
             }
 
-            const auto host_wait_pending = has_pending_host_wait(this->process);
-
             // Idle: nothing is ready. Release the kernel lock while pumping UI events
             // and sleeping so other threads (UI delivery, vCPU workers) can run.
             lock.unlock();
@@ -880,15 +867,15 @@ namespace sogen
             {
                 this->executed_instructions_ += MAX_INSTRUCTIONS_PER_TIME_SLICE;
             }
-            else if (host_wait_pending)
-            {
-                // A host wait (e.g. a GPU semaphore) is parked - re-poll immediately to wake it promptly.
-                std::this_thread::yield();
-            }
             else
             {
-                // Only timed waits remain; nothing host-side wakes sooner than wall-clock, so don't busy-spin.
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+#ifdef __EMSCRIPTEN__
+                std::this_thread::sleep_for(idle_poll_interval);
+#else
+                // Host I/O and GPU completion sources are polled, so the scheduler cannot wait indefinitely for a notification.
+                std::unique_lock idle_lock(this->idle_mutex_);
+                this->idle_condition_.wait_for(idle_lock, idle_poll_interval, [this] { return this->should_stop.load(); });
+#endif
             }
 
             lock.lock();
@@ -1343,15 +1330,10 @@ namespace sogen
         const auto _ = utils::finally([&] {
             {
                 std::unique_lock lock{interrupt_mutex};
-                this->should_stop = true;
+                this->stop();
             }
 
             interrupt_cond.notify_all();
-
-            for (uint32_t i = 0; i < this->vcpu_count_; ++i)
-            {
-                this->vcpu(i).cpu.stop();
-            }
 
             for (auto& worker : workers)
             {
@@ -1769,7 +1751,11 @@ namespace sogen
 
     void windows_emulator::stop()
     {
-        this->should_stop = true;
+        {
+            const std::scoped_lock idle_lock(this->idle_mutex_);
+            this->should_stop = true;
+        }
+        this->idle_condition_.notify_all();
 
         for (uint32_t i = 0; i < this->vcpu_count_; ++i)
         {
