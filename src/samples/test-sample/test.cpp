@@ -685,6 +685,19 @@ namespace
         return validate_primary_monitor(mi);
     }
 
+    bool test_display_config_buffer_sizes()
+    {
+        UINT32 num_paths = 0;
+        UINT32 num_modes = 0;
+
+        if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &num_paths, &num_modes) != ERROR_SUCCESS)
+        {
+            return false;
+        }
+
+        return num_paths >= 1 && num_modes >= num_paths;
+    }
+
     BOOL CALLBACK monitor_enum_proc(HMONITOR hMonitor, HDC, LPRECT, LPARAM dwData)
     {
         auto* valid = reinterpret_cast<bool*>(dwData);
@@ -2302,6 +2315,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_registry, "Registry")
     RUN_TEST(test_system_info, "System Info")
     RUN_TEST(test_monitor_info, "Monitor Info")
+    RUN_TEST(test_display_config_buffer_sizes, "Display Config Buffer Sizes")
     RUN_TEST(test_time_zone, "Time Zone")
     RUN_TEST(test_threads, "Threads")
     RUN_TEST(test_threads_winapi, "Threads WinAPI")
