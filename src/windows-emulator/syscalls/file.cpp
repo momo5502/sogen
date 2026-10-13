@@ -1557,15 +1557,18 @@ namespace sogen
             }
 
             const auto bytes_written = fwrite(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
+            const auto flushed = fflush(f->handle) == 0;
+            const auto status = flushed && bytes_written == temp_buffer.size() ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 
             if (io_status_block)
             {
                 IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
+                block.Status = status;
                 block.Information = bytes_written;
                 io_status_block.write(block);
             }
 
-            return STATUS_SUCCESS;
+            return status;
         }
 
         NTSTATUS handle_NtCopyFileChunk(const syscall_context& c, const handle source_handle, const handle destination_handle,
