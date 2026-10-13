@@ -82,14 +82,15 @@ namespace sogen::test
         EXPECT_EQ(this->thread->await_file_io, storage);
     }
 
-    TEST_F(IdleSchedulerTest, PendingHostConditionDoesNotBusyPoll)
+    TEST_F(IdleSchedulerTest, HostConditionMakesParkedThreadRunnable)
     {
         this->create();
-        this->thread->await_host_condition = [] { return false; };
-        this->stop_after(std::chrono::milliseconds(50));
-        EXPECT_FALSE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
-        EXPECT_GT(this->ui->polls, 0u);
-        EXPECT_LT(this->ui->polls, 1000u);
+        size_t polls{};
+        this->thread->await_host_condition = [&polls] { return ++polls == 3; };
+        EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
+        EXPECT_EQ(polls, 3u);
+        EXPECT_FALSE(this->thread->await_host_condition);
+        EXPECT_EQ(STATUS_SUCCESS, this->emu->vcpu(0).cpu.reg<uint64_t>(x86_register::rax));
     }
 
     TEST_F(IdleSchedulerTest, FileCompletionMakesParkedThreadRunnable)
@@ -125,7 +126,7 @@ namespace sogen::test
         EXPECT_FALSE(this->thread->await_host_condition);
     }
 
-    TEST_F(IdleSchedulerTest, StopWakesParkedScheduler)
+    TEST_F(IdleSchedulerTest, StopEndsParkedFileWait)
     {
 #ifdef __EMSCRIPTEN__
         GTEST_SKIP() << "Threadless WebAssembly does not support cross-thread stop";
@@ -135,7 +136,10 @@ namespace sogen::test
         {
             GTEST_SKIP() << "Backend does not support cross-thread stop";
         }
-        this->thread->await_host_condition = [] { return false; };
+        const auto storage = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+        emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>>{this->emu->memory, storage}.write(
+            {.Status = STATUS_PENDING, .Information = 0});
+        this->thread->await_file_io = storage;
         std::promise<void> parked;
         auto parked_future = parked.get_future();
         this->ui->on_pump = [this, &parked] {
