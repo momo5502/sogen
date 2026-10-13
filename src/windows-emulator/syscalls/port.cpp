@@ -8,12 +8,18 @@ namespace sogen
 
     namespace syscalls
     {
+        namespace
+        {
+            constexpr ULONG alpc_create_port_section_secure = 0x40000;
+            constexpr ULONG alpc_view_not_secure = 0x40000;
+        }
+
         NTSTATUS handle_NtAlpcCreatePortSection(const syscall_context& c, const handle port_handle, const ULONG flags,
                                                 const handle section_handle, const uint64_t section_size,
                                                 const emulator_object<handle> alpc_section_handle,
                                                 const emulator_object<uint64_t> actual_section_size)
         {
-            if ((flags & ~ULONG{0x40000}) != 0)
+            if ((flags & ~alpc_create_port_section_secure) != 0)
             {
                 return STATUS_INVALID_PARAMETER;
             }
@@ -402,7 +408,7 @@ namespace sogen
             const auto write_attribute = [&]<typename Traits>() {
                 view_attribute_at<Traits>(c, *attr_base)
                     .write({
-                        .Flags = 0x40000,
+                        .Flags = alpc_view_not_secure,
                         .SectionHandle = 0,
                         .ViewBase = static_cast<typename Traits::PVOID>(view_base),
                         .ViewSize = static_cast<typename Traits::SIZE_T>(view_size),
@@ -529,7 +535,7 @@ namespace sogen
                 {
                     return STATUS_ACCESS_VIOLATION;
                 }
-                if ((view->Flags & ~ULONG{0x40000}) != 0 ||
+                if ((view->Flags & ~alpc_view_not_secure) != 0 ||
                     !destination.owns_section_view(view->SectionHandle, view->ViewBase, view->ViewSize))
                 {
                     return STATUS_INVALID_PARAMETER;

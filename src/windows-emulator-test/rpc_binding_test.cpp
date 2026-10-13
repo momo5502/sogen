@@ -177,6 +177,53 @@ namespace sogen::test
         EXPECT_TRUE(this->endpoint.received_data.empty());
     }
 
+    TEST_F(RpcBindingTest, RejectsShortCallHeadersWithoutDispatching)
+    {
+        this->bind(0, 1, 0x11);
+        ASSERT_EQ(STATUS_SUCCESS, this->call(0).status);
+        for (ULONG size = 0; size < 64; ++size)
+        {
+            EXPECT_EQ(STATUS_INVALID_PARAMETER, this->request(size).status) << size;
+        }
+        EXPECT_TRUE(this->endpoint.received_data.empty());
+    }
+
+    TEST_F(RpcBindingTest, RejectsUnmappedOperationAndPartiallyMappedCallHeader)
+    {
+        this->bind(0, 1, 0x11);
+        ASSERT_EQ(STATUS_SUCCESS, this->call(0).status);
+        const auto original_storage = this->storage;
+        this->storage += 0x1000;
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->request(64).status);
+        this->storage = original_storage + 0xffc;
+        this->emu->memory.write_memory(this->storage, uint32_t{0});
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->request(64).status);
+        EXPECT_TRUE(this->endpoint.received_data.empty());
+    }
+
+    TEST_F(RpcBindingTest, RejectsUnmappedLargeRequestLength)
+    {
+        this->bind(0, 1, 0x11);
+        ASSERT_EQ(STATUS_SUCCESS, this->call(0).status);
+        this->storage += 0xfc0;
+        this->emu->memory.set_memory(this->storage, 0, 64);
+        this->emu->memory.write_memory(this->storage + 8, uint32_t{4});
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->request(72, this->storage, 0x1000).status);
+        EXPECT_TRUE(this->endpoint.received_data.empty());
+    }
+
+    TEST_F(RpcBindingTest, RejectsPartiallyMappedHandshakeWithoutReplacingBinding)
+    {
+        this->bind(0, 1, 0x11);
+        const auto original_storage = this->storage;
+        this->storage += 0xfe0;
+        this->emu->memory.set_memory(this->storage, 0, 32);
+        this->emu->memory.write_memory(this->storage, uint32_t{1});
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->request(72).status);
+        this->storage = original_storage;
+        this->expect_call(0, 0x11, 4);
+    }
+
     TEST_F(RpcBindingTest, RequestSerializationPreservesViewAndTransferredHandle)
     {
         const lpc_request_context source{

@@ -163,6 +163,67 @@ namespace sogen::test
         EXPECT_EQ(STATUS_INVALID_ADDRESS, this->delete_view(view.ViewBase));
     }
 
+    TEST_F(AlpcSectionTest, DeletingNoAccessAndGuardedViewPreservesBackingContents)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->create_section(0x10000));
+        view_attributes view{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_view(0x2000, view));
+        this->emu->memory.write_memory(view.ViewBase, uint32_t{0xabcdef01});
+        this->emu->memory.write_memory(view.ViewBase + 0x1000, uint32_t{0x12345678});
+        ASSERT_TRUE(this->emu->memory.protect_memory(view.ViewBase, 0x1000, memory_permission::none));
+        ASSERT_TRUE(
+            this->emu->memory.protect_memory(view.ViewBase + 0x1000, 0x1000, memory_permission::read_write | memory_permission::guard));
+        ASSERT_EQ(STATUS_SUCCESS, this->delete_view(view.ViewBase));
+        ASSERT_EQ(STATUS_SUCCESS, this->create_view(0x2000, view));
+        EXPECT_EQ(0xabcdef01u, this->emu->memory.read_memory<uint32_t>(view.ViewBase));
+        EXPECT_EQ(0x12345678u, this->emu->memory.read_memory<uint32_t>(view.ViewBase + 0x1000));
+        EXPECT_EQ(STATUS_SUCCESS, this->delete_view(view.ViewBase));
+    }
+
+    TEST_F(AlpcSectionTest, FailedPageCapturePreservesCacheViewAndOriginalPermissions)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->create_section(0x10000));
+        view_attributes view{};
+        ASSERT_EQ(STATUS_SUCCESS, this->create_view(0x2000, view));
+        this->emu->memory.write_memory(view.ViewBase, uint32_t{123});
+        ASSERT_EQ(STATUS_SUCCESS, this->delete_view(view.ViewBase));
+        ASSERT_EQ(STATUS_SUCCESS, this->create_view(0x2000, view));
+        this->emu->memory.write_memory(view.ViewBase, uint32_t{456});
+        ASSERT_TRUE(this->emu->memory.protect_memory(view.ViewBase, 0x1000, memory_permission::none));
+        ASSERT_TRUE(this->emu->memory.decommit_memory(view.ViewBase + 0x1000, 0x1000));
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->delete_view(view.ViewBase));
+        EXPECT_EQ(memory_permission::none, this->emu->memory.get_region_info(view.ViewBase).permissions.common);
+        const auto& section = this->inner_port()->sections.begin()->second;
+        EXPECT_EQ(1u, section.views.size());
+        uint32_t saved_value{};
+        std::memcpy(&saved_value, section.saved_pages.at(0).data(), sizeof(saved_value));
+        EXPECT_EQ(123u, saved_value);
+        ASSERT_TRUE(this->emu->memory.commit_memory(view.ViewBase + 0x1000, 0x1000, memory_permission::read_write));
+        ASSERT_EQ(STATUS_SUCCESS, this->delete_view(view.ViewBase));
+        ASSERT_EQ(STATUS_SUCCESS, this->create_view(0x2000, view));
+        EXPECT_EQ(456u, this->emu->memory.read_memory<uint32_t>(view.ViewBase));
+        EXPECT_EQ(STATUS_SUCCESS, this->delete_view(view.ViewBase));
+    }
+
+    TEST_F(AlpcSectionTest, RepeatedViewDeletionDoesNotGrowSavedPagesForSameSlot)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->create_section(0x10000));
+        view_attributes view{};
+        for (uint32_t value = 0; value < 16; ++value)
+        {
+            ASSERT_EQ(STATUS_SUCCESS, this->create_view(0x2000, view));
+            if (value != 0)
+            {
+                EXPECT_EQ(value - 1, this->emu->memory.read_memory<uint32_t>(view.ViewBase));
+            }
+            this->emu->memory.write_memory(view.ViewBase, value);
+            ASSERT_EQ(STATUS_SUCCESS, this->delete_view(view.ViewBase));
+            EXPECT_EQ(2u, this->inner_port()->sections.begin()->second.saved_pages.size());
+        }
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtAlpcDeletePortSection(this->context(), this->port_handle, 0, this->section_handle()));
+        EXPECT_TRUE(this->inner_port()->sections.empty());
+    }
+
     TEST_F(AlpcSectionTest, RejectsInvalidInputsWithoutAllocatingViewsOrSections)
     {
         EXPECT_EQ(STATUS_INVALID_PARAMETER, this->create_section(0));
