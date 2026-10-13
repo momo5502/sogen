@@ -350,7 +350,7 @@ namespace sogen
         {
             for (const auto& thread_entry : process.threads)
             {
-                if (thread_entry.second.await_host_condition || thread_entry.second.await_file_io)
+                if (thread_entry.second.await_host_condition)
                 {
                     return true;
                 }
@@ -887,7 +887,6 @@ namespace sogen
             }
             else
             {
-                // Only timed waits remain; nothing host-side wakes sooner than wall-clock, so don't busy-spin.
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
 
