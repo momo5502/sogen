@@ -5,7 +5,12 @@
 # a real Steam runs on (Windows, Linux, macOS) -- not the mobile/web targets. The Valve-licensed headers
 # are fetched, never committed.
 
-option(SOGEN_ENABLE_STEAM "Build the Steam bridge (fetches Proton SDK snapshots; needs the libclang pip package)" ON)
+if(DEFINED CACHE{SOGEN_ENABLE_STEAM})
+  set(_SOGEN_STEAM_OPTION_CONFIGURED TRUE)
+else()
+  set(_SOGEN_STEAM_OPTION_CONFIGURED FALSE)
+endif()
+option(SOGEN_ENABLE_STEAM "Build the Steam bridge (requires downloading Proton SDK snapshots and the libclang pip package)" ON)
 set(SOGEN_STEAMWORKS_PROTON_REPO "https://github.com/ValveSoftware/Proton.git"
     CACHE STRING "Repo carrying vendored steamworks_sdk_* header snapshots")
 set(SOGEN_STEAMWORKS_PROTON_TAG "proton_11.0" CACHE STRING "Ref of SOGEN_STEAMWORKS_PROTON_REPO to fetch")
@@ -17,7 +22,7 @@ if(WIN32 OR LINUX OR CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 endif()
 
 set(SOGEN_STEAM_ENABLED FALSE)
-if(SOGEN_ENABLE_STEAM AND SOGEN_STEAM_HOST_PLATFORM)
+if(SOGEN_ENABLE_STEAM AND _SOGEN_STEAM_OPTION_CONFIGURED AND SOGEN_STEAM_HOST_PLATFORM)
   find_package(Python3 COMPONENTS Interpreter)
   if(NOT Python3_Interpreter_FOUND)
     message(WARNING "SOGEN_ENABLE_STEAM: Python3 not found; Steam bridge disabled.")
