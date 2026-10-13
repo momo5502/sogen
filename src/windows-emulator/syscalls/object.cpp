@@ -76,6 +76,7 @@ namespace sogen
                 const auto* port = c.proc.ports.get(h);
                 if (port && port->ref_count == 1)
                 {
+                    port->get_internal_port()->release_sections(c.win_emu);
                     const auto port_key = static_cast<uint32_t>(h.bits & 0xFFFFFFFF);
                     if (const auto views = c.proc.pending_alpc_reply_views.find(port_key); views != c.proc.pending_alpc_reply_views.end())
                     {

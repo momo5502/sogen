@@ -283,6 +283,13 @@ namespace sogen
         NTSTATUS handle_NtAlpcCreateSecurityContext(const syscall_context& c, handle port_handle, ULONG flags,
                                                     emulator_object<ALPC_SECURITY_ATTR<EmulatorTraits<Emu64>>> security_attribute);
         NTSTATUS handle_NtAlpcDeleteSecurityContext(const syscall_context& c, handle port_handle, ULONG flags, handle context_handle);
+        NTSTATUS handle_NtAlpcCreatePortSection(const syscall_context& c, handle port_handle, ULONG flags, handle section_handle,
+                                                uint64_t section_size, emulator_object<handle> alpc_section_handle,
+                                                emulator_object<uint64_t> actual_section_size);
+        NTSTATUS handle_NtAlpcDeletePortSection(const syscall_context& c, handle port_handle, ULONG flags, handle section_handle);
+        NTSTATUS handle_NtAlpcCreateSectionView(const syscall_context& c, handle port_handle, ULONG flags,
+                                                emulator_object<ALPC_DATA_VIEW_ATTR<EmulatorTraits<Emu64>>> view_attributes);
+        NTSTATUS handle_NtAlpcDeleteSectionView(const syscall_context& c, handle port_handle, ULONG flags, uint64_t view_base);
 
         // syscalls/process.cpp:
         NTSTATUS handle_NtQueryInformationProcess(const syscall_context& c, handle process_handle, uint32_t info_class,
@@ -1833,6 +1840,10 @@ namespace sogen
         add_handler(NtCreateDebugObject);
         add_handler(NtReleaseWorkerFactoryWorker);
         add_handler(NtAlpcCreateSecurityContext);
+        add_handler(NtAlpcCreatePortSection);
+        add_handler(NtAlpcDeletePortSection);
+        add_handler(NtAlpcCreateSectionView);
+        add_handler(NtAlpcDeleteSectionView);
         add_handler(NtAlpcDeleteSecurityContext);
         add_handler(NtSetSecurityObject);
         add_handler(NtSetInformationDebugObject);

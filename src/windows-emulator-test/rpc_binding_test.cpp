@@ -8,9 +8,18 @@ namespace sogen::test
     {
         struct binding_probe_port final : rpc_port
         {
-            NTSTATUS handle_rpc(windows_emulator&, uint32_t procedure, const lpc_request_context&, utils::aligned_binary_writer& writer,
-                                std::vector<alpc_reply_handle>&) override
+            std::vector<uint8_t> received_data{};
+            uint64_t received_handle{};
+
+            NTSTATUS handle_rpc(windows_emulator& emu, uint32_t procedure, const lpc_request_context& c,
+                                utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>&) override
             {
+                this->received_data.resize(c.send_buffer_length);
+                if (!this->received_data.empty())
+                {
+                    emu.memory.read_memory(c.send_buffer, this->received_data.data(), this->received_data.size());
+                }
+                this->received_handle = c.send_handle;
                 writer.write(this->bound_interface().data(), this->bound_interface().size());
                 writer.write(static_cast<uint32_t>(writer.pointer_size()));
                 writer.write(procedure);
@@ -34,12 +43,15 @@ namespace sogen::test
                 this->storage = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
             }
 
-            lpc_request_result request(ULONG size)
+            lpc_request_result request(ULONG size, uint64_t view_base = 0, uint64_t view_size = 0)
             {
                 return this->endpoint.handle_request(*this->emu, {.send_buffer = this->storage,
                                                                   .send_buffer_length = size,
                                                                   .recv_buffer = this->storage + 0x800,
-                                                                  .recv_buffer_length = 0x800});
+                                                                  .recv_buffer_length = 0x800,
+                                                                  .send_handle = 0x1234,
+                                                                  .send_view_base = view_base,
+                                                                  .send_view_size = view_size});
             }
 
             void bind(uint16_t context, uint16_t syntax, uint8_t interface_tag)
@@ -124,5 +136,105 @@ namespace sogen::test
         this->endpoint.deserialize_object(input);
         this->expect_call(0, 0x11, 4);
         this->expect_call(7, 0x22, 8);
+    }
+
+    TEST_F(RpcBindingTest, ReadsLargeRequestDataFromViewForBothNdrWidths)
+    {
+        for (const auto syntax : {uint16_t{1}, uint16_t{3}})
+        {
+            this->bind(0, syntax, 0x11);
+            ASSERT_EQ(STATUS_SUCCESS, this->call(0).status);
+            std::vector<uint8_t> data(0x5000);
+            uint8_t value{};
+            for (auto& byte : data)
+            {
+                byte = value++;
+            }
+            const auto view = this->emu->memory.allocate_memory(data.size(), memory_permission::read_write);
+            this->emu->memory.write_memory(view, data.data(), data.size());
+            this->emu->memory.write_memory(this->storage + 8, uint32_t{4});
+            this->emu->memory.write_memory(this->storage + 64, static_cast<uint64_t>(data.size()));
+            const auto result = this->request(72, view, data.size());
+            ASSERT_EQ(STATUS_SUCCESS, result.status);
+            EXPECT_EQ(data, this->endpoint.received_data);
+            EXPECT_EQ(0x1234u, this->endpoint.received_handle);
+            ASSERT_TRUE(result.payload.has_value());
+            uint32_t width{};
+            std::memcpy(&width, result.payload->data() + 40, sizeof(width));
+            EXPECT_EQ(syntax == 3 ? 8u : 4u, width);
+        }
+    }
+
+    TEST_F(RpcBindingTest, RejectsMissingTruncatedOrOversizedRequestView)
+    {
+        this->bind(0, 1, 0x11);
+        ASSERT_EQ(STATUS_SUCCESS, this->call(0).status);
+        this->emu->memory.write_memory(this->storage + 8, uint32_t{4});
+        this->emu->memory.write_memory(this->storage + 64, uint64_t{0x1001});
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->request(72).status);
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->request(64, this->storage, 0x1000).status);
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->request(72, this->storage, 0x1000).status);
+        EXPECT_TRUE(this->endpoint.received_data.empty());
+    }
+
+    TEST_F(RpcBindingTest, RejectsShortCallHeadersWithoutDispatching)
+    {
+        this->bind(0, 1, 0x11);
+        ASSERT_EQ(STATUS_SUCCESS, this->call(0).status);
+        for (ULONG size = 0; size < 64; ++size)
+        {
+            EXPECT_EQ(STATUS_INVALID_PARAMETER, this->request(size).status) << size;
+        }
+        EXPECT_TRUE(this->endpoint.received_data.empty());
+    }
+
+    TEST_F(RpcBindingTest, RejectsUnmappedOperationAndPartiallyMappedCallHeader)
+    {
+        this->bind(0, 1, 0x11);
+        ASSERT_EQ(STATUS_SUCCESS, this->call(0).status);
+        const auto original_storage = this->storage;
+        this->storage += 0x1000;
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->request(64).status);
+        this->storage = original_storage + 0xffc;
+        this->emu->memory.write_memory(this->storage, uint32_t{0});
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->request(64).status);
+        EXPECT_TRUE(this->endpoint.received_data.empty());
+    }
+
+    TEST_F(RpcBindingTest, RejectsUnmappedLargeRequestLength)
+    {
+        this->bind(0, 1, 0x11);
+        ASSERT_EQ(STATUS_SUCCESS, this->call(0).status);
+        this->storage += 0xfc0;
+        this->emu->memory.set_memory(this->storage, 0, 64);
+        this->emu->memory.write_memory(this->storage + 8, uint32_t{4});
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->request(72, this->storage, 0x1000).status);
+        EXPECT_TRUE(this->endpoint.received_data.empty());
+    }
+
+    TEST_F(RpcBindingTest, RejectsPartiallyMappedHandshakeWithoutReplacingBinding)
+    {
+        this->bind(0, 1, 0x11);
+        const auto original_storage = this->storage;
+        this->storage += 0xfe0;
+        this->emu->memory.set_memory(this->storage, 0, 32);
+        this->emu->memory.write_memory(this->storage, uint32_t{1});
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->request(72).status);
+        this->storage = original_storage;
+        this->expect_call(0, 0x11, 4);
+    }
+
+    TEST_F(RpcBindingTest, RequestSerializationPreservesViewAndTransferredHandle)
+    {
+        const lpc_request_context source{
+            .send_buffer = 0x1000, .send_buffer_length = 72, .send_handle = 0x1234, .send_view_base = 0x2000, .send_view_size = 0x5000};
+        utils::buffer_serializer snapshot;
+        source.serialize(snapshot);
+        utils::buffer_deserializer input{snapshot};
+        lpc_request_context restored{};
+        restored.deserialize(input);
+        EXPECT_EQ(source.send_handle, restored.send_handle);
+        EXPECT_EQ(source.send_view_base, restored.send_view_base);
+        EXPECT_EQ(source.send_view_size, restored.send_view_size);
     }
 }

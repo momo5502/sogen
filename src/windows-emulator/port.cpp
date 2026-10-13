@@ -15,12 +15,15 @@
 #include "binary_writer.hpp"
 
 #include <platform/unicode.hpp>
+#include <utils/finally.hpp>
 
 namespace sogen
 {
 
     namespace
     {
+        constexpr uint32_t rpc_call_large_payload_flag = 4;
+
         struct dummy_port : port
         {
             explicit dummy_port(std::u16string name)
@@ -94,6 +97,181 @@ namespace sogen
             }
         };
 
+    }
+
+    NTSTATUS port::create_section(const uint64_t size, uint64_t& section_handle, uint64_t& actual_size)
+    {
+        if (size == 0 || size > std::numeric_limits<uint64_t>::max() - (ALLOCATION_GRANULARITY - 1))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+        actual_size = align_up(size, ALLOCATION_GRANULARITY);
+        if (this->next_section_handle > std::numeric_limits<uint64_t>::max() - 4)
+        {
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        const auto id = this->next_section_handle;
+        this->sections.emplace(id, alpc_port_section{.size = actual_size});
+        this->next_section_handle += 4;
+        section_handle = id;
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS port::delete_section(const uint64_t section_handle)
+    {
+        const auto section = this->sections.find(section_handle);
+        if (section == this->sections.end() || section->second.closed)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+        if (section->second.views.empty())
+        {
+            this->sections.erase(section);
+        }
+        else
+        {
+            section->second.closed = true;
+        }
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS port::create_section_view(windows_emulator& win_emu, const uint64_t section_handle, const uint64_t requested_size,
+                                       uint64_t& result_base, uint64_t& actual_size)
+    {
+        const auto section = this->sections.find(section_handle);
+        if (section == this->sections.end() || section->second.closed)
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+        if (requested_size == 0 || requested_size > std::numeric_limits<uint64_t>::max() - (ALLOCATION_GRANULARITY - 1))
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+        const auto size = page_align_up(requested_size);
+        // ALPC reserves allocation-granularity slots even for page-sized views.
+        const auto reserved_size = align_up(size, ALLOCATION_GRANULARITY);
+        uint64_t offset{};
+        for (const auto& [view_offset, view] : section->second.views)
+        {
+            if (view_offset >= offset && reserved_size <= view_offset - offset)
+            {
+                break;
+            }
+            offset = view_offset + view.reserved_size;
+        }
+        if (offset > section->second.size || reserved_size > section->second.size - offset)
+        {
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        if (size > std::numeric_limits<size_t>::max())
+        {
+            return STATUS_NO_MEMORY;
+        }
+        const auto start = win_emu.process.is_wow64_process ? DEFAULT_ALLOCATION_ADDRESS_32BIT : 0;
+        const auto base = win_emu.memory.allocate_memory(static_cast<size_t>(size), memory_permission::read_write, false, start,
+                                                         memory_region_kind::pagefile_section_view);
+        if (base == 0)
+        {
+            return STATUS_NO_MEMORY;
+        }
+        auto rollback = utils::finally([&] { win_emu.memory.release_memory(base, static_cast<size_t>(size)); });
+        for (const auto& [page_offset, page] : section->second.saved_pages)
+        {
+            if (page_offset >= offset && page_offset - offset < size)
+            {
+                win_emu.memory.write_memory(base + page_offset - offset, page.data(), page.size());
+            }
+        }
+        section->second.views.emplace(offset, alpc_section_view{.base = base, .size = size, .reserved_size = reserved_size});
+        result_base = base;
+        actual_size = size;
+        rollback.cancel();
+        return STATUS_SUCCESS;
+    }
+
+    NTSTATUS port::delete_section_view(windows_emulator& win_emu, const uint64_t address)
+    {
+        for (auto section = this->sections.begin(); section != this->sections.end(); ++section)
+        {
+            auto& state = section->second;
+            const auto view = std::ranges::find_if(state.views, [&](const auto& entry) { return entry.second.base == address; });
+            if (view == state.views.end())
+            {
+                continue;
+            }
+            if (!state.closed)
+            {
+                std::map<uint64_t, std::array<uint8_t, 0x1000>> saved;
+                for (uint64_t offset = 0; offset < view->second.size; offset += 0x1000)
+                {
+                    std::array<uint8_t, 0x1000> page{};
+                    const auto page_address = address + offset;
+                    const auto region = win_emu.memory.get_region_info(page_address);
+                    if (!region.is_committed)
+                    {
+                        return STATUS_ACCESS_VIOLATION;
+                    }
+                    const auto readable = (region.permissions.common & memory_permission::read) != memory_permission::none &&
+                                          !region.permissions.is_guarded();
+                    // Direct-mapped backends enforce guest protections even on emulator reads of section backing data.
+                    if (!readable && !win_emu.memory.protect_memory(page_address, page.size(), memory_permission::read))
+                    {
+                        return STATUS_ACCESS_VIOLATION;
+                    }
+                    auto restore_permissions = utils::finally([&] {
+                        if (!readable)
+                        {
+                            win_emu.memory.protect_memory(page_address, page.size(), region.permissions);
+                        }
+                    });
+                    if (!win_emu.memory.try_read_memory(page_address, page.data(), page.size()))
+                    {
+                        return STATUS_ACCESS_VIOLATION;
+                    }
+                    saved.emplace(view->first + offset, page);
+                }
+                for (auto& [offset, page] : saved)
+                {
+                    const auto existing = state.saved_pages.find(offset);
+                    if (existing != state.saved_pages.end())
+                    {
+                        existing->second = page;
+                    }
+                }
+                state.saved_pages.merge(saved);
+            }
+            win_emu.memory.release_memory(address, static_cast<size_t>(view->second.size));
+            state.views.erase(view);
+            if (state.closed && state.views.empty())
+            {
+                this->sections.erase(section);
+            }
+            return STATUS_SUCCESS;
+        }
+        return STATUS_INVALID_ADDRESS;
+    }
+
+    bool port::owns_section_view(const uint64_t section_handle, const uint64_t address, const uint64_t size) const
+    {
+        const auto section = this->sections.find(section_handle);
+        if (section == this->sections.end() || section->second.closed || size == 0)
+        {
+            return false;
+        }
+        return std::ranges::any_of(section->second.views,
+                                   [&](const auto& entry) { return entry.second.base == address && size <= entry.second.size; });
+    }
+
+    void port::release_sections(windows_emulator& win_emu)
+    {
+        for (const auto& section : this->sections | std::views::values)
+        {
+            for (const auto& view : section.views | std::views::values)
+            {
+                win_emu.memory.release_memory(view.base, static_cast<size_t>(view.size));
+            }
+        }
+        this->sections.clear();
     }
 
     std::unique_ptr<port> create_port(const std::u16string_view port)
@@ -262,6 +440,8 @@ namespace sogen
         context.recv_buffer_length =
             c.receive_buffer_length >= header_size ? static_cast<ULONG>(c.receive_buffer_length - header_size) : data_length;
         context.send_handle = c.send_handle;
+        context.send_view_base = c.send_view_base;
+        context.send_view_size = c.send_view_size;
 
         auto request_result = this->handle_request(win_emu, context);
         const auto payload_size = request_result.payload ? static_cast<ULONG>(request_result.payload->size()) : context.recv_buffer_length;
@@ -298,16 +478,20 @@ namespace sogen
             return STATUS_INVALID_PARAMETER;
         }
 
-        const auto operation = win_emu.emu().read_memory<uint32_t>(c.send_buffer);
+        const auto operation = emulator_object<uint32_t>{win_emu.memory, c.send_buffer}.try_read();
+        if (!operation)
+        {
+            return STATUS_ACCESS_VIOLATION;
+        }
 
-        switch (operation)
+        switch (*operation)
         {
         case 1: // Handshake
             return handle_handshake(win_emu, c);
         case 0: // Call
             return handle_rpc_call(win_emu, c);
         default:
-            win_emu.log.print(color::gray, "Unexpected RPC operation: 0x%X\n", operation);
+            win_emu.log.print(color::gray, "Unexpected RPC operation: 0x%X\n", *operation);
             return STATUS_NOT_SUPPORTED;
         }
     }
@@ -325,26 +509,26 @@ namespace sogen
 
         // The bind carries the target interface's RPC_SYNTAX_IDENTIFIER GUID at offset 12.
         constexpr ULONG rpc_handshake_interface_offset = 12;
-        if (c.send_buffer_length >= rpc_handshake_interface_offset + this->bound_interface_.size())
-        {
-            win_emu.emu().read_memory(c.send_buffer + rpc_handshake_interface_offset, this->bound_interface_.data(),
-                                      this->bound_interface_.size());
-        }
-
         std::vector<uint8_t> payload(c.send_buffer_length, 0);
-        win_emu.emu().read_memory(c.send_buffer, payload.data(), payload.size());
+        if (!win_emu.memory.try_read_memory(c.send_buffer, payload.data(), payload.size()))
+        {
+            return STATUS_ACCESS_VIOLATION;
+        }
 
         utils::aligned_binary_writer writer(payload);
         writer.write_at<uint32_t>(8, 0);
 
-        const auto syntax = win_emu.emu().read_memory<uint32_t>(c.send_buffer + rpc_handshake_state_offset);
+        uint32_t syntax{};
+        std::memcpy(&syntax, payload.data() + rpc_handshake_state_offset, sizeof(syntax));
         if (syntax == 0 || (syntax & ~uint32_t{3}) != 0)
         {
             return STATUS_INVALID_PARAMETER;
         }
         const auto ndr64 = (syntax & 2) != 0;
         const auto context_offset = rpc_handshake_context_offset + (ndr64 ? sizeof(uint16_t) : 0);
-        const auto context_id = win_emu.emu().read_memory<uint16_t>(c.send_buffer + context_offset);
+        uint16_t context_id{};
+        std::memcpy(&context_id, payload.data() + context_offset, sizeof(context_id));
+        std::memcpy(this->bound_interface_.data(), payload.data() + rpc_handshake_interface_offset, this->bound_interface_.size());
         this->bindings_.insert_or_assign(context_id, rpc_binding{.interface_id = this->bound_interface_, .ndr64 = ndr64});
         if (ndr64)
         {
@@ -368,10 +552,15 @@ namespace sogen
             return STATUS_INVALID_PARAMETER;
         }
 
-        const auto call_id = win_emu.emu().read_memory<uint32_t>(c.send_buffer + rpc_call_id_offset);
-        const auto procedure_id = win_emu.emu().read_memory<uint32_t>(c.send_buffer + rpc_call_opnum_offset);
-        const auto context_id = win_emu.emu().read_memory<uint16_t>(c.send_buffer + 16);
-        const auto binding = this->bindings_.find(context_id);
+        const auto call_id = emulator_object<uint32_t>{win_emu.memory, c.send_buffer + rpc_call_id_offset}.try_read();
+        const auto procedure_id = emulator_object<uint32_t>{win_emu.memory, c.send_buffer + rpc_call_opnum_offset}.try_read();
+        const auto context_id = emulator_object<uint16_t>{win_emu.memory, c.send_buffer + 16}.try_read();
+        const auto call_flags = emulator_object<uint32_t>{win_emu.memory, c.send_buffer + 8}.try_read();
+        if (!call_id || !procedure_id || !context_id || !call_flags)
+        {
+            return STATUS_ACCESS_VIOLATION;
+        }
+        const auto binding = this->bindings_.find(*context_id);
         if (binding == this->bindings_.end())
         {
             return STATUS_INVALID_PARAMETER;
@@ -382,7 +571,7 @@ namespace sogen
 
         std::array<uint8_t, rpc_call_immediate_response_header_size> header{};
         header[0] = 3;
-        std::memcpy(header.data() + rpc_call_id_offset, &call_id, sizeof(call_id));
+        std::memcpy(header.data() + rpc_call_id_offset, &*call_id, sizeof(*call_id));
 
         std::vector<uint8_t> payload;
         utils::aligned_binary_writer writer(payload, pointer_size);
@@ -391,6 +580,26 @@ namespace sogen
         lpc_request_context rpc_context{};
         rpc_context.send_buffer = c.send_buffer + rpc_call_send_header_size;
         rpc_context.send_buffer_length = c.send_buffer_length - rpc_call_send_header_size;
+        if ((*call_flags & rpc_call_large_payload_flag) != 0)
+        {
+            constexpr ULONG rpc_call_view_header_size = rpc_call_send_header_size + sizeof(uint64_t);
+            if (c.send_buffer_length < rpc_call_view_header_size || c.send_view_base == 0)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            const auto view_length = emulator_object<uint32_t>{win_emu.memory, c.send_buffer + rpc_call_send_header_size}.try_read();
+            if (!view_length)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+            if (*view_length > c.send_view_size)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            rpc_context.send_buffer = c.send_view_base;
+            rpc_context.send_buffer_length = *view_length;
+        }
+        rpc_context.send_handle = c.send_handle;
         rpc_context.recv_buffer = c.recv_buffer + rpc_call_immediate_response_header_size;
         if (c.recv_buffer_length >= rpc_call_immediate_response_header_size)
         {
@@ -398,7 +607,7 @@ namespace sogen
         }
 
         std::vector<alpc_reply_handle> reply_handles;
-        const auto status = this->handle_rpc(win_emu, procedure_id, rpc_context, writer, reply_handles);
+        const auto status = this->handle_rpc(win_emu, *procedure_id, rpc_context, writer, reply_handles);
 
         std::vector<uint8_t> view_payload;
         const auto ndr_size = payload.size() - rpc_call_immediate_response_header_size;
@@ -407,7 +616,7 @@ namespace sogen
             view_payload.assign(payload.begin() + rpc_call_immediate_response_header_size, payload.end());
             payload.resize(rpc_call_large_response_header_size);
             utils::aligned_binary_writer header_writer(payload);
-            header_writer.write_at<uint32_t>(0x08, 4);
+            header_writer.write_at<uint32_t>(0x08, rpc_call_large_payload_flag);
             header_writer.write_at<uint32_t>(0x18, static_cast<uint32_t>(ndr_size));
         }
 
