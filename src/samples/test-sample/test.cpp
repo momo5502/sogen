@@ -1268,7 +1268,7 @@ namespace
 
     bool test_desktop_window_text()
     {
-        const auto desktop = GetDesktopWindow();
+        auto* const desktop = GetDesktopWindow();
         if (desktop == nullptr)
         {
             return false;
