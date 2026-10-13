@@ -28,6 +28,7 @@ if(SOGEN_ENABLE_STEAM AND SOGEN_STEAM_HOST_PLATFORM)
     FetchContent_Declare(steamworks_snapshots GIT_REPOSITORY "${SOGEN_STEAMWORKS_PROTON_REPO}"
       GIT_TAG "${SOGEN_STEAMWORKS_PROTON_TAG}" GIT_SHALLOW TRUE GIT_SUBMODULES "" GIT_PROGRESS TRUE
       SOURCE_SUBDIR __sogen_headers_only__)
+    message(STATUS "cloning repository ${SOGEN_STEAMWORKS_PROTON_REPO}")
     FetchContent_MakeAvailable(steamworks_snapshots)
     set(_snap_root "${steamworks_snapshots_SOURCE_DIR}")
     if(EXISTS "${_snap_root}/lsteamclient")
