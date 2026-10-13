@@ -4,6 +4,7 @@
 
 #include <deque>
 #include <vector>
+#include <cstdint>
 
 namespace sogen
 {
