@@ -357,6 +357,11 @@ namespace sogen
                             info.DeviceType = FILE_DEVICE_CONSOLE;
                             info.Characteristics = 0x20000;
                         }
+                        else if (file_handle == NUL_HANDLE)
+                        {
+                            info.DeviceType = FILE_DEVICE_NULL;
+                            info.Characteristics = FILE_DEVICE_SECURE_OPEN;
+                        }
                         else
                         {
                             info.DeviceType = FILE_DEVICE_DISK;
