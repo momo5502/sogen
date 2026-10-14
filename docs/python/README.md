@@ -87,7 +87,8 @@ import sogen
 app = sogen.windows.create_application(
     "c:/test-sample.exe",
     emulation_root="./root",
-    path_mappings={"c:/a.txt": Path("./a.txt")},
+    root_mode="ro",
+    mounts=[(Path("./a.txt"), "c:/a.txt", "rw")],
     network="live",
     port_mappings={28970: 28980},
 )
@@ -96,6 +97,12 @@ app.callbacks.on_stdout = lambda text: print(text, end="")
 app.start()
 print("exit status:", app.process.exit_status)
 ```
+
+`root_mode` sets the access mode of the drives in the emulation root. Each entry in `mounts` is
+`(host_path, guest_path)` or `(host_path, guest_path, mode)`. The host path can be a file or a directory. The mode is
+`"ro"` or `"rw"`, and both settings default to `"rw"`. A guest write to a `"ro"` path fails with
+`STATUS_ACCESS_DENIED`, and the host files do not change. `path_mappings={guest_path: host_path}` is the same as
+`mounts` with the default mode.
 
 Linux applications also accept guest cwd, filesystem mapping, and TCP port mapping kwargs:
 

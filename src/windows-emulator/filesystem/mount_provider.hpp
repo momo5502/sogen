@@ -19,6 +19,11 @@ namespace sogen
         NTSTATUS status{};
     };
 
+    inline bool is_write_open_mode(const std::u16string_view mode)
+    {
+        return mode.find_first_of(u"wa+") != std::u16string_view::npos;
+    }
+
     // Paths passed to a provider are relative to the mount point and contain no "." or ".." components.
     class mount_provider
     {

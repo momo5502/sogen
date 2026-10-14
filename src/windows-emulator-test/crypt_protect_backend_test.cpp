@@ -181,6 +181,16 @@ namespace sogen::test
         std::filesystem::remove_all(root);
     }
 
+    TEST(CryptProtectBackend, DefaultMasterKeyDoesNotWriteToEmulationRoot)
+    {
+        const auto root = std::filesystem::temp_directory_path() / "sogen-dpapi-test" / std::to_string(std::random_device{}());
+        std::filesystem::create_directories(root);
+
+        const auto backend = create_windows_dpapi_backend(root);
+        EXPECT_TRUE(std::filesystem::is_empty(root));
+        std::filesystem::remove_all(root);
+    }
+
     TEST(CryptProtectBackend, EmptyPlaintextRoundTrip)
     {
         const auto key = test_master_key();
