@@ -87,7 +87,8 @@ namespace sogen
             uint16_t managed_process_port{};
             std::string managed_process_token{};
             managed_process_connection* managed_process{};
-            std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
+            filesystem_mode root_mode{default_root_mode};
+            std::vector<mount_spec> mounts{};
             utils::unordered_insensitive_u16string_map<std::u16string> environment{};
         };
 
@@ -113,11 +114,12 @@ namespace sogen
                 arguments.emplace_back("--reg-file");
                 arguments.push_back(registry_file.string());
             }
-            for (const auto& [source, target] : options.path_mappings)
+            arguments.emplace_back("--root-mode");
+            arguments.emplace_back(to_string(options.root_mode));
+            for (const auto& mount : options.mounts)
             {
-                arguments.emplace_back("--path");
-                arguments.push_back(u16_to_u8(source.u16string()));
-                arguments.push_back(target.string());
+                arguments.emplace_back("--mount");
+                arguments.push_back(render_mount_spec(mount));
             }
 
             return arguments;
@@ -544,7 +546,8 @@ namespace sogen
                 .use_instruction_precision = !options.disable_instruction_precision,
                 .emulation_root = options.emulation_root,
                 .registry_directory = options.registry_path,
-                .path_mappings = options.path_mappings,
+                .root_mode = options.root_mode,
+                .mounts = options.mounts,
                 .network = options.network,
             };
         }
@@ -1048,7 +1051,19 @@ namespace sogen
             app.add_option("-i,--ignore", ignored_functions, "Comma-separated list of functions to ignore")->allow_extra_args(false);
 
             std::vector<std::pair<std::string, std::string>> path_mappings{};
-            app.add_option("-p,--path", path_mappings, "Map a Windows path to a host path")->type_name("SRC DST")->allow_extra_args(false);
+            app.add_option("-p,--path", path_mappings, "Map a Windows path to a host path, same as --mount DST:SRC")
+                ->type_name("SRC DST")
+                ->allow_extra_args(false);
+
+            std::vector<std::string> mounts{};
+            app.add_option("--mount", mounts, "Mount a host path into the guest file system (MODE is ro or rw)")
+                ->type_name("HOST:GUEST[:MODE]")
+                ->allow_extra_args(false);
+
+            std::string root_mode{to_string(default_root_mode)};
+            app.add_option("--root-mode", root_mode, "Access mode of the emulation root drives")
+                ->capture_default_str()
+                ->check(CLI::IsMember({"ro", "rw"}));
 
             std::vector<std::pair<std::string, std::string>> environment{};
             app.add_option("--env", environment, "Set an environment variable")->type_name("NAME VALUE")->allow_extra_args(false);
@@ -1092,9 +1107,21 @@ namespace sogen
                     split_and_insert(options.ignored_functions, functions);
                 }
 
+                options.root_mode = parse_filesystem_mode(root_mode).value();
+
                 for (const auto& [source, target] : path_mappings)
                 {
-                    options.path_mappings[windows_path(source)] = std::filesystem::absolute(target);
+                    options.mounts.push_back(mount_spec{
+                        .host_path = std::filesystem::absolute(target),
+                        .guest_path = windows_path(source),
+                    });
+                }
+
+                for (const auto& mount : mounts)
+                {
+                    auto spec = parse_mount_spec(mount);
+                    spec.host_path = std::filesystem::absolute(spec.host_path);
+                    options.mounts.push_back(std::move(spec));
                 }
 
                 for (const auto& [name, value] : environment)

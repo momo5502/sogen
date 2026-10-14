@@ -300,10 +300,6 @@ namespace sogen
                 }
 
                 this->master_key_ = k_default_master_key;
-                if (!this->emulation_root_.empty())
-                {
-                    save_master_key_file(master_key_path(this->emulation_root_), this->master_key_);
-                }
             }
 
             crypt_protect_result protect(const crypt_protect_request& request) override
