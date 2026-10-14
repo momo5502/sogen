@@ -19,8 +19,9 @@ It's very slow, so only use it at the end:
 
 ## Smoke tests
 
-Execute `analyzer.exe -s test-sample.exe` for smoke tests using the cmd in the directory of the built preset.
-E.g.: `cmd /c "cd build\release\artifacts\ && analyzer.exe -s test-sample.exe"`
+Execute `analyzer.exe --network live -s test-sample.exe` for smoke tests using the cmd in the directory of the built preset.
+E.g.: `cmd /c "cd build\release\artifacts\ && analyzer.exe --network live -s test-sample.exe"`
+The sample resolves `google.com`, which needs `--network live`.
 
 Other applications can also be executed in the emulator:
 `cmd /c "cd build\release\artifacts\ && analyzer.exe -s path/to/binary.exe arg1 arg2 ..."`
