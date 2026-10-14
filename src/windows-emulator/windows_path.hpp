@@ -228,6 +228,33 @@ namespace sogen
             return {this->drive_, std::move(folders)};
         }
 
+        windows_path lexically_normal() const
+        {
+            std::list<std::u16string> folders{};
+
+            for (const auto& folder : this->folders_)
+            {
+                if (folder == u".")
+                {
+                    continue;
+                }
+
+                if (folder == u"..")
+                {
+                    if (!folders.empty())
+                    {
+                        folders.pop_back();
+                    }
+
+                    continue;
+                }
+
+                folders.push_back(folder);
+            }
+
+            return {this->drive_, std::move(folders)};
+        }
+
         // Number of path components (excluding the drive).
         size_t depth() const
         {

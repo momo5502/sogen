@@ -1104,45 +1104,50 @@ namespace sogen::sxs
             }
         }
 
-        std::optional<resolved_assembly> resolve_private_assembly(const mapped_module& executable, const assembly_identity& identity)
+        bool is_plain_file_name(const std::u16string_view name)
         {
-            const auto application_directory = executable.path.parent_path();
-            const auto identity_name = std::filesystem::path(u8_to_u16(identity.name));
-            const std::array candidates{
-                application_directory / (identity_name.u16string() + u".manifest"),
-                application_directory / identity_name / (identity_name.u16string() + u".manifest"),
-            };
-            for (const auto& candidate : candidates)
+            return !name.empty() && name != u"." && name != u".." && name.find_first_of(u"\\/:") == std::u16string_view::npos;
+        }
+
+        std::optional<resolved_assembly> resolve_private_assembly(const file_system& file_system, const mapped_module& executable,
+                                                                  const assembly_identity& identity)
+        {
+            const auto identity_name = u8_to_u16(identity.name);
+            if (!is_plain_file_name(identity_name))
             {
-                const auto xml = read_text_file(candidate);
-                if (!xml)
-                {
-                    continue;
-                }
-                auto manifest = parse_manifest(*xml);
-                if (!manifest.identity || !identity_matches(*manifest.identity, identity, true))
-                {
-                    continue;
-                }
-                const auto relative_directory = candidate.parent_path().lexically_relative(application_directory);
-                const auto relative_manifest = candidate.lexically_relative(application_directory);
-                resolved_assembly result{};
-                result.identity = std::move(*manifest.identity);
-                result.manifest_path = (executable.module_path.parent() / windows_path(relative_manifest)).u16string();
-                result.directory_name = relative_directory == "." ? std::u16string{} : relative_directory.u16string();
-                result.files = std::move(manifest.files);
-                result.dependencies = std::move(manifest.dependencies);
-                result.flags = assembly_information_private;
-                return result;
+                return std::nullopt;
             }
 
-            const std::array embedded_candidates{
-                application_directory / (identity_name.u16string() + u".dll"),
-                application_directory / identity_name / (identity_name.u16string() + u".dll"),
-            };
-            for (const auto& candidate : embedded_candidates)
+            struct candidate
             {
-                const auto xml = read_embedded_manifest(candidate, 2);
+                windows_path relative_path;
+                std::u16string directory_name;
+            };
+
+            const auto make_candidates = [&](const std::u16string_view extension) {
+                const auto file_name = identity_name + std::u16string(extension);
+                return std::array{
+                    candidate{.relative_path = windows_path{file_name}, .directory_name = {}},
+                    candidate{.relative_path = windows_path{identity_name} / windows_path{file_name}, .directory_name = identity_name},
+                };
+            };
+
+            const auto application_directory = executable.module_path.parent();
+
+            const auto make_result = [&](const candidate& entry, manifest_document manifest) {
+                resolved_assembly result{};
+                result.identity = std::move(*manifest.identity);
+                result.manifest_path = (application_directory / entry.relative_path).u16string();
+                result.directory_name = entry.directory_name;
+                result.files = std::move(manifest.files);
+                result.dependencies = std::move(manifest.dependencies);
+                result.flags = assembly_information_private;
+                return result;
+            };
+
+            for (const auto& entry : make_candidates(u".manifest"))
+            {
+                const auto xml = read_text_file(file_system.translate(application_directory / entry.relative_path));
                 if (!xml)
                 {
                     continue;
@@ -1152,16 +1157,22 @@ namespace sogen::sxs
                 {
                     continue;
                 }
-                const auto relative_directory = candidate.parent_path().lexically_relative(application_directory);
-                const auto relative_manifest = candidate.lexically_relative(application_directory);
-                resolved_assembly result{};
-                result.identity = std::move(*manifest.identity);
-                result.manifest_path = (executable.module_path.parent() / windows_path(relative_manifest)).u16string();
-                result.directory_name = relative_directory == "." ? std::u16string{} : relative_directory.u16string();
-                result.files = std::move(manifest.files);
-                result.dependencies = std::move(manifest.dependencies);
-                result.flags = assembly_information_private;
-                return result;
+                return make_result(entry, std::move(manifest));
+            }
+
+            for (const auto& entry : make_candidates(u".dll"))
+            {
+                const auto xml = read_embedded_manifest(file_system.translate(application_directory / entry.relative_path), 2);
+                if (!xml)
+                {
+                    continue;
+                }
+                auto manifest = parse_manifest(*xml);
+                if (!manifest.identity || !identity_matches(*manifest.identity, identity, true))
+                {
+                    continue;
+                }
+                return make_result(entry, std::move(manifest));
             }
             return std::nullopt;
         }
@@ -1617,7 +1628,7 @@ namespace sogen::sxs
                     apply_binding_redirects(config->contents, identity);
                 }
 
-                auto resolved = resolve_private_assembly(executable, identity);
+                auto resolved = resolve_private_assembly(file_system, executable, identity);
                 if (!resolved)
                 {
                     resolved = resolve_winsxs_assembly(file_system, manifests_path, winsxs_path, identity, executable, preferred_language);
