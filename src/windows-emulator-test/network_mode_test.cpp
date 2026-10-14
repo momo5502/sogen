@@ -8,9 +8,10 @@
 
 namespace sogen::test
 {
+#ifndef OS_EMSCRIPTEN
     namespace
     {
-        bool connect_to_host_listener(network::network_mode mode)
+        bool connect_to_host_listener(const network::network_mode mode)
         {
             network::tcp_server_socket listener{AF_INET};
             if (!listener.bind(network::address{"127.0.0.1", 0}))
@@ -30,7 +31,6 @@ namespace sogen::test
         EXPECT_FALSE(connect_to_host_listener(network::network_mode::offline));
     }
 
-#ifndef OS_EMSCRIPTEN
     TEST(NetworkModeTest, LiveSocketReachesHostListener)
     {
         EXPECT_TRUE(connect_to_host_listener(network::network_mode::live));

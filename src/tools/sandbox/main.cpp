@@ -119,15 +119,14 @@ namespace sogen::sandbox
             settings.path_mappings = std::move(path_mappings);
 
             subprocess_process_manager process_manager{get_sandbox_executable(), [&](const auto port, const auto& token) {
-                                                           std::vector<std::string> arguments{
-                                                               "--managed-process-port",
-                                                               std::to_string(port),
-                                                               "--managed-process-token",
-                                                               token,
-                                                               "--registry",
-                                                               settings.registry_directory.string(),
-                                                               "--network",
-                                                               std::string(network::to_string(network_mode))};
+                                                           std::vector<std::string> arguments{"--managed-process-port",
+                                                                                              std::to_string(port),
+                                                                                              "--managed-process-token",
+                                                                                              token,
+                                                                                              "--registry",
+                                                                                              settings.registry_directory.string()};
+                                                           arguments.emplace_back("--network");
+                                                           arguments.emplace_back(network::to_string(network_mode));
                                                            if (!settings.emulation_root.empty())
                                                            {
                                                                arguments.emplace_back("--emulation");

@@ -91,12 +91,9 @@ namespace sogen
         std::vector<std::string> create_managed_process_arguments(const analysis_options& options, const uint16_t port,
                                                                   const std::string& token)
         {
-            std::vector<std::string> arguments{"--managed-process-port",
-                                               std::to_string(port),
-                                               "--managed-process-token",
-                                               token,
-                                               "--network",
-                                               std::string(network::to_string(options.network))};
+            std::vector<std::string> arguments{"--managed-process-port", std::to_string(port), "--managed-process-token", token};
+            arguments.emplace_back("--network");
+            arguments.emplace_back(network::to_string(options.network));
 
             const auto add_path = [&](const std::string_view option, const std::filesystem::path& path) {
                 if (!path.empty())
