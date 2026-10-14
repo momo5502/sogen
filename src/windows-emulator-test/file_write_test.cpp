@@ -32,7 +32,7 @@ namespace sogen::test
         {
             SCOPED_TRACE(append);
             auto emu = create_empty_emulator();
-            emu.file_sys.map(windows_path{'x', {}}, directory);
+            emu.file_sys.map(windows_path{'x', {}}, directory, filesystem_mode::read_write);
             const auto path = windows_path{'x', {append ? u"append.bin" : u"write.bin"}};
             const auto* const mode = append ? u"a+b" : u"w+b";
             file writer{};

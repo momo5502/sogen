@@ -128,8 +128,8 @@ namespace sogen::test
 
     TEST_F(FileSystemTest, RenameAcrossMountsCopiesFile)
     {
-        file_system fs{this->root};
-        fs.map(windows_path{'c', {u"mnt"}}, this->root / "mapped");
+        file_system fs{this->root, filesystem_mode::read_write};
+        fs.map(windows_path{'c', {u"mnt"}}, this->root / "mapped", filesystem_mode::read_write);
 
         EXPECT_EQ(STATUS_SUCCESS, fs.rename(windows_path{'c', {u"mnt", u"x.txt"}}, windows_path{'c', {u"moved.txt"}}));
         EXPECT_FALSE(std::filesystem::exists(this->root / "mapped" / "x.txt"));
@@ -141,8 +141,8 @@ namespace sogen::test
 
     TEST_F(FileSystemTest, DirectoryMountPointsCannotBeRemovedOrRenamed)
     {
-        file_system fs{this->root};
-        fs.map(windows_path{'c', {u"mnt"}}, this->root / "mapped");
+        file_system fs{this->root, filesystem_mode::read_write};
+        fs.map(windows_path{'c', {u"mnt"}}, this->root / "mapped", filesystem_mode::read_write);
 
         EXPECT_EQ(STATUS_ACCESS_DENIED, fs.remove(windows_path{'c', {u"mnt"}}));
         EXPECT_EQ(STATUS_ACCESS_DENIED, fs.remove(windows_path{'c', {}}));
@@ -152,9 +152,9 @@ namespace sogen::test
 
     TEST_F(FileSystemTest, FileMountsCanBeRemovedAndRenamed)
     {
-        file_system fs{this->root};
-        fs.map(windows_path{'c', {u"single.txt"}}, this->root / "single.txt");
-        fs.map(windows_path{'c', {u"other.txt"}}, this->root / "other" / "y.txt");
+        file_system fs{this->root, filesystem_mode::read_write};
+        fs.map(windows_path{'c', {u"single.txt"}}, this->root / "single.txt", filesystem_mode::read_write);
+        fs.map(windows_path{'c', {u"other.txt"}}, this->root / "other" / "y.txt", filesystem_mode::read_write);
 
         EXPECT_EQ(STATUS_SUCCESS, fs.rename(windows_path{'c', {u"x.txt"}}, windows_path{'c', {u"single.txt"}}));
         EXPECT_FALSE(std::filesystem::exists(this->root / "c" / "x.txt"));
@@ -211,7 +211,7 @@ namespace sogen::test
 
     TEST_F(FileSystemTest, HandlesReportWriteAccess)
     {
-        file_system fs{this->root};
+        file_system fs{this->root, filesystem_mode::read_write};
         const windows_path path{'c', {u"x.txt"}};
 
         const guest_file reader{fs, path, u"rb", fs.open(path, u"rb").file};
@@ -225,7 +225,7 @@ namespace sogen::test
 
     TEST_F(FileSystemTest, DeferredOperationsRunOnClose)
     {
-        file_system fs{this->root};
+        file_system fs{this->root, filesystem_mode::read_write};
         const windows_path source{'c', {u"x.txt"}};
         const windows_path target{'c', {u"renamed.txt"}};
 
@@ -247,7 +247,7 @@ namespace sogen::test
 
     TEST_F(FileSystemTest, SnapshotRestoreKeepsWrittenContents)
     {
-        file_system fs{this->root};
+        file_system fs{this->root, filesystem_mode::read_write};
         const windows_path path{'c', {u"new.bin"}};
         constexpr std::string_view contents = "snapshot";
 
