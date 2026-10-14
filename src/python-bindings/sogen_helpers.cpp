@@ -202,7 +202,7 @@ namespace sogen::py
             const nb::object value = kwargs["network"];
             if (!nb::isinstance<nb::str>(value))
             {
-                throw nb::type_error("network must be a string: \"offline\" or \"live\"");
+                throw nb::type_error(R"(network must be a string: "offline" or "live")");
             }
 
             return network::parse_network_mode(nb::cast<std::string>(value));
