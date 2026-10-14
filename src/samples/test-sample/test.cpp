@@ -307,6 +307,112 @@ namespace
         return text == buffer;
     }
 
+    bool rename_by_handle(const HANDLE file, const std::filesystem::path& target, const bool replace_if_exists, const DWORD expected_error)
+    {
+        const auto name = target.wstring();
+        const auto name_bytes = name.size() * sizeof(wchar_t);
+
+        std::vector<char> buffer(offsetof(FILE_RENAME_INFO, FileName) + name_bytes + sizeof(wchar_t));
+        auto* info = reinterpret_cast<FILE_RENAME_INFO*>(buffer.data());
+        info->ReplaceIfExists = replace_if_exists ? TRUE : FALSE;
+        info->FileNameLength = static_cast<DWORD>(name_bytes);
+        memcpy(info->FileName, name.c_str(), name_bytes);
+
+        SetLastError(ERROR_SUCCESS);
+        const auto result = SetFileInformationByHandle(file, FileRenameInfo, info, static_cast<DWORD>(buffer.size()));
+        const auto error = GetLastError();
+
+        if (expected_error == ERROR_SUCCESS)
+        {
+            return result != FALSE;
+        }
+
+        if (result || error != expected_error)
+        {
+            printf("Rename result=%d error=%lu, expected error %lu\n", static_cast<int>(result), error, expected_error);
+            return false;
+        }
+
+        return true;
+    }
+
+    HANDLE open_for_rename(const std::filesystem::path& path)
+    {
+        return CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE | DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    }
+
+    bool test_file_rename()
+    {
+        const auto directory = std::filesystem::absolute(L"sogen-rename-test");
+        if (!CreateDirectoryW(directory.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
+        {
+            puts("Failed to create rename test directory");
+            return false;
+        }
+
+        const auto source = directory / L"source.txt";
+        const auto existing = directory / L"existing.txt";
+        const auto fresh = directory / L"fresh.txt";
+        const auto missing = directory / L"missing" / L"target.txt";
+
+        const auto cleanup = sogen::utils::finally([&] {
+            DeleteFileW(source.c_str());
+            DeleteFileW(existing.c_str());
+            DeleteFileW(fresh.c_str());
+            RemoveDirectoryW(directory.c_str());
+        });
+
+        const auto create_file = [](const std::filesystem::path& path) {
+            auto* const handle = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (handle == INVALID_HANDLE_VALUE)
+            {
+                return false;
+            }
+
+            CloseHandle(handle);
+            return true;
+        };
+
+        const auto exists = [](const std::filesystem::path& path) { return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES; };
+
+        if (!create_file(source) || !create_file(existing))
+        {
+            puts("Failed to create rename test files");
+            return false;
+        }
+
+        HANDLE handle = open_for_rename(source);
+        if (handle == INVALID_HANDLE_VALUE)
+        {
+            puts("Failed to open rename source");
+            return false;
+        }
+
+        const auto refused =
+            rename_by_handle(handle, source, false, ERROR_SUCCESS) && rename_by_handle(handle, existing, false, ERROR_ALREADY_EXISTS) &&
+            rename_by_handle(handle, missing, false, ERROR_PATH_NOT_FOUND) && rename_by_handle(handle, existing, true, ERROR_SUCCESS);
+        CloseHandle(handle);
+
+        if (!refused || exists(source) || !exists(existing))
+        {
+            puts("Rename onto existing file failed");
+            return false;
+        }
+
+        handle = open_for_rename(existing);
+        if (handle == INVALID_HANDLE_VALUE)
+        {
+            puts("Failed to reopen rename source");
+            return false;
+        }
+
+        const auto renamed = rename_by_handle(handle, fresh, false, ERROR_SUCCESS);
+        CloseHandle(handle);
+
+        return renamed && exists(fresh) && !exists(existing);
+    }
+
     bool test_file_locking()
     {
         const auto filename = std::filesystem::absolute("a.txt");
@@ -2294,6 +2400,7 @@ int main(const int argc, const char* argv[])
 #endif
     RUN_TEST(test_io, "I/O")
     RUN_TEST(test_file_locking, "File Locking")
+    RUN_TEST(test_file_rename, "File Rename")
     RUN_TEST(test_dir_io, "Dir I/O")
     RUN_TEST(test_apis, "APIs")
 #ifdef _WIN64
