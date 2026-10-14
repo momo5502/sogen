@@ -1912,6 +1912,41 @@ namespace
         return true;
     }
 
+    bool test_open_named_section()
+    {
+        constexpr auto* name = "sogen-open-named-section";
+
+        auto* const creator = CreateFileMappingA(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, 0x1000, name);
+        if (!creator)
+        {
+            puts("CreateFileMappingA failed");
+            return false;
+        }
+
+        auto* const opener = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, name);
+        if (!opener)
+        {
+            puts("OpenFileMappingA failed");
+            CloseHandle(creator);
+            return false;
+        }
+
+        CloseHandle(creator);
+
+        auto* const view = MapViewOfFile(opener, FILE_MAP_ALL_ACCESS, 0, 0, 0x1000);
+        if (!view)
+        {
+            puts("MapViewOfFile failed");
+            CloseHandle(opener);
+            return false;
+        }
+
+        UnmapViewOfFile(view);
+        CloseHandle(opener);
+
+        return true;
+    }
+
     bool test_handle_tag_bits()
     {
         using nt_close_t = LONG(NTAPI*)(HANDLE);
@@ -2363,6 +2398,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_paint_message_queue, "Message Queue (Paint)")
     RUN_TEST(test_settimer, "User Timer")
     RUN_TEST(test_private_namespace, "Private Namespace")
+    RUN_TEST(test_open_named_section, "Open Named Section")
     RUN_TEST(test_handle_tag_bits, "Handle Tag Bits")
     RUN_TEST(test_unicode_case_mapping, "Unicode Case Mapping")
     RUN_TEST(test_actctx, "Activation Context")

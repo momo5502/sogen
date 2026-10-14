@@ -331,6 +331,7 @@ namespace sogen
             {
                 if (!section.name.empty() && utils::string::equals_ignore_case(section.name, filename))
                 {
+                    ++section.ref_count;
                     section_handle.write(c.proc.sections.make_handle(handle));
                     return STATUS_SUCCESS;
                 }
