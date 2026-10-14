@@ -4,6 +4,7 @@
 #include <platform/compiler.hpp>
 #include <gtest/gtest.h>
 
+#include <array>
 #include <stdexcept>
 
 namespace sogen::test
@@ -36,6 +37,35 @@ namespace sogen::test
         EXPECT_TRUE(connect_to_host_listener(network::network_mode::live));
     }
 #endif
+
+    TEST(NetworkModeTest, OfflineLoopbackClientReachesWildcardListener)
+    {
+        const auto factory = network::create_socket_factory(network::network_mode::offline);
+        const auto server = factory->create_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        ASSERT_TRUE(server->bind(network::address{"0.0.0.0", 28970}));
+        ASSERT_TRUE(server->listen(1));
+
+        const auto client = factory->create_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        EXPECT_TRUE(client->connect(network::address{"127.0.0.1", 28970}));
+
+        network::address peer{};
+        EXPECT_NE(server->accept(peer), nullptr);
+    }
+
+    TEST(NetworkModeTest, OfflineLoopbackDatagramReachesWildcardReceiver)
+    {
+        const auto factory = network::create_socket_factory(network::network_mode::offline);
+        const auto receiver = factory->create_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        ASSERT_TRUE(receiver->bind(network::address{"0.0.0.0", 28970}));
+
+        const auto sender = factory->create_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        const std::array data{std::byte{1}, std::byte{2}, std::byte{3}};
+        ASSERT_EQ(sender->sendto(network::address{"127.0.0.1", 28970}, data), static_cast<sent_size>(data.size()));
+
+        std::array<std::byte, 8> buffer{};
+        network::address source{};
+        EXPECT_EQ(receiver->recvfrom(source, buffer), static_cast<sent_size>(data.size()));
+    }
 
     TEST(NetworkModeTest, OfflineDnsResolvesNoAddresses)
     {
