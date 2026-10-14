@@ -192,7 +192,13 @@ namespace sogen
 
                     bool bind(const address& addr) override
                     {
+                        const auto assigned_port = this->a.get_port();
                         this->a = addr;
+                        if (addr.get_port() == 0)
+                        {
+                            this->a.set_port(assigned_port);
+                        }
+
                         return true;
                     }
 

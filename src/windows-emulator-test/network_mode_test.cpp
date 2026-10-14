@@ -67,6 +67,25 @@ namespace sogen::test
         EXPECT_EQ(receiver->recvfrom(source, buffer), static_cast<sent_size>(data.size()));
     }
 
+    TEST(NetworkModeTest, OfflineBindToPortZeroAssignsReachablePort)
+    {
+        const auto factory = network::create_socket_factory(network::network_mode::offline);
+        const auto server = factory->create_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        ASSERT_TRUE(server->bind(network::address{"127.0.0.1", 0}));
+        ASSERT_TRUE(server->listen(1));
+
+        const auto local = server->get_local_address();
+        ASSERT_TRUE(local.has_value());
+        ASSERT_NE(local->get_port(), 0);
+
+        const auto other = factory->create_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        ASSERT_TRUE(other->bind(network::address{"127.0.0.1", 0}));
+        EXPECT_NE(other->get_local_address()->get_port(), local->get_port());
+
+        const auto client = factory->create_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        EXPECT_TRUE(client->connect(*local));
+    }
+
     TEST(NetworkModeTest, OfflineDnsResolvesNoAddresses)
     {
         const auto lookup = network::create_dns_lookup(network::network_mode::offline);
