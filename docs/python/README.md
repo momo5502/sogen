@@ -132,7 +132,7 @@ synthetic Linux socket behavior.
 
 Path and port mappings explicitly opt into host filesystem and network access. They are convenience bridges for tests and controlled analysis workflows, not a malware sandbox boundary.
 
-Windows emulators accept `network="offline"` (default) or `network="live"`. Other strings raise `ValueError`, and non-string values raise `TypeError`. In offline mode, guest sockets use an in-process loopback that cannot reach the host network, DNS queries resolve to no addresses, and the Steam bridge is disabled. `port_mappings` apply only in live mode. A `dns_resolver` callback that returns `None` falls back to the resolver of the selected mode.
+Windows emulators accept `network="offline"` (default) or `network="live"`. Other strings raise `ValueError`, and non-string values raise `TypeError`. In offline mode, guest sockets use an in-process loopback that cannot reach the host network, DNS queries resolve to no addresses, and the Steam bridge is disabled. `port_mappings` apply only in live mode. A `dns_resolver` callback that returns `None` falls back to the resolver of the selected mode, which resolves to no addresses in offline mode.
 
 ## Choosing backend
 
