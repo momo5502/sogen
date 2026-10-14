@@ -45,6 +45,21 @@ namespace sogen
 
             return results;
         }
+
+        std::vector<address> null_dns_lookup::resolve_host(const std::string_view /*hostname*/, const std::optional<int> /*family*/)
+        {
+            return {};
+        }
+
+        std::unique_ptr<dns_lookup> create_dns_lookup(const network_mode mode)
+        {
+            if (mode == network_mode::live)
+            {
+                return std::make_unique<dns_lookup>();
+            }
+
+            return std::make_unique<null_dns_lookup>();
+        }
     }
 
 } // namespace sogen

@@ -122,6 +122,8 @@ namespace sogen
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
 
         fake_environment_config fake_env{};
+
+        network::network_mode network{network::network_mode::offline};
     };
 
     struct emulator_interfaces
@@ -164,6 +166,7 @@ namespace sogen
         std::unique_ptr<x86_64_emulator> emu_{};
         bool use_native_timestamp_counter_{};
         std::unique_ptr<utils::clock> clock_{};
+        network::network_mode network_mode_{};
         std::unique_ptr<network::dns_lookup> dns_lookup_{};
         std::unique_ptr<network::socket_factory> socket_factory_{};
         std::unique_ptr<ui_backend> ui_backend_{};
@@ -216,6 +219,11 @@ namespace sogen
         const utils::clock& clock() const
         {
             return *this->clock_;
+        }
+
+        network::network_mode network_mode() const
+        {
+            return this->network_mode_;
         }
 
         network::dns_lookup& dns_lookup()

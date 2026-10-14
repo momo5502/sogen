@@ -111,6 +111,7 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
         r"C:\test-sample.exe",
         emulation_root=emulator_root,
         path_mappings={r"C:\a.txt": mapped_file},
+        network="live",
         port_mappings={28970: 28980},
     )
 
@@ -239,6 +240,7 @@ def on_resolve(hostname, family):
 dns_app = win.create_application(
     r"C:\test-sample.exe",
     emulation_root=emulator_root,
+    network="live",
     dns_resolver=on_resolve,
 )
 dns_app.callbacks.on_stdout = lambda text: None

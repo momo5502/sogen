@@ -1,5 +1,6 @@
 #include "socket_factory.hpp"
 #include "socket_wrapper.hpp"
+#include "static_socket_factory.hpp"
 
 namespace sogen
 {
@@ -54,6 +55,21 @@ namespace sogen
             }
 
             return res;
+        }
+
+        std::unique_ptr<socket_factory> create_socket_factory(const network_mode mode)
+        {
+#ifdef OS_EMSCRIPTEN
+            (void)mode;
+            return create_static_socket_factory();
+#else
+            if (mode == network_mode::live)
+            {
+                return std::make_unique<socket_factory>();
+            }
+
+            return create_static_socket_factory();
+#endif
         }
     }
 

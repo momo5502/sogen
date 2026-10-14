@@ -806,7 +806,7 @@ jobs:
           systeminfo | Select-String -Pattern 'Hyper-V Requirements|Virtualization Enabled In Firmware|VM Monitor Mode Extensions|Second Level Address Translation|Data Execution Prevention'
 
       - name: CMake Test
-        run: cd build/release/artifacts && ./analyzer.exe -e root c:/test-sample.exe
+        run: cd build/release/artifacts && ./analyzer.exe --network live -e root c:/test-sample.exe
         env:
           EMULATOR_WHP: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
@@ -852,7 +852,7 @@ jobs:
           grep -m1 -oE 'vmx|svm' /proc/cpuinfo || true
 
       - name: CMake Test
-        run: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer -e root c:/test-sample.exe
+        run: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer --network live -e root c:/test-sample.exe
         env:
           EMULATOR_KVM: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
@@ -879,7 +879,7 @@ jobs:
         run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
       - name: CMake Test
-        run: cd build/release/artifacts && ./analyzer.exe -e root c:/test-sample.exe
+        run: cd build/release/artifacts && ./analyzer.exe --network live -e root c:/test-sample.exe
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
@@ -922,7 +922,7 @@ jobs:
         with:
           max_attempts: 5
           timeout_minutes: 10
-          command: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer -e root c:/test-sample.exe
+          command: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer --network live -e root c:/test-sample.exe
         env:
           EMULATOR_FEX: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
@@ -949,7 +949,7 @@ jobs:
         run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
       - name: CMake Test
-        run: cd build/release/artifacts && ./windows-emulator-test.exe && ./analyzer.exe -e root c:/test-sample.exe
+        run: cd build/release/artifacts && ./windows-emulator-test.exe && ./analyzer.exe --network live -e root c:/test-sample.exe
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
@@ -1031,7 +1031,7 @@ jobs:
           script: |
             tar -cf build/${{matrix.preset}}/artifacts.tar -C build/${{matrix.preset}}/artifacts .
             adb push build/${{matrix.preset}}/artifacts.tar /data/local/tmp/
-            adb shell "cd /data/local/tmp && tar xf artifacts.tar --no-same-owner && rm artifacts.tar && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }} ./analyzer -e ./root c:/test-sample.exe"
+            adb shell "cd /data/local/tmp && tar xf artifacts.tar --no-same-owner && rm artifacts.tar && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }} ./analyzer --network live -e ./root c:/test-sample.exe"
 
   build-page:
     name: Build Page

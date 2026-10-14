@@ -65,7 +65,8 @@ namespace sogen::sandbox
         int run(const std::span<const std::string_view> args, std::unordered_map<windows_path, std::filesystem::path> path_mappings,
                 const std::filesystem::path& emulation_root, const std::filesystem::path& registry_directory,
                 const std::vector<std::filesystem::path>& registry_files,
-                const std::vector<std::pair<std::string, std::string>>& environment, managed_process_connection* managed_connection)
+                const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
+                managed_process_connection* managed_connection)
         {
             application_settings app_settings{
                 .application = std::u8string(args[0].begin(), args[0].end()),
@@ -103,6 +104,7 @@ namespace sogen::sandbox
 
             emulator_settings settings{
                 .registry_directory = registry_directory.empty() ? get_current_binary_dir() / "registry" : registry_directory,
+                .network = network_mode,
             };
 
             if (!emulation_root.empty())
@@ -117,12 +119,15 @@ namespace sogen::sandbox
             settings.path_mappings = std::move(path_mappings);
 
             subprocess_process_manager process_manager{get_sandbox_executable(), [&](const auto port, const auto& token) {
-                                                           std::vector<std::string> arguments{"--managed-process-port",
-                                                                                              std::to_string(port),
-                                                                                              "--managed-process-token",
-                                                                                              token,
-                                                                                              "--registry",
-                                                                                              settings.registry_directory.string()};
+                                                           std::vector<std::string> arguments{
+                                                               "--managed-process-port",
+                                                               std::to_string(port),
+                                                               "--managed-process-token",
+                                                               token,
+                                                               "--registry",
+                                                               settings.registry_directory.string(),
+                                                               "--network",
+                                                               std::string(network::to_string(network_mode))};
                                                            if (!settings.emulation_root.empty())
                                                            {
                                                                arguments.emplace_back("--emulation");
@@ -231,6 +236,10 @@ namespace sogen::sandbox
                 ->expected(1)
                 ->allow_extra_args(false);
             app.add_option("--env", environment, "Set a guest environment variable")->type_name("NAME VALUE")->allow_extra_args(false);
+            std::string network_name{network::to_string(network::network_mode::offline)};
+            app.add_option("--network", network_name, "Guest network access: offline (no host network) or live")
+                ->capture_default_str()
+                ->check(CLI::IsMember({"offline", "live"}));
             app.add_option("--managed-process-port", managed_process_port)->group("");
             app.add_option("--managed-process-token", managed_process_token)->group("");
 
@@ -270,7 +279,7 @@ namespace sogen::sandbox
 
                 const std::vector<std::string_view> views{application.begin(), application.end()};
                 return run(views, std::move(mappings), emulation_root, registry_directory, registry_files, environment,
-                           managed_process ? &*managed_process : nullptr);
+                           network::parse_network_mode(network_name), managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)
             {

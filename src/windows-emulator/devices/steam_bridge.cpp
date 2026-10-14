@@ -150,6 +150,12 @@ namespace sogen
 
         std::unique_ptr<steam_backend> make_backend(windows_emulator& win_emu)
         {
+            if (win_emu.network_mode() == network::network_mode::offline)
+            {
+                win_emu.log.info("[steam-bridge] network mode is offline; guest Steam calls will fail\n");
+                return std::make_unique<null_backend>();
+            }
+
 #ifdef SOGEN_STEAM_REAL_BACKEND
             if (sogen_steam_backend_init())
             {

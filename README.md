@@ -126,3 +126,9 @@ cmake --preset=vs2022
 ```bash
 analyzer.exe C:\example.exe
 ```
+
+By default, the guest has no access to the host network. Guest sockets use an in-process loopback, DNS queries resolve to no addresses, and the Steam bridge is disabled. To give the guest access to the host network, add `--network live`:
+
+```bash
+analyzer.exe --network live C:\example.exe
+```

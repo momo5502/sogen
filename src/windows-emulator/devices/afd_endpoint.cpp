@@ -172,6 +172,13 @@ namespace sogen
             throw std::runtime_error("Unsupported host address family for conversion: " + std::to_string(a.get_family()));
         }
 
+        void report_socket_activity(windows_emulator& win_emu, const std::string_view action, const network::address& host_address)
+        {
+            auto guest_address = host_address;
+            guest_address.set_port(win_emu.get_emulator_port(host_address.get_port()));
+            win_emu.callbacks.on_generic_activity("Socket " + std::string(action) + ": " + guest_address.to_string());
+        }
+
         network::address convert_to_host_address(const windows_emulator& win_emu, const std::span<const std::byte> data)
         {
             if (data.size() < sizeof(win_sockaddr))
@@ -776,6 +783,7 @@ namespace sogen
                 }
 
                 const auto addr = convert_to_host_address(win_emu, std::span(data).subspan(address_offset));
+                report_socket_activity(win_emu, "connect", addr);
                 const auto connected = this->s_->connect(addr);
                 if (!connected)
                 {
@@ -820,6 +828,7 @@ namespace sogen
                 }
 
                 const auto addr = convert_to_host_address(win_emu, std::span(data).subspan(address_offset));
+                report_socket_activity(win_emu, "bind", addr);
 
                 if (!this->s_->bind(addr))
                 {
@@ -1387,6 +1396,7 @@ namespace sogen
                     emu.read_memory(send_info.TdiConnInfo.RemoteAddress, static_cast<size_t>(send_info.TdiConnInfo.RemoteAddressLength));
 
                 const auto target = convert_to_host_address(win_emu, address_buffer);
+                report_socket_activity(win_emu, "sendto", target);
                 const auto data = emu.read_memory(buffer.buf, buffer.len);
 
                 const auto sent_data = this->s_->sendto(target, data);

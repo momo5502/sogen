@@ -149,9 +149,10 @@ method). See `BLOCKED_INTERFACES` / `BLOCKED_METHODS` in `generate.py`. The bloc
   protocol-registration / persona-rename / social-send methods, and `ISteamRemoteStorage`
   `FileShare`/`Publish*` (post a file publicly under the host account).
 
-Network reach (`ISteamHTTP`, the networking/sockets interfaces) is deliberately **not** blocked: the
-guest already has host network access through the emulated AFD socket device, so blocking it here buys
-nothing. Identity reads and `ISteamFriends::ActivateGameOverlayToStore` (the DLC/store button) are
+The blocklist does not include network reach (`ISteamHTTP`, the networking/sockets interfaces). With
+`--network live` the guest already has host network access through the emulated AFD socket device, so
+blocking it here buys nothing. With `--network offline` (the default) the device uses the null backend,
+so all guest Steam calls fail. Identity reads and `ISteamFriends::ActivateGameOverlayToStore` (the DLC/store button) are
 intentionally allowed. Matching is by method *name* per snapshot, so a version that lacks a listed
 method simply never matches, and the list survives the version-drift the bridge already handles.
 
