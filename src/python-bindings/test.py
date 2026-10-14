@@ -48,6 +48,14 @@ assert hasattr(win, "create_application")
 assert mod.create_empty is win.create_empty
 assert mod.create_application is win.create_application
 
+for bad_network, expected_error in (("none", ValueError), (1, TypeError)):
+    try:
+        win.create_empty(emulation_root=emulator_root, network=bad_network)
+    except expected_error:
+        pass
+    else:
+        raise AssertionError(f"network={bad_network!r} must raise {expected_error.__name__}")
+
 emu = win.create_empty(emulation_root=emulator_root)
 assert emu.backend_name in {"Unicorn Engine", "icicle-emu", "Windows Hypervisor Platform"}
 assert hasattr(emu, "read_memory")

@@ -28,7 +28,7 @@ namespace sogen
                 return network_mode::live;
             }
 
-            throw std::runtime_error("Network mode must be offline or live, not: " + std::string(value));
+            throw std::invalid_argument("Network mode must be offline or live, not: " + std::string(value));
         }
 
         inline std::string_view to_string(const network_mode mode)

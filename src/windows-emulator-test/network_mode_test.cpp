@@ -47,6 +47,6 @@ namespace sogen::test
     {
         EXPECT_EQ(network::parse_network_mode("offline"), network::network_mode::offline);
         EXPECT_EQ(network::parse_network_mode("live"), network::network_mode::live);
-        EXPECT_THROW(network::parse_network_mode("none"), std::runtime_error);
+        EXPECT_THROW(network::parse_network_mode("none"), std::invalid_argument);
     }
 }

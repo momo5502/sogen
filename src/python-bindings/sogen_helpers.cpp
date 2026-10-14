@@ -192,6 +192,22 @@ namespace sogen::py
             return result;
         }
 
+        network::network_mode get_network_mode(const nb::kwargs& kwargs)
+        {
+            if (!kwargs.contains("network"))
+            {
+                return network::network_mode::offline;
+            }
+
+            const nb::object value = kwargs["network"];
+            if (!nb::isinstance<nb::str>(value))
+            {
+                throw nb::type_error("network must be a string: \"offline\" or \"live\"");
+            }
+
+            return network::parse_network_mode(nb::cast<std::string>(value));
+        }
+
         emulator_settings make_emulator_settings(const nb::kwargs& kwargs)
         {
             emulator_settings settings{};
@@ -204,7 +220,7 @@ namespace sogen::py
             settings.port_mappings = parse_port_mappings(kwargs.contains("port_mappings") ? kwargs["port_mappings"] : nb::none());
             settings.fake_env.number_of_processors = get_kwarg<uint32_t>(kwargs, "number_of_processors", 4);
             settings.fake_env.nt_product_type = static_cast<uint8_t>(get_kwarg<uint32_t>(kwargs, "nt_product_type", 1));
-            settings.network = network::parse_network_mode(get_kwarg<std::string>(kwargs, "network", "offline"));
+            settings.network = get_network_mode(kwargs);
             return settings;
         }
 
