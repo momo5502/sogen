@@ -6,13 +6,13 @@ guest path, Sogen uses the deepest mount point that contains the path. Thus a `C
 drive for all paths below `C:\out`.
 
 With an emulation root, each single-letter directory in `<root>/filesys` becomes a drive mount. For example,
-`<root>/filesys/c` becomes `C:\`. These drives use the mode from `--root-mode`, which is `rw` by default. Without a
+`<root>/filesys/c` becomes `C:\`. These drives use the mode from `--root-mode`, which is `ro` by default. Without a
 root (Windows hosts only), Sogen mounts the host drives directly. The registry (`<root>/registry`) and DPAPI files
 (`<root>/dpapi`) are outside `filesys`, so the guest cannot open them. Sogen reads the DPAPI master key from the root,
 but never writes it.
 
 Add mounts with `--mount HOST:GUEST[:MODE]`. HOST can be a file or a directory. If you do not give MODE, the mount
-uses the default mode, which is `rw`. `-p GUEST HOST` is the same as `--mount HOST:GUEST`. In Python, use
+uses the default mode, which is `ro`. `-p GUEST HOST` is the same as `--mount HOST:GUEST`. In Python, use
 `root_mode="ro"` and `mounts=[(host, guest)]` or `mounts=[(host, guest, mode)]`.
 
 A guest write to a `ro` mount fails with `STATUS_ACCESS_DENIED`, and the host files do not change. This applies to:
