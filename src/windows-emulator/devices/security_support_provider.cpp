@@ -285,14 +285,22 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                std::vector<uint8_t> data(length);
-                win_emu.emu().read_memory(source, data.data(), data.size());
-                xor_ksec_memory(data);
-                win_emu.emu().write_memory(dest, data.data(), data.size());
+                std::array<uint8_t, 0x1000> chunk{};
+                static_assert(chunk.size() % k_ksec_memory_crypt_key.size() == 0);
+
+                for (size_t offset = 0; offset < length; offset += chunk.size())
+                {
+                    const auto count = std::min(chunk.size(), length - offset);
+                    const std::span<uint8_t> bytes{chunk.data(), count};
+                    win_emu.emu().read_memory(source + offset, bytes.data(), bytes.size());
+                    xor_ksec_memory(bytes);
+                    win_emu.emu().write_memory(dest + offset, bytes.data(), bytes.size());
+                }
+
                 if (c.io_status_block)
                 {
                     IO_STATUS_BLOCK<EmulatorTraits<Emu64>> block{};
-                    block.Information = data.size();
+                    block.Information = length;
                     c.io_status_block.write(block);
                 }
 
