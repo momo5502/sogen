@@ -1,6 +1,8 @@
 #include "../std_include.hpp"
 #include "buffered_console_backend.hpp"
 
+#include <limits>
+
 #ifdef OS_WINDOWS
 namespace sogen
 {
@@ -47,6 +49,23 @@ namespace sogen
             ~windows_console_backend() override
             {
                 this->restore_terminal();
+            }
+
+            console_size get_size() const override
+            {
+                CONSOLE_SCREEN_BUFFER_INFO info{};
+                if (!GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info))
+                {
+                    return {};
+                }
+                const auto width = info.srWindow.Right - info.srWindow.Left + 1;
+                const auto height = info.srWindow.Bottom - info.srWindow.Top + 1;
+                constexpr auto maximum = std::numeric_limits<int16_t>::max();
+                if (width <= 0 || height <= 0 || width > maximum || height > maximum)
+                {
+                    return {};
+                }
+                return {.width = static_cast<int16_t>(width), .height = static_cast<int16_t>(height)};
             }
 
             std::string read_input(const size_t length) override
@@ -130,11 +149,15 @@ namespace sogen
                         }
                         const auto& key = record.Event.KeyEvent;
                         const auto control = (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+                        const auto synthesized = key.wVirtualKeyCode == 0 || key.wVirtualKeyCode == VK_PACKET;
+                        const auto alt_gr = key.uChar.UnicodeChar >= L' ' && key.uChar.UnicodeChar != L'\x7F' &&
+                                            (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED | RIGHT_ALT_PRESSED)) ==
+                                                (LEFT_CTRL_PRESSED | RIGHT_ALT_PRESSED);
                         for (WORD i = 0; i < key.wRepeatCount; ++i)
                         {
                             if (key.uChar.UnicodeChar)
                             {
-                                if (control)
+                                if (control && !synthesized && !alt_gr)
                                 {
                                     const auto sequence = "\x1B[" + std::to_string(static_cast<uint16_t>(key.uChar.UnicodeChar)) + ";5u";
                                     text.append(sequence.begin(), sequence.end());

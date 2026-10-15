@@ -4,6 +4,9 @@
 
 namespace sogen::syscalls
 {
+    NTSTATUS handle_NtQueryInformationThread(const syscall_context& c, handle thread_handle, uint32_t info_class,
+                                             uint64_t thread_information, uint32_t thread_information_length,
+                                             emulator_object<uint32_t> return_length);
     NTSTATUS handle_NtCancelIoFile(const syscall_context& c, handle file_handle,
                                    emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block);
     NTSTATUS handle_NtCancelIoFileEx(const syscall_context& c, handle file_handle,
@@ -24,6 +27,7 @@ namespace sogen::test
                 interfaces.ui = std::make_unique<null_ui_backend>();
                 interfaces.audio = std::make_unique<null_audio_backend>();
                 interfaces.console = std::make_unique<null_console_backend>();
+                interfaces.socket_factory = network::create_static_socket_factory();
                 this->emu = std::make_unique<windows_emulator>(
                     create_x86_64_emulator_from_environment(),
                     emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false},
@@ -67,12 +71,116 @@ namespace sogen::test
                 return syscalls::handle_NtCancelIoFile(context, target, this->status(0xF00));
             }
 
+            NTSTATUS query_io_pending(handle target, uint64_t buffer, uint32_t length = sizeof(ULONG), uint64_t return_buffer = 0)
+            {
+                const syscall_context context{
+                    .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                return syscalls::handle_NtQueryInformationThread(context, target, ThreadIsIoPending, buffer, length,
+                                                                 {this->emu->memory, return_buffer});
+            }
+
+            void expect_io_pending(handle target, bool expected)
+            {
+                this->emu->memory.write_memory<uint64_t>(this->storage + 0xE00, 0xAAAAAAAAAAAAAAAA);
+                this->emu->memory.write_memory<uint64_t>(this->storage + 0xE10, 0xBBBBBBBBBBBBBBBB);
+                ASSERT_EQ(STATUS_SUCCESS, this->query_io_pending(target, this->storage + 0xE00, sizeof(ULONG), this->storage + 0xE10));
+                EXPECT_EQ(static_cast<ULONG>(expected), this->emu->memory.read_memory<ULONG>(this->storage + 0xE00));
+                EXPECT_EQ(0xAAAAAAAAu, this->emu->memory.read_memory<ULONG>(this->storage + 0xE04));
+                EXPECT_EQ(sizeof(ULONG), this->emu->memory.read_memory<ULONG>(this->storage + 0xE10));
+                EXPECT_EQ(0xBBBBBBBBu, this->emu->memory.read_memory<ULONG>(this->storage + 0xE14));
+            }
+
             std::unique_ptr<windows_emulator> emu{};
             handle first{};
             handle second{};
             handle endpoint{};
             uint64_t storage{};
         };
+    }
+
+    TEST_F(IoCancellationTest, IdleThreadsHaveNoPendingIo)
+    {
+        this->expect_io_pending(CURRENT_THREAD, false);
+        this->expect_io_pending(this->first, false);
+        this->expect_io_pending(this->second, false);
+    }
+
+    TEST_F(IoCancellationTest, PendingIoQueryTracksIssuersAndCancellation)
+    {
+        this->queue_poll(0, this->first);
+        this->expect_io_pending(this->first, true);
+        this->expect_io_pending(this->second, false);
+        this->queue_poll(0x100, this->second);
+        this->queue_poll(0x200, this->first);
+        this->expect_io_pending(CURRENT_THREAD, true);
+        this->expect_io_pending(this->second, true);
+        const syscall_context context{
+            .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCancelIoFileEx(context, this->endpoint, this->status(0), this->status(0xF00)));
+        this->expect_io_pending(this->first, true);
+        ASSERT_EQ(STATUS_SUCCESS, this->cancel(this->endpoint));
+        this->expect_io_pending(this->first, false);
+        this->expect_io_pending(this->second, true);
+        this->emu->vcpu(0).active_thread = this->emu->process.threads.get(this->second);
+        ASSERT_EQ(STATUS_SUCCESS, this->cancel(this->endpoint));
+        this->expect_io_pending(CURRENT_THREAD, false);
+    }
+
+    TEST_F(IoCancellationTest, EndpointPendingIoClearsOnCompletion)
+    {
+        struct endpoint_creation_data
+        {
+            uint64_t flags{};
+            std::array<char, 16> packet{};
+            uint64_t group{};
+            int32_t address_family{2};
+            int32_t type{1};
+            int32_t protocol{6};
+        };
+
+        const endpoint_creation_data creation{};
+        this->emu->memory.write_memory(this->storage + 0xD00, &creation, sizeof(creation));
+        this->endpoint = this->emu->process.devices.store(
+            io_device_container{u"Afd\\Endpoint", *this->emu, {.buffer = this->storage + 0xD00, .length = sizeof(creation)}});
+        this->queue_poll(0, this->first);
+        this->expect_io_pending(this->first, true);
+        this->expect_io_pending(this->second, false);
+        ASSERT_EQ(STATUS_SUCCESS, this->cancel(this->endpoint));
+        this->expect_io_pending(this->first, false);
+    }
+
+    TEST_F(IoCancellationTest, PendingIoQueryRequiresExactUlongLength)
+    {
+        for (const uint32_t length : {0, 1, 3, 5, 8})
+        {
+            this->emu->memory.write_memory<ULONG>(this->storage + 0xE00, 0xAAAAAAAA);
+            this->emu->memory.write_memory<ULONG>(this->storage + 0xE10, 0xBBBBBBBB);
+            EXPECT_EQ(STATUS_INFO_LENGTH_MISMATCH,
+                      this->query_io_pending(CURRENT_THREAD, this->storage + 0xE00, length, this->storage + 0xE10));
+            EXPECT_EQ(0xAAAAAAAAu, this->emu->memory.read_memory<ULONG>(this->storage + 0xE00));
+            EXPECT_EQ(0xBBBBBBBBu, this->emu->memory.read_memory<ULONG>(this->storage + 0xE10));
+        }
+    }
+
+    TEST_F(IoCancellationTest, PendingIoQueryValidatesHandlesAndBuffers)
+    {
+        EXPECT_EQ(STATUS_INVALID_HANDLE, this->query_io_pending(NULL_HANDLE, this->storage + 0xE00));
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->query_io_pending(CURRENT_THREAD, 0));
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->query_io_pending(CURRENT_THREAD, 0x12340000));
+        EXPECT_EQ(STATUS_DATATYPE_MISALIGNMENT, this->query_io_pending(CURRENT_THREAD, this->storage + 0xE01));
+        EXPECT_EQ(STATUS_ACCESS_VIOLATION, this->query_io_pending(CURRENT_THREAD, this->storage + 0xE00, sizeof(ULONG), 0x12340000));
+    }
+
+    TEST_F(IoCancellationTest, PendingIoQueryAllowsOmittedReturnLength)
+    {
+        EXPECT_EQ(STATUS_SUCCESS, this->query_io_pending(CURRENT_THREAD, this->storage + 0xE00));
+        EXPECT_EQ(0u, this->emu->memory.read_memory<ULONG>(this->storage + 0xE00));
+    }
+
+    TEST_F(IoCancellationTest, Wow64PendingIoQueryWritesOnlyUlong)
+    {
+        this->emu->process.is_wow64_process = true;
+        this->expect_io_pending(CURRENT_THREAD, false);
     }
 
     TEST_F(IoCancellationTest, LegacyCancellationOnlyCancelsCallingThreadsPolls)

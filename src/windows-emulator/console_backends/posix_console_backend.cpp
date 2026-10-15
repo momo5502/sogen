@@ -2,8 +2,11 @@
 #include "buffered_console_backend.hpp"
 
 #if !defined(OS_WINDOWS) && !defined(OS_EMSCRIPTEN)
+#include <algorithm>
 #include <cerrno>
+#include <limits>
 #include <poll.h>
+#include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -17,6 +20,18 @@ namespace sogen
             ~posix_console_backend() override
             {
                 this->restore_terminal();
+            }
+
+            console_size get_size() const override
+            {
+                winsize size{};
+                if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) != 0 || size.ws_col == 0 || size.ws_row == 0)
+                {
+                    return {};
+                }
+                constexpr auto maximum = std::numeric_limits<int16_t>::max();
+                return {.width = static_cast<int16_t>(std::min<int>(size.ws_col, maximum)),
+                        .height = static_cast<int16_t>(std::min<int>(size.ws_row, maximum))};
             }
 
             void set_input_mode(const console_input_mode& mode) override

@@ -229,6 +229,12 @@ namespace sogen
         return this->file_->device->cancel_io(win_emu, io_status_block, issuing_thread_id);
     }
 
+    bool io_device_container::has_pending_io(const uint32_t issuing_thread_id) const
+    {
+        this->assert_validity();
+        return this->file_->device->has_pending_io(issuing_thread_id);
+    }
+
     NTSTATUS io_device_container::set_completion_association(process_context& process, const emulator_thread* active_thread,
                                                              const handle completion_port, const uint64_t key)
     {

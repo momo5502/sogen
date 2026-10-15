@@ -332,6 +332,26 @@ namespace sogen
 
             emulator_thread& cur_emulator_thread = c.thread();
 
+            if (info_class == ThreadIsIoPending)
+            {
+                if (thread_information_length != sizeof(ULONG))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                if (thread_information % alignof(ULONG) != 0)
+                {
+                    return STATUS_DATATYPE_MISALIGNMENT;
+                }
+                const auto pending = std::ranges::any_of(c.proc.devices | std::views::values,
+                                                         [thread](const auto& device) { return device.has_pending_io(thread->id); });
+                const emulator_object<ULONG> info{c.emu, thread_information};
+                if (!info.try_write(pending) || (return_length && !return_length.try_write(sizeof(ULONG))))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+                return STATUS_SUCCESS;
+            }
+
             if (info_class == ThreadWow64Context)
             {
                 // ThreadWow64Context is only valid for WOW64 processes

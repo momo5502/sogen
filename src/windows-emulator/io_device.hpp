@@ -164,6 +164,12 @@ namespace sogen
             return false;
         }
 
+        virtual bool has_pending_io(uint32_t issuing_thread_id) const
+        {
+            (void)issuing_thread_id;
+            return false;
+        }
+
         virtual void create(windows_emulator& win_emu, const io_device_creation_data& data)
         {
             (void)win_emu;
@@ -251,6 +257,7 @@ namespace sogen
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override;
         io_device_context prepare_io_context(const io_device_context& context) const override;
         bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block, std::optional<uint32_t> issuing_thread_id = {}) override;
+        bool has_pending_io(uint32_t issuing_thread_id) const override;
         NTSTATUS set_completion_association(process_context& process, const emulator_thread* active_thread, handle completion_port,
                                             uint64_t key);
         void set_completion_notification_flags(ULONG flags);

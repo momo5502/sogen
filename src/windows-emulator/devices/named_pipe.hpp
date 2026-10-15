@@ -41,6 +41,7 @@ namespace sogen
 
         void work(windows_emulator& win_emu) override;
         bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block, std::optional<uint32_t> issuing_thread_id = {}) override;
+        bool has_pending_io(uint32_t issuing_thread_id) const override;
         void release_references(process_context& process) override;
         NTSTATUS start_io(windows_emulator& win_emu, io_device_context context, bool reading);
         void copy_configuration(const named_pipe& source);

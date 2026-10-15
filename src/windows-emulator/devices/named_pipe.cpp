@@ -2,6 +2,7 @@
 #include "named_pipe.hpp"
 #include "../windows_emulator.hpp"
 #include "../io_completion_wait.hpp"
+#include <algorithm>
 #include <utils/finally.hpp>
 
 namespace sogen
@@ -206,6 +207,13 @@ namespace sogen
             release_operation(win_emu.process, *it);
             it = this->pending_.erase(it);
         }
+    }
+
+    bool named_pipe::has_pending_io(const uint32_t issuing_thread_id) const
+    {
+        return std::ranges::any_of(this->pending_, [issuing_thread_id](const auto& operation) {
+            return operation.context.issuing_thread_id == issuing_thread_id;
+        });
     }
 
     bool named_pipe::cancel_io(windows_emulator& win_emu, const uint64_t io_status_block, const std::optional<uint32_t> issuing_thread_id)
