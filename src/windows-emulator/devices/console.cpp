@@ -198,7 +198,8 @@ namespace sogen
                 {
                     record.virtual_key_code = static_cast<uint16_t>('A' + event.character - 'a');
                 }
-                else
+                else if ((event.character >= 'A' && event.character <= 'Z') || (event.character >= '0' && event.character <= '9') ||
+                         event.character == u' ')
                 {
                     record.virtual_key_code = event.character;
                 }

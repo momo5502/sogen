@@ -8,6 +8,8 @@
 
 namespace sogen::syscalls
 {
+    NTSTATUS handle_NtCancelIoFile(const syscall_context& c, handle file_handle,
+                                   emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block);
     NTSTATUS handle_NtClose(const syscall_context& c, handle h);
     NTSTATUS handle_NtDuplicateObject(const syscall_context& c, handle source_process_handle, handle source_handle,
                                       handle target_process_handle, emulator_object<handle> target_handle, ACCESS_MASK desired_access,
@@ -365,6 +367,32 @@ namespace sogen::test
         duplicate.reset();
         this->pipe(this->reader).work(*this->emu);
         EXPECT_EQ(context.io_status_block.read().Status, STATUS_PIPE_BROKEN);
+    }
+
+    TEST_F(NamedPipeTest, LegacyCancellationLeavesOtherThreadsReadsPending)
+    {
+        const auto first = this->emu->process.threads.find_handle(this->emu->vcpu(0).active_thread);
+        const auto second =
+            this->emu->process.threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 12, false});
+        const auto read = [this](handle thread, uint64_t offset) {
+            this->emu->vcpu(0).active_thread = this->emu->process.threads.get(thread);
+            auto request = this->request(this->reader, 1);
+            request.io_status_block.set_address(this->storage + offset);
+            EXPECT_EQ(STATUS_PENDING, this->pipe(this->reader).start_io(*this->emu, request, true));
+            return request.io_status_block;
+        };
+        const auto first_read = read(first, 0x600);
+        const auto second_read = read(second, 0x620);
+        const auto third_read = read(first, 0x640);
+        const syscall_context context{
+            .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCancelIoFile(context, this->reader, {this->emu->memory, this->storage + 0x700}));
+        EXPECT_EQ(STATUS_CANCELLED, first_read.read().Status);
+        EXPECT_EQ(STATUS_PENDING, second_read.read().Status);
+        EXPECT_EQ(STATUS_CANCELLED, third_read.read().Status);
+        this->emu->vcpu(0).active_thread = this->emu->process.threads.get(second);
+        ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCancelIoFile(context, this->reader, {this->emu->memory, this->storage + 0x700}));
+        EXPECT_EQ(STATUS_CANCELLED, second_read.read().Status);
     }
 
     TEST_F(NamedPipeTest, CancelledReadSignalsItsEvent)

@@ -114,6 +114,28 @@ namespace sogen::test
             std::array<uint8_t, 2> padding{};
         };
 
+        struct console_read_request
+        {
+            uint32_t events_read{};
+            uint16_t flags{2};
+            uint8_t unicode{1};
+            uint8_t padding{};
+        };
+
+        struct console_input_record
+        {
+            uint16_t type;
+            uint16_t padding;
+            int32_t down;
+            uint16_t repeat;
+            uint16_t key;
+            uint16_t scan;
+            char16_t character;
+            uint32_t control;
+        };
+
+        static_assert(sizeof(console_input_record) == 20);
+
         class ConsoleProtocolTest : public testing::Test
         {
           protected:
@@ -121,7 +143,9 @@ namespace sogen::test
             {
                 emulator_interfaces interfaces{};
                 interfaces.audio = std::make_unique<null_audio_backend>();
-                interfaces.console = std::make_unique<null_console_backend>();
+                auto backend = std::make_unique<queued_console_backend>();
+                this->input = backend.get();
+                interfaces.console = std::move(backend);
                 interfaces.ui = std::make_unique<null_ui_backend>();
                 this->emu = std::make_unique<windows_emulator>(
                     create_x86_64_emulator_from_environment(),
@@ -184,9 +208,50 @@ namespace sogen::test
             }
 
             std::unique_ptr<windows_emulator> emu{};
+            queued_console_backend* input{};
             handle console_handle{};
             uint64_t storage{};
         };
+    }
+
+    TEST_F(ConsoleProtocolTest, PunctuationAndUnicodeDoNotBecomeNavigationKeys)
+    {
+        for (const auto character : std::u16string_view{u"\"&.-()%'[]\u03BB"})
+        {
+            this->input->queue(u16_to_u8(std::u16string_view{&character, 1}));
+            console_read_request request{};
+            ASSERT_EQ(STATUS_SUCCESS, this->invoke_text(0x01000004, request, sizeof(console_input_record), true, STDIN_HANDLE));
+            ASSERT_EQ(1u, request.events_read);
+            const auto record = this->emu->emu().read_memory<console_input_record>(this->storage + 0x200);
+            EXPECT_EQ(character, record.character);
+            EXPECT_EQ(0u, record.key);
+        }
+    }
+
+    TEST_F(ConsoleProtocolTest, LettersDigitsAndSpaceRetainTheirVirtualKeys)
+    {
+        this->input->queue("aA09 ");
+        for (const auto key : std::u16string_view{u"AA09 "})
+        {
+            console_read_request request{};
+            ASSERT_EQ(STATUS_SUCCESS, this->invoke_text(0x01000004, request, sizeof(console_input_record), true, STDIN_HANDLE));
+            ASSERT_EQ(1u, request.events_read);
+            EXPECT_EQ(key, this->emu->emu().read_memory<console_input_record>(this->storage + 0x200).key);
+        }
+    }
+
+    TEST_F(ConsoleProtocolTest, ModifiedKeysRetainControlInGuestRecords)
+    {
+        this->input->queue("\x1B[13;5u\x1B[9;5u\x1B[127;5u\x1B[2;5~\x1B[3;5~\x1B[5;5~\x1B[6;5~");
+        for (const auto key : {VK_RETURN, VK_TAB, VK_BACK, VK_INSERT, VK_DELETE, VK_PRIOR, VK_NEXT})
+        {
+            console_read_request request{};
+            ASSERT_EQ(STATUS_SUCCESS, this->invoke_text(0x01000004, request, sizeof(console_input_record), true, STDIN_HANDLE));
+            ASSERT_EQ(1u, request.events_read);
+            const auto record = this->emu->emu().read_memory<console_input_record>(this->storage + 0x200);
+            EXPECT_EQ(key, record.key);
+            EXPECT_NE(0u, record.control & 0x0008);
+        }
     }
 
     TEST_F(ConsoleProtocolTest, FontUpdatesSurviveSerialization)
@@ -298,6 +363,20 @@ namespace sogen::test
         EXPECT_FALSE(console.input_available());
     }
 
+    TEST(ConsoleBackendTest, SurrogateEventsRemainReadyUntilConsumed)
+    {
+        queued_console_backend console{};
+        console.queue("\xF0\x9F\x98\x80");
+        const auto high = console.read_input_event(false, true);
+        ASSERT_TRUE(high.has_value());
+        EXPECT_EQ(0xD83D, high->character);
+        EXPECT_TRUE(console.input_available());
+        const auto low = console.read_input_event(false, true);
+        ASSERT_TRUE(low.has_value());
+        EXPECT_EQ(0xDE00, low->character);
+        EXPECT_FALSE(console.input_available());
+    }
+
     TEST(ConsoleBackendTest, DecodesEnterAndDownNavigation)
     {
         queued_console_backend console{};
@@ -311,6 +390,77 @@ namespace sogen::test
         const auto down = console.read_input_event(false, true);
         ASSERT_TRUE(down.has_value());
         EXPECT_EQ(down->key, console_key::down);
+    }
+
+    TEST(ConsoleBackendTest, DecodesControlModifiedCharacters)
+    {
+        struct character_key
+        {
+            char16_t character;
+            console_key expected_key;
+            char16_t expected_character;
+        };
+
+        constexpr std::array keys{
+            character_key{.character = u'\r', .expected_key = console_key::enter, .expected_character = u'\r'},
+            character_key{.character = u'\n', .expected_key = console_key::enter, .expected_character = u'\r'},
+            character_key{.character = u'\t', .expected_key = console_key::tab, .expected_character = u'\t'},
+            character_key{.character = u'\b', .expected_key = console_key::backspace, .expected_character = u'\b'},
+            character_key{.character = 0x7F, .expected_key = console_key::backspace, .expected_character = u'\b'},
+            character_key{.character = u'.', .expected_key = console_key::character, .expected_character = u'.'},
+            character_key{.character = u'\u03BB', .expected_key = console_key::character, .expected_character = u'\u03BB'},
+            character_key{.character = u'\x1B', .expected_key = console_key::escape, .expected_character = 0},
+            character_key{.character = u'\x03', .expected_key = console_key::character, .expected_character = u'\x03'},
+        };
+        queued_console_backend console{};
+        for (const auto& key : keys)
+        {
+            console.queue("\x1B[" + std::to_string(static_cast<uint16_t>(key.character)) + ";5u");
+            for (const bool remove : {false, true})
+            {
+                const auto event = console.read_input_event(false, remove);
+                ASSERT_TRUE(event.has_value());
+                EXPECT_EQ(key.expected_key, event->key);
+                EXPECT_EQ(key.expected_character, event->character);
+                EXPECT_TRUE(event->control);
+            }
+            EXPECT_FALSE(console.input_available());
+        }
+    }
+
+    TEST(ConsoleBackendTest, DecodesControlModifiedTildeNavigation)
+    {
+        constexpr std::array keys{
+            console_key::home,    console_key::insert,    console_key::delete_key, console_key::end,
+            console_key::page_up, console_key::page_down, console_key::home,       console_key::end,
+        };
+        queued_console_backend console{};
+        for (size_t i = 0; i < keys.size(); ++i)
+        {
+            console.queue("\x1B[" + std::to_string(i + 1) + ";5~");
+            for (const bool remove : {false, true})
+            {
+                const auto event = console.read_input_event(false, remove);
+                ASSERT_TRUE(event.has_value());
+                EXPECT_EQ(keys.at(i), event->key);
+                EXPECT_TRUE(event->control);
+            }
+            EXPECT_FALSE(console.input_available());
+        }
+    }
+
+    TEST(ConsoleBackendTest, MalformedModifiedCharactersPreserveInput)
+    {
+        queued_console_backend console{};
+        for (const auto* const sequence : {"[;5u", "[65536;5u", "[9999999999;5u", "[13;5;5u", "[13;u", "[13;5"})
+        {
+            console.queue("\x1B" + std::string(sequence));
+            const auto event = console.read_input_event(false, true);
+            ASSERT_TRUE(event.has_value());
+            EXPECT_EQ(console_key::escape, event->key);
+            EXPECT_EQ(sequence, console.read_input(32));
+            EXPECT_FALSE(console.input_available());
+        }
     }
 
     TEST(ConsoleBackendTest, RestoresSerializedInputModeAfterBackendReset)

@@ -215,13 +215,18 @@ namespace sogen
         }
         request.completion_notification_flags = this->file_->completion_notification_flags;
         request.granted_access = this->granted_access;
+        if (request.vcpu && request.vcpu->active_thread)
+        {
+            request.issuing_thread_id = request.thread().id;
+        }
         return request;
     }
 
-    bool io_device_container::cancel_io(windows_emulator& win_emu, const uint64_t io_status_block)
+    bool io_device_container::cancel_io(windows_emulator& win_emu, const uint64_t io_status_block,
+                                        const std::optional<uint32_t> issuing_thread_id)
     {
         this->assert_validity();
-        return this->file_->device->cancel_io(win_emu, io_status_block);
+        return this->file_->device->cancel_io(win_emu, io_status_block, issuing_thread_id);
     }
 
     NTSTATUS io_device_container::set_completion_association(process_context& process, const emulator_thread* active_thread,
