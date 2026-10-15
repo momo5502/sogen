@@ -34,6 +34,7 @@ namespace sogen
         uint64_t completion_key{};
         ULONG completion_notification_flags{};
         ACCESS_MASK granted_access{};
+        uint32_t issuing_thread_id{};
 
         // The vCPU whose thread issued this I/O request. Set on syscall-originated ioctls;
         // null (and not serialized) for deserialized delayed ioctls re-executed from the
@@ -70,6 +71,7 @@ namespace sogen
             buffer.write(completion_key);
             buffer.write(completion_notification_flags);
             buffer.write(granted_access);
+            buffer.write(issuing_thread_id);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -89,6 +91,7 @@ namespace sogen
             buffer.read(completion_key);
             buffer.read(completion_notification_flags);
             buffer.read(granted_access);
+            buffer.read(issuing_thread_id);
         }
     };
 
@@ -153,10 +156,11 @@ namespace sogen
             (void)process;
         }
 
-        virtual bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block)
+        virtual bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block, std::optional<uint32_t> issuing_thread_id = {})
         {
             (void)win_emu;
             (void)io_status_block;
+            (void)issuing_thread_id;
             return false;
         }
 
@@ -246,7 +250,7 @@ namespace sogen
         void restore_after_state_restore(windows_emulator& win_emu) override;
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override;
         io_device_context prepare_io_context(const io_device_context& context) const override;
-        bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block) override;
+        bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block, std::optional<uint32_t> issuing_thread_id = {}) override;
         NTSTATUS set_completion_association(process_context& process, const emulator_thread* active_thread, handle completion_port,
                                             uint64_t key);
         void set_completion_notification_flags(ULONG flags);

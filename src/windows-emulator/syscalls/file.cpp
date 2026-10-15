@@ -1456,6 +1456,34 @@ namespace sogen
             return status;
         }
 
+        NTSTATUS handle_NtCancelIoFile(const syscall_context& c, const handle file_handle,
+                                       const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block)
+        {
+            if (!io_status_block)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+            const auto resolved = c.proc.resolve_object_pseudo_handle(file_handle, c.vcpu.active_thread);
+            if (auto* device = c.proc.devices.get(resolved))
+            {
+                device->cancel_io(c.win_emu, 0, c.thread().id);
+            }
+            else if (!c.proc.files.get(resolved) && resolved != STDIN_HANDLE && resolved != STDOUT_HANDLE && resolved != CONSOLE_HANDLE &&
+                     resolved != NUL_HANDLE)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+            if (c.proc.is_wow64_process)
+            {
+                emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu32>>>{c.emu, io_status_block.value()}.write({});
+            }
+            else
+            {
+                io_status_block.write({});
+            }
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtCancelIoFileEx(const syscall_context& c, const handle file_handle,
                                          const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_request_to_cancel,
                                          const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block)

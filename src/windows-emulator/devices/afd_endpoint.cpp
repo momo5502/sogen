@@ -416,9 +416,11 @@ namespace sogen
                 }
             }
 
-            bool cancel_io(windows_emulator& win_emu, const uint64_t io_status_block) override
+            bool cancel_io(windows_emulator& win_emu, const uint64_t io_status_block,
+                           const std::optional<uint32_t> issuing_thread_id = {}) override
             {
-                if (!this->delayed_ioctl_ || this->delayed_ioctl_->io_status_block.value() != io_status_block)
+                if (!this->delayed_ioctl_ || (io_status_block && this->delayed_ioctl_->io_status_block.value() != io_status_block) ||
+                    (issuing_thread_id && this->delayed_ioctl_->issuing_thread_id != *issuing_thread_id))
                 {
                     return false;
                 }
@@ -1644,20 +1646,24 @@ namespace sogen
                 }
             }
 
-            bool cancel_io(windows_emulator& win_emu, const uint64_t io_status_block) override
+            bool cancel_io(windows_emulator& win_emu, const uint64_t io_status_block,
+                           const std::optional<uint32_t> issuing_thread_id = {}) override
             {
-                const auto it = std::ranges::find_if(this->pending_polls_, [io_status_block](const pending_poll& poll) {
-                    return poll.context.io_status_block.value() == io_status_block;
-                });
-                if (it == this->pending_polls_.end())
+                auto cancelled = afd_endpoint<Traits>::cancel_io(win_emu, io_status_block, issuing_thread_id);
+                for (auto it = this->pending_polls_.begin(); it != this->pending_polls_.end();)
                 {
-                    return false;
+                    if ((io_status_block && it->context.io_status_block.value() != io_status_block) ||
+                        (issuing_thread_id && it->context.issuing_thread_id != *issuing_thread_id))
+                    {
+                        ++it;
+                        continue;
+                    }
+                    this->complete_io(win_emu, it->context, STATUS_CANCELLED);
+                    io_completion_wait::release_handle_reference(win_emu.process, it->retained_completion_port);
+                    it = this->pending_polls_.erase(it);
+                    cancelled = true;
                 }
-
-                this->complete_io(win_emu, it->context, STATUS_CANCELLED);
-                io_completion_wait::release_handle_reference(win_emu.process, it->retained_completion_port);
-                this->pending_polls_.erase(it);
-                return true;
+                return cancelled;
             }
 
             void serialize_object(utils::buffer_serializer& buffer) const override

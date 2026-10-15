@@ -127,6 +127,7 @@ namespace sogen
     NTSTATUS named_pipe::enqueue_operation(windows_emulator& win_emu, io_device_context context,
                                            std::unique_ptr<utils::host_pipe_operation> operation, const operation_kind kind)
     {
+        context.issuing_thread_id = context.thread().id;
         pending_operation pending{.context = context,
                                   .operation = std::move(operation),
                                   .issuing_thread = win_emu.process.threads.find_handle(&context.thread()),
@@ -207,11 +208,16 @@ namespace sogen
         }
     }
 
-    bool named_pipe::cancel_io(windows_emulator& win_emu, const uint64_t io_status_block)
+    bool named_pipe::cancel_io(windows_emulator& win_emu, const uint64_t io_status_block, const std::optional<uint32_t> issuing_thread_id)
     {
         bool cancelled{};
         for (auto it = this->pending_.begin(); it != this->pending_.end();)
         {
+            if (issuing_thread_id && it->context.issuing_thread_id != *issuing_thread_id)
+            {
+                ++it;
+                continue;
+            }
             if (io_status_block && it->context.io_status_block.value() != io_status_block &&
                 it->context.wow64_io_status_block.value() != io_status_block)
             {
