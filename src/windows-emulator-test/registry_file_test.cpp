@@ -1,10 +1,9 @@
-#include <gtest/gtest.h>
+#include "emulation_test_utils.hpp"
 
 #include <registry/registry_file.hpp>
 
 #include <atomic>
 #include <fstream>
-#include <random>
 
 namespace sogen::test
 {
@@ -107,7 +106,7 @@ namespace sogen::test
             {
                 static std::atomic_uint64_t counter{};
                 directory_ = std::filesystem::temp_directory_path() /
-                             ("sogen-registry-file-test-" + std::to_string(std::random_device{}()) + "-" + std::to_string(counter++));
+                             ("sogen-registry-file-test-" + std::to_string(getpid()) + "-" + std::to_string(counter++));
                 ASSERT_TRUE(std::filesystem::create_directories(directory_));
 
                 const std::array<std::byte, 4> empty_hive{
