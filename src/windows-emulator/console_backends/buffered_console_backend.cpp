@@ -1,10 +1,56 @@
 #include "../std_include.hpp"
 #include "buffered_console_backend.hpp"
 
+#include <charconv>
+
 namespace sogen
 {
     namespace
     {
+        console_key_event make_character_event(const char16_t character, const bool control)
+        {
+            console_key_event event{.character = character, .control = control};
+            switch (character)
+            {
+            case u'\x1B':
+                event.key = console_key::escape;
+                event.character = 0;
+                break;
+            case u'\n':
+            case u'\r':
+                event.key = console_key::enter;
+                event.character = u'\r';
+                break;
+            case u'\t':
+                event.key = console_key::tab;
+                break;
+            case u'\b':
+            case 0x7F:
+                event.key = console_key::backspace;
+                event.character = u'\b';
+                break;
+            default:
+                break;
+            }
+            return event;
+        }
+
+        std::optional<console_key_event> decode_modified_character(const char prefix, const std::string_view sequence)
+        {
+            if (prefix != '[' || !sequence.ends_with(";5u"))
+            {
+                return std::nullopt;
+            }
+            const auto code = sequence.substr(0, sequence.size() - 3);
+            uint16_t character{};
+            const auto [end, error] = std::from_chars(code.data(), code.data() + code.size(), character);
+            if (error != std::errc{} || end != code.data() + code.size())
+            {
+                return std::nullopt;
+            }
+            return make_character_event(static_cast<char16_t>(character), true);
+        }
+
         std::optional<console_key> decode_escape_sequence(const char prefix, const std::string_view sequence)
         {
             if (sequence.empty() || (prefix == 'O' && sequence.size() != 1))
@@ -27,27 +73,27 @@ namespace sogen
             case 'F':
                 return console_key::end;
             case '~':
-                if (sequence == "1~" || sequence == "7~")
+                if (sequence == "1~" || sequence == "7~" || sequence == "1;5~" || sequence == "7;5~")
                 {
                     return console_key::home;
                 }
-                if (sequence == "4~" || sequence == "8~")
+                if (sequence == "4~" || sequence == "8~" || sequence == "4;5~" || sequence == "8;5~")
                 {
                     return console_key::end;
                 }
-                if (sequence == "2~")
+                if (sequence == "2~" || sequence == "2;5~")
                 {
                     return console_key::insert;
                 }
-                if (sequence == "3~")
+                if (sequence == "3~" || sequence == "3;5~")
                 {
                     return console_key::delete_key;
                 }
-                if (sequence == "5~")
+                if (sequence == "5~" || sequence == "5;5~")
                 {
                     return console_key::page_up;
                 }
-                if (sequence == "6~")
+                if (sequence == "6~" || sequence == "6;5~")
                 {
                     return console_key::page_down;
                 }
@@ -183,7 +229,12 @@ namespace sogen
                 }
             }
 
-            if (const auto key = decode_escape_sequence(static_cast<char>(*prefix), std::string_view{sequence.data(), sequence_size}))
+            const std::string_view sequence_view{sequence.data(), sequence_size};
+            if (const auto event = decode_modified_character(static_cast<char>(*prefix), sequence_view))
+            {
+                return event;
+            }
+            if (const auto key = decode_escape_sequence(static_cast<char>(*prefix), sequence_view))
             {
                 const bool control = sequence_size >= 3 && sequence[sequence_size - 3] == ';' && sequence[sequence_size - 2] == '5';
                 return console_key_event{.key = *key, .control = control};
@@ -201,12 +252,10 @@ namespace sogen
         {
         case '\n':
         case '\r':
-            return console_key_event{.key = console_key::enter, .character = u'\r'};
         case '\t':
-            return console_key_event{.key = console_key::tab, .character = u'\t'};
         case '\b':
         case 0x7F:
-            return console_key_event{.key = console_key::backspace, .character = u'\b'};
+            return make_character_event(static_cast<char16_t>(*byte), false);
         default: {
             if (*byte >= 0x80)
             {
@@ -273,11 +322,7 @@ namespace sogen
                 return console_key_event{.key = console_key::character, .character = static_cast<char16_t>(code_point)};
             }
 
-            return console_key_event{
-                .key = console_key::character,
-                .character = static_cast<char16_t>(*byte),
-                .control = *byte > 0 && *byte <= 0x1A,
-            };
+            return make_character_event(static_cast<char16_t>(*byte), *byte > 0 && *byte <= 0x1A);
         }
         }
     }

@@ -23,13 +23,13 @@ namespace sogen
             case VK_END:
                 return control ? u"\x1B[1;5F" : u"\x1B[F";
             case VK_INSERT:
-                return u"\x1B[2~";
+                return control ? u"\x1B[2;5~" : u"\x1B[2~";
             case VK_DELETE:
-                return u"\x1B[3~";
+                return control ? u"\x1B[3;5~" : u"\x1B[3~";
             case VK_PRIOR:
-                return u"\x1B[5~";
+                return control ? u"\x1B[5;5~" : u"\x1B[5~";
             case VK_NEXT:
-                return u"\x1B[6~";
+                return control ? u"\x1B[6;5~" : u"\x1B[6~";
             default:
                 return {};
             }
@@ -134,7 +134,15 @@ namespace sogen
                         {
                             if (key.uChar.UnicodeChar)
                             {
-                                text.push_back(static_cast<char16_t>(key.uChar.UnicodeChar));
+                                if (control)
+                                {
+                                    const auto sequence = "\x1B[" + std::to_string(static_cast<uint16_t>(key.uChar.UnicodeChar)) + ";5u";
+                                    text.append(sequence.begin(), sequence.end());
+                                }
+                                else
+                                {
+                                    text.push_back(static_cast<char16_t>(key.uChar.UnicodeChar));
+                                }
                             }
                             else
                             {

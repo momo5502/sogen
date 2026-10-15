@@ -81,6 +81,77 @@ namespace sogen::test
         EXPECT_FALSE(this->console->input_available());
     }
 
+    TEST_F(WindowsConsoleBackendTest, PreservesControlOnCharacterKeys)
+    {
+        struct character_key
+        {
+            char16_t character;
+            WORD key;
+            console_key expected_key;
+            char16_t expected_character;
+        };
+
+        constexpr std::array keys{
+            character_key{.character = u'\r', .key = VK_RETURN, .expected_key = console_key::enter, .expected_character = u'\r'},
+            character_key{.character = u'\n', .key = VK_RETURN, .expected_key = console_key::enter, .expected_character = u'\r'},
+            character_key{.character = u'\t', .key = VK_TAB, .expected_key = console_key::tab, .expected_character = u'\t'},
+            character_key{.character = u'\b', .key = VK_BACK, .expected_key = console_key::backspace, .expected_character = u'\b'},
+            character_key{.character = 0x7F, .key = VK_BACK, .expected_key = console_key::backspace, .expected_character = u'\b'},
+            character_key{.character = u'.', .key = VK_OEM_PERIOD, .expected_key = console_key::character, .expected_character = u'.'},
+            character_key{.character = u'\u03BB', .key = 0, .expected_key = console_key::character, .expected_character = u'\u03BB'},
+            character_key{.character = u'\x1B', .key = VK_ESCAPE, .expected_key = console_key::escape, .expected_character = 0},
+        };
+        for (const auto control : std::array<DWORD, 3>{0, LEFT_CTRL_PRESSED, RIGHT_CTRL_PRESSED})
+        {
+            for (const auto& key : keys)
+            {
+                this->queue(key.character, key.key, control, 2);
+                for (size_t i = 0; i < 2; ++i)
+                {
+                    ASSERT_TRUE(this->console->input_available());
+                    for (const bool remove : {false, true})
+                    {
+                        const auto event = this->console->read_input_event(false, remove);
+                        ASSERT_TRUE(event.has_value());
+                        EXPECT_EQ(key.expected_key, event->key);
+                        EXPECT_EQ(key.expected_character, event->character);
+                        EXPECT_EQ(control != 0, event->control);
+                    }
+                }
+                EXPECT_FALSE(this->console->input_available());
+            }
+        }
+    }
+
+    TEST_F(WindowsConsoleBackendTest, PreservesControlOnDeleteFamilyKeys)
+    {
+        constexpr std::array keys{
+            std::pair{VK_INSERT, console_key::insert},
+            std::pair{VK_DELETE, console_key::delete_key},
+            std::pair{VK_PRIOR, console_key::page_up},
+            std::pair{VK_NEXT, console_key::page_down},
+        };
+        for (const auto control : std::array<DWORD, 3>{0, LEFT_CTRL_PRESSED, RIGHT_CTRL_PRESSED})
+        {
+            for (const auto& [key, expected_key] : keys)
+            {
+                this->queue(0, static_cast<WORD>(key), control, 2);
+                for (size_t i = 0; i < 2; ++i)
+                {
+                    ASSERT_TRUE(this->console->input_available());
+                    for (const bool remove : {false, true})
+                    {
+                        const auto event = this->console->read_input_event(false, remove);
+                        ASSERT_TRUE(event.has_value());
+                        EXPECT_EQ(expected_key, event->key);
+                        EXPECT_EQ(control != 0, event->control);
+                    }
+                }
+                EXPECT_FALSE(this->console->input_available());
+            }
+        }
+    }
+
     TEST_F(WindowsConsoleBackendTest, PeekAndByteReadsShareInput)
     {
         this->queue(u'\x1B', VK_ESCAPE);
