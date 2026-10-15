@@ -80,6 +80,7 @@ namespace sogen
     };
 
     std::unique_ptr<console_backend> create_default_console_backend();
+    std::unique_ptr<console_backend> create_windows_console_backend();
     std::unique_ptr<console_backend> create_posix_console_backend();
     std::unique_ptr<console_backend> create_stream_console_backend();
 

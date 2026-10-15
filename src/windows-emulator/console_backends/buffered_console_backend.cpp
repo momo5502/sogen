@@ -62,6 +62,10 @@ namespace sogen
 
     bool buffered_console_backend::input_available()
     {
+        if (!this->pending_events_.empty())
+        {
+            return true;
+        }
         if (this->input_.empty())
         {
             this->refill(0);

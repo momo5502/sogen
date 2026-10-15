@@ -6,6 +6,10 @@ namespace sogen
     std::unique_ptr<console_backend> create_default_console_backend()
     {
 #ifdef OS_WINDOWS
+        if (auto console = create_windows_console_backend())
+        {
+            return console;
+        }
         return create_stream_console_backend();
 #elif defined(OS_EMSCRIPTEN)
         return std::make_unique<null_console_backend>();

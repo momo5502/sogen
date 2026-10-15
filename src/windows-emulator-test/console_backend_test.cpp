@@ -114,6 +114,28 @@ namespace sogen::test
             std::array<uint8_t, 2> padding{};
         };
 
+        struct console_read_request
+        {
+            uint32_t events_read{};
+            uint16_t flags{2};
+            uint8_t unicode{1};
+            uint8_t padding{};
+        };
+
+        struct console_input_record
+        {
+            uint16_t type;
+            uint16_t padding;
+            int32_t down;
+            uint16_t repeat;
+            uint16_t key;
+            uint16_t scan;
+            char16_t character;
+            uint32_t control;
+        };
+
+        static_assert(sizeof(console_input_record) == 20);
+
         class ConsoleProtocolTest : public testing::Test
         {
           protected:
@@ -121,7 +143,9 @@ namespace sogen::test
             {
                 emulator_interfaces interfaces{};
                 interfaces.audio = std::make_unique<null_audio_backend>();
-                interfaces.console = std::make_unique<null_console_backend>();
+                auto backend = std::make_unique<queued_console_backend>();
+                this->input = backend.get();
+                interfaces.console = std::move(backend);
                 interfaces.ui = std::make_unique<null_ui_backend>();
                 this->emu = std::make_unique<windows_emulator>(
                     create_x86_64_emulator_from_environment(),
@@ -184,9 +208,36 @@ namespace sogen::test
             }
 
             std::unique_ptr<windows_emulator> emu{};
+            queued_console_backend* input{};
             handle console_handle{};
             uint64_t storage{};
         };
+    }
+
+    TEST_F(ConsoleProtocolTest, PunctuationAndUnicodeDoNotBecomeNavigationKeys)
+    {
+        for (const auto character : std::u16string_view{u"\"&.-()%'[]\u03BB"})
+        {
+            this->input->queue(u16_to_u8(std::u16string_view{&character, 1}));
+            console_read_request request{};
+            ASSERT_EQ(STATUS_SUCCESS, this->invoke_text(0x01000004, request, sizeof(console_input_record), true, STDIN_HANDLE));
+            ASSERT_EQ(1u, request.events_read);
+            const auto record = this->emu->emu().read_memory<console_input_record>(this->storage + 0x200);
+            EXPECT_EQ(character, record.character);
+            EXPECT_EQ(0u, record.key);
+        }
+    }
+
+    TEST_F(ConsoleProtocolTest, LettersDigitsAndSpaceRetainTheirVirtualKeys)
+    {
+        this->input->queue("aA09 ");
+        for (const auto key : std::u16string_view{u"AA09 "})
+        {
+            console_read_request request{};
+            ASSERT_EQ(STATUS_SUCCESS, this->invoke_text(0x01000004, request, sizeof(console_input_record), true, STDIN_HANDLE));
+            ASSERT_EQ(1u, request.events_read);
+            EXPECT_EQ(key, this->emu->emu().read_memory<console_input_record>(this->storage + 0x200).key);
+        }
     }
 
     TEST_F(ConsoleProtocolTest, FontUpdatesSurviveSerialization)
@@ -295,6 +346,20 @@ namespace sogen::test
         ASSERT_TRUE(event.has_value());
         EXPECT_EQ(event->key, console_key::up);
         EXPECT_EQ(console.read_input(1), "q");
+        EXPECT_FALSE(console.input_available());
+    }
+
+    TEST(ConsoleBackendTest, SurrogateEventsRemainReadyUntilConsumed)
+    {
+        queued_console_backend console{};
+        console.queue("\xF0\x9F\x98\x80");
+        const auto high = console.read_input_event(false, true);
+        ASSERT_TRUE(high.has_value());
+        EXPECT_EQ(0xD83D, high->character);
+        EXPECT_TRUE(console.input_available());
+        const auto low = console.read_input_event(false, true);
+        ASSERT_TRUE(low.has_value());
+        EXPECT_EQ(0xDE00, low->character);
         EXPECT_FALSE(console.input_available());
     }
 
