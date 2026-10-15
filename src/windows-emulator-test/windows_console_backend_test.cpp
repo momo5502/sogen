@@ -96,6 +96,43 @@ namespace sogen::test
         EXPECT_EQ(25, size.height);
     }
 
+    TEST_F(WindowsConsoleBackendTest, RedirectedInputStillUsesOutputViewport)
+    {
+        HANDLE pipe_input{};
+        HANDLE pipe_writer{};
+        ASSERT_TRUE(CreatePipe(&pipe_input, &pipe_writer, nullptr, 0));
+        const auto restore_input = utils::finally([&] {
+            SetStdHandle(STD_INPUT_HANDLE, this->input);
+            CloseHandle(pipe_input);
+            CloseHandle(pipe_writer);
+        });
+        auto* const original_output = GetStdHandle(STD_OUTPUT_HANDLE);
+        auto* const output = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                                       CONSOLE_TEXTMODE_BUFFER, nullptr);
+        ASSERT_NE(INVALID_HANDLE_VALUE, output);
+        const auto restore_output = utils::finally([&] {
+            SetStdHandle(STD_OUTPUT_HANDLE, original_output);
+            CloseHandle(output);
+        });
+        ASSERT_TRUE(SetStdHandle(STD_INPUT_HANDLE, pipe_input));
+        ASSERT_TRUE(SetStdHandle(STD_OUTPUT_HANDLE, output));
+        ASSERT_EQ(nullptr, create_windows_console_backend());
+        const auto backend = create_default_console_backend();
+        ASSERT_NE(nullptr, backend);
+        for (const auto size : {console_size{.width = 79, .height = 17}, console_size{.width = 61, .height = 13}})
+        {
+            const SMALL_RECT window{
+                .Left = 0, .Top = 0, .Right = static_cast<SHORT>(size.width - 1), .Bottom = static_cast<SHORT>(size.height - 1)};
+            ASSERT_TRUE(SetConsoleWindowInfo(output, TRUE, &window));
+            ASSERT_TRUE(SetConsoleScreenBufferSize(output, {size.width, size.height}));
+            EXPECT_EQ(size.width, backend->get_size().width);
+            EXPECT_EQ(size.height, backend->get_size().height);
+        }
+        ASSERT_TRUE(SetStdHandle(STD_OUTPUT_HANDLE, INVALID_HANDLE_VALUE));
+        EXPECT_EQ(80, backend->get_size().width);
+        EXPECT_EQ(25, backend->get_size().height);
+    }
+
     TEST_F(WindowsConsoleBackendTest, ByteReadsHonorRawMode)
     {
         this->queue(u'q', 'Q');
