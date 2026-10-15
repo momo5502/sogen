@@ -4,10 +4,14 @@
 #include <io_completion_wait.hpp>
 #include <inherited_pipes.hpp>
 #include <syscall_utils.hpp>
+#include <chrono>
 #include <gtest/gtest.h>
 
 namespace sogen::syscalls
 {
+    NTSTATUS handle_NtQueryInformationThread(const syscall_context& c, handle thread_handle, uint32_t info_class,
+                                             uint64_t thread_information, uint32_t thread_information_length,
+                                             emulator_object<uint32_t> return_length);
     NTSTATUS handle_NtCancelIoFile(const syscall_context& c, handle file_handle,
                                    emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block);
     NTSTATUS handle_NtClose(const syscall_context& c, handle h);
@@ -161,6 +165,16 @@ namespace sogen::test
                 const syscall_context context{
                     .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
                 return syscalls::handle_NtClose(context, h);
+            }
+
+            bool io_pending(handle thread)
+            {
+                const syscall_context context{
+                    .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                EXPECT_EQ(STATUS_SUCCESS,
+                          syscalls::handle_NtQueryInformationThread(context, thread, ThreadIsIoPending, this->storage + 0x48000,
+                                                                    sizeof(ULONG), {this->emu->memory}));
+                return this->emu->memory.read_memory<ULONG>(this->storage + 0x48000) != 0;
             }
 
             handle duplicate(handle h, ACCESS_MASK access = FILE_READ_DATA, ULONG attributes = 0)
@@ -367,6 +381,37 @@ namespace sogen::test
         duplicate.reset();
         this->pipe(this->reader).work(*this->emu);
         EXPECT_EQ(context.io_status_block.read().Status, STATUS_PIPE_BROKEN);
+    }
+
+    TEST_F(NamedPipeTest, PendingIoQueryTracksReadCompletionAndCancellation)
+    {
+        const auto first = this->emu->process.threads.find_handle(this->emu->vcpu(0).active_thread);
+        const auto second =
+            this->emu->process.threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 12, false});
+        auto request = this->request(this->reader, 1);
+        ASSERT_EQ(STATUS_PENDING, this->pipe(this->reader).start_io(*this->emu, request, true));
+        this->emu->vcpu(0).active_thread = this->emu->process.threads.get(second);
+        EXPECT_TRUE(this->io_pending(first));
+        EXPECT_FALSE(this->io_pending(CURRENT_THREAD));
+        ASSERT_EQ(STATUS_SUCCESS, this->write("x"));
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        do
+        {
+            this->pipe(this->reader).work(*this->emu);
+        } while (request.io_status_block.read().Status == STATUS_PENDING && std::chrono::steady_clock::now() < deadline);
+        ASSERT_EQ(STATUS_SUCCESS, request.io_status_block.read().Status);
+        EXPECT_FALSE(this->io_pending(first));
+        request = this->request(this->reader, 1);
+        ASSERT_EQ(STATUS_PENDING, this->pipe(this->reader).start_io(*this->emu, request, true));
+        EXPECT_TRUE(this->io_pending(CURRENT_THREAD));
+        ASSERT_TRUE(this->pipe(this->reader).cancel_io(*this->emu, request.io_status_block.value()));
+        const auto cancel_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        do
+        {
+            this->pipe(this->reader).work(*this->emu);
+        } while (request.io_status_block.read().Status == STATUS_PENDING && std::chrono::steady_clock::now() < cancel_deadline);
+        EXPECT_EQ(STATUS_CANCELLED, request.io_status_block.read().Status);
+        EXPECT_FALSE(this->io_pending(CURRENT_THREAD));
     }
 
     TEST_F(NamedPipeTest, LegacyCancellationLeavesOtherThreadsReadsPending)

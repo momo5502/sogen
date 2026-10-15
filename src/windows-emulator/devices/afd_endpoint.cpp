@@ -6,6 +6,7 @@
 #include "../windows_emulator.hpp"
 #include "../network/socket_factory.hpp"
 
+#include <algorithm>
 #include <network/address.hpp>
 #include <network/socket.hpp>
 
@@ -414,6 +415,11 @@ namespace sogen
                 {
                     this->s_->set_blocking(false);
                 }
+            }
+
+            bool has_pending_io(const uint32_t issuing_thread_id) const override
+            {
+                return this->delayed_ioctl_ && this->delayed_ioctl_->issuing_thread_id == issuing_thread_id;
             }
 
             bool cancel_io(windows_emulator& win_emu, const uint64_t io_status_block,
@@ -1664,6 +1670,14 @@ namespace sogen
                     cancelled = true;
                 }
                 return cancelled;
+            }
+
+            bool has_pending_io(const uint32_t issuing_thread_id) const override
+            {
+                return afd_endpoint<Traits>::has_pending_io(issuing_thread_id) ||
+                       std::ranges::any_of(this->pending_polls_, [issuing_thread_id](const auto& poll) {
+                           return poll.context.issuing_thread_id == issuing_thread_id;
+                       });
             }
 
             void serialize_object(utils::buffer_serializer& buffer) const override

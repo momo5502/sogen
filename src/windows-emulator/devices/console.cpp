@@ -651,7 +651,8 @@ namespace sogen
                     {
                         return STATUS_INVALID_PARAMETER;
                     }
-                    constexpr console_coordinate size{.x = 80, .y = 25};
+                    const auto dimensions = win_emu.console().get_size();
+                    const console_coordinate size{.x = dimensions.width, .y = dimensions.height};
                     win_emu.emu().write_memory(header.data, size);
                     return STATUS_SUCCESS;
                 }
@@ -663,8 +664,9 @@ namespace sogen
                     }
 
                     console_screen_buffer_info_response response{};
-                    response.size_x = 80;
-                    response.size_y = 25;
+                    const auto dimensions = win_emu.console().get_size();
+                    response.size_x = dimensions.width;
+                    response.size_y = dimensions.height;
                     response.cursor_x = cursor_position_.x;
                     response.cursor_y = cursor_position_.y;
                     response.window_width = response.size_x;

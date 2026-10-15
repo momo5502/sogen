@@ -1,4 +1,5 @@
 #include "emulation_test_utils.hpp"
+#include <utils/finally.hpp>
 
 #ifdef OS_WINDOWS
 namespace sogen::test
@@ -54,6 +55,84 @@ namespace sogen::test
         EXPECT_FALSE(this->console->input_available());
     }
 
+    TEST_F(WindowsConsoleBackendTest, DimensionsMatchHostViewport)
+    {
+        CONSOLE_SCREEN_BUFFER_INFO info{};
+        ASSERT_TRUE(GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info));
+        const auto size = this->console->get_size();
+        EXPECT_EQ(info.srWindow.Right - info.srWindow.Left + 1, size.width);
+        EXPECT_EQ(info.srWindow.Bottom - info.srWindow.Top + 1, size.height);
+    }
+
+    TEST_F(WindowsConsoleBackendTest, DimensionsTrackOutputViewportChanges)
+    {
+        auto* const original = GetStdHandle(STD_OUTPUT_HANDLE);
+        auto* const output = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                                       CONSOLE_TEXTMODE_BUFFER, nullptr);
+        ASSERT_NE(INVALID_HANDLE_VALUE, output);
+        const auto cleanup = utils::finally([&] {
+            SetStdHandle(STD_OUTPUT_HANDLE, original);
+            CloseHandle(output);
+        });
+        ASSERT_TRUE(SetStdHandle(STD_OUTPUT_HANDLE, output));
+        for (const auto size : {console_size{.width = 79, .height = 17}, console_size{.width = 61, .height = 13}})
+        {
+            const SMALL_RECT window{0, 0, static_cast<SHORT>(size.width - 1), static_cast<SHORT>(size.height - 1)};
+            ASSERT_TRUE(SetConsoleWindowInfo(output, TRUE, &window));
+            ASSERT_TRUE(SetConsoleScreenBufferSize(output, {size.width, size.height}));
+            const auto reported = this->console->get_size();
+            EXPECT_EQ(size.width, reported.width);
+            EXPECT_EQ(size.height, reported.height);
+        }
+    }
+
+    TEST_F(WindowsConsoleBackendTest, RedirectedOutputUsesDefaultDimensions)
+    {
+        auto* const original = GetStdHandle(STD_OUTPUT_HANDLE);
+        const auto cleanup = utils::finally([&] { SetStdHandle(STD_OUTPUT_HANDLE, original); });
+        ASSERT_TRUE(SetStdHandle(STD_OUTPUT_HANDLE, INVALID_HANDLE_VALUE));
+        const auto size = this->console->get_size();
+        EXPECT_EQ(80, size.width);
+        EXPECT_EQ(25, size.height);
+    }
+
+    TEST_F(WindowsConsoleBackendTest, RedirectedInputStillUsesOutputViewport)
+    {
+        HANDLE pipe_input{};
+        HANDLE pipe_writer{};
+        ASSERT_TRUE(CreatePipe(&pipe_input, &pipe_writer, nullptr, 0));
+        const auto restore_input = utils::finally([&] {
+            SetStdHandle(STD_INPUT_HANDLE, this->input);
+            CloseHandle(pipe_input);
+            CloseHandle(pipe_writer);
+        });
+        auto* const original_output = GetStdHandle(STD_OUTPUT_HANDLE);
+        auto* const output = CreateConsoleScreenBuffer(GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                                                       CONSOLE_TEXTMODE_BUFFER, nullptr);
+        ASSERT_NE(INVALID_HANDLE_VALUE, output);
+        const auto restore_output = utils::finally([&] {
+            SetStdHandle(STD_OUTPUT_HANDLE, original_output);
+            CloseHandle(output);
+        });
+        ASSERT_TRUE(SetStdHandle(STD_INPUT_HANDLE, pipe_input));
+        ASSERT_TRUE(SetStdHandle(STD_OUTPUT_HANDLE, output));
+        ASSERT_EQ(nullptr, create_windows_console_backend());
+        const auto backend = create_default_console_backend();
+        ASSERT_NE(nullptr, backend);
+        for (const auto size : {console_size{.width = 79, .height = 17}, console_size{.width = 61, .height = 13}})
+        {
+            const SMALL_RECT window{
+                .Left = 0, .Top = 0, .Right = static_cast<SHORT>(size.width - 1), .Bottom = static_cast<SHORT>(size.height - 1)};
+            ASSERT_TRUE(SetConsoleWindowInfo(output, TRUE, &window));
+            ASSERT_TRUE(SetConsoleScreenBufferSize(output, {size.width, size.height}));
+            EXPECT_EQ(size.width, backend->get_size().width);
+            EXPECT_EQ(size.height, backend->get_size().height);
+        }
+        ASSERT_TRUE(SetStdHandle(STD_OUTPUT_HANDLE, INVALID_HANDLE_VALUE));
+        EXPECT_EQ(80, backend->get_size().width);
+        EXPECT_EQ(25, backend->get_size().height);
+    }
+
     TEST_F(WindowsConsoleBackendTest, ByteReadsHonorRawMode)
     {
         this->queue(u'q', 'Q');
@@ -98,7 +177,7 @@ namespace sogen::test
             character_key{.character = u'\b', .key = VK_BACK, .expected_key = console_key::backspace, .expected_character = u'\b'},
             character_key{.character = 0x7F, .key = VK_BACK, .expected_key = console_key::backspace, .expected_character = u'\b'},
             character_key{.character = u'.', .key = VK_OEM_PERIOD, .expected_key = console_key::character, .expected_character = u'.'},
-            character_key{.character = u'\u03BB', .key = 0, .expected_key = console_key::character, .expected_character = u'\u03BB'},
+            character_key{.character = u'\u03BB', .key = 'L', .expected_key = console_key::character, .expected_character = u'\u03BB'},
             character_key{.character = u'\x1B', .key = VK_ESCAPE, .expected_key = console_key::escape, .expected_character = 0},
         };
         for (const auto control : std::array<DWORD, 3>{0, LEFT_CTRL_PRESSED, RIGHT_CTRL_PRESSED})
@@ -120,6 +199,66 @@ namespace sogen::test
                 }
                 EXPECT_FALSE(this->console->input_available());
             }
+        }
+    }
+
+    TEST_F(WindowsConsoleBackendTest, AltGrTextDoesNotBecomeControlShortcuts)
+    {
+        for (const auto state :
+             std::array<DWORD, 3>{0, LEFT_CTRL_PRESSED | RIGHT_ALT_PRESSED, LEFT_CTRL_PRESSED | RIGHT_ALT_PRESSED | SHIFT_PRESSED})
+        {
+            for (const auto character : std::u16string_view{u"\\@{}[]|\u20AC"})
+            {
+                this->queue(character, VK_OEM_5, state, 2);
+                for (size_t i = 0; i < 2; ++i)
+                {
+                    for (const bool remove : {false, true})
+                    {
+                        const auto event = this->console->read_input_event(false, remove);
+                        ASSERT_TRUE(event.has_value());
+                        EXPECT_EQ(console_key::character, event->key);
+                        EXPECT_EQ(character, event->character);
+                        EXPECT_FALSE(event->control);
+                    }
+                }
+            }
+            EXPECT_FALSE(this->console->input_available());
+        }
+    }
+
+    TEST_F(WindowsConsoleBackendTest, SynthesizedTextPreservesClipboardPaths)
+    {
+        for (const auto key : std::array<WORD, 2>{0, VK_PACKET})
+        {
+            for (const auto state : std::array<DWORD, 4>{0, LEFT_CTRL_PRESSED, RIGHT_CTRL_PRESSED, LEFT_CTRL_PRESSED | RIGHT_ALT_PRESSED})
+            {
+                for (const auto character : std::u16string_view{u"C:\\Users\\test\\hello.py"})
+                {
+                    this->queue(character, key, state);
+                    for (const bool remove : {false, true})
+                    {
+                        const auto event = this->console->read_input_event(false, remove);
+                        ASSERT_TRUE(event.has_value());
+                        EXPECT_EQ(console_key::character, event->key);
+                        EXPECT_EQ(character, event->character);
+                        EXPECT_FALSE(event->control);
+                    }
+                }
+                EXPECT_FALSE(this->console->input_available());
+            }
+        }
+    }
+
+    TEST_F(WindowsConsoleBackendTest, RealControlBackslashRetainsControl)
+    {
+        for (const auto state :
+             std::array<DWORD, 3>{LEFT_CTRL_PRESSED, RIGHT_CTRL_PRESSED, LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED | RIGHT_ALT_PRESSED})
+        {
+            this->queue(u'\\', VK_OEM_5, state);
+            const auto event = this->console->read_input_event(false, true);
+            ASSERT_TRUE(event.has_value());
+            EXPECT_EQ(u'\\', event->character);
+            EXPECT_TRUE(event->control);
         }
     }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -40,6 +41,12 @@ namespace sogen
         bool echo{};
     };
 
+    struct console_size
+    {
+        int16_t width{80};
+        int16_t height{25};
+    };
+
     class console_backend
     {
       public:
@@ -50,6 +57,11 @@ namespace sogen
         virtual std::string read_input(size_t length) = 0;
         virtual void set_input_mode(const console_input_mode& mode) = 0;
         virtual void reset() = 0;
+
+        virtual console_size get_size() const
+        {
+            return {};
+        }
     };
 
     class null_console_backend final : public console_backend

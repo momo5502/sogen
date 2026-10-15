@@ -29,7 +29,13 @@ namespace sogen::test
                 mode_ = mode;
             }
 
+            console_size get_size() const override
+            {
+                return this->size_;
+            }
+
             console_input_mode mode_{};
+            console_size size_{};
 
           protected:
             void refill(int) override
@@ -98,6 +104,21 @@ namespace sogen::test
         };
 
         static_assert(sizeof(console_font_request) == 84);
+
+        struct console_buffer_info
+        {
+            std::array<int16_t, 2> size{};
+            std::array<int16_t, 2> cursor{};
+            std::array<int16_t, 2> window_origin{};
+            uint16_t attributes{};
+            std::array<int16_t, 2> window_size{};
+            std::array<int16_t, 2> maximum_window_size{};
+            uint16_t popup_attributes{};
+            uint8_t fullscreen_supported{};
+            std::array<uint32_t, 16> color_table{};
+        };
+
+        static_assert(sizeof(console_buffer_info) == 92);
 
         struct console_text_request
         {
@@ -344,10 +365,36 @@ namespace sogen::test
 
     TEST_F(ConsoleProtocolTest, LargestWindowMatchesScreenBufferDimensions)
     {
-        std::array<int16_t, 2> size{};
-        ASSERT_EQ(STATUS_SUCCESS, this->invoke(0x0200000B, size));
-        EXPECT_EQ(80, size[0]);
-        EXPECT_EQ(25, size[1]);
+        for (const auto dimensions : {console_size{}, console_size{.width = 79, .height = 17}, console_size{.width = 113, .height = 31},
+                                      console_size{.width = 1, .height = 1}})
+        {
+            this->input->size_ = dimensions;
+            const std::array<int16_t, 2> expected{dimensions.width, dimensions.height};
+            std::array<int16_t, 2> largest{};
+            ASSERT_EQ(STATUS_SUCCESS, this->invoke(0x0200000B, largest));
+            EXPECT_EQ(expected, largest);
+            console_buffer_info info{};
+            ASSERT_EQ(STATUS_SUCCESS, this->invoke(0x02000007, info));
+            EXPECT_EQ(expected, info.size);
+            EXPECT_EQ(expected, info.window_size);
+            EXPECT_EQ(expected, info.maximum_window_size);
+            EXPECT_EQ((std::array<int16_t, 2>{}), info.window_origin);
+        }
+    }
+
+    TEST_F(ConsoleProtocolTest, BufferInfoRejectsInputHandlesAndInvalidSizes)
+    {
+        console_buffer_info info{};
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->invoke(0x02000007, info, STDIN_HANDLE));
+        uint32_t truncated{};
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->invoke(0x02000007, truncated));
+    }
+
+    TEST(ConsoleBackendTest, HeadlessConsoleRetainsDefaultDimensions)
+    {
+        null_console_backend console{};
+        EXPECT_EQ(80, console.get_size().width);
+        EXPECT_EQ(25, console.get_size().height);
     }
 
     TEST(ConsoleBackendTest, EventsAndByteReadsShareBufferedInput)

@@ -130,11 +130,15 @@ namespace sogen
                         }
                         const auto& key = record.Event.KeyEvent;
                         const auto control = (key.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+                        const auto synthesized = key.wVirtualKeyCode == 0 || key.wVirtualKeyCode == VK_PACKET;
+                        constexpr auto alt_gr_mask = LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED | RIGHT_ALT_PRESSED;
+                        const auto alt_gr = key.uChar.UnicodeChar >= L' ' && key.uChar.UnicodeChar != L'\x7F' &&
+                                            (key.dwControlKeyState & alt_gr_mask) == (LEFT_CTRL_PRESSED | RIGHT_ALT_PRESSED);
                         for (WORD i = 0; i < key.wRepeatCount; ++i)
                         {
                             if (key.uChar.UnicodeChar)
                             {
-                                if (control)
+                                if (control && !synthesized && !alt_gr)
                                 {
                                     const auto sequence = "\x1B[" + std::to_string(static_cast<uint16_t>(key.uChar.UnicodeChar)) + ";5u";
                                     text.append(sequence.begin(), sequence.end());
