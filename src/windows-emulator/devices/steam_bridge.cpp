@@ -152,7 +152,6 @@ namespace sogen
         {
             if (win_emu.network_mode() == network::network_mode::offline)
             {
-                win_emu.log.info("[steam-bridge] network mode is offline; guest Steam calls will fail\n");
                 return std::make_unique<null_backend>();
             }
 
