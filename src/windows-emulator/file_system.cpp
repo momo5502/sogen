@@ -14,6 +14,17 @@ namespace sogen
             return (file_stat.st_mode & S_IFMT) == S_IFDIR;
         }
 
+        bool is_protected_mount_root(const mount_provider& provider, const windows_path& relative)
+        {
+            if (!relative.empty())
+            {
+                return false;
+            }
+
+            const auto root_stat = provider.stat({});
+            return !root_stat || is_directory(*root_stat);
+        }
+
         NTSTATUS copy_file(i_file& source, i_file& destination)
         {
             std::vector<std::byte> buffer(0x10000);
@@ -221,7 +232,8 @@ namespace sogen
             return STATUS_OBJECT_PATH_NOT_FOUND;
         }
 
-        if (source->relative.empty() || destination->relative.empty())
+        if (is_protected_mount_root(*source->provider, source->relative) ||
+            is_protected_mount_root(*destination->provider, destination->relative))
         {
             return STATUS_ACCESS_DENIED;
         }
@@ -278,7 +290,7 @@ namespace sogen
             return STATUS_OBJECT_PATH_NOT_FOUND;
         }
 
-        if (resolved->relative.empty())
+        if (is_protected_mount_root(*resolved->provider, resolved->relative))
         {
             return STATUS_ACCESS_DENIED;
         }

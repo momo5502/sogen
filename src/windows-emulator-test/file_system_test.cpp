@@ -139,7 +139,7 @@ namespace sogen::test
         EXPECT_EQ(STATUS_NOT_SAME_DEVICE, fs.rename(windows_path{'c', {u"mnt", u"deep"}}, windows_path{'c', {u"deep"}}));
     }
 
-    TEST_F(FileSystemTest, MountPointsCannotBeRemovedOrRenamed)
+    TEST_F(FileSystemTest, DirectoryMountPointsCannotBeRemovedOrRenamed)
     {
         file_system fs{this->root};
         fs.map(windows_path{'c', {u"mnt"}}, this->root / "mapped");
@@ -148,6 +148,24 @@ namespace sogen::test
         EXPECT_EQ(STATUS_ACCESS_DENIED, fs.remove(windows_path{'c', {}}));
         EXPECT_EQ(STATUS_ACCESS_DENIED, fs.rename(windows_path{'c', {u"mnt"}}, windows_path{'c', {u"renamed"}}));
         EXPECT_TRUE(std::filesystem::exists(this->root / "mapped" / "x.txt"));
+    }
+
+    TEST_F(FileSystemTest, FileMountsCanBeRemovedAndRenamed)
+    {
+        file_system fs{this->root};
+        fs.map(windows_path{'c', {u"single.txt"}}, this->root / "single.txt");
+        fs.map(windows_path{'c', {u"other.txt"}}, this->root / "other" / "y.txt");
+
+        EXPECT_EQ(STATUS_SUCCESS, fs.rename(windows_path{'c', {u"x.txt"}}, windows_path{'c', {u"single.txt"}}));
+        EXPECT_FALSE(std::filesystem::exists(this->root / "c" / "x.txt"));
+        EXPECT_EQ("root", read_host_file(this->root / "single.txt"));
+
+        EXPECT_EQ(STATUS_SUCCESS, fs.rename(windows_path{'c', {u"other.txt"}}, windows_path{'c', {u"moved.txt"}}));
+        EXPECT_FALSE(std::filesystem::exists(this->root / "other" / "y.txt"));
+        EXPECT_EQ("other", read_host_file(this->root / "c" / "moved.txt"));
+
+        EXPECT_EQ(STATUS_SUCCESS, fs.remove(windows_path{'c', {u"single.txt"}}));
+        EXPECT_FALSE(std::filesystem::exists(this->root / "single.txt"));
     }
 
     TEST_F(FileSystemTest, DeferredOperationsRunOnClose)
