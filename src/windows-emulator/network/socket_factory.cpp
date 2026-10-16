@@ -59,17 +59,15 @@ namespace sogen
 
         std::unique_ptr<socket_factory> create_socket_factory(const network_mode mode)
         {
-#ifdef OS_EMSCRIPTEN
-            (void)mode;
-            return create_static_socket_factory();
-#else
+#ifndef OS_EMSCRIPTEN
             if (mode == network_mode::live)
             {
                 return std::make_unique<socket_factory>();
             }
-
-            return create_static_socket_factory();
 #endif
+
+            (void)mode;
+            return create_static_socket_factory();
         }
     }
 

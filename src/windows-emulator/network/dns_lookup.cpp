@@ -53,17 +53,15 @@ namespace sogen
 
         std::unique_ptr<dns_lookup> create_dns_lookup(const network_mode mode)
         {
-#ifdef OS_EMSCRIPTEN
-            (void)mode;
-            return std::make_unique<null_dns_lookup>();
-#else
+#ifndef OS_EMSCRIPTEN
             if (mode == network_mode::live)
             {
                 return std::make_unique<dns_lookup>();
             }
-
-            return std::make_unique<null_dns_lookup>();
 #endif
+
+            (void)mode;
+            return std::make_unique<null_dns_lookup>();
         }
     }
 
