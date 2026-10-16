@@ -126,6 +126,9 @@ namespace sogen
                         [&](const io_control_event& e) {
                             this->log_.print(color::dark_gray, "--> %s: 0x%X\n", e.device_name.c_str(), e.code);
                         },
+                        [&](const socket_activity_event& e) {
+                            this->log_.print(color::dark_gray, "Socket %s: %s\n", e.action.c_str(), e.address.c_str());
+                        },
                         [&](const thread_create_event& e) {
                             std::string flags{};
                             for (const auto& flag : e.flags)

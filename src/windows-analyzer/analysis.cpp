@@ -256,6 +256,17 @@ namespace sogen
             }
         }
 
+        void handle_socket_activity(const analysis_context& c, const network::socket_activity activity, const network::address& address)
+        {
+            if (!c.settings->skip_generic_activity)
+            {
+                c.emit_observation<socket_activity_event>([&](auto& event) {
+                    event.action = std::string(network::to_string(activity));
+                    event.address = address.to_string();
+                });
+            }
+        }
+
         void handle_thread_create(const analysis_context& c, handle, emulator_thread& t)
         {
             if (c.settings->skip_generic_activity)
@@ -872,6 +883,7 @@ namespace sogen
         cb.on_generic_access = make_callback(c, handle_generic_access);
         cb.on_generic_activity = make_callback(c, handle_generic_activity);
         cb.on_suspicious_activity = make_callback(c, handle_suspicious_activity);
+        cb.on_socket_activity = make_callback(c, handle_socket_activity);
         cb.on_fast_fail = make_callback(c, handle_fast_fail);
 
         watch_import_table(c);

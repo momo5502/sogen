@@ -15,6 +15,7 @@
 #include "memory_manager.hpp"
 #include "module/module_manager.hpp"
 #include "network/dns_lookup.hpp"
+#include "network/socket_activity.hpp"
 #include "network/socket_factory.hpp"
 #include "version/windows_version_manager.hpp"
 #include <platform/audio_backend.hpp>
@@ -47,6 +48,7 @@ namespace sogen
         opt_func<void(std::string_view type, std::u16string_view name)> on_generic_access{};
         opt_func<void(std::string_view description)> on_generic_activity{};
         opt_func<void(std::string_view description)> on_suspicious_activity{};
+        opt_func<void(network::socket_activity activity, const network::address& address)> on_socket_activity{};
         utils::callback_list<void(std::string_view message)> on_debug_string{};
         utils::callback_list<void(const mapped_module& mod, const mapped_section& section, uint64_t address)> on_section_first_execution{};
         opt_func<void(uint64_t address)> on_instruction{};
