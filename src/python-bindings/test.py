@@ -251,7 +251,9 @@ dns_app = win.create_application(
     network="live",
     dns_resolver=on_resolve,
 )
+socket_activity = []
 dns_app.callbacks.on_stdout = lambda text: None
+dns_app.callbacks.on_socket_activity = lambda action, address: socket_activity.append((action, address))
 dns_app.start()
 print(
     f"[test.py:dns] exit_status={dns_app.process.exit_status}"
@@ -262,6 +264,8 @@ print(
 assert dns_app.process.exit_status == 0, (
     f"dns_resolver run exited {dns_app.process.exit_status}; the kwarg must not perturb a normal run"
 )
+assert ("bind", "127.0.0.1:28970") in socket_activity, socket_activity
+assert ("sendto", "127.0.0.1:28970") in socket_activity, socket_activity
 dns_app = None
 gc.collect()
 
