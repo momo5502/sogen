@@ -1,5 +1,6 @@
 #include "emulation_test_utils.hpp"
 #include <devices/afd_types.hpp>
+#include <filesystem/host_directory_provider.hpp>
 #include <syscall_utils.hpp>
 
 namespace sogen::syscalls
@@ -226,7 +227,7 @@ namespace sogen::test
     TEST_F(IoCancellationTest, CompletedFileIoNeedsNoCancellation)
     {
         file entry{};
-        entry.handle = tmpfile();
+        entry.handle = guest_file{this->emu->file_sys, windows_path{'c', {u"cancel.tmp"}}, u"w+b", std::make_unique<host_file>(tmpfile())};
         ASSERT_TRUE(entry.handle);
         const auto target = this->emu->process.files.store(std::move(entry));
         EXPECT_EQ(STATUS_SUCCESS, this->cancel(target));
