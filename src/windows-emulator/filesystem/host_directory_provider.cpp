@@ -125,6 +125,8 @@ namespace sogen
         }
 
         auto candidate = (this->target_ / path.to_portable_path()).lexically_normal();
+        // The containment check is lexical and does not follow symlinks. Host symlinks inside the mount may
+        // point elsewhere (e.g. a mounted game directory); the OS resolves those at open time.
         if (!is_subpath(this->target_.lexically_normal(), candidate))
         {
             return std::nullopt;
