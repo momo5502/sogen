@@ -73,6 +73,7 @@ namespace sogen
             std::string report_format{"jsonl"};
             std::string whp_execution_hook_mode{"auto"};
             std::optional<backend_type> backend{};
+            network::network_mode network{network::network_mode::offline};
             bool disable_instruction_precision{false};
             uint32_t vcpu_count{1};
             std::filesystem::path registry_path{get_current_binary_dir() / "registry"};
@@ -91,6 +92,8 @@ namespace sogen
                                                                   const std::string& token)
         {
             std::vector<std::string> arguments{"--managed-process-port", std::to_string(port), "--managed-process-token", token};
+            arguments.emplace_back("--network");
+            arguments.emplace_back(network::to_string(options.network));
 
             const auto add_path = [&](const std::string_view option, const std::filesystem::path& path) {
                 if (!path.empty())
@@ -538,6 +541,7 @@ namespace sogen
                 .emulation_root = options.emulation_root,
                 .registry_directory = options.registry_path,
                 .path_mappings = options.path_mappings,
+                .network = options.network,
             };
         }
 
@@ -681,6 +685,10 @@ namespace sogen
 #endif
             const auto concise_logging = options.concise_logging;
             const auto win_emu = setup_emulator(options, args, emulator_interfaces{.processes = manager.get()});
+            if (options.network == network::network_mode::live)
+            {
+                win_emu->log.warn("Network mode is live: the guest can use the host network\n");
+            }
             apply_registry_files(*win_emu, options);
 #ifndef OS_EMSCRIPTEN
             std::unique_ptr<emulator_process_target> managed_target{};
@@ -1020,6 +1028,11 @@ namespace sogen
             app.add_option("--vcpus", options.vcpu_count, "Number of virtual CPUs (requires a backend with multi-vCPU support)")
                 ->capture_default_str();
 
+            std::string network_name{network::to_string(network::network_mode::offline)};
+            app.add_option("--network", network_name, "Guest network access: offline (no host network) or live")
+                ->capture_default_str()
+                ->check(CLI::IsMember({"offline", "live"}));
+
             std::string backend_name{};
             app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp, kvm or fex (overrides env)")
                 ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm", "fex"}));
@@ -1053,6 +1066,8 @@ namespace sogen
                 {
                     throw std::runtime_error("GDB debugging requires --vcpus 1");
                 }
+
+                options.network = network::parse_network_mode(network_name);
 
                 if (!backend_name.empty())
                 {

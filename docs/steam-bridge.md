@@ -149,11 +149,13 @@ method). See `BLOCKED_INTERFACES` / `BLOCKED_METHODS` in `generate.py`. The bloc
   protocol-registration / persona-rename / social-send methods, and `ISteamRemoteStorage`
   `FileShare`/`Publish*` (post a file publicly under the host account).
 
-Network reach (`ISteamHTTP`, the networking/sockets interfaces) is deliberately **not** blocked: the
-guest already has host network access through the emulated AFD socket device, so blocking it here buys
-nothing. Identity reads and `ISteamFriends::ActivateGameOverlayToStore` (the DLC/store button) are
-intentionally allowed. Matching is by method *name* per snapshot, so a version that lacks a listed
-method simply never matches, and the list survives the version-drift the bridge already handles.
+Network reach (`ISteamHTTP`, the networking/sockets interfaces) is deliberately **not** blocked: with
+`--network live` the guest already has host network access through the emulated AFD socket device, so
+blocking it here buys nothing. With `--network offline` (the default) the device uses the null backend,
+so no guest Steam call reaches the host. Identity reads and `ISteamFriends::ActivateGameOverlayToStore`
+(the DLC/store button) are intentionally allowed. Matching is by method *name* per snapshot, so a
+version that lacks a listed method simply never matches, and the list survives the version-drift the
+bridge already handles.
 
 Reverse-callback (`callback_token`) params also reject a guest `type` outside the known range instead of
 handing a null proxy to Steam (which would crash the host on the next virtual dispatch).
@@ -175,7 +177,8 @@ proxy. Suspected fix is pumping the matchmaking frame host-side
 ## Running a real game
 
 The game loads its **own** `steam_api` unchanged; that DLL finds our `steamclient` via the registry.
-Nothing in the game folder is modified.
+Nothing in the game folder is modified. Run with `--network live`; in offline mode the bridge uses the
+null backend.
 
 1. **Make the shim visible in the guest.** Either drop `steamclient(64).dll` at a guest path (e.g.
    `C:\`) or map it with `-p C:\steamclient64.dll <host-path>` and `-p C:\steamclient.dll <host-path>`.

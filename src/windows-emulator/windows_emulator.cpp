@@ -12,7 +12,6 @@
 #include "apiset/apiset.hpp"
 #include "syscall_dispatcher.hpp"
 
-#include "network/static_socket_factory.hpp"
 #include "memory_permission_ext.hpp"
 
 namespace sogen
@@ -626,28 +625,24 @@ namespace sogen
             return std::make_unique<utils::clock>();
         }
 
-        std::unique_ptr<network::dns_lookup> get_dns_lookup(emulator_interfaces& interfaces)
+        std::unique_ptr<network::dns_lookup> get_dns_lookup(emulator_interfaces& interfaces, const network::network_mode mode)
         {
             if (interfaces.dns_lookup)
             {
                 return std::move(interfaces.dns_lookup);
             }
 
-            return std::make_unique<network::dns_lookup>();
+            return network::create_dns_lookup(mode);
         }
 
-        std::unique_ptr<network::socket_factory> get_socket_factory(emulator_interfaces& interfaces)
+        std::unique_ptr<network::socket_factory> get_socket_factory(emulator_interfaces& interfaces, const network::network_mode mode)
         {
             if (interfaces.socket_factory)
             {
                 return std::move(interfaces.socket_factory);
             }
 
-#ifdef OS_EMSCRIPTEN
-            return network::create_static_socket_factory();
-#else
-            return std::make_unique<network::socket_factory>();
-#endif
+            return network::create_socket_factory(mode);
         }
 
         std::unique_ptr<ui_backend> get_ui_backend(emulator_interfaces& interfaces)
@@ -717,8 +712,9 @@ namespace sogen
           use_native_timestamp_counter_(!interfaces.clock && !settings.use_relative_time &&
                                         this->emu_->supports_native_timestamp_counter()),
           clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
-          dns_lookup_(get_dns_lookup(interfaces)),
-          socket_factory_(get_socket_factory(interfaces)),
+          network_mode_(settings.network),
+          dns_lookup_(get_dns_lookup(interfaces, settings.network)),
+          socket_factory_(get_socket_factory(interfaces, settings.network)),
           ui_backend_(get_ui_backend(interfaces)),
           audio_backend_(get_audio_backend(interfaces)),
           crypt_protect_backend_(get_crypt_protect_backend(

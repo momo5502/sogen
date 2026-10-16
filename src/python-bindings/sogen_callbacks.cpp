@@ -36,6 +36,7 @@ namespace sogen::py
             callback_slot{.name = "generic_access", .member = &callback_registry::generic_access_cb},
             callback_slot{.name = "generic_activity", .member = &callback_registry::generic_activity_cb},
             callback_slot{.name = "suspicious_activity", .member = &callback_registry::suspicious_activity_cb},
+            callback_slot{.name = "socket_activity", .member = &callback_registry::socket_activity_cb},
             callback_slot{.name = "exception", .member = &callback_registry::exception_cb},
             callback_slot{.name = "instruction", .member = &callback_registry::instruction_cb},
             callback_slot{.name = "memory_protect", .member = &callback_registry::memory_protect_cb},
@@ -89,6 +90,9 @@ namespace sogen::py
         };
         this->emu->callbacks.on_suspicious_activity = [this](std::string_view description) {
             invoke_callback(this->suspicious_activity_cb, std::string(description));
+        };
+        this->emu->callbacks.on_socket_activity = [this](const network::socket_activity activity, const network::address& address) {
+            invoke_callback(this->socket_activity_cb, std::string(network::to_string(activity)), address.to_string());
         };
         this->emu->callbacks.on_exception = [this] { invoke_callback(this->exception_cb); };
         this->emu->callbacks.on_instruction = [this](const uint64_t address) { invoke_callback(this->instruction_cb, address); };

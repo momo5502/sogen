@@ -116,6 +116,7 @@ namespace sogen::py
         bind_callback_property<&callback_registry::generic_activity_cb>(callbacks_class, "on_generic_activity", "generic_activity");
         bind_callback_property<&callback_registry::suspicious_activity_cb>(callbacks_class, "on_suspicious_activity",
                                                                            "suspicious_activity");
+        bind_callback_property<&callback_registry::socket_activity_cb>(callbacks_class, "on_socket_activity", "socket_activity");
         bind_callback_property<&callback_registry::exception_cb>(callbacks_class, "on_exception", "exception");
         bind_callback_property<&callback_registry::instruction_cb>(callbacks_class, "on_instruction", "instruction");
         bind_callback_property<&callback_registry::memory_protect_cb>(callbacks_class, "on_memory_protect", "memory_protect");

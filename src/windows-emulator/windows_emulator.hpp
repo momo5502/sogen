@@ -15,6 +15,7 @@
 #include "memory_manager.hpp"
 #include "module/module_manager.hpp"
 #include "network/dns_lookup.hpp"
+#include "network/socket_activity.hpp"
 #include "network/socket_factory.hpp"
 #include "version/windows_version_manager.hpp"
 #include <platform/audio_backend.hpp>
@@ -47,6 +48,7 @@ namespace sogen
         opt_func<void(std::string_view type, std::u16string_view name)> on_generic_access{};
         opt_func<void(std::string_view description)> on_generic_activity{};
         opt_func<void(std::string_view description)> on_suspicious_activity{};
+        opt_func<void(network::socket_activity activity, const network::address& address)> on_socket_activity{};
         utils::callback_list<void(std::string_view message)> on_debug_string{};
         utils::callback_list<void(const mapped_module& mod, const mapped_section& section, uint64_t address)> on_section_first_execution{};
         opt_func<void(uint64_t address)> on_instruction{};
@@ -122,6 +124,8 @@ namespace sogen
         std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
 
         fake_environment_config fake_env{};
+
+        network::network_mode network{network::network_mode::offline};
     };
 
     struct emulator_interfaces
@@ -164,6 +168,7 @@ namespace sogen
         std::unique_ptr<x86_64_emulator> emu_{};
         bool use_native_timestamp_counter_{};
         std::unique_ptr<utils::clock> clock_{};
+        network::network_mode network_mode_{};
         std::unique_ptr<network::dns_lookup> dns_lookup_{};
         std::unique_ptr<network::socket_factory> socket_factory_{};
         std::unique_ptr<ui_backend> ui_backend_{};
@@ -216,6 +221,11 @@ namespace sogen
         const utils::clock& clock() const
         {
             return *this->clock_;
+        }
+
+        network::network_mode network_mode() const
+        {
+            return this->network_mode_;
         }
 
         network::dns_lookup& dns_lookup()

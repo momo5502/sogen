@@ -192,6 +192,22 @@ namespace sogen::py
             return result;
         }
 
+        network::network_mode get_network_mode(const nb::kwargs& kwargs)
+        {
+            if (!kwargs.contains("network"))
+            {
+                return network::network_mode::offline;
+            }
+
+            const nb::object value = kwargs["network"];
+            if (!nb::isinstance<nb::str>(value))
+            {
+                throw nb::type_error(R"(network must be a string: "offline" or "live")");
+            }
+
+            return network::parse_network_mode(nb::cast<std::string>(value));
+        }
+
         emulator_settings make_emulator_settings(const nb::kwargs& kwargs)
         {
             emulator_settings settings{};
@@ -204,6 +220,7 @@ namespace sogen::py
             settings.port_mappings = parse_port_mappings(kwargs.contains("port_mappings") ? kwargs["port_mappings"] : nb::none());
             settings.fake_env.number_of_processors = get_kwarg<uint32_t>(kwargs, "number_of_processors", 4);
             settings.fake_env.nt_product_type = static_cast<uint8_t>(get_kwarg<uint32_t>(kwargs, "nt_product_type", 1));
+            settings.network = get_network_mode(kwargs);
             return settings;
         }
 
@@ -225,8 +242,9 @@ namespace sogen::py
         class python_dns_lookup : public network::dns_lookup
         {
           public:
-            explicit python_dns_lookup(nb::object callback)
-                : callback_(std::move(callback))
+            python_dns_lookup(nb::object callback, std::unique_ptr<network::dns_lookup> fallback)
+                : callback_(std::move(callback)),
+                  fallback_(std::move(fallback))
             {
             }
 
@@ -277,21 +295,22 @@ namespace sogen::py
                     }
                 }
 
-                // Outside the GIL: the base resolver blocks on the host
+                // Outside the GIL: in live mode the fallback blocks on the host
                 // getaddrinfo, and start() runs with the GIL released so a
                 // Python watchdog thread keeps moving during a slow lookup.
                 if (fall_back)
                 {
-                    return network::dns_lookup::resolve_host(hostname, family);
+                    return this->fallback_->resolve_host(hostname, family);
                 }
                 return results;
             }
 
           private:
             nb::object callback_;
+            std::unique_ptr<network::dns_lookup> fallback_;
         };
 
-        emulator_interfaces make_emulator_interfaces(const nb::kwargs& kwargs)
+        emulator_interfaces make_emulator_interfaces(const nb::kwargs& kwargs, const network::network_mode network_mode)
         {
             emulator_interfaces interfaces{};
             if (kwargs.contains("dns_resolver"))
@@ -299,7 +318,8 @@ namespace sogen::py
                 nb::object resolver = kwargs["dns_resolver"];
                 if (!resolver.is_none())
                 {
-                    interfaces.dns_lookup = std::make_unique<python_dns_lookup>(std::move(resolver));
+                    interfaces.dns_lookup =
+                        std::make_unique<python_dns_lookup>(std::move(resolver), network::create_dns_lookup(network_mode));
                 }
             }
             return interfaces;
@@ -308,15 +328,17 @@ namespace sogen::py
 
     std::unique_ptr<windows_emulator> create_empty_emulator(const nb::kwargs& kwargs)
     {
-        return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), make_emulator_settings(kwargs),
-                                                  emulator_callbacks{}, make_emulator_interfaces(kwargs));
+        const auto settings = make_emulator_settings(kwargs);
+        return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), settings, emulator_callbacks{},
+                                                  make_emulator_interfaces(kwargs, settings.network));
     }
 
     std::unique_ptr<windows_emulator> create_application_emulator(const nb::object& application, const nb::object& args,
                                                                   const nb::kwargs& kwargs)
     {
         auto app_settings = make_application_settings(application, args, kwargs);
-        return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), std::move(app_settings),
-                                                  make_emulator_settings(kwargs), emulator_callbacks{}, make_emulator_interfaces(kwargs));
+        const auto settings = make_emulator_settings(kwargs);
+        return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), std::move(app_settings), settings,
+                                                  emulator_callbacks{}, make_emulator_interfaces(kwargs, settings.network));
     }
 }

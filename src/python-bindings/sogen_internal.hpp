@@ -182,6 +182,7 @@ namespace sogen::py
         nb::object generic_access_cb = nb::none();
         nb::object generic_activity_cb = nb::none();
         nb::object suspicious_activity_cb = nb::none();
+        nb::object socket_activity_cb = nb::none();
         nb::object exception_cb = nb::none();
         nb::object instruction_cb = nb::none();
         nb::object memory_protect_cb = nb::none();

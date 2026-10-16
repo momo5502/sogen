@@ -7,6 +7,17 @@ namespace sogen
 
     namespace network
     {
+        namespace
+        {
+            struct null_dns_lookup final : dns_lookup
+            {
+                std::vector<address> resolve_host(const std::string_view /*hostname*/, const std::optional<int> /*family*/) override
+                {
+                    return {};
+                }
+            };
+        }
+
         dns_lookup::dns_lookup()
         {
             initialize_wsa();
@@ -44,6 +55,20 @@ namespace sogen
             }
 
             return results;
+        }
+
+        std::unique_ptr<dns_lookup> create_dns_lookup(const network_mode mode)
+        {
+            // Guest sockets on Emscripten are always in-process, so host DNS results would be unreachable.
+#ifndef OS_EMSCRIPTEN
+            if (mode == network_mode::live)
+            {
+                return std::make_unique<dns_lookup>();
+            }
+#endif
+
+            (void)mode;
+            return std::make_unique<null_dns_lookup>();
         }
     }
 

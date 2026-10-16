@@ -48,6 +48,14 @@ assert hasattr(win, "create_application")
 assert mod.create_empty is win.create_empty
 assert mod.create_application is win.create_application
 
+for bad_network, expected_error in (("none", ValueError), (1, TypeError)):
+    try:
+        win.create_empty(emulation_root=emulator_root, network=bad_network)
+    except expected_error:
+        pass
+    else:
+        raise AssertionError(f"network={bad_network!r} must raise {expected_error.__name__}")
+
 emu = win.create_empty(emulation_root=emulator_root)
 assert emu.backend_name in {"Unicorn Engine", "icicle-emu", "Windows Hypervisor Platform"}
 assert hasattr(emu, "read_memory")
@@ -111,6 +119,7 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
         r"C:\test-sample.exe",
         emulation_root=emulator_root,
         path_mappings={r"C:\a.txt": mapped_file},
+        network="live",
         port_mappings={28970: 28980},
     )
 
@@ -239,9 +248,12 @@ def on_resolve(hostname, family):
 dns_app = win.create_application(
     r"C:\test-sample.exe",
     emulation_root=emulator_root,
+    network="live",
     dns_resolver=on_resolve,
 )
+socket_activity = []
 dns_app.callbacks.on_stdout = lambda text: None
+dns_app.callbacks.on_socket_activity = lambda action, address: socket_activity.append((action, address))
 dns_app.start()
 print(
     f"[test.py:dns] exit_status={dns_app.process.exit_status}"
@@ -252,6 +264,8 @@ print(
 assert dns_app.process.exit_status == 0, (
     f"dns_resolver run exited {dns_app.process.exit_status}; the kwarg must not perturb a normal run"
 )
+assert ("bind", "127.0.0.1:28970") in socket_activity, socket_activity
+assert ("sendto", "127.0.0.1:28970") in socket_activity, socket_activity
 dns_app = None
 gc.collect()
 
