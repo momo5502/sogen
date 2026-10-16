@@ -43,7 +43,10 @@ namespace sogen
 
     host_file::~host_file()
     {
-        (void)fclose(this->file_);
+        if (this->file_)
+        {
+            (void)fclose(this->file_);
+        }
     }
 
     size_t host_file::read(const std::span<std::byte> buffer)
