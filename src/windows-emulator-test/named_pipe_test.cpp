@@ -163,14 +163,14 @@ namespace sogen::test
             NTSTATUS close(handle h)
             {
                 const syscall_context context{
-                    .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                    .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
                 return syscalls::handle_NtClose(context, h);
             }
 
             bool io_pending(handle thread)
             {
                 const syscall_context context{
-                    .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                    .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
                 EXPECT_EQ(STATUS_SUCCESS,
                           syscalls::handle_NtQueryInformationThread(context, thread, ThreadIsIoPending, this->storage + 0x48000,
                                                                     sizeof(ULONG), {this->emu->memory}));
@@ -180,7 +180,7 @@ namespace sogen::test
             handle duplicate(handle h, ACCESS_MASK access = FILE_READ_DATA, ULONG attributes = 0)
             {
                 const syscall_context context{
-                    .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                    .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
                 const emulator_object<handle> output{this->emu->memory, this->storage + 0x40000};
                 EXPECT_EQ(syscalls::handle_NtDuplicateObject(context, CURRENT_PROCESS, h, CURRENT_PROCESS, output, access, attributes, 0),
                           STATUS_SUCCESS);
@@ -190,7 +190,7 @@ namespace sogen::test
             void create_child(ULONG flags, std::optional<std::vector<handle>> inherited = {}, bool expect_manager_request = true)
             {
                 const syscall_context context{
-                    .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                    .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
                 emulator_allocator allocator{this->emu->memory, this->storage + 0x30000, 0x10000};
                 const auto name = allocator.make_unicode_string(u"C:\\test.exe");
                 const auto parameters = allocator.reserve<RTL_USER_PROCESS_PARAMETERS64>();
@@ -323,7 +323,7 @@ namespace sogen::test
         utils::buffer_serializer snapshot;
         this->emu->process.devices.get(this->reader)->serialize(snapshot);
         utils::buffer_deserializer input{snapshot};
-        input.register_factory<x64_emulator_wrapper>([&] { return x64_emulator_wrapper{this->emu->emu()}; });
+        input.register_factory<guest_machine_wrapper>([&] { return guest_machine_wrapper{this->emu->emu()}; });
         this->emu->process.devices.get(this->reader)->deserialize(input);
         auto& restored = this->pipe(this->reader);
         restored.work(*this->emu);
@@ -430,7 +430,7 @@ namespace sogen::test
         const auto second_read = read(second, 0x620);
         const auto third_read = read(first, 0x640);
         const syscall_context context{
-            .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtCancelIoFile(context, this->reader, {this->emu->memory, this->storage + 0x700}));
         EXPECT_EQ(STATUS_CANCELLED, first_read.read().Status);
         EXPECT_EQ(STATUS_PENDING, second_read.read().Status);
@@ -468,7 +468,7 @@ namespace sogen::test
         auto context = this->request(this->reader, 16);
         ASSERT_EQ(this->pipe(this->reader).start_io(*this->emu, context, true), STATUS_PENDING);
         const syscall_context syscall{
-            .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
         const auto status = this->emu->synchronize(
             [&] { return syscalls::handle_NtWaitForSingleObject(syscall, this->reader, FALSE, {this->emu->memory}); });
         ASSERT_EQ(status, STATUS_SUCCESS);
@@ -482,7 +482,7 @@ namespace sogen::test
     TEST_F(NamedPipeTest, PipeDirectoryAcceptsDosAndDeviceAliases)
     {
         const syscall_context syscall{
-            .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
         for (const std::u16string_view alias : {u"\\??\\PIPE\\", u"\\Device\\NamedPipe\\", u"\\??\\pipe\\"})
         {
             emulator_allocator allocator{this->emu->memory, this->storage + 0x30000, 0x10000};
@@ -555,7 +555,7 @@ namespace sogen::test
         this->pipe(server).unopened_peer = std::move(pair.second);
         const auto duplicate = this->duplicate(server);
         const syscall_context context{
-            .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
         emulator_allocator allocator{this->emu->memory, this->storage + 0x30000, 0x10000};
         const auto name = allocator.make_unicode_string(this->pipe(server).name);
         const auto attributes = allocator.reserve<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>>();
@@ -702,7 +702,7 @@ namespace sogen::test
         this->emu->process.devices.get(this->reader)->serialize(snapshot);
         this->emu->process.devices.get(this->writer)->serialize(snapshot);
         utils::buffer_deserializer input{snapshot};
-        input.register_factory<x64_emulator_wrapper>([&] { return x64_emulator_wrapper{this->emu->emu()}; });
+        input.register_factory<guest_machine_wrapper>([&] { return guest_machine_wrapper{this->emu->emu()}; });
         this->emu->process.devices.get(this->reader)->deserialize(input);
         this->emu->process.devices.get(this->writer)->deserialize(input);
         EXPECT_FALSE(this->pipe(this->reader).signaled);
@@ -778,7 +778,7 @@ namespace sogen::test
         io_device_container container{u"DeviceApi\\CMApi", *this->emu, {}};
         const auto device = this->emu->process.devices.store(std::move(container));
         const syscall_context context{
-            .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
         const emulator_object<OBJECT_HANDLE_FLAG_INFORMATION> flags{this->emu->memory, this->storage + 0x40000};
         OBJECT_HANDLE_FLAG_INFORMATION values{};
         values.Inherit = TRUE;

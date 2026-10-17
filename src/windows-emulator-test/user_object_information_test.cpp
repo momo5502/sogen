@@ -40,7 +40,7 @@ namespace sogen::test
 
             syscall_context context()
             {
-                return {.win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                return {.win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
             }
 
             BOOL query(handle object, int index, DWORD length = 512)

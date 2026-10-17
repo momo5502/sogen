@@ -189,8 +189,10 @@ namespace sogen::py
                 "hooks", [](sogen_windows_emulator& self) -> hook_registry& { return *self.hooks; }, nb::rv_policy::reference_internal)
             .def("read_memory", &sogen_windows_emulator::read_memory)
             .def("write_memory", &sogen_windows_emulator::write_memory)
-            .def("read_register", &sogen_windows_emulator::read_register)
-            .def("write_register", &sogen_windows_emulator::write_register)
+            .def("read_register", nb::overload_cast<x86_register>(&sogen_windows_emulator::read_register, nb::const_))
+            .def("write_register", nb::overload_cast<x86_register, uint64_t>(&sogen_windows_emulator::write_register, nb::const_))
+            .def("read_register", nb::overload_cast<arm64_register>(&sogen_windows_emulator::read_register, nb::const_))
+            .def("write_register", nb::overload_cast<arm64_register, uint64_t>(&sogen_windows_emulator::write_register, nb::const_))
             .def("get_host_port", &sogen_windows_emulator::get_host_port)
             .def("get_emulator_port", &sogen_windows_emulator::get_emulator_port)
             .def("map_port", &sogen_windows_emulator::map_port);
@@ -198,6 +200,13 @@ namespace sogen::py
         nb::setattr(m, "WindowsEmulator", m.attr("Emulator"));
 
         m.def("create_empty", [](nb::kwargs kwargs) { // NOLINT(performance-unnecessary-value-param)
+#if defined(_M_ARM64) && !SOGEN_ENABLE_RUST_CODE
+            // ARM64 builds have no x86-64 guest backend; applications pick their guest from the executable.
+            if (!kwargs.contains("architecture") || nb::cast<std::string>(kwargs["architecture"]) != "arm64")
+            {
+                throw std::runtime_error("The Windows x86-64 personality is unavailable in this ARM64 build; pass architecture=\"arm64\"");
+            }
+#endif
             return sogen_windows_emulator(create_empty_emulator(kwargs));
         });
         m.def("create_application", [](nb::object application, nb::kwargs kwargs) { // NOLINT(performance-unnecessary-value-param)

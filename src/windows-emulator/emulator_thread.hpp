@@ -8,6 +8,7 @@
 
 #include "process_manager.hpp"
 #include <utils/moved_marker.hpp>
+#include <platform/arm64_context.hpp>
 
 namespace sogen
 {
@@ -242,6 +243,7 @@ namespace sogen
         uint16_t es{};
         uint16_t fs{};
         uint16_t gs{};
+        std::optional<arm64_context> arm64_registers{};
         std::unique_ptr<completion_state> state{};
 
         callback_frame();
@@ -255,8 +257,8 @@ namespace sogen
 
         ~callback_frame();
 
-        void save_registers(x86_64_cpu& emu);
-        void restore_registers(x86_64_cpu& emu) const;
+        void save_registers(guest_cpu& cpu);
+        void restore_registers(guest_cpu& cpu) const;
 
         void serialize(utils::buffer_serializer& buffer) const;
         void deserialize(utils::buffer_deserializer& buffer);
@@ -462,40 +464,25 @@ namespace sogen
 
         bool is_thread_ready(windows_emulator& win_emu);
 
-        void save(x86_64_cpu& emu)
+        void save(cpu_interface& emu)
         {
             this->last_registers = emu.save_registers();
         }
 
-        void restore(x86_64_cpu& emu) const
+        void restore(cpu_interface& emu) const
         {
             this->load_registers(emu);
             this->refresh_execution_context(emu);
         }
 
-        void load_registers(x86_64_cpu& emu) const
+        void load_registers(cpu_interface& emu) const
         {
             emu.restore_registers(this->last_registers);
         }
 
-        void refresh_execution_context(x86_64_cpu& emu) const;
+        void refresh_execution_context(cpu_interface& cpu) const;
 
-        void setup_if_necessary(x86_64_cpu& emu, const process_context& context)
-        {
-            if (!this->setup_done)
-            {
-                this->setup_done = true;
-                this->setup_registers(emu, context);
-            }
-
-            if (this->pending_status.has_value())
-            {
-                const auto status = *this->pending_status;
-                this->pending_status = {};
-
-                emu.reg<uint64_t>(x86_register::rax, static_cast<uint64_t>(status));
-            }
-        }
+        void setup_if_necessary(cpu_interface& emu, const process_context& context);
 
         void serialize_object(utils::buffer_serializer& buffer) const override
         {
@@ -658,7 +645,8 @@ namespace sogen
         std::optional<msg> peek_queued_message(const process_context& process, hwnd hwnd_filter, UINT filter_min, UINT filter_max,
                                                bool remove);
 
-        void setup_registers(x86_64_cpu& emu, const process_context& context) const;
+        void setup_registers(cpu_interface& emu, const process_context& context) const;
+        void setup_wow64_registers(x86_64_cpu& emu, const process_context& context) const;
 
         void release()
         {

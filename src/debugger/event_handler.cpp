@@ -279,7 +279,9 @@ namespace sogen::debugger
         void handle_read_register(const event_context& c, const Debugger::ReadRegisterRequestT& request)
         {
             std::array<uint8_t, 512> buffer{};
-            const auto res = c.win_emu.emu().read_register(static_cast<x86_register>(request.register_), buffer.data(), buffer.size());
+            // Register IDs use the guest architecture's numbering (x86_register or arm64_register).
+            cpu_interface& cpu = c.win_emu.active_cpu();
+            const auto res = cpu.read_raw_register(static_cast<int>(request.register_), buffer.data(), buffer.size());
 
             const auto size = std::min(buffer.size(), res);
 
@@ -297,8 +299,8 @@ namespace sogen::debugger
 
             try
             {
-                size =
-                    c.win_emu.emu().write_register(static_cast<x86_register>(request.register_), request.data.data(), request.data.size());
+                cpu_interface& cpu = c.win_emu.active_cpu();
+                size = cpu.write_raw_register(static_cast<int>(request.register_), request.data.data(), request.data.size());
                 success = true;
             }
             catch (...)

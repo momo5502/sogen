@@ -151,6 +151,107 @@ namespace sogen
                 }
             }
         }
+
+        namespace
+        {
+            void validate_arm64_context(const arm64_context& context)
+            {
+                if ((context.ContextFlags & 0x00FF0000) != arm64_context_architecture)
+                {
+                    throw std::invalid_argument("ContextFlags do not describe an ARM64 context");
+                }
+            }
+
+            template <size_t N, typename T>
+            void save_arm64_registers(arm64_cpu& emu, std::array<T, N>& values, const arm64_register first)
+            {
+                for (size_t i = 0; i < N; ++i)
+                {
+                    const auto reg = static_cast<arm64_register>(static_cast<int>(first) + static_cast<int>(i));
+                    emu.read_register(reg, &values[i], sizeof(values[i]));
+                }
+            }
+
+            template <size_t N, typename T>
+            void restore_arm64_registers(arm64_cpu& emu, const std::array<T, N>& values, const arm64_register first)
+            {
+                for (size_t i = 0; i < N; ++i)
+                {
+                    const auto reg = static_cast<arm64_register>(static_cast<int>(first) + static_cast<int>(i));
+                    emu.write_register(reg, &values[i], sizeof(values[i]));
+                }
+            }
+        }
+
+        void save(arm64_cpu& emu, arm64_context& context)
+        {
+            validate_arm64_context(context);
+            if ((context.ContextFlags & arm64_context_control) == arm64_context_control)
+            {
+                context.Cpsr = static_cast<uint32_t>(emu.reg(arm64_register::pstate));
+                context.Sp = emu.read_stack_pointer();
+                context.Pc = emu.read_instruction_pointer();
+                context.X[29] = emu.reg(arm64_register::fp);
+                context.X[30] = emu.reg(arm64_register::lr);
+            }
+            if ((context.ContextFlags & arm64_context_integer) == arm64_context_integer)
+            {
+                for (int i = 0; i < 29; ++i)
+                {
+                    context.X[i] = emu.reg(static_cast<arm64_register>(static_cast<int>(arm64_register::x0) + i));
+                }
+            }
+            if ((context.ContextFlags & arm64_context_floating_point) == arm64_context_floating_point)
+            {
+                save_arm64_registers(emu, context.V, arm64_register::q0);
+                context.Fpcr = emu.reg<uint32_t>(arm64_register::fpcr);
+                context.Fpsr = emu.reg<uint32_t>(arm64_register::fpsr);
+            }
+            if ((context.ContextFlags & arm64_context_debug_registers) == arm64_context_debug_registers)
+            {
+                save_arm64_registers(emu, context.Bcr, arm64_register::bcr0);
+                save_arm64_registers(emu, context.Bvr, arm64_register::bvr0);
+                save_arm64_registers(emu, context.Wcr, arm64_register::wcr0);
+                save_arm64_registers(emu, context.Wvr, arm64_register::wvr0);
+            }
+        }
+
+        void restore(arm64_cpu& emu, const arm64_context& context)
+        {
+            validate_arm64_context(context);
+            if ((context.ContextFlags & arm64_context_control) == arm64_context_control)
+            {
+                if (context.Sp % 16 != 0 || context.Pc % 4 != 0 || (context.Cpsr & 0x1F) != 0)
+                {
+                    throw std::invalid_argument("Invalid ARM64 user control context");
+                }
+                emu.reg(arm64_register::pstate, context.Cpsr);
+                emu.reg(arm64_register::sp, context.Sp);
+                emu.reg(arm64_register::pc, context.Pc);
+                emu.reg(arm64_register::fp, context.X[29]);
+                emu.reg(arm64_register::lr, context.X[30]);
+            }
+            if ((context.ContextFlags & arm64_context_integer) == arm64_context_integer)
+            {
+                for (int i = 0; i < 29; ++i)
+                {
+                    emu.reg(static_cast<arm64_register>(static_cast<int>(arm64_register::x0) + i), context.X[i]);
+                }
+            }
+            if ((context.ContextFlags & arm64_context_floating_point) == arm64_context_floating_point)
+            {
+                restore_arm64_registers(emu, context.V, arm64_register::q0);
+                emu.reg(arm64_register::fpcr, context.Fpcr);
+                emu.reg(arm64_register::fpsr, context.Fpsr);
+            }
+            if ((context.ContextFlags & arm64_context_debug_registers) == arm64_context_debug_registers)
+            {
+                restore_arm64_registers(emu, context.Bcr, arm64_register::bcr0);
+                restore_arm64_registers(emu, context.Bvr, arm64_register::bvr0);
+                restore_arm64_registers(emu, context.Wcr, arm64_register::wcr0);
+                restore_arm64_registers(emu, context.Wvr, arm64_register::wvr0);
+            }
+        }
     }
 
 } // namespace sogen

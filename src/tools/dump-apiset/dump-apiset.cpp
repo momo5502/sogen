@@ -73,7 +73,9 @@ namespace sogen
 
     __forceinline PVOID GetCurrentProcessPeb()
     {
-#ifdef _WIN64
+#if defined(_M_ARM64)
+        return reinterpret_cast<PVOID>(*reinterpret_cast<ULONG_PTR*>(reinterpret_cast<BYTE*>(NtCurrentTeb()) + 0x60));
+#elif defined(_WIN64)
         return reinterpret_cast<PVOID>(__readgsqword(0x60));
 #else
         return reinterpret_cast<PVOID>(__readfsdword(0x30));

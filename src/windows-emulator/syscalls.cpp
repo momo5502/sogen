@@ -430,8 +430,8 @@ namespace sogen
         NTSTATUS handle_NtSetThreadExecutionState(const syscall_context& c, ULONG new_flags, emulator_object<ULONG> previous_flags);
         NTSTATUS handle_NtSuspendThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
         NTSTATUS handle_NtResumeThread(const syscall_context& c, handle thread_handle, emulator_object<ULONG> previous_suspend_count);
-        NTSTATUS handle_NtContinue(const syscall_context& c, emulator_object<CONTEXT64> thread_context, BOOLEAN raise_alert);
-        NTSTATUS handle_NtContinueEx(const syscall_context& c, emulator_object<CONTEXT64> thread_context, uint64_t continue_argument);
+        NTSTATUS handle_NtContinue(const syscall_context& c, uint64_t thread_context, BOOLEAN raise_alert);
+        NTSTATUS handle_NtContinueEx(const syscall_context& c, uint64_t thread_context, uint64_t continue_argument);
         NTSTATUS handle_NtGetNextThread(const syscall_context& c, handle process_handle, handle thread_handle,
                                         ACCESS_MASK /*desired_access*/, ULONG /*handle_attributes*/, ULONG flags,
                                         emulator_object<handle> new_thread_handle);

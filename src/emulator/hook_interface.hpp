@@ -1,5 +1,6 @@
 #pragma once
 
+#include "interface.hpp"
 #include "memory_permission.hpp"
 
 #include <cstddef>
@@ -11,7 +12,7 @@ namespace sogen
 {
 
     struct emulator_hook;
-    struct cpu_interface;
+    struct EMULATOR_INTERFACE cpu_interface;
 
     using memory_operation = memory_permission;
 
@@ -58,7 +59,7 @@ namespace sogen
     using memory_violation_hook_callback = std::function<memory_violation_continuation(
         cpu_interface& cpu, uint64_t address, size_t size, memory_operation operation, memory_violation_type type)>;
 
-    class hook_interface
+    class EMULATOR_INTERFACE hook_interface
     {
       public:
         virtual ~hook_interface() = default;

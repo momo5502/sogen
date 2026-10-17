@@ -1,7 +1,13 @@
 #include "emulation_test_utils.hpp"
+#include <syscall_utils.hpp>
 #include <utils/finally.hpp>
 
 #include <future>
+
+namespace sogen::syscalls
+{
+    NTSTATUS handle_NtGetContextThread(const syscall_context& c, handle thread_handle, emulator_object<CONTEXT64> thread_context);
+}
 
 namespace sogen::test
 {
@@ -90,7 +96,7 @@ namespace sogen::test
         EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
         EXPECT_EQ(polls, 3u);
         EXPECT_FALSE(this->thread->await_host_condition);
-        EXPECT_EQ(STATUS_SUCCESS, this->emu->vcpu(0).cpu.reg<uint64_t>(x86_register::rax));
+        EXPECT_EQ(STATUS_SUCCESS, this->emu->vcpu(0).x64_cpu().reg<uint64_t>(x86_register::rax));
     }
 
     TEST_F(IdleSchedulerTest, FileCompletionMakesParkedThreadRunnable)
@@ -103,7 +109,7 @@ namespace sogen::test
         this->ui->on_pump = [status] { status.write({.Status = STATUS_SUCCESS, .Information = 0}); };
         EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
         EXPECT_FALSE(this->thread->await_file_io.has_value());
-        EXPECT_EQ(STATUS_SUCCESS, this->emu->vcpu(0).cpu.reg<uint64_t>(x86_register::rax));
+        EXPECT_EQ(STATUS_SUCCESS, this->emu->vcpu(0).x64_cpu().reg<uint64_t>(x86_register::rax));
     }
 
     TEST_F(IdleSchedulerTest, TimerMakesParkedThreadRunnable)
@@ -132,7 +138,7 @@ namespace sogen::test
         GTEST_SKIP() << "Threadless WebAssembly does not support cross-thread stop";
 #else
         this->create();
-        if (!this->emu->emu().is_stop_thread_safe())
+        if (!this->emu->vcpu(0).cpu.is_stop_thread_safe())
         {
             GTEST_SKIP() << "Backend does not support cross-thread stop";
         }
@@ -187,5 +193,44 @@ namespace sogen::test
         EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
         EXPECT_EQ(polls, "cab|ca");
         EXPECT_EQ(this->emu->vcpu(0).active_thread, second);
+    }
+
+    TEST_F(IdleSchedulerTest, ContextAccessWaitsForAnInFlightRegisterTransfer)
+    {
+#ifdef __EMSCRIPTEN__
+        GTEST_SKIP() << "Threadless WebAssembly does not support register transfers";
+#else
+        this->create();
+        this->emu->process.default_register_set = this->emu->vcpu(0).cpu.save_registers();
+        const auto other_handle =
+            this->emu->process.threads.store(emulator_thread{this->emu->memory, this->emu->process, 0, 0, 0x100000, 0, 8, true});
+        auto* other = this->emu->process.threads.get(other_handle);
+        other->registers_in_transit = true;
+        const auto storage = this->emu->memory.allocate_memory(0x1000, memory_permission::read_write);
+        const emulator_object<CONTEXT64> context{this->emu->memory, storage};
+        CONTEXT64 requested{};
+        requested.ContextFlags = CONTEXT64_ALL;
+        context.write(requested);
+        const syscall_context call{
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+
+        std::promise<void> access_started;
+        auto started = access_started.get_future();
+        bool transfer_finished{};
+        auto transfer = std::async(std::launch::async, [&] {
+            started.wait();
+            this->emu->synchronize([&] {
+                other->registers_in_transit = false;
+                transfer_finished = true;
+            });
+        });
+
+        this->emu->dispatch_on_cpu(this->emu->vcpu(0).cpu, [&] {
+            access_started.set_value();
+            EXPECT_EQ(STATUS_SUCCESS, syscalls::handle_NtGetContextThread(call, other_handle, context));
+            EXPECT_TRUE(transfer_finished);
+        });
+        transfer.get();
+#endif
     }
 }

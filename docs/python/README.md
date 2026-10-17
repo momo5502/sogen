@@ -18,6 +18,8 @@ Project links:
 
 ## What you need
 
+ARM64 executables use the same API with an ARM64 emulation root; see `examples/python/arm64_application.py`.
+
 The Python package still needs an **emulation root** at runtime. Download ready-made root here:
 
 - https://sogen.dev/root.zip

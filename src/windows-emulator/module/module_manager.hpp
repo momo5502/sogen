@@ -6,6 +6,7 @@
 #include "../file_system.hpp"
 #include <utils/function.hpp>
 #include "platform/win_pefile.hpp"
+#include "../arch/windows_abi.hpp"
 
 namespace sogen
 {
@@ -26,8 +27,9 @@ namespace sogen
     // PE architecture detection result
     struct pe_detection_result
     {
-        winpe::pe_arch architecture;
-        execution_mode suggested_mode;
+        winpe::pe_arch architecture{};
+        PEMachineType machine{};
+        execution_mode suggested_mode{execution_mode::unknown};
         std::string error_message;
 
         bool is_valid() const
@@ -80,7 +82,7 @@ namespace sogen
       public:
         static pe_detection_result detect_from_file(const std::filesystem::path& file);
         static pe_detection_result detect_from_memory(const memory_interface& memory, uint64_t base_address, uint64_t image_size);
-        static execution_mode determine_execution_mode(winpe::pe_arch executable_arch);
+        static execution_mode determine_execution_mode(winpe::pe_format format);
     };
 
     class module_manager
@@ -94,9 +96,10 @@ namespace sogen
 
         using module_map = std::map<uint64_t, mapped_module>;
 
-        module_manager(memory_manager& memory, file_system& file_sys, callbacks& cb);
+        module_manager(memory_manager& memory, file_system& file_sys, callbacks& cb,
+                       windows_guest_architecture architecture = windows_guest_architecture::x86_64);
 
-        void map_main_modules(x86_64_emulator& emu, const windows_path& executable_path, windows_version_manager& version,
+        void map_main_modules(cpu_interface& cpu, const windows_path& executable_path, windows_version_manager& version,
                               process_context& context, const logger& logger);
 
         std::optional<uint64_t> get_module_load_count_by_path(const windows_path& path);
@@ -184,6 +187,7 @@ namespace sogen
         memory_manager* memory_{};
         file_system* file_sys_{};
         callbacks* callbacks_{};
+        windows_guest_architecture native_architecture_{};
 
         module_map modules_{};
         mutable module_map::iterator last_module_cache_{modules_.end()};
@@ -193,6 +197,8 @@ namespace sogen
 
         mapped_module* map_module_core(const pe_detection_result& detection_result, const std::function<mapped_module()>& mapper,
                                        const logger& logger, bool is_static);
+
+        bool supports_image(const pe_detection_result& detection_result) const;
 
         execution_mode detect_execution_mode(const windows_path& executable_path, const logger& logger);
 

@@ -3,6 +3,8 @@
 `examples/python/basic_usage.py` shows how to run the bundled Windows `test-sample.exe`.
 It passes `network="live"` because the sample resolves `google.com`. The default, `network="offline"`, gives the guest no host network access.
 `examples/python/linux_true.py` shows how to run `/bin/true` with the Linux bindings.
+`examples/python/arm64_application.py` runs a Windows ARM64 executable; set `EMULATOR_ARM64_ROOT` to an
+ARM64 emulation root.
 
 Install the package:
 

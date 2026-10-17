@@ -25,12 +25,12 @@ namespace sogen::py
     {
         struct hook_state
         {
-            sogen::x86_64_emulator* emu{};
+            sogen::guest_machine* emu{};
             emulator_hook* hook{};
             std::function<void()> remover{};
 
             hook_state() = default;
-            hook_state(sogen::x86_64_emulator& emulator, emulator_hook* hook);
+            hook_state(sogen::guest_machine& emulator, emulator_hook* hook);
             explicit hook_state(std::function<void()> remover);
             ~hook_state();
 
@@ -49,7 +49,7 @@ namespace sogen::py
         nb::object owner = nb::none();
 
         hook_handle() = default;
-        hook_handle(sogen::x86_64_emulator& emulator, emulator_hook* hook, nb::object owner);
+        hook_handle(sogen::guest_machine& emulator, emulator_hook* hook, nb::object owner);
         hook_handle(std::function<void()> remover, nb::object owner);
 
         bool active() const
@@ -110,15 +110,14 @@ namespace sogen::py
         api_hook_entry& operator=(api_hook_entry&&) noexcept = default;
     };
 
-    // Dispatches API hooks by matching executed instruction addresses against
-    // every module's address_names map (mirrors the analyzer's behavior so
-    // forwarders / thunks are handled naturally).
+    // Dispatches API hooks through execution hooks on the addresses of every module's matching
+    // address_names entries (mirrors the analyzer's behavior so forwarders / thunks are handled naturally).
     struct api_hook_registry
     {
         windows_emulator* win_emu{};
         std::map<std::string, api_hook_entry, std::less<>> entries{};
         std::map<uint64_t, std::vector<api_hook_hit>> address_index{};
-        std::optional<hook_handle> execution_hook{};
+        std::map<uint64_t, hook_handle> address_hooks{};
         utils::callback_id_type module_load_id{};
         utils::callback_id_type module_unload_id{};
 
@@ -140,8 +139,7 @@ namespace sogen::py
         void return_from_api(const api_call_info& call) const;
         void invoke_hook(const api_hook_hit& hit);
         void refresh_index();
-        void ensure_execution_hook();
-        void remove_execution_hook();
+        void sync_address_hooks();
         void add_entry_for_module(const std::string& key, api_hook_entry& entry, const mapped_module& module);
         void dispatch_address(uint64_t address);
     };
@@ -265,6 +263,8 @@ namespace sogen::py
         void write_memory(uint64_t address, const nb::bytes& buffer) const;
         uint64_t read_register(x86_register reg) const;
         void write_register(x86_register reg, uint64_t value) const;
+        uint64_t read_register(arm64_register reg) const;
+        void write_register(arm64_register reg, uint64_t value) const;
 
         uint16_t get_host_port(uint16_t emulator_port) const;
         uint16_t get_emulator_port(uint16_t host_port) const;

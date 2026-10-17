@@ -1,4 +1,4 @@
-﻿#include "sogen_internal.hpp"
+#include "sogen_internal.hpp"
 
 #include <windows_emulator.hpp>
 
@@ -62,7 +62,7 @@ namespace sogen::py
 
     hook_handle hook_registry::instruction(x86_hookable_instructions instruction_type, nb::object callback)
     {
-        auto* hook = this->emu->emu().hook_instruction(instruction_type, [cb = std::move(callback)](cpu_interface&, uint64_t data) {
+        auto* hook = this->emu->x64_emu().hook_instruction(instruction_type, [cb = std::move(callback)](cpu_interface&, uint64_t data) {
             nb::gil_scoped_acquire gil{};
             return coerce_instruction_continuation(cb(data));
         });
@@ -231,12 +231,35 @@ namespace sogen::py
 
     uint64_t sogen_windows_emulator::read_register(const x86_register reg) const
     {
-        return this->emu->emu().reg<uint64_t>(reg);
+        return this->emu->x64_emu().reg<uint64_t>(reg);
     }
 
     void sogen_windows_emulator::write_register(const x86_register reg, const uint64_t value) const
     {
-        this->emu->emu().reg<uint64_t>(reg, value);
+        this->emu->x64_emu().reg<uint64_t>(reg, value);
+    }
+
+    namespace
+    {
+        arm64_cpu& active_arm64_cpu(const windows_emulator& emu)
+        {
+            auto* cpu = dynamic_cast<arm64_cpu*>(&emu.active_cpu());
+            if (!cpu)
+            {
+                throw std::invalid_argument("ARM64 registers require an ARM64 guest");
+            }
+            return *cpu;
+        }
+    }
+
+    uint64_t sogen_windows_emulator::read_register(const arm64_register reg) const
+    {
+        return active_arm64_cpu(*this->emu).reg<uint64_t>(reg);
+    }
+
+    void sogen_windows_emulator::write_register(const arm64_register reg, const uint64_t value) const
+    {
+        active_arm64_cpu(*this->emu).reg<uint64_t>(reg, value);
     }
 
     uint16_t sogen_windows_emulator::get_host_port(const uint16_t emulator_port) const

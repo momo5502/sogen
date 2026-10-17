@@ -115,6 +115,10 @@ namespace sogen
         static std::optional<segment_bitness> get_segment_bitness(x86_64_cpu& cpu, uint16_t cs_selector);
         csh resolve_handle(x86_64_cpu& cpu, uint16_t cs_selector) const;
 
+        // Decodes with the CPU's current instruction set: the active x86 code segment's bitness, or AArch64.
+        instructions disassemble(guest_cpu& cpu, std::span<const uint8_t> data, size_t count, uint64_t address = 0) const;
+        csh resolve_handle(guest_cpu& cpu) const;
+
         csh get_handle_64() const
         {
             return this->handle_64_;
@@ -130,10 +134,16 @@ namespace sogen
             return this->handle_16_;
         }
 
+        csh get_handle_arm64() const
+        {
+            return this->handle_arm64_;
+        }
+
       private:
         csh handle_64_{};
         csh handle_32_{};
         csh handle_16_{};
+        csh handle_arm64_{};
 
         void release();
     };

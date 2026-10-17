@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <optional>
 #include <cstdint>
@@ -40,9 +40,9 @@ namespace sogen::segment_utils
         bool default_op_size{};
     };
 
-    inline std::optional<cpu_interface::descriptor_table_register> read_descriptor_table(x86_64_cpu& cpu, const x86_register reg)
+    inline std::optional<x86_64_cpu::descriptor_table_register> read_descriptor_table(x86_64_cpu& cpu, const x86_register reg)
     {
-        cpu_interface::descriptor_table_register table{};
+        x86_64_cpu::descriptor_table_register table{};
         if (!cpu.read_descriptor_table(static_cast<int>(reg), table))
         {
             return std::nullopt;
@@ -63,7 +63,7 @@ namespace sogen::segment_utils
         return selector;
     }
 
-    inline std::optional<descriptor> read_descriptor(x86_64_cpu& cpu, const cpu_interface::descriptor_table_register& table,
+    inline std::optional<descriptor> read_descriptor(x86_64_cpu& cpu, const x86_64_cpu::descriptor_table_register& table,
                                                      const uint16_t selector)
     {
         const auto index = selector >> 3;
@@ -117,7 +117,7 @@ namespace sogen::segment_utils
         return desc;
     }
 
-    inline std::optional<cpu_interface::descriptor_table_register> resolve_table(x86_64_cpu& cpu, const uint16_t selector)
+    inline std::optional<x86_64_cpu::descriptor_table_register> resolve_table(x86_64_cpu& cpu, const uint16_t selector)
     {
         auto gdt = read_descriptor_table(cpu, x86_register::gdtr);
         if (!gdt)
@@ -143,7 +143,7 @@ namespace sogen::segment_utils
             return std::nullopt;
         }
 
-        cpu_interface::descriptor_table_register ldt{};
+        x86_64_cpu::descriptor_table_register ldt{};
         ldt.base = ldt_descriptor->base;
         ldt.limit = ldt_descriptor->limit;
         return ldt;

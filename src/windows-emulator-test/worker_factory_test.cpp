@@ -34,7 +34,7 @@ namespace sogen::test
             NTSTATUS set_stack(uint64_t address, ULONG size)
             {
                 const syscall_context c{
-                    .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                    .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
                 return syscalls::handle_NtSetInformationWorkerFactory(c, this->factory_handle, WorkerFactoryStackInformation, address,
                                                                       size);
             }

@@ -106,6 +106,34 @@ namespace sogen
         }
     }
 
+    void apply_arm64_processor(KUSER_SHARED_DATA64& kusd, const uint64_t isar0, const uint64_t isar1)
+    {
+        const auto field = [](const uint64_t value, const unsigned shift) { return (value >> shift) & 0xF; };
+
+        kusd.ImageNumberLow = IMAGE_FILE_MACHINE_ARM64;
+        kusd.ImageNumberHigh = IMAGE_FILE_MACHINE_ARM64;
+        kusd.NativeProcessorArchitecture = PROCESSOR_ARCHITECTURE_ARM64;
+        kusd.XState = {};
+
+        auto& features = kusd.ProcessorFeatures.arr;
+        std::ranges::fill(features, std::remove_cvref_t<decltype(features[0])>{});
+        for (const auto feature : {PF_COMPARE_EXCHANGE_DOUBLE, PF_NX_ENABLED, PF_ARM_VFP_32_REGISTERS_AVAILABLE,
+                                   PF_ARM_NEON_INSTRUCTIONS_AVAILABLE, PF_FASTFAIL_AVAILABLE, PF_ARM_DIVIDE_INSTRUCTION_AVAILABLE,
+                                   PF_ARM_64BIT_LOADSTORE_ATOMIC, PF_ARM_FMAC_INSTRUCTIONS_AVAILABLE, PF_ARM_V8_INSTRUCTIONS_AVAILABLE})
+        {
+            features[feature] = 1;
+        }
+
+        // ID_AA64ISAR0_EL1: AES [7:4], SHA1 [11:8], SHA2 [15:12], CRC32 [19:16], Atomic [23:20], DP [47:44].
+        // ID_AA64ISAR1_EL1: JSCVT [15:12], LRCPC [23:20].
+        features[PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE] = field(isar0, 4) && field(isar0, 8) && field(isar0, 12);
+        features[PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE] = field(isar0, 16) != 0;
+        features[PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE] = field(isar0, 20) >= 2;
+        features[PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE] = field(isar0, 44) != 0;
+        features[PF_ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE] = field(isar1, 12) != 0;
+        features[PF_ARM_V83_LRCPC_INSTRUCTIONS_AVAILABLE] = field(isar1, 20) != 0;
+    }
+
     namespace utils
     {
         static void serialize(buffer_serializer& buffer, const KUSER_SHARED_DATA64& kusd)

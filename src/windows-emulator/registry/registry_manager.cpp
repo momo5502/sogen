@@ -84,11 +84,13 @@ namespace sogen
         const std::filesystem::path user = root / "user";
 
         register_hive(this->hives_, machine / "system", this->hive_path_ / "SYSTEM");
-        register_hive(this->hives_, machine / "security", this->hive_path_ / "SECURITY");
-        register_hive(this->hives_, machine / "sam", this->hive_path_ / "SAM");
         register_hive(this->hives_, machine / "software", this->hive_path_ / "SOFTWARE");
-        register_hive(this->hives_, machine / "system", this->hive_path_ / "SYSTEM");
         register_optional_hive(this->hives_, machine / "hardware", this->hive_path_ / "HARDWARE");
+
+        // SYSTEM-only hives that applications cannot open. Newer Windows builds refuse REG SAVE for them,
+        // even from SYSTEM, so a root grabbed there has none.
+        register_optional_hive(this->hives_, machine / "security", this->hive_path_ / "SECURITY");
+        register_optional_hive(this->hives_, machine / "sam", this->hive_path_ / "SAM");
 
         register_hive(this->hives_, root / "user", this->hive_path_ / "NTUSER.DAT");
 

@@ -3,7 +3,7 @@
 #include <chrono>
 
 #include <platform/platform.hpp>
-#if defined(_MSC_VER)
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
 #include <intrin.h>
 #pragma intrinsic(__rdtsc)
 #elif defined(__x86_64__) || defined(__i386__) || defined(__amd64__)
