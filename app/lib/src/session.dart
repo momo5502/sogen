@@ -68,7 +68,10 @@ class GameSession extends ChangeNotifier {
     exitCode = null;
 
     // FEX, the default backend on arm64, cannot run WoW64 processes yet; Unicorn can.
-    final backend = await game.isThirtyTwoBit() ? 'unicorn' : '';
+    final backend = switch (game.backend) {
+      CpuBackend.automatic when await game.isThirtyTwoBit() => CpuBackend.unicorn.id,
+      final selected => selected.id,
+    };
 
     final started =
         await _methods.invokeMethod<bool>('start', {

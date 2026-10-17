@@ -8,6 +8,22 @@ import 'package:path_provider/path_provider.dart';
 /// Where a game's folder appears inside the emulated file system.
 const String guestGameDirectory = r'C:\game';
 
+/// The CPU backend a game runs on. [automatic] lets the launcher pick one that can run the executable.
+enum CpuBackend {
+  automatic('Automatic', ''),
+  fex('FEX', 'fex'),
+  unicorn('Unicorn', 'unicorn');
+
+  const CpuBackend(this.label, this.id);
+
+  final String label;
+
+  /// The name the native runtime expects; empty selects its platform default.
+  final String id;
+
+  static CpuBackend fromId(String? id) => values.firstWhere((backend) => backend.id == id, orElse: () => automatic);
+}
+
 @immutable
 class Game {
   const Game({
@@ -17,6 +33,7 @@ class Game {
     required this.executable,
     this.arguments = const [],
     this.liveNetwork = false,
+    this.backend = CpuBackend.automatic,
   });
 
   factory Game.fromJson(Map<String, dynamic> json) => Game(
@@ -26,6 +43,7 @@ class Game {
     executable: json['executable'] as String,
     arguments: (json['arguments'] as List<dynamic>? ?? const []).cast<String>(),
     liveNetwork: json['liveNetwork'] as bool? ?? false,
+    backend: CpuBackend.fromId(json['backend'] as String?),
   );
 
   final String id;
@@ -39,6 +57,7 @@ class Game {
 
   final List<String> arguments;
   final bool liveNetwork;
+  final CpuBackend backend;
 
   String get guestExecutable => _toGuestPath(executable);
 
@@ -84,6 +103,7 @@ class Game {
     'executable': executable,
     'arguments': arguments,
     'liveNetwork': liveNetwork,
+    'backend': backend.id,
   };
 }
 

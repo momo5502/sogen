@@ -30,6 +30,7 @@ class _AddGamePageState extends State<AddGamePage> {
   List<String> _executables = const [];
   String? _executable;
   bool _liveNetwork = false;
+  CpuBackend _backend = CpuBackend.automatic;
   bool _scanning = false;
 
   @override
@@ -131,6 +132,7 @@ class _AddGamePageState extends State<AddGamePage> {
         executable: executable,
         arguments: arguments.isEmpty ? const [] : arguments.split(RegExp(r'\s+')),
         liveNetwork: _liveNetwork,
+        backend: _backend,
       ),
     );
   }
@@ -222,6 +224,16 @@ class _AddGamePageState extends State<AddGamePage> {
               ),
               value: _liveNetwork,
               onChanged: (value) => setState(() => _liveNetwork = value),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<CpuBackend>(
+              initialValue: _backend,
+              dropdownColor: SogenColors.card,
+              decoration: const InputDecoration(labelText: 'CPU backend'),
+              items: [
+                for (final backend in CpuBackend.values) DropdownMenuItem(value: backend, child: Text(backend.label)),
+              ],
+              onChanged: (value) => setState(() => _backend = value ?? CpuBackend.automatic),
             ),
             const SizedBox(height: 24),
             PrimaryButton(label: 'Add to library', icon: LucideIcons.plus, expand: true, onPressed: _save),
