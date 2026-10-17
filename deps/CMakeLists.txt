@@ -59,10 +59,12 @@ endif()
 
 ##########################################
 
-if(SOGEN_ENABLE_SDL3 AND NOT EMSCRIPTEN)
+if(SOGEN_ENABLE_SDL3 AND NOT EMSCRIPTEN AND NOT ANDROID)
   # Prefer a system-installed SDL3 (find_package) when allowed and present;
-  # otherwise build the vendored submodule. Emscripten uses the web UI backend
-  # and is excluded above.
+  # otherwise build the vendored submodule. Emscripten uses the web UI backend.
+  # SDL's Android drivers only work inside an SDLActivity, which the processes
+  # sogen runs in on Android don't have; there the embedder supplies the UI
+  # backend and AAudio provides audio.
   if(SOGEN_USE_SYSTEM_SDL3)
     find_package(SDL3 CONFIG QUIET)
   endif()

@@ -63,5 +63,6 @@ namespace sogen
 
     std::unique_ptr<audio_backend> create_default_audio_backend();
     std::unique_ptr<audio_backend> create_sdl_audio_backend();
+    std::unique_ptr<audio_backend> create_aaudio_audio_backend();
 
 } // namespace sogen
