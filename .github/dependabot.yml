@@ -5,6 +5,10 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 100
+    ignore:
+      # Mbed TLS 4.x no longer commits its generated sources, so building it needs Perl and Jinja2.
+      - dependency-name: "deps/mbedtls"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
