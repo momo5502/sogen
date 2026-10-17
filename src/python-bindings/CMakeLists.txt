@@ -1,4 +1,4 @@
-find_package(Python 3.9 REQUIRED COMPONENTS Interpreter Development.Module OPTIONAL_COMPONENTS Development.SABIModule)
+find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module OPTIONAL_COMPONENTS Development.SABIModule)
 
 if(NOT TARGET Python::Module)
   add_library(Python::Module INTERFACE IMPORTED)
