@@ -1776,6 +1776,29 @@ namespace sogen
             }
         }
 
+        // DXVK requires 16- and 8-bit storage buffer access, which older Adreno 6xx GPUs lack even with
+        // Turnip. DXVK only uses it in a few shader paths; create_device masks it back out.
+        for (auto& buffer : chained)
+        {
+            switch (reinterpret_cast<const VkBaseOutStructure*>(buffer.data())->sType)
+            {
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES:
+                reinterpret_cast<VkPhysicalDeviceVulkan11Features*>(buffer.data())->storageBuffer16BitAccess = VK_TRUE;
+                break;
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES:
+                reinterpret_cast<VkPhysicalDevice16BitStorageFeatures*>(buffer.data())->storageBuffer16BitAccess = VK_TRUE;
+                break;
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES:
+                reinterpret_cast<VkPhysicalDeviceVulkan12Features*>(buffer.data())->storageBuffer8BitAccess = VK_TRUE;
+                break;
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES:
+                reinterpret_cast<VkPhysicalDevice8BitStorageFeatures*>(buffer.data())->storageBuffer8BitAccess = VK_TRUE;
+                break;
+            default:
+                break;
+            }
+        }
+
         // DXVK's shared D3D8-11 adapter filter requires these five features, which MoltenVK lacks and
         // D3D9 never uses; create_device masks them back out before they reach the driver.
         if (impl::is_portability_device(instance->second, pd->second))
@@ -2090,8 +2113,8 @@ namespace sogen
 
         const bool has_feature_chain = has_features || !chained.empty();
 
-        // Undo the query-time feature spoof: vkCreateDevice fails on a feature the device lacks.
-        if (portability && has_feature_chain && instance->second.get_physical_device_features2)
+        // Undo the query-time feature spoofs: vkCreateDevice fails on a feature the device lacks.
+        if (has_feature_chain && instance->second.get_physical_device_features2)
         {
             VkPhysicalDeviceFeatures2 supported{};
             supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
