@@ -392,8 +392,19 @@ endmacro()
 
 ##########################################
 
+function(sogen_target_skip_clang_tidy target)
+  set_target_properties(${target} PROPERTIES SOGEN_SKIP_CLANG_TIDY ON)
+endfunction()
+
+##########################################
+
 function(sogen_target_enable_clang_tidy target)
   if(NOT SOGEN_ENABLE_CLANG_TIDY)
+    return()
+  endif()
+
+  get_target_property(_skip_clang_tidy ${target} SOGEN_SKIP_CLANG_TIDY)
+  if(_skip_clang_tidy)
     return()
   endif()
 

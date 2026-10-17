@@ -33,3 +33,4 @@ add_test(NAME windows-emulator-test
 sogen_targets_set_folder("tests" windows-emulator-test)
 
 sogen_strip_target(windows-emulator-test)
+sogen_target_skip_clang_tidy(windows-emulator-test)

@@ -43,7 +43,9 @@
             ],
             "cacheVariables": {
                 "SOGEN_ENABLE_CLANG_TIDY": "ON",
-                "SOGEN_ENABLE_PYTHON_BINDINGS": "ON"
+                "SOGEN_ENABLE_PYTHON_BINDINGS": "ON",
+                "SOGEN_ENABLE_STEAM": "OFF",
+                "SOGEN_ENABLE_RUST_CODE": "OFF"
             }
         },
         {

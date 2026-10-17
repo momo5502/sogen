@@ -13,3 +13,4 @@ if(WIN)
 endif()
 
 sogen_assign_source_group(${SRC_FILES})
+sogen_target_skip_clang_tidy(test-sample)

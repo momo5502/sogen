@@ -11,3 +11,4 @@ add_executable(vulkan-shim-test ${SRC_FILES})
 sogen_assign_source_group(${SRC_FILES})
 
 target_link_libraries(vulkan-shim-test PRIVATE vulkan-headers)
+sogen_target_skip_clang_tidy(vulkan-shim-test)
