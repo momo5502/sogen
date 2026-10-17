@@ -196,6 +196,28 @@ namespace
         return !computername.empty() && blub == "LUL";
     }
 
+    bool test_critical_section_timeout()
+    {
+#ifdef _WIN64
+        constexpr size_t peb_critical_section_timeout_offset = 0xC0;
+        const auto* peb = reinterpret_cast<const uint8_t*>(__readgsqword(0x60));
+#else
+        constexpr size_t peb_critical_section_timeout_offset = 0x70;
+        const auto* peb = reinterpret_cast<const uint8_t*>(__readfsdword(0x30));
+#endif
+
+        int64_t timeout{};
+        memcpy(&timeout, peb + peb_critical_section_timeout_offset, sizeof(timeout));
+
+        if (timeout >= 0)
+        {
+            puts("PEB CriticalSectionTimeout is not a relative timeout");
+            return false;
+        }
+
+        return true;
+    }
+
     bool test_lookup_account_sid()
     {
         HANDLE token{};
@@ -2320,6 +2342,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_threads, "Threads")
     RUN_TEST(test_threads_winapi, "Threads WinAPI")
     RUN_TEST(test_env, "Environment")
+    RUN_TEST(test_critical_section_timeout, "Critical Section Timeout")
     RUN_TEST(test_lookup_account_sid, "LSA")
     RUN_TEST(test_exceptions, "Exceptions")
 #ifndef __MINGW64__
