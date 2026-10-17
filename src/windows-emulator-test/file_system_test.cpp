@@ -128,8 +128,8 @@ namespace sogen::test
 
     TEST_F(FileSystemTest, RenameAcrossMountsCopiesFile)
     {
-        file_system fs{this->root};
-        fs.map(windows_path{'c', {u"mnt"}}, this->root / "mapped");
+        file_system fs{this->root, filesystem_mode::read_write};
+        fs.map(windows_path{'c', {u"mnt"}}, this->root / "mapped", filesystem_mode::read_write);
 
         EXPECT_EQ(STATUS_SUCCESS, fs.rename(windows_path{'c', {u"mnt", u"x.txt"}}, windows_path{'c', {u"moved.txt"}}));
         EXPECT_FALSE(std::filesystem::exists(this->root / "mapped" / "x.txt"));
@@ -141,8 +141,8 @@ namespace sogen::test
 
     TEST_F(FileSystemTest, DirectoryMountPointsCannotBeRemovedOrRenamed)
     {
-        file_system fs{this->root};
-        fs.map(windows_path{'c', {u"mnt"}}, this->root / "mapped");
+        file_system fs{this->root, filesystem_mode::read_write};
+        fs.map(windows_path{'c', {u"mnt"}}, this->root / "mapped", filesystem_mode::read_write);
 
         EXPECT_EQ(STATUS_ACCESS_DENIED, fs.remove(windows_path{'c', {u"mnt"}}));
         EXPECT_EQ(STATUS_ACCESS_DENIED, fs.remove(windows_path{'c', {}}));
@@ -152,9 +152,9 @@ namespace sogen::test
 
     TEST_F(FileSystemTest, FileMountsCanBeRemovedAndRenamed)
     {
-        file_system fs{this->root};
-        fs.map(windows_path{'c', {u"single.txt"}}, this->root / "single.txt");
-        fs.map(windows_path{'c', {u"other.txt"}}, this->root / "other" / "y.txt");
+        file_system fs{this->root, filesystem_mode::read_write};
+        fs.map(windows_path{'c', {u"single.txt"}}, this->root / "single.txt", filesystem_mode::read_write);
+        fs.map(windows_path{'c', {u"other.txt"}}, this->root / "other" / "y.txt", filesystem_mode::read_write);
 
         EXPECT_EQ(STATUS_SUCCESS, fs.rename(windows_path{'c', {u"x.txt"}}, windows_path{'c', {u"single.txt"}}));
         EXPECT_FALSE(std::filesystem::exists(this->root / "c" / "x.txt"));
@@ -168,9 +168,64 @@ namespace sogen::test
         EXPECT_FALSE(std::filesystem::exists(this->root / "single.txt"));
     }
 
+    TEST_F(FileSystemTest, ReadOnlyMountsRejectWrites)
+    {
+        file_system fs{this->root, filesystem_mode::read_only};
+        fs.map(windows_path{'c', {u"mnt"}}, this->root / "mapped", filesystem_mode::read_write);
+
+        const windows_path existing{'c', {u"x.txt"}};
+        const windows_path missing{'c', {u"new.txt"}};
+
+        EXPECT_FALSE(fs.is_writable(existing));
+        EXPECT_TRUE(fs.open(existing, u"rb").file);
+        EXPECT_EQ(STATUS_ACCESS_DENIED, fs.open(existing, u"r+b").status);
+        EXPECT_EQ(STATUS_ACCESS_DENIED, fs.open(existing, u"ab").status);
+        EXPECT_EQ(STATUS_ACCESS_DENIED, fs.open(missing, u"wb").status);
+        EXPECT_EQ(STATUS_ACCESS_DENIED, fs.create_directory(windows_path{'c', {u"dir"}}));
+        EXPECT_EQ(STATUS_ACCESS_DENIED, fs.remove(existing));
+        EXPECT_EQ(STATUS_ACCESS_DENIED, fs.rename(existing, missing));
+        EXPECT_EQ(STATUS_ACCESS_DENIED, fs.rename(windows_path{'c', {u"mnt", u"x.txt"}}, missing));
+        EXPECT_EQ(STATUS_ACCESS_DENIED, fs.rename(existing, windows_path{'c', {u"mnt", u"moved.txt"}}));
+
+        EXPECT_FALSE(std::filesystem::exists(this->root / "c" / "new.txt"));
+        EXPECT_FALSE(std::filesystem::exists(this->root / "c" / "dir"));
+        EXPECT_EQ("root", read_host_file(this->root / "c" / "x.txt"));
+        EXPECT_EQ("mapped", read_host_file(this->root / "mapped" / "x.txt"));
+
+        const windows_path writable{'c', {u"mnt", u"new.txt"}};
+        EXPECT_TRUE(fs.is_writable(writable));
+        EXPECT_TRUE(fs.open(writable, u"wb").file);
+        EXPECT_EQ(STATUS_SUCCESS, fs.create_directory(windows_path{'c', {u"mnt", u"dir"}}));
+        EXPECT_EQ(STATUS_SUCCESS, fs.remove(writable));
+    }
+
+    TEST_F(FileSystemTest, ExplicitMountReplacesRootDrive)
+    {
+        file_system fs{this->root, filesystem_mode::read_only};
+        fs.map(windows_path{'c', {}}, this->root / "mapped", filesystem_mode::read_write);
+
+        EXPECT_EQ(this->root / "mapped" / "x.txt", fs.translate(windows_path{'c', {u"x.txt"}}));
+        EXPECT_TRUE(fs.is_writable(windows_path{'c', {u"x.txt"}}));
+        EXPECT_FALSE(fs.is_writable(windows_path{'a', {u"x.txt"}}));
+    }
+
+    TEST_F(FileSystemTest, HandlesReportWriteAccess)
+    {
+        file_system fs{this->root, filesystem_mode::read_write};
+        const windows_path path{'c', {u"x.txt"}};
+
+        const guest_file reader{fs, path, u"rb", fs.open(path, u"rb").file};
+        const guest_file writer{fs, path, u"r+b", fs.open(path, u"r+b").file};
+        const guest_file directory{fs, windows_path{'c', {}}};
+
+        EXPECT_FALSE(reader.is_writable());
+        EXPECT_TRUE(writer.is_writable());
+        EXPECT_FALSE(directory.is_writable());
+    }
+
     TEST_F(FileSystemTest, DeferredOperationsRunOnClose)
     {
-        file_system fs{this->root};
+        file_system fs{this->root, filesystem_mode::read_write};
         const windows_path source{'c', {u"x.txt"}};
         const windows_path target{'c', {u"renamed.txt"}};
 
@@ -192,7 +247,7 @@ namespace sogen::test
 
     TEST_F(FileSystemTest, SnapshotRestoreKeepsWrittenContents)
     {
-        file_system fs{this->root};
+        file_system fs{this->root, filesystem_mode::read_write};
         const windows_path path{'c', {u"new.bin"}};
         constexpr std::string_view contents = "snapshot";
 

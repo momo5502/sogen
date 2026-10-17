@@ -62,7 +62,7 @@ namespace sogen::sandbox
             return wide_args;
         }
 
-        int run(const std::span<const std::string_view> args, std::unordered_map<windows_path, std::filesystem::path> path_mappings,
+        int run(const std::span<const std::string_view> args, const filesystem_mode root_mode, std::vector<mount_spec> mounts,
                 const std::filesystem::path& emulation_root, const std::filesystem::path& registry_directory,
                 const std::vector<std::filesystem::path>& registry_files,
                 const std::vector<std::pair<std::string, std::string>>& environment, const network::network_mode network_mode,
@@ -116,7 +116,8 @@ namespace sogen::sandbox
                 settings.emulation_root = root;
             }
 
-            settings.path_mappings = std::move(path_mappings);
+            settings.root_mode = root_mode;
+            settings.mounts = std::move(mounts);
 
             subprocess_process_manager process_manager{get_sandbox_executable(), [&](const auto port, const auto& token) {
                                                            std::vector<std::string> arguments{"--managed-process-port",
@@ -132,11 +133,12 @@ namespace sogen::sandbox
                                                                arguments.emplace_back("--emulation");
                                                                arguments.push_back(settings.emulation_root.string());
                                                            }
-                                                           for (const auto& [source, target] : settings.path_mappings)
+                                                           arguments.emplace_back("--root-mode");
+                                                           arguments.emplace_back(to_string(settings.root_mode));
+                                                           for (const auto& mount : settings.mounts)
                                                            {
-                                                               arguments.emplace_back("--path");
-                                                               arguments.push_back(u16_to_u8(source.u16string()));
-                                                               arguments.push_back(target.string());
+                                                               arguments.emplace_back("--mount");
+                                                               arguments.push_back(render_mount_spec(mount));
                                                            }
                                                            for (const auto& file : registry_files)
                                                            {
@@ -221,7 +223,17 @@ namespace sogen::sandbox
             // Map a guest Windows path to a host path (repeatable, two values each), mirroring
             // the analyzer's -p option. Parsed before the first positional (the application).
             std::vector<std::pair<std::string, std::string>> path_mappings{};
-            app.add_option("-p,--path", path_mappings, "Map a Windows path to a host path")->type_name("SRC DST")->allow_extra_args(false);
+            app.add_option("-p,--path", path_mappings, "Map a Windows path to a host path, same as --mount DST:SRC")
+                ->type_name("SRC DST")
+                ->allow_extra_args(false);
+            std::vector<std::string> mount_specs{};
+            app.add_option("--mount", mount_specs, "Mount a host path into the guest file system (MODE is ro or rw)")
+                ->type_name("HOST:GUEST[:MODE]")
+                ->allow_extra_args(false);
+            std::string root_mode{to_string(default_root_mode)};
+            app.add_option("--root-mode", root_mode, "Access mode of the emulation root drives")
+                ->capture_default_str()
+                ->check(CLI::IsMember({"ro", "rw"}));
             std::filesystem::path emulation_root{};
             std::filesystem::path registry_directory{};
             std::vector<std::filesystem::path> registry_files{};
@@ -270,15 +282,27 @@ namespace sogen::sandbox
                     return 1;
                 }
 
-                std::unordered_map<windows_path, std::filesystem::path> mappings{};
+                std::vector<mount_spec> mounts{};
+                mounts.reserve(path_mappings.size() + mount_specs.size());
                 for (const auto& [source, target] : path_mappings)
                 {
-                    mappings[windows_path(source)] = std::filesystem::absolute(target);
+                    mounts.push_back(mount_spec{
+                        .host_path = std::filesystem::absolute(target),
+                        .guest_path = windows_path(source),
+                    });
+                }
+
+                for (const auto& mount : mount_specs)
+                {
+                    auto spec = parse_mount_spec(mount);
+                    spec.host_path = std::filesystem::absolute(spec.host_path);
+                    mounts.push_back(std::move(spec));
                 }
 
                 const std::vector<std::string_view> views{application.begin(), application.end()};
-                return run(views, std::move(mappings), emulation_root, registry_directory, registry_files, environment,
-                           network::parse_network_mode(network_name), managed_process ? &*managed_process : nullptr);
+                return run(views, parse_filesystem_mode(root_mode).value(), std::move(mounts), emulation_root, registry_directory,
+                           registry_files, environment, network::parse_network_mode(network_name),
+                           managed_process ? &*managed_process : nullptr);
             }
             catch (const std::exception& e)
             {

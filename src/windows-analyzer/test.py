@@ -18,6 +18,7 @@ command = [
     '-c',
     '--network', 'live',
     '-e', emulator_root,
+    '--root-mode', 'rw',
     '-p', virtual_sample, analysis_sample,
     virtual_sample
 ]

@@ -131,8 +131,11 @@ namespace sogen::test
 
         settings.emulation_root = get_emulator_root();
 
-        settings.path_mappings["C:\\a.txt"] =
-            std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt");
+        settings.mounts.push_back(mount_spec{
+            .host_path = std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt"),
+            .guest_path = windows_path{'c', {u"a.txt"}},
+            .mode = filesystem_mode::read_write,
+        });
 
         if (!interfaces.socket_factory)
         {
@@ -170,8 +173,11 @@ namespace sogen::test
 
         settings.emulation_root = get_emulator_root();
 
-        settings.path_mappings["C:\\a.txt"] =
-            std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt");
+        settings.mounts.push_back(mount_spec{
+            .host_path = std::filesystem::temp_directory_path() / ("emulator-test-file-" + std::to_string(getpid()) + ".txt"),
+            .guest_path = windows_path{'c', {u"a.txt"}},
+            .mode = filesystem_mode::read_write,
+        });
 
         if (!interfaces.socket_factory)
         {
