@@ -31,6 +31,8 @@ namespace sogen
         section_image,
         mmio,
         host_reserved,
+        placeholder,
+        placeholder_backed_allocation,
     };
 
     // This maps to the `basic_memory_region` struct defined in
@@ -82,6 +84,7 @@ namespace sogen
         using reserved_region_map = std::map<uint64_t, reserved_region>;
 
         using memory_interface::read_memory;
+        using memory_interface::write_memory;
 
         void read_memory(uint64_t address, void* data, size_t size) const final;
         bool try_read_memory(uint64_t address, void* data, size_t size) const final;
@@ -128,6 +131,11 @@ namespace sogen
         bool decommit_memory(uint64_t address, size_t size);
 
         bool release_memory(uint64_t address, size_t size);
+
+        bool split_placeholder(uint64_t address, size_t size);
+        bool coalesce_placeholders(uint64_t address, size_t size);
+        bool replace_placeholder(uint64_t address, size_t size, nt_memory_permission permissions, bool commit);
+        bool preserve_placeholder(uint64_t address, size_t size);
 
         void unmap_all_memory();
 
@@ -254,6 +262,8 @@ namespace sogen
             switch (kind)
             {
             case memory_region_kind::private_allocation:
+            case memory_region_kind::placeholder:
+            case memory_region_kind::placeholder_backed_allocation:
                 return 1 << 0;
             case memory_region_kind::file_section_view:
                 return 1 << 1;

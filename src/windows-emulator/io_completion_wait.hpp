@@ -15,10 +15,10 @@ namespace sogen
 
         void cleanup_wait_packet_on_close(process_context& process, handle wait_packet_handle);
         void clear_wait_packet_completion_state(process_context& process, handle wait_packet_handle);
-        void materialize_signaled_wait_packets(process_context& process, handle io_completion_handle);
+        void materialize_signaled_wait_packets(windows_emulator& win_emu, handle io_completion_handle);
 
-        bool dequeue_io_completion_message(process_context& process, handle io_completion_handle, io_completion_message& out_message);
-        ULONG dequeue_io_completion_entries(process_context& process, handle io_completion_handle,
+        bool dequeue_io_completion_message(windows_emulator& win_emu, handle io_completion_handle, io_completion_message& out_message);
+        ULONG dequeue_io_completion_entries(windows_emulator& win_emu, handle io_completion_handle,
                                             emulator_object<FILE_IO_COMPLETION_INFORMATION<EmulatorTraits<Emu64>>> out_entries,
                                             ULONG max_count);
     }

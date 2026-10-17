@@ -30,6 +30,31 @@ namespace sogen
             // is guaranteed to make the next pick skip the offending range.
             constexpr int max_host_reserved_retries = 8;
 
+            const emulator_process* get_managed_process(const syscall_context& c, const handle process_handle)
+            {
+                const auto* process = c.proc.processes.get(process_handle);
+                return process && process->process ? process : nullptr;
+            }
+
+            NTSTATUS map_process_memory_error(const process_error error)
+            {
+                switch (error)
+                {
+                case process_error::none:
+                    return STATUS_SUCCESS;
+                case process_error::invalid_process:
+                    return STATUS_INVALID_HANDLE;
+                case process_error::permission_denied:
+                    return STATUS_ACCESS_DENIED;
+                case process_error::resource_limit:
+                    return STATUS_INSUFFICIENT_RESOURCES;
+                case process_error::unavailable:
+                    return STATUS_MEMORY_NOT_ALLOCATED;
+                default:
+                    return STATUS_UNSUCCESSFUL;
+                }
+            }
+
             std::optional<uint64_t> checked_add(const uint64_t lhs, const uint64_t rhs)
             {
                 if (lhs > UINT64_MAX - rhs)
@@ -341,11 +366,6 @@ namespace sogen
                                                const emulator_object<uint32_t> bytes_to_protect, const uint32_t protection,
                                                const emulator_object<uint32_t> old_protection)
         {
-            if (!c.proc.is_current_process_handle(process_handle))
-            {
-                return STATUS_NOT_SUPPORTED;
-            }
-
             const auto orig_start = base_address.read();
             const auto orig_length = bytes_to_protect.read();
 
@@ -359,6 +379,27 @@ namespace sogen
             if (!requested_protection.has_value())
             {
                 return STATUS_INVALID_PAGE_PROTECTION;
+            }
+
+            if (!c.proc.is_current_process_handle(process_handle))
+            {
+                const auto* process = get_managed_process(c, process_handle);
+                auto* manager = c.win_emu.processes();
+                if (!process || !manager)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+                const auto result =
+                    manager->protect_memory(process->process, aligned_start, aligned_length, requested_protection->flattened());
+                if (!result)
+                {
+                    return map_process_memory_error(result.error);
+                }
+                if (old_protection)
+                {
+                    old_protection.write(map_emulator_to_nt_protection(nt_memory_permission{result.permission}));
+                }
+                return STATUS_SUCCESS;
             }
 
             c.win_emu.callbacks.on_memory_protect(aligned_start, aligned_length, *requested_protection);
@@ -391,11 +432,10 @@ namespace sogen
                                                   const emulator_object<MEM_EXTENDED_PARAMETER64> extended_parameters,
                                                   const ULONG extended_parameter_count)
         {
-            if (!c.proc.is_current_process_handle(process_handle))
+            if (allocation_type & MEM_WRITE_WATCH)
             {
                 return STATUS_NOT_SUPPORTED;
             }
-
             auto allocation_bytes = bytes_to_allocate.read();
 
             if (allocation_bytes == 0)
@@ -419,6 +459,32 @@ namespace sogen
             if (!protection.has_value())
             {
                 return STATUS_INVALID_PAGE_PROTECTION;
+            }
+
+            if (!c.proc.is_current_process_handle(process_handle))
+            {
+                const auto* process = get_managed_process(c, process_handle);
+                auto* manager = c.win_emu.processes();
+                if (!process || !manager || extended_parameter_count != 0)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+                const bool reserve = allocation_type & MEM_RESERVE;
+                const bool commit = allocation_type & MEM_COMMIT;
+                if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN)) || (!commit && !reserve))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const auto requested_address = requested_base ? page_align_down(requested_base) : 0;
+                const auto result = manager->allocate_memory(process->process, requested_address, allocation_bytes, protection->flattened(),
+                                                             reserve, commit);
+                if (!result)
+                {
+                    return map_process_memory_error(result.error);
+                }
+                base_address.write(result.address);
+                bytes_to_allocate.write(result.size);
+                return STATUS_SUCCESS;
             }
 
             if (allocation_type & MEM_RESET)
@@ -533,9 +599,26 @@ namespace sogen
             const bool reserve = allocation_type & MEM_RESERVE;
             const bool commit = allocation_type & MEM_COMMIT;
 
-            if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN | MEM_WRITE_WATCH)) || (!commit && !reserve))
+            const bool placeholder = allocation_type & MEM_RESERVE_PLACEHOLDER;
+            const bool replace_placeholder = allocation_type & MEM_REPLACE_PLACEHOLDER;
+            if ((allocation_type & ~(MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN | MEM_RESERVE_PLACEHOLDER | MEM_REPLACE_PLACEHOLDER)) ||
+                (!commit && !reserve) || (placeholder && (commit || replace_placeholder || !reserve || page_protection != PAGE_NOACCESS)))
             {
                 return STATUS_INVALID_PARAMETER;
+            }
+
+            if (replace_placeholder)
+            {
+                if (!requested_base || !reserve || requested_base != potential_base || requested_allocation_bytes != allocation_bytes)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                if (!c.win_emu.memory.replace_placeholder(potential_base, static_cast<size_t>(allocation_bytes), *protection, commit))
+                {
+                    return STATUS_CONFLICTING_ADDRESSES;
+                }
+                c.win_emu.callbacks.on_memory_allocate(potential_base, allocation_bytes, *protection, commit);
+                return STATUS_SUCCESS;
             }
 
             if (commit && !reserve && c.win_emu.memory.commit_memory(potential_base, static_cast<size_t>(allocation_bytes), *protection))
@@ -546,9 +629,12 @@ namespace sogen
 
             c.win_emu.callbacks.on_memory_allocate(potential_base, allocation_bytes, *protection, false);
 
-            return c.win_emu.memory.allocate_memory(potential_base, static_cast<size_t>(allocation_bytes), *protection, !commit)
-                       ? STATUS_SUCCESS
-                       : STATUS_MEMORY_NOT_ALLOCATED;
+            const auto kind = placeholder ? memory_region_kind::placeholder : memory_region_kind::private_allocation;
+            if (!c.win_emu.memory.allocate_memory(potential_base, static_cast<size_t>(allocation_bytes), *protection, !commit, kind))
+            {
+                return STATUS_MEMORY_NOT_ALLOCATED;
+            }
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtAllocateVirtualMemory(const syscall_context& c, const handle process_handle,
@@ -564,11 +650,6 @@ namespace sogen
                                             const emulator_object<uint64_t> base_address, const emulator_object<uint64_t> bytes_to_allocate,
                                             const uint32_t free_type)
         {
-            if (!c.proc.is_current_process_handle(process_handle))
-            {
-                return STATUS_NOT_SUPPORTED;
-            }
-
             if (free_type == 0)
             {
                 return STATUS_INVALID_PARAMETER_4;
@@ -577,8 +658,51 @@ namespace sogen
             const auto allocation_base = base_address.read();
             const auto allocation_size = bytes_to_allocate.read();
 
+            if (!c.proc.is_current_process_handle(process_handle))
+            {
+                const auto* process = get_managed_process(c, process_handle);
+                auto* manager = c.win_emu.processes();
+                if (!process || !manager)
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+                const bool release = (free_type & MEM_RELEASE) != 0;
+                if (free_type & ~(MEM_RELEASE | MEM_DECOMMIT))
+                {
+                    return STATUS_INVALID_PARAMETER_4;
+                }
+                const auto address = page_align_down(allocation_base);
+                const auto size =
+                    release || allocation_size == 0 ? allocation_size : page_align_up(allocation_base + allocation_size) - address;
+                const auto error = manager->free_memory(process->process, address, size, release);
+                if (error != process_error::none)
+                {
+                    return map_process_memory_error(error);
+                }
+                base_address.write(address);
+                bytes_to_allocate.write(size);
+                return STATUS_SUCCESS;
+            }
+
             if (free_type & MEM_RELEASE)
             {
+                if (free_type & (MEM_PRESERVE_PLACEHOLDER | MEM_COALESCE_PLACEHOLDERS))
+                {
+                    if (free_type != (MEM_RELEASE | MEM_PRESERVE_PLACEHOLDER) && free_type != (MEM_RELEASE | MEM_COALESCE_PLACEHOLDERS))
+                    {
+                        return STATUS_INVALID_PARAMETER_4;
+                    }
+                    if ((free_type & MEM_PRESERVE_PLACEHOLDER) && allocation_size == 0 &&
+                        c.win_emu.memory.get_region_kind(allocation_base) == memory_region_kind::placeholder)
+                    {
+                        return STATUS_INVALID_PARAMETER_3;
+                    }
+                    const auto success =
+                        free_type & MEM_PRESERVE_PLACEHOLDER
+                            ? c.win_emu.memory.preserve_placeholder(allocation_base, static_cast<size_t>(allocation_size))
+                            : c.win_emu.memory.coalesce_placeholders(allocation_base, static_cast<size_t>(allocation_size));
+                    return success ? STATUS_SUCCESS : STATUS_CONFLICTING_ADDRESSES;
+                }
                 if (allocation_size)
                 {
                     return STATUS_INVALID_PARAMETER;
@@ -671,15 +795,10 @@ namespace sogen
         }
 
         NTSTATUS handle_NtReadVirtualMemory(const syscall_context& c, const handle process_handle, const emulator_pointer base_address,
-                                            const emulator_pointer buffer, const ULONG number_of_bytes_to_read,
-                                            const emulator_object<ULONG> number_of_bytes_read)
+                                            const emulator_pointer buffer, const uint64_t number_of_bytes_to_read,
+                                            const emulator_object<uint64_t> number_of_bytes_read)
         {
             number_of_bytes_read.try_write(0);
-
-            if (!c.proc.is_current_process_handle(process_handle))
-            {
-                return STATUS_NOT_SUPPORTED;
-            }
 
             if (number_of_bytes_to_read == 0)
             {
@@ -693,18 +812,36 @@ namespace sogen
             };
 
             std::vector<uint8_t> memory(page_size, 0);
-            size_t bytes_read = 0;
+            uint64_t bytes_read = 0;
             while (bytes_read < number_of_bytes_to_read)
             {
                 const auto current_base = static_cast<uint64_t>(base_address) + bytes_read;
                 const auto current_buffer = static_cast<uint64_t>(buffer) + bytes_read;
-                const auto bytes_remaining = static_cast<size_t>(number_of_bytes_to_read) - bytes_read;
-                const auto chunk_size =
-                    std::min({bytes_remaining, bytes_until_page_boundary(current_base), bytes_until_page_boundary(current_buffer)});
+                const auto bytes_remaining = number_of_bytes_to_read - bytes_read;
+                const auto chunk_size = static_cast<size_t>(std::min<uint64_t>(
+                    {bytes_remaining, bytes_until_page_boundary(current_base), bytes_until_page_boundary(current_buffer)}));
 
-                if (!c.emu.try_read_memory(current_base, memory.data(), chunk_size))
+                if (c.proc.is_current_process_handle(process_handle))
                 {
-                    break;
+                    if (!c.emu.try_read_memory(current_base, memory.data(), chunk_size))
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    const auto* process = get_managed_process(c, process_handle);
+                    auto* manager = c.win_emu.processes();
+                    if (!process || !manager)
+                    {
+                        return STATUS_NOT_SUPPORTED;
+                    }
+                    const auto result = manager->read_memory(process->process, current_base, chunk_size);
+                    if (!result || result.data.size() != chunk_size)
+                    {
+                        break;
+                    }
+                    std::ranges::copy(result.data, memory.begin());
                 }
 
                 if (!c.emu.try_write_memory(current_buffer, memory.data(), chunk_size))
@@ -715,7 +852,7 @@ namespace sogen
                 bytes_read += chunk_size;
             }
 
-            number_of_bytes_read.try_write(static_cast<ULONG>(bytes_read));
+            number_of_bytes_read.try_write(bytes_read);
             if (bytes_read == number_of_bytes_to_read)
             {
                 return STATUS_SUCCESS;
@@ -725,15 +862,10 @@ namespace sogen
         }
 
         NTSTATUS handle_NtWriteVirtualMemory(const syscall_context& c, const handle process_handle, const emulator_pointer base_address,
-                                             const emulator_pointer buffer, const ULONG number_of_bytes_to_write,
-                                             const emulator_object<ULONG> number_of_bytes_write)
+                                             const emulator_pointer buffer, const uint64_t number_of_bytes_to_write,
+                                             const emulator_object<uint64_t> number_of_bytes_write)
         {
             number_of_bytes_write.try_write(0);
-
-            if (!c.proc.is_current_process_handle(process_handle))
-            {
-                return STATUS_NOT_SUPPORTED;
-            }
 
             if (number_of_bytes_to_write == 0)
             {
@@ -747,35 +879,63 @@ namespace sogen
             };
 
             std::vector<uint8_t> memory(page_size, 0);
-            size_t bytes_written = 0;
+            uint64_t bytes_written = 0;
             while (bytes_written < number_of_bytes_to_write)
             {
                 const auto current_buffer = static_cast<uint64_t>(buffer) + bytes_written;
                 const auto current_base = static_cast<uint64_t>(base_address) + bytes_written;
-                const auto bytes_remaining = static_cast<size_t>(number_of_bytes_to_write) - bytes_written;
-                const auto chunk_size =
-                    std::min({bytes_remaining, bytes_until_page_boundary(current_buffer), bytes_until_page_boundary(current_base)});
+                const auto bytes_remaining = number_of_bytes_to_write - bytes_written;
+                const auto chunk_size = static_cast<size_t>(std::min<uint64_t>(
+                    {bytes_remaining, bytes_until_page_boundary(current_buffer), bytes_until_page_boundary(current_base)}));
 
                 if (!c.emu.try_read_memory(current_buffer, memory.data(), chunk_size))
                 {
                     break;
                 }
 
-                if (!c.emu.try_write_memory(current_base, memory.data(), chunk_size))
+                if (c.proc.is_current_process_handle(process_handle))
                 {
-                    break;
+                    if (!c.emu.try_write_memory(current_base, memory.data(), chunk_size))
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    const auto* process = get_managed_process(c, process_handle);
+                    auto* manager = c.win_emu.processes();
+                    if (!process || !manager)
+                    {
+                        return STATUS_NOT_SUPPORTED;
+                    }
+                    const auto result = manager->write_memory(process->process, current_base, std::span{memory.data(), chunk_size});
+                    if (!result || result.size != chunk_size)
+                    {
+                        break;
+                    }
                 }
 
                 bytes_written += chunk_size;
             }
 
-            number_of_bytes_write.try_write(static_cast<ULONG>(bytes_written));
+            number_of_bytes_write.try_write(bytes_written);
             if (bytes_written == number_of_bytes_to_write)
             {
                 return STATUS_SUCCESS;
             }
 
             return bytes_written == 0 ? STATUS_INVALID_ADDRESS : STATUS_PARTIAL_COPY;
+        }
+
+        NTSTATUS handle_NtGetWriteWatch(const syscall_context&, handle, ULONG, uint64_t, uint64_t, uint64_t, emulator_object<uint64_t>,
+                                        emulator_object<ULONG>)
+        {
+            return STATUS_NOT_SUPPORTED;
+        }
+
+        NTSTATUS handle_NtResetWriteWatch(const syscall_context&, handle, uint64_t, uint64_t)
+        {
+            return STATUS_NOT_SUPPORTED;
         }
 
         NTSTATUS handle_NtSetInformationVirtualMemory()

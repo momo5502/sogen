@@ -134,6 +134,25 @@ namespace sogen
             {
                 return keyboard_layout_to_handle(get_keyboard_layouts(registry).front());
             }
+
+            NTSTATUS map_nls_file(const syscall_context& c, const std::string_view file_path,
+                                  const emulator_object<uint64_t> section_pointer, const emulator_object<ULONG> section_size)
+            {
+                const auto nls_file = utils::io::read_file(c.win_emu.file_sys.translate(file_path));
+                if (nls_file.empty())
+                {
+                    return STATUS_OBJECT_NAME_NOT_FOUND;
+                }
+
+                const auto size = static_cast<size_t>(page_align_up(nls_file.size()));
+                const auto section_memory = c.win_emu.memory.allocate_memory(size, memory_permission::read);
+                c.emu.write_memory(section_memory, nls_file.data(), nls_file.size());
+
+                section_pointer.write_if_valid(section_memory);
+                section_size.write_if_valid(static_cast<ULONG>(size));
+
+                return STATUS_SUCCESS;
+            }
         }
 
         NTSTATUS handle_NtInitializeNlsFiles(const syscall_context& c, const emulator_object<uint64_t> base_address,
@@ -169,21 +188,13 @@ namespace sogen
         {
             if (section_type == 11)
             {
-                const auto file_path = R"(C:\Windows\System32\C_)" + std::to_string(section_data) + ".NLS";
-                const auto locale_file = utils::io::read_file(c.win_emu.file_sys.translate(file_path));
-                if (locale_file.empty())
-                {
-                    return STATUS_OBJECT_NAME_NOT_FOUND;
-                }
+                return map_nls_file(c, R"(C:\Windows\System32\C_)" + std::to_string(section_data) + ".NLS", section_pointer, section_size);
+            }
 
-                const auto size = static_cast<size_t>(page_align_up(locale_file.size()));
-                const auto section_memory = c.win_emu.memory.allocate_memory(size, memory_permission::read);
-                c.emu.write_memory(section_memory, locale_file.data(), locale_file.size());
-
-                section_pointer.write_if_valid(section_memory);
-                section_size.write_if_valid(static_cast<ULONG>(size));
-
-                return STATUS_SUCCESS;
+            // l_intl.nls: backs RtlUpcaseUnicodeChar/RtlDowncaseUnicodeChar beyond ASCII.
+            if (section_type == 14)
+            {
+                return map_nls_file(c, R"(C:\Windows\System32\l_intl.nls)", section_pointer, section_size);
             }
 
             c.win_emu.log.warn("Unsupported section type: %X\n", static_cast<uint32_t>(section_type));

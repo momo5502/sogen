@@ -21,6 +21,7 @@ sogen_assign_source_group(${SRC_FILES})
 
 target_link_libraries(sandbox PRIVATE
   windows-emulator
+  process-manager
   emulator-common
   cli11
 )

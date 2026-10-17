@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
+#include "../devices/named_pipe.hpp"
 
 #include <utils/finally.hpp>
 
@@ -9,12 +10,426 @@ namespace sogen
 
     namespace syscalls
     {
+        namespace
+        {
+            constexpr ULONG windows_cui_subsystem = 3;
+            constexpr USHORT executable_large_address_aware_image = 0x0022;
+            constexpr ULONG process_create_flags_inherit_handles = 4;
+
+            std::vector<std::u16string> parse_command_line(const std::u16string_view command_line)
+            {
+                std::vector<std::u16string> arguments{};
+                size_t offset = 0;
+
+                while (offset < command_line.size())
+                {
+                    while (offset < command_line.size() && (command_line[offset] == u' ' || command_line[offset] == u'\t'))
+                    {
+                        ++offset;
+                    }
+
+                    if (offset == command_line.size())
+                    {
+                        break;
+                    }
+
+                    std::u16string argument{};
+                    bool quoted = false;
+                    while (offset < command_line.size() && (quoted || (command_line[offset] != u' ' && command_line[offset] != u'\t')))
+                    {
+                        size_t slash_count = 0;
+                        while (offset < command_line.size() && command_line[offset] == u'\\')
+                        {
+                            ++slash_count;
+                            ++offset;
+                        }
+
+                        if (offset < command_line.size() && command_line[offset] == u'"')
+                        {
+                            argument.append(slash_count / 2, u'\\');
+                            if ((slash_count % 2) != 0)
+                            {
+                                argument.push_back(u'"');
+                            }
+                            else
+                            {
+                                quoted = !quoted;
+                            }
+                            ++offset;
+                            continue;
+                        }
+
+                        argument.append(slash_count, u'\\');
+                        if (offset < command_line.size() && (quoted || (command_line[offset] != u' ' && command_line[offset] != u'\t')))
+                        {
+                            argument.push_back(command_line[offset++]);
+                        }
+                    }
+
+                    arguments.push_back(std::move(argument));
+                }
+
+                return arguments;
+            }
+
+            std::unordered_map<std::string, std::string> read_environment(const syscall_context& c,
+                                                                          const RTL_USER_PROCESS_PARAMETERS64& parameters)
+            {
+                std::unordered_map<std::string, std::string> environment{};
+                if (parameters.Environment == 0 || parameters.EnvironmentSize == 0 || (parameters.EnvironmentSize % sizeof(char16_t)) != 0)
+                {
+                    return environment;
+                }
+
+                constexpr uint64_t maximum_environment_size = 16ULL << 20;
+                if (parameters.EnvironmentSize > maximum_environment_size)
+                {
+                    throw std::runtime_error("Process environment is too large");
+                }
+
+                const auto environment_size = static_cast<size_t>(parameters.EnvironmentSize);
+                std::u16string block(environment_size / sizeof(char16_t), u'\0');
+                c.emu.read_memory(parameters.Environment, block.data(), environment_size);
+
+                for (size_t offset = 0; offset < block.size() && block[offset] != u'\0';)
+                {
+                    const auto end = block.find(u'\0', offset);
+                    if (end == std::u16string::npos)
+                    {
+                        break;
+                    }
+
+                    const std::u16string_view entry{block.data() + offset, end - offset};
+                    const auto separator = entry.find(u'=', entry.starts_with(u'=') ? 1 : 0);
+                    if (separator != std::u16string_view::npos)
+                    {
+                        environment.insert_or_assign(u16_to_u8(entry.substr(0, separator)), u16_to_u8(entry.substr(separator + 1)));
+                    }
+
+                    offset = end + 1;
+                }
+
+                return environment;
+            }
+
+            NTSTATUS map_process_error(const process_error error)
+            {
+                switch (error)
+                {
+                case process_error::none:
+                    return STATUS_SUCCESS;
+                case process_error::invalid_process:
+                    return STATUS_INVALID_CID;
+                case process_error::permission_denied:
+                    return STATUS_ACCESS_DENIED;
+                case process_error::resource_limit:
+                    return STATUS_INSUFFICIENT_RESOURCES;
+                case process_error::unavailable:
+                    return STATUS_NOT_SUPPORTED;
+                case process_error::communication_failure:
+                case process_error::internal_failure:
+                    return STATUS_INTERNAL_ERROR;
+                }
+
+                return STATUS_INTERNAL_ERROR;
+            }
+
+            NTSTATUS process_exit_code(const process_exit& exit)
+            {
+                return exit.kind == process_exit_kind::runtime_failure ? STATUS_UNSUCCESSFUL : static_cast<NTSTATUS>(exit.code);
+            }
+        }
+
+        NTSTATUS handle_NtCreateUserProcess(const syscall_context& c, const emulator_object<handle> process_handle,
+                                            const emulator_object<handle> thread_handle, const ACCESS_MASK /*process_desired_access*/,
+                                            const ACCESS_MASK /*thread_desired_access*/,
+                                            const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*process_object_attributes*/,
+                                            const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*thread_object_attributes*/,
+                                            const ULONG process_flags, const ULONG /*thread_flags*/,
+                                            const emulator_object<RTL_USER_PROCESS_PARAMETERS64> process_parameters,
+                                            const emulator_object<PS_CREATE_INFO<EmulatorTraits<Emu64>>> create_info,
+                                            const emulator_object<PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>> attribute_list)
+        {
+            auto* manager = c.win_emu.processes();
+            if (!manager)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
+            if (!process_handle || !thread_handle || !process_parameters || !create_info)
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto parameters = process_parameters.read();
+            auto creation = create_info.read();
+            if (creation.Size < sizeof(creation))
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            size_t attribute_count = 0;
+            if (attribute_list)
+            {
+                constexpr auto entry_size = sizeof(PS_ATTRIBUTE<EmulatorTraits<Emu64>>);
+                constexpr auto header_size = sizeof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>) - entry_size;
+                const auto total_length = attribute_list.read().TotalLength;
+                if (total_length < header_size || (total_length - header_size) % entry_size != 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                attribute_count = static_cast<size_t>((total_length - header_size) / entry_size);
+            }
+
+            const auto original_command_line = read_unicode_string(c.emu, parameters.CommandLine);
+            auto command_line = parse_command_line(original_command_line);
+
+            process_create_request request{};
+            request.command_line = u16_to_u8(original_command_line);
+            const windows_path application_path{read_unicode_string(c.emu, parameters.ImagePathName)};
+            request.application = u16_to_u8(application_path.u16string());
+            request.working_directory =
+                u16_to_u8(windows_path(read_unicode_string(c.emu, parameters.CurrentDirectory.DosPath)).u16string());
+            request.environment = read_environment(c, parameters);
+            request.standard_input = parameters.StandardInput;
+            request.standard_output = parameters.StandardOutput;
+            request.standard_error = parameters.StandardError;
+            std::unordered_map<const io_device*, uint64_t> inherited_files;
+            const auto inherit_pipe = [&](const handle h) -> NTSTATUS {
+                if (std::ranges::any_of(request.inherited_pipes, [&](const auto& entry) { return entry.guest_handle == h.bits; }))
+                {
+                    return STATUS_SUCCESS;
+                }
+                const auto* container = c.proc.devices.get(h);
+                const auto* pipe = container ? container->get_internal_device<named_pipe>() : nullptr;
+                if (pipe && pipe->endpoint)
+                {
+                    if (pipe->read_mode != 0)
+                    {
+                        return STATUS_NOT_SUPPORTED;
+                    }
+                    const auto [file, inserted] = inherited_files.try_emplace(pipe, h.bits);
+                    request.inherited_pipes.push_back(
+                        {.guest_handle = h.bits,
+                         .file_id = file->second,
+                         .endpoint = pipe->endpoint,
+                         .name = u16_to_u8(pipe->name),
+                         .access = container->granted_access,
+                         .pipe_type = pipe->pipe_type,
+                         .read_mode = pipe->read_mode,
+                         .completion_mode = pipe->completion_mode,
+                         .create_options = pipe->create_options,
+                         .completion_notification_flags =
+                             container->prepare_io_context(io_device_context{c.emu}).completion_notification_flags,
+                         .inherit = container->inherit});
+                }
+                return STATUS_SUCCESS;
+            };
+            bool explicit_handle_list{};
+            for (size_t i = 0; i < attribute_count; ++i)
+            {
+                const emulator_object<PS_ATTRIBUTE<EmulatorTraits<Emu64>>> attributes{
+                    c.emu, attribute_list.value() + offsetof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>, Attributes)};
+                const auto attribute = attributes.read(i);
+                if ((attribute.Attribute & PS_ATTRIBUTE_NUMBER_MASK) != PsAttributeHandleList)
+                {
+                    continue;
+                }
+                if (!(process_flags & process_create_flags_inherit_handles))
+                {
+                    continue;
+                }
+                explicit_handle_list = true;
+                if (attribute.Size % sizeof(handle) != 0)
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+                const emulator_object<handle> handles{c.emu, attribute.ValuePtr};
+                for (size_t j = 0; j < attribute.Size / sizeof(handle); ++j)
+                {
+                    const auto status = inherit_pipe(handles.read(j));
+                    if (!NT_SUCCESS(status))
+                    {
+                        return status;
+                    }
+                }
+            }
+            if (!explicit_handle_list && (process_flags & process_create_flags_inherit_handles))
+            {
+                for (const auto& [index, device] : c.proc.devices)
+                {
+                    if (device.get_internal_device<named_pipe>() && device.inherit)
+                    {
+                        const auto status = inherit_pipe(c.proc.devices.make_handle(index));
+                        if (!NT_SUCCESS(status))
+                        {
+                            return status;
+                        }
+                    }
+                }
+            }
+            for (auto* standard : {&request.standard_input, &request.standard_output, &request.standard_error})
+            {
+                const auto* device = c.proc.devices.get(*standard);
+                if (device && device->get_internal_device<named_pipe>() &&
+                    std::ranges::none_of(request.inherited_pipes, [&](const auto& pipe) { return pipe.guest_handle == *standard; }))
+                {
+                    *standard = 0;
+                }
+            }
+
+            if (!command_line.empty())
+            {
+                request.argument0 = u16_to_u8(command_line.front());
+                command_line.erase(command_line.begin());
+            }
+            request.arguments.reserve(command_line.size());
+            for (const auto& argument : command_line)
+            {
+                request.arguments.push_back(u16_to_u8(argument));
+            }
+
+            if (request.application.empty())
+            {
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            const auto image_arch = winpe::get_pe_arch(c.win_emu.file_sys.translate(application_path));
+            const auto* pe_arch = std::get_if<winpe::pe_arch>(&image_arch);
+            const auto child_is_wow64 = pe_arch && *pe_arch == winpe::pe_arch::pe32;
+
+            const auto result = manager->create_process(std::move(request));
+            if (!result)
+            {
+                return map_process_error(result.error);
+            }
+            const auto process_id = result.process_id;
+            const auto thread_id = result.thread_id;
+
+            emulator_process child{};
+            child.process = result.process;
+            child.id = process_id;
+            child.is_wow64_process = child_is_wow64;
+            child.native_environment = result.native_environment;
+            child.compatibility_environment = result.compatibility_environment;
+            const auto child_process_handle = c.proc.processes.store(std::move(child));
+
+            managed_process_thread initial_thread{};
+            initial_thread.process = result.process;
+            initial_thread.process_id = process_id;
+            initial_thread.thread_id = thread_id;
+            const auto child_thread_handle = c.proc.managed_threads.store(std::move(initial_thread));
+
+            process_handle.write(child_process_handle);
+            thread_handle.write(child_thread_handle);
+
+            creation.State = PsCreateSuccess;
+            creation.SuccessState = {};
+            creation.SuccessState.CurrentParameterFlags = parameters.Flags;
+            creation.SuccessState.PebAddressNative = result.native_environment;
+            creation.SuccessState.PebAddressWow64 = static_cast<uint32_t>(result.compatibility_environment);
+            creation.SuccessState.UserProcessParametersNative = result.native_parameters;
+            creation.SuccessState.UserProcessParametersWow64 = static_cast<uint32_t>(result.compatibility_parameters);
+            create_info.write(creation);
+
+            if (attribute_list)
+            {
+                const emulator_object<PS_ATTRIBUTE<EmulatorTraits<Emu64>>> attributes{
+                    c.emu, attribute_list.value() + offsetof(PS_ATTRIBUTE_LIST<EmulatorTraits<Emu64>>, Attributes)};
+                for (size_t i = 0; i < attribute_count; ++i)
+                {
+                    const auto attribute = attributes.read(i);
+                    const auto type = attribute.Attribute & PS_ATTRIBUTE_NUMBER_MASK;
+                    if (type == PsAttributeClientId && attribute.ValuePtr && attribute.Size >= sizeof(CLIENT_ID64))
+                    {
+                        c.emu.write_memory<CLIENT_ID64>(attribute.ValuePtr, {.UniqueProcess = process_id, .UniqueThread = thread_id});
+                        if (attribute.ReturnLength)
+                        {
+                            c.emu.write_memory<EmulatorTraits<Emu64>::SIZE_T>(attribute.ReturnLength, sizeof(CLIENT_ID64));
+                        }
+                    }
+                    else if (type == PsAttributeImageInfo && attribute.ValuePtr &&
+                             attribute.Size >= sizeof(SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>>))
+                    {
+                        SECTION_IMAGE_INFORMATION<EmulatorTraits<Emu64>> image_info{};
+                        image_info.MaximumStackSize = 1ULL << 20;
+                        image_info.CommittedStackSize = 0x1000;
+                        image_info.SubSystemType = windows_cui_subsystem;
+                        image_info.SubSystemMajorVersion = 6;
+                        image_info.MajorOperatingSystemVersion = 6;
+                        image_info.ImageCharacteristics = executable_large_address_aware_image;
+                        image_info.Machine = child_is_wow64 ? PEMachineType::I386 : PEMachineType::AMD64;
+                        image_info.ImageContainsCode = TRUE;
+                        c.emu.write_memory(attribute.ValuePtr, &image_info, sizeof(image_info));
+                        if (attribute.ReturnLength)
+                        {
+                            c.emu.write_memory<EmulatorTraits<Emu64>::SIZE_T>(attribute.ReturnLength, sizeof(image_info));
+                        }
+                    }
+                }
+            }
+
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtQueryInformationProcess(const syscall_context& c, const handle process_handle, const uint32_t info_class,
                                                   const uint64_t process_information, const uint32_t process_information_length,
                                                   const emulator_object<uint32_t> return_length)
         {
             if (!c.proc.is_current_process_handle(process_handle))
             {
+                const auto* managed = c.proc.processes.get(process_handle);
+                if (managed && managed->process)
+                {
+                    if (!c.win_emu.processes())
+                    {
+                        return STATUS_NOT_SUPPORTED;
+                    }
+
+                    if (info_class == ProcessWow64Information)
+                    {
+                        return handle_query<EmulatorTraits<Emu64>::ULONG_PTR>(
+                            c.emu, process_information, process_information_length, return_length,
+                            [&](EmulatorTraits<Emu64>::ULONG_PTR& peb32) { peb32 = managed->compatibility_environment; });
+                    }
+
+                    if (info_class != ProcessBasicInformation)
+                    {
+                        return STATUS_NOT_SUPPORTED;
+                    }
+
+                    const auto status = c.win_emu.processes()->exit_status(managed->process);
+                    if (!status)
+                    {
+                        return map_process_error(status.error);
+                    }
+
+                    const auto init_process_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
+                        basic_info = {};
+                        basic_info.ExitStatus = status.status ? process_exit_code(*status.status) : STATUS_PENDING;
+                        basic_info.PebBaseAddress = managed->native_environment;
+                        basic_info.UniqueProcessId = managed->id;
+                        basic_info.InheritedFromUniqueProcessId = c.proc.process_id;
+                    };
+
+                    switch (process_information_length)
+                    {
+                    case sizeof(PROCESS_BASIC_INFORMATION64):
+                        return handle_query<PROCESS_BASIC_INFORMATION64>(c.emu, process_information, process_information_length,
+                                                                         return_length, init_process_info);
+                    case sizeof(PROCESS_EXTENDED_BASIC_INFORMATION):
+                        return handle_query<PROCESS_EXTENDED_BASIC_INFORMATION>(c.emu, process_information, process_information_length,
+                                                                                return_length,
+                                                                                [&](PROCESS_EXTENDED_BASIC_INFORMATION& ext) {
+                                                                                    ext = {};
+                                                                                    ext.Size = sizeof(PROCESS_EXTENDED_BASIC_INFORMATION);
+                                                                                    init_process_info(ext.BasicInfo);
+                                                                                });
+                    default:
+                        return STATUS_INFO_LENGTH_MISMATCH;
+                    }
+                }
+
                 // The synthetic Steam process: report it as alive so a guest steam_api's GetExitCodeProcess
                 // liveness check succeeds. Only ProcessBasicInformation is meaningful; any other class is
                 // rejected cleanly rather than falling through to the default (which stops the emulator).
@@ -128,9 +543,10 @@ namespace sogen
                     cookie = 0x01234567; //
                 });
 
-            case ProcessDebugObjectHandle:
-
-                c.win_emu.callbacks.on_suspicious_activity("Anti-debug check with ProcessDebugObjectHandle");
+            case ProcessDebugObjectHandle: {
+                const auto& proc_name = c.win_emu.mod_manager.executable->name;
+                c.win_emu.callbacks.on_suspicious_activity(std::string("Anti-debug check with ProcessDebugObjectHandle [") + proc_name +
+                                                           "]");
 
                 if ((process_information & 3) != 0)
                 {
@@ -151,27 +567,72 @@ namespace sogen
                     h = NULL_HANDLE;
                     return STATUS_PORT_NOT_SET;
                 });
+            }
 
             case ProcessDebugFlags:
             case ProcessWx86Information:
-            case ProcessDefaultHardErrorMode:
                 return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length, [&](ULONG& res) {
                     res = (info_class == ProcessDebugFlags ? 1 : 0); //
                 });
 
-            case ProcessDebugPort:
-                c.win_emu.callbacks.on_suspicious_activity("Anti-debug check with ProcessDebugPort");
+            case ProcessDefaultHardErrorMode:
+                return handle_query<ULONG>(c.emu, process_information, process_information_length, return_length,
+                                           [&](ULONG& res) { res = c.proc.hard_error_mode; });
+
+            case ProcessDebugPort: {
+                const auto& proc_name = c.win_emu.mod_manager.executable->name;
+                c.win_emu.callbacks.on_suspicious_activity(std::string("Anti-debug check with ProcessDebugPort [") + proc_name + "]");
 
                 return handle_query<EmulatorTraits<Emu64>::PVOID>(c.emu, process_information, process_information_length, return_length,
                                                                   [](EmulatorTraits<Emu64>::PVOID& ptr) {
                                                                       ptr = 0; //
                                                                   });
+            }
 
-            case ProcessDeviceMap:
-                return handle_query<EmulatorTraits<Emu64>::PVOID>(c.emu, process_information, process_information_length, return_length,
-                                                                  [](EmulatorTraits<Emu64>::PVOID& ptr) {
-                                                                      ptr = 0; //
-                                                                  });
+            case ProcessDeviceMap: {
+                struct device_map_query
+                {
+                    ULONG drive_map;
+                    std::array<uint8_t, 32> drive_types;
+                };
+
+                struct device_map_query_ex
+                {
+                    device_map_query query;
+                    ULONG reserved;
+                    ULONG flags;
+                    ULONG padding;
+                };
+
+                static_assert(sizeof(device_map_query) == 36);
+                static_assert(sizeof(device_map_query_ex) == 48);
+                if (process_information_length != sizeof(device_map_query) && process_information_length != sizeof(device_map_query_ex))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                device_map_query_ex response{};
+                if (process_information_length == sizeof(response))
+                {
+                    response.flags = emulator_object<ULONG>{c.emu, process_information + offsetof(device_map_query_ex, flags)}.read();
+                    if (response.flags & ~1u)
+                    {
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                }
+                for (const auto drive : c.win_emu.file_sys.list_drives())
+                {
+                    if (drive < 'a' || drive > 'z')
+                    {
+                        continue;
+                    }
+                    const auto index = static_cast<size_t>(drive - 'a');
+                    response.query.drive_map |= 1u << index;
+                    response.query.drive_types[index] = c.win_emu.file_sys.drive_type(drive);
+                }
+                c.emu.write_memory(process_information, &response, process_information_length);
+                return_length.write_if_valid(process_information_length);
+                return STATUS_SUCCESS;
+            }
 
             case ProcessEnableAlignmentFaultFixup:
                 return handle_query<BOOLEAN>(c.emu, process_information, process_information_length, return_length, [](BOOLEAN& b) {
@@ -190,13 +651,18 @@ namespace sogen
                     c.emu, process_information, process_information_length, return_length,
                     [&](EmulatorTraits<Emu64>::ULONG_PTR& peb32) { peb32 = c.proc.peb32 ? c.proc.peb32->value() : 0; });
 
+            case ProcessConsoleHostProcess:
+                return handle_query<EmulatorTraits<Emu64>::ULONG_PTR>(
+                    c.emu, process_information, process_information_length, return_length,
+                    [&](EmulatorTraits<Emu64>::ULONG_PTR& process_id) { process_id = c.proc.process_id; });
+
             case ProcessBasicInformation: {
                 const auto init_basic_info = [&](PROCESS_BASIC_INFORMATION64& basic_info) {
                     basic_info.PebBaseAddress = c.proc.peb64.value();
                     const auto processor_count =
                         c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
                     basic_info.AffinityMask = processor_count >= 64 ? ~0ull : ((1ull << processor_count) - 1);
-                    basic_info.UniqueProcessId = process_context::process_id;
+                    basic_info.UniqueProcessId = c.proc.process_id;
                 };
 
                 switch (process_information_length)
@@ -372,7 +838,6 @@ namespace sogen
             if (info_class == ProcessSchedulerSharedData                     //
                 || info_class == ProcessConsoleHostProcess                   //
                 || info_class == ProcessFaultInformation                     //
-                || info_class == ProcessDefaultHardErrorMode                 //
                 || info_class == ProcessRaiseUMExceptionOnInvalidHandleClose //
                 || info_class == ProcessDynamicFunctionTableInformation      //
                 || info_class == ProcessPriorityBoost                        //
@@ -382,6 +847,19 @@ namespace sogen
                 || info_class == ProcessAffinityMask                         //
                 || info_class == ProcessTelemetryCoverage)
             {
+                return STATUS_SUCCESS;
+            }
+
+            if (info_class == ProcessDefaultHardErrorMode)
+            {
+                if (process_information_length < sizeof(ULONG))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+
+                ULONG mode{};
+                c.emu.read_memory(process_information, &mode, sizeof(mode));
+                c.proc.hard_error_mode = mode;
                 return STATUS_SUCCESS;
             }
 
@@ -550,7 +1028,7 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
-        NTSTATUS handle_NtOpenProcess(const syscall_context& /*c*/, const emulator_object<handle> process_handle,
+        NTSTATUS handle_NtOpenProcess(const syscall_context& c, const emulator_object<handle> process_handle,
                                       const ACCESS_MASK /*desired_access*/,
                                       const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
                                       const emulator_object<CLIENT_ID64> client_id)
@@ -563,10 +1041,24 @@ namespace sogen
             const auto id = client_id.read();
 
             // The guest opening its own pid resolves to the real guest process handle.
-            if (id.UniqueProcess == process_context::process_id)
+            if (id.UniqueProcess == c.proc.process_id)
             {
                 process_handle.write(GUEST_PROCESS_HANDLE);
                 return STATUS_SUCCESS;
+            }
+
+            for (const auto& [index, process] : c.proc.processes)
+            {
+                if (process.process && process.id == id.UniqueProcess)
+                {
+                    const auto handle = c.proc.processes.make_handle(index);
+                    if (!c.proc.processes.duplicate(handle))
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+                    process_handle.write(handle);
+                    return STATUS_SUCCESS;
+                }
             }
 
             // The one synthetic external process we vouch for: the Steam client. A guest steam_api reads
@@ -577,7 +1069,6 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
-            // The emulator hosts a single process; any other pid does not exist.
             return STATUS_INVALID_CID;
         }
 
@@ -620,6 +1111,12 @@ namespace sogen
                 c.proc.exit_status = exit_status;
                 c.win_emu.stop();
                 return STATUS_SUCCESS;
+            }
+
+            const auto* managed = c.proc.processes.get(process_handle);
+            if (managed && managed->process && c.win_emu.processes())
+            {
+                return map_process_error(c.win_emu.processes()->terminate_process(managed->process, static_cast<uint32_t>(exit_status)));
             }
 
             return STATUS_NOT_SUPPORTED;

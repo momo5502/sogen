@@ -19,6 +19,7 @@ namespace sogen
 
     struct io_device_context
     {
+        handle source_handle{};
         handle event{};
         emulator_pointer /*PIO_APC_ROUTINE*/ apc_routine{};
         emulator_pointer apc_context{};
@@ -29,6 +30,11 @@ namespace sogen
         ULONG input_buffer_length{};
         emulator_pointer output_buffer{};
         ULONG output_buffer_length{};
+        handle completion_port{};
+        uint64_t completion_key{};
+        ULONG completion_notification_flags{};
+        ACCESS_MASK granted_access{};
+        uint32_t issuing_thread_id{};
 
         // The vCPU whose thread issued this I/O request. Set on syscall-originated ioctls;
         // null (and not serialized) for deserialized delayed ioctls re-executed from the
@@ -50,6 +56,7 @@ namespace sogen
 
         void serialize(utils::buffer_serializer& buffer) const
         {
+            buffer.write(source_handle);
             buffer.write(event);
             buffer.write(apc_routine);
             buffer.write(apc_context);
@@ -60,10 +67,16 @@ namespace sogen
             buffer.write(input_buffer_length);
             buffer.write(output_buffer);
             buffer.write(output_buffer_length);
+            buffer.write(completion_port);
+            buffer.write(completion_key);
+            buffer.write(completion_notification_flags);
+            buffer.write(granted_access);
+            buffer.write(issuing_thread_id);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
         {
+            buffer.read(source_handle);
             buffer.read(event);
             buffer.read(apc_routine);
             buffer.read(apc_context);
@@ -74,6 +87,11 @@ namespace sogen
             buffer.read(input_buffer_length);
             buffer.read(output_buffer);
             buffer.read(output_buffer_length);
+            buffer.read(completion_port);
+            buffer.read(completion_key);
+            buffer.read(completion_notification_flags);
+            buffer.read(granted_access);
+            buffer.read(issuing_thread_id);
         }
     };
 
@@ -126,10 +144,41 @@ namespace sogen
 
         virtual NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) = 0;
 
+        virtual io_device_context prepare_io_context(const io_device_context& context) const
+        {
+            return context;
+        }
+
+        static void queue_io_completion(windows_emulator& win_emu, const io_device_context& context);
+
+        virtual void release_references(process_context& process)
+        {
+            (void)process;
+        }
+
+        virtual bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block, std::optional<uint32_t> issuing_thread_id = {})
+        {
+            (void)win_emu;
+            (void)io_status_block;
+            (void)issuing_thread_id;
+            return false;
+        }
+
+        virtual bool has_pending_io(uint32_t issuing_thread_id) const
+        {
+            (void)issuing_thread_id;
+            return false;
+        }
+
         virtual void create(windows_emulator& win_emu, const io_device_creation_data& data)
         {
             (void)win_emu;
             (void)data;
+        }
+
+        virtual void restore_after_state_restore(windows_emulator& win_emu)
+        {
+            (void)win_emu;
         }
 
         virtual void work(windows_emulator& win_emu)
@@ -175,6 +224,12 @@ namespace sogen
     // Ordered so the fuzzer's enumeration is deterministic across runs.
     const std::map<std::u16string_view, device_factory>& get_device_registry();
 
+    struct device_completion_association
+    {
+        handle completion_port{};
+        uint64_t key{};
+    };
+
     class io_device_container : public io_device
     {
       public:
@@ -185,11 +240,28 @@ namespace sogen
               device_name_(std::move(device))
         {
             this->setup();
-            this->device_->create(win_emu, data);
+            this->file_->device->create(win_emu, data);
+        }
+
+        ACCESS_MASK granted_access{GENERIC_ALL};
+
+        io_device_container duplicate(ACCESS_MASK access, bool inheritable) const;
+
+        bool is_last_file_reference() const
+        {
+            return this->file_.use_count() == 1;
         }
 
         void work(windows_emulator& win_emu) override;
+        void restore_after_state_restore(windows_emulator& win_emu) override;
         NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override;
+        io_device_context prepare_io_context(const io_device_context& context) const override;
+        bool cancel_io(windows_emulator& win_emu, uint64_t io_status_block, std::optional<uint32_t> issuing_thread_id = {}) override;
+        bool has_pending_io(uint32_t issuing_thread_id) const override;
+        NTSTATUS set_completion_association(process_context& process, const emulator_thread* active_thread, handle completion_port,
+                                            uint64_t key);
+        void set_completion_notification_flags(ULONG flags);
+        void release_references(process_context& process) override;
 
         void serialize_object(utils::buffer_serializer& buffer) const override;
         void deserialize_object(utils::buffer_deserializer& buffer) override;
@@ -199,7 +271,7 @@ namespace sogen
         T* get_internal_device() const
         {
             this->assert_validity();
-            auto* value = this->device_.get();
+            auto* value = this->file_->device.get();
             return dynamic_cast<T*>(value);
         }
 
@@ -218,17 +290,26 @@ namespace sogen
       private:
         bool is_32_bit_{};
         std::u16string device_name_{};
-        std::unique_ptr<io_device> device_{};
+
+        struct file_state
+        {
+            std::unique_ptr<io_device> device{};
+            std::optional<device_completion_association> completion_association{};
+            ULONG completion_notification_flags{};
+        };
+
+        std::shared_ptr<file_state> file_{};
 
         void setup()
         {
             const device_creation_context context{.is_32_bit = this->is_32_bit_};
-            this->device_ = create_device(this->device_name_, context);
+            this->file_ = std::make_shared<file_state>();
+            this->file_->device = create_device(this->device_name_, context);
         }
 
         void assert_validity() const
         {
-            if (!this->device_)
+            if (!this->file_ || !this->file_->device)
             {
                 throw std::runtime_error("Device not created!");
             }

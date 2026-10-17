@@ -34,7 +34,7 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            if (context.eventName !== "push") {
+            if (context.eventName !== "push" || context.ref === "refs/heads/main") {
               core.setOutput("should_run", "true");
               return;
             }
@@ -42,14 +42,24 @@ jobs:
             const branch = context.ref.replace("refs/heads/", "");
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const { data: pulls } = await github.rest.pulls.list({
-              owner,
-              repo,
-              state: "open",
-              head: `${owner}:${branch}`,
-            });
+            const hasOpenPullRequest = async () => {
+              const { data: pulls } = await github.rest.pulls.list({
+                owner,
+                repo,
+                state: "open",
+                head: `${owner}:${branch}`,
+                per_page: 1,
+              });
+              return pulls.length > 0;
+            };
 
-            core.setOutput("should_run", pulls.length === 0 ? "true" : "false");
+            if (await hasOpenPullRequest()) {
+              core.setOutput("should_run", "false");
+              return;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 60_000));
+            core.setOutput("should_run", (await hasOpenPullRequest()) ? "false" : "true");
 
   ci:
     name: Build

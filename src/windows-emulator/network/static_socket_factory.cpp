@@ -1,10 +1,13 @@
 #include "static_socket_factory.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <deque>
 #include <queue>
+#include <span>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 
 #include <network/socket.hpp>
 
@@ -54,6 +57,35 @@ namespace sogen
                 listen_mapping listen_queues;
             };
 
+            // The in-process network has a single host, so the unspecified and loopback
+            // addresses all name it. A listener on 0.0.0.0 must accept clients of 127.0.0.1.
+            address get_queue_key(const address& a)
+            {
+                auto key = a;
+                if (a.is_ipv4())
+                {
+                    const auto ip = ntohl(a.get_in_addr().sin_addr.s_addr);
+                    if (ip == INADDR_ANY || (ip >> 24) == 127)
+                    {
+                        key.set_ipv4(htonl(INADDR_LOOPBACK));
+                        key.set_port(a.get_port());
+                    }
+                }
+                else if (a.is_ipv6())
+                {
+                    const auto& bytes = a.get_in6_addr().sin6_addr.s6_addr;
+                    if (std::ranges::all_of(std::span(bytes).first<15>(), [](const auto b) { return b == 0; }) && bytes[15] <= 1)
+                    {
+                        in6_addr loopback{};
+                        loopback.s6_addr[15] = 1;
+                        key.set_ipv6(loopback);
+                        key.set_port(a.get_port());
+                    }
+                }
+
+                return key;
+            }
+
             struct static_socket_factory_impl : socket_factory
             {
                 std::shared_ptr<shared_state> state = std::make_shared<shared_state>();
@@ -63,6 +95,7 @@ namespace sogen
                 {
                     static_socket_factory_impl* factory{};
                     int error{0};
+                    int connect_error{0};
                     address a{};
                     address peer_addr{};
                     std::shared_ptr<pipe_state> pipe{};
@@ -126,11 +159,16 @@ namespace sogen
                         return this->error;
                     }
 
+                    std::optional<int> get_socket_error() override
+                    {
+                        return std::exchange(this->connect_error, 0);
+                    }
+
                     bool is_ready(const bool in_poll) override
                     {
                         if (this->listening)
                         {
-                            auto it = this->factory->state->listen_queues.find(this->a);
+                            auto it = this->factory->state->listen_queues.find(get_queue_key(this->a));
                             return it != this->factory->state->listen_queues.end() && !it->second.empty();
                         }
                         if (this->pipe && in_poll)
@@ -154,7 +192,13 @@ namespace sogen
 
                     bool bind(const address& addr) override
                     {
+                        const auto assigned_port = this->a.get_port();
                         this->a = addr;
+                        if (addr.get_port() == 0)
+                        {
+                            this->a.set_port(assigned_port);
+                        }
+
                         return true;
                     }
 
@@ -163,10 +207,11 @@ namespace sogen
                         this->peer_addr = addr;
 
                         auto& queues = this->factory->state->listen_queues;
-                        auto it = queues.find(addr);
+                        auto it = queues.find(get_queue_key(addr));
                         if (it == queues.end())
                         {
                             this->error = SERR(ECONNREFUSED);
+                            this->connect_error = this->error;
                             return false;
                         }
 
@@ -174,13 +219,14 @@ namespace sogen
                         this->is_server_side = false;
                         it->second.emplace_back(pending_connection{.client_addr = this->a, .p = this->pipe});
                         this->error = 0;
+                        this->connect_error = 0;
                         return true;
                     }
 
                     bool listen(int /*backlog*/) override
                     {
                         this->listening = true;
-                        this->factory->state->listen_queues.try_emplace(this->a);
+                        this->factory->state->listen_queues.try_emplace(get_queue_key(this->a));
                         this->error = 0;
                         return true;
                     }
@@ -188,7 +234,7 @@ namespace sogen
                     std::unique_ptr<i_socket> accept(address& out_addr) override
                     {
                         auto& queues = this->factory->state->listen_queues;
-                        auto it = queues.find(this->a);
+                        auto it = queues.find(get_queue_key(this->a));
                         if (it == queues.end() || it->second.empty())
                         {
                             this->error = SERR(EWOULDBLOCK);
@@ -225,7 +271,8 @@ namespace sogen
                     sent_size sendto(const address& destination, std::span<const std::byte> data) override
                     {
                         this->error = 0;
-                        this->factory->state->packets[destination].emplace(this->a, shared_state::packet_data{data.begin(), data.end()});
+                        this->factory->state->packets[get_queue_key(destination)].emplace(
+                            this->a, shared_state::packet_data{data.begin(), data.end()});
                         return static_cast<sent_size>(data.size());
                     }
 
@@ -264,7 +311,7 @@ namespace sogen
                     {
                         this->error = 0;
 
-                        auto& q = this->factory->state->packets[this->a];
+                        auto& q = this->factory->state->packets[get_queue_key(this->a)];
 
                         if (q.empty())
                         {
@@ -313,7 +360,7 @@ namespace sogen
 
                         if (s->listening)
                         {
-                            auto it = this->state->listen_queues.find(s->a);
+                            auto it = this->state->listen_queues.find(get_queue_key(s->a));
                             readable = it != this->state->listen_queues.end() && !it->second.empty();
                         }
                         else if (s->pipe)
@@ -324,7 +371,7 @@ namespace sogen
                         }
                         else
                         {
-                            auto packet_it = this->state->packets.find(s->a);
+                            auto packet_it = this->state->packets.find(get_queue_key(s->a));
                             readable = packet_it != this->state->packets.end() && !packet_it->second.empty();
                         }
 

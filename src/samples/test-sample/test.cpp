@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <string_view>
 #include <array>
+#include <algorithm>
 
 #include "../../common/utils/finally.hpp"
 
@@ -29,6 +30,7 @@
 #include <knownfolders.h>
 #include <sddl.h>
 #include <bcrypt.h>
+#include <wincrypt.h>
 
 using namespace std::literals;
 
@@ -192,6 +194,28 @@ namespace
         const auto blub = read_env("BLUB");
 
         return !computername.empty() && blub == "LUL";
+    }
+
+    bool test_critical_section_timeout()
+    {
+#ifdef _WIN64
+        constexpr size_t peb_critical_section_timeout_offset = 0xC0;
+        const auto* peb = reinterpret_cast<const uint8_t*>(__readgsqword(0x60));
+#else
+        constexpr size_t peb_critical_section_timeout_offset = 0x70;
+        const auto* peb = reinterpret_cast<const uint8_t*>(__readfsdword(0x30));
+#endif
+
+        int64_t timeout{};
+        memcpy(&timeout, peb + peb_critical_section_timeout_offset, sizeof(timeout));
+
+        if (timeout >= 0)
+        {
+            puts("PEB CriticalSectionTimeout is not a relative timeout");
+            return false;
+        }
+
+        return true;
     }
 
     bool test_lookup_account_sid()
@@ -681,6 +705,19 @@ namespace
         }
 
         return validate_primary_monitor(mi);
+    }
+
+    bool test_display_config_buffer_sizes()
+    {
+        UINT32 num_paths = 0;
+        UINT32 num_modes = 0;
+
+        if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &num_paths, &num_modes) != ERROR_SUCCESS)
+        {
+            return false;
+        }
+
+        return num_paths >= 1 && num_modes >= num_paths;
     }
 
     BOOL CALLBACK monitor_enum_proc(HMONITOR hMonitor, HDC, LPRECT, LPARAM dwData)
@@ -1266,6 +1303,21 @@ namespace
         return true;
     }
 
+    bool test_desktop_window_text()
+    {
+        auto* const desktop = GetDesktopWindow();
+        if (desktop == nullptr)
+        {
+            return false;
+        }
+
+        std::array<char, 32> text{};
+        text.fill('x');
+
+        return GetWindowTextA(desktop, text.data(), static_cast<int>(text.size())) == 0 && text.front() == '\0' &&
+               GetWindowTextLengthA(desktop) == 0;
+    }
+
     bool test_message_queue()
     {
         thread_local UINT wnd_proc_num = 0;
@@ -1774,6 +1826,7 @@ namespace
         auto* ctx = CreateActCtxA(&actctx);
         if (ctx == INVALID_HANDLE_VALUE)
         {
+            printf("CreateActCtxA failed: %lu\n", GetLastError());
             return false;
         }
 
@@ -1911,6 +1964,24 @@ namespace
         return valid;
     }
 
+    bool test_unicode_case_mapping()
+    {
+        using rtl_case_unicode_char_t = WCHAR(NTAPI*)(WCHAR);
+        auto* const ntdll = GetModuleHandleA("ntdll.dll");
+        const auto upcase =
+            reinterpret_cast<rtl_case_unicode_char_t>(reinterpret_cast<void*>(GetProcAddress(ntdll, "RtlUpcaseUnicodeChar")));
+        const auto downcase =
+            reinterpret_cast<rtl_case_unicode_char_t>(reinterpret_cast<void*>(GetProcAddress(ntdll, "RtlDowncaseUnicodeChar")));
+        if (!upcase || !downcase)
+        {
+            puts("ntdll case mapping functions not found");
+            return false;
+        }
+
+        return upcase(L'a') == L'A' && upcase(0x00E4) == 0x00C4 && upcase(0x0430) == 0x0410 && downcase(0x00C4) == 0x00E4 &&
+               downcase(0x0410) == 0x0430;
+    }
+
     bool test_gdi()
     {
         const wchar_t* cursor_path = L"C:\\Windows\\Cursors\\aero_arrow.cur";
@@ -1937,6 +2008,86 @@ namespace
 
         DestroyCursor(cursor);
         return true;
+    }
+
+    namespace
+    {
+        INT_PTR CALLBACK dialog_table_proc(const HWND hwnd, const UINT msg, const WPARAM wp, const LPARAM lp)
+        {
+            (void)hwnd;
+            (void)msg;
+            (void)wp;
+            (void)lp;
+            return FALSE;
+        }
+    }
+
+    bool test_dialog_table()
+    {
+        alignas(DWORD) static const std::array<uint8_t, 28> template_bytes = {
+            0x00, 0x00, 0xC8, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x64, 0x00, 0x3C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        };
+
+        const HWND hwnd = CreateDialogIndirectParamW(GetModuleHandleW(nullptr), reinterpret_cast<const DLGTEMPLATE*>(template_bytes.data()),
+                                                     nullptr, dialog_table_proc, 0);
+        if (!hwnd)
+        {
+            puts("CreateDialogIndirectParamW failed");
+            return false;
+        }
+
+        DestroyWindow(hwnd);
+        return true;
+    }
+
+    bool test_ansi_oem_translation()
+    {
+        std::array<char, 256> source{};
+        std::array<char, 256> converted{};
+        for (size_t i = 0; i < source.size(); ++i)
+        {
+            source[i] = static_cast<char>(i);
+        }
+        if (!CharToOemBuffA(source.data(), converted.data(), static_cast<DWORD>(source.size())))
+        {
+            return false;
+        }
+        for (size_t i = 0; i < source.size(); ++i)
+        {
+            wchar_t wide{};
+            char expected{};
+            if (!MultiByteToWideChar(CP_ACP, 0, &source[i], 1, &wide, 1) ||
+                !WideCharToMultiByte(CP_OEMCP, 0, &wide, 1, &expected, 1, nullptr, nullptr) || converted[i] != expected)
+            {
+                return false;
+            }
+        }
+        auto inplace = std::to_array("shell-arguments");
+        return CharToOemA(inplace.data(), inplace.data()) && std::string_view{inplace.data()} == "shell-arguments";
+    }
+
+    bool test_bcrypt_random()
+    {
+        std::array<UCHAR, 8192> first{};
+        std::array<UCHAR, 8192> second{};
+        const auto status = BCryptGenRandom(nullptr, first.data(), static_cast<ULONG>(first.size()), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+        if (!BCRYPT_SUCCESS(status))
+        {
+            printf("BCryptGenRandom failed: 0x%08lX\n", status);
+            return false;
+        }
+
+        BCRYPT_ALG_HANDLE algorithm{};
+        const auto open_status = BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_RNG_ALGORITHM, nullptr, 0);
+        if (!BCRYPT_SUCCESS(open_status))
+        {
+            printf("BCryptOpenAlgorithmProvider(RNG) failed: 0x%08lX\n", open_status);
+            return false;
+        }
+        const auto close_algorithm = sogen::utils::finally([&] { BCryptCloseAlgorithmProvider(algorithm, 0); });
+        const auto second_status = BCryptGenRandom(algorithm, second.data(), static_cast<ULONG>(second.size()), 0);
+        return BCRYPT_SUCCESS(second_status) && first != second && std::ranges::any_of(first, [](UCHAR value) { return value != 0; });
     }
 
     bool test_bcrypt_hash()
@@ -1976,6 +2127,171 @@ namespace
             {
                 printf("BCryptHash(%ls) failed: 0x%08lX\n", vector.algorithm, hash_status);
                 return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool test_crypt_protect()
+    {
+        auto roundtrip = [](const std::vector<BYTE>& plain, const std::vector<BYTE>& entropy, const LPCWSTR descr) {
+            DATA_BLOB input{};
+            BYTE empty{};
+            input.cbData = static_cast<DWORD>(plain.size());
+            // crypt32 returns ERROR_INVALID_PARAMETER when pbData is NULL, including cbData == 0.
+            input.pbData = plain.empty() ? &empty : const_cast<BYTE*>(plain.data());
+
+            DATA_BLOB entropy_blob{};
+            DATA_BLOB* entropy_ptr = nullptr;
+            if (!entropy.empty())
+            {
+                entropy_blob.cbData = static_cast<DWORD>(entropy.size());
+                entropy_blob.pbData = const_cast<BYTE*>(entropy.data());
+                entropy_ptr = &entropy_blob;
+            }
+
+            DATA_BLOB protected_blob{};
+            if (!CryptProtectData(&input, descr, entropy_ptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &protected_blob))
+            {
+                printf("CryptProtectData failed: %lu\n", GetLastError());
+                return false;
+            }
+
+            const auto free_protected = sogen::utils::finally([&] { LocalFree(protected_blob.pbData); });
+
+            LPWSTR out_descr = nullptr;
+            DATA_BLOB unprotected{};
+            if (!CryptUnprotectData(&protected_blob, descr ? &out_descr : nullptr, entropy_ptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN,
+                                    &unprotected))
+            {
+                printf("CryptUnprotectData failed: %lu\n", GetLastError());
+                return false;
+            }
+
+            const auto free_unprotected = sogen::utils::finally([&] { LocalFree(unprotected.pbData); });
+            const auto free_descr = sogen::utils::finally([&] { LocalFree(out_descr); });
+
+            if (unprotected.cbData != input.cbData)
+            {
+                puts("CryptUnprotectData length mismatch");
+                return false;
+            }
+
+            if (input.cbData != 0 && memcmp(unprotected.pbData, input.pbData, input.cbData) != 0)
+            {
+                puts("CryptUnprotectData data mismatch");
+                return false;
+            }
+
+            if (descr)
+            {
+                if (!out_descr || wcscmp(out_descr, descr) != 0)
+                {
+                    puts("CryptUnprotectData description mismatch");
+                    return false;
+                }
+            }
+
+            return true;
+        };
+
+        if (!roundtrip({}, {}, nullptr))
+        {
+            return false;
+        }
+
+        if (!roundtrip({0x61, 0x62, 0x63}, {}, nullptr))
+        {
+            return false;
+        }
+
+        if (!roundtrip({0x61, 0x62, 0x63}, {0x01, 0x02, 0x03, 0x04}, nullptr))
+        {
+            return false;
+        }
+
+        if (!roundtrip({0x61, 0x62, 0x63}, {}, L"sogen-test"))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    bool test_set_dib_bits_to_device()
+    {
+        constexpr int width = 4;
+        constexpr int height = 1;
+
+        struct
+        {
+            BITMAPINFOHEADER header;
+            std::array<RGBQUAD, 4> colors;
+        } info{};
+
+        info.header.biSize = sizeof(BITMAPINFOHEADER);
+        info.header.biWidth = width;
+        info.header.biHeight = -height;
+        info.header.biPlanes = 1;
+        info.header.biCompression = BI_RGB;
+        info.header.biClrUsed = 4;
+        info.colors[0] = {.rgbBlue = 0, .rgbGreen = 0, .rgbRed = 255, .rgbReserved = 0};
+        info.colors[1] = {.rgbBlue = 0, .rgbGreen = 255, .rgbRed = 0, .rgbReserved = 0};
+        info.colors[2] = {.rgbBlue = 255, .rgbGreen = 0, .rgbRed = 0, .rgbReserved = 0};
+        info.colors[3] = {.rgbBlue = 255, .rgbGreen = 255, .rgbRed = 255, .rgbReserved = 0};
+
+        const std::array<COLORREF, 4> palette = {RGB(255, 0, 0), RGB(0, 255, 0), RGB(0, 0, 255), RGB(255, 255, 255)};
+
+        struct dib
+        {
+            WORD bpp;
+            std::array<uint8_t, 8> bits;
+            std::array<uint8_t, width> expected_index;
+        };
+
+        const std::array<dib, 4> dibs = {
+            dib{.bpp = 1, .bits = {0x50}, .expected_index = {0, 1, 0, 1}},
+            dib{.bpp = 4, .bits = {0x01, 0x23}, .expected_index = {0, 1, 2, 3}},
+            dib{.bpp = 8, .bits = {0, 1, 2, 3}, .expected_index = {0, 1, 2, 3}},
+            dib{.bpp = 16, .bits = {0x00, 0x7C, 0xE0, 0x03, 0x1F, 0x00, 0xFF, 0x7F}, .expected_index = {0, 1, 2, 3}},
+        };
+
+        const HDC dc = CreateCompatibleDC(nullptr);
+        const HBITMAP bitmap = CreateBitmap(width, height, 1, 32, nullptr);
+        const HGDIOBJ previous = SelectObject(dc, bitmap);
+        const auto cleanup = sogen::utils::finally([&] {
+            SelectObject(dc, previous);
+            DeleteObject(bitmap);
+            DeleteDC(dc);
+        });
+
+        for (const auto& d : dibs)
+        {
+            info.header.biBitCount = d.bpp;
+            for (int x = 0; x < width; ++x)
+            {
+                SetPixel(dc, x, 0, RGB(0, 0, 0));
+            }
+
+            const int copied = SetDIBitsToDevice(dc, 0, 0, width, height, 0, 0, 0, height, d.bits.data(),
+                                                 reinterpret_cast<const BITMAPINFO*>(&info), DIB_RGB_COLORS);
+            if (copied != height)
+            {
+                printf("SetDIBitsToDevice(%ubpp) copied %d scanlines\n", d.bpp, copied);
+                return false;
+            }
+
+            for (int x = 0; x < width; ++x)
+            {
+                const COLORREF actual = GetPixel(dc, x, 0);
+                const COLORREF expected = palette[d.expected_index[x]];
+                if (actual != expected)
+                {
+                    printf("SetDIBitsToDevice(%ubpp) pixel %d is %06lX, expected %06lX\n", d.bpp, x, static_cast<unsigned long>(actual),
+                           static_cast<unsigned long>(expected));
+                    return false;
+                }
             }
         }
 
@@ -2021,10 +2337,12 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_registry, "Registry")
     RUN_TEST(test_system_info, "System Info")
     RUN_TEST(test_monitor_info, "Monitor Info")
+    RUN_TEST(test_display_config_buffer_sizes, "Display Config Buffer Sizes")
     RUN_TEST(test_time_zone, "Time Zone")
     RUN_TEST(test_threads, "Threads")
     RUN_TEST(test_threads_winapi, "Threads WinAPI")
     RUN_TEST(test_env, "Environment")
+    RUN_TEST(test_critical_section_timeout, "Critical Section Timeout")
     RUN_TEST(test_lookup_account_sid, "LSA")
     RUN_TEST(test_exceptions, "Exceptions")
 #ifndef __MINGW64__
@@ -2037,6 +2355,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
+    RUN_TEST(test_desktop_window_text, "Desktop Window Text")
     RUN_TEST(test_window_geometry, "Window Geometry")
     RUN_TEST(test_user_callback, "User Callback")
     RUN_TEST(test_mutable_callbacks, "Mutable User Callback")
@@ -2045,10 +2364,16 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_settimer, "User Timer")
     RUN_TEST(test_private_namespace, "Private Namespace")
     RUN_TEST(test_handle_tag_bits, "Handle Tag Bits")
+    RUN_TEST(test_unicode_case_mapping, "Unicode Case Mapping")
     RUN_TEST(test_actctx, "Activation Context")
     RUN_TEST(test_mmio, "MMIO")
     RUN_TEST(test_gdi, "GDI")
+    RUN_TEST(test_dialog_table, "Dialog Table")
     RUN_TEST(test_bcrypt_hash, "BCrypt Hash")
+    RUN_TEST(test_bcrypt_random, "BCrypt Random")
+    RUN_TEST(test_ansi_oem_translation, "ANSI/OEM Translation")
+    RUN_TEST(test_crypt_protect, "CryptProtect")
+    RUN_TEST(test_set_dib_bits_to_device, "GDI DIB")
 
     return valid ? 0 : 1;
 }

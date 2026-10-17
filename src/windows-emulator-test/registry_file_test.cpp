@@ -1,9 +1,8 @@
-#include <gtest/gtest.h>
+#include "emulation_test_utils.hpp"
 
 #include <registry/registry_file.hpp>
 
 #include <atomic>
-#include <chrono>
 #include <fstream>
 
 namespace sogen::test
@@ -106,9 +105,8 @@ namespace sogen::test
             void SetUp() override
             {
                 static std::atomic_uint64_t counter{};
-                const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
                 directory_ = std::filesystem::temp_directory_path() /
-                             ("sogen-registry-file-test-" + std::to_string(timestamp) + "-" + std::to_string(counter++));
+                             ("sogen-registry-file-test-" + std::to_string(getpid()) + "-" + std::to_string(counter++));
                 ASSERT_TRUE(std::filesystem::create_directories(directory_));
 
                 const std::array<std::byte, 4> empty_hive{
@@ -291,6 +289,20 @@ namespace sogen::test
         ASSERT_TRUE(value.has_value());
         EXPECT_EQ(value->type, REG_BINARY);
         EXPECT_EQ(std::vector(value->data.begin(), value->data.end()), data);
+    }
+
+    TEST_F(RegistryFileTest, ResolvesOverlayOnlyKeysForExactPaths)
+    {
+        const std::filesystem::path path{uR"(\Registry\Machine\Software\Vendor\Overlay)"};
+        ASSERT_FALSE(registry().get_key(utils::path_key{path}).has_value());
+        ASSERT_TRUE(registry().create_key(path).has_value());
+        EXPECT_TRUE(registry().get_key(utils::path_key{path}).has_value());
+
+        const std::filesystem::path deeper{path / "Child"};
+        EXPECT_FALSE(registry().get_key(utils::path_key{deeper}).has_value());
+
+        const std::filesystem::path sibling{uR"(\Registry\Machine\Software\Vendor\Missing)"};
+        EXPECT_FALSE(registry().get_key(utils::path_key{sibling}).has_value());
     }
 
     TEST_F(RegistryFileTest, CreateKeyIsIdempotent)

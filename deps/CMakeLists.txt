@@ -1,6 +1,13 @@
 set(UNICORN_ARCH "x86" CACHE STRING "")
 add_subdirectory(unicorn)
 
+if(NOT EMSCRIPTEN)
+  set(REPROC++ ON CACHE BOOL "" FORCE)
+  set(REPROC_INSTALL OFF CACHE BOOL "" FORCE)
+  set(REPROC_OBJECT_LIBRARIES ON CACHE BOOL "" FORCE)
+  add_subdirectory(reproc)
+endif()
+
 ##########################################
 
 option(BASE64_ENABLE_TESTING "" OFF)
@@ -125,3 +132,11 @@ include(zstd.cmake)
 ##########################################
 
 include("${PROJECT_SOURCE_DIR}/cmake/fex.cmake")
+
+set(MBEDTLS_TARGET_PREFIX "sogen_")
+set(ENABLE_PROGRAMS OFF)
+set(ENABLE_TESTING OFF)
+set(GEN_FILES OFF)
+set(USE_STATIC_MBEDTLS_LIBRARY ON)
+set(USE_SHARED_MBEDTLS_LIBRARY OFF)
+add_subdirectory(mbedtls)

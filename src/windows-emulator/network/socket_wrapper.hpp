@@ -17,6 +17,7 @@ namespace sogen
             void set_blocking(bool blocking) override;
 
             int get_last_error() override;
+            std::optional<int> get_socket_error() override;
 
             bool is_ready(bool in_poll) override;
             bool is_listening() override;

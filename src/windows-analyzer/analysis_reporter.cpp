@@ -284,6 +284,7 @@ namespace sogen
             EVENT_NAME(memory_protect_event, "memory_protect");
             EVENT_NAME(memory_violation_event, "memory_violation");
             EVENT_NAME(io_control_event, "io_control");
+            EVENT_NAME(socket_activity_event, "socket_activity");
             EVENT_NAME(thread_create_event, "thread_create");
             EVENT_NAME(thread_terminated_event, "thread_terminated");
             EVENT_NAME(thread_set_name_event, "thread_set_name");
@@ -421,6 +422,12 @@ namespace sogen
             {
                 object.field("device", event.device_name);
                 object.field("code", event.code);
+            }
+
+            static void write_fields(json_object_builder& object, const socket_activity_event& event)
+            {
+                object.field("action", event.action);
+                object.field("address", event.address);
             }
 
             static void write_fields(json_object_builder& object, const thread_create_event& event)

@@ -3,6 +3,7 @@
 
 #include "../win32k_userconnect.hpp"
 #include "../windows_emulator.hpp"
+#include "../sxs/activation_context_request.hpp"
 
 namespace sogen
 {
@@ -16,8 +17,9 @@ namespace sogen
         }
 
         constexpr uint32_t k_base_srv_nls_get_user_info_api = 0x0001001b;
+        constexpr uint32_t k_base_srv_sxs_create_activation_context_api = 0x0001001e;
 
-        bool is_nls_get_user_info_request(windows_emulator& win_emu, const lpc_request_context& c)
+        bool is_api_request(windows_emulator& win_emu, const lpc_request_context& c, const uint32_t expected_api)
         {
             const ULONG api_number_offset = 0x08u;
 
@@ -28,7 +30,7 @@ namespace sogen
 
             uint32_t api_number{};
             return win_emu.memory.try_read_memory(c.send_buffer + api_number_offset, &api_number, sizeof(api_number)) &&
-                   api_number == k_base_srv_nls_get_user_info_api;
+                   api_number == expected_api;
         }
 
         struct wow64_userconnect_payload
@@ -69,8 +71,8 @@ namespace sogen
                 return false;
             }
 
-            if (payload.user_connect_length != sizeof(WIN32K_USERCONNECT32) &&
-                payload.user_connect_length != (sizeof(WIN32K_USERCONNECT32) + win32k_userconnect::k_wow64_userconnect_header_size))
+            if (payload.user_connect_length != sizeof(USER_SHAREDINFO) &&
+                payload.user_connect_length != (sizeof(USER_SHAREDINFO) + win32k_userconnect::k_wow64_userconnect_header_size))
             {
                 return false;
             }
@@ -94,14 +96,9 @@ namespace sogen
                 return destination_status;
             }
 
-            WIN32K_USERCONNECT32 connect{};
-            const auto connect_status = win32k_userconnect::build_wow64_userconnect(win_emu.process, connect);
-            if (connect_status != STATUS_SUCCESS)
-            {
-                return connect_status;
-            }
-
-            if (!win32k_userconnect::try_write_wow64_userconnect(win_emu.memory, destination, connect))
+            // user32's UserClientDllInitialize raw-copies this reply verbatim into _gSharedInfo, and
+            // the WoW64 client slots SHAREDINFO the same way the 64-bit one does.
+            if (!win32k_userconnect::try_write_user_shared_info(win_emu.memory, destination, win_emu.process))
             {
                 return STATUS_INVALID_PARAMETER;
             }
@@ -138,7 +135,12 @@ namespace sogen
 
             lpc_request_result handle_request(windows_emulator& win_emu, const lpc_request_context& c) override
             {
-                if (is_nls_get_user_info_request(win_emu, c))
+                if (is_api_request(win_emu, c, k_base_srv_sxs_create_activation_context_api))
+                {
+                    return sxs::handle_create_activation_context(win_emu, c);
+                }
+
+                if (is_api_request(win_emu, c, k_base_srv_nls_get_user_info_api))
                 {
                     // BASESRV BaseSrvNlsGetUserInfo, called by kernelbase's GetCurrentNlsCache.
                     // Sogen does not emulate the private 0x67c-byte NLS server cache. Returning

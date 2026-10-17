@@ -320,7 +320,7 @@ namespace sogen
             using Traits = EmulatorTraits<Emu64>;
             using proc_t = SYSTEM_BASICPROCESS_INFORMATION<Traits>;
 
-            uint64_t process_id = process_context::process_id;
+            uint64_t process_id = c.proc.process_id;
 
             if (c.vcpu.active_thread && c.vcpu.active_thread->teb64)
             {
@@ -371,7 +371,7 @@ namespace sogen
             using proc_t = SYSTEM_PROCESS_INFORMATION<Traits>;
             using thread_t = SYSTEM_THREAD_INFORMATION<Traits>;
 
-            uint64_t process_id = process_context::process_id;
+            uint64_t process_id = c.proc.process_id;
             uint64_t active_tid = 0;
             if (c.vcpu.active_thread && c.vcpu.active_thread->teb64)
             {
@@ -493,7 +493,8 @@ namespace sogen
                 return handle_system_process_information(c, system_information, system_information_length, return_length);
 
             case SystemFlushInformation:
-            case SystemCodeIntegrityPolicyInformation:
+            case SystemSecureBootPolicyInformation:
+            case SystemCodeIntegrityPoliciesFullInformation:
             case SystemHypervisorSharedPageInformation:
             case SystemFeatureConfigurationInformation:
             case SystemSupportedProcessorArchitectures2:
@@ -511,6 +512,27 @@ namespace sogen
 
             case SystemModuleInformationEx:
                 return handle_system_module_information_ex(c, system_information, system_information_length, return_length);
+
+            case SystemLeapSecondInformation: {
+                struct system_leap_second_information
+                {
+                    BOOLEAN enabled;
+                    std::array<uint8_t, 3> reserved;
+                    ULONG flags;
+                };
+
+                static_assert(sizeof(system_leap_second_information) == 8);
+                if (return_length)
+                {
+                    return_length.write(sizeof(system_leap_second_information));
+                }
+                if (system_information_length != sizeof(system_leap_second_information))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                c.emu.write_memory(system_information, system_leap_second_information{});
+                return STATUS_SUCCESS;
+            }
 
             case SystemTimeOfDayInformation:
                 return handle_query<SYSTEM_TIMEOFDAY_INFORMATION64>(c.emu, system_information, system_information_length, return_length,
@@ -844,6 +866,32 @@ namespace sogen
                                                                           ci.Length = sizeof(ci);
                                                                           ci.CodeIntegrityOptions = CODEINTEGRITY_OPTION_ENABLED;
                                                                       });
+            }
+
+            case SystemCodeIntegrityPolicyInformation: {
+                struct system_code_integrity_policy_information
+                {
+                    ULONG options;
+                    ULONG hvci_options;
+                    ULONGLONG version;
+                    GUID policy_guid;
+                };
+
+                static_assert(sizeof(system_code_integrity_policy_information) == 32);
+                if (return_length)
+                {
+                    if (!return_length.try_write(sizeof(system_code_integrity_policy_information)))
+                    {
+                        return STATUS_ACCESS_VIOLATION;
+                    }
+                }
+                if (system_information_length != sizeof(system_code_integrity_policy_information))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                const system_code_integrity_policy_information information{};
+                return c.emu.try_write_memory(system_information, &information, sizeof(information)) ? STATUS_SUCCESS
+                                                                                                     : STATUS_ACCESS_VIOLATION;
             }
 
             case SystemBootEnvironmentInformation:

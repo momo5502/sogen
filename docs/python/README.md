@@ -88,6 +88,7 @@ app = sogen.windows.create_application(
     "c:/test-sample.exe",
     emulation_root="./root",
     path_mappings={"c:/a.txt": Path("./a.txt")},
+    network="live",
     port_mappings={28970: 28980},
 )
 
@@ -130,6 +131,10 @@ are proxied to the configured host loopback port, while unmapped ports keep the
 synthetic Linux socket behavior.
 
 Path and port mappings explicitly opt into host filesystem and network access. They are convenience bridges for tests and controlled analysis workflows, not a malware sandbox boundary.
+
+Windows emulators accept `network="offline"` (default) or `network="live"`. Other strings raise `ValueError`, and non-string values raise `TypeError`. In offline mode, guest sockets use an in-process loopback that cannot reach the host network, DNS queries resolve to no addresses, and the Steam bridge is disabled. `port_mappings` apply only in live mode. A `dns_resolver` callback that returns `None` falls back to the resolver of the selected mode, which resolves to no addresses in offline mode.
+
+`app.callbacks.on_socket_activity` receives `(action, address)` when the guest calls `connect`, `bind`, or `sendto`. The action is one of `"connect"`, `"bind"`, or `"sendto"`, and the address is a string like `"127.0.0.1:28970"` with the port as the guest sees it.
 
 ## Choosing backend
 

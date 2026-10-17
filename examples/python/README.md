@@ -1,6 +1,7 @@
 # Python examples
 
 `examples/python/basic_usage.py` shows how to run the bundled Windows `test-sample.exe`.
+It passes `network="live"` because the sample resolves `google.com`. The default, `network="offline"`, gives the guest no host network access.
 `examples/python/linux_true.py` shows how to run `/bin/true` with the Linux bindings.
 
 Install the package:

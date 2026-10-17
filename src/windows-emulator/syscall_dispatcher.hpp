@@ -102,10 +102,17 @@ namespace sogen
         }
     };
 
+    enum class window_create_phase : uint8_t
+    {
+        cbt_create,
+        creation_messages,
+    };
+
     struct window_create_state : completion_state
     {
         hwnd handle{};
         hwnd parent_handle{};
+        window_create_phase phase{window_create_phase::cbt_create};
 
         emulator_stack_allocation min_max_info_alloc{};
         emulator_stack_allocation window_rect_alloc{};
@@ -118,6 +125,8 @@ namespace sogen
         {
             buffer.write(this->handle);
             buffer.write(this->parent_handle);
+            buffer.write(this->phase);
+
             buffer.write(this->min_max_info_alloc);
             buffer.write(this->window_rect_alloc);
             buffer.write(this->create_struct_alloc);
@@ -129,6 +138,8 @@ namespace sogen
         {
             buffer.read(this->handle);
             buffer.read(this->parent_handle);
+            buffer.read(this->phase);
+
             buffer.read(this->min_max_info_alloc);
             buffer.read(this->window_rect_alloc);
             buffer.read(this->create_struct_alloc);
@@ -259,6 +270,36 @@ namespace sogen
             buffer.read(this->changed_window_pos_alloc);
             buffer.read_vector(this->message_queue);
             buffer.read(this->position_applied);
+        }
+    };
+
+    struct deferred_window_position_state : window_position_state
+    {
+        std::vector<EMU_WINDOWPOS> positions{};
+        size_t next_position{};
+        hwnd current_window{};
+
+      private:
+        void serialize_object(utils::buffer_serializer& buffer) const override
+        {
+            buffer.write(this->window_pos_alloc);
+            buffer.write(this->changed_window_pos_alloc);
+            buffer.write_vector(this->message_queue);
+            buffer.write(this->position_applied);
+            buffer.write_vector(this->positions);
+            buffer.write(this->next_position);
+            buffer.write(this->current_window);
+        }
+
+        void deserialize_object(utils::buffer_deserializer& buffer) override
+        {
+            buffer.read(this->window_pos_alloc);
+            buffer.read(this->changed_window_pos_alloc);
+            buffer.read_vector(this->message_queue);
+            buffer.read(this->position_applied);
+            buffer.read_vector(this->positions);
+            buffer.read(this->next_position);
+            buffer.read(this->current_window);
         }
     };
 

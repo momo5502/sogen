@@ -49,6 +49,7 @@ namespace sogen
             io_completion completion{};
             completion.name = std::move(name);
             completion.number_of_concurrent_threads = number_of_concurrent_threads;
+            completion.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
 
             io_completion_handle.write(c.proc.io_completions.store(std::move(completion)));
             return STATUS_SUCCESS;
@@ -148,7 +149,7 @@ namespace sogen
             }
 
             io_completion_message message{};
-            if (io_completion_wait::dequeue_io_completion_message(c.proc, io_completion_handle, message))
+            if (io_completion_wait::dequeue_io_completion_message(c.win_emu, io_completion_handle, message))
             {
                 key_context.write_if_valid(message.key_context);
                 apc_context.write_if_valid(message.apc_context);
@@ -209,7 +210,7 @@ namespace sogen
             }
 
             const auto removed =
-                io_completion_wait::dequeue_io_completion_entries(c.proc, io_completion_handle, io_completion_information, count);
+                io_completion_wait::dequeue_io_completion_entries(c.win_emu, io_completion_handle, io_completion_information, count);
             num_entries_removed.write_if_valid(removed);
             if (removed > 0)
             {
@@ -282,6 +283,7 @@ namespace sogen
 
             wait_completion_packet packet{};
             packet.name = std::move(name);
+            packet.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
             wait_packet_handle.write(c.proc.wait_completion_packets.store(std::move(packet)));
             return STATUS_SUCCESS;
         }
@@ -318,7 +320,9 @@ namespace sogen
                 switch (resolved_target_handle.value.type)
                 {
                 case handle_types::process:
-                    return resolved_target_handle == GUEST_PROCESS_HANDLE;
+                    return c.proc.processes.get(resolved_target_handle) != nullptr;
+                case handle_types::managed_thread:
+                    return c.proc.managed_threads.get(resolved_target_handle) != nullptr;
                 case handle_types::event:
                     return c.proc.events.get(resolved_target_handle) != nullptr;
                 case handle_types::thread:
@@ -369,7 +373,7 @@ namespace sogen
             wait_packet->io_status_information = io_status_information;
             wait_packet->associated = true;
 
-            io_completion_wait::materialize_signaled_wait_packets(c.proc, io_completion_handle);
+            io_completion_wait::materialize_signaled_wait_packets(c.win_emu, io_completion_handle);
             already_signaled.write_if_valid(wait_packet->queued_completion ? TRUE : FALSE);
 
             return STATUS_SUCCESS;

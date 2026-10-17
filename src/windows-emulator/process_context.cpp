@@ -1,8 +1,10 @@
 #include "std_include.hpp"
 #include "process_context.hpp"
+#include "code_page.hpp"
 
 #include "emulator_utils.hpp"
 #include "registry/registry_utils.hpp"
+#include "sxs/activation_context.hpp"
 #include "syscall_utils.hpp"
 #include "windows_emulator.hpp"
 #include "version/windows_version_manager.hpp"
@@ -83,6 +85,38 @@ namespace sogen
             }
 
             return emulator_allocator{memory, base, size};
+        }
+
+        void append_command_line_argument(std::u16string& command_line, const std::u16string_view argument)
+        {
+            if (!argument.empty() && argument.find_first_of(u" \t\"") == std::u16string_view::npos)
+            {
+                command_line.append(argument);
+                return;
+            }
+
+            command_line.push_back(u'"');
+            size_t backslashes{};
+            for (const auto character : argument)
+            {
+                if (character == u'\\')
+                {
+                    ++backslashes;
+                    continue;
+                }
+                if (character == u'"')
+                {
+                    command_line.append(backslashes * 2 + 1, u'\\');
+                }
+                else
+                {
+                    command_line.append(backslashes, u'\\');
+                }
+                backslashes = 0;
+                command_line.push_back(character);
+            }
+            command_line.append(backslashes * 2, u'\\');
+            command_line.push_back(u'"');
         }
 
         void setup_gdt(x86_64_emulator& emu, memory_manager& memory)
@@ -228,8 +262,8 @@ namespace sogen
             env_map[u"SystemDrive"] = system_drive;
             env_map[u"SystemRoot"] = system_root;
             env_map[u"SystemTemp"] = system_temp;
-            env_map[u"TMP"] = user_profile + u"\\AppData\\Temp";
-            env_map[u"TEMP"] = user_profile + u"\\AppData\\Temp";
+            env_map[u"TMP"] = user_profile + u"\\AppData\\Local\\Temp";
+            env_map[u"TEMP"] = user_profile + u"\\AppData\\Local\\Temp";
             env_map[u"USERPROFILE"] = user_profile;
 
             for (const auto& [key, value] : app_settings.environment)
@@ -252,11 +286,19 @@ namespace sogen
 
             return env_map;
         }
+
+        // RtlpWaitOnCriticalSection waits PEB->CriticalSectionTimeout; zero times out immediately instead of blocking. Windows seeds it
+        // from MmCritsectTimeout (30 days).
+        constexpr auto critical_section_timeout = static_cast<uint64_t>(-25920000000000LL);
     }
 
     void process_context::setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
                                 const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32)
     {
+        this->process_id = app_settings.process_id;
+        this->initial_thread_id = app_settings.thread_id;
+        this->processes.get(GUEST_PROCESS_HANDLE)->id = this->process_id;
+
         auto& emu = win_emu.emu();
         const auto& version = win_emu.version;
         const auto& fake_env = win_emu.fake_env;
@@ -323,18 +365,15 @@ namespace sogen
 
             const auto application_str = app_settings.application.u16string();
 
-            std::u16string command_line = u"\"" + application_str + u"\"";
-
-            for (const auto& arg : app_settings.arguments)
+            const auto& argument0 = app_settings.argument0.empty() ? application_str : app_settings.argument0;
+            auto command_line = app_settings.command_line.value_or(std::u16string{});
+            if (!app_settings.command_line)
             {
-                command_line.push_back(u' ');
-                if (arg.find(' ') != std::string::npos)
+                append_command_line_argument(command_line, argument0);
+                for (const auto& arg : app_settings.arguments)
                 {
-                    command_line.append(u"\"" + arg + u"\"");
-                }
-                else
-                {
-                    command_line.append(arg);
+                    command_line.push_back(u' ');
+                    append_command_line_argument(command_line, arg);
                 }
             }
 
@@ -363,6 +402,7 @@ namespace sogen
             p.NumberOfHeaps = 0x00000000;
             p.MaximumNumberOfHeaps = 0x00000010;
             p.NumberOfProcessors = fake_env.number_of_processors;
+            p.CriticalSectionTimeout.QuadPart = critical_section_timeout;
             p.ImageSubsystemMajorVersion = 6;
 
             // TODO: p.SessionId = 1;
@@ -374,6 +414,9 @@ namespace sogen
             // p.AnsiCodePageData = allocator.reserve<CPTABLEINFO>().value();
             // p.OemCodePageData = allocator.reserve<CPTABLEINFO>().value();
             p.UnicodeCaseTableData = allocator.reserve<NLSTABLEINFO>().value();
+
+            // ntdll only requests the l_intl.nls case tables (NtGetNlsSectionPtr type 14) when this is non-zero.
+            p.UseCaseMapping = 1;
         });
 
         if (this->is_wow64_process)
@@ -456,6 +499,7 @@ namespace sogen
                 p32.NumberOfHeaps = 0;
                 p32.MaximumNumberOfHeaps = 0x10;
                 p32.NumberOfProcessors = fake_env.number_of_processors;
+                p32.CriticalSectionTimeout.QuadPart = critical_section_timeout;
                 p32.ImageSubsystemMajorVersion = 6;
 
                 // TODO: p32.SessionId = 1;
@@ -467,6 +511,7 @@ namespace sogen
                 // Initialize NLS tables for 32-bit processes
                 // These need to be in 32-bit addressable space
                 p32.UnicodeCaseTableData = static_cast<uint32_t>(allocator.reserve<NLSTABLEINFO>().value());
+                p32.UseCaseMapping = 1;
 
                 // TODO: Initialize other PEB32 fields as needed
             });
@@ -474,6 +519,22 @@ namespace sogen
             if (ntdll32 != nullptr)
             {
                 this->rtl_user_thread_start32 = ntdll32->find_export("RtlUserThreadStart");
+            }
+        }
+
+        const auto preferred_language =
+            registry_utils::read_registry_string(win_emu.registry, R"(\Registry\User\Control Panel\International)", "LocaleName")
+                .value_or(u"");
+        const auto activation_context = sxs::build_process_activation_context(
+            win_emu.file_sys, executable, windows_path(version.get_system_root()), u16_to_u8(preferred_language));
+        if (!activation_context.empty())
+        {
+            const auto activation_context_address = allocator.reserve(activation_context.size(), alignof(uint32_t));
+            emu.write_memory(activation_context_address, activation_context.data(), activation_context.size());
+            this->peb64.access([&](PEB64& peb) { peb.ActivationContextData = activation_context_address; });
+            if (this->peb32)
+            {
+                this->peb32->access([&](PEB32& peb) { peb.ActivationContextData = static_cast<uint32_t>(activation_context_address); });
             }
         }
 
@@ -491,6 +552,7 @@ namespace sogen
         this->instrumentation_callback = 0;
         this->zw_callback_return = ntdll.find_export("ZwCallbackReturn");
         this->gdi_default_dc_handle = 0;
+        this->gdi_memory_dc_default_bitmap_handle = 0;
         this->gdi_dc_states.clear();
         this->gdi_dc_save_states.clear();
         this->gdi_bitmap_surfaces.clear();
@@ -523,6 +585,7 @@ namespace sogen
         this->default_register_set = emu.save_registers();
 
         this->user_handles.setup(is_wow64_process);
+        initialize_user_code_page_tables(win_emu);
 
         auto [mh, monitor_obj] = this->user_handles.allocate_object<USER_MONITOR>(handle_types::monitor);
         this->default_monitor_handle = mh;
@@ -562,7 +625,7 @@ namespace sogen
             window.fnid = 0x29D;   // FNID_DESKTOP
             window.windowBand = 1; // ZBID_DESKTOP
             window.dpiContext = USER_DEFAULT_WINDOW_DPI_CONTEXT;
-            window.processId = process_context::process_id;
+            window.processId = this->process_id;
         });
 
         // Seed the shared foreground window with the desktop so the guest's client-side GetForegroundWindow
@@ -595,7 +658,7 @@ namespace sogen
                 window.rcClient = window.rcWindow;
                 window.windowBand = 1; // ZBID_DESKTOP
                 window.dpiContext = USER_DEFAULT_WINDOW_DPI_CONTEXT;
-                window.processId = process_context::process_id;
+                window.processId = this->process_id;
             });
             return handle;
         };
@@ -642,6 +705,7 @@ namespace sogen
         buffer.write(this->kusd);
 
         buffer.write(this->is_wow64_process);
+        buffer.write(this->hard_error_mode);
         buffer.write(this->ntdll_image_base);
         buffer.write(this->ldr_initialize_thunk);
         buffer.write(this->rtl_user_thread_start);
@@ -653,6 +717,8 @@ namespace sogen
         buffer.write(this->zw_callback_return);
         buffer.write(this->dispatch_client_message);
         buffer.write(this->gdi_default_dc_handle);
+        buffer.write(this->gdi_memory_dc_default_bitmap_handle);
+        buffer.write_map(this->pending_alpc_reply_views);
         buffer.write_map(this->gdi_dc_states);
         buffer.write_map(this->gdi_dc_save_states);
         buffer.write_map(this->gdi_bitmap_surfaces);
@@ -689,15 +755,20 @@ namespace sogen
         buffer.write(this->io_completions);
         buffer.write(this->wait_completion_packets);
         buffer.write(this->worker_factories);
+        buffer.write(this->jobs);
         buffer.write(this->ports);
         buffer.write(this->mutants);
         buffer.write(this->default_desktop);
         buffer.write(this->desktops);
         buffer.write(this->windows);
+        buffer.write(this->menus);
         buffer.write(this->timers);
         buffer.write(this->accelerator_tables);
+        buffer.write(this->deferred_window_position_batches);
         buffer.write(this->registry_keys);
         buffer.write(this->private_namespaces);
+        buffer.write(this->processes);
+        buffer.write(this->managed_threads);
         buffer.write_map(this->atoms);
         buffer.write_map(this->classes);
 
@@ -715,6 +786,8 @@ namespace sogen
         buffer.write(this->uuid_sequence);
 
         buffer.write_vector(this->default_register_set);
+        buffer.write(this->process_id);
+        buffer.write(this->initial_thread_id);
         buffer.write(this->spawned_thread_count);
         buffer.write(this->threads);
 
@@ -737,6 +810,7 @@ namespace sogen
         buffer.read(this->kusd);
 
         buffer.read(this->is_wow64_process);
+        buffer.read(this->hard_error_mode);
         buffer.read(this->ntdll_image_base);
         buffer.read(this->ldr_initialize_thunk);
         buffer.read(this->rtl_user_thread_start);
@@ -748,6 +822,8 @@ namespace sogen
         buffer.read(this->zw_callback_return);
         buffer.read(this->dispatch_client_message);
         buffer.read(this->gdi_default_dc_handle);
+        buffer.read(this->gdi_memory_dc_default_bitmap_handle);
+        buffer.read_map(this->pending_alpc_reply_views);
         buffer.read_map(this->gdi_dc_states);
         buffer.read_map(this->gdi_dc_save_states);
         buffer.read_map(this->gdi_bitmap_surfaces);
@@ -784,15 +860,20 @@ namespace sogen
         buffer.read(this->io_completions);
         buffer.read(this->wait_completion_packets);
         buffer.read(this->worker_factories);
+        buffer.read(this->jobs);
         buffer.read(this->ports);
         buffer.read(this->mutants);
         buffer.read(this->default_desktop);
         buffer.read(this->desktops);
         buffer.read(this->windows);
+        buffer.read(this->menus);
         buffer.read(this->timers);
         buffer.read(this->accelerator_tables);
+        buffer.read(this->deferred_window_position_batches);
         buffer.read(this->registry_keys);
         buffer.read(this->private_namespaces);
+        buffer.read(this->processes);
+        buffer.read(this->managed_threads);
         buffer.read_map(this->atoms);
         buffer.read_map(this->classes);
 
@@ -810,6 +891,8 @@ namespace sogen
         buffer.read(this->uuid_sequence);
 
         buffer.read_vector(this->default_register_set);
+        buffer.read(this->process_id);
+        buffer.read(this->initial_thread_id);
         buffer.read(this->spawned_thread_count);
 
         for (auto& thread : this->threads | std::views::values)
@@ -838,6 +921,11 @@ namespace sogen
     void process_context::restore_after_state_restore(windows_emulator& win_emu)
     {
         restore_windows_after_state_restore(win_emu);
+
+        for (auto& device : this->devices | std::views::values)
+        {
+            device.restore_after_state_restore(win_emu);
+        }
 
         for (auto& port : this->ports | std::views::values)
         {
@@ -953,10 +1041,10 @@ namespace sogen
     {
         switch (handle.value.type)
         {
-        case handle_types::process: {
-            static dummy_handle_store<handle_types::process, emulator_process> handle_store{GUEST_PROCESS_HANDLE};
-            return &handle_store;
-        }
+        case handle_types::process:
+            return &this->processes;
+        case handle_types::managed_thread:
+            return &this->managed_threads;
         case handle_types::thread:
             return &threads;
         case handle_types::event:
@@ -973,6 +1061,8 @@ namespace sogen
             return &wait_completion_packets;
         case handle_types::worker_factory:
             return &worker_factories;
+        case handle_types::job:
+            return &jobs;
         case handle_types::registry:
             return &registry_keys;
         case handle_types::mutant:
@@ -987,6 +1077,8 @@ namespace sogen
             return &sections;
         case handle_types::private_namespace:
             return &private_namespaces;
+        case handle_types::deferred_window_positions:
+            return &deferred_window_position_batches;
         default:
             return nullptr;
         }
@@ -1099,8 +1191,7 @@ namespace sogen
     handle process_context::create_thread(memory_manager& memory, const uint64_t start_address, const uint64_t argument,
                                           const uint64_t stack_size, const uint32_t create_flags, const bool initial_thread)
     {
-        // Thread ids are 8, 12, 16, ... (the process keeps id 4); all 4-aligned like real Windows.
-        const uint32_t thread_id = (++this->spawned_thread_count + 1) * 4;
+        const uint32_t thread_id = this->initial_thread_id + this->spawned_thread_count++ * 4;
         emulator_thread t{memory, *this, start_address, argument, stack_size, create_flags, thread_id, initial_thread};
         auto [h, thr] = this->threads.store_and_get(std::move(t));
         this->thread_handles_by_id[thr->id] = h;

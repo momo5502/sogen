@@ -2,6 +2,7 @@
 #include "../emulator_utils.hpp"
 #include "../io_completion_wait.hpp"
 #include "../syscall_utils.hpp"
+#include "../devices/named_pipe.hpp"
 
 namespace sogen
 {
@@ -12,6 +13,9 @@ namespace sogen
         NTSTATUS handle_NtReleaseMutant(const syscall_context& c, handle mutant_handle, emulator_object<LONG> previous_count);
         NTSTATUS handle_NtReleaseSemaphore(const syscall_context& c, handle semaphore_handle, ULONG release_count,
                                            emulator_object<LONG> previous_count);
+
+        constexpr ULONG duplicate_close_source = 1;
+        constexpr ULONG duplicate_same_access = 2;
 
         NTSTATUS handle_NtClose(const syscall_context& c, const handle h)
         {
@@ -24,9 +28,16 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            if (value.is_pseudo)
+            if (value.is_pseudo || h == GUEST_PROCESS_HANDLE)
             {
                 return STATUS_SUCCESS;
+            }
+
+            auto* handle_store = c.proc.get_handle_store(h);
+            const auto* object = handle_store ? handle_store->get_object(h) : nullptr;
+            if (object && object->protect_from_close)
+            {
+                return STATUS_HANDLE_NOT_CLOSABLE;
             }
 
             if (value.type == handle_types::wait_completion_packet)
@@ -44,6 +55,37 @@ namespace sogen
                 if (factory && factory->ref_count == 1)
                 {
                     io_completion_wait::release_handle_reference(c.proc, factory->io_completion_handle);
+                }
+            }
+
+            if (value.type == handle_types::device)
+            {
+                auto* device = c.proc.devices.get(h);
+                if (device && device->ref_count == 1)
+                {
+                    if (device->is_last_file_reference() && device->get_internal_device<named_pipe>())
+                    {
+                        device->cancel_io(c.win_emu, 0);
+                    }
+                    device->release_references(c.proc);
+                }
+            }
+
+            if (value.type == handle_types::port)
+            {
+                const auto* port = c.proc.ports.get(h);
+                if (port && port->ref_count == 1)
+                {
+                    port->get_internal_port()->release_sections(c.win_emu);
+                    const auto port_key = static_cast<uint32_t>(h.bits & 0xFFFFFFFF);
+                    if (const auto views = c.proc.pending_alpc_reply_views.find(port_key); views != c.proc.pending_alpc_reply_views.end())
+                    {
+                        for (const auto& view : views->second)
+                        {
+                            c.win_emu.memory.release_memory(view[0], static_cast<size_t>(view[1]));
+                        }
+                        c.proc.pending_alpc_reply_views.erase(views);
+                    }
                 }
             }
 
@@ -78,7 +120,6 @@ namespace sogen
                 }
             }
 
-            auto* handle_store = c.proc.get_handle_store(h);
             if (handle_store && handle_store->erase(h))
             {
                 if (section_backing_address != 0)
@@ -93,7 +134,7 @@ namespace sogen
 
         NTSTATUS handle_NtDuplicateObject(const syscall_context& c, const handle source_process_handle, const handle source_handle,
                                           const handle target_process_handle, const emulator_object<handle> target_handle,
-                                          const ACCESS_MASK /*desired_access*/, const ULONG /*handle_attributes*/, const ULONG /*options*/)
+                                          const ACCESS_MASK desired_access, const ULONG handle_attributes, const ULONG options)
         {
             if (!c.proc.is_current_process_handle(source_process_handle) || !c.proc.is_current_process_handle(target_process_handle))
             {
@@ -109,6 +150,20 @@ namespace sogen
             }
 
             auto* store = c.proc.get_handle_store(resolved_source_handle);
+            if (const auto* source = c.proc.devices.get(resolved_source_handle))
+            {
+                if (source->get_internal_device<named_pipe>())
+                {
+                    auto duplicate = source->duplicate((options & duplicate_same_access) ? source->granted_access : desired_access,
+                                                       (handle_attributes & OBJ_INHERIT) != 0);
+                    target_handle.write(c.proc.devices.store(std::move(duplicate)));
+                    if (options & duplicate_close_source)
+                    {
+                        return handle_NtClose(c, resolved_source_handle);
+                    }
+                    return STATUS_SUCCESS;
+                }
+            }
             if (!store)
             {
                 return STATUS_NOT_SUPPORTED;
@@ -145,6 +200,7 @@ namespace sogen
             case handle_types::port:
                 return u"Port";
             case handle_types::thread:
+            case handle_types::managed_thread:
                 return u"Thread";
             case handle_types::registry:
                 return u"Registry";
@@ -164,6 +220,8 @@ namespace sogen
                 return u"WaitCompletionPacket";
             case handle_types::worker_factory:
                 return u"TpWorkerFactory";
+            case handle_types::job:
+                return u"Job";
             case handle_types::private_namespace:
                 return u"Directory";
             case handle_types::process:
@@ -293,6 +351,16 @@ namespace sogen
                     device_path = factory->name;
                     break;
                 }
+                case handle_types::job: {
+                    const auto* job = c.proc.jobs.get(effective_handle);
+                    if (!job)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    device_path = job->name;
+                    break;
+                }
                 case handle_types::private_namespace: {
                     const auto* ns = c.proc.private_namespaces.get(effective_handle);
                     if (!ns)
@@ -303,7 +371,7 @@ namespace sogen
                     break;
                 }
                 case handle_types::process: {
-                    if (effective_handle != GUEST_PROCESS_HANDLE)
+                    if (!c.proc.processes.get(effective_handle))
                     {
                         return STATUS_INVALID_HANDLE;
                     }
@@ -313,6 +381,14 @@ namespace sogen
                 case handle_types::thread: {
                     const auto* thread = c.proc.threads.get(effective_handle);
                     if (!thread)
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+
+                    break;
+                }
+                case handle_types::managed_thread: {
+                    if (!c.proc.managed_threads.get(effective_handle))
                     {
                         return STATUS_INVALID_HANDLE;
                     }
@@ -410,11 +486,13 @@ namespace sogen
 
             if (object_information_class == ObjectHandleFlagInformation)
             {
-                return handle_query<OBJECT_HANDLE_FLAG_INFORMATION>(c.emu, object_information, object_information_length, return_length,
-                                                                    [&](OBJECT_HANDLE_FLAG_INFORMATION& info) {
-                                                                        info.Inherit = 0;
-                                                                        info.ProtectFromClose = 0;
-                                                                    });
+                return handle_query<OBJECT_HANDLE_FLAG_INFORMATION>(
+                    c.emu, object_information, object_information_length, return_length, [&](OBJECT_HANDLE_FLAG_INFORMATION& info) {
+                        auto* store = c.proc.get_handle_store(effective_handle);
+                        const auto* object = store ? store->get_object(effective_handle) : nullptr;
+                        info.Inherit = object && object->inherit;
+                        info.ProtectFromClose = object && object->protect_from_close;
+                    });
             }
 
             c.win_emu.log.error("Unsupported object info class: %X\n", object_information_class);
@@ -498,9 +576,20 @@ namespace sogen
 
             switch (h.value.type)
             {
+            case handle_types::device: {
+                const auto* container = c.proc.devices.get(h);
+                if (!container)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+                return container->get_internal_device<named_pipe>() ? STATUS_SUCCESS : STATUS_OBJECT_TYPE_MISMATCH;
+            }
             case handle_types::process:
                 // The synthetic Steam process never signals, so a liveness wait times out ("alive").
-                return (h == GUEST_PROCESS_HANDLE || h == STEAM_PROCESS_HANDLE) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+                return (h == STEAM_PROCESS_HANDLE || c.proc.processes.get(h)) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+
+            case handle_types::managed_thread:
+                return validate_handle_in_store(c.proc.managed_threads);
 
             case handle_types::file:
                 if (h.value.is_pseudo)
@@ -806,22 +895,22 @@ namespace sogen
             }
 
             const auto effective_handle = c.proc.resolve_object_pseudo_handle(handle, c.vcpu.active_thread);
-            if (!c.proc.get_handle_store(effective_handle))
+            auto* store = c.proc.get_handle_store(effective_handle);
+            auto* object = store ? store->get_object(effective_handle) : nullptr;
+            if (object == nullptr)
             {
                 return STATUS_INVALID_HANDLE;
             }
 
-            // Validate the buffer, then drop the flags: NtQueryObject reports both
-            // as 0 because neither is tracked per handle. Failing instead breaks
-            // callers that only set them defensively -- winhttp aborts session
-            // creation with ERROR_NOT_SUPPORTED and returns a NULL session.
             const emulator_object<OBJECT_HANDLE_FLAG_INFORMATION> info{c.emu, object_information};
-            (void)info.read();
+            const auto flags = info.read();
+            object->inherit = flags.Inherit != 0;
+            object->protect_from_close = flags.ProtectFromClose != 0;
 
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, const handle /*h*/, const SECURITY_INFORMATION security_information,
+        NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, const handle, const SECURITY_INFORMATION security_information,
                                               const emulator_pointer security_descriptor, const ULONG length,
                                               const emulator_object<ULONG> length_needed)
         {
@@ -831,13 +920,8 @@ namespace sogen
                 return STATUS_INVALID_PARAMETER;
             }
 
-            // Owner SID: S-1-5-32-544 (Administrators)
-            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-            const uint8_t owner_sid[] = {0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x20, 0x00, 0x00, 0x00, 0x20, 0x02, 0x00, 0x00};
-
-            // Group SID: S-1-5-18 (Local System)
-            // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-            const uint8_t group_sid[] = {0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x12, 0x00, 0x00, 0x00};
+            const auto& owner_sid = c.proc.sid;
+            const auto& group_sid = c.proc.sid;
 
             // DACL structure
             // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
@@ -860,12 +944,12 @@ namespace sogen
 
             if (security_information & OWNER_SECURITY_INFORMATION)
             {
-                total_size += sizeof(owner_sid);
+                total_size += static_cast<ULONG>(owner_sid.size());
             }
 
             if (security_information & GROUP_SECURITY_INFORMATION)
             {
-                total_size += sizeof(group_sid);
+                total_size += static_cast<ULONG>(group_sid.size());
             }
 
             if (security_information & DACL_SECURITY_INFORMATION)
@@ -899,15 +983,15 @@ namespace sogen
             if (security_information & OWNER_SECURITY_INFORMATION)
             {
                 sd.Owner = current_offset;
-                c.emu.write_memory(security_descriptor + current_offset, owner_sid);
-                current_offset += sizeof(owner_sid);
+                c.emu.write_memory(security_descriptor + current_offset, owner_sid.data(), owner_sid.size());
+                current_offset += static_cast<ULONG>(owner_sid.size());
             }
 
             if (security_information & GROUP_SECURITY_INFORMATION)
             {
                 sd.Group = current_offset;
-                c.emu.write_memory(security_descriptor + current_offset, group_sid);
-                current_offset += sizeof(group_sid);
+                c.emu.write_memory(security_descriptor + current_offset, group_sid.data(), group_sid.size());
+                current_offset += static_cast<ULONG>(group_sid.size());
             }
 
             if (security_information & DACL_SECURITY_INFORMATION)

@@ -19,8 +19,12 @@ if (${MINGW_WINDRES_COMPILER} STREQUAL "MINGW_WINDRES_COMPILER-NOTFOUND")
     message(FATAL_ERROR "mingw-w64 compiler not found: ${MINGW_WINDRES_COMPILER_NAME}")
 endif()
 
-# this macro is needed when compile `libwindows-emulator.a`
-add_compile_definitions(NTDDI_VERSION=NTDDI_WIN10_MN)
+# Keep WINVER aligned with NTDDI_VERSION; MinGW gates related declarations on both.
+add_compile_definitions(
+    WINVER=0x0A00
+    _WIN32_WINNT=0x0A00
+    NTDDI_VERSION=NTDDI_WIN10_MN
+)
 
 # set the compiler
 set(CMAKE_C_COMPILER  ${MINGW_C_COMPILER})

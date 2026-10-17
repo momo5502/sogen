@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace sogen
 {
@@ -103,6 +104,16 @@ namespace sogen
 
         virtual void present_surface(const hwnd /*window*/, const ui_surface_desc& /*surface*/)
         {
+        }
+
+        virtual std::vector<std::string> vulkan_instance_extensions()
+        {
+            return {};
+        }
+
+        virtual uint64_t create_vulkan_surface(const hwnd /*window*/, const uint64_t /*instance*/)
+        {
+            return 0;
         }
 
         // Warp the host cursor so it tracks a guest SetCursorPos. Without this, the next host mouse-motion

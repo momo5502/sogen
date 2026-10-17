@@ -16,6 +16,7 @@ def make_app(app):
 command = [
     os.path.join(os.getcwd(), make_app(application)),
     '-c',
+    '--network', 'live',
     '-e', emulator_root,
     '-p', virtual_sample, analysis_sample,
     virtual_sample

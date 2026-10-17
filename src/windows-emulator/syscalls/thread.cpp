@@ -11,6 +11,22 @@ namespace sogen
 
     namespace syscalls
     {
+        namespace
+        {
+            void set_thread_impersonation_token(emulator_thread& thread, const handle token)
+            {
+                thread.impersonation_token = token;
+                if (thread.teb64)
+                {
+                    thread.teb64->access([&](TEB64& teb) { teb.IsImpersonating = token != 0; });
+                }
+                if (thread.teb32)
+                {
+                    thread.teb32->access([&](TEB32& teb) { teb.IsImpersonating = token != 0; });
+                }
+            }
+        }
+
         NTSTATUS handle_NtSetInformationThread(const syscall_context& c, const handle thread_handle, const THREADINFOCLASS info_class,
                                                const uint64_t thread_information, const uint32_t thread_information_length)
         {
@@ -196,7 +212,12 @@ namespace sogen
                 }
 
                 const emulator_object<handle> info{c.emu, thread_information};
-                info.write(DUMMY_IMPERSONATION_TOKEN);
+                const auto token = info.read();
+                if (token != 0 && token != DUMMY_IMPERSONATION_TOKEN && token != ANONYMOUS_IMPERSONATION_TOKEN)
+                {
+                    return token == CURRENT_PROCESS_TOKEN ? STATUS_BAD_TOKEN_TYPE : STATUS_INVALID_HANDLE;
+                }
+                set_thread_impersonation_token(*thread, token);
 
                 return STATUS_SUCCESS;
             }
@@ -264,6 +285,44 @@ namespace sogen
                                                  const uint64_t thread_information, const uint32_t thread_information_length,
                                                  const emulator_object<uint32_t> return_length)
         {
+            if (const auto* managed = c.proc.managed_threads.get(thread_handle))
+            {
+                if (info_class != ThreadBasicInformation || !c.win_emu.processes())
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                if (return_length)
+                {
+                    return_length.write(sizeof(THREAD_BASIC_INFORMATION64));
+                }
+                if (thread_information_length < sizeof(THREAD_BASIC_INFORMATION64))
+                {
+                    return STATUS_BUFFER_OVERFLOW;
+                }
+
+                const auto status = c.win_emu.processes()->exit_status(managed->process);
+                if (!status)
+                {
+                    return STATUS_INVALID_HANDLE;
+                }
+
+                NTSTATUS exit_status = STATUS_PENDING;
+                if (status.status)
+                {
+                    exit_status = status.status->kind == process_exit_kind::runtime_failure ? STATUS_UNSUCCESSFUL
+                                                                                            : static_cast<NTSTATUS>(status.status->code);
+                }
+
+                const emulator_object<THREAD_BASIC_INFORMATION64> info{c.emu, thread_information};
+                info.access([&](THREAD_BASIC_INFORMATION64& value) {
+                    value = {};
+                    value.ExitStatus = exit_status;
+                    value.ClientId = {.UniqueProcess = managed->process_id, .UniqueThread = managed->thread_id};
+                });
+                return STATUS_SUCCESS;
+            }
+
             const auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
 
             if (!thread)
@@ -272,6 +331,26 @@ namespace sogen
             }
 
             emulator_thread& cur_emulator_thread = c.thread();
+
+            if (info_class == ThreadIsIoPending)
+            {
+                if (thread_information_length != sizeof(ULONG))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                if (thread_information % alignof(ULONG) != 0)
+                {
+                    return STATUS_DATATYPE_MISALIGNMENT;
+                }
+                const auto pending = std::ranges::any_of(c.proc.devices | std::views::values,
+                                                         [thread](const auto& device) { return device.has_pending_io(thread->id); });
+                const emulator_object<ULONG> info{c.emu, thread_information};
+                if (!info.try_write(pending) || (return_length && !return_length.try_write(sizeof(ULONG))))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
+                return STATUS_SUCCESS;
+            }
 
             if (info_class == ThreadWow64Context)
             {
@@ -506,11 +585,33 @@ namespace sogen
 
             const auto id = client_id.read();
 
-            for (auto& [h_val, t] : c.proc.threads)
+            if (id.UniqueProcess == 0 || id.UniqueProcess == c.proc.process_id)
             {
-                if (t.id == id.UniqueThread)
+                for (auto& [h_val, t] : c.proc.threads)
                 {
-                    thread_handle.write(c.proc.threads.make_handle(h_val));
+                    if (t.id == id.UniqueThread)
+                    {
+                        const auto handle = c.proc.threads.make_handle(h_val);
+                        if (!c.proc.threads.duplicate(handle))
+                        {
+                            return STATUS_INVALID_HANDLE;
+                        }
+                        thread_handle.write(handle);
+                        return STATUS_SUCCESS;
+                    }
+                }
+            }
+
+            for (auto& [h_val, thread] : c.proc.managed_threads)
+            {
+                if (thread.thread_id == id.UniqueThread && (id.UniqueProcess == 0 || thread.process_id == id.UniqueProcess))
+                {
+                    const auto handle = c.proc.managed_threads.make_handle(h_val);
+                    if (!c.proc.managed_threads.duplicate(handle))
+                    {
+                        return STATUS_INVALID_HANDLE;
+                    }
+                    thread_handle.write(handle);
                     return STATUS_SUCCESS;
                 }
             }
@@ -521,12 +622,20 @@ namespace sogen
         NTSTATUS handle_NtOpenThreadToken(const syscall_context& c, const handle thread_handle, const ACCESS_MASK /*desired_access*/,
                                           const BOOLEAN /*open_as_self*/, const emulator_object<handle> token_handle)
         {
-            if (!c.proc.is_current_thread_handle(thread_handle, c.vcpu.active_thread))
+            const auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
+            if (!thread)
             {
-                return STATUS_NOT_SUPPORTED;
+                return STATUS_INVALID_HANDLE;
             }
-
-            token_handle.write(CURRENT_THREAD_TOKEN);
+            if (thread->impersonation_token == 0)
+            {
+                return STATUS_NO_TOKEN;
+            }
+            if (thread->impersonation_token == ANONYMOUS_IMPERSONATION_TOKEN)
+            {
+                return STATUS_CANT_OPEN_ANONYMOUS;
+            }
+            token_handle.write(thread->impersonation_token);
 
             return STATUS_SUCCESS;
         }
@@ -538,8 +647,31 @@ namespace sogen
             return handle_NtOpenThreadToken(c, thread_handle, desired_access, open_as_self, token_handle);
         }
 
+        NTSTATUS handle_NtImpersonateAnonymousToken(const syscall_context& c, const handle thread_handle)
+        {
+            auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
+            if (!thread)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+            set_thread_impersonation_token(*thread, ANONYMOUS_IMPERSONATION_TOKEN);
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtTerminateThread(const syscall_context& c, const handle thread_handle, const NTSTATUS exit_status)
         {
+            if (const auto* managed = c.proc.managed_threads.get(thread_handle))
+            {
+                if (!c.win_emu.processes())
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                return c.win_emu.processes()->terminate_process(managed->process, static_cast<uint32_t>(exit_status)) == process_error::none
+                           ? STATUS_SUCCESS
+                           : STATUS_INVALID_HANDLE;
+            }
+
             auto* thread = !thread_handle.bits ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
 
             if (!thread)
@@ -643,6 +775,11 @@ namespace sogen
         NTSTATUS handle_NtSuspendThread(const syscall_context& c, const handle thread_handle,
                                         const emulator_object<ULONG> previous_suspend_count)
         {
+            if (c.proc.managed_threads.get(thread_handle))
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+
             auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
 
             if (!thread)
@@ -674,6 +811,21 @@ namespace sogen
         NTSTATUS handle_NtResumeThread(const syscall_context& c, const handle thread_handle,
                                        const emulator_object<ULONG> previous_suspend_count)
         {
+            if (auto* managed = c.proc.managed_threads.get(thread_handle))
+            {
+                previous_suspend_count.write_if_valid(managed->resume_observed ? 0 : 1);
+                if (!managed->resume_observed)
+                {
+                    auto* manager = c.win_emu.processes();
+                    if (!manager || manager->resume_process(managed->process) != process_error::none)
+                    {
+                        return STATUS_UNSUCCESSFUL;
+                    }
+                }
+                managed->resume_observed = true;
+                return STATUS_SUCCESS;
+            }
+
             auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
             if (!thread)
             {
@@ -835,7 +987,7 @@ namespace sogen
 
         NTSTATUS handle_NtCreateThreadEx(const syscall_context& c, const emulator_object<handle> thread_handle,
                                          const ACCESS_MASK /*desired_access*/,
-                                         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> /*object_attributes*/,
+                                         const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                          const handle process_handle, const uint64_t start_routine, const uint64_t argument,
                                          const ULONG create_flags, const EmulatorTraits<Emu64>::SIZE_T /*zero_bits*/,
                                          const EmulatorTraits<Emu64>::SIZE_T stack_size,
@@ -889,6 +1041,7 @@ namespace sogen
             actual_stack_size = align_up(actual_stack_size, ALLOCATION_GRANULARITY);
 
             const auto h = c.proc.create_thread(c.win_emu.memory, start_routine, argument, actual_stack_size, create_flags);
+            c.proc.threads.get(h)->inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
 
             thread_handle.write(h);
 

@@ -96,6 +96,8 @@ namespace sogen
                 is_signaled = entry->signaled;
             }
 
+            is_signaled = is_signaled || event_handle == LSA_AUTHENTICATION_INITIALIZED;
+
             event_information.access([&](EVENT_BASIC_INFORMATION& info) {
                 info.EventType = type;
                 info.EventState = is_signaled ? 1 : 0;
@@ -154,6 +156,7 @@ namespace sogen
             e.type = event_type;
             e.signaled = initial_state != FALSE;
             e.name = std::move(name);
+            e.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
 
             const auto handle = c.proc.events.store(std::move(e));
             event_handle.write(handle);

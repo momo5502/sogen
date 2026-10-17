@@ -9,6 +9,10 @@
 //
 #include "windows.h"
 
+#ifdef __MINGW32__
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "resources/test-sample.manifest"
+#endif
+
 /////////////////////////////////////////////////////////////////////////////
 #undef APSTUDIO_READONLY_SYMBOLS
 

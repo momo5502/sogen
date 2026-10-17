@@ -12,7 +12,6 @@
 #include "apiset/apiset.hpp"
 #include "syscall_dispatcher.hpp"
 
-#include "network/static_socket_factory.hpp"
 #include "memory_permission_ext.hpp"
 
 namespace sogen
@@ -626,28 +625,24 @@ namespace sogen
             return std::make_unique<utils::clock>();
         }
 
-        std::unique_ptr<network::dns_lookup> get_dns_lookup(emulator_interfaces& interfaces)
+        std::unique_ptr<network::dns_lookup> get_dns_lookup(emulator_interfaces& interfaces, const network::network_mode mode)
         {
             if (interfaces.dns_lookup)
             {
                 return std::move(interfaces.dns_lookup);
             }
 
-            return std::make_unique<network::dns_lookup>();
+            return network::create_dns_lookup(mode);
         }
 
-        std::unique_ptr<network::socket_factory> get_socket_factory(emulator_interfaces& interfaces)
+        std::unique_ptr<network::socket_factory> get_socket_factory(emulator_interfaces& interfaces, const network::network_mode mode)
         {
             if (interfaces.socket_factory)
             {
                 return std::move(interfaces.socket_factory);
             }
 
-#ifdef OS_EMSCRIPTEN
-            return network::create_static_socket_factory();
-#else
-            return std::make_unique<network::socket_factory>();
-#endif
+            return network::create_socket_factory(mode);
         }
 
         std::unique_ptr<ui_backend> get_ui_backend(emulator_interfaces& interfaces)
@@ -668,6 +663,27 @@ namespace sogen
             }
 
             return create_default_audio_backend();
+        }
+
+        std::unique_ptr<crypt_protect_backend> get_crypt_protect_backend(emulator_interfaces& interfaces,
+                                                                         const std::filesystem::path& emulation_root)
+        {
+            if (interfaces.crypt_protect)
+            {
+                return std::move(interfaces.crypt_protect);
+            }
+
+            return create_default_crypt_protect_backend(emulation_root);
+        }
+
+        std::unique_ptr<console_backend> get_console_backend(emulator_interfaces& interfaces)
+        {
+            if (interfaces.console)
+            {
+                return std::move(interfaces.console);
+            }
+
+            return create_default_console_backend();
         }
 
         // The guest must see at least as many logical processors as there are vCPUs, otherwise a
@@ -693,11 +709,18 @@ namespace sogen
     windows_emulator::windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings,
                                        emulator_callbacks callbacks, emulator_interfaces interfaces)
         : emu_(std::move(emu)),
+          use_native_timestamp_counter_(!interfaces.clock && !settings.use_relative_time &&
+                                        this->emu_->supports_native_timestamp_counter()),
           clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
-          dns_lookup_(get_dns_lookup(interfaces)),
-          socket_factory_(get_socket_factory(interfaces)),
+          network_mode_(settings.network),
+          dns_lookup_(get_dns_lookup(interfaces, settings.network)),
+          socket_factory_(get_socket_factory(interfaces, settings.network)),
           ui_backend_(get_ui_backend(interfaces)),
           audio_backend_(get_audio_backend(interfaces)),
+          crypt_protect_backend_(get_crypt_protect_backend(
+              interfaces, settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root))),
+          process_manager_(interfaces.processes),
+          console_backend_(get_console_backend(interfaces)),
           emulation_root{settings.emulation_root.empty() ? settings.emulation_root : absolute(settings.emulation_root)},
           fake_env(effective_fake_env(settings, static_cast<uint32_t>(this->emu_->vcpu_count()))),
           callbacks(std::move(callbacks)),
@@ -860,7 +883,6 @@ namespace sogen
             }
             else
             {
-                // Only timed waits remain; nothing host-side wakes sooner than wall-clock, so don't busy-spin.
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
 
@@ -1095,6 +1117,11 @@ namespace sogen
             auto& acting = vcpu.cpu;
             this->callbacks.on_rdtscp();
 
+            if (this->use_native_timestamp_counter_)
+            {
+                return instruction_hook_continuation::run_instruction;
+            }
+
             const auto ticks = this->clock_->timestamp_counter();
             acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
             acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
@@ -1112,6 +1139,11 @@ namespace sogen
             const scoped_dispatch dispatch(*this, vcpu);
             auto& acting = vcpu.cpu;
             this->callbacks.on_rdtsc();
+
+            if (this->use_native_timestamp_counter_)
+            {
+                return instruction_hook_continuation::run_instruction;
+            }
 
             const auto ticks = this->clock_->timestamp_counter();
             acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
@@ -1364,6 +1396,7 @@ namespace sogen
 
         if (this->vcpu_count_ > 1)
         {
+            this->ui_backend_->pump_events();
             // One worker thread per vCPU; this thread pumps UI events until the run ends.
             active_workers = this->vcpu_count_;
             workers.reserve(this->vcpu_count_);
@@ -1768,6 +1801,9 @@ namespace sogen
         buffer.register_factory<window>([this] {
             return window{this->emu()}; //
         });
+
+        buffer.register_factory<menu>([this] { return menu{this->emu()}; });
+        buffer.register_factory<accelerator_table>([this] { return accelerator_table{this->emu()}; });
     }
 
     void windows_emulator::serialize(utils::buffer_serializer& buffer) const
@@ -1814,6 +1850,7 @@ namespace sogen
         this->clear_section_first_execution_hooks();
         this->ui().reset();
         this->audio().stop();
+        this->console().reset();
 
         // Match raw serialize() above; do not use backend snapshot mode here.
         this->emu().deserialize_state(buffer, false);
@@ -1870,6 +1907,7 @@ namespace sogen
         this->clear_section_first_execution_hooks();
         this->ui().reset();
         this->audio().stop();
+        this->console().reset();
 
         this->emu().deserialize_state(buffer, false);
         this->memory.deserialize_memory_state(buffer, false);

@@ -36,6 +36,9 @@ namespace sogen
             private_namespace,
             process,
             accelerator_table,
+            managed_thread,
+            job,
+            deferred_window_positions,
         };
     };
 
@@ -150,16 +153,22 @@ namespace sogen
         virtual ~ref_counted_object() = default;
 
         uint32_t ref_count{1};
+        bool inherit{};
+        bool protect_from_close{};
 
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->ref_count);
+            buffer.write(this->inherit);
+            buffer.write(this->protect_from_close);
             this->serialize_object(buffer);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
         {
             buffer.read(this->ref_count);
+            buffer.read(this->inherit);
+            buffer.read(this->protect_from_close);
             this->deserialize_object(buffer);
         }
 
@@ -182,6 +191,11 @@ namespace sogen
         virtual ~generic_handle_store() = default;
         virtual bool erase(handle h) = 0;
         virtual std::optional<handle> duplicate(handle h) = 0;
+
+        virtual ref_counted_object* get_object(handle)
+        {
+            return nullptr;
+        }
     };
 
     template <handle_types::type Type, typename T>
@@ -217,6 +231,19 @@ namespace sogen
             return this->store_and_get(std::move(value)).first;
         }
 
+        bool store_at(const handle h, T value)
+        {
+            if (this->block_mutation_)
+            {
+                throw std::runtime_error("Mutation of handle store is blocked!");
+            }
+            if (h.value.type != Type || h.value.is_pseudo || h.value.id == 0)
+            {
+                return false;
+            }
+            return this->store_.try_emplace(static_cast<index_type>(h.value.id), std::move(value)).second;
+        }
+
         handle make_handle(const index_type index) const
         {
             handle h{};
@@ -231,6 +258,11 @@ namespace sogen
         T* get_by_index(const uint32_t index)
         {
             return this->get(this->make_handle(index));
+        }
+
+        ref_counted_object* get_object(const handle h) override
+        {
+            return this->get(h);
         }
 
         T* get(const handle_value h)
@@ -462,6 +494,11 @@ namespace sogen
             }
         }
 
+        ref_counted_object* get_object(const handle h) override
+        {
+            return this->get(h);
+        }
+
         T* get(const handle_value h)
         {
             handle hh{};
@@ -616,6 +653,7 @@ namespace sogen
     constexpr auto NUL_HANDLE = make_pseudo_handle(0x4, handle_types::file);
 
     constexpr auto DUMMY_IMPERSONATION_TOKEN = make_pseudo_handle(0x1, handle_types::token);
+    constexpr auto ANONYMOUS_IMPERSONATION_TOKEN = make_pseudo_handle(0x2, handle_types::token);
 
     constexpr auto GUEST_PROCESS_HANDLE = make_handle(0x1, handle_types::process, false);
 

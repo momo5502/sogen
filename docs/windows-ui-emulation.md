@@ -662,26 +662,25 @@ Dumping the live globals (guest `user32_base = fault_ip - 0x29378`; read `+0xccb
 reaches user32. With the limit at 0, only `DefWindowProc(WM_NULL=0)` reaches the read and `[0+0]`
 faults — and the load loop pumps `WM_NULL`, so it hits reliably.
 
-### Fix concept is validated; the clean location is NOT yet found
+### Resolved: the globals are `SHAREDINFO.DefWindowMsgs` / `DefWindowSpecMsgs`
+
+The four globals are `_gSharedInfo.DefWindowMsgs` (0x218) and `.DefWindowSpecMsgs` (0x228). The
+32-bit `user32!UserClientDllInitialize` raw-copies the 0x238-byte user-connect reply into
+`_gSharedInfo` and reads it with the same 8-byte-slotted `SHAREDINFO` layout as the 64-bit client
+(hence the 8-byte spacing of `…bc0/…bc8/…bd0/…bd8`). The WoW64 connect used to be written in a
+separate `WIN32K_USERCONNECT32` layout whose `wndmsg_count`/`wndmsg_table` fields landed in the
+wrong slots, so the message tables never reached user32. Both WoW64 writers (the CSRSS ApiPort
+reply in `ports/api_port.cpp` and `NtUserProcessConnect`) now go through the same
+`populate_user_shared_info` as the 64-bit path, and `WIN32K_USERCONNECT32` is gone.
+
+Reproduction: a 32-bit guest that creates a window and calls `DefWindowProcA(hwnd, WM_NULL, 0, 0)`
+faults inside user32 on a read of address 0 (the null bit-array pointer) before the fix and
+returns 0 after it.
 
 Seeding the four globals at runtime (targeted **execution hook** on `user32+0x29310`; write
-`DAT_100ccbc0=0x63F`, `DAT_100ccbc8`=client message-bits table addr, same for `…bd0/…bd8`)
-**eliminates the crash** — the dialog renders. So the diagnosis and the "what user32 needs" are
-correct.
-
-But the proper source is still unknown:
-- The WoW64 connect (`build_wow64_userconnect` → `WIN32K_USERCONNECT32` in `win32k_userconnect.cpp` /
-  `platform/user.hpp`) sets `wndmsg_count` (0x108) and an inline `wndmsg_table` (0x40), and has
-  unused pointer fields `wndmsg_bits` (0x110) / `ime_msg_bits` (0x120). Setting those pointers did
-  **not** move `DAT_100ccbc8` — and `DAT_100ccbc0` is 0 even though `wndmsg_count` is set — so user32
-  copies these four globals from a **different** connect/SHAREDINFO field than the struct assumes.
-- Ghidra finds **no write xref and no byte-immediate reference** to `0x100ccbc0`/`0x100ccbc8` in
-  user32 (its client init sets them via a copy/path the analyzer didn't resolve), so the source
-  offset can't be pinned statically. NEXT: instrument the emulator to watch the user32 client-init
-  write these globals (a GDB hardware watchpoint won't fire under WHP; and `hook_memory_read/write`
-  are **registered but not enforced** under WHP — only `hook_memory_execution` is, via int3/page
-  remap). The practical path is an execution-hook trace over user32 init, or a page-protect +
-  `memory_violation` hook on the globals' page.
+`DAT_100ccbc0=0x63F`, `DAT_100ccbc8`=client message-bits table addr, same for `…bd0/…bd8`) had
+already **eliminated the crash** — the dialog renders — which is what validated the diagnosis
+before the source field was found.
 
 ### Deeper wall: `NtUserMessageCall` server callback (`call to 0x2`)
 
@@ -693,9 +692,10 @@ tables — see "Ntdll/User32 Callback Findings" above). With the bit table **zer
 forwards: no crash, but the dialog's **buttons never get created** (controls need that server
 handling), so the dialog is non-operable.
 
-So a working dialog needs BOTH: (1) the message-table globals seeded from the right connect field,
-and (2) the `NtUserMessageCall` server-callback path through the WoW64 transition to resolve a valid
-client callback instead of `0x2`. (2) is the real blocker and is its own win32k-callback effort.
+So a working dialog needs BOTH: (1) the message-table globals seeded from the right connect field
+(done, see above), and (2) the `NtUserMessageCall` server-callback path through the WoW64 transition
+to resolve a valid client callback instead of `0x2`. (2) is the real blocker and is its own
+win32k-callback effort.
 
 ### Useful breadcrumbs
 
@@ -703,8 +703,9 @@ client callback instead of `0x2`. (2) is the real blocker and is its own win32k-
 - Globals: `user32+0xccbc0` (limit), `+0xccbc8` (bit-array ptr), `+0xccbd0`/`+0xccbd8` (2nd table).
 - Game wndproc: `iw4x.exe` `FUN_004731f0` (0x4731f0).
 - `NtUserMessageCall` crash: `ntdll+0xd6f1c`, `call to 0x2`, stack via `wow64cpu.dll` + `user32+0x3b880`.
-- `client_message_bits` table (44 client-callback message bits) lives in `user_handle_table.hpp`
-  (`get_client_message_bits()`); native `populate_user_shared_info` points `controlMessageBits`/
-  `staticMessageBits` at it — the WoW64 path has no working equivalent.
+- The per-message bit tables live in `user_handle_table.hpp` (`WND_MESSAGE_BITS`, read via
+  `get_awm_control_message`/`get_def_window_messages`/`get_def_window_spec_messages`);
+  `populate_user_shared_info` points `awmControl[]`/`DefWindowMsgs`/`DefWindowSpecMsgs` at them for
+  both the native and the WoW64 connect.
 - WHP debugging note: data watchpoints (GDB stub and `hook_memory_read/write`) do **not** fire under
   WHP; only `hook_memory_execution(address, …)` is enforced.

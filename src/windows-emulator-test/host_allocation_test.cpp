@@ -15,6 +15,12 @@ namespace sogen::test
         class fake_host_memory : public memory_interface
         {
           public:
+            struct guest_address_range
+            {
+                uint64_t address;
+                uint64_t size;
+            };
+
             // Reported by both the full reserved_host_ranges() scan and the windowed probe.
             std::vector<host_reserved_range> foreign_ranges{};
 
@@ -25,7 +31,7 @@ namespace sogen::test
             std::vector<host_reserved_range> hidden_from_full_scan{};
 
             std::vector<host_reserved_range> claimed_ranges{};
-            std::vector<host_reserved_range> released_ranges{};
+            std::vector<guest_address_range> released_ranges{};
             bool requires_host_identity{};
             std::optional<uint64_t> mapped_host_address{};
             void* mapped_host_pointer{};
@@ -35,7 +41,7 @@ namespace sogen::test
                 this->claimed_ranges.push_back({.address = address, .size = size});
             }
 
-            void release_guest_address_range(const uint64_t address, const size_t size) override
+            void release_guest_address_range(const uint64_t address, const uint64_t size) override
             {
                 this->released_ranges.push_back({.address = address, .size = size});
             }
@@ -206,7 +212,7 @@ namespace sogen::test
         memory_manager mm{host};
 
         constexpr size_t size = 0x2000;
-        constexpr uint64_t address = DEFAULT_ALLOCATION_ADDRESS_64BIT;
+        constexpr uintptr_t address = 0x70000000;
         host.foreign_ranges.push_back({.address = address, .size = size});
         host.requires_host_identity = true;
         mm.reserve_host_memory_ranges();

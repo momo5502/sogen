@@ -111,6 +111,18 @@ namespace sogen
     };
 
     template <typename Traits>
+    struct ALPC_DATA_VIEW_ATTR
+    {
+        ULONG Flags;
+        typename Traits::HANDLE SectionHandle;
+        typename Traits::PVOID ViewBase;
+        typename Traits::SIZE_T ViewSize;
+    };
+
+    static_assert(sizeof(ALPC_DATA_VIEW_ATTR<EmulatorTraits<Emu32>>) == 16);
+    static_assert(sizeof(ALPC_DATA_VIEW_ATTR<EmulatorTraits<Emu64>>) == 32);
+
+    template <typename Traits>
     struct PORT_DATA_ENTRY
     {
         Traits::PVOID Base;

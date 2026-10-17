@@ -42,6 +42,7 @@ namespace sogen
                                },
                                [&](const stdout_chunk_event& e) {
                                    (void)fwrite(e.data.data(), 1, e.data.size(), stdout); //
+                                   fflush(stdout);
                                },
                                [&](const auto&) {
                                    // Ignore all other events in silent mode.
@@ -124,6 +125,9 @@ namespace sogen
                         },
                         [&](const io_control_event& e) {
                             this->log_.print(color::dark_gray, "--> %s: 0x%X\n", e.device_name.c_str(), e.code);
+                        },
+                        [&](const socket_activity_event& e) {
+                            this->log_.print(color::dark_gray, "Socket %s: %s\n", e.action.c_str(), e.address.c_str());
                         },
                         [&](const thread_create_event& e) {
                             std::string flags{};

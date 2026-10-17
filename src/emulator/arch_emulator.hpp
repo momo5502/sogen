@@ -77,6 +77,11 @@ namespace sogen
             return 1;
         }
 
+        virtual bool supports_native_timestamp_counter() const
+        {
+            return false;
+        }
+
         virtual x86_cpu<Traits>& get_cpu(const size_t index)
         {
             if (index >= this->vcpu_count())

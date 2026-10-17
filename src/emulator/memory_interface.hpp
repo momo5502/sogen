@@ -92,7 +92,7 @@ namespace sogen
         // not on a decommit, where the range stays reserved and the host claim must persist. The
         // caller expands the freed range to the surrounding unreserved gap, so the backend may drop
         // any host claim wholly inside it.
-        virtual void release_guest_address_range(uint64_t /*address*/, size_t /*size*/)
+        virtual void release_guest_address_range(uint64_t /*address*/, uint64_t /*size*/)
         {
         }
 

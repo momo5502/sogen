@@ -26,6 +26,18 @@ namespace sogen
             return GET_SOCKET_ERROR();
         }
 
+        std::optional<int> socket_wrapper::get_socket_error()
+        {
+            int error{};
+            socklen_t length = sizeof(error);
+            if (::getsockopt(this->socket_.get_socket(), SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &length) == SOCKET_ERROR)
+            {
+                return std::nullopt;
+            }
+
+            return error;
+        }
+
         bool socket_wrapper::is_ready(const bool in_poll)
         {
             return this->socket_.is_ready(in_poll);

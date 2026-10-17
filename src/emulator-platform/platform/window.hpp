@@ -500,6 +500,8 @@ namespace sogen
 #define MF_BYCOMMAND                0x0000
 #define MF_BYPOSITION               0x0400
 
+#define MF_UNCHECKED                0x00000000L
+#define MF_CHECKED                  0x00000008L
 #define MF_ENABLED                  0x00000000L
 #define MF_GRAYED                   0x00000001L
 #define MF_DISABLED                 0x00000002L
