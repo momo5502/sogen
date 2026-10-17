@@ -31,6 +31,11 @@ android {
         }
     }
 
+    androidResources {
+        // The Turnip driver is copied out of the APK with AssetManager.openFd, which needs it uncompressed.
+        noCompress += "so"
+    }
+
     sourceSets {
         // libsogen.so and its dependencies come from the sogen CMake build; see app/README.md.
         getByName("main").jniLibs.srcDir("src/main/jniLibs")
