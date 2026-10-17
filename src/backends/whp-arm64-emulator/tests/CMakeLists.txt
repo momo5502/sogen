@@ -1,0 +1,7 @@
+add_executable(whp-arm64-test whp_arm64_test.cpp)
+target_link_libraries(whp-arm64-test PRIVATE backend-selection whp-arm64-emulator windows-emulator gtest gtest_main)
+target_include_directories(whp-arm64-test SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/deps/unicorn/include")
+add_test(NAME whp-arm64-test COMMAND whp-arm64-test)
+set_tests_properties(whp-arm64-test PROPERTIES TIMEOUT 30)
+sogen_targets_set_folder("tests" whp-arm64-test)
+sogen_target_skip_clang_tidy(whp-arm64-test)

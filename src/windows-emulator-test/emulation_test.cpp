@@ -66,4 +66,12 @@ namespace sogen::test
         EXPECT_TRUE(contains(network::socket_activity::bind, "127.0.0.1:28970"));
         EXPECT_TRUE(contains(network::socket_activity::sendto, "127.0.0.1:28970"));
     }
+
+    TEST(EmulationTest, RelativeApplicationMachineResolvesAgainstTheWorkingDirectory)
+    {
+        const emulator_settings settings{.emulation_root = get_emulator_root()};
+        const application_settings app_settings{.application = "test-sample.exe", .working_directory = "C:\\"};
+
+        EXPECT_EQ(get_application_machine(settings, app_settings), PEMachineType::AMD64);
+    }
 } // namespace sogen::test

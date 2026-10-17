@@ -169,7 +169,7 @@ namespace sogen
         }
 
         lpc_message_context(utils::buffer_deserializer& buffer)
-            : lpc_message_context(buffer.read<x64_emulator_wrapper>().get())
+            : lpc_message_context(buffer.read<guest_machine_wrapper>().get())
         {
         }
 

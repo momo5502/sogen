@@ -132,3 +132,5 @@ By default, the guest has no access to the host network. Guest sockets use an in
 ```bash
 analyzer.exe --network live C:\example.exe
 ```
+
+Windows ARM64 executables run the same way, from an emulation root created with [create-root.bat](https://github.com/momo5502/sogen/blob/main/src/tools/create-root.bat) on a Windows ARM64 machine. They run on WHP on Windows ARM64, on Hypervisor.framework on Apple Silicon and on Unicorn elsewhere.

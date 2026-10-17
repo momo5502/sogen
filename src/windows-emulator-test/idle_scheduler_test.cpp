@@ -90,7 +90,7 @@ namespace sogen::test
         EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
         EXPECT_EQ(polls, 3u);
         EXPECT_FALSE(this->thread->await_host_condition);
-        EXPECT_EQ(STATUS_SUCCESS, this->emu->vcpu(0).cpu.reg<uint64_t>(x86_register::rax));
+        EXPECT_EQ(STATUS_SUCCESS, this->emu->vcpu(0).x64_cpu().reg<uint64_t>(x86_register::rax));
     }
 
     TEST_F(IdleSchedulerTest, FileCompletionMakesParkedThreadRunnable)
@@ -103,7 +103,7 @@ namespace sogen::test
         this->ui->on_pump = [status] { status.write({.Status = STATUS_SUCCESS, .Information = 0}); };
         EXPECT_TRUE(this->emu->perform_thread_switch(this->emu->vcpu(0)));
         EXPECT_FALSE(this->thread->await_file_io.has_value());
-        EXPECT_EQ(STATUS_SUCCESS, this->emu->vcpu(0).cpu.reg<uint64_t>(x86_register::rax));
+        EXPECT_EQ(STATUS_SUCCESS, this->emu->vcpu(0).x64_cpu().reg<uint64_t>(x86_register::rax));
     }
 
     TEST_F(IdleSchedulerTest, TimerMakesParkedThreadRunnable)
@@ -132,7 +132,7 @@ namespace sogen::test
         GTEST_SKIP() << "Threadless WebAssembly does not support cross-thread stop";
 #else
         this->create();
-        if (!this->emu->emu().is_stop_thread_safe())
+        if (!this->emu->vcpu(0).cpu.is_stop_thread_safe())
         {
             GTEST_SKIP() << "Backend does not support cross-thread stop";
         }

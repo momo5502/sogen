@@ -41,7 +41,7 @@ namespace sogen::test
             const auto writer_handle = emu.process.files.store(std::move(writer));
 
             const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
-            const syscall_context context{.win_emu = emu, .emu = emu.emu(), .vcpu = emu.vcpu(0), .proc = emu.process};
+            const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
             const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> status{emu.memory, storage};
             constexpr std::string_view contents = "{\"type\":\"session_meta\"}\n";
             emu.memory.write_memory(storage + 0x100, contents.data(), contents.size());

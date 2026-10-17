@@ -1,5 +1,5 @@
 #pragma once
-#include "x86_64_gdb_stub_handler.hpp"
+#include "cpu_gdb_stub_handler.hpp"
 #include "windows_filesystem.hpp"
 
 #include <atomic>
@@ -17,12 +17,12 @@ namespace sogen
         bits_32,
     };
 
-    class win_x86_64_gdb_stub_handler : public x86_64_gdb_stub_handler
+    class win_gdb_stub_handler : public cpu_gdb_stub_handler
     {
       public:
-        win_x86_64_gdb_stub_handler(windows_emulator& win_emu, utils::optional_function<bool()> should_stop = {},
-                                    const gdb_target_architecture target_architecture = gdb_target_architecture::bits_64)
-            : x86_64_gdb_stub_handler(win_emu.emu()),
+        win_gdb_stub_handler(windows_emulator& win_emu, utils::optional_function<bool()> should_stop = {},
+                             const gdb_target_architecture target_architecture = gdb_target_architecture::bits_64)
+            : cpu_gdb_stub_handler(win_emu.emu()),
               win_emu_(&win_emu),
               should_stop_(std::move(should_stop)),
               windows_filesystem_(win_emu),
@@ -42,7 +42,7 @@ namespace sogen
             });
         }
 
-        ~win_x86_64_gdb_stub_handler() override
+        ~win_gdb_stub_handler() override
         {
             win_emu_->callbacks.on_module_load.remove(mod_load_id);
             win_emu_->callbacks.on_module_unload.remove(mod_unload_id);

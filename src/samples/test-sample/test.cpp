@@ -185,6 +185,52 @@ namespace
         return successes == thread_count;
     }
 
+#ifdef _WIN64
+    DWORD WINAPI context_original_start(LPVOID)
+    {
+        return 1;
+    }
+
+    DWORD WINAPI context_redirected_start(LPVOID argument)
+    {
+        return static_cast<DWORD>(reinterpret_cast<uintptr_t>(argument));
+    }
+
+    bool test_thread_context()
+    {
+        auto* const thread = CreateThread(nullptr, 0, context_original_start, nullptr, CREATE_SUSPENDED, nullptr);
+        if (!thread)
+        {
+            return false;
+        }
+
+        CONTEXT context{};
+        context.ContextFlags = CONTEXT_FULL;
+        bool success = GetThreadContext(thread, &context) != FALSE;
+
+        // A new thread starts in RtlUserThreadStart(start routine, argument); redirect both.
+#if defined(_M_ARM64)
+        success = success && context.X0 == reinterpret_cast<DWORD64>(&context_original_start);
+        context.X0 = reinterpret_cast<DWORD64>(&context_redirected_start);
+        context.X1 = 42;
+#else
+        success = success && context.Rcx == reinterpret_cast<DWORD64>(&context_original_start);
+        context.Rcx = reinterpret_cast<DWORD64>(&context_redirected_start);
+        context.Rdx = 42;
+#endif
+
+        success = success && SetThreadContext(thread, &context) != FALSE;
+        ResumeThread(thread);
+        WaitForSingleObject(thread, INFINITE);
+
+        DWORD exit_code{};
+        success = success && GetExitCodeThread(thread, &exit_code) != FALSE && exit_code == 42;
+        CloseHandle(thread);
+
+        return success;
+    }
+#endif
+
     bool test_env()
     {
         const auto computername = read_env("COMPUTERNAME");
@@ -198,7 +244,10 @@ namespace
 
     bool test_critical_section_timeout()
     {
-#ifdef _WIN64
+#if defined(_M_ARM64)
+        constexpr size_t peb_critical_section_timeout_offset = 0xC0;
+        const auto* peb = reinterpret_cast<const uint8_t*>(__readx18qword(0x60));
+#elif defined(_WIN64)
         constexpr size_t peb_critical_section_timeout_offset = 0xC0;
         const auto* peb = reinterpret_cast<const uint8_t*>(__readgsqword(0x60));
 #else
@@ -650,6 +699,21 @@ namespace
             return false;
         }
 
+        SYSTEM_INFO native_info{};
+        GetNativeSystemInfo(&native_info);
+#if defined(_M_ARM64)
+        if (native_info.wProcessorArchitecture != PROCESSOR_ARCHITECTURE_ARM64 ||
+            !IsProcessorFeaturePresent(PF_ARM_V8_INSTRUCTIONS_AVAILABLE))
+        {
+            return false;
+        }
+#elif defined(_M_AMD64)
+        if (native_info.wProcessorArchitecture != PROCESSOR_ARCHITECTURE_AMD64)
+        {
+            return false;
+        }
+#endif
+
         // TODO: This currently doesn't work.
         /*
         char username[256];
@@ -987,7 +1051,10 @@ namespace
         auto* old = SetUnhandledExceptionFilter([](struct _EXCEPTION_POINTERS* info) -> LONG {
             caught = true;
 
-#ifdef _WIN64
+#if defined(_M_ARM64)
+            // DebugBreak is BRK #0xF000; ARM64 Windows reports the exception at the BRK itself.
+            info->ContextRecord->Pc += 4;
+#elif defined(_WIN64)
             info->ContextRecord->Rip += 1;
 #else
             info->ContextRecord->Eip += 1;
@@ -1010,7 +1077,13 @@ namespace
             return false;
         }
 
+#if defined(_M_ARM64)
+        constexpr uint32_t undefined_instruction = 0x00000000; // udf #0
+        memcpy(address, &undefined_instruction, sizeof(undefined_instruction));
+        FlushInstructionCache(GetCurrentProcess(), address, sizeof(undefined_instruction));
+#else
         memcpy(address, "\x0F\x0B", 2); // ud2
+#endif
 
         const auto res = test_ud2_exception(address);
 
@@ -1115,11 +1188,72 @@ namespace
         return success;
     }
 
+    bool test_divide_by_zero_exception()
+    {
+        static volatile int zero = 0;
+        __try
+        {
+            volatile int result = 10 / zero;
+            (void)result;
+            return false;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return GetExceptionCode() == STATUS_INTEGER_DIVIDE_BY_ZERO;
+        }
+    }
+
+#ifdef _WIN64
+    bool test_debug_print()
+    {
+        using dbg_print_t = ULONG(__cdecl*)(PCSTR format, ...);
+        const auto dbg_print = reinterpret_cast<dbg_print_t>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "DbgPrint"));
+        if (!dbg_print)
+        {
+            return false;
+        }
+
+        __try
+        {
+            dbg_print("test-sample\n");
+            return true;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return false;
+        }
+    }
+#endif
+
+#if defined(_M_ARM64)
+    template <int Immediate>
+    bool test_brk_exception(const DWORD expected_code)
+    {
+        __try
+        {
+            __break(Immediate);
+            return false;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return GetExceptionCode() == expected_code;
+        }
+    }
+#endif
+
     bool test_native_exceptions()
     {
         return test_access_violation_exception()       //
                && test_illegal_instruction_exception() //
                && test_unhandled_exception()           //
+               && test_divide_by_zero_exception()      //
+#ifdef _WIN64
+               && test_debug_print() //
+#endif
+#if defined(_M_ARM64)
+               && test_brk_exception<0xF001>(STATUS_ASSERTION_FAILURE)   //
+               && test_brk_exception<0x1234>(STATUS_ILLEGAL_INSTRUCTION) //
+#endif
 #ifdef _WIN64
                && test_guard_page_exception();
 #else
@@ -1128,6 +1262,60 @@ namespace
     }
 #endif
 
+#if defined(_M_ARM64)
+    thread_local bool single_step_cleared = false;
+    thread_local int single_step_count = 0;
+    thread_local DWORD64 single_step_pc = 0;
+    constexpr DWORD SOFTWARE_STEP_MASK = 0x200000;
+
+    LONG NTAPI single_step_handler(PEXCEPTION_POINTERS exception_info)
+    {
+        if (exception_info->ExceptionRecord->ExceptionCode == EXCEPTION_SINGLE_STEP)
+        {
+            ++single_step_count;
+            single_step_cleared = (exception_info->ContextRecord->Cpsr & SOFTWARE_STEP_MASK) == 0;
+            single_step_pc = exception_info->ContextRecord->Pc;
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+
+    bool test_interrupts()
+    {
+        // ARM64 has no trap flag; a continued context with PSTATE.SS set steps exactly one instruction.
+        using nt_continue_t = NTSTATUS(NTAPI*)(PCONTEXT, BOOLEAN);
+        const auto nt_continue = reinterpret_cast<nt_continue_t>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtContinue"));
+        if (!nt_continue)
+        {
+            return false;
+        }
+
+        single_step_cleared = false;
+        single_step_count = 0;
+        single_step_pc = 0;
+
+        PVOID veh_handle = AddVectoredExceptionHandler(1, single_step_handler);
+        if (!veh_handle)
+        {
+            return false;
+        }
+
+        CONTEXT context{};
+        volatile bool resumed = false;
+        RtlCaptureContext(&context);
+        if (!resumed)
+        {
+            resumed = true;
+            context.Cpsr |= SOFTWARE_STEP_MASK;
+            nt_continue(&context, FALSE);
+        }
+
+        RemoveVectoredExceptionHandler(veh_handle);
+
+        return single_step_count == 1 && single_step_cleared && single_step_pc == context.Pc + 4;
+    }
+#else
     thread_local bool trap_flag_cleared = false;
     constexpr DWORD TRAP_FLAG_MASK = 0x100;
 
@@ -1165,6 +1353,7 @@ namespace
 
         return trap_flag_cleared;
     }
+#endif
 
     void print_time()
     {
@@ -2322,6 +2511,11 @@ int main(const int argc, const char* argv[])
         RaiseFailFastException(&record, nullptr, 0);
     }
 
+    if (argc == 2 && argv[1] == "-fastfail"sv)
+    {
+        __fastfail(FAST_FAIL_FATAL_APP_EXIT);
+    }
+
     bool valid = true;
 
 #ifdef _WIN64
@@ -2341,6 +2535,9 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_time_zone, "Time Zone")
     RUN_TEST(test_threads, "Threads")
     RUN_TEST(test_threads_winapi, "Threads WinAPI")
+#ifdef _WIN64
+    RUN_TEST(test_thread_context, "Thread Context")
+#endif
     RUN_TEST(test_env, "Environment")
     RUN_TEST(test_critical_section_timeout, "Critical Section Timeout")
     RUN_TEST(test_lookup_account_sid, "LSA")

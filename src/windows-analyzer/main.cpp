@@ -6,7 +6,7 @@
 #include <emulator_process_target.hpp>
 #include <inherited_pipes.hpp>
 #include <backend_selection.hpp>
-#include <win_x86_64_gdb_stub_handler.hpp>
+#include <win_gdb_stub_handler.hpp>
 #include <minidump_loader.hpp>
 #include <scoped_hook.hpp>
 #include <registry/registry_file.hpp>
@@ -197,7 +197,7 @@ namespace sogen
         emulator_object<RTL_USER_PROCESS_PARAMETERS64> get_process_params(windows_emulator& win_emu)
         {
             const auto peb = win_emu.process.peb64.read();
-            return {win_emu.emu(), peb.ProcessParameters};
+            return {win_emu.memory, peb.ProcessParameters};
         }
 
         uint64_t get_environment_ptr(windows_emulator& win_emu)
@@ -206,7 +206,7 @@ namespace sogen
             return process_params.read().Environment;
         }
 
-        size_t get_environment_size(const x86_64_emulator& emu, const uint64_t env)
+        size_t get_environment_size(const memory_interface& emu, const uint64_t env)
         {
             std::array<uint8_t, 4> data{};
             std::array<uint8_t, 4> empty{};
@@ -233,7 +233,7 @@ namespace sogen
 
             auto install_env_access_hook = [state] {
                 const auto env_ptr = get_environment_ptr(state->win_emu_);
-                const auto env_size = get_environment_size(state->win_emu_.emu(), env_ptr);
+                const auto env_size = get_environment_size(state->win_emu_.memory, env_ptr);
                 if (!env_size)
                 {
                     state->env_data_hook_.remove();
@@ -371,10 +371,7 @@ namespace sogen
             {
                 for (const auto& instruction : instructions)
                 {
-                    const auto& e = c.win_emu;
-                    auto& emu = e->emu();
-                    const auto reg_cs = emu.reg<uint16_t>(x86_register::cs);
-                    const auto handle = c.d.resolve_handle(emu, reg_cs);
+                    const auto handle = c.d.resolve_handle(c.win_emu->active_cpu());
                     const auto* mnemonic = cs_insn_name(handle, instruction);
                     entries.emplace_back(instruction_summary_entry{.mnemonic = mnemonic ? mnemonic : "<N/A>", .count = count});
                 }
@@ -433,7 +430,7 @@ namespace sogen
             auto emit_failure = [&](std::string message) {
                 do_post_emulation_work(c);
                 c.emit_summary<run_failed_event>([&](auto& event) {
-                    event.rip = win_emu.emu().read_instruction_pointer();
+                    event.rip = win_emu.active_cpu().read_instruction_pointer();
                     event.message = std::move(message);
                 });
                 flush_reporters(c);
@@ -449,7 +446,7 @@ namespace sogen
 
                     const auto should_stop = [&] { return signals_received > 0; };
 
-                    win_x86_64_gdb_stub_handler handler{win_emu, should_stop, parse_gdb_target_architecture(options.gdb_architecture)};
+                    win_gdb_stub_handler handler{win_emu, should_stop, parse_gdb_target_architecture(options.gdb_architecture)};
                     gdb_stub::run_gdb_stub(address, handler);
                 }
                 else if (!options.minidump_path.empty())
@@ -560,24 +557,15 @@ namespace sogen
             throw std::runtime_error("WHP memory execution hook mode must be auto or int3");
         }
 
-        std::unique_ptr<x86_64_emulator> create_configured_backend(const analysis_options& options)
+        std::unique_ptr<guest_machine> create_configured_backend(const analysis_options& options,
+                                                                 const PEMachineType machine = PEMachineType::AMD64)
         {
-            auto emu = options.backend ? create_x86_64_emulator(*options.backend, options.vcpu_count)
-                                       : create_x86_64_emulator_from_environment(options.vcpu_count);
+            auto emu = create_emulator_for_machine(machine, options.backend, options.vcpu_count);
             emu->set_memory_execution_hook_mode(parse_memory_execution_hook_mode(options.whp_execution_hook_mode));
             return emu;
         }
 
-        std::unique_ptr<windows_emulator> create_empty_emulator(const analysis_options& options, emulator_interfaces interfaces = {})
-        {
-            const auto settings = create_emulator_settings(options);
-            return std::make_unique<windows_emulator>(create_configured_backend(options), settings, emulator_callbacks{},
-                                                      std::move(interfaces));
-        }
-
-        std::unique_ptr<windows_emulator> create_application_emulator(const analysis_options& options,
-                                                                      const std::span<const std::string_view> args,
-                                                                      emulator_interfaces interfaces = {})
+        application_settings create_application_settings(const analysis_options& options, const std::span<const std::string_view> args)
         {
             if (args.empty())
             {
@@ -603,8 +591,47 @@ namespace sogen
                 app_settings.working_directory = windows_path(options.working_directory);
             }
 
+            return app_settings;
+        }
+
+#ifndef OS_EMSCRIPTEN
+        PEMachineType get_target_machine(const analysis_options& options, const std::span<const std::string_view> args)
+        {
+            if (!options.minidump_path.empty())
+            {
+                return minidump_loader::get_minidump_machine(options.minidump_path);
+            }
+
+            if (!options.dump.empty())
+            {
+                return snapshot::get_snapshot_machine(options.dump);
+            }
+
+            if (args.empty())
+            {
+                return PEMachineType::AMD64;
+            }
+
+            return get_application_machine(create_emulator_settings(options), create_application_settings(options, args));
+        }
+#endif
+
+        std::unique_ptr<windows_emulator> create_empty_emulator(const analysis_options& options, emulator_interfaces interfaces = {},
+                                                                const PEMachineType machine = PEMachineType::AMD64)
+        {
             const auto settings = create_emulator_settings(options);
-            return std::make_unique<windows_emulator>(create_configured_backend(options), std::move(app_settings), settings,
+            return std::make_unique<windows_emulator>(create_configured_backend(options, machine), settings, emulator_callbacks{},
+                                                      std::move(interfaces));
+        }
+
+        std::unique_ptr<windows_emulator> create_application_emulator(const analysis_options& options,
+                                                                      const std::span<const std::string_view> args,
+                                                                      emulator_interfaces interfaces = {})
+        {
+            auto app_settings = create_application_settings(options, args);
+            const auto settings = create_emulator_settings(options);
+            const auto machine = get_application_machine(settings, app_settings);
+            return std::make_unique<windows_emulator>(create_configured_backend(options, machine), std::move(app_settings), settings,
                                                       emulator_callbacks{}, std::move(interfaces));
         }
 
@@ -622,14 +649,15 @@ namespace sogen
             if (!options.dump.empty())
             {
                 // load snapshot
-                auto win_emu = create_empty_emulator(options, std::move(interfaces));
+                auto win_emu = create_empty_emulator(options, std::move(interfaces), snapshot::get_snapshot_machine(options.dump));
                 snapshot::load_emulator_snapshot(*win_emu, options.dump);
                 return win_emu;
             }
             if (!options.minidump_path.empty())
             {
                 // load minidump
-                auto win_emu = create_empty_emulator(options, std::move(interfaces));
+                auto win_emu =
+                    create_empty_emulator(options, std::move(interfaces), minidump_loader::get_minidump_machine(options.minidump_path));
                 minidump_loader::load_minidump_into_emulator(*win_emu, options.minidump_path);
                 return win_emu;
             }
@@ -675,8 +703,8 @@ namespace sogen
             std::unique_ptr<process_manager> manager{};
 
 #ifndef OS_EMSCRIPTEN
-            const auto backend = options.backend.value_or(get_x86_64_emulator_backend_from_environment());
-            if (backend == backend_type::whp)
+            const auto is_x86_64_target = get_target_machine(options, args) != PEMachineType::ARM64;
+            if (is_x86_64_target && options.backend.value_or(get_x86_64_emulator_backend_from_environment()) == backend_type::whp)
             {
                 manager = std::make_unique<subprocess_process_manager>(get_sandbox_executable(), [&](const auto port, const auto& token) {
                     return create_managed_process_arguments(options, port, token);
@@ -781,55 +809,58 @@ namespace sogen
             const auto& exe = *win_emu->mod_manager.executable;
             const auto is_whp = win_emu->emu().get_name() == "Windows Hypervisor Platform";
 
-            win_emu->emu().hook_instruction(x86_hookable_instructions::cpuid, [&](cpu_interface& cpu, uint64_t) {
-                return win_emu->dispatch_on_cpu(cpu, [&] {
-                    auto& emu = win_emu->active_cpu();
+            if (auto* x64 = dynamic_cast<x86_64_emulator*>(&win_emu->emu()))
+            {
+                x64->hook_instruction(x86_hookable_instructions::cpuid, [&](cpu_interface& cpu, uint64_t) {
+                    return win_emu->dispatch_on_cpu(cpu, [&] {
+                        auto& emu = win_emu->active_x64_cpu();
 
-                    const auto rip = emu.read_instruction_pointer();
-                    const auto leaf = emu.reg<uint32_t>(x86_register::eax);
-                    const auto mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
+                        const auto rip = emu.read_instruction_pointer();
+                        const auto leaf = emu.reg<uint32_t>(x86_register::eax);
+                        const auto mod = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
-                    if (mod.has_value() && (!concise_logging || context.cpuid_cache.insert({rip, leaf}).second))
-                    {
-                        context.emit_observation<cpuid_event>([&](auto& event) { event.leaf = leaf; });
-                    }
+                        if (mod.has_value() && (!concise_logging || context.cpuid_cache.insert({rip, leaf}).second))
+                        {
+                            context.emit_observation<cpuid_event>([&](auto& event) { event.leaf = leaf; });
+                        }
 
-                    if (leaf == 1 && !is_whp)
-                    {
-                        // NOTE: We hard-code these values to disable SSE4.x and AVX
-                        //       See: https://github.com/momo5502/sogen/issues/560
-                        emu.reg<uint32_t>(x86_register::eax, 0x000906EA);
-                        emu.reg<uint32_t>(x86_register::ebx, 0x00100800);
-                        emu.reg<uint32_t>(x86_register::ecx, 0xEFE2F38F);
-                        emu.reg<uint32_t>(x86_register::edx, 0xBFEBFBFF);
+                        if (leaf == 1 && !is_whp)
+                        {
+                            // NOTE: We hard-code these values to disable SSE4.x and AVX
+                            //       See: https://github.com/momo5502/sogen/issues/560
+                            emu.reg<uint32_t>(x86_register::eax, 0x000906EA);
+                            emu.reg<uint32_t>(x86_register::ebx, 0x00100800);
+                            emu.reg<uint32_t>(x86_register::ecx, 0xEFE2F38F);
+                            emu.reg<uint32_t>(x86_register::edx, 0xBFEBFBFF);
 
-                        return instruction_hook_continuation::skip_instruction;
-                    }
+                            return instruction_hook_continuation::skip_instruction;
+                        }
 
-                    if (leaf == 0x40000000 && !is_whp)
-                    {
-                        // Microsoft Hv vendor string
-                        emu.reg<uint32_t>(x86_register::eax, 0x40000003);
-                        emu.reg<uint32_t>(x86_register::ebx, 0x7263694d);
-                        emu.reg<uint32_t>(x86_register::ecx, 0x666f736f);
-                        emu.reg<uint32_t>(x86_register::edx, 0x76482074);
+                        if (leaf == 0x40000000 && !is_whp)
+                        {
+                            // Microsoft Hv vendor string
+                            emu.reg<uint32_t>(x86_register::eax, 0x40000003);
+                            emu.reg<uint32_t>(x86_register::ebx, 0x7263694d);
+                            emu.reg<uint32_t>(x86_register::ecx, 0x666f736f);
+                            emu.reg<uint32_t>(x86_register::edx, 0x76482074);
 
-                        return instruction_hook_continuation::skip_instruction;
-                    }
+                            return instruction_hook_continuation::skip_instruction;
+                        }
 
-                    if (leaf == 0x40000003 && !is_whp)
-                    {
-                        emu.reg<uint32_t>(x86_register::eax, 0x00000000);
-                        emu.reg<uint32_t>(x86_register::ebx, 0x00000001);
-                        emu.reg<uint32_t>(x86_register::ecx, 0x00000000);
-                        emu.reg<uint32_t>(x86_register::edx, 0x00000000);
+                        if (leaf == 0x40000003 && !is_whp)
+                        {
+                            emu.reg<uint32_t>(x86_register::eax, 0x00000000);
+                            emu.reg<uint32_t>(x86_register::ebx, 0x00000001);
+                            emu.reg<uint32_t>(x86_register::ecx, 0x00000000);
+                            emu.reg<uint32_t>(x86_register::edx, 0x00000000);
 
-                        return instruction_hook_continuation::skip_instruction;
-                    }
+                            return instruction_hook_continuation::skip_instruction;
+                        }
 
-                    return instruction_hook_continuation::run_instruction;
+                        return instruction_hook_continuation::run_instruction;
+                    });
                 });
-            });
+            }
 
             if (options.log_foreign_module_access)
             {
@@ -886,7 +917,7 @@ namespace sogen
 
                     auto read_handler = [&, section, concise_logging, read_count](cpu_interface&, const uint64_t address, const void*,
                                                                                   size_t size) {
-                        const auto rip = win_emu->emu().read_instruction_pointer();
+                        const auto rip = win_emu->active_cpu().read_instruction_pointer();
                         const auto accessor = get_module_if_interesting(win_emu->mod_manager, options.modules, rip);
 
                         if (!accessor.has_value())
@@ -1034,8 +1065,8 @@ namespace sogen
                 ->check(CLI::IsMember({"offline", "live"}));
 
             std::string backend_name{};
-            app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp, kvm or fex (overrides env)")
-                ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm", "fex"}));
+            app.add_option("--backend", backend_name, "Select CPU backend: unicorn, icicle, whp, kvm, fex or hvf (overrides env)")
+                ->check(CLI::IsMember({"unicorn", "icicle", "whp", "kvm", "fex", "hvf"}));
 
             std::vector<std::string> tracked_modules{};
             app.add_option("-m,--module", tracked_modules, "Specify module(s) to track")->allow_extra_args(false);
@@ -1073,7 +1104,7 @@ namespace sogen
                 {
                     static const std::map<std::string, backend_type> backends{
                         {"unicorn", backend_type::unicorn}, {"icicle", backend_type::icicle}, {"whp", backend_type::whp},
-                        {"kvm", backend_type::kvm},         {"fex", backend_type::fex},
+                        {"kvm", backend_type::kvm},         {"fex", backend_type::fex},       {"hvf", backend_type::hvf},
                     };
                     options.backend = backends.at(backend_name);
                 }

@@ -37,7 +37,7 @@ namespace sogen::test
             NTSTATUS query(uint32_t size, SECURITY_INFORMATION information = OWNER_SECURITY_INFORMATION)
             {
                 const syscall_context context{
-                    .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+                    .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
                 return syscalls::handle_NtQuerySecurityObject(context, this->directory, information, this->storage + 0x100, size,
                                                               {this->emu->memory, this->storage});
             }
@@ -73,7 +73,7 @@ namespace sogen::test
     {
         ASSERT_EQ(STATUS_SUCCESS, this->query(256));
         const syscall_context context{
-            .win_emu = *this->emu, .emu = this->emu->emu(), .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
+            .win_emu = *this->emu, .emu = this->emu->vcpu(0).cpu, .vcpu = this->emu->vcpu(0), .proc = this->emu->process};
         ASSERT_EQ(STATUS_SUCCESS, syscalls::handle_NtQueryInformationToken(context, CURRENT_PROCESS_TOKEN, TokenUser, this->storage + 0x300,
                                                                            256, {this->emu->memory, this->storage}));
         const auto descriptor = emulator_object<SECURITY_DESCRIPTOR_RELATIVE>{this->emu->memory, this->storage + 0x100}.read();
