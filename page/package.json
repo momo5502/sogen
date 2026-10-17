@@ -59,7 +59,7 @@
     "eslint-plugin-react-refresh": "^0.5.7",
     "globals": "^17.13.0",
     "prettier": "3.9.10",
-    "typescript": "~7.0.2",
+    "typescript": "~6.0.3",
     "typescript-eslint": "^8.71.2",
     "vite": "^8.3.4",
     "vite-plugin-pwa": "^2.0.0"
