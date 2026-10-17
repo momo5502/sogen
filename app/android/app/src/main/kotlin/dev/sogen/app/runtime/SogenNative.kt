@@ -3,7 +3,8 @@ package dev.sogen.app.runtime
 import android.view.Surface
 
 interface NativeListener {
-    fun onOutput(text: String)
+    /** [color] is the emulator's logger color index, or -1 for the guest's own stdout. */
+    fun onOutput(text: String, color: Int)
     fun onWindowCreated(window: Long, width: Int, height: Int, title: String, visible: Boolean)
     fun onWindowDestroyed(window: Long)
     fun onWindowResized(window: Long, width: Int, height: Int)

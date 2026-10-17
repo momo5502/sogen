@@ -30,7 +30,7 @@ class SogenService : Service() {
                     native = SogenNative(CallbackListener(callback))
                 } catch (e: UnsatisfiedLinkError) {
                     Log.e(TAG, "Could not load the emulator library", e)
-                    callback.onOutput("Could not load the emulator library: ${e.message}")
+                    callback.onOutput("Could not load the emulator library: ${e.message}", LOGGER_COLOR_RED)
                     callback.onExit(1)
                     return
                 }
@@ -98,7 +98,7 @@ class SogenService : Service() {
     }
 
     private class CallbackListener(private val callback: ISogenCallback) : NativeListener {
-        override fun onOutput(text: String) = deliver { callback.onOutput(text) }
+        override fun onOutput(text: String, color: Int) = deliver { callback.onOutput(text, color) }
 
         override fun onWindowCreated(window: Long, width: Int, height: Int, title: String, visible: Boolean) =
             deliver { callback.onWindowCreated(window, width, height, title, visible) }
@@ -125,5 +125,6 @@ class SogenService : Service() {
 
     private companion object {
         const val TAG = "SogenService"
+        const val LOGGER_COLOR_RED = 1
     }
 }

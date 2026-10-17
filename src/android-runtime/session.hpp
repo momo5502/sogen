@@ -73,6 +73,7 @@ namespace sogen::android
         android_ui_backend* ui_{};
         bool stop_requested_{};
 
-        void output(std::string text);
+        // [color] is a logger color, or -1 for the guest's own stdout.
+        void output(std::string text, int32_t color);
     };
 }
