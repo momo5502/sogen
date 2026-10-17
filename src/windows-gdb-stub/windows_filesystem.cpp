@@ -1,13 +1,8 @@
 #include "windows_filesystem.hpp"
 
-#include <ios>
 #include <limits>
+#include <span>
 
-#ifdef _WIN32
-#include <io.h>
-#else
-#include <unistd.h>
-#endif
 #include <sys/stat.h>
 #include <platform/compiler.hpp>
 
@@ -47,112 +42,89 @@ namespace sogen
     static_assert(sizeof(gdb_stat) == 0x40, "bad structure size");
 #pragma pack(pop)
 
-    static std::ios_base::openmode flags_to_mode(uint32_t flags)
+    static std::optional<std::u16string> flags_to_mode(uint32_t flags)
     {
-        std::ios_base::openmode mode = std::ios::binary;
+        const bool read_write = (flags & FILEIO_O_RDWR) != 0;
+        const bool write_only = (flags & FILEIO_O_WRONLY) != 0;
+        const bool append = (flags & FILEIO_O_APPEND) != 0;
+        const bool truncate = (flags & FILEIO_O_TRUNC) != 0;
 
-        if (flags & FILEIO_O_RDWR)
-        {
-            mode |= std::ios::in | std::ios::out;
-            flags &= ~FILEIO_O_RDWR;
-
-            if (flags & FILEIO_O_WRONLY)
-            {
-                return {};
-            }
-        }
-
-        if (flags & FILEIO_O_WRONLY)
-        {
-            mode |= std::ios::out;
-            flags &= ~FILEIO_O_WRONLY;
-        }
-        else
-        {
-            mode |= std::ios::in;
-        }
-
-        if (flags & FILEIO_O_APPEND)
-        {
-            mode |= std::ios::app;
-            flags &= ~FILEIO_O_APPEND;
-        }
-
-        if (flags & FILEIO_O_TRUNC)
-        {
-            mode |= std::ios::trunc;
-            flags &= ~FILEIO_O_TRUNC;
-        }
-
-        if (flags & ~(FILEIO_O_CREAT | FILEIO_O_EXCL))
-        {
-            return {};
-        }
-
-        return mode;
-    }
-
-    static int unlink_path(const std::filesystem::path& path)
-    {
-#ifdef _WIN32
-        return _wunlink(path.c_str());
-#else
-        return ::unlink(path.c_str());
-#endif
-    }
-
-    std::optional<std::filesystem::path> windows_filesystem::translate_path(std::string_view emulated_path) const
-    {
-        try
-        {
-            return this->win_emu_->file_sys.translate(windows_path{std::u8string(emulated_path.begin(), emulated_path.end())});
-        }
-        catch (const std::runtime_error&)
+        if (read_write && write_only)
         {
             return std::nullopt;
         }
+
+        if (flags & ~(FILEIO_O_RDWR | FILEIO_O_WRONLY | FILEIO_O_APPEND | FILEIO_O_TRUNC | FILEIO_O_CREAT | FILEIO_O_EXCL))
+        {
+            return std::nullopt;
+        }
+
+        if (read_write)
+        {
+            if (append)
+            {
+                return u"a+b";
+            }
+
+            return truncate ? u"w+b" : u"r+b";
+        }
+
+        if (write_only)
+        {
+            return append ? u"ab" : u"wb";
+        }
+
+        if (truncate)
+        {
+            return std::nullopt;
+        }
+
+        return append ? u"a+b" : u"rb";
+    }
+
+    static std::optional<windows_path> to_guest_path(const std::string_view emulated_path)
+    {
+        windows_path path{std::u8string(emulated_path.begin(), emulated_path.end())};
+        if (!path.is_absolute())
+        {
+            return std::nullopt;
+        }
+
+        return path;
     }
 
     uint32_t windows_filesystem::open(const std::string& file_path, const uint32_t flags, uint32_t /*mode*/)
     {
         const auto open_mode = flags_to_mode(flags);
-        if (open_mode == 0)
+        const auto path = to_guest_path(file_path);
+        if (!open_mode || !path)
         {
             return 0;
         }
 
-        const auto real_path = translate_path(file_path);
-        if (!real_path)
+        if ((flags & FILEIO_O_CREAT) && (flags & FILEIO_O_EXCL) && this->win_emu_->file_sys.stat(*path))
         {
             return 0;
         }
 
-        auto stream = std::fstream(*real_path, open_mode);
-        stream.exceptions(std::fstream::goodbit);
-
-        if (!stream.is_open())
+        auto result = this->win_emu_->file_sys.open(*path, *open_mode);
+        if (!result.file)
         {
             return 0;
         }
 
-        opened_files.emplace(free_index, std::move(stream));
+        opened_files.emplace(free_index, std::move(result.file));
         return free_index++;
     }
 
     void windows_filesystem::close(const uint32_t fd)
     {
-        auto it = opened_files.find(fd);
-        if (it != opened_files.end())
-        {
-            it->second.close();
-            opened_files.erase(it);
-        }
+        opened_files.erase(fd);
     }
 
     std::string windows_filesystem::read(const uint32_t fd, const size_t count, const uint64_t offset)
     {
-        if (count > static_cast<size_t>(std::numeric_limits<std::streamsize>::max()) ||
-            offset > static_cast<uint64_t>(std::numeric_limits<std::fstream::off_type>::max()))
+        if (offset > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
         {
             return {};
         }
@@ -163,28 +135,22 @@ namespace sogen
             return {};
         }
 
-        auto& stream = it->second;
-        stream.clear();
-        stream.seekg(static_cast<std::fstream::off_type>(offset), std::ios::beg);
-
-        if (stream.fail())
+        auto& file = *it->second;
+        if (!file.seek(static_cast<int64_t>(offset), SEEK_SET))
         {
             return {};
         }
 
         std::string buffer;
         buffer.resize(count);
-
-        stream.read(buffer.data(), static_cast<std::streamsize>(count));
-        buffer.resize(static_cast<size_t>(stream.gcount()));
+        buffer.resize(file.read(std::as_writable_bytes(std::span(buffer))));
 
         return buffer;
     }
 
     size_t windows_filesystem::write(const uint32_t fd, uint64_t offset, const void* data, const size_t length)
     {
-        if (length > static_cast<size_t>(std::numeric_limits<std::streamsize>::max()) ||
-            offset > static_cast<uint64_t>(std::numeric_limits<std::fstream::off_type>::max()))
+        if (offset > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
         {
             return 0;
         }
@@ -195,20 +161,16 @@ namespace sogen
             return 0;
         }
 
-        auto& stream = it->second;
-        stream.clear();
-        stream.seekp(static_cast<std::fstream::off_type>(offset), std::ios::beg);
-
-        if (stream.fail())
+        auto& file = *it->second;
+        if (!file.seek(static_cast<int64_t>(offset), SEEK_SET))
         {
             return 0;
         }
 
-        const auto before = stream.tellp();
-        stream.write(static_cast<const char*>(data), static_cast<std::streamsize>(length));
-        const auto after = stream.tellp();
+        const auto written = file.write(std::span(static_cast<const std::byte*>(data), length));
+        (void)file.flush();
 
-        return static_cast<size_t>(after - before);
+        return written;
     }
 
     std::string windows_filesystem::fstat(const uint32_t fd)
@@ -219,21 +181,16 @@ namespace sogen
             return {};
         }
 
-        auto& stream = it->second;
-        stream.clear();
-        stream.seekg(0, std::fstream::end);
-
-        if (stream.fail())
+        const auto size = it->second->size();
+        if (size < 0)
         {
             return {};
         }
 
-        const auto end_pos = stream.tellg();
-
         gdb_stat stat_buf{};
         stat_buf.st_mode = S_IFREG;
         stat_buf.st_nlink = 1;
-        stat_buf.st_size = static_cast<uint64_t>(end_pos);
+        stat_buf.st_size = static_cast<uint64_t>(size);
 
         auto* p = reinterpret_cast<char*>(&stat_buf);
         std::string buffer{p, p + sizeof(stat_buf)};
@@ -242,13 +199,13 @@ namespace sogen
 
     int windows_filesystem::unlink(const std::string& file_path)
     {
-        const auto real_path = translate_path(file_path);
-        if (!real_path)
+        const auto path = to_guest_path(file_path);
+        if (!path)
         {
             return -1;
         }
 
-        return unlink_path(*real_path);
+        return this->win_emu_->file_sys.remove(*path) == STATUS_SUCCESS ? 0 : -1;
     }
 
 } // namespace sogen

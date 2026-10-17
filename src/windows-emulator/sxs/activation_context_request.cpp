@@ -66,7 +66,7 @@ namespace sogen::sxs
             }
             const auto position = file->handle.tell();
             const auto restore = utils::finally([&] { file->handle.seek_to(position); });
-            return file->handle.seek_to(0) && fread(contents.data(), 1, contents.size(), file->handle) == contents.size();
+            return file->handle.seek_to(0) && file->handle.read(contents) == contents.size();
         }
 
         bool read_string(const memory_manager& memory, const unicode_string& string, std::u16string& value)

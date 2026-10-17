@@ -135,10 +135,15 @@ namespace sogen
                 return keyboard_layout_to_handle(get_keyboard_layouts(registry).front());
             }
 
-            NTSTATUS map_nls_file(const syscall_context& c, const std::string_view file_path,
+            windows_path get_system32_path(const syscall_context& c, const std::string_view file_name)
+            {
+                return c.win_emu.version.get_system_root() / "System32" / file_name;
+            }
+
+            NTSTATUS map_nls_file(const syscall_context& c, const std::string_view file_name,
                                   const emulator_object<uint64_t> section_pointer, const emulator_object<ULONG> section_size)
             {
-                const auto nls_file = utils::io::read_file(c.win_emu.file_sys.translate(file_path));
+                const auto nls_file = utils::io::read_file(c.win_emu.file_sys.translate(get_system32_path(c, file_name)));
                 if (nls_file.empty())
                 {
                     return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -159,7 +164,7 @@ namespace sogen
                                              const emulator_object<LCID> default_locale_id,
                                              const emulator_object<LARGE_INTEGER> /*default_casing_table_size*/)
         {
-            const auto locale_file = utils::io::read_file(c.win_emu.file_sys.translate(R"(C:\Windows\System32\locale.nls)"));
+            const auto locale_file = utils::io::read_file(c.win_emu.file_sys.translate(get_system32_path(c, "locale.nls")));
             if (locale_file.empty())
             {
                 return STATUS_FILE_INVALID;
@@ -188,13 +193,13 @@ namespace sogen
         {
             if (section_type == 11)
             {
-                return map_nls_file(c, R"(C:\Windows\System32\C_)" + std::to_string(section_data) + ".NLS", section_pointer, section_size);
+                return map_nls_file(c, "C_" + std::to_string(section_data) + ".NLS", section_pointer, section_size);
             }
 
             // l_intl.nls: backs RtlUpcaseUnicodeChar/RtlDowncaseUnicodeChar beyond ASCII.
             if (section_type == 14)
             {
-                return map_nls_file(c, R"(C:\Windows\System32\l_intl.nls)", section_pointer, section_size);
+                return map_nls_file(c, "l_intl.nls", section_pointer, section_size);
             }
 
             c.win_emu.log.warn("Unsupported section type: %X\n", static_cast<uint32_t>(section_type));

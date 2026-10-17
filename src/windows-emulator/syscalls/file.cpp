@@ -111,30 +111,16 @@ namespace sogen
                 return path;
             }
 
-            std::pair<utils::file_handle, NTSTATUS> open_file(const file_system& file_sys, const windows_path& path,
-                                                              const std::u16string& mode)
+            bool read_file_stat(const guest_file& handle, struct compat_stat& file_stat)
             {
-                FILE* file{};
-                const auto error = open_unicode(&file, file_sys.translate(path), mode);
-
-                if (file)
+                const auto result = handle.stat();
+                if (!result)
                 {
-                    return {file, STATUS_SUCCESS};
+                    return false;
                 }
 
-                using fh = utils::file_handle;
-
-                switch (error)
-                {
-                case ENOENT:
-                    return {fh{}, STATUS_OBJECT_NAME_NOT_FOUND};
-                case EACCES:
-                    return {fh{}, STATUS_ACCESS_DENIED};
-                case EISDIR:
-                    return {fh{}, STATUS_FILE_IS_A_DIRECTORY};
-                default:
-                    return {fh{}, STATUS_NOT_SUPPORTED};
-                }
+                file_stat = *result;
+                return true;
             }
         }
 
@@ -216,20 +202,18 @@ namespace sogen
 
                 c.win_emu.log.warn("--> File rename requested: %s --> %s\n", u16_to_u8(f->name).c_str(), u16_to_u8(new_name).c_str());
 
-                std::error_code ec{};
-                bool file_exists = std::filesystem::exists(c.win_emu.file_sys.translate(new_name), ec);
-
-                if (ec)
+                auto new_path = windows_path{new_name};
+                if (new_path.is_relative())
                 {
-                    return STATUS_ACCESS_DENIED;
+                    new_path = f->handle.path().parent() / new_path;
                 }
 
-                if (!info.ReplaceIfExists && file_exists)
+                if (!info.ReplaceIfExists && c.win_emu.file_sys.stat(new_path))
                 {
                     return STATUS_OBJECT_NAME_EXISTS;
                 }
 
-                f->handle.defer_rename(c.win_emu.file_sys.translate(f->name), c.win_emu.file_sys.translate(new_name));
+                f->handle.defer_rename(new_path);
 
                 return STATUS_SUCCESS;
             }
@@ -248,7 +232,7 @@ namespace sogen
 
                 const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION>(file_information);
 
-                f->handle.defer_delete(info.DeleteFile ? c.win_emu.file_sys.translate(f->name) : std::filesystem::path{});
+                f->handle.set_delete_on_close(info.DeleteFile != FALSE);
 
                 return STATUS_SUCCESS;
             }
@@ -268,7 +252,7 @@ namespace sogen
                     return STATUS_ACCESS_DENIED;
                 }
 
-                f->handle.defer_delete(wants_delete ? c.win_emu.file_sys.translate(f->name) : std::filesystem::path{});
+                f->handle.set_delete_on_close(wants_delete);
 
                 return STATUS_SUCCESS;
             }
@@ -429,18 +413,16 @@ namespace sogen
         {
             std::vector<file_entry> files{};
 
-            const auto dir = file_sys.translate(win_path);
-            const auto make_file_entry = [deterministic_time](const std::filesystem::path& file_path,
-                                                              const std::filesystem::path& host_path, const bool is_directory) {
+            const auto make_file_entry = [deterministic_time](const std::filesystem::path& file_path, const bool is_directory,
+                                                              const std::optional<struct compat_stat>& file_stat) {
                 file_entry entry{.file_path = file_path, .is_directory = is_directory};
 
-                struct compat_stat file_stat{};
-                if (compat_stat(host_path, &file_stat))
+                if (file_stat)
                 {
-                    entry.file_size = is_directory ? 0 : static_cast<uint64_t>(file_stat.st_size);
-                    entry.creation_time = get_file_time(deterministic_time, file_stat.st_ctimespec);
-                    entry.last_access_time = get_file_time(deterministic_time, file_stat.st_atimespec);
-                    entry.last_write_time = get_file_time(deterministic_time, file_stat.st_mtimespec);
+                    entry.file_size = is_directory ? 0 : static_cast<uint64_t>(file_stat->st_size);
+                    entry.creation_time = get_file_time(deterministic_time, file_stat->st_ctimespec);
+                    entry.last_access_time = get_file_time(deterministic_time, file_stat->st_atimespec);
+                    entry.last_write_time = get_file_time(deterministic_time, file_stat->st_mtimespec);
                 }
 
                 return entry;
@@ -448,37 +430,20 @@ namespace sogen
 
             if (file_mask.empty() || file_mask == u"*")
             {
-                files.emplace_back(make_file_entry(".", dir, true));
-                files.emplace_back(make_file_entry("..", dir.parent_path(), true));
+                const auto normalized = win_path.lexically_normal();
+                files.emplace_back(make_file_entry(".", true, file_sys.stat(normalized)));
+                files.emplace_back(make_file_entry("..", true, file_sys.stat(normalized.parent())));
             }
 
-            std::error_code ec{};
-            for (const auto& file : std::filesystem::directory_iterator(dir, ec))
+            for (const auto& entry : file_sys.list_directory(win_path))
             {
-                if (!file_mask.empty() && !utils::wildcard::match_filename(file.path().filename().u16string(), file_mask))
+                if (!file_mask.empty() && !utils::wildcard::match_filename(entry.name, file_mask))
                 {
                     continue;
                 }
 
-                files.emplace_back(make_file_entry(file.path().filename(), file.path(), file.is_directory()));
+                files.emplace_back(make_file_entry(entry.name, entry.is_directory, entry.stat));
             }
-
-            file_sys.access_mapped_entries(win_path, [&](const std::pair<windows_path, std::filesystem::path>& entry) {
-                const auto filename = entry.first.leaf();
-
-                if (!file_mask.empty() && !utils::wildcard::match_filename(filename, file_mask))
-                {
-                    return;
-                }
-
-                const std::filesystem::directory_entry dir_entry(entry.second, ec);
-                if (ec || !dir_entry.exists())
-                {
-                    return;
-                }
-
-                files.emplace_back(make_file_entry(filename, entry.second, dir_entry.is_directory()));
-            });
 
             return files;
         }
@@ -778,7 +743,7 @@ namespace sogen
                 }
 
                 struct compat_stat file_stat{};
-                if (!compat_fstat(f->handle.file_descriptor(), &file_stat))
+                if (!read_file_stat(f->handle, file_stat))
                 {
                     return ret(STATUS_INVALID_HANDLE);
                 }
@@ -808,7 +773,7 @@ namespace sogen
                 }
 
                 struct compat_stat file_stat{};
-                if (f->handle && !compat_fstat(f->handle.file_descriptor(), &file_stat))
+                if (f->handle && !read_file_stat(f->handle, file_stat))
                 {
                     return ret(STATUS_INVALID_HANDLE);
                 }
@@ -873,7 +838,7 @@ namespace sogen
                 }
 
                 struct compat_stat file_stat{};
-                if (f->handle && !compat_fstat(f->handle.file_descriptor(), &file_stat))
+                if (f->handle && !read_file_stat(f->handle, file_stat))
                 {
                     return STATUS_INVALID_HANDLE;
                 }
@@ -952,7 +917,7 @@ namespace sogen
                 }
 
                 struct compat_stat file_stat{};
-                if (f->handle && !compat_fstat(f->handle.file_descriptor(), &file_stat))
+                if (f->handle && !read_file_stat(f->handle, file_stat))
                 {
                     return STATUS_INVALID_HANDLE;
                 }
@@ -1197,7 +1162,7 @@ namespace sogen
             });
 
             const auto attributes = object_attributes.read();
-            auto filename = read_unicode_string(c.emu, attributes.ObjectName);
+            auto filename = resolve_volume_device_path(resolve_system_root_path(c, read_unicode_string(c.emu, attributes.ObjectName)));
 
             c.win_emu.callbacks.on_generic_access("Query file info", filename);
 
@@ -1221,12 +1186,13 @@ namespace sogen
                     return ret(STATUS_OBJECT_NAME_NOT_FOUND);
                 }
 
-                const auto local_filename = c.win_emu.file_sys.translate(filepath);
-                struct compat_stat file_stat{};
-                if (!compat_stat(local_filename, &file_stat))
+                const auto file_stat_result = c.win_emu.file_sys.stat(filepath);
+                if (!file_stat_result)
                 {
                     return ret(STATUS_OBJECT_NAME_NOT_FOUND);
                 }
+
+                const auto& file_stat = *file_stat_result;
 
                 const auto is_directory = (file_stat.st_mode & S_IFDIR) != 0;
 
@@ -1433,7 +1399,7 @@ namespace sogen
                 }
             }
 
-            const auto bytes_read = fread(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
+            const auto bytes_read = f->handle.read(std::as_writable_bytes(std::span(temp_buffer)));
 
             if (bytes_read > 0)
             {
@@ -1584,8 +1550,8 @@ namespace sogen
                 }
             }
 
-            const auto bytes_written = fwrite(temp_buffer.data(), 1, temp_buffer.size(), f->handle);
-            const auto flushed = fflush(f->handle) == 0;
+            const auto bytes_written = f->handle.write(std::as_bytes(std::span(temp_buffer)));
+            const auto flushed = f->handle.flush();
             const auto status = flushed && bytes_written == temp_buffer.size() ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
 
             if (io_status_block)
@@ -1625,7 +1591,7 @@ namespace sogen
 
             std::string temp_buffer{};
             temp_buffer.resize(length);
-            const auto bytes_read = fread(temp_buffer.data(), 1, temp_buffer.size(), source->handle);
+            const auto bytes_read = source->handle.read(std::as_writable_bytes(std::span(temp_buffer)));
 
             if (destination_offset)
             {
@@ -1636,8 +1602,8 @@ namespace sogen
                 }
             }
 
-            const auto bytes_written = fwrite(temp_buffer.data(), 1, bytes_read, destination->handle);
-            (void)fflush(destination->handle);
+            const auto bytes_written = destination->handle.write(std::as_bytes(std::span(temp_buffer).first(bytes_read)));
+            (void)destination->handle.flush();
 
             if (io_status_block)
             {
@@ -1679,7 +1645,7 @@ namespace sogen
             const auto offset = static_cast<uint64_t>(lock_offset.QuadPart);
             const auto range_length = static_cast<uint64_t>(lock_length.QuadPart);
             const auto is_exclusive = exclusive_lock != FALSE;
-            const auto lock_key = f->host_path.u16string();
+            const auto lock_key = f->handle.path().u16string();
 
             if (const auto lock_it = c.proc.file_locks.find(lock_key); lock_it != c.proc.file_locks.end())
             {
@@ -1741,7 +1707,7 @@ namespace sogen
 
             const auto offset = static_cast<uint64_t>(lock_offset.QuadPart);
             const auto range_length = static_cast<uint64_t>(lock_length.QuadPart);
-            const auto lock_key = f->host_path.u16string();
+            const auto lock_key = f->handle.path().u16string();
             const auto lock_it = c.proc.file_locks.find(lock_key);
             if (lock_it == c.proc.file_locks.end())
             {
@@ -2033,8 +1999,6 @@ namespace sogen
 
             printer.cancel();
 
-            std::error_code ec{};
-
             const windows_path path = f.name;
 
             if (!path.is_absolute())
@@ -2044,10 +2008,11 @@ namespace sogen
 
             f.drive_number = path.get_drive().value() - 'a' + 1;
 
-            const auto host_path = c.win_emu.file_sys.translate(path);
-            const bool file_exists = std::filesystem::exists(host_path, ec);
+            auto& file_sys = c.win_emu.file_sys;
+            const auto existing_stat = file_sys.stat(path);
+            const bool file_exists = existing_stat.has_value();
 
-            if (file_exists && std::filesystem::is_directory(host_path, ec))
+            if (file_exists && (existing_stat->st_mode & S_IFMT) == S_IFDIR)
             {
                 if (create_options & FILE_NON_DIRECTORY_FILE)
                 {
@@ -2066,7 +2031,7 @@ namespace sogen
 
                 c.win_emu.callbacks.on_generic_access("Opening folder", f.name);
 
-                f.host_path = host_path;
+                f.handle = guest_file{file_sys, path};
 
                 const auto handle = c.proc.files.store(std::move(f));
                 file_handle.write(handle);
@@ -2088,19 +2053,13 @@ namespace sogen
                     return STATUS_OBJECT_NAME_NOT_FOUND;
                 }
 
-                if (!std::filesystem::is_directory(host_path.parent_path(), ec))
+                const auto status = file_sys.create_directory(path);
+                if (status != STATUS_SUCCESS)
                 {
-                    return STATUS_OBJECT_PATH_NOT_FOUND;
+                    return status;
                 }
 
-                create_directory(host_path, ec);
-
-                if (ec)
-                {
-                    return STATUS_ACCESS_DENIED;
-                }
-
-                f.host_path = host_path;
+                f.handle = guest_file{file_sys, path};
 
                 const auto handle = c.proc.files.store(std::move(f));
                 file_handle.write(handle);
@@ -2120,12 +2079,16 @@ namespace sogen
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
 
+            const auto touch = [&] {
+                const auto result = file_sys.open(path, u"ab");
+                return result.file ? STATUS_SUCCESS : result.status;
+            };
+
             if (create_disposition == FILE_OPEN_IF && !file_exists)
             {
-                std::ofstream touch(host_path, std::ios::binary | std::ios::app);
-                if (!touch)
+                if (const auto status = touch(); status != STATUS_SUCCESS)
                 {
-                    return STATUS_ACCESS_DENIED;
+                    return status;
                 }
             }
 
@@ -2133,10 +2096,9 @@ namespace sogen
 
             if (mode.empty() && create_disposition == FILE_CREATE)
             {
-                std::ofstream touch(host_path, std::ios::binary | std::ios::app);
-                if (!touch)
+                if (const auto status = touch(); status != STATUS_SUCCESS)
                 {
-                    return STATUS_ACCESS_DENIED;
+                    return status;
                 }
 
                 mode = u"rb";
@@ -2147,25 +2109,19 @@ namespace sogen
                 mode = u"rb";
             }
 
-            if (mode.empty() || path.is_relative())
+            if (mode.empty())
             {
                 return STATUS_NOT_SUPPORTED;
             }
 
-            auto [native_file_handle, status] = open_file(c.win_emu.file_sys, path, mode);
+            auto [io, status] = file_sys.open(path, mode);
             if (status != STATUS_SUCCESS)
             {
                 return status;
             }
 
-            f.handle = std::move(native_file_handle);
-            f.open_mode = mode;
-            f.host_path = host_path;
-
-            if (create_options & FILE_DELETE_ON_CLOSE)
-            {
-                f.handle.defer_delete(host_path);
-            }
+            f.handle = guest_file{file_sys, path, std::move(mode), std::move(io)};
+            f.handle.set_delete_on_close((create_options & FILE_DELETE_ON_CLOSE) != 0);
 
             const auto handle = c.proc.files.store(std::move(f));
             file_handle.write(handle);
@@ -2218,13 +2174,13 @@ namespace sogen
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
 
-            const auto local_filename = c.win_emu.file_sys.translate(filepath);
-
-            struct compat_stat file_stat{};
-            if (!compat_stat(local_filename, &file_stat))
+            const auto file_stat_result = c.win_emu.file_sys.stat(filepath);
+            if (!file_stat_result)
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
+
+            const auto& file_stat = *file_stat_result;
 
             file_information.access([&](FILE_NETWORK_OPEN_INFORMATION& info) {
                 info.CreationTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_ctimespec);
@@ -2284,13 +2240,13 @@ namespace sogen
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
 
-            const auto local_filename = c.win_emu.file_sys.translate(filepath);
-
-            struct compat_stat file_stat{};
-            if (!compat_stat(local_filename, &file_stat))
+            const auto file_stat_result = c.win_emu.file_sys.stat(filepath);
+            if (!file_stat_result)
             {
                 return STATUS_OBJECT_NAME_NOT_FOUND;
             }
+
+            const auto& file_stat = *file_stat_result;
 
             file_information.access([&](FILE_BASIC_INFORMATION& info) {
                 info.CreationTime = get_file_time(c.win_emu.uses_relative_time(), file_stat.st_ctimespec);
@@ -2537,7 +2493,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
-            (void)fflush(f->handle);
+            (void)f->handle.flush();
             return STATUS_SUCCESS;
         }
     }

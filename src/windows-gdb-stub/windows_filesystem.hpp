@@ -3,8 +3,8 @@
 #include <filesystem_interface.hpp>
 #include <windows_emulator.hpp>
 
-#include <fstream>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 
@@ -33,10 +33,8 @@ namespace sogen
         int unlink(const std::string& file_path) override;
 
       private:
-        std::optional<std::filesystem::path> translate_path(std::string_view emulated_path) const;
-
         windows_emulator* win_emu_{};
-        std::unordered_map<unsigned, std::fstream> opened_files;
+        std::unordered_map<unsigned, std::unique_ptr<i_file>> opened_files;
         uint32_t free_index{1};
     };
 

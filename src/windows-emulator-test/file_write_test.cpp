@@ -32,13 +32,12 @@ namespace sogen::test
         {
             SCOPED_TRACE(append);
             auto emu = create_empty_emulator();
-            const auto path = directory / (append ? "append.bin" : "write.bin");
+            emu.file_sys.map(windows_path{'x', {}}, directory);
+            const auto path = windows_path{'x', {append ? u"append.bin" : u"write.bin"}};
+            const auto* const mode = append ? u"a+b" : u"w+b";
             file writer{};
-            FILE* stream{};
-            open_unicode(&stream, path, append ? u"a+b" : u"w+b");
-            writer.handle = stream;
+            writer.handle = guest_file{emu.file_sys, path, mode, emu.file_sys.open(path, mode).file};
             ASSERT_TRUE(writer.handle);
-            ASSERT_EQ(0, setvbuf(writer.handle, nullptr, _IOFBF, 8192));
             const auto writer_handle = emu.process.files.store(std::move(writer));
 
             const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
@@ -55,9 +54,7 @@ namespace sogen::test
                 EXPECT_EQ(contents.size(), status.read().Information);
 
                 file reader{};
-                stream = nullptr;
-                open_unicode(&stream, path, u"rb");
-                reader.handle = stream;
+                reader.handle = guest_file{emu.file_sys, path, u"rb", emu.file_sys.open(path, u"rb").file};
                 ASSERT_TRUE(reader.handle);
                 const auto reader_handle = emu.process.files.store(std::move(reader));
                 const auto length = static_cast<ULONG>(i * contents.size());

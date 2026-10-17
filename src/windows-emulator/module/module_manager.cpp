@@ -488,7 +488,13 @@ namespace sogen
 
     std::optional<uint64_t> module_manager::get_module_load_count_by_path(const windows_path& path)
     {
-        auto local_file = std::filesystem::weakly_canonical(std::filesystem::absolute(this->file_sys_->translate(path)));
+        const auto host_path = this->file_sys_->translate(path);
+        if (host_path.empty())
+        {
+            return {};
+        }
+
+        auto local_file = std::filesystem::weakly_canonical(std::filesystem::absolute(host_path));
 
         if (auto load_count_entry = modules_load_count.find(local_file); load_count_entry != modules_load_count.end())
         {
@@ -502,6 +508,11 @@ namespace sogen
                                               const uint64_t relocation_base)
     {
         auto local_file = this->file_sys_->translate(file);
+        if (local_file.empty())
+        {
+            logger.error("Failed to map module: %s does not resolve to a file\n", file.string().c_str());
+            return nullptr;
+        }
 
         if (local_file.filename() == "win32u.dll")
         {

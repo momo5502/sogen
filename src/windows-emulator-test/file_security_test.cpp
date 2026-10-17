@@ -30,7 +30,7 @@ namespace sogen::test
                 this->emu->process.sid = {0x01, 0x05, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x15, 0x00, 0x00, 0x00, 0x6F, 0x00,
                                           0x00, 0x00, 0xDE, 0x00, 0x00, 0x00, 0x4D, 0x01, 0x00, 0x00, 0xE9, 0x03, 0x00, 0x00};
                 file entry{};
-                entry.host_path = std::filesystem::current_path();
+                entry.handle = guest_file{this->emu->file_sys, windows_path{'c', {}}};
                 this->directory = this->emu->process.files.store(std::move(entry));
             }
 
@@ -97,7 +97,7 @@ namespace sogen::test
 
     TEST_F(FileSecurityTest, VirtualFilesDoNotRequireHostSecurityAccess)
     {
-        this->emu->process.files.get(this->directory)->host_path.clear();
+        this->emu->process.files.get(this->directory)->handle = {};
         ASSERT_EQ(STATUS_SUCCESS, this->query(256));
         const auto descriptor = emulator_object<SECURITY_DESCRIPTOR_RELATIVE>{this->emu->memory, this->storage + 0x100}.read();
         std::vector<uint8_t> owner(this->emu->process.sid.size());

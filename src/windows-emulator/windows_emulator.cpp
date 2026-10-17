@@ -1798,6 +1798,10 @@ namespace sogen
             return socket_factory_wrapper{this->socket_factory()}; //
         });
 
+        buffer.register_factory<file_system_wrapper>([this] {
+            return file_system_wrapper{this->file_sys}; //
+        });
+
         buffer.register_factory<window>([this] {
             return window{this->emu()}; //
         });
