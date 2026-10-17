@@ -867,6 +867,9 @@ namespace sogen
         NTSTATUS handle_NtGdiExtCreateRegion();
         BOOL handle_NtGdiTransparentBlt(const syscall_context& c, hdc dst_dc, int x_dst, int y_dst, int dst_width, int dst_height,
                                         hdc src_dc, int x_src, int y_src, int src_width, int src_height, COLORREF transparent_color);
+        BOOL handle_NtGdiAlphaBlend(const syscall_context& c, hdc dst_dc, LONG x_dst, LONG y_dst, LONG dst_width, LONG dst_height,
+                                    hdc src_dc, LONG x_src, LONG y_src, LONG src_width, LONG src_height, DWORD blend_function,
+                                    handle color_transform);
         uint64_t handle_NtGdiCreateRectRgn(const syscall_context& c, LONG x_left, LONG y_top, LONG x_right, LONG y_bottom);
         BOOL handle_NtGdiEqualRgn(const syscall_context& c, handle first_region, handle second_region);
         int32_t handle_NtGdiGetRandomRgn(const syscall_context& c, hdc dc, uint64_t region, LONG index);
@@ -1611,6 +1614,7 @@ namespace sogen
         add_handler(NtGdiBitBlt);
         add_handler(NtGdiStretchBlt);
         add_handler(NtGdiTransparentBlt);
+        add_handler(NtGdiAlphaBlend);
         add_handler(NtGdiPolyPatBlt);
         add_handler(NtGdiExtTextOutW);
         add_handler(NtGdiGetRealizationInfo);
