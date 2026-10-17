@@ -64,7 +64,7 @@ jobs:
           exclude-current: true
 
       - name: Install LLVM
-        uses: momo5502/install-llvm-action@7372aab026498959cff47c82953ba378477d4b00
+        uses: momo5502/install-llvm-action@master
         with:
           version: ${{ env.LLVM_VERSION }}
           arch: x64
