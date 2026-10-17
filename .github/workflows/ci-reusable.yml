@@ -1137,10 +1137,7 @@ jobs:
         run: |
           for abi in arm64-v8a x86_64; do
             mkdir -p app/android/app/src/main/jniLibs/$abi
-            cp build/android/$abi/libsogen.so app/android/app/src/main/jniLibs/$abi/
-            if [ -f build/android/$abi/libFEXCore.so ]; then
-              cp build/android/$abi/libFEXCore.so app/android/app/src/main/jniLibs/$abi/
-            fi
+            cp build/android/$abi/*.so app/android/app/src/main/jniLibs/$abi/
           done
 
       - name: Set up Java
