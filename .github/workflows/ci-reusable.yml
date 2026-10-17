@@ -107,7 +107,7 @@ jobs:
               libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
 
       - name: CMake Build
-        run: cmake --workflow --preset=tidy
+        run: cmake --preset=tidy && cmake --build --preset=tidy -- -k 0
 
   verify-formatting:
     name: Verify Formatting

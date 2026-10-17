@@ -1,5 +1,4 @@
 #pragma once
-#include <algorithm>
 #include <string>
 
 #include <gdb_stub.hpp>
@@ -229,13 +228,15 @@ namespace sogen
 
         std::string get_target_description(const std::string_view file) override
         {
-            const auto entry = std::ranges::find(x64_target_descriptions, file, &target_description::name);
-            if (entry == x64_target_descriptions.end())
+            for (const auto& [name, xml] : x64_target_descriptions)
             {
-                return {};
+                if (name == file)
+                {
+                    return std::string{xml};
+                }
             }
 
-            return std::string{entry->xml};
+            return {};
         }
 
         uint32_t get_current_thread_id() override
