@@ -168,7 +168,10 @@ class _GamePageState extends State<GamePage> {
           fit: StackFit.expand,
           children: [
             if (window != null)
-              GuestWindowView(session: _session, window: window, touchButton: _touchButton)
+              Padding(
+                padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+                child: GuestWindowView(session: _session, window: window, touchButton: _touchButton),
+              )
             else
               _StatusView(session: _session, game: widget.game),
             Positioned(
