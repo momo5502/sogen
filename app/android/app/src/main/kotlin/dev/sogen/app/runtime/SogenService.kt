@@ -26,7 +26,14 @@ class SogenService : Service() {
                     return
                 }
 
-                native = SogenNative(CallbackListener(callback))
+                try {
+                    native = SogenNative(CallbackListener(callback))
+                } catch (e: UnsatisfiedLinkError) {
+                    Log.e(TAG, "Could not load the emulator library", e)
+                    callback.onOutput("Could not load the emulator library: ${e.message}")
+                    callback.onExit(1)
+                    return
+                }
             }
 
             thread(name = "sogen-emulator") { runSession(RunConfig.fromBundle(config), callback) }
