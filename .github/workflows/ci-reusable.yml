@@ -304,7 +304,7 @@ jobs:
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/mingw-w64.cmake"
           - platform: Linux x86_64 GCC Sanitizer
             runner: ubuntu-24.04
-            cmake-options: "-DSOGEN_ENABLE_SANITIZER=On"
+            cmake-options: "-DSOGEN_ENABLE_SANITIZER=On -DSOGEN_ENABLE_STEAM=OFF -DSOGEN_ENABLE_RUST_CODE=OFF"
           #- platform: Linux x86_64 GCC
           #  runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
