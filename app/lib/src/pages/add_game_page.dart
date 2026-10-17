@@ -3,9 +3,12 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:path/path.dart' as p;
 
 import '../game_library.dart';
+import '../theme.dart';
+import '../widgets/sogen_widgets.dart';
 
 const _storage = MethodChannel('dev.sogen.app/storage');
 
@@ -135,34 +138,66 @@ class _AddGamePageState extends State<AddGamePage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final directory = _directory;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Add game')),
+      appBar: AppBar(
+        leading: IconButton(icon: const Icon(LucideIcons.x), onPressed: () => Navigator.of(context).pop()),
+        title: Text('Add game', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+      ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 32),
         children: [
-          Card.outlined(
-            child: ListTile(
-              leading: const Icon(Icons.folder_open),
-              title: Text(_directory ?? 'Choose the game folder'),
-              subtitle: const Text('The folder is mapped to C:\\game inside the emulator'),
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
               onTap: _pickDirectory,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: [
+                    IconTile(icon: LucideIcons.folderOpen, color: SogenColors.accents[0]),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            directory == null ? 'Choose the game folder' : p.basename(directory),
+                            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            directory ?? r'Mapped to C:\game inside the emulator',
+                            overflow: TextOverflow.ellipsis,
+                            style: directory == null
+                                ? theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400)
+                                : monospace(fontSize: 12, color: SogenColors.neutral400),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
-          const SizedBox(height: 16),
-          if (_scanning) const LinearProgressIndicator(),
-          if (_directory != null && !_scanning && _executables.isEmpty)
+          const SizedBox(height: 24),
+          if (_scanning)
+            ClipRRect(borderRadius: BorderRadius.circular(4), child: const LinearProgressIndicator(minHeight: 6)),
+          if (directory != null && !_scanning && _executables.isEmpty)
             Text('No .exe files found in this folder.', style: TextStyle(color: theme.colorScheme.error)),
           if (_executables.isNotEmpty) ...[
             DropdownButtonFormField<String>(
               initialValue: _executable,
               isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Executable', border: OutlineInputBorder()),
+              dropdownColor: SogenColors.card,
+              decoration: const InputDecoration(labelText: 'Executable'),
               items: [
                 for (final executable in _executables)
                   DropdownMenuItem(
                     value: executable,
-                    child: Text(executable, overflow: TextOverflow.ellipsis),
+                    child: Text(executable, overflow: TextOverflow.ellipsis, style: monospace(fontSize: 13)),
                   ),
               ],
               onChanged: (value) => setState(() => _executable = value),
@@ -170,27 +205,29 @@ class _AddGamePageState extends State<AddGamePage> {
             const SizedBox(height: 16),
             TextField(
               controller: _name,
-              decoration: const InputDecoration(labelText: 'Name', border: OutlineInputBorder()),
+              decoration: const InputDecoration(labelText: 'Name'),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: _arguments,
-              decoration: const InputDecoration(labelText: 'Arguments', border: OutlineInputBorder()),
+              decoration: const InputDecoration(labelText: 'Arguments'),
             ),
             const SizedBox(height: 8),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Network access'),
-              subtitle: const Text('Let the game use the device\'s internet connection'),
+              subtitle: Text(
+                "Let the game use the device's internet connection",
+                style: theme.textTheme.bodySmall?.copyWith(color: SogenColors.neutral400),
+              ),
               value: _liveNetwork,
               onChanged: (value) => setState(() => _liveNetwork = value),
             ),
+            const SizedBox(height: 24),
+            PrimaryButton(label: 'Add to library', icon: LucideIcons.plus, expand: true, onPressed: _save),
           ],
         ],
       ),
-      floatingActionButton: _executable == null
-          ? null
-          : FloatingActionButton.extended(onPressed: _save, icon: const Icon(Icons.check), label: const Text('Add')),
     );
   }
 }
