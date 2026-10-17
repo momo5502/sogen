@@ -80,7 +80,8 @@ class SessionController(
     fun close(window: Long) = call { session?.close(window) }
 
     private val callback = object : ISogenCallback.Stub() {
-        override fun onOutput(text: String) = post { emit(mapOf("event" to "output", "text" to text)) }
+        override fun onOutput(text: String, color: Int) =
+            post { emit(mapOf("event" to "output", "text" to text, "color" to color)) }
 
         override fun onWindowCreated(window: Long, width: Int, height: Int, title: String, visible: Boolean) = post {
             val producer = textures.createSurfaceProducer()

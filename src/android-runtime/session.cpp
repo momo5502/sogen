@@ -85,7 +85,7 @@ namespace sogen::android
     {
         auto* listener_class = env.GetObjectClass(listener);
         this->methods_ = {
-            .on_output = env.GetMethodID(listener_class, "onOutput", "(Ljava/lang/String;)V"),
+            .on_output = env.GetMethodID(listener_class, "onOutput", "(Ljava/lang/String;I)V"),
             .on_window_created = env.GetMethodID(listener_class, "onWindowCreated", "(JIILjava/lang/String;Z)V"),
             .on_window_destroyed = env.GetMethodID(listener_class, "onWindowDestroyed", "(J)V"),
             .on_window_resized = env.GetMethodID(listener_class, "onWindowResized", "(JII)V"),
@@ -108,7 +108,7 @@ namespace sogen::android
             auto* ui_backend = ui.get();
 
             emulator_callbacks callbacks{};
-            callbacks.on_stdout = [this](const std::string_view data) { this->output(std::string{data}); };
+            callbacks.on_stdout = [this](const std::string_view data) { this->output(std::string{data}, -1); };
 
             windows_emulator win_emu{create_x86_64_emulator(parse_backend(config.backend)), create_application_settings(config),
                                      create_emulator_settings(config), std::move(callbacks), emulator_interfaces{.ui = std::move(ui)}};
@@ -117,7 +117,7 @@ namespace sogen::android
             win_emu.log.set_sink([this](const color c, const std::string_view message) {
                 if (c != color::gray && c != color::dark_gray)
                 {
-                    this->output(std::string{message});
+                    this->output(std::string{message}, static_cast<int32_t>(c));
                 }
             });
 
@@ -145,7 +145,7 @@ namespace sogen::android
         }
         catch (const std::exception& e)
         {
-            this->output(std::string{"Emulation failed: "} + e.what() + "\n");
+            this->output(std::string{"Emulation failed: "} + e.what() + "\n", static_cast<int32_t>(color::red));
         }
 
         {
@@ -220,11 +220,11 @@ namespace sogen::android
         });
     }
 
-    void session::output(std::string text)
+    void session::output(std::string text, const int32_t color)
     {
-        this->dispatcher_.post([this, text = std::move(text)](JNIEnv& env) {
+        this->dispatcher_.post([this, text = std::move(text), color](JNIEnv& env) {
             auto* java_text = make_java_string(env, u8_to_u16(text));
-            env.CallVoidMethod(this->listener_, this->methods_.on_output, java_text);
+            env.CallVoidMethod(this->listener_, this->methods_.on_output, java_text, color);
             env.DeleteLocalRef(java_text);
         });
     }
