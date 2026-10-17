@@ -116,6 +116,13 @@ namespace sogen
             return 0;
         }
 
+        // The vkGetInstanceProcAddr the GPU bridge should use, when the backend loads its own Vulkan driver.
+        // Null means the platform's default Vulkan loader.
+        virtual void* vulkan_get_instance_proc_addr()
+        {
+            return nullptr;
+        }
+
         // Warp the host cursor so it tracks a guest SetCursorPos. Without this, the next host mouse-motion
         // event reports the (unchanged) host position and overwrites the recentered guest cursor, making
         // relative-mouse deltas (in-game look) jump. screen_x/y are emulated-desktop screen coordinates.

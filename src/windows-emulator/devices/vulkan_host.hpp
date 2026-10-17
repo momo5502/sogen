@@ -29,6 +29,11 @@ namespace sogen
         vulkan_host(vulkan_host&&) = delete;
         vulkan_host& operator=(vulkan_host&&) = delete;
 
+        // Binds the host Vulkan loader on first use. A null get_instance_proc_addr loads the platform's
+        // default loader; otherwise the given vkGetInstanceProcAddr is used, e.g. for a custom driver the
+        // embedder loaded. Later calls have no effect.
+        void load(void* get_instance_proc_addr);
+
         // False if no Vulkan driver could be loaded on the host.
         bool available() const;
 
