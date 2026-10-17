@@ -30,3 +30,4 @@ add_test(NAME linux-emulator-test
 sogen_targets_set_folder("tests" linux-emulator-test)
 
 sogen_strip_target(linux-emulator-test)
+sogen_target_skip_clang_tidy(linux-emulator-test)

@@ -552,7 +552,6 @@ jobs:
           #- macOS x86_64
         emulator:
           - Unicorn
-          - Icicle
         emulation-root:
           - Windows 2025
           #- Windows 2022
@@ -590,7 +589,6 @@ jobs:
         run: |
           echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
-          echo "EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }}" >> $GITHUB_ENV
 
       - name: Download Test Configuration
         uses: actions/download-artifact@v8
@@ -621,7 +619,6 @@ jobs:
         run: cp build/${{matrix.preset}}/artifacts/test-sample.exe build/${{matrix.preset}}/artifacts/root/filesys/c/
 
       - name: CMake Test
-        if: ${{ matrix.emulator != 'Icicle' || matrix.platform != 'Windows x86' }}
         run: cd build/${{matrix.preset}} && ctest --verbose -j
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/${{matrix.preset}}/artifacts/root
@@ -652,7 +649,6 @@ jobs:
           - Release
         emulator:
           - Unicorn
-          - Icicle
           #- WHP
         emulation-root:
           - Windows 2025
@@ -679,7 +675,6 @@ jobs:
         run: |
           echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
-          echo "EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }}" >> $GITHUB_ENV
           echo "EMULATOR_WHP=${{ matrix.emulator == 'WHP' }}" >> $GITHUB_ENV
 
       - name: Download Test Configuration
@@ -809,6 +804,33 @@ jobs:
         run: cd build/release/artifacts && ./analyzer.exe --network live -e root c:/test-sample.exe
         env:
           EMULATOR_WHP: "1"
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ inputs.verbose }}
+
+  smoke-test-icicle:
+    name: Smoke Test Icicle x86_64
+    runs-on: windows-latest
+    needs: [create-emulation-root, build]
+    steps:
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows x86_64 Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 2025 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      - name: CMake Test
+        run: cd build/release/artifacts && ./analyzer.exe --network live -e root c:/test-sample.exe
+        env:
+          EMULATOR_ICICLE: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
 
@@ -1344,6 +1366,7 @@ jobs:
         clang-tidy,
         build-root-tools,
         smoke-test-whp,
+        smoke-test-icicle,
         smoke-test-kvm,
         smoke-test-fex,
         smoke-test-node,

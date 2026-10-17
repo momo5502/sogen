@@ -10,3 +10,4 @@ add_executable(bad-sample ${SRC_FILES})
 target_link_libraries(bad-sample PRIVATE emulator-common emulator-platform)
 
 sogen_assign_source_group(${SRC_FILES})
+sogen_target_skip_clang_tidy(bad-sample)
