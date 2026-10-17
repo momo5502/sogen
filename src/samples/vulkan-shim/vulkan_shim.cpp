@@ -220,7 +220,11 @@ namespace
     // VkDeviceMemory is host-side; the guest can't see a host pointer. We emulate vkMapMemory by
     // staging a guest-side copy: download the host range on map, hand the app that buffer, and upload
     // it back on unmap so writes persist. allocationSize is tracked here to resolve VK_WHOLE_SIZE.
-    std::unordered_map<gb::object_id, uint64_t> g_memory_sizes;
+    std::unordered_map<gb::object_id, uint64_t>& memory_sizes()
+    {
+        static std::unordered_map<gb::object_id, uint64_t> sizes;
+        return sizes;
+    }
 
     struct mapped_range
     {
@@ -229,11 +233,19 @@ namespace
         uint64_t size{};
     };
 
-    std::unordered_map<gb::object_id, mapped_range> g_mapped_ranges;
+    std::unordered_map<gb::object_id, mapped_range>& mapped_ranges()
+    {
+        static std::unordered_map<gb::object_id, mapped_range> ranges;
+        return ranges;
+    }
 
     // Memory objects the bridge aliased straight into the guest address space (no staging copy). These are
-    // not in g_mapped_ranges; vkUnmapMemory tears them down via the bridge instead of uploading.
-    std::unordered_set<gb::object_id> g_direct_mapped;
+    // not in mapped_ranges(); vkUnmapMemory tears them down via the bridge instead of uploading.
+    std::unordered_set<gb::object_id>& direct_mapped()
+    {
+        static std::unordered_set<gb::object_id> memory;
+        return memory;
+    }
 
     // vkDestroyX(device, child) for the non-dispatchable device children that share device_child_request.
     template <typename Handle>
@@ -254,7 +266,11 @@ namespace
     // in a single IOCTL at vkEndCommandBuffer. This amortises the boundary crossing, which dominates
     // emulated frame time. The shim only runs inside the single-threaded emulator, so the map needs no
     // lock. Each record is a gb::command_record_header followed by that command's request payload.
-    std::unordered_map<gb::object_id, std::vector<uint8_t>> g_command_streams;
+    std::unordered_map<gb::object_id, std::vector<uint8_t>>& command_streams()
+    {
+        static std::unordered_map<gb::object_id, std::vector<uint8_t>> streams;
+        return streams;
+    }
 
     // Pending coalesced vkUpdateDescriptorSets blobs (the hottest bridge call - DXVK updates per draw).
     // Unlike the per-command-buffer streams (each synchronised to one thread by Vulkan), this global is
@@ -284,7 +300,7 @@ namespace
 
     void record_command(gb::object_id command_buffer, gb::command command, const void* payload, size_t size)
     {
-        auto& stream = g_command_streams[command_buffer];
+        auto& stream = command_streams()[command_buffer];
         gb::command_record_header header{.command = static_cast<uint32_t>(command), .size = static_cast<uint32_t>(size)};
         const auto* header_bytes = reinterpret_cast<const uint8_t*>(&header);
         stream.insert(stream.end(), header_bytes, header_bytes + sizeof(header));
@@ -412,8 +428,8 @@ extern "C"
         }
 
         static const VkExtensionProperties extensions[] = {
-            {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_SURFACE_SPEC_VERSION},
-            {VK_KHR_WIN32_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_SPEC_VERSION},
+            {.extensionName = VK_KHR_SURFACE_EXTENSION_NAME, .specVersion = VK_KHR_SURFACE_SPEC_VERSION},
+            {.extensionName = VK_KHR_WIN32_SURFACE_EXTENSION_NAME, .specVersion = VK_KHR_WIN32_SURFACE_SPEC_VERSION},
         };
         constexpr auto available = static_cast<uint32_t>(sizeof(extensions) / sizeof(extensions[0]));
 
@@ -788,7 +804,7 @@ extern "C"
             std::memcpy(message.data(), &request, sizeof(request));
         }
 
-        g_command_streams[request.command_buffer].clear();
+        command_streams()[request.command_buffer].clear();
         record_command(request.command_buffer, gb::command::begin_command_buffer, message.data(), message.size());
         return VK_SUCCESS;
     }
@@ -818,13 +834,13 @@ extern "C"
         request.command_buffer = command_buffer;
         record_command(command_buffer, gb::command::end_command_buffer, &request, sizeof(request));
 
-        const auto it = g_command_streams.find(command_buffer);
-        if (it == g_command_streams.end())
+        const auto it = command_streams().find(command_buffer);
+        if (it == command_streams().end())
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         const std::vector<uint8_t> stream = std::move(it->second);
-        g_command_streams.erase(it);
+        command_streams().erase(it);
 
         gb::result_response response{};
         if (!bridge_call(gb::ioctl_record_commands, stream.data(), static_cast<DWORD>(stream.size()), &response, sizeof(response)))
@@ -854,7 +870,7 @@ extern "C"
                                                                               VkCommandBufferResetFlags flags)
     {
         // Drop any half-recorded local stream; recording only reaches the bridge at vkEndCommandBuffer.
-        g_command_streams.erase(to_object_id(commandBuffer));
+        command_streams().erase(to_object_id(commandBuffer));
 
         gb::reset_command_buffer_request request{};
         request.command_buffer = to_object_id(commandBuffer);
@@ -1394,7 +1410,7 @@ extern "C"
             return static_cast<VkResult>(response.vk_result);
         }
 
-        g_memory_sizes[response.memory] = pAllocateInfo->allocationSize;
+        memory_sizes()[response.memory] = pAllocateInfo->allocationSize;
         *pMemory = to_handle<VkDeviceMemory>(response.memory);
         return VK_SUCCESS;
     }
@@ -1412,8 +1428,8 @@ extern "C"
         request.memory = mem_id;
         bridge_call(gb::ioctl_free_memory, &request, sizeof(request), nullptr, 0);
 
-        g_memory_sizes.erase(mem_id);
-        g_mapped_ranges.erase(mem_id);
+        memory_sizes().erase(mem_id);
+        mapped_ranges().erase(mem_id);
     }
 
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkMapMemory(VkDevice device, VkDeviceMemory memory, VkDeviceSize offset,
@@ -1424,8 +1440,8 @@ extern "C"
         uint64_t actual = size;
         if (size == VK_WHOLE_SIZE)
         {
-            const auto it = g_memory_sizes.find(mem_id);
-            const uint64_t total = (it != g_memory_sizes.end()) ? it->second : 0;
+            const auto it = memory_sizes().find(mem_id);
+            const uint64_t total = (it != memory_sizes().end()) ? it->second : 0;
             actual = (total > offset) ? (total - offset) : 0;
         }
 
@@ -1443,7 +1459,7 @@ extern "C"
             if (bridge_call(gb::ioctl_map_memory_direct, &request, sizeof(request), &response, sizeof(response)) &&
                 response.vk_result == VK_SUCCESS && response.guest_address != 0)
             {
-                g_direct_mapped.insert(mem_id);
+                direct_mapped().insert(mem_id);
                 *ppData = reinterpret_cast<void*>(static_cast<uintptr_t>(response.guest_address));
                 return VK_SUCCESS;
             }
@@ -1468,7 +1484,7 @@ extern "C"
             }
         }
 
-        auto& stored = (g_mapped_ranges[mem_id] = std::move(range));
+        auto& stored = (mapped_ranges()[mem_id] = std::move(range));
         *ppData = stored.staging.data();
         return VK_SUCCESS;
     }
@@ -1477,7 +1493,7 @@ extern "C"
     {
         const gb::object_id mem_id = to_object_id(memory);
 
-        if (g_direct_mapped.erase(mem_id) != 0)
+        if (direct_mapped().erase(mem_id) != 0)
         {
             gb::unmap_memory_direct_request request{};
             request.device = to_object_id(device);
@@ -1486,8 +1502,8 @@ extern "C"
             return;
         }
 
-        const auto it = g_mapped_ranges.find(mem_id);
-        if (it == g_mapped_ranges.end())
+        const auto it = mapped_ranges().find(mem_id);
+        if (it == mapped_ranges().end())
         {
             return;
         }
@@ -1508,7 +1524,7 @@ extern "C"
             bridge_call(gb::ioctl_upload_memory, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response));
         }
 
-        g_mapped_ranges.erase(it);
+        mapped_ranges().erase(it);
     }
 
     // The bridge models a map as a private staging copy synced by download (map) / upload (unmap). DXVK may
@@ -1520,7 +1536,7 @@ extern "C"
         for (uint32_t i = 0; i < memoryRangeCount; ++i)
         {
             const gb::object_id mem_id = to_object_id(pMemoryRanges[i].memory);
-            if (g_direct_mapped.contains(mem_id))
+            if (direct_mapped().contains(mem_id))
             {
                 gb::mapped_memory_range_request request{};
                 request.device = to_object_id(device);
@@ -1540,8 +1556,8 @@ extern "C"
                 continue;
             }
 
-            const auto it = g_mapped_ranges.find(mem_id);
-            if (it == g_mapped_ranges.end() || it->second.staging.empty())
+            const auto it = mapped_ranges().find(mem_id);
+            if (it == mapped_ranges().end() || it->second.staging.empty())
             {
                 continue;
             }
@@ -1567,7 +1583,7 @@ extern "C"
         for (uint32_t i = 0; i < memoryRangeCount; ++i)
         {
             const gb::object_id mem_id = to_object_id(pMemoryRanges[i].memory);
-            if (g_direct_mapped.contains(mem_id))
+            if (direct_mapped().contains(mem_id))
             {
                 gb::mapped_memory_range_request request{};
                 request.device = to_object_id(device);
@@ -1587,8 +1603,8 @@ extern "C"
                 continue;
             }
 
-            const auto it = g_mapped_ranges.find(mem_id);
-            if (it == g_mapped_ranges.end() || it->second.staging.empty())
+            const auto it = mapped_ranges().find(mem_id);
+            if (it == mapped_ranges().end() || it->second.staging.empty())
             {
                 continue;
             }
@@ -2991,6 +3007,7 @@ extern "C"
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         *pSurfaceCapabilities = {};
 
         gb::get_surface_capabilities_request request{};

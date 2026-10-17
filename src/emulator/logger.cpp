@@ -170,49 +170,49 @@ namespace sogen
         this->print_message(c, message);
     }
 
-    // NOLINTNEXTLINE(cert-dcl50-cpp)
+    // NOLINTNEXTLINE(cert-dcl50-cpp,modernize-avoid-variadic-functions)
     void logger::print(const color c, const char* message, ...)
     {
         format_to_string(message, data);
         this->print_message(c, data);
     }
 
-    // NOLINTNEXTLINE(cert-dcl50-cpp)
+    // NOLINTNEXTLINE(cert-dcl50-cpp,modernize-avoid-variadic-functions)
     void logger::force_print(const color c, const char* message, ...)
     {
         format_to_string(message, data);
         this->print_message(c, data, true);
     }
 
-    // NOLINTNEXTLINE(cert-dcl50-cpp)
+    // NOLINTNEXTLINE(cert-dcl50-cpp,modernize-avoid-variadic-functions)
     void logger::info(const char* message, ...) const
     {
         format_to_string(message, data);
         this->print_message(color::cyan, data);
     }
 
-    // NOLINTNEXTLINE(cert-dcl50-cpp)
+    // NOLINTNEXTLINE(cert-dcl50-cpp,modernize-avoid-variadic-functions)
     void logger::warn(const char* message, ...) const
     {
         format_to_string(message, data);
         this->print_message(color::yellow, data);
     }
 
-    // NOLINTNEXTLINE(cert-dcl50-cpp)
+    // NOLINTNEXTLINE(cert-dcl50-cpp,modernize-avoid-variadic-functions)
     void logger::error(const char* message, ...) const
     {
         format_to_string(message, data);
         this->print_message(color::red, data, true);
     }
 
-    // NOLINTNEXTLINE(cert-dcl50-cpp)
+    // NOLINTNEXTLINE(cert-dcl50-cpp,modernize-avoid-variadic-functions)
     void logger::success(const char* message, ...) const
     {
         format_to_string(message, data);
         this->print_message(color::green, data);
     }
 
-    // NOLINTNEXTLINE(cert-dcl50-cpp)
+    // NOLINTNEXTLINE(cert-dcl50-cpp,modernize-avoid-variadic-functions)
     void logger::log(const char* message, ...) const
     {
         format_to_string(message, data);

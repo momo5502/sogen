@@ -1,4 +1,6 @@
 #pragma once
+#include <string>
+
 #include <gdb_stub.hpp>
 #include <scoped_hook.hpp>
 #include <arch_emulator.hpp>
@@ -187,7 +189,7 @@ namespace sogen
             try
             {
                 return this->hooks_.access<bool>([&](hook_map& hooks) {
-                    hooks[{addr, size, type}] = this->create_hook(type, addr, size);
+                    hooks[{.addr = addr, .size = size, .type = type}] = this->create_hook(type, addr, size);
                     return true;
                 });
             }
@@ -202,7 +204,7 @@ namespace sogen
             try
             {
                 return this->hooks_.access<bool>([&](hook_map& hooks) {
-                    const auto entry = hooks.find({addr, size, type});
+                    const auto entry = hooks.find({.addr = addr, .size = size, .type = type});
                     if (entry == hooks.end())
                     {
                         return false;
@@ -226,13 +228,15 @@ namespace sogen
 
         std::string get_target_description(const std::string_view file) override
         {
-            const auto entry = x64_target_descriptions.find(file);
-            if (entry == x64_target_descriptions.end())
+            for (const auto& [name, xml] : x64_target_descriptions)
             {
-                return {};
+                if (name == file)
+                {
+                    return std::string{xml};
+                }
             }
 
-            return entry->second;
+            return {};
         }
 
         uint32_t get_current_thread_id() override

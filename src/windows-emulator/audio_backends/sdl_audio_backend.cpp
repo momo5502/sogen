@@ -68,7 +68,8 @@ namespace sogen
                     }
                 }
 
-                const SDL_AudioSpec spec{*sdl_format, static_cast<int>(format.channels), static_cast<int>(format.sample_rate)};
+                const SDL_AudioSpec spec{
+                    .format = *sdl_format, .channels = static_cast<int>(format.channels), .freq = static_cast<int>(format.sample_rate)};
                 this->stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
                 if (!this->stream_)
                 {

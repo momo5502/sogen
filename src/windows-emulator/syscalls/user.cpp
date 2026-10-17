@@ -2484,7 +2484,7 @@ namespace sogen
             }
 
             // TODO: This should return the clip cursor. For simplicity, we return a best effort derived from the screen size.
-            RECT rect{0, 0, 1920, 1080};
+            RECT rect{.left = 0, .top = 0, .right = 1920, .bottom = 1080};
             const auto display_info = c.proc.user_handles.get_display_info().read();
             if (const emulator_object<USER_MONITOR> monitor_obj(c.emu, display_info.pPrimaryMonitor); monitor_obj)
             {
@@ -4132,8 +4132,8 @@ namespace sogen
                 .right = client.right,
                 .bottom = client.bottom,
             };
-            RECT item_rect = item ? RECT{item->x, item->y, item->x + item->width, item->y + item->height}
-                                  : RECT{client.left, client.top, button_left, client.bottom};
+            RECT item_rect = item ? RECT{.left = item->x, .top = item->y, .right = item->x + item->width, .bottom = item->y + item->height}
+                                  : RECT{.left = client.left, .top = client.top, .right = button_left, .bottom = client.bottom};
             item_rect.right = std::max(item_rect.left, std::min(item_rect.right, button_left));
             uint32_t state_button = 0;
             if (simple)

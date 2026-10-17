@@ -200,9 +200,10 @@ namespace sogen
             constexpr uint32_t k_dxgk_device_handle = 0x5000;
             constexpr uint32_t k_dxgk_context_handle = 0x6000;
             constexpr uint32_t k_dxgk_shared_primary_handle = 0x7000;
-            constexpr LUID k_dxgk_adapter_luid = {0x1000, 0};
+            constexpr LUID k_dxgk_adapter_luid = {.LowPart = 0x1000, .HighPart = 0};
             // Stable emulator-only unique adapter id. Sequential, not a host device.
-            constexpr GUID k_dxgk_adapter_unique_id = {0x00000001, 0x0002, 0x0003, {0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
+            constexpr GUID k_dxgk_adapter_unique_id = {
+                .Data1 = 0x00000001, .Data2 = 0x0002, .Data3 = 0x0003, .Data4 = {0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
             constexpr uint32_t k_dxgk_adapter_source_count = 1;
             constexpr uint32_t k_dxgk_command_buffer_size = 0x1000;
             constexpr uint32_t k_dxgk_allocation_list_entry_size = 8;
@@ -2099,7 +2100,7 @@ namespace sogen
 
             const size_t total_size = stride * surface.height;
 
-            if (total_size > static_cast<size_t>((std::numeric_limits<int32_t>::max)()))
+            if (total_size > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
             {
                 return 0;
             }
@@ -2184,7 +2185,7 @@ namespace sogen
 
             const auto allocation_bytes = static_cast<uint64_t>(stride) * abs_height;
 
-            if (allocation_bytes == 0 || allocation_bytes > (std::numeric_limits<size_t>::max)())
+            if (allocation_bytes == 0 || allocation_bytes > std::numeric_limits<size_t>::max())
             {
                 return 0;
             }

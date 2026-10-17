@@ -205,7 +205,7 @@ namespace sogen
       public:
         using index_type = uint32_t;
         using value_map = std::map<index_type, T>;
-        using iterator = typename value_map::iterator;
+        using iterator = value_map::iterator;
 
         bool block_mutation(bool blocked)
         {

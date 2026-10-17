@@ -100,6 +100,7 @@ namespace sogen
         T read_memory(const uint64_t address) const
         {
             static_assert(std::is_trivially_copyable_v<T>, "Type must be trivially copyable!");
+            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
             T value{};
             this->read_memory(address, &value, sizeof(value));
             return value;

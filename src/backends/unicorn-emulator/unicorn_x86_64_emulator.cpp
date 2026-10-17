@@ -304,7 +304,7 @@ namespace sogen::unicorn
                 }
 
                 size_t result_size = sizeof(msr_value);
-                uce(uc_reg_read2(*this, (int)x86_register::msr, &msr_val, &result_size));
+                uce(uc_reg_read2(*this, static_cast<int>(x86_register::msr), &msr_val, &result_size));
 
                 return msr_val.value;
             }

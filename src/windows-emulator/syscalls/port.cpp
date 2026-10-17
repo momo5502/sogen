@@ -410,8 +410,8 @@ namespace sogen
                     .write({
                         .Flags = alpc_view_not_secure,
                         .SectionHandle = 0,
-                        .ViewBase = static_cast<typename Traits::PVOID>(view_base),
-                        .ViewSize = static_cast<typename Traits::SIZE_T>(view_size),
+                        .ViewBase = static_cast<Traits::PVOID>(view_base),
+                        .ViewSize = static_cast<Traits::SIZE_T>(view_size),
                     });
             };
 
@@ -460,7 +460,7 @@ namespace sogen
                 handle_attribute_at<Traits>(c, *attr_base)
                     .write({
                         .Flags = alpc_received_handle_flags,
-                        .Handle = static_cast<typename Traits::HANDLE>(h.handle),
+                        .Handle = static_cast<Traits::HANDLE>(h.handle),
                         .ObjectType = static_cast<ULONG>(handles.size()),
                         .DesiredAccess = h.desired_access,
                     });
@@ -646,7 +646,7 @@ namespace sogen
 
             if (receive_message && buffer_length)
             {
-                buffer_length.write(static_cast<typename EmulatorTraits<Emu64>::SIZE_T>(result.total_length()));
+                buffer_length.write(static_cast<EmulatorTraits<Emu64>::SIZE_T>(result.total_length()));
             }
 
             return result.status;

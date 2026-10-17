@@ -37,7 +37,7 @@ jobs:
   clang-tidy:
     name: Run Clang Tidy
     env:
-      LLVM_VERSION: 21
+      LLVM_VERSION: 22
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -64,7 +64,7 @@ jobs:
           exclude-current: true
 
       - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@v2
+        uses: momo5502/install-llvm-action@master
         with:
           version: ${{ env.LLVM_VERSION }}
           arch: x64
@@ -107,13 +107,13 @@ jobs:
               libpipewire-0.3-dev libwayland-dev libdecor-0-dev liburing-dev
 
       - name: CMake Build
-        run: cmake --workflow --preset=tidy
+        run: cmake --preset=tidy && cmake --build --preset=tidy -- -k 0
 
   verify-formatting:
     name: Verify Formatting
     runs-on: ubuntu-24.04
     env:
-      LLVM_VERSION: 21
+      LLVM_VERSION: 22
     steps:
       - name: Checkout Source
         uses: actions/checkout@v7
@@ -309,10 +309,10 @@ jobs:
           #  runner: ubuntu-24.04
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
-            clang-version: 21
+            clang-version: 22
           - platform: Linux arm64 Clang
             runner: ubuntu-24.04-arm
-            clang-version: 21
+            clang-version: 22
           #- platform: iOS arm64
           #  runner: macos-latest
           #  rust-target: aarch64-apple-ios

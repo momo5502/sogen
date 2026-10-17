@@ -161,6 +161,7 @@ namespace sogen
         {
             if constexpr (sizeof(T) < 0x4000)
             {
+                // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
                 T obj{};
                 this->access_object(accessor, obj, index);
             }

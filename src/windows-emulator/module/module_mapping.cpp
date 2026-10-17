@@ -215,7 +215,7 @@ namespace sogen
                 }
 
                 using thunk_traits = thunk_data_traits<T>;
-                using thunk_type = typename thunk_traits::type;
+                using thunk_type = thunk_traits::type;
 
                 const auto module_index = binary.imported_modules.size();
                 binary.imported_modules.push_back(read_mapped_string(memory, binary.image_base + descriptor.Name));

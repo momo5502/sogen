@@ -579,6 +579,7 @@ namespace sogen
                         return STATUS_INVALID_PARAMETER;
                     }
 
+                    // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
                     fill_console_output_request request{};
                     win_emu.emu().read_memory(header.data, &request, sizeof(request));
                     switch (request.type)

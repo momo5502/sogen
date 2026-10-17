@@ -202,6 +202,4 @@ namespace sogen
         this->setup(ntdll_exports, ntdll_data, win32u_exports, win32u_data);
     }
 
-    std::map<callback_id, std::function<std::unique_ptr<completion_state>()>> syscall_dispatcher::completion_state_factories_{};
-
 } // namespace sogen

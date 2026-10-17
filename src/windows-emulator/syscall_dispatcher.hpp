@@ -379,7 +379,8 @@ namespace sogen
 
         static std::unique_ptr<completion_state> create_completion_state(callback_id id)
         {
-            if (auto it = completion_state_factories_.find(id); it != completion_state_factories_.end())
+            const auto& factories = completion_state_factories();
+            if (auto it = factories.find(id); it != factories.end())
             {
                 return it->second();
             }
@@ -389,7 +390,12 @@ namespace sogen
       private:
         std::map<uint64_t, syscall_handler_entry> handlers_{};
         std::map<callback_id, syscall_handler> completion_handlers_;
-        static std::map<callback_id, std::function<std::unique_ptr<completion_state>()>> completion_state_factories_;
+
+        static std::map<callback_id, std::function<std::unique_ptr<completion_state>()>>& completion_state_factories()
+        {
+            static std::map<callback_id, std::function<std::unique_ptr<completion_state>()>> factories{};
+            return factories;
+        }
 
         static void add_handlers(std::map<std::string, syscall_handler>& handler_mapping);
         void add_handlers();

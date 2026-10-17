@@ -105,7 +105,7 @@ namespace sogen
     struct ALPC_HANDLE_ATTR
     {
         ULONG Flags;
-        typename Traits::HANDLE Handle;
+        Traits::HANDLE Handle;
         ULONG ObjectType;
         ULONG DesiredAccess; // GrantedAccess on receive
     };
@@ -114,9 +114,9 @@ namespace sogen
     struct ALPC_DATA_VIEW_ATTR
     {
         ULONG Flags;
-        typename Traits::HANDLE SectionHandle;
-        typename Traits::PVOID ViewBase;
-        typename Traits::SIZE_T ViewSize;
+        Traits::HANDLE SectionHandle;
+        Traits::PVOID ViewBase;
+        Traits::SIZE_T ViewSize;
     };
 
     static_assert(sizeof(ALPC_DATA_VIEW_ATTR<EmulatorTraits<Emu32>>) == 16);

@@ -2024,11 +2024,11 @@ namespace sogen
 
     void syscall_dispatcher::add_callbacks()
     {
-#define add_callback(syscall, completion_state)                                                                                      \
-    do                                                                                                                               \
-    {                                                                                                                                \
-        this->completion_handlers_[callback_id::syscall] = make_syscall_handler<syscalls::completion_##syscall>();                   \
-        syscall_dispatcher::completion_state_factories_[callback_id::syscall] = [] { return std::make_unique<completion_state>(); }; \
+#define add_callback(syscall, completion_state)                                                                                       \
+    do                                                                                                                                \
+    {                                                                                                                                 \
+        this->completion_handlers_[callback_id::syscall] = make_syscall_handler<syscalls::completion_##syscall>();                    \
+        syscall_dispatcher::completion_state_factories()[callback_id::syscall] = [] { return std::make_unique<completion_state>(); }; \
     } while (0)
 
 #define add_stateless_callback(syscall)                                                                            \

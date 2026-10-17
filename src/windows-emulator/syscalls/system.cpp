@@ -241,7 +241,7 @@ namespace sogen
         void fill_ntoskrnl_module(RTL_PROCESS_MODULE_INFORMATION<Traits>& m)
         {
             memset(&m, 0, sizeof(m));
-            m.ImageBase = static_cast<typename Traits::PVOID>(FAKE_KERNEL_BASE);
+            m.ImageBase = static_cast<Traits::PVOID>(FAKE_KERNEL_BASE);
             m.MappedBase = m.ImageBase;
             m.ImageSize = FAKE_KERNEL_SIZE;
             m.LoadCount = 1;

@@ -16,19 +16,19 @@ namespace sogen
                 this->point_ = Clock::now();
             }
 
-            bool has_elapsed(typename Clock::duration duration) const
+            bool has_elapsed(Clock::duration duration) const
             {
                 return this->elapsed() > duration;
             }
 
-            typename Clock::duration elapsed() const
+            Clock::duration elapsed() const
             {
                 const auto now = Clock::now();
                 return now - this->point_;
             }
 
           private:
-            typename Clock::time_point point_{Clock::now()};
+            Clock::time_point point_{Clock::now()};
         };
     }
 } // namespace sogen
