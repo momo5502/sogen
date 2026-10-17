@@ -16,9 +16,9 @@ export enum EmulationState {
 
 export interface EmulationStatus {
   activeThreads: number;
-  reservedMemory: BigInt;
-  committedMemory: BigInt;
-  executedInstructions: BigInt;
+  reservedMemory: bigint;
+  committedMemory: bigint;
+  executedInstructions: bigint;
 }
 
 /**
@@ -137,7 +137,7 @@ export class Emulator {
   stautsUpdateHandler: StatusUpdateHandler;
   terminatePromise: Promise<number | null>;
   terminateResolve: (value: number | null) => void;
-  terminateReject: (reason?: any) => void;
+  terminateReject: (reason?: unknown) => void;
   worker: Worker;
   mode: EmulatorMode;
   state: EmulationState = EmulationState.Stopped;
@@ -637,9 +637,7 @@ export class Emulator {
   }
 
   _onError(ev: ErrorEvent) {
-    try {
-      this.worker.terminate();
-    } catch (e) {}
+    this.worker.terminate();
 
     this.logError(`Emulator encountered fatal error: ${ev.message}`);
     this._flushPendingMemoryRequests();
@@ -736,7 +734,7 @@ export class Emulator {
       return;
     }
 
-    let regions: MemoryRegion[] | null = null;
+    let regions: MemoryRegion[] | null;
     try {
       const text = new TextDecoder().decode(Uint8Array.from(response.regions));
       regions = JSON.parse(text) as MemoryRegion[];

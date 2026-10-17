@@ -97,7 +97,7 @@ function getIcon(
 }
 
 function renderIcon(element: FolderElement, iconReader: IconReader) {
-  let className = "w-11 h-11 flex-1";
+  const className = "w-11 h-11 flex-1";
   return getIcon(element, iconReader, className);
 }
 

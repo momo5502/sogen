@@ -1085,8 +1085,14 @@ jobs:
           cp ./build/release/artifacts/64/analyzer.js ./page/public/64/
           cp ./build/release/artifacts/64/analyzer.wasm ./page/public/64/
 
+      - name: Install Page Dependencies
+        run: cd ./page && npm ci
+
+      - name: Lint Page
+        run: cd ./page && npm run lint
+
       - name: Build Page
-        run: cd ./page && npm ci && npm run build
+        run: cd ./page && npm run build
 
       - name: Upload Page Artifacts
         uses: pyTooling/upload-artifact@v7

@@ -59,7 +59,7 @@ export interface PlaygroundFile {
   storage: string;
 }
 
-export interface PlaygroundProps {}
+export type PlaygroundProps = object;
 
 export interface PlaygroundState {
   settings: Settings;

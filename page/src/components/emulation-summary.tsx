@@ -13,7 +13,7 @@ export interface EmulationSummaryProps {
   executionTimeFetcher: () => number;
 }
 
-function formatMemory(value: BigInt): string {
+function formatMemory(value: bigint): string {
   const abbr = ["B", "KB", "MB", "GB", "PB"];
 
   let num = Number(value);
@@ -42,10 +42,7 @@ function formatTime(seconds: number): string {
   return `${mins.toString()}:${secsString}`;
 }
 
-export class EmulationSummary extends React.Component<
-  EmulationSummaryProps,
-  {}
-> {
+export class EmulationSummary extends React.Component<EmulationSummaryProps> {
   private timer: NodeJS.Timeout | undefined = undefined;
 
   constructor(props: EmulationSummaryProps) {

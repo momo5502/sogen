@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { CircleFill } from "react-bootstrap-icons";
-import { EmulationStatus, EmulationState as State } from "@/emulator";
+import { useEffect } from "react";
+import { EmulationState as State } from "@/emulator";
 
 function getStateName(state: State) {
   switch (state) {
@@ -68,9 +69,11 @@ export interface StatusIndicatorProps {
 }
 
 export function StatusIndicator(props: StatusIndicatorProps) {
-  if (props.application && props.application.length > 0) {
-    document.title = `${getStateEmoji(props.state)} ${getFilename(props.application)} | Sogen`;
-  }
+  useEffect(() => {
+    if (props.application && props.application.length > 0) {
+      document.title = `${getStateEmoji(props.state)} ${getFilename(props.application)} | Sogen`;
+    }
+  }, [props.application, props.state]);
 
   return (
     <Badge variant="outline">

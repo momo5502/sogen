@@ -7,7 +7,7 @@ function patchExeFile(exe: PE.NtExecutable) {
   const rsrc = exe.getSectionByEntry(PE.Format.ImageDirectoryEntry.Resource);
   const orig = exe.getAllSections.bind(exe);
   exe.getAllSections = function () {
-    let x = { skip: false };
+    const x = { skip: false };
     return orig().filter((s) => {
       if (x.skip) {
         return false;
@@ -168,13 +168,13 @@ function getBiggestIcon(group: IconGroup) {
     return null;
   }
 
-  var biggest = group.icons[0];
+  let biggest = group.icons[0];
   if (isMaxResIcon(biggest)) {
     return biggest;
   }
 
   for (let i = 1; i < group.icons.length; ++i) {
-    let current = group.icons[i];
+    const current = group.icons[i];
     if (isMaxResIcon(current)) {
       return current;
     }
@@ -234,8 +234,7 @@ function tryParsePeIcon(data: Uint8Array) {
 export function parsePeIcon(data: Uint8Array) {
   try {
     return tryParsePeIcon(data);
-  } catch (e) {
-    // console.error(e);
+  } catch {
     return null;
   }
 }
