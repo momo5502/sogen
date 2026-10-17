@@ -1,5 +1,6 @@
 #include "vulkan_host.hpp"
 #include "../vulkan_handle_utils.hpp"
+#include "spirv_clip_distance.hpp"
 
 #include <address_utils.hpp>
 
@@ -270,6 +271,9 @@ namespace sogen
             uint64_t instance_id{};
             VkPhysicalDevice physical_device{}; // the device this was created from (for memory queries)
             uint32_t queue_family_index{};      // the single family this device was created with
+            // The driver lacks these features although the guest was told otherwise; shaders are rewritten.
+            bool strip_clip_distance{};
+            bool strip_cull_distance{};
             PFN_vkDestroyDevice destroy_device{};
             PFN_vkGetDeviceQueue get_device_queue{};
             PFN_vkQueueWaitIdle queue_wait_idle{};
@@ -2187,6 +2191,15 @@ namespace sogen
         data.instance_id = pd->second.instance_id;
         data.physical_device = pd->second.handle;
         data.queue_family_index = primary_family;
+
+        if (instance->second.get_physical_device_features2)
+        {
+            VkPhysicalDeviceFeatures2 supported{};
+            supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            instance->second.get_physical_device_features2(pd->second.handle, &supported);
+            data.strip_clip_distance = supported.features.shaderClipDistance == VK_FALSE;
+            data.strip_cull_distance = supported.features.shaderCullDistance == VK_FALSE;
+        }
 
         if (const auto gdpa = instance->second.get_device_proc_addr)
         {
@@ -4460,6 +4473,16 @@ namespace sogen
         info.flags = static_cast<VkShaderModuleCreateFlags>(flags);
         info.codeSize = code_size;
         info.pCode = static_cast<const uint32_t*>(code);
+
+        // Mali's compiler crashes on clip and cull distance writes, which the guest emits because it was told the
+        // features exist.
+        const auto stripped = strip_clip_and_cull_distance(std::span{info.pCode, code_size / sizeof(uint32_t)},
+                                                           dev->second.strip_clip_distance, dev->second.strip_cull_distance);
+        if (stripped)
+        {
+            info.codeSize = stripped->size() * sizeof(uint32_t);
+            info.pCode = stripped->data();
+        }
 
         VkShaderModule module{};
         const VkResult result = dev->second.create_shader_module(dev->second.handle, &info, nullptr, &module);
