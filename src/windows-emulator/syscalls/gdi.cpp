@@ -3895,6 +3895,93 @@ namespace sogen
                                           srccopy, 0);
         }
 
+        // BLENDFUNCTION is passed by value: BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat from the low byte up.
+        // With AC_SRC_ALPHA the source is premultiplied, so dst = src * sca + dst * (1 - src_alpha * sca).
+        BOOL handle_NtGdiAlphaBlend(const syscall_context& c, const hdc dst_dc, const LONG x_dst, const LONG y_dst, const LONG dst_width,
+                                    const LONG dst_height, const hdc src_dc, const LONG x_src, const LONG y_src, const LONG src_width,
+                                    const LONG src_height, const DWORD blend_function, const handle /*color_transform*/)
+        {
+            constexpr uint8_t ac_src_alpha = 0x01;
+
+            if (dst_dc == 0 || src_dc == 0 || dst_width <= 0 || dst_height <= 0 || src_width <= 0 || src_height <= 0)
+            {
+                return FALSE;
+            }
+
+            const auto constant_alpha = static_cast<uint32_t>((blend_function >> 16) & 0xFFu);
+            const bool per_pixel_alpha = ((blend_function >> 24) & ac_src_alpha) != 0;
+
+            (void)handle_NtGdiFlush(c);
+
+            int32_t dst_origin_x = 0;
+            int32_t dst_origin_y = 0;
+            uint32_t present_handle = 0;
+            gdi_bitmap_surface* dst_surface = resolve_dc_surface(c, dst_dc, dst_origin_x, dst_origin_y, present_handle);
+            if (!dst_surface || dst_surface->width == 0 || dst_surface->height == 0 || dst_surface->pixels.empty())
+            {
+                return FALSE;
+            }
+
+            int32_t src_origin_x = 0;
+            int32_t src_origin_y = 0;
+            uint32_t unused_present_handle = 0;
+            const gdi_bitmap_surface* src_surface = resolve_dc_surface(c, src_dc, src_origin_x, src_origin_y, unused_present_handle);
+            if (!src_surface || src_surface->width == 0 || src_surface->height == 0 || src_surface->pixels.empty())
+            {
+                return FALSE;
+            }
+
+            const auto blend_channel = [](const uint32_t src, const uint32_t dst, const int shift, const uint32_t src_weight,
+                                          const uint32_t dst_weight) {
+                const auto s = (src >> shift) & 0xFFu;
+                const auto d = (dst >> shift) & 0xFFu;
+                return std::min<uint32_t>(255, (s * src_weight + d * dst_weight + 127) / 255) << shift;
+            };
+
+            for (LONG dy = 0; dy < dst_height; ++dy)
+            {
+                const auto out_y = static_cast<int64_t>(y_dst) + dst_origin_y + dy;
+                const auto sy = static_cast<int64_t>(y_src) + src_origin_y + (static_cast<int64_t>(dy) * src_height / dst_height);
+                if (out_y < 0 || out_y >= static_cast<int64_t>(dst_surface->height) || sy < 0 ||
+                    sy >= static_cast<int64_t>(src_surface->height))
+                {
+                    continue;
+                }
+
+                auto* dst_row = dst_surface->pixels.data() + static_cast<size_t>(out_y) * dst_surface->width;
+                const auto* src_row = src_surface->pixels.data() + static_cast<size_t>(sy) * src_surface->width;
+
+                for (LONG dx = 0; dx < dst_width; ++dx)
+                {
+                    const auto out_x = static_cast<int64_t>(x_dst) + dst_origin_x + dx;
+                    const auto sx = static_cast<int64_t>(x_src) + src_origin_x + (static_cast<int64_t>(dx) * src_width / dst_width);
+                    if (out_x < 0 || out_x >= static_cast<int64_t>(dst_surface->width) || sx < 0 ||
+                        sx >= static_cast<int64_t>(src_surface->width))
+                    {
+                        continue;
+                    }
+
+                    const uint32_t src = src_row[sx];
+                    const uint32_t dst = dst_row[out_x];
+
+                    uint32_t src_weight = constant_alpha;
+                    uint32_t dst_weight = 255 - constant_alpha;
+                    if (per_pixel_alpha)
+                    {
+                        const auto src_alpha = (src >> 24) & 0xFFu;
+                        dst_weight = 255 - ((src_alpha * constant_alpha + 127) / 255);
+                    }
+
+                    dst_row[out_x] = blend_channel(src, dst, 0, src_weight, dst_weight) |
+                                     blend_channel(src, dst, 8, src_weight, dst_weight) |
+                                     blend_channel(src, dst, 16, src_weight, dst_weight) | 0xFF000000u;
+                }
+            }
+
+            present_win_surface(c, present_handle, dst_surface);
+            return TRUE;
+        }
+
         BOOL handle_NtGdiPatBlt(const syscall_context& c, const hdc dc, const LONG x, const LONG y, const LONG width, const LONG height,
                                 const DWORD /*rop*/)
         {
