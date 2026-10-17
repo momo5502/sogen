@@ -8,8 +8,22 @@
 namespace sogen
 {
 
+    // A machine viewed independently of its guest architecture: shared memory and hooks plus the
+    // register-independent view of each virtual CPU.
+    class guest_machine : public emulator
+    {
+      public:
+        virtual size_t vcpu_count() const = 0;
+        virtual guest_cpu& get_guest_cpu(size_t index) = 0;
+
+        virtual bool supports_native_timestamp_counter() const
+        {
+            return false;
+        }
+    };
+
     template <typename Traits>
-    class typed_emulator : public emulator
+    class typed_emulator : public guest_machine
     {
       public:
         using registers = Traits::register_type;

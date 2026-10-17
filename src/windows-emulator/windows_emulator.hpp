@@ -145,7 +145,7 @@ namespace sogen
     // (docs/multi-vcpu-design.md, section 5.1).
     struct vcpu_context
     {
-        x86_64_cpu& cpu;
+        guest_cpu& cpu;
         emulator_thread* active_thread{};
         std::atomic_bool switch_thread{false};
 
@@ -158,14 +158,29 @@ namespace sogen
 
             return *this->active_thread;
         }
+
+        x86_64_cpu& x64_cpu() const
+        {
+            auto* x64 = dynamic_cast<x86_64_cpu*>(&this->cpu);
+            if (!x64)
+            {
+                throw std::runtime_error("This operation is only implemented for x86-64 guest CPUs");
+            }
+
+            return *x64;
+        }
     };
+
+    // The COFF machine of an application, resolved through its working directory and the settings' emulation
+    // root and path mappings as the emulator will resolve it. Selects which guest CPU to create for the application.
+    PEMachineType get_application_machine(const emulator_settings& settings, application_settings app_settings);
 
     class windows_emulator
     {
         uint64_t executed_instructions_{0};
         application_settings application_settings_{};
 
-        std::unique_ptr<x86_64_emulator> emu_{};
+        std::unique_ptr<guest_machine> emu_{};
         bool use_native_timestamp_counter_{};
         std::unique_ptr<utils::clock> clock_{};
         network::network_mode network_mode_{};
@@ -191,9 +206,9 @@ namespace sogen
         process_context process;
         syscall_dispatcher dispatcher;
 
-        windows_emulator(std::unique_ptr<x86_64_emulator> emu, const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
+        windows_emulator(std::unique_ptr<guest_machine> emu, const emulator_settings& settings = {}, emulator_callbacks callbacks = {},
                          emulator_interfaces interfaces = {});
-        windows_emulator(std::unique_ptr<x86_64_emulator> emu, application_settings app_settings, const emulator_settings& settings = {},
+        windows_emulator(std::unique_ptr<guest_machine> emu, application_settings app_settings, const emulator_settings& settings = {},
                          emulator_callbacks callbacks = {}, emulator_interfaces interfaces = {});
 
         windows_emulator(windows_emulator&&) = delete;
@@ -203,14 +218,30 @@ namespace sogen
 
         ~windows_emulator();
 
-        x86_64_emulator& emu()
+        guest_machine& emu()
         {
             return *this->emu_;
         }
 
-        const x86_64_emulator& emu() const
+        const guest_machine& emu() const
         {
             return *this->emu_;
+        }
+
+        x86_64_emulator& x64_emu() const
+        {
+            auto* x64 = dynamic_cast<x86_64_emulator*>(this->emu_.get());
+            if (!x64)
+            {
+                throw std::runtime_error("This operation is only implemented for x86-64 guest machines");
+            }
+
+            return *x64;
+        }
+
+        const windows_arch_abi& abi() const
+        {
+            return this->process.abi();
         }
 
         utils::clock& clock()
@@ -305,15 +336,20 @@ namespace sogen
         // race-free. Falls back to vCPU 0 when no handler is active (e.g. setup).
         emulator_thread& current_thread() const
         {
-            return (this->dispatch_vcpu_ ? this->dispatch_vcpu_ : this->vcpus_[0].get())->thread();
+            return this->active_vcpu().thread();
         }
 
         // The CPU of the vCPU currently dispatching a handler on the calling host thread (see
         // scoped_dispatch). emu() is only the facade/vCPU 0, so handlers that inspect the faulting
         // register state must go through here to observe the right vCPU when vcpu_count > 1.
-        x86_64_cpu& active_cpu() const
+        guest_cpu& active_cpu() const
         {
-            return (this->dispatch_vcpu_ ? this->dispatch_vcpu_ : this->vcpus_[0].get())->cpu;
+            return this->active_vcpu().cpu;
+        }
+
+        x86_64_cpu& active_x64_cpu() const
+        {
+            return this->active_vcpu().x64_cpu();
         }
 
         // Run fn as a dispatched handler for the CPU that triggered a hook: takes the kernel lock and
@@ -396,6 +432,12 @@ namespace sogen
         // has already closed is simply ignored. Returns false without signaling if the lock is busy -- callers
         // here drive periodic work and can retry, and blocking would stall them behind long kernel operations.
         bool try_signal_guest_event(handle event_handle);
+
+        // For state restored from outside (a minidump): the process already exists, so it is not bootstrapped.
+        void mark_process_setup_completed()
+        {
+            this->setup_completed_ = true;
+        }
 
         uint64_t get_executed_instructions() const
         {
@@ -511,6 +553,11 @@ namespace sogen
         // unique_ptr because vcpu_context contains an atomic and must stay address-stable.
         std::vector<std::unique_ptr<vcpu_context>> vcpus_{};
 
+        vcpu_context& active_vcpu() const
+        {
+            return this->dispatch_vcpu_ ? *this->dispatch_vcpu_ : *this->vcpus_[0];
+        }
+
         std::unordered_map<uint16_t, uint16_t> port_mappings_{};
 
         std::vector<std::byte> process_snapshot_{};
@@ -522,6 +569,9 @@ namespace sogen
         std::map<uint64_t, std::vector<emulator_hook*>> section_first_execution_hooks_{};
 
         void setup_hooks();
+        void setup_x64_hooks(x86_64_emulator& emu);
+        void setup_arm64_hooks(arm64_emulator& emu);
+        void handle_arm64_breakpoint(vcpu_context& vcpu);
         void setup_process();
         void vcpu_worker(vcpu_context& vcpu);
         void on_instruction_execution(vcpu_context& vcpu, uint64_t address);

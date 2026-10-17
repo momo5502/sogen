@@ -66,3 +66,10 @@ if(SOGEN_ENABLE_FEX)
 endif()
 
 sogen_targets_set_folder("bindings" sogen sogen_stub)
+
+if(NOT CMAKE_CROSSCOMPILING)
+  add_test(NAME arm64-python-bindings
+    COMMAND "${CMAKE_COMMAND}" -E env "PYTHONPATH=$<TARGET_FILE_DIR:sogen>"
+      "${Python_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/test_arm64.py")
+  set_tests_properties(arm64-python-bindings PROPERTIES TIMEOUT 30)
+endif()

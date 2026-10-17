@@ -17,6 +17,7 @@ namespace sogen
         {
             host,
             file,
+            schema_dll,
             default_windows_10,
             default_windows_11
         };
@@ -34,10 +35,10 @@ namespace sogen
         container obtain(location location, const std::filesystem::path& root);
         container obtain(const std::filesystem::path& root);
 
-        emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator,
+        emulator_object<API_SET_NAMESPACE> clone(memory_interface& emu, emulator_allocator& allocator,
                                                  const API_SET_NAMESPACE& orig_api_set_map);
 
-        emulator_object<API_SET_NAMESPACE> clone(x86_64_emulator& emu, emulator_allocator& allocator, const container& container);
+        emulator_object<API_SET_NAMESPACE> clone(memory_interface& emu, emulator_allocator& allocator, const container& container);
 
         apiset_map get_namespace_table(const API_SET_NAMESPACE* apiset_ns_data);
     }

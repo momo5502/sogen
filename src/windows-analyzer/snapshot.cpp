@@ -3,6 +3,9 @@
 #include <utils/io.hpp>
 #include <utils/compression.hpp>
 
+#include <array>
+#include <fstream>
+
 namespace sogen
 {
 
@@ -14,12 +17,13 @@ namespace sogen
             {
                 // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
                 char magic[4] = {'S', 'N', 'A', 'P'};
-                uint32_t version{2};
+                uint32_t version{3};
+                uint32_t machine{static_cast<uint32_t>(PEMachineType::AMD64)};
             };
 
-            static_assert(sizeof(snapshot_header) == 8);
+            static_assert(sizeof(snapshot_header) == 12);
 
-            std::span<const std::byte> validate_header(const std::span<const std::byte> snapshot)
+            snapshot_header read_header(const std::span<const std::byte> snapshot)
             {
                 snapshot_header header{};
                 constexpr snapshot_header default_header{};
@@ -42,7 +46,13 @@ namespace sogen
                                              "(needed: " + std::to_string(default_header.version) + ")");
                 }
 
-                return snapshot.subspan(sizeof(header));
+                return header;
+            }
+
+            std::span<const std::byte> validate_header(const std::span<const std::byte> snapshot)
+            {
+                read_header(snapshot);
+                return snapshot.subspan(sizeof(snapshot_header));
             }
 
             std::vector<std::byte> get_compressed_emulator_state(const windows_emulator& win_emu)
@@ -76,6 +86,8 @@ namespace sogen
             const auto state = get_compressed_emulator_state(win_emu);
 
             snapshot_header header{};
+            header.machine = static_cast<uint32_t>(
+                win_emu.process.native_architecture == windows_guest_architecture::arm64 ? PEMachineType::ARM64 : PEMachineType::AMD64);
             std::span header_span(reinterpret_cast<const std::byte*>(&header), sizeof(header));
 
             std::vector<std::byte> snapshot{};
@@ -102,6 +114,18 @@ namespace sogen
             }
 
             return snapshot_file;
+        }
+
+        PEMachineType get_snapshot_machine(const std::filesystem::path& snapshot_file)
+        {
+            std::array<std::byte, sizeof(snapshot_header)> header{};
+            std::ifstream stream{snapshot_file, std::ios::binary};
+            if (!stream.read(reinterpret_cast<char*>(header.data()), header.size()))
+            {
+                throw std::runtime_error("Failed to read snapshot file: " + snapshot_file.string());
+            }
+
+            return static_cast<PEMachineType>(read_header(header).machine);
         }
 
         void load_emulator_snapshot(windows_emulator& win_emu, const std::span<const std::byte> snapshot)

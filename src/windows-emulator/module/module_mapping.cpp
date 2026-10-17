@@ -46,6 +46,20 @@ namespace sogen
             return permissions;
         }
 
+        template <typename T>
+        void validate_image_machine(const PENTHeaders_t<T>& headers)
+        {
+            const auto machine = headers.FileHeader.Machine;
+            const bool supported = sizeof(T) == sizeof(uint32_t) ? machine == PEMachineType::I386
+                                                                 : machine == PEMachineType::AMD64 || machine == PEMachineType::ARM64 ||
+                                                                       machine == PEMachineType::ARM64EC;
+            if (!supported || headers.Signature != PENTHeaders_t<T>::k_Signature ||
+                headers.OptionalHeader.Magic != PEOptionalHeader_t<T>::k_Magic)
+            {
+                throw std::runtime_error("Unsupported or inconsistent PE machine and optional header");
+            }
+        }
+
         bool must_map_module_below_4gb(const std::string& module_name, const PEMachineType machine, const uint64_t image_base)
         {
             if (machine != PEMachineType::AMD64)
@@ -628,11 +642,7 @@ namespace sogen
         const auto nt_headers = buffer.as<PENTHeaders_t<T>>(nt_headers_offset).get();
         const auto& optional_header = nt_headers.OptionalHeader;
 
-        if (nt_headers.FileHeader.Machine != PEMachineType::I386 && nt_headers.FileHeader.Machine != PEMachineType::AMD64 &&
-            nt_headers.FileHeader.Machine != PEMachineType::ARM64EC)
-        {
-            throw std::runtime_error("Unsupported architecture!");
-        }
+        validate_image_machine(nt_headers);
 
         binary.image_base = optional_header.ImageBase;
         binary.image_base_file = optional_header.ImageBase;
@@ -746,7 +756,8 @@ namespace sogen
         {
             const auto dos_header = buffer.as<PEDosHeader_t>(0).get();
             const auto nt_headers_offset = dos_header.e_lfanew;
-            const auto nt_headers = buffer.as<PENTHeaders_t<std::uint64_t>>(nt_headers_offset).get();
+            const auto nt_headers = buffer.as<PENTHeaders_t<T>>(nt_headers_offset).get();
+            validate_image_machine(nt_headers);
             const auto& optional_header = nt_headers.OptionalHeader;
 
             binary.entry_point = binary.image_base + optional_header.AddressOfEntryPoint;

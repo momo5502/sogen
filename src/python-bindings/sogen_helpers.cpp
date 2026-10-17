@@ -239,6 +239,31 @@ namespace sogen::py
             return get_kwarg<backend_type>(kwargs, "backend", backend_type::unicorn);
         }
 
+        std::unique_ptr<guest_machine> create_machine(const PEMachineType machine, const nb::kwargs& kwargs)
+        {
+            if (machine == PEMachineType::ARM64 && !kwargs.contains("backend"))
+            {
+                return create_emulator_for_machine(machine);
+            }
+
+            return create_emulator_for_machine(machine, get_backend_type(kwargs));
+        }
+
+        PEMachineType get_empty_machine(const nb::kwargs& kwargs)
+        {
+            const auto architecture = get_kwarg<std::string>(kwargs, "architecture", "x86_64");
+            if (architecture == "x86_64")
+            {
+                return PEMachineType::AMD64;
+            }
+            if (architecture == "arm64")
+            {
+                return PEMachineType::ARM64;
+            }
+
+            throw std::invalid_argument("architecture must be 'x86_64' or 'arm64'");
+        }
+
         class python_dns_lookup : public network::dns_lookup
         {
           public:
@@ -329,7 +354,7 @@ namespace sogen::py
     std::unique_ptr<windows_emulator> create_empty_emulator(const nb::kwargs& kwargs)
     {
         const auto settings = make_emulator_settings(kwargs);
-        return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), settings, emulator_callbacks{},
+        return std::make_unique<windows_emulator>(create_machine(get_empty_machine(kwargs), kwargs), settings, emulator_callbacks{},
                                                   make_emulator_interfaces(kwargs, settings.network));
     }
 
@@ -338,7 +363,8 @@ namespace sogen::py
     {
         auto app_settings = make_application_settings(application, args, kwargs);
         const auto settings = make_emulator_settings(kwargs);
-        return std::make_unique<windows_emulator>(create_x86_64_emulator(get_backend_type(kwargs)), std::move(app_settings), settings,
-                                                  emulator_callbacks{}, make_emulator_interfaces(kwargs, settings.network));
+        auto machine = create_machine(get_application_machine(settings, app_settings), kwargs);
+        return std::make_unique<windows_emulator>(std::move(machine), std::move(app_settings), settings, emulator_callbacks{},
+                                                  make_emulator_interfaces(kwargs, settings.network));
     }
 }

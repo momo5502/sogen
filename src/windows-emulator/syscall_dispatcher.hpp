@@ -370,7 +370,7 @@ namespace sogen
         void deserialize(utils::buffer_deserializer& buffer);
 
         void setup(const exported_symbols& ntdll_exports, std::span<const std::byte> ntdll_data, const exported_symbols& win32u_exports,
-                   std::span<const std::byte> win32u_data);
+                   std::span<const std::byte> win32u_data, const arch_syscall_abi& abi = x86_64_syscall_abi_instance());
 
         std::string get_syscall_name(const uint64_t id)
         {

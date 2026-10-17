@@ -1061,7 +1061,15 @@ namespace sogen::sxs
             {
                 return to_lower(identity.processor_architecture);
             }
-            return executable.machine == IMAGE_FILE_MACHINE_I386 ? "x86" : "amd64";
+            switch (executable.machine)
+            {
+            case IMAGE_FILE_MACHINE_I386:
+                return "x86";
+            case IMAGE_FILE_MACHINE_ARM64:
+                return "arm64";
+            default:
+                return "amd64";
+            }
         }
 
         std::vector<std::filesystem::path> directory_entries(const std::filesystem::path& directory)

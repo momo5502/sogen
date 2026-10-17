@@ -121,6 +121,11 @@
 #define PF_ARM_SME_FA64_INSTRUCTIONS_AVAILABLE     88
 #endif
 
+// MinGW's winnt.h predates this feature index.
+#ifndef PF_ARM_V83_LRCPC_INSTRUCTIONS_AVAILABLE
+#define PF_ARM_V83_LRCPC_INSTRUCTIONS_AVAILABLE 45
+#endif
+
 namespace sogen
 {
 
@@ -1156,7 +1161,12 @@ namespace sogen
 #if defined(OS_WINDOWS) && defined(_WIN64)
     inline TEB64* NtCurrentTeb64()
     {
+#if defined(_M_ARM64) || defined(__aarch64__)
+        // ARM64 has no segment registers; the SDK's NtCurrentTeb() reads the TEB pointer from x18.
+        return reinterpret_cast<TEB64*>(NtCurrentTeb());
+#else
         return reinterpret_cast<TEB64*>(__readgsqword(FIELD_OFFSET(EMU_NT_TIB64, Self)));
+#endif
     }
 #endif
 

@@ -59,7 +59,7 @@ namespace sogen
     struct process_context;
 
     using clock_wrapper = object_wrapper<utils::clock>;
-    using x64_emulator_wrapper = object_wrapper<x86_64_emulator>;
+    using guest_machine_wrapper = object_wrapper<guest_machine>;
     using memory_manager_wrapper = object_wrapper<memory_manager>;
     using module_manager_wrapper = object_wrapper<module_manager>;
     using process_context_wrapper = object_wrapper<process_context>;
@@ -73,7 +73,7 @@ namespace sogen
       public:
         using value_type = T;
 
-        emulator_object(const x64_emulator_wrapper& wrapper, const uint64_t address = 0)
+        emulator_object(const guest_machine_wrapper& wrapper, const uint64_t address = 0)
             : emulator_object(wrapper.get(), address)
         {
         }

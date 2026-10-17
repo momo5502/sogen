@@ -5,10 +5,12 @@
 #include "windows_objects.hpp"
 #include "emulator_thread.hpp"
 #include "memory_utils.hpp"
+#include "cpu_context.hpp"
 
 #include <platform/platform.hpp>
 
 #include <minidump/minidump.hpp>
+#include <utils/finally.hpp>
 
 namespace sogen
 {
@@ -121,17 +123,19 @@ namespace sogen
                 if (sys_info)
                 {
                     const auto arch = static_cast<minidump::processor_architecture>(sys_info->processor_architecture);
-                    const bool is_x64 = (arch == minidump::processor_architecture::amd64);
+                    const auto guest = win_emu.process.native_architecture;
+                    const bool matches = (arch == minidump::processor_architecture::amd64 && guest == windows_guest_architecture::x86_64) ||
+                                         (arch == minidump::processor_architecture::arm64 && guest == windows_guest_architecture::arm64);
 
                     win_emu.log.info("Processor architecture: %s\n", get_architecture_string(dump_file).c_str());
 
-                    if (!is_x64)
+                    if (!matches)
                     {
-                        win_emu.log.error("Only x64 minidumps are currently supported\n");
+                        win_emu.log.error("The minidump architecture does not match the guest machine\n");
                         return false;
                     }
 
-                    win_emu.log.info("Architecture compatibility: OK (x64)\n");
+                    win_emu.log.info("Architecture compatibility: OK (%s)\n", get_architecture_string(dump_file).c_str());
                 }
                 else
                 {
@@ -372,22 +376,32 @@ namespace sogen
                                  write_failed_count);
             }
 
+            // Dumps record full module paths in any case (C:\\Windows\\System32\\PING.EXE).
+            std::string module_file_name(const minidump::module_info& mod)
+            {
+                auto name = mod.module_name;
+                if (const auto separator = name.find_last_of("\\/"); separator != std::string::npos)
+                {
+                    name.erase(0, separator + 1);
+                }
+                std::ranges::transform(name, name.begin(),
+                                       [](const char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+                return name;
+            }
+
             bool is_main_executable(const minidump::module_info& mod)
             {
-                const auto name = mod.module_name;
-                return name.find(".exe") != std::string::npos;
+                return module_file_name(mod).ends_with(".exe");
             }
 
             bool is_ntdll(const minidump::module_info& mod)
             {
-                const auto name = mod.module_name;
-                return name == "ntdll.dll" || name == "NTDLL.DLL";
+                return module_file_name(mod) == "ntdll.dll";
             }
 
             bool is_win32u(const minidump::module_info& mod)
             {
-                const auto name = mod.module_name;
-                return name == "win32u.dll" || name == "WIN32U.DLL";
+                return module_file_name(mod) == "win32u.dll";
             }
 
             void reconstruct_module_state(windows_emulator& win_emu, const minidump::minidump_file* dump_file)
@@ -466,7 +480,13 @@ namespace sogen
 
                 win_emu.log.info("Setting up KUSER_SHARED_DATA from dump system info\n");
 
+                auto* arm64 = dynamic_cast<arm64_cpu*>(&win_emu.emu().get_guest_cpu(0));
                 win_emu.process.kusd.access([&](KUSER_SHARED_DATA64& kusd) {
+                    if (arm64)
+                    {
+                        apply_arm64_processor(kusd, arm64->reg(arm64_register::id_aa64isar0_el1),
+                                              arm64->reg(arm64_register::id_aa64isar1_el1));
+                    }
                     kusd.NtMajorVersion = sys_info->major_version;
                     kusd.NtMinorVersion = sys_info->minor_version;
                     kusd.NtBuildNumber = sys_info->build_number;
@@ -502,6 +522,35 @@ namespace sogen
                 return context_file.good();
             }
 
+            // ARM64 dump threads carry an ARM64_NT_CONTEXT; turn it into the backend's saved register state. The
+            // thread was already running, so it must not be bootstrapped again.
+            bool convert_arm64_thread_context(windows_emulator& win_emu, emulator_thread& thread)
+            {
+                auto* arm64 = dynamic_cast<arm64_cpu*>(&win_emu.emu().get_guest_cpu(0));
+                if (!arm64)
+                {
+                    return true;
+                }
+
+                if (thread.last_registers.size() < sizeof(arm64_context))
+                {
+                    thread.last_registers.clear();
+                    return false;
+                }
+
+                arm64_context context{};
+                std::memcpy(&context, thread.last_registers.data(), sizeof(context));
+                // Debug slots beyond the virtual processor's breakpoints cannot be restored.
+                context.ContextFlags &= ~(arm64_context_debug_registers & ~arm64_context_architecture);
+
+                const auto saved = arm64->save_registers();
+                const auto _ = utils::finally([&] { arm64->restore_registers(saved); });
+                cpu_context::restore(*arm64, context);
+                thread.last_registers = arm64->save_registers();
+                thread.setup_done = true;
+                return true;
+            }
+
             void reconstruct_threads(windows_emulator& win_emu, const minidump::minidump_file* dump_file,
                                      const std::filesystem::path& minidump_path)
             {
@@ -527,7 +576,11 @@ namespace sogen
                         thread.stack_size = thread_info.stack_data_size;
 
                         // Load CPU context if available
-                        const bool context_loaded = load_thread_context(minidump_path, thread_info, thread.last_registers);
+                        bool context_loaded = load_thread_context(minidump_path, thread_info, thread.last_registers);
+                        if (context_loaded)
+                        {
+                            context_loaded = convert_arm64_thread_context(win_emu, thread);
+                        }
                         if (context_loaded)
                         {
                             context_loaded_count++;
@@ -674,6 +727,27 @@ namespace sogen
             }
         }
 
+        PEMachineType get_minidump_machine(const std::filesystem::path& minidump_path)
+        {
+            const auto dump_file = minidump::minidump_file::parse(minidump_path.string());
+            const auto* sys_info = dump_file ? dump_file->get_system_info() : nullptr;
+            if (!sys_info)
+            {
+                throw std::runtime_error("The minidump has no system info stream: " + minidump_path.string());
+            }
+
+            switch (static_cast<minidump::processor_architecture>(sys_info->processor_architecture))
+            {
+            case minidump::processor_architecture::amd64:
+                return PEMachineType::AMD64;
+            case minidump::processor_architecture::arm64:
+                return PEMachineType::ARM64;
+            default:
+                throw std::runtime_error("Unsupported minidump processor architecture: " +
+                                         std::to_string(sys_info->processor_architecture));
+            }
+        }
+
         void load_minidump_into_emulator(windows_emulator& win_emu, const std::filesystem::path& minidump_path)
         {
             win_emu.log.info("Starting minidump loading process\n");
@@ -709,6 +783,7 @@ namespace sogen
                 reconstruct_threads(win_emu, dump_file.get(), minidump_path);
                 reconstruct_handle_table(win_emu, dump_file.get());
                 setup_exception_context(win_emu, dump_file.get());
+                win_emu.mark_process_setup_completed();
 
                 win_emu.log.info("Process state reconstruction completed\n");
             }

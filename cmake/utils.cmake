@@ -343,6 +343,23 @@ endmacro()
 
 ##########################################
 
+# Executables that may create Hypervisor.framework VMs need the hypervisor entitlement. Ad-hoc signing is
+# enough for local runs. Call it after sogen_strip_target, since stripping invalidates the signature.
+function(sogen_enable_hypervisor_entitlement target)
+  if(NOT SOGEN_ENABLE_HVF)
+    return()
+  endif()
+
+  add_custom_command(TARGET ${target} POST_BUILD
+    COMMAND codesign --force --sign - --entitlements "${PROJECT_SOURCE_DIR}/src/backends/hvf-arm64-emulator/hypervisor.entitlements"
+            "$<TARGET_FILE:${target}>"
+    COMMENT "Signing ${target} with the hypervisor entitlement"
+    VERBATIM
+  )
+endfunction()
+
+##########################################
+
 function(sogen_strip_target target)
   # Keep symbols for builds whose whole point is debuggability: Debug, RelWithDebInfo, and any
   # sanitizer build (stripping there yields unusable ASAN/UBSan stack traces).
@@ -444,6 +461,12 @@ function(sogen_target_enable_clang_tidy target)
     set(CLANG_TIDY_COMMAND_CXX
       "${CLANG_TIDY_COMMAND_CXX};--extra-arg=/EHa"
     )
+    list(APPEND CLANG_TIDY_COMMAND_C "--extra-arg=-D_CRT_USE_BUILTIN_OFFSETOF")
+    list(APPEND CLANG_TIDY_COMMAND_CXX "--extra-arg=-D_CRT_USE_BUILTIN_OFFSETOF")
+    if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "ARM64")
+      list(APPEND CLANG_TIDY_COMMAND_C "--extra-arg=--target=aarch64-pc-windows-msvc")
+      list(APPEND CLANG_TIDY_COMMAND_CXX "--extra-arg=--target=aarch64-pc-windows-msvc")
+    endif()
   endif()
 
   set_target_properties(${target} PROPERTIES

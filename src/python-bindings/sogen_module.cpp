@@ -18,6 +18,7 @@ namespace sogen::py
             auto linux_module = m.def_submodule("linux", "Linux emulator bindings");
             register_linux_runtime_bindings(linux_module);
             register_runtime_bindings(m);
+            register_arm64_runtime_bindings(m);
         }
     }
 }
