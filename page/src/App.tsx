@@ -5,7 +5,7 @@ import { Playground, storeEmulateData } from "./playground";
 import { InstallPrompt } from "./components/install-prompt";
 import { LandingPage } from "./landing-page";
 import { useParams } from "react-router-dom";
-import Loader from "./Loader";
+import { useLoader } from "./Loader";
 
 import "@fontsource/inter/latin.css";
 
@@ -19,7 +19,7 @@ function EmulateFile() {
 }
 
 function Spinner() {
-  const loading = Loader.useLoader();
+  const loading = useLoader();
 
   return (
     <div

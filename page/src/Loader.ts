@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 type Callback = (loading: boolean) => void;
 
@@ -26,24 +26,17 @@ class Loader {
   public unregister(callback: Callback): void {
     this.callbacks.delete(callback);
   }
-
-  public useLoader() {
-    const [isLoading, setIsLoading] = useState(this.isLoading());
-
-    useEffect(() => {
-      function callback(loading: boolean) {
-        setIsLoading(loading);
-      }
-
-      this.register(callback);
-
-      return () => {
-        this.unregister(callback);
-      };
-    });
-
-    return isLoading;
-  }
 }
 
-export default new Loader();
+const loader = new Loader();
+
+function subscribe(callback: Callback) {
+  loader.register(callback);
+  return () => loader.unregister(callback);
+}
+
+export function useLoader() {
+  return useSyncExternalStore(subscribe, () => loader.isLoading());
+}
+
+export default loader;

@@ -49,7 +49,7 @@ export function downloadBinaryFile(
     );
 
     let receivedLength = 0;
-    let chunks: Uint8Array<ArrayBufferLike>[] = [];
+    const chunks: Uint8Array<ArrayBufferLike>[] = [];
 
     function processData(
       res: ReadableStreamReadResult<Uint8Array<ArrayBufferLike>>,

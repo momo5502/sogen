@@ -25,7 +25,7 @@ async function fetchFilesystem(
 
 function synchronizeIDBFS(idbfs: MainModule, populate: boolean) {
   return new Promise<void>((resolve, reject) => {
-    idbfs.FS.syncfs(populate, function (err: any) {
+    idbfs.FS.syncfs(populate, function (err: unknown) {
       if (err) {
         reject(err);
       } else {
@@ -102,41 +102,6 @@ function clearDirectory(idbfs: MainModule, root: string) {
     .filter(filterPseudoDir)
     .forEach((e: string) => {
       unlinkRecursive(idbfs, `${root}/${e}`);
-    });
-}
-
-function copyRecursive(idbfs: MainModule, source: string, target: string) {
-  if (isFolder(idbfs, source)) {
-    ensureDirectory(idbfs, target);
-
-    idbfs.FS.readdir(source)
-      .filter(filterPseudoDir)
-      .forEach((e: string) => {
-        copyRecursive(idbfs, `${source}/${e}`, `${target}/${e}`);
-      });
-
-    return;
-  }
-
-  const data = idbfs.FS.readFile(source);
-  const slash = target.lastIndexOf("/");
-  const parent = slash > 0 ? target.substring(0, slash) : "/";
-  ensureDirectory(idbfs, parent);
-  idbfs.FS.writeFile(target, data);
-}
-
-function copyDirectoryContents(
-  idbfs: MainModule,
-  sourceRoot: string,
-  targetRoot: string,
-) {
-  ensureDirectory(idbfs, sourceRoot);
-  ensureDirectory(idbfs, targetRoot);
-
-  idbfs.FS.readdir(sourceRoot)
-    .filter(filterPseudoDir)
-    .forEach((e: string) => {
-      copyRecursive(idbfs, `${sourceRoot}/${e}`, `${targetRoot}/${e}`);
     });
 }
 
@@ -304,7 +269,7 @@ export async function setupLinuxFilesystem() {
 
         idbfs.FS.writeFile(linuxRootMarker, new Uint8Array([1]));
       }
-    } catch (_) {
+    } catch {
       // Ignore optional preload errors; users can still upload files manually.
     }
   }

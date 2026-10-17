@@ -183,9 +183,10 @@ function selectFiles(linuxMode: boolean = false): Promise<FileList> {
     fileInput.type = "file";
     fileInput.accept = linuxMode ? ".elf,.so,.bin" : ".exe";
 
-    fileInput.addEventListener("change", function (event) {
-      const files = (event as any).target.files as FileList;
-      resolve(files);
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files) {
+        resolve(fileInput.files);
+      }
     });
 
     fileInput.click();
@@ -218,7 +219,7 @@ interface BreadcrumbElement {
   targetPath: string[];
 }
 
-function isGoodPath(path: any) {
+function isGoodPath(path: unknown): path is string {
   return typeof path === "string" && path.length > 0;
 }
 
@@ -230,18 +231,10 @@ function trimLeadingSlash(path: string) {
   return path;
 }
 
-function getFileName(file: File) {
-  const fileObj = file as any;
-  const properties = ["relativePath", "webkitRelativePath", "name"];
-
-  for (let i = 0; i < properties.length; ++i) {
-    const prop = properties[i];
-
-    if (prop in fileObj) {
-      const relativePath = fileObj[prop];
-      if (isGoodPath(relativePath)) {
-        return trimLeadingSlash(relativePath);
-      }
+function getFileName(file: File & { relativePath?: string }) {
+  for (const path of [file.relativePath, file.webkitRelativePath, file.name]) {
+    if (isGoodPath(path)) {
+      return trimLeadingSlash(path);
     }
   }
 
@@ -463,7 +456,9 @@ export class FilesystemExplorer extends React.Component<
         <DialogContent className="sm:max-w-[425px]">
           <form
             onSubmit={(e) => {
-              const folderName = (e.target as any).elements.name.value;
+              const folderName = (
+                e.currentTarget.elements.namedItem("name") as HTMLInputElement
+              ).value;
               this._onFolderCreate(folderName);
               e.preventDefault();
             }}
@@ -502,7 +497,9 @@ export class FilesystemExplorer extends React.Component<
         <DialogContent className="sm:max-w-[425px]">
           <form
             onSubmit={(e) => {
-              const newName = (e.target as any).elements.name.value;
+              const newName = (
+                e.currentTarget.elements.namedItem("name") as HTMLInputElement
+              ).value;
               this._onFileRename(this.state.renameFile, newName);
               e.preventDefault();
             }}

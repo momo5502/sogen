@@ -64,7 +64,9 @@ export function ItemList(props: ItemListProps) {
 
       <form
         onSubmit={(e) => {
-          const nameInput = (e.target as any).elements.name;
+          const nameInput = e.currentTarget.elements.namedItem(
+            "name",
+          ) as HTMLInputElement;
           const newItem = nameInput.value;
           nameInput.value = "";
 

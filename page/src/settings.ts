@@ -53,17 +53,15 @@ export function loadSettings(): Settings {
   }
 
   try {
-    const userSettings = JSON.parse(settingsStr);
-    const keys = Object.keys(defaultSettings);
+    const userSettings: Record<string, unknown> = JSON.parse(settingsStr);
+    const knownSettings = Object.fromEntries(
+      Object.entries(userSettings).filter(([key]) => key in defaultSettings),
+    );
 
-    keys.forEach((k) => {
-      if (k in userSettings) {
-        (defaultSettings as any)[k] = userSettings[k];
-      }
-    });
-  } catch (e) {}
-
-  return defaultSettings;
+    return { ...defaultSettings, ...knownSettings };
+  } catch {
+    return defaultSettings;
+  }
 }
 
 export function saveSettings(settings: Settings) {

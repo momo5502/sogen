@@ -3,7 +3,7 @@ import { List, ListImperativeAPI, type RowComponentProps } from "react-window";
 import { ArrowDown } from "react-bootstrap-icons";
 import { Button } from "./ui/button";
 
-interface OutputProps {}
+type OutputProps = object;
 
 interface ColorState {
   color: string;
@@ -91,7 +91,7 @@ function renderLine(line: string, colorState: ColorState) {
 }
 
 function renderLines(lines: string[], color: string): OutputState {
-  var state: ColorState = {
+  const state: ColorState = {
     color,
   };
 
