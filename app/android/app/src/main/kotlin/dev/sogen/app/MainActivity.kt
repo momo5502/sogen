@@ -58,7 +58,14 @@ class MainActivity : FlutterActivity() {
             return super.dispatchKeyEvent(event)
         }
 
-        session.key(window, event.keyCode, event.action == KeyEvent.ACTION_DOWN)
+        val down = event.action == KeyEvent.ACTION_DOWN
+        session.key(window, event.keyCode, down)
+
+        val character = event.unicodeChar
+        if (down && character != 0 && !Character.isISOControl(character)) {
+            session.text(window, String(Character.toChars(character)))
+        }
+
         return true
     }
 

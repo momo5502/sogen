@@ -81,6 +81,23 @@ namespace sogen::android
             return value;
         }
 
+        uint16_t control_character(const uint8_t virtual_key)
+        {
+            switch (virtual_key)
+            {
+            case VK_BACK:
+                return 0x08;
+            case VK_TAB:
+                return 0x09;
+            case VK_RETURN:
+                return 0x0D;
+            case VK_ESCAPE:
+                return 0x1B;
+            default:
+                return 0;
+            }
+        }
+
         void copy_surface(const ANativeWindow_Buffer& buffer, const ui_surface_desc& surface)
         {
             const auto width = std::min(surface.width, buffer.width);
@@ -222,7 +239,15 @@ namespace sogen::android
                 this->key_down_since_.emplace(key->virtual_key, now);
             }
 
-            this->queue_event(window, down_message, key->virtual_key, make_key_lparam(*key, was_down, false));
+            const auto lparam = make_key_lparam(*key, was_down, false);
+            this->queue_event(window, down_message, key->virtual_key, lparam);
+
+            // Sogen's TranslateMessage does not synthesize WM_CHAR, so the backend delivers it. Printable characters
+            // arrive through post_text, which knows the keyboard layout.
+            if (const auto character = control_character(key->virtual_key); character != 0 && !system_key)
+            {
+                this->queue_event(window, WM_CHAR, character, lparam);
+            }
             return;
         }
 
