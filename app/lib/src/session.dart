@@ -25,6 +25,15 @@ class GuestWindow {
 
 enum MouseButton { left, right, middle }
 
+class OutputLine {
+  const OutputLine(this.text, this.color);
+
+  final String text;
+
+  /// The emulator's logger color index, or -1 for the guest's own stdout.
+  final int color;
+}
+
 enum SessionState { idle, running, exited }
 
 /// One emulated game, running in the launcher's `:sogen` service process.
@@ -39,7 +48,7 @@ class GameSession extends ChangeNotifier {
 
   late final StreamSubscription<dynamic> _subscription;
   final Map<int, GuestWindow> _windows = {};
-  final List<String> _output = [];
+  final List<OutputLine> _output = [];
 
   SessionState state = SessionState.idle;
 
@@ -51,7 +60,7 @@ class GameSession extends ChangeNotifier {
   /// The window that is shown and receives input: the most recently created visible top-level window.
   GuestWindow? get primaryWindow => _windows.values.where((window) => window.visible).lastOrNull;
 
-  List<String> get output => List.unmodifiable(_output);
+  List<OutputLine> get output => List.unmodifiable(_output);
 
   Future<bool> start(Game game, {required String emulationRoot}) async {
     _windows.clear();
@@ -107,7 +116,8 @@ class GameSession extends ChangeNotifier {
 
     switch (event['event']) {
       case 'output':
-        _output.addAll((event['text'] as String).trimRight().split('\n'));
+        final color = (event['color'] as num?)?.toInt() ?? -1;
+        _output.addAll((event['text'] as String).trimRight().split('\n').map((line) => OutputLine(line, color)));
         if (_output.length > _maxOutputLines) {
           _output.removeRange(0, _output.length - _maxOutputLines);
         }

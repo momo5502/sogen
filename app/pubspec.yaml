@@ -39,6 +39,8 @@ dependencies:
   path_provider: ^2.1.6
   file_picker: ^13.1.0
   path: ^1.9.1
+  google_fonts: ^8.0.0
+  lucide_icons_flutter: ^4.0.0
 
 dev_dependencies:
   flutter_test:

@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'package:lucide_icons_flutter/lucide_icons.dart';
+
 import '../game_library.dart';
 import '../session.dart';
+import '../theme.dart';
 import '../widgets/guest_window_view.dart';
+import '../widgets/sogen_widgets.dart';
+import '../widgets/terminal_log.dart';
 
 // android.view.KeyEvent key codes, which the emulator maps to Windows virtual keys.
 const _keyCodeEnter = 66;
@@ -127,22 +132,19 @@ class _GamePageState extends State<GamePage> {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
+      backgroundColor: Colors.transparent,
       builder: (context) => DraggableScrollableSheet(
         expand: false,
         initialChildSize: 0.6,
-        builder: (context, controller) => ListenableBuilder(
-          listenable: _session,
-          builder: (context, _) {
-            final lines = _session.output;
-            return ListView.builder(
-              controller: controller,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              itemCount: lines.length,
-              itemBuilder: (context, index) =>
-                  Text(lines[index], style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
-            );
-          },
+        builder: (context, controller) => Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: TerminalWindow(
+            title: widget.game.name,
+            child: ListenableBuilder(
+              listenable: _session,
+              builder: (context, _) => TerminalLog(lines: _session.output, controller: controller),
+            ),
+          ),
         ),
       ),
     );
@@ -160,7 +162,7 @@ class _GamePageState extends State<GamePage> {
         }
       },
       child: Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: window != null ? Colors.black : SogenColors.background,
         resizeToAvoidBottomInset: false,
         body: Stack(
           fit: StackFit.expand,
@@ -230,37 +232,55 @@ class _Toolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(12),
       child: Material(
-        color: Colors.black54,
-        shape: const StadiumBorder(),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (running) ...[
-              IconButton(
-                tooltip: 'Keyboard',
-                color: Colors.white,
-                icon: const Icon(Icons.keyboard),
-                onPressed: onKeyboard,
-              ),
-              IconButton(
-                tooltip: rightClick ? 'Touch: right click' : 'Touch: left click',
-                color: rightClick ? Theme.of(context).colorScheme.primary : Colors.white,
-                icon: const Icon(Icons.mouse),
-                onPressed: onRightClick,
+        color: SogenColors.neutral900.withValues(alpha: 0.85),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: SogenColors.neutral700),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (running) ...[
+                _ToolbarButton(tooltip: 'Keyboard', icon: LucideIcons.keyboard, onPressed: onKeyboard),
+                _ToolbarButton(
+                  tooltip: rightClick ? 'Touch acts as right click' : 'Touch acts as left click',
+                  icon: rightClick ? LucideIcons.mousePointerClick : LucideIcons.mouse,
+                  color: rightClick ? SogenColors.accents[0] : null,
+                  onPressed: onRightClick,
+                ),
+              ],
+              _ToolbarButton(tooltip: 'Log', icon: LucideIcons.squareTerminal, onPressed: onLog),
+              _ToolbarButton(
+                tooltip: running ? 'Stop' : 'Close',
+                icon: running ? LucideIcons.circleStop : LucideIcons.x,
+                onPressed: onStop,
               ),
             ],
-            IconButton(tooltip: 'Log', color: Colors.white, icon: const Icon(Icons.article_outlined), onPressed: onLog),
-            IconButton(
-              tooltip: running ? 'Stop' : 'Close',
-              color: Colors.white,
-              icon: Icon(running ? Icons.stop_circle_outlined : Icons.close),
-              onPressed: onStop,
-            ),
-          ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _ToolbarButton extends StatelessWidget {
+  const _ToolbarButton({required this.tooltip, required this.icon, required this.onPressed, this.color});
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onPressed;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      icon: Icon(icon, size: 20, color: color ?? SogenColors.neutral300),
+      onPressed: onPressed,
     );
   }
 }
@@ -274,36 +294,28 @@ class _StatusView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final lastLine = session.output.lastOrNull ?? '';
 
-    final (Widget indicator, String headline) = switch (session.state) {
-      SessionState.exited when session.exitCode == null => (
-        Icon(Icons.error_outline, size: 48, color: theme.colorScheme.error),
-        '${game.name} crashed',
-      ),
-      SessionState.exited => (
-        const Icon(Icons.check_circle_outline, size: 48, color: Colors.white70),
-        '${game.name} exited with code ${session.exitCode}',
-      ),
-      _ => (const CircularProgressIndicator(), 'Starting ${game.name}…'),
+    final (IconData icon, String status, String headline) = switch (session.state) {
+      SessionState.exited when session.exitCode == null => (LucideIcons.triangleAlert, 'Crashed', game.name),
+      SessionState.exited => (LucideIcons.circleCheck, 'Exited with code ${session.exitCode}', game.name),
+      _ => (LucideIcons.play, 'Starting', game.name),
     };
 
-    return Center(
+    return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.fromLTRB(24, 80, 24, 24),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            indicator,
+            Pill(label: status, icon: icon),
             const SizedBox(height: 16),
-            Text(headline, style: theme.textTheme.titleMedium?.copyWith(color: Colors.white)),
-            const SizedBox(height: 8),
-            Text(
-              lastLine,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall?.copyWith(color: Colors.white60, fontFamily: 'monospace'),
+            Text(headline, style: theme.textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 24),
+            Expanded(
+              child: TerminalWindow(
+                title: 'Sogen',
+                child: TerminalLog(lines: session.output),
+              ),
             ),
           ],
         ),
