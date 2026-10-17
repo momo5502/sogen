@@ -121,6 +121,8 @@ namespace sogen::android
                 }
             });
 
+            win_emu.log.info("Using emulator backend: %s\n", win_emu.emu().get_name().c_str());
+
             {
                 const std::lock_guard lock{this->mutex_};
                 if (this->stop_requested_)
