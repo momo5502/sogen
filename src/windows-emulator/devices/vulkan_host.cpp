@@ -1776,8 +1776,15 @@ namespace sogen
             }
         }
 
-        // DXVK requires 16- and 8-bit storage buffer access, which older Adreno 6xx GPUs lack even with
-        // Turnip. DXVK only uses it in a few shader paths; create_device masks it back out.
+        // DXVK refuses adapters without these, but Mali GPUs lack them and older Adreno 6xx GPUs lack the 16- and
+        // 8-bit storage access even with Turnip. Most games never touch them, and BC formats still report as
+        // unsupported, so games fall back instead of failing. create_device masks them back out.
+        features2.features.fillModeNonSolid = VK_TRUE;
+        features2.features.multiViewport = VK_TRUE;
+        features2.features.shaderClipDistance = VK_TRUE;
+        features2.features.shaderCullDistance = VK_TRUE;
+        features2.features.textureCompressionBC = VK_TRUE;
+
         for (auto& buffer : chained)
         {
             switch (reinterpret_cast<const VkBaseOutStructure*>(buffer.data())->sType)
