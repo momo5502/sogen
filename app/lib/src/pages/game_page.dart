@@ -9,6 +9,7 @@ import '../theme.dart';
 import '../widgets/guest_window_view.dart';
 import '../widgets/sogen_widgets.dart';
 import '../widgets/terminal_log.dart';
+import '../widgets/virtual_controls.dart';
 
 // android.view.KeyEvent key codes, which the emulator maps to Windows virtual keys.
 const _keyCodeEnter = 66;
@@ -35,6 +36,7 @@ class _GamePageState extends State<GamePage> {
 
   GuestWindow? _inputWindow;
   MouseButton _touchButton = MouseButton.left;
+  bool _showControls = true;
 
   @override
   void initState() {
@@ -174,6 +176,7 @@ class _GamePageState extends State<GamePage> {
               )
             else
               _StatusView(session: _session, game: widget.game),
+            if (window != null && _showControls) VirtualControls(session: _session, window: window),
             Positioned(
               left: 0,
               top: 0,
@@ -199,7 +202,9 @@ class _GamePageState extends State<GamePage> {
                 child: _Toolbar(
                   running: _session.state == SessionState.running,
                   rightClick: _touchButton == MouseButton.right,
+                  controls: _showControls,
                   onKeyboard: _toggleKeyboard,
+                  onControls: () => setState(() => _showControls = !_showControls),
                   onRightClick: () => setState(() {
                     _touchButton = _touchButton == MouseButton.right ? MouseButton.left : MouseButton.right;
                   }),
@@ -219,7 +224,9 @@ class _Toolbar extends StatelessWidget {
   const _Toolbar({
     required this.running,
     required this.rightClick,
+    required this.controls,
     required this.onKeyboard,
+    required this.onControls,
     required this.onRightClick,
     required this.onLog,
     required this.onStop,
@@ -227,7 +234,9 @@ class _Toolbar extends StatelessWidget {
 
   final bool running;
   final bool rightClick;
+  final bool controls;
   final VoidCallback onKeyboard;
+  final VoidCallback onControls;
   final VoidCallback onRightClick;
   final VoidCallback onLog;
   final VoidCallback onStop;
@@ -248,6 +257,12 @@ class _Toolbar extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (running) ...[
+                _ToolbarButton(
+                  tooltip: controls ? 'Hide controls' : 'Show controls',
+                  icon: LucideIcons.gamepad2,
+                  color: controls ? SogenColors.accents[0] : null,
+                  onPressed: onControls,
+                ),
                 _ToolbarButton(tooltip: 'Keyboard', icon: LucideIcons.keyboard, onPressed: onKeyboard),
                 _ToolbarButton(
                   tooltip: rightClick ? 'Touch acts as right click' : 'Touch acts as left click',
