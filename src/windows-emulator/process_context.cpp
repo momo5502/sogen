@@ -742,6 +742,7 @@ namespace sogen
         buffer.write(this->next_raw_input_token);
         buffer.write_atomic(this->audio_render_event);
 
+        buffer.write(this->views);
         buffer.write(this->user_handles);
         buffer.write(this->default_monitor_handle);
         buffer.write(this->default_desktop_window_handle);
@@ -847,6 +848,7 @@ namespace sogen
         buffer.read(this->next_raw_input_token);
         buffer.read_atomic(this->audio_render_event);
 
+        buffer.read(this->views);
         buffer.read(this->user_handles);
         buffer.read(this->default_monitor_handle);
         buffer.read(this->default_desktop_window_handle);

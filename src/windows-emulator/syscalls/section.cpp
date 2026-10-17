@@ -96,6 +96,13 @@ namespace sogen
                 return loader_list_contains_image<uint64_t>(c, ldr, module.image_base);
             }
 
+            template <typename T>
+            bool is_backing_alive(const T& container, uint64_t address)
+            {
+                return std::any_of(container.begin(), container.end(),
+                                   [&](const auto& pair) { return static_cast<uint64_t>(pair.second.backing_address) == address; });
+            }
+
             NTSTATUS initialize_shared_section_base_static_server_data_mapping(const syscall_context& c,
                                                                                const uint64_t shared_section_address,
                                                                                const uint64_t shared_section_size, uint64_t& obj_address)
@@ -490,7 +497,13 @@ namespace sogen
                 {
                     view_size.write(backing_size - aligned_offset);
                 }
-                base_address.write(section_entry->backing_address + aligned_offset);
+
+                const uint64_t view_address = section_entry->backing_address + aligned_offset;
+                base_address.write(view_address);
+
+                view entry(section_entry->backing_address, backing_size);
+                c.proc.views.store(view_address, std::move(entry));
+
                 return STATUS_SUCCESS;
             }
 
@@ -689,7 +702,20 @@ namespace sogen
                 // when the last section handle is closed.
                 if (region_info.kind == memory_region_kind::pagefile_section_view)
                 {
-                    return STATUS_SUCCESS;
+                    // remove the view from memory
+                    bool no_references = false;
+                    if (!c.proc.views.erase(base_address, no_references))
+                    {
+                        // no view contains this address
+                        return STATUS_NOT_MAPPED_VIEW;
+                    }
+
+                    // if there are other view or section references
+                    if (!no_references || is_backing_alive(c.proc.sections, region_info.allocation_base))
+                    {
+                        // do not release the memory
+                        return STATUS_SUCCESS;
+                    }
                 }
 
                 if (c.win_emu.memory.release_memory(region_info.allocation_base, 0))

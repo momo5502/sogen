@@ -2297,6 +2297,208 @@ namespace
 
         return true;
     }
+
+    // Tests that backing memory persists until all references to it are released (see #1400)
+    //
+    // "Mapped views of a file mapping object maintain internal references to
+    // the object, and a file mapping object does not close until all references
+    // to it are released. Therefore, to fully close a file mapping object,
+    // an application must unmap all mapped views of the file mapping object
+    // by calling UnmapViewOfFile and close the file mapping object handle by
+    // calling CloseHandle. These functions can be called in any order."
+    //
+    // https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw#remarks
+    bool test_file_mapped_object_lifecycle(bool close_before_unmap)
+    {
+        auto CreateView = [](HANDLE handle, uint64_t offset, size_t length) {
+            return static_cast<unsigned char*>(
+                MapViewOfFile(handle, FILE_MAP_WRITE, static_cast<DWORD>(offset >> 32), static_cast<DWORD>(offset & 0xFFFFFFFF), length));
+        };
+
+        // 128 KB
+        constexpr uint64_t MAP_SZ = 0x20000;
+        auto* const mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, MAP_SZ >> 32, MAP_SZ & 0xFFFFFFFF, nullptr);
+        if (!mapping)
+        {
+            printf("CreateFileMappingW failed: %lu\n", GetLastError());
+            return false;
+        }
+
+        // map first view at offset 0 (size: 4KB)
+        constexpr uint64_t VIEW_SZ = 0x1000;
+        auto* view1 = CreateView(mapping, 0, VIEW_SZ);
+        if (!view1)
+        {
+            printf("MapViewOfFile (view1) failed: %lu\n", GetLastError());
+            CloseHandle(mapping);
+            return false;
+        }
+
+        // map second view at offset 64KB (size: 4KB)
+        auto* view2 = CreateView(mapping, MAP_SZ / 2, VIEW_SZ);
+        if (!view2)
+        {
+            printf("MapViewOfFile (view2) failed: %lu\n", GetLastError());
+            UnmapViewOfFile(view1);
+            CloseHandle(mapping);
+            return false;
+        }
+
+        if (close_before_unmap)
+        {
+            if (!CloseHandle(mapping))
+            {
+                printf("CloseHandle failed: %lu\n", GetLastError());
+                return false;
+            }
+
+            // Verify the handle slot is dead to the guest
+            auto* const invalid = CreateView(mapping, 0, VIEW_SZ);
+            if (invalid != nullptr)
+            {
+                puts("ERROR: Section handle stayed valid after CloseHandle!\n");
+                UnmapViewOfFile(invalid);
+                return false;
+            }
+
+            // Ensure views survive mapping close
+            memset(view1, 0x5a, 64);
+            memset(view2, 0xa5, 64);
+            if (view1[0] != 0x5a || view2[0] != 0xa5)
+            {
+                return false;
+            }
+
+            // Backing memory must stay alive for view2
+            UnmapViewOfFile(view1 + VIEW_SZ / 2);
+
+            // Ensure view2 successfully survives view1 unmapping
+            memset(view2, 0xa5, 64);
+            if (view2[0] != 0xa5)
+            {
+                return false;
+            }
+
+            // Cleanup
+            UnmapViewOfFile(view2);
+        }
+        else
+        {
+            memset(view1, 0x5a, 64);
+
+            // Unmap view1 while handle remains wide open
+            if (!UnmapViewOfFile(view1 + VIEW_SZ / 2))
+            {
+                printf("UnmapViewOfFile (view1) failed: %lu\n", GetLastError());
+                return false;
+            }
+
+            // Attempt to re-map a clean view from the persistent open handle
+            view1 = CreateView(mapping, 0, 0x1000);
+            if (!view1)
+            {
+                printf("MapViewOfFile (view1) failed: %lu\n", GetLastError());
+                UnmapViewOfFile(view2);
+                CloseHandle(mapping);
+                return false;
+            }
+
+            // Ensure data to the remapped address window
+            memset(view1, 0x5a, 64);
+            memset(view2, 0xa5, 64);
+            if (view1[0] != 0x5a || view2[0] != 0xa5)
+            {
+                return false;
+            }
+
+            // Clean up
+            UnmapViewOfFile(view1);
+            UnmapViewOfFile(view2);
+            CloseHandle(mapping);
+        }
+
+        return true;
+    }
+
+    bool test_file_mapped_object_duplicate()
+    {
+        auto CreateView = [](HANDLE handle, uint64_t offset, size_t length) {
+            return static_cast<unsigned char*>(
+                MapViewOfFile(handle, FILE_MAP_WRITE, static_cast<DWORD>(offset >> 32), static_cast<DWORD>(offset & 0xFFFFFFFF), length));
+        };
+
+        // 128 KB
+        constexpr uint64_t MAP_SZ = 0x20000;
+        auto* const mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, MAP_SZ >> 32, MAP_SZ & 0xFFFFFFFF, nullptr);
+        if (!mapping)
+        {
+            printf("CreateFileMappingW failed: %lu\n", GetLastError());
+            return false;
+        }
+
+        // map first view at offset 0 (size: 4KB)
+        auto* view1 = CreateView(mapping, 0, 0x1000);
+        if (!view1)
+        {
+            printf("MapViewOfFile (view1) failed: %lu\n", GetLastError());
+            CloseHandle(mapping);
+            return false;
+        }
+
+        // map overlapping view at the same offset 0 (size: 4KB)
+        auto* view2 = CreateView(mapping, 0, 0x1000);
+        if (!view2)
+        {
+            printf("MapViewOfFile (view2) failed: %lu\n", GetLastError());
+            UnmapViewOfFile(view1);
+            CloseHandle(mapping);
+            return false;
+        }
+
+        // invalidate mapping handle
+        if (!CloseHandle(mapping))
+        {
+            printf("CloseHandle failed: %lu\n", GetLastError());
+            return false;
+        }
+
+        // write a test pattern to view1
+        memset(view1, 0x5a, 64);
+
+        // tests if memory is prematurely released, leaving view2 dangling
+        if (!UnmapViewOfFile(view1))
+        {
+            printf("UnmapViewOfFile (view1) failed: %lu\n", GetLastError());
+            return false;
+        }
+
+        // force emulator to exit the basic instruction block, evaluate system
+        // threads, and fully commit any pending page table removals
+        Sleep(0);
+
+        // hardware mapping violation if memory did get released
+        memset(view2, 0xa5, 64);
+        if (view2[0] != 0xa5 || view2[63] != 0xa5)
+        {
+            puts("Memory corruption (expected pattern)\n");
+            return false;
+        }
+
+        // clean up final reference
+        if (!UnmapViewOfFile(view2))
+        {
+            printf("UnmapViewOfFile (view2) failed: %lu\n", GetLastError());
+            return false;
+        }
+
+        return true;
+    }
+
+    bool test_file_mapped_object()
+    {
+        return test_file_mapped_object_lifecycle(false) && test_file_mapped_object_lifecycle(true) && test_file_mapped_object_duplicate();
+    }
+
 }
 
 #define RUN_TEST(func, name)                 \
@@ -2374,6 +2576,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_ansi_oem_translation, "ANSI/OEM Translation")
     RUN_TEST(test_crypt_protect, "CryptProtect")
     RUN_TEST(test_set_dib_bits_to_device, "GDI DIB")
+    RUN_TEST(test_file_mapped_object, "File-Mapped Object")
 
     return valid ? 0 : 1;
 }
