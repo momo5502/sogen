@@ -116,8 +116,10 @@ class SessionController(
             emit(mapOf("event" to "windowDestroyed", "window" to window))
         }
 
+        // The texture keeps its size: the emulator sizes the buffers it presents itself (CPU frames set the
+        // buffer geometry, Vulkan swapchains keep the surface extent they were created with), and resizing the
+        // producer would make Flutter sample those buffers as if they were the new size.
         override fun onWindowResized(window: Long, width: Int, height: Int) = post {
-            windows[window]?.setSize(width, height)
             emit(mapOf("event" to "windowResized", "window" to window, "width" to width, "height" to height))
         }
 
