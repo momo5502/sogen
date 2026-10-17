@@ -1151,6 +1151,11 @@ jobs:
         with:
           channel: stable
 
+      # dart format reads the page width from analysis_options.yaml, which includes a package.
+      - name: Fetch App Dependencies
+        working-directory: app
+        run: flutter pub get
+
       - name: Verify App Formatting
         working-directory: app
         run: dart format --output=none --set-exit-if-changed lib test
