@@ -6,9 +6,10 @@ updates:
       interval: monthly
     open-pull-requests-limit: 100
     ignore:
-      # Mbed TLS 4.x no longer commits its generated sources, so building it needs Perl and Jinja2.
+      # Submodule updates follow the newest tag without version filtering, so 4.x cannot be excluded on its own.
+      # Mbed TLS 4.x no longer commits its generated sources (building it needs Perl and Jinja2), so the 3.6 LTS
+      # is bumped manually.
       - dependency-name: "deps/mbedtls"
-        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
