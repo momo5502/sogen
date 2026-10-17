@@ -219,7 +219,7 @@ namespace sogen::sspi
                     break;
                 }
                 auto chain_index = static_cast<DWORD>(index);
-                CRYPT_DATA_BLOB chain_index_blob{sizeof(chain_index), reinterpret_cast<BYTE*>(&chain_index)};
+                CRYPT_DATA_BLOB chain_index_blob{.cbData = sizeof(chain_index), .pbData = reinterpret_cast<BYTE*>(&chain_index)};
                 std::array<BYTE, 20> sha1{};
                 auto sha1_size = static_cast<DWORD>(sha1.size());
                 success = CertSetCertificateContextProperty(context, 0xe697, 0, &chain_index_blob) != FALSE &&

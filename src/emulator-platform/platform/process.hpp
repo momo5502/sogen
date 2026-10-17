@@ -1320,7 +1320,7 @@ namespace sogen
     template <typename Traits>
     struct SYSTEM_MEMORY_USAGE
     {
-        typename Traits::PVOID Name;
+        Traits::PVOID Name;
         USHORT Valid;
         USHORT Standby;
         USHORT Modified;
@@ -1331,7 +1331,7 @@ namespace sogen
     struct SYSTEM_MEMORY_USAGE_INFORMATION
     {
         ULONG Reserved;
-        typename Traits::PVOID EndOfData;
+        Traits::PVOID EndOfData;
         SYSTEM_MEMORY_USAGE<Traits> MemoryUsage[1];
     };
 

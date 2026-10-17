@@ -1,25 +1,26 @@
 #pragma once
 
-namespace
+namespace reflect_extension_detail
 {
     template <bool Cond>
-    struct REFLECT_FWD_LIKE2
+    struct fwd_like
     {
         template <class T>
         using type = std::remove_reference_t<T>&&;
     };
 
     template <>
-    struct REFLECT_FWD_LIKE2<true>
+    struct fwd_like<true>
     {
         template <class T>
         using type = std::remove_reference_t<T>&;
     };
-} // to speed up compilation times
+} // namespace reflect_extension_detail
 
 #define REFLECT_FWD(...) static_cast<decltype(__VA_ARGS__)&&>(__VA_ARGS__)
-#define REFLECT_FWD_LIKE(T, ...) \
-    static_cast<typename ::REFLECT_FWD_LIKE2<::std::is_lvalue_reference_v<T>>::template type<decltype(__VA_ARGS__)>>(__VA_ARGS__)
+#define REFLECT_FWD_LIKE(T, ...)                                                                                                       \
+    static_cast<typename ::reflect_extension_detail::fwd_like<::std::is_lvalue_reference_v<T>>::template type<decltype(__VA_ARGS__)>>( \
+        __VA_ARGS__)
 
 namespace reflect::inline v1_2_5
 {

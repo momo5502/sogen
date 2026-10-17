@@ -1,4 +1,8 @@
 #pragma once
+#include <algorithm>
+#include <span>
+#include <string>
+
 #include <gdb_stub.hpp>
 #include <scoped_hook.hpp>
 #include <arch_emulator.hpp>
@@ -96,7 +100,7 @@ namespace sogen
         {
             try
             {
-                const auto& registers = this->get_register_mapping();
+                const auto registers = this->get_register_mapping();
                 if (reg >= registers.size())
                 {
                     return 0;
@@ -131,7 +135,7 @@ namespace sogen
         {
             try
             {
-                const auto& registers = this->get_register_mapping();
+                const auto registers = this->get_register_mapping();
                 if (reg >= registers.size())
                 {
                     return 0;
@@ -192,7 +196,7 @@ namespace sogen
             try
             {
                 return this->hooks_.access<bool>([&](hook_map& hooks) {
-                    hooks[{addr, size, type}] = this->create_hook(type, addr, size);
+                    hooks[{.addr = addr, .size = size, .type = type}] = this->create_hook(type, addr, size);
                     return true;
                 });
             }
@@ -207,7 +211,7 @@ namespace sogen
             try
             {
                 return this->hooks_.access<bool>([&](hook_map& hooks) {
-                    const auto entry = hooks.find({addr, size, type});
+                    const auto entry = hooks.find({.addr = addr, .size = size, .type = type});
                     if (entry == hooks.end())
                     {
                         return false;
@@ -231,14 +235,14 @@ namespace sogen
 
         std::string get_target_description(const std::string_view file) override
         {
-            const auto& target_descriptions = this->get_target_descriptions();
-            const auto entry = target_descriptions.find(file);
+            const auto target_descriptions = this->get_target_descriptions();
+            const auto entry = std::ranges::find(target_descriptions, file, &target_description::name);
             if (entry == target_descriptions.end())
             {
                 return {};
             }
 
-            auto data = entry->second;
+            auto data = std::string{entry->xml};
 
             if (const auto os_abi = this->get_os_abi(); !os_abi.empty())
             {
@@ -252,7 +256,7 @@ namespace sogen
             return data;
         }
 
-        const std::vector<register_entry>& get_register_mapping() const
+        std::span<const register_entry> get_register_mapping() const
         {
             if (this->is_32_bit())
             {
@@ -262,7 +266,7 @@ namespace sogen
             return x64_gdb_registers;
         }
 
-        const std::map<std::string, std::string, std::less<>>& get_target_descriptions() const
+        std::span<const target_description> get_target_descriptions() const
         {
             if (this->is_32_bit())
             {

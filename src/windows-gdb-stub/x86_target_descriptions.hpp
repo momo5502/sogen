@@ -1,17 +1,17 @@
 #pragma once
 
-#include <map>
-#include <string>
+#include <array>
 
+#include "target_description.hpp"
 #include "osabi_template.hpp"
 
 namespace sogen
 {
 
-    inline std::map<std::string, std::string, std::less<>> x86_target_descriptions{
+    inline constexpr auto x86_target_descriptions = std::to_array<target_description>({
         {
-            "target.xml",
-            R"__xml__(<?xml version="1.0"?>
+            .name = "target.xml",
+            .xml = R"__xml__(<?xml version="1.0"?>
 <!-- Copyright (C) 2010-2018 Free Software Foundation, Inc.
 
      Copying and distribution of this file, with or without modification,
@@ -31,8 +31,8 @@ namespace sogen
 )__xml__",
         },
         {
-            "32bit-core.xml",
-            R"__xml__(<?xml version="1.0"?>
+            .name = "32bit-core.xml",
+            .xml = R"__xml__(<?xml version="1.0"?>
 <!-- Copyright (C) 2010-2015 Free Software Foundation, Inc.
 
      Copying and distribution of this file, with or without modification,
@@ -100,8 +100,8 @@ namespace sogen
 )__xml__",
         },
         {
-            "32bit-sse.xml",
-            R"__xml__(<?xml version="1.0"?>
+            .name = "32bit-sse.xml",
+            .xml = R"__xml__(<?xml version="1.0"?>
 <!-- Copyright (C) 2010-2015 Free Software Foundation, Inc.
 
      Copying and distribution of this file, with or without modification,
@@ -156,8 +156,8 @@ namespace sogen
 )__xml__",
         },
         {
-            "64bit-segments.xml",
-            R"__xml__(<?xml version="1.0"?>
+            .name = "64bit-segments.xml",
+            .xml = R"__xml__(<?xml version="1.0"?>
 <!-- Copyright (C) 2016-2018 Free Software Foundation, Inc.
 
      Copying and distribution of this file, with or without modification,
@@ -171,6 +171,6 @@ namespace sogen
 </feature>
 )__xml__",
         },
-    };
+    });
 
 } // namespace sogen

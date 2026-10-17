@@ -1,11 +1,11 @@
 #pragma once
 #include "register_entry.hpp"
-#include <vector>
+#include <array>
 
 namespace sogen
 {
 
-    inline std::vector<register_entry> x64_gdb_registers{
+    inline constexpr auto x64_gdb_registers = std::to_array<register_entry>({
         x86_register::rax,
         x86_register::rbx,
         x86_register::rcx,
@@ -85,6 +85,6 @@ namespace sogen
         {x86_register::ymm13, 16, 16},
         {x86_register::ymm14, 16, 16},
         {x86_register::ymm15, 16, 16},
-    };
+    });
 
 } // namespace sogen

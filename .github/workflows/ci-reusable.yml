@@ -37,7 +37,7 @@ jobs:
   clang-tidy:
     name: Run Clang Tidy
     env:
-      LLVM_VERSION: 21
+      LLVM_VERSION: 22
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false

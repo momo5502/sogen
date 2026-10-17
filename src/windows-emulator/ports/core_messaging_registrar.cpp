@@ -63,6 +63,7 @@ namespace sogen
             uint32_t flags{};
             uint32_t nested_size{};
             uint32_t body0{};
+            // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
             registrar_method body1{};
 
             bool common_shape() const

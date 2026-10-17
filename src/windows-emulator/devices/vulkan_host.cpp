@@ -2484,6 +2484,7 @@ namespace sogen
         // A secondary command buffer recorded inside dynamic rendering needs an inheritance chain describing
         // the attachment formats it will render to (VkCommandBufferInheritanceRenderingInfo).
         VkCommandBufferInheritanceInfo inheritance{};
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         VkCommandBufferInheritanceRenderingInfo rendering{};
         std::vector<VkFormat> color_format_handles;
         if (is_secondary)
@@ -3483,6 +3484,7 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         VkImageCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
         info.flags = flags;
@@ -4065,6 +4067,7 @@ namespace sogen
             return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
 
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         VkSurfaceCapabilitiesKHR caps{};
         const VkResult result = instance->second.get_surface_capabilities(pd->second.handle, surf->second.handle, &caps);
         if (result != VK_SUCCESS)
@@ -4204,6 +4207,7 @@ namespace sogen
             native_old_swapchain = old->second.handle;
         }
 
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         VkSwapchainCreateInfoKHR info{};
         info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         info.flags = static_cast<VkSwapchainCreateFlagsKHR>(flags);
@@ -5001,6 +5005,7 @@ namespace sogen
 
         const bool has_depth = depth_format != 0;
 
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         std::array<VkAttachmentDescription, 2> attachments{};
         attachments[0].format = static_cast<VkFormat>(format);
         attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
@@ -5884,6 +5889,7 @@ namespace sogen
             return &identifier;
         };
 
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
         stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         stages[0].pNext = initialize_identifier(0, vertex_shader);
@@ -6005,6 +6011,7 @@ namespace sogen
         rasterization.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rasterization.lineWidth = 1.0f;
 
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         VkPipelineMultisampleStateCreateInfo multisample{};
         multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
         // The pipeline's sample count must match the render target it is used with; DXVK renders the menu
@@ -6140,6 +6147,7 @@ namespace sogen
             cache_handle = cache->second.handle;
         }
 
+        // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
         VkComputePipelineCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
         info.flags = static_cast<VkPipelineCreateFlags>(flags);

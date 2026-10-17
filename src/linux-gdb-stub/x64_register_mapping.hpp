@@ -1,7 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <optional>
-#include <vector>
+#include <array>
 #include <x86_register.hpp>
 
 namespace sogen
@@ -13,8 +13,8 @@ namespace sogen
         std::optional<size_t> expected_size;
         std::optional<size_t> offset;
 
-        register_entry(const x86_register reg = x86_register::invalid, const std::optional<size_t> expected_size = std::nullopt,
-                       const std::optional<size_t> offset = std::nullopt)
+        constexpr register_entry(const x86_register reg = x86_register::invalid, const std::optional<size_t> expected_size = std::nullopt,
+                                 const std::optional<size_t> offset = std::nullopt)
             : reg(reg),
               expected_size(expected_size),
               offset(offset)
@@ -22,7 +22,7 @@ namespace sogen
         }
     };
 
-    inline std::vector<register_entry> gdb_registers{
+    inline constexpr auto gdb_registers = std::to_array<register_entry>({
         x86_register::rax,
         x86_register::rbx,
         x86_register::rcx,
@@ -102,6 +102,6 @@ namespace sogen
         {x86_register::ymm13, 16, 16},
         {x86_register::ymm14, 16, 16},
         {x86_register::ymm15, 16, 16},
-    };
+    });
 
 } // namespace sogen

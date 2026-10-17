@@ -1,11 +1,11 @@
 #pragma once
 #include "register_entry.hpp"
-#include <vector>
+#include <array>
 
 namespace sogen
 {
 
-    inline std::vector<register_entry> x86_gdb_registers{
+    inline constexpr auto x86_gdb_registers = std::to_array<register_entry>({
         x86_register::eax,        x86_register::ecx,     x86_register::edx,     x86_register::ebx,     x86_register::esp,
         x86_register::ebp,        x86_register::esi,     x86_register::edi,     x86_register::eip,     x86_register::eflags,
 
@@ -27,6 +27,6 @@ namespace sogen
         x86_register::xmm0,       x86_register::xmm1,    x86_register::xmm2,    x86_register::xmm3,    x86_register::xmm4,
         x86_register::xmm5,       x86_register::xmm6,    x86_register::xmm7,    x86_register::mxcsr,   x86_register::fs_base,
         x86_register::gs_base,
-    };
+    });
 
 } // namespace sogen

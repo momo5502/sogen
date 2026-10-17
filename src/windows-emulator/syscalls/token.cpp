@@ -437,6 +437,7 @@ namespace sogen
                     return STATUS_BUFFER_TOO_SMALL;
                 }
 
+                // NOLINTNEXTLINE(bugprone-invalid-enum-default-initialization)
                 TOKEN_STATISTICS stats{};
                 stats.TokenId.LowPart = token_id;
                 stats.AuthenticationId.LowPart = token_authentication_id;

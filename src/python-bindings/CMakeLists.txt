@@ -25,6 +25,10 @@ if(MSVC)
   if(TARGET nanobind-static)
     target_compile_options(nanobind-static PRIVATE /wd4714)
   endif()
+  # nanobind adds /MP unconditionally; it only has an effect under MSBuild and clang-tidy rejects it as unused.
+  if(NOT CMAKE_GENERATOR MATCHES "Visual Studio")
+    sogen_target_remove_compile_options(sogen /MP)
+  endif()
 elseif(UNIX AND NOT APPLE)
   # Override the global -z defs / --no-undefined for the Python extension.
   target_link_options(sogen PRIVATE -Wl,-z,undefs)
