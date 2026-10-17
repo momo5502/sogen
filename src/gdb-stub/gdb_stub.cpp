@@ -1,10 +1,11 @@
 #include "gdb_stub.hpp"
 
 #include <cassert>
-#include <cinttypes>
+#include <charconv>
+#include <limits>
+#include <utility>
 
 #include <utils/string.hpp>
-#include <platform/compiler.hpp>
 #include <network/tcp_server_socket.hpp>
 
 #include "async_handler.hpp"
@@ -22,6 +23,47 @@ namespace sogen::gdb_stub
         {
             (void)condition;
             assert(condition);
+        }
+
+        template <typename... Values>
+        bool parse_hex_list(std::string_view input, Values&... values)
+        {
+            bool first = true;
+            const auto parse = [&](auto& value) {
+                if (!std::exchange(first, false))
+                {
+                    if (!input.starts_with(','))
+                    {
+                        return false;
+                    }
+
+                    input.remove_prefix(1);
+                }
+
+                const auto [end, error] = std::from_chars(input.data(), input.data() + input.size(), value, 16);
+                if (error != std::errc{})
+                {
+                    return false;
+                }
+
+                input.remove_prefix(static_cast<size_t>(end - input.data()));
+                return true;
+            };
+
+            return (parse(values) && ...);
+        }
+
+        uint32_t parse_thread_id(const std::string_view input)
+        {
+            // gdb uses -1 to address all threads.
+            if (input == "-1")
+            {
+                return std::numeric_limits<uint32_t>::max();
+            }
+
+            uint32_t thread_id{};
+            rt_assert(parse_hex_list(input, thread_id));
+            return thread_id;
         }
 
         struct debugging_state
@@ -174,7 +216,7 @@ namespace sogen::gdb_stub
             size_t offset{};
             size_t length{};
 
-            rt_assert(sscanf_s(args.c_str(), "%zx,%zx", &offset, &length) == 2);
+            rt_assert(parse_hex_list(args, offset, length));
 
             if (offset >= data.size())
             {
@@ -399,7 +441,7 @@ namespace sogen::gdb_stub
             else if (name == "GetTIBAddr")
             {
                 uint32_t thread_id{};
-                rt_assert(sscanf_s(std::string(args).c_str(), "%" PRIx32, &thread_id) == 1);
+                rt_assert(parse_hex_list(args, thread_id));
 
                 const auto address = c.handler.get_thread_teb_addr(thread_id);
                 c.connection.send_reply(utils::string::to_hex_number(address));
@@ -435,7 +477,7 @@ namespace sogen::gdb_stub
 
             uint32_t flags{};
             uint32_t mode{};
-            rt_assert(sscanf_s(std::string(args).c_str(), "%x,%x", &flags, &mode) == 2);
+            rt_assert(parse_hex_list(args, flags, mode));
 
             const auto file_path = utils::string::from_hex_string<std::string>(hex_name);
             if (file_path.empty())
@@ -457,7 +499,7 @@ namespace sogen::gdb_stub
         void process_file_close(const debugging_context& c, const std::string_view payload)
         {
             uint32_t fd{};
-            rt_assert(sscanf_s(std::string(payload).c_str(), "%x", &fd) == 1);
+            rt_assert(parse_hex_list(payload, fd));
 
             c.handler.get_filesystem()->close(fd);
             send_file_result(c, 0);
@@ -468,7 +510,7 @@ namespace sogen::gdb_stub
             uint32_t fd{};
             size_t count{};
             uint64_t offset{};
-            rt_assert(sscanf_s(std::string(payload).c_str(), "%x,%zx,%" PRIx64, &fd, &count, &offset) == 3);
+            rt_assert(parse_hex_list(payload, fd, count, offset));
 
             count = std::min(count, max_data_size);
 
@@ -481,12 +523,12 @@ namespace sogen::gdb_stub
             const auto [fd_str, remainder] = split_string(payload, ',');
 
             uint32_t fd{};
-            rt_assert(sscanf_s(std::string(fd_str).c_str(), "%x", &fd) == 1);
+            rt_assert(parse_hex_list(fd_str, fd));
 
             const auto [offset_str, encoded_data] = split_string(remainder, ',');
 
             uint64_t offset{};
-            rt_assert(sscanf_s(std::string(offset_str).c_str(), "%" PRIx64, &offset) == 1);
+            rt_assert(parse_hex_list(offset_str, offset));
 
             const auto data = unescape(encoded_data);
             const auto n = c.handler.get_filesystem()->write(fd, offset, data.data(), data.size());
@@ -496,7 +538,7 @@ namespace sogen::gdb_stub
         void process_file_fstat(const debugging_context& c, const std::string_view payload)
         {
             uint32_t fd{};
-            rt_assert(sscanf_s(std::string(payload).c_str(), "%x", &fd) == 1);
+            rt_assert(parse_hex_list(payload, fd));
 
             const auto data = c.handler.get_filesystem()->fstat(fd);
             if (data.empty())
@@ -580,7 +622,7 @@ namespace sogen::gdb_stub
             uint32_t type{};
             uint64_t addr{};
             size_t kind{};
-            rt_assert(sscanf_s(data.c_str(), "%x,%" PRIX64 ",%zx", &type, &addr, &kind) == 3);
+            rt_assert(parse_hex_list(data, type, addr, kind));
 
             const auto res = change_breakpoint(c.handler, set, translate_breakpoint_type(type), addr, kind);
             c.connection.send_reply(res ? "OK" : "E01");
@@ -672,9 +714,7 @@ namespace sogen::gdb_stub
                 return;
             }
 
-            uint32_t thread_id{};
-            rt_assert(sscanf_s(std::string(thread_string).c_str(), "%x", &thread_id) == 1);
-            c.state.continuation_thread = thread_id;
+            c.state.continuation_thread = parse_thread_id(thread_string);
         }
 
         void handle_v_packet(const debugging_context& c, const std::string_view data)
@@ -770,7 +810,7 @@ namespace sogen::gdb_stub
         void read_single_register(const debugging_context& c, const std::string& payload)
         {
             size_t reg{};
-            rt_assert(sscanf_s(payload.c_str(), "%zx", &reg) == 1);
+            rt_assert(parse_hex_list(payload, reg));
 
             std::vector<std::byte> data{};
             data.resize(c.handler.get_max_register_size());
@@ -793,7 +833,7 @@ namespace sogen::gdb_stub
             const auto [reg, hex_data] = split_string(payload, '=');
 
             size_t register_index{};
-            rt_assert(sscanf_s(std::string(reg).c_str(), "%zx", &register_index) == 1);
+            rt_assert(parse_hex_list(reg, register_index));
 
             const auto data = utils::string::from_hex_string(hex_data);
             const auto res = c.handler.write_register(register_index, data.data(), data.size()) > 0;
@@ -804,7 +844,7 @@ namespace sogen::gdb_stub
         {
             uint64_t address{};
             size_t size{};
-            rt_assert(sscanf_s(payload.c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
+            rt_assert(parse_hex_list(payload, address, size));
 
             if (size > max_data_size / 2)
             {
@@ -831,7 +871,7 @@ namespace sogen::gdb_stub
 
             size_t size{};
             uint64_t address{};
-            rt_assert(sscanf_s(std::string(info).c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
+            rt_assert(parse_hex_list(info, address, size));
 
             if (size > max_data_size)
             {
@@ -852,7 +892,7 @@ namespace sogen::gdb_stub
 
             size_t size{};
             uint64_t address{};
-            rt_assert(sscanf_s(std::string(info).c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
+            rt_assert(parse_hex_list(info, address, size));
 
             if (size > max_data_size)
             {
@@ -877,7 +917,7 @@ namespace sogen::gdb_stub
         {
             uint64_t address{};
             size_t size{};
-            rt_assert(sscanf_s(std::string(payload).c_str(), "%" PRIx64 ",%zx", &address, &size) == 2);
+            rt_assert(parse_hex_list(payload, address, size));
 
             size = std::min(size, max_data_size - 1);
 
@@ -902,8 +942,7 @@ namespace sogen::gdb_stub
                 return;
             }
 
-            uint32_t id{};
-            rt_assert(sscanf_s(std::string(payload.substr(1)).c_str(), "%x", &id) == 1);
+            const auto id = parse_thread_id(payload.substr(1));
 
             const auto operation = payload[0];
             if (operation == 'c')
@@ -930,8 +969,7 @@ namespace sogen::gdb_stub
                 return;
             }
 
-            uint32_t id{};
-            rt_assert(sscanf_s(std::string(payload).c_str(), "%x", &id) == 1);
+            const auto id = parse_thread_id(payload);
 
             const auto ids = c.handler.get_thread_ids();
             const auto is_alive = std::ranges::find(ids, id) != ids.cend();
