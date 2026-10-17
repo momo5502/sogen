@@ -265,6 +265,7 @@ namespace sogen
 
           private:
             vulkan_host vulkan_{};
+            std::unordered_map<uint64_t, hwnd> surface_windows_{};
 
             // VkDeviceMemory aliased directly into the guest address space (see handle_map_memory_direct),
             // keyed by memory object id, so unmap can release the guest range and the host mapping.
@@ -1886,6 +1887,10 @@ namespace sogen
                 const uint64_t native_surface = win_emu.ui().create_vulkan_surface(static_cast<hwnd>(request.hwnd), native_instance);
                 uint64_t surface = gpu_bridge::null_object;
                 const int32_t result = this->vulkan_.create_surface(request.instance, native_surface, surface);
+                if (result == 0)
+                {
+                    this->surface_windows_[surface] = static_cast<hwnd>(request.hwnd);
+                }
                 return write_output(win_emu, context,
                                     gpu_bridge::create_surface_response{.vk_result = result, .reserved = 0, .surface = surface});
             }
@@ -1899,6 +1904,7 @@ namespace sogen
                 }
 
                 this->vulkan_.destroy_surface(request.surface);
+                this->surface_windows_.erase(request.surface);
                 return STATUS_SUCCESS;
             }
 
@@ -3649,8 +3655,17 @@ namespace sogen
 
                 const size_t capacity = std::min<size_t>(context.output_buffer_length - sizeof(response_t), max_readback_bytes);
                 std::vector<std::byte> caps(capacity);
-                const int32_t result =
-                    this->vulkan_.get_surface_capabilities(request.physical_device, request.surface, caps.data(), caps.size());
+                std::optional<std::pair<uint32_t, uint32_t>> current_extent{};
+                if (const auto window = this->surface_windows_.find(request.surface); window != this->surface_windows_.end())
+                {
+                    if (const auto extent = win_emu.ui().vulkan_surface_extent(window->second))
+                    {
+                        current_extent = std::pair{extent->width, extent->height};
+                    }
+                }
+
+                const int32_t result = this->vulkan_.get_surface_capabilities(request.physical_device, request.surface, caps.data(),
+                                                                              caps.size(), current_extent);
 
                 emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response_t{.vk_result = result, .reserved = 0});
                 const size_t written = result == 0 ? caps.size() : 0;

@@ -79,6 +79,7 @@ namespace sogen::android
         std::vector<std::string> vulkan_instance_extensions() override;
         uint64_t create_vulkan_surface(hwnd window, uint64_t instance) override;
         void* vulkan_get_instance_proc_addr() override;
+        std::optional<ui_extent> vulkan_surface_extent(hwnd window) override;
 
       private:
         struct window_state

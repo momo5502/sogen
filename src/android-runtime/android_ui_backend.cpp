@@ -582,6 +582,24 @@ namespace sogen::android
         return this->vulkan_get_instance_proc_addr_;
     }
 
+    // An Android surface reports the size of the buffers its consumer was created with, which stays at the window's
+    // initial size. Swapchains follow the guest window instead, and Flutter scales whatever buffer size arrives.
+    std::optional<ui_extent> android_ui_backend::vulkan_surface_extent(const hwnd window)
+    {
+        const std::lock_guard lock{this->mutex_};
+
+        const auto* state = this->find_top_level(window);
+        if (!state)
+        {
+            return std::nullopt;
+        }
+
+        return ui_extent{
+            .width = static_cast<uint32_t>(client_width(state->desc)),
+            .height = static_cast<uint32_t>(client_height(state->desc)),
+        };
+    }
+
     void android_ui_backend::queue_event(const hwnd window, const uint32_t message, const uint64_t w_param, const uint64_t l_param)
     {
         this->events_.push_back(ui_event{.window = window, .message = message, .wParam = w_param, .lParam = l_param});

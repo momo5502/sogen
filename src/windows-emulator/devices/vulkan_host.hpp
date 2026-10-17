@@ -4,8 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace sogen
@@ -373,7 +375,9 @@ namespace sogen
         int32_t create_surface(uint64_t instance, uint64_t native_surface, uint64_t& out_surface);
         void destroy_surface(uint64_t surface);
         int32_t get_surface_support(uint64_t physical_device, uint64_t surface, uint32_t queue_family_index, uint32_t& out_supported);
-        int32_t get_surface_capabilities(uint64_t physical_device, uint64_t surface, void* out, size_t out_size);
+        // current_extent replaces the extent the driver reports, clamped to the supported range.
+        int32_t get_surface_capabilities(uint64_t physical_device, uint64_t surface, void* out, size_t out_size,
+                                         std::optional<std::pair<uint32_t, uint32_t>> current_extent = std::nullopt);
         int32_t get_surface_formats(uint64_t physical_device, uint64_t surface, std::span<surface_format> out_formats, uint32_t& out_count);
         int32_t get_surface_present_modes(uint64_t physical_device, uint64_t surface, std::span<uint32_t> out_modes, uint32_t& out_count);
 

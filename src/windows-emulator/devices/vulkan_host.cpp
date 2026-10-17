@@ -4096,7 +4096,8 @@ namespace sogen
         return result;
     }
 
-    int32_t vulkan_host::get_surface_capabilities(uint64_t physical_device, uint64_t surface, void* out, size_t out_size)
+    int32_t vulkan_host::get_surface_capabilities(uint64_t physical_device, uint64_t surface, void* out, size_t out_size,
+                                                  const std::optional<std::pair<uint32_t, uint32_t>> current_extent)
     {
         const auto pd = this->impl_->physical_devices.find(physical_device);
         const auto surf = this->impl_->surfaces.find(surface);
@@ -4118,6 +4119,11 @@ namespace sogen
         if (result != VK_SUCCESS)
         {
             return result;
+        }
+        if (current_extent)
+        {
+            caps.currentExtent.width = std::clamp(current_extent->first, caps.minImageExtent.width, caps.maxImageExtent.width);
+            caps.currentExtent.height = std::clamp(current_extent->second, caps.minImageExtent.height, caps.maxImageExtent.height);
         }
         if (out && out_size > 0)
         {
