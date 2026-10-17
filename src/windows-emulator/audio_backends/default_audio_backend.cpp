@@ -5,7 +5,9 @@ namespace sogen
 {
     std::unique_ptr<audio_backend> create_default_audio_backend()
     {
-#ifdef SOGEN_HAS_SDL3
+#if defined(__ANDROID__)
+        return create_aaudio_audio_backend();
+#elif defined(SOGEN_HAS_SDL3)
         return create_sdl_audio_backend();
 #else
         return std::make_unique<null_audio_backend>();

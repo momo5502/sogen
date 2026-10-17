@@ -6,16 +6,20 @@ file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
 
 list(SORT SRC_FILES)
 
-if(SOGEN_ENABLE_SDL3 AND SOGEN_USE_SYSTEM_SDL3 AND NOT EMSCRIPTEN AND NOT TARGET SDL3::SDL3)
+if(SOGEN_ENABLE_SDL3 AND SOGEN_USE_SYSTEM_SDL3 AND NOT EMSCRIPTEN AND NOT ANDROID AND NOT TARGET SDL3::SDL3)
   find_package(SDL3 CONFIG REQUIRED)
 endif()
 
 if(NOT SOGEN_ENABLE_SDL3 OR NOT TARGET SDL3::SDL3)
   list(REMOVE_ITEM SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/ui_backends/sdl_ui_backend.cpp")
   list(REMOVE_ITEM SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/audio_backends/sdl_audio_backend.cpp")
-  if(SOGEN_ENABLE_SDL3 AND NOT EMSCRIPTEN)
+  if(SOGEN_ENABLE_SDL3 AND NOT EMSCRIPTEN AND NOT ANDROID)
     message(FATAL_ERROR "The SDL3 submodule (deps/SDL) is required for the host UI backend on this platform")
   endif()
+endif()
+
+if(NOT ANDROID)
+  list(REMOVE_ITEM SRC_FILES "${CMAKE_CURRENT_LIST_DIR}/audio_backends/aaudio_audio_backend.cpp")
 endif()
 
 add_library(windows-emulator ${SRC_FILES})
@@ -30,6 +34,9 @@ target_link_libraries(windows-emulator PUBLIC emulator minidump process-manager)
 target_link_libraries(windows-emulator PRIVATE gpu-bridge-protocol vulkan-headers steam-bridge-protocol sogen_mbedtls)
 if(WIN32)
   target_link_libraries(windows-emulator PRIVATE crypt32)
+endif()
+if(ANDROID)
+  target_link_libraries(windows-emulator PRIVATE aaudio)
 endif()
 
 # When the Steamworks SDK was provided, link the real Steam host backend (owns the SDK headers + the

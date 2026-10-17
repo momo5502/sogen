@@ -24,6 +24,10 @@ endif()
 sogen_add_subdirectory_and_get_targets("backends" BACKEND_TARGETS)
 sogen_targets_set_folder("backends" ${BACKEND_TARGETS})
 
+if(ANDROID)
+  add_subdirectory(android-runtime)
+endif()
+
 set(_SOGEN_BUILD_STANDALONE_TARGETS ON)
 if(SOGEN_BUILD_STATIC)
   # if static build, tools are opt in
