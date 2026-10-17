@@ -1801,6 +1801,10 @@ namespace sogen
             case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES:
                 reinterpret_cast<VkPhysicalDevice8BitStorageFeatures*>(buffer.data())->storageBuffer8BitAccess = VK_TRUE;
                 break;
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT:
+                // Mali has the extension but not the stricter bounds checking; core robustBufferAccess still applies.
+                reinterpret_cast<VkPhysicalDeviceRobustness2FeaturesEXT*>(buffer.data())->robustBufferAccess2 = VK_TRUE;
+                break;
             default:
                 break;
             }
