@@ -168,6 +168,7 @@ namespace sogen
             t.await_time = {};
             t.await_msg = {};
             t.waiting_for_alert = false;
+            t.wait_alert_address = std::nullopt;
             t.await_io_completion = pending_io_completion_wait{};
 
             auto& wait = *t.await_io_completion;
@@ -228,6 +229,7 @@ namespace sogen
             t.await_time = {};
             t.await_msg = {};
             t.waiting_for_alert = false;
+            t.wait_alert_address = std::nullopt;
             t.await_io_completion = pending_io_completion_wait{};
 
             auto& wait = *t.await_io_completion;
