@@ -10,6 +10,11 @@ namespace sogen
 {
     namespace
     {
+// GCC reports the std::optional return as maybe-uninitialized once this is inlined into start().
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
         std::optional<SDL_AudioFormat> to_sdl_format(const audio_format& format)
         {
             if (format.is_float)
@@ -29,6 +34,9 @@ namespace sogen
                 return std::nullopt;
             }
         }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
         class sdl_audio_backend final : public audio_backend
         {
