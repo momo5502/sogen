@@ -11,6 +11,10 @@
 
 #include <dlfcn.h>
 
+#ifdef SOGEN_HAS_ADRENOTOOLS
+#include <adrenotools/driver.h>
+#endif
+
 namespace sogen::android
 {
     namespace
@@ -126,21 +130,36 @@ namespace sogen::android
             }
         }
 
-        PFN_vkGetInstanceProcAddr load_vulkan_loader()
+        // The library stays loaded for the life of the process; each session process runs a single game.
+        void* load_vulkan_library(const vulkan_driver& driver)
         {
-            void* library = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
-            if (!library)
+#ifdef SOGEN_HAS_ADRENOTOOLS
+            // Turnip only drives Adreno GPUs, which Qualcomm's kernel driver exposes as kgsl.
+            if (!driver.custom_name.empty() && std::filesystem::exists("/dev/kgsl-3d0"))
             {
-                return nullptr;
+                const auto hook_directory = driver.hook_directory + "/";
+                const auto custom_directory = driver.custom_directory + "/";
+                if (void* library = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, nullptr, hook_directory.c_str(),
+                                                               custom_directory.c_str(), driver.custom_name.c_str(), nullptr, nullptr))
+                {
+                    return library;
+                }
             }
+#else
+            (void)driver;
+#endif
 
-            return reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(library, "vkGetInstanceProcAddr"));
+            return dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
         }
     }
 
-    android_ui_backend::android_ui_backend(ui_host& host)
+    android_ui_backend::android_ui_backend(ui_host& host, const vulkan_driver& driver)
         : host_(&host)
     {
+        if (void* library = load_vulkan_library(driver))
+        {
+            this->vulkan_get_instance_proc_addr_ = dlsym(library, "vkGetInstanceProcAddr");
+        }
     }
 
     android_ui_backend::~android_ui_backend()
@@ -507,7 +526,7 @@ namespace sogen::android
 
     uint64_t android_ui_backend::create_vulkan_surface(const hwnd window, const uint64_t instance)
     {
-        static const auto get_instance_proc_addr = load_vulkan_loader();
+        const auto get_instance_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(this->vulkan_get_instance_proc_addr_);
         if (!get_instance_proc_addr)
         {
             return 0;
@@ -556,6 +575,11 @@ namespace sogen::android
         ANativeWindow_release(target);
 
         return result == VK_SUCCESS ? pack_vulkan_handle(surface) : 0;
+    }
+
+    void* android_ui_backend::vulkan_get_instance_proc_addr()
+    {
+        return this->vulkan_get_instance_proc_addr_;
     }
 
     void android_ui_backend::queue_event(const hwnd window, const uint32_t message, const uint64_t w_param, const uint64_t l_param)

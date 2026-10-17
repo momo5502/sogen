@@ -23,4 +23,9 @@ target_link_libraries(android-runtime PRIVATE
   log
 )
 
+if(TARGET adrenotools)
+  target_link_libraries(android-runtime PRIVATE adrenotools)
+  target_compile_definitions(android-runtime PRIVATE SOGEN_HAS_ADRENOTOOLS=1)
+endif()
+
 sogen_strip_target(android-runtime)
