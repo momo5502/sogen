@@ -834,7 +834,7 @@ jobs:
         run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
       - name: CMake Test
-        run: cd build/release/artifacts && ./analyzer.exe --network live -e root c:/test-sample.exe
+        run: cd build/release/artifacts && ./analyzer.exe --network live -e root --root-mode rw c:/test-sample.exe
         env:
           EMULATOR_ICICLE: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
