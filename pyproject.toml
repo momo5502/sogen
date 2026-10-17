@@ -14,7 +14,7 @@ dynamic = ["version"]
 license = {text = "GPL-2.0-only"}
 name = "sogen"
 readme = "docs/python/README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 [tool.scikit-build]
 build-dir = "build/{wheel_tag}"

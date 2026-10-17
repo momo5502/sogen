@@ -155,7 +155,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.9"
+          python-version: "3.10"
         env:
           PIP_NO_CACHE_DIR: 1
 
