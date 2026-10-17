@@ -111,7 +111,7 @@ class Pill extends StatelessWidget {
   }
 }
 
-/// A macOS-style terminal window, as the site shows emulator output.
+/// A titled terminal window, as the site shows emulator output.
 class TerminalWindow extends StatelessWidget {
   const TerminalWindow({super.key, required this.title, required this.child});
 
@@ -135,26 +135,11 @@ class TerminalWindow extends StatelessWidget {
           Container(
             color: SogenColors.neutral800,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            child: Row(
-              children: [
-                for (final color in const [Color(0xFFFF5F57), Color(0xFFFEBC2E), Color(0xFF28C840)])
-                  Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                      child: const SizedBox.square(dimension: 10),
-                    ),
-                  ),
-                Expanded(
-                  child: Text(
-                    title,
-                    textAlign: TextAlign.center,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(color: SogenColors.neutral300),
-                  ),
-                ),
-                const SizedBox(width: 48),
-              ],
+            child: Text(
+              title,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(color: SogenColors.neutral300),
             ),
           ),
           Flexible(child: child),
