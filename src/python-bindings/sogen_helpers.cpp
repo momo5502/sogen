@@ -158,21 +158,66 @@ namespace sogen::py
             return result;
         }
 
-        std::unordered_map<windows_path, std::filesystem::path> parse_path_mappings(const nb::object& object)
+        filesystem_mode parse_python_filesystem_mode(const std::string& name)
         {
-            std::unordered_map<windows_path, std::filesystem::path> result{};
+            const auto mode = parse_filesystem_mode(name);
+            if (!mode)
+            {
+                throw std::invalid_argument("Filesystem mode must be 'ro' or 'rw', not '" + name + "'");
+            }
+
+            return *mode;
+        }
+
+        void parse_path_mappings(const nb::object& object, std::vector<mount_spec>& mounts)
+        {
             if (object.is_none())
             {
-                return result;
+                return;
             }
 
             const auto dict = nb::cast<nb::dict>(object);
             for (const auto& item : dict)
             {
-                result.emplace(nb::cast<std::filesystem::path>(item.first), nb::cast<std::filesystem::path>(item.second));
+                mounts.push_back(mount_spec{
+                    .host_path = nb::cast<std::filesystem::path>(item.second),
+                    .guest_path = windows_path{nb::cast<std::filesystem::path>(item.first)},
+                });
+            }
+        }
+
+        void parse_mounts(const nb::object& object, std::vector<mount_spec>& mounts)
+        {
+            if (object.is_none())
+            {
+                return;
             }
 
-            return result;
+            for (const auto& item : nb::cast<nb::sequence>(object))
+            {
+                std::vector<nb::object> fields{};
+                for (const auto& field : nb::cast<nb::sequence>(item))
+                {
+                    fields.push_back(nb::borrow(field));
+                }
+
+                if (fields.size() != 2 && fields.size() != 3)
+                {
+                    throw std::invalid_argument("Mounts must be [(host_path, guest_path[, mode]), ...]");
+                }
+
+                mount_spec spec{
+                    .host_path = nb::cast<std::filesystem::path>(fields[0]),
+                    .guest_path = windows_path{nb::cast<std::filesystem::path>(fields[1])},
+                };
+
+                if (fields.size() == 3)
+                {
+                    spec.mode = parse_python_filesystem_mode(nb::cast<std::string>(fields[2]));
+                }
+
+                mounts.push_back(std::move(spec));
+            }
         }
 
         std::unordered_map<uint16_t, uint16_t> parse_port_mappings(const nb::object& object)
@@ -216,7 +261,10 @@ namespace sogen::py
             settings.emulation_root = get_kwarg<std::filesystem::path>(kwargs, "emulation_root", {});
             settings.registry_directory =
                 get_kwarg<std::filesystem::path>(kwargs, "registry_directory", std::filesystem::path{"./registry"});
-            settings.path_mappings = parse_path_mappings(kwargs.contains("path_mappings") ? kwargs["path_mappings"] : nb::none());
+            settings.root_mode =
+                parse_python_filesystem_mode(get_kwarg<std::string>(kwargs, "root_mode", std::string(to_string(default_root_mode))));
+            parse_path_mappings(kwargs.contains("path_mappings") ? kwargs["path_mappings"] : nb::none(), settings.mounts);
+            parse_mounts(kwargs.contains("mounts") ? kwargs["mounts"] : nb::none(), settings.mounts);
             settings.port_mappings = parse_port_mappings(kwargs.contains("port_mappings") ? kwargs["port_mappings"] : nb::none());
             settings.fake_env.number_of_processors = get_kwarg<uint32_t>(kwargs, "number_of_processors", 4);
             settings.fake_env.nt_product_type = static_cast<uint8_t>(get_kwarg<uint32_t>(kwargs, "nt_product_type", 1));

@@ -208,6 +208,11 @@ namespace sogen
                     new_path = f->handle.path().parent() / new_path;
                 }
 
+                if (!c.win_emu.file_sys.is_writable(f->handle.path()) || !c.win_emu.file_sys.is_writable(new_path))
+                {
+                    return STATUS_ACCESS_DENIED;
+                }
+
                 if (!info.ReplaceIfExists && c.win_emu.file_sys.stat(new_path))
                 {
                     return STATUS_OBJECT_NAME_EXISTS;
@@ -231,8 +236,14 @@ namespace sogen
                 }
 
                 const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION>(file_information);
+                const bool wants_delete = info.DeleteFile != FALSE;
 
-                f->handle.set_delete_on_close(info.DeleteFile != FALSE);
+                if (wants_delete && !c.win_emu.file_sys.is_writable(f->handle.path()))
+                {
+                    return STATUS_ACCESS_DENIED;
+                }
+
+                f->handle.set_delete_on_close(wants_delete);
 
                 return STATUS_SUCCESS;
             }
@@ -247,7 +258,7 @@ namespace sogen
                 const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION_EX>(file_information);
                 const bool wants_delete = (info.Flags & FILE_DISPOSITION_DELETE) != 0;
 
-                if (wants_delete && !(f->access_mask & DELETE))
+                if (wants_delete && (!(f->access_mask & DELETE) || !c.win_emu.file_sys.is_writable(f->handle.path())))
                 {
                     return STATUS_ACCESS_DENIED;
                 }
@@ -297,6 +308,11 @@ namespace sogen
                 if (length < sizeof(FILE_END_OF_FILE_INFORMATION))
                 {
                     return STATUS_BUFFER_OVERFLOW;
+                }
+
+                if (!f->handle.is_writable())
+                {
+                    return STATUS_ACCESS_DENIED;
                 }
 
                 const auto info = c.emu.read_memory<FILE_END_OF_FILE_INFORMATION>(file_information);
@@ -1523,6 +1539,11 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            if (!f->handle.is_writable())
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
             if (byte_offset)
             {
                 const auto offset = byte_offset.read();
@@ -1578,6 +1599,11 @@ namespace sogen
             if (!source || !destination || !source->handle || !destination->handle)
             {
                 return STATUS_INVALID_HANDLE;
+            }
+
+            if (!destination->handle.is_writable())
+            {
+                return STATUS_ACCESS_DENIED;
             }
 
             if (source_offset)
@@ -2009,6 +2035,11 @@ namespace sogen
             f.drive_number = path.get_drive().value() - 'a' + 1;
 
             auto& file_sys = c.win_emu.file_sys;
+
+            if ((create_options & FILE_DELETE_ON_CLOSE) && !file_sys.is_writable(path))
+            {
+                return STATUS_ACCESS_DENIED;
+            }
             const auto existing_stat = file_sys.stat(path);
             const bool file_exists = existing_stat.has_value();
 
