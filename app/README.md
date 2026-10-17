@@ -7,9 +7,9 @@ textures, and touch, mouse and keyboard input is forwarded to the guest.
 
 ## Native libraries
 
-The emulator itself is `libsogen.so` (`src/android-runtime`), built by the regular CMake build for Android. The
-arm64 build also produces `libFEXCore.so`. Both go into `android/app/src/main/jniLibs/<abi>/`, which is not checked
-in. CI does this in the `build-android-app` job from the `Android arm64` and `Android x86_64` build artifacts.
+The emulator itself is `libsogen.so` (`src/android-runtime`), built by the regular CMake build for Android, together
+with the shared libraries it links (the CPU backends and, on arm64, FEXCore). All `.so` files from the build's
+artifacts directory go into `android/app/src/main/jniLibs/<abi>/`, which is not checked in. CI does this in the `build-android-app` job from the `Android arm64` and `Android x86_64` build artifacts.
 
 Building them locally needs a Linux host, since parts of the dependency tree configure through shell scripts:
 
@@ -20,7 +20,7 @@ cmake --preset=release -DSOGEN_ENABLE_RUST_CODE=Off -DSOGEN_ENABLE_FEX=On \
 cmake --build --preset=release --target android-runtime
 
 mkdir -p app/android/app/src/main/jniLibs/arm64-v8a
-cp build/release/artifacts/libsogen.so build/release/artifacts/libFEXCore.so app/android/app/src/main/jniLibs/arm64-v8a/
+cp build/release/artifacts/*.so app/android/app/src/main/jniLibs/arm64-v8a/
 ```
 
 ## Building the app
