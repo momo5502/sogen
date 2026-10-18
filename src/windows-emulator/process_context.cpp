@@ -293,7 +293,8 @@ namespace sogen
     }
 
     void process_context::setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
-                                const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32)
+                                const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32,
+                                const bool intercept_kusd)
     {
         this->process_id = app_settings.process_id;
         this->initial_thread_id = app_settings.thread_id;
@@ -310,7 +311,7 @@ namespace sogen
 
         setup_gdt(emu, win_emu.memory);
 
-        this->kusd.setup(version, fake_env);
+        this->kusd.setup(version, fake_env, intercept_kusd);
 
         this->base_allocator = create_allocator(win_emu.memory, PEB_SEGMENT_SIZE, this->is_wow64_process);
         auto& allocator = this->base_allocator;
