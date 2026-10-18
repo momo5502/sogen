@@ -4440,7 +4440,7 @@ namespace sogen
         info.pImageIndices = &image_index;
 
         const auto native_present = dev_it->second.queue_present;
-        const auto native_queue = queue_it->second.handle;
+        auto* const native_queue = queue_it->second.handle;
         const auto queue_lock = this->impl_->queue_lock(native_queue);
         const auto presents = dev_it->second.presents;
         std::shared_lock device_in_use(*presents);
