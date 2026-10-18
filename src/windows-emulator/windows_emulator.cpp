@@ -105,7 +105,6 @@ namespace sogen
             return result;
         }
 
-        // The origin of the window's client area in the client coordinates of ancestor (screen coordinates for 0).
         std::optional<POINT> get_client_origin_relative_to_ancestor(const process_context& process, const hwnd window, const hwnd ancestor)
         {
             POINT origin{};
