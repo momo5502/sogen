@@ -46,10 +46,8 @@ namespace sogen
         virtual pointer_type get_segment_base(register_type base) = 0;
         virtual void load_gdt(pointer_type address, uint32_t limit) = 0;
 
-        // Called once before any module is mapped. Backends running on real x86-64 hardware ignore
-        // this; the CPU switches to compatibility mode on the CS load alone. FEXCore compiles for a
-        // fixed bitness and only stands up the 64-bit context, so it uses this to reject a WoW64
-        // process up front instead of mis-decoding its first block as 64-bit code.
+        // Called once before any module is mapped, so a backend that cannot host a WoW64 process
+        // can reject it up front instead of failing once compatibility-mode code runs.
         virtual void notify_process_bitness(bool /*is_wow64_process*/)
         {
         }
