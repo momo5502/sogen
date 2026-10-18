@@ -52,8 +52,12 @@ namespace sogen
         }
 #endif
 
+        // Not an aggregate: GCC 15+ reports the set members as uninitialized once
+        // the value-initialization of the base is inlined.
         struct analysis_options : analysis_settings
         {
+            analysis_options() = default;
+
             mutable bool use_gdb{false};
             std::string gdb_host{"127.0.0.1"};
             uint16_t gdb_port{28960};
