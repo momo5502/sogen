@@ -12,6 +12,15 @@ namespace sogen
         constexpr uint32_t maximum_reserved_ids = 0x20000;
         constexpr uint32_t maximum_object_ids = 0x100000;
 
+        // The optional third Connect parameter, a flat NDR structure (layout from rpcss.dll's IDL).
+        struct connect_process_info
+        {
+            uint32_t flags;
+            uint64_t value;
+            std::array<uint32_t, 16> fields;
+            std::array<uint8_t, 16> id;
+        };
+
         class connect_reader
         {
           public:
@@ -155,7 +164,7 @@ namespace sogen
                     const auto executable = reader.string();
                     if (reader.pointer() != 0)
                     {
-                        return STATUS_NOT_SUPPORTED;
+                        (void)reader.read<connect_process_info>();
                     }
                     const auto process_flags = reader.read<uint32_t>();
                     const auto architecture = reader.read<uint16_t>();

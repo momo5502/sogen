@@ -362,6 +362,8 @@ namespace sogen
 
         void perform_context_switch_work(windows_emulator& win_emu, vcpu_context& vcpu)
         {
+            win_emu.apply_pending_guest_event_signals();
+
             auto& threads = win_emu.process.threads;
 
             for (auto it = threads.begin(); it != threads.end();)
@@ -1714,23 +1716,40 @@ namespace sogen
         }
     }
 
-    bool windows_emulator::try_signal_guest_event(const handle event_handle)
+    void windows_emulator::request_guest_event_signal(const handle event_handle, const uint32_t maximum_pending)
     {
-        if (!this->kernel_lock_.try_lock())
+        const std::lock_guard lock{this->pending_event_signals_mutex_};
+        auto& pending = this->pending_event_signals_[event_handle.bits];
+        pending = std::min(pending + 1, maximum_pending);
+    }
+
+    void windows_emulator::apply_pending_guest_event_signals()
+    {
+        this->kernel_lock_.assert_held();
+
+        const std::lock_guard lock{this->pending_event_signals_mutex_};
+
+        for (auto it = this->pending_event_signals_.begin(); it != this->pending_event_signals_.end();)
         {
-            return false;
+            auto* entry = this->process.events.get(make_handle(it->first));
+            if (!entry)
+            {
+                it = this->pending_event_signals_.erase(it);
+                continue;
+            }
+
+            if (!entry->signaled)
+            {
+                entry->signaled = true;
+                if (--it->second == 0)
+                {
+                    it = this->pending_event_signals_.erase(it);
+                    continue;
+                }
+            }
+
+            ++it;
         }
-
-        const std::lock_guard<kernel_lock> lock{this->kernel_lock_, std::adopt_lock};
-
-        auto* entry = this->process.events.get(event_handle);
-        if (!entry)
-        {
-            return false;
-        }
-
-        entry->signaled = true;
-        return true;
     }
 
     void windows_emulator::dump_lock_profile()
