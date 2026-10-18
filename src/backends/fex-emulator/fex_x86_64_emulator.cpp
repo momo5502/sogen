@@ -9,6 +9,10 @@
 
 #include "address_utils.hpp"
 
+#if !defined(__APPLE__) && !defined(__linux__)
+#error "The FEX backend supports only Darwin and Linux hosts"
+#endif
+
 // FEX (https://fex-emu.com) is an in-process x86-64 -> AArch64 binary translator. Unlike the
 // Unicorn/Icicle/KVM backends it does not manage a sandboxed guest address space: the translated
 // guest executes inside the host process with guest VA == host VA. So map_memory() is a real
@@ -1495,15 +1499,13 @@ namespace sogen::fex
         // FEXCore decodes each block in the mode its CS descriptor selects, so the single 64-bit
         // Context also runs a WoW64 process's compatibility-mode code. That code addresses the low
         // 4GB directly, which Darwin's __PAGEZERO makes unmappable.
-        void notify_process_bitness(bool is_wow64_process) override
+        void notify_process_bitness([[maybe_unused]] bool is_wow64_process) override
         {
 #ifdef __APPLE__
             if (is_wow64_process)
             {
                 throw std::runtime_error("FEX backend does not support WoW64 (32-bit) processes on macOS yet");
             }
-#else
-            (void)is_wow64_process;
 #endif
         }
 
@@ -1974,7 +1976,7 @@ namespace sogen::fex
 
         bool host_memory_aliasing_is_coherent() const override
         {
-#ifdef __linux__
+#ifdef __ANDROID__
             return true;
 #else
             // Apple Silicon's unified memory makes CPU/GPU coherency for the Metal buffers behind
@@ -2975,11 +2977,7 @@ namespace sogen::fex
                 // a guest address and would dispatch a synthetic guest exception built from this
                 // backend's own internal pointer.
 #endif
-#ifdef __linux__
                 const auto interrupt_page_addr = get_untagged_pointer_address(this->thread_->InterruptFaultPage);
-#else
-                const auto interrupt_page_addr = reinterpret_cast<uint64_t>(this->thread_->InterruptFaultPage);
-#endif
                 if (fault_addr >= interrupt_page_addr && fault_addr < interrupt_page_addr + sizeof(this->thread_->InterruptFaultPage))
                 {
                     const auto fault_pc = get_host_pc(uctx);
