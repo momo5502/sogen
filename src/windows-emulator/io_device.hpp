@@ -224,6 +224,8 @@ namespace sogen
     // Ordered so the fuzzer's enumeration is deterministic across runs.
     const std::map<std::u16string_view, device_factory>& get_device_registry();
 
+    bool is_device_supported(std::u16string_view device);
+
     struct device_completion_association
     {
         handle completion_port{};

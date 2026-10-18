@@ -1952,6 +1952,13 @@ namespace sogen
             const auto io_device_name = get_io_device_name(filename);
             if (io_device_name.has_value())
             {
+                if (!is_device_supported(*io_device_name))
+                {
+                    printer.cancel();
+                    c.win_emu.callbacks.on_generic_access("Opening unsupported device", filename);
+                    return STATUS_NO_SUCH_DEVICE;
+                }
+
                 const io_device_creation_data data{
                     .buffer = ea_buffer,
                     .length = ea_length,

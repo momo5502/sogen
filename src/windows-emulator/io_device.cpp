@@ -119,6 +119,12 @@ namespace sogen
         return registry;
     }
 
+    bool is_device_supported(std::u16string_view device)
+    {
+        const auto& registry = get_device_registry();
+        return registry.contains(device);
+    }
+
     bool needs_32_bit_devices(const windows_emulator& win_emu)
     {
         return win_emu.process.is_wow64_process;
