@@ -105,7 +105,7 @@ namespace sogen
             return result;
         }
 
-        std::optional<POINT> get_window_origin_relative_to_ancestor(const process_context& process, const hwnd window, const hwnd ancestor)
+        std::optional<POINT> get_client_origin_relative_to_ancestor(const process_context& process, const hwnd window, const hwnd ancestor)
         {
             POINT origin{};
             auto current_handle = window;
@@ -117,8 +117,8 @@ namespace sogen
                     return std::nullopt;
                 }
 
-                origin.x += current->x;
-                origin.y += current->y;
+                origin.x += current->client_x();
+                origin.y += current->client_y();
                 current_handle = current->parent_handle;
             }
 
@@ -319,8 +319,8 @@ namespace sogen
                     // Capture sends every pointer event to the capturing window, even one reported for
                     // another top-level. Translate via screen coordinates (origin relative to the root)
                     // so it works across top-levels; for a child of top_level this is the same offset.
-                    const auto captured_origin = get_window_origin_relative_to_ancestor(process, captured->handle, 0);
-                    const auto top_level_origin = get_window_origin_relative_to_ancestor(process, top_level, 0);
+                    const auto captured_origin = get_client_origin_relative_to_ancestor(process, captured->handle, 0);
+                    const auto top_level_origin = get_client_origin_relative_to_ancestor(process, top_level, 0);
                     if (captured_origin && top_level_origin)
                     {
                         const auto screen_x = top_level_origin->x + x;
@@ -368,7 +368,7 @@ namespace sogen
 
             for (auto it = threads.begin(); it != threads.end();)
             {
-                if (!it->second.is_terminated() || it->second.ref_count > 0)
+                if (!it->second.is_terminated() || it->second.ref_count > 0 || it->second.registers_in_transit)
                 {
                     ++it;
                     continue;
@@ -508,6 +508,11 @@ namespace sogen
                 return false;
             }
 
+            if (thread.registers_in_transit)
+            {
+                return false;
+            }
+
             auto& emu = vcpu.cpu;
             auto& context = win_emu.process;
 
@@ -527,12 +532,11 @@ namespace sogen
                 if (active_thread)
                 {
                     win_emu.callbacks.on_thread_switch(*active_thread, thread);
-                    active_thread->save(emu);
                 }
 
                 vcpu.active_thread = &thread;
 
-                thread.restore(emu);
+                win_emu.transfer_thread_registers(vcpu, active_thread, thread);
             }
 
             thread.setup_if_necessary(emu, context);
@@ -729,6 +733,8 @@ namespace sogen
           process(*this->emu_, memory, *this->clock_, this->callbacks),
           use_relative_time_(settings.use_relative_time),
           instruction_precision_(settings.use_instruction_precision && this->emu_->supports_instruction_counting()),
+          intercept_rdtsc_(settings.intercept_rdtsc),
+          intercept_kusd_(settings.intercept_kusd),
           vcpu_count_(static_cast<uint32_t>(this->emu_->vcpu_count()))
     {
         if (this->vcpu_count_ == 0)
@@ -812,7 +818,8 @@ namespace sogen
 
         const auto apiset_data = apiset::obtain(this->emulation_root);
 
-        this->process.setup(*this, this->application_settings_, *executable, *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32);
+        this->process.setup(*this, this->application_settings_, *executable, *ntdll, apiset_data, this->mod_manager.wow64_modules_.ntdll32,
+                            this->intercept_kusd_);
 
         const auto ntdll_data = emu.read_memory(ntdll->image_base, static_cast<size_t>(ntdll->size_of_image));
         const auto win32u_data = emu.read_memory(win32u->image_base, static_cast<size_t>(win32u->size_of_image));
@@ -822,6 +829,7 @@ namespace sogen
         const auto main_thread_id = context.create_thread(this->memory, this->mod_manager.executable->entry_point, 0,
                                                           this->mod_manager.executable->size_of_stack_reserve, 0, true);
 
+        const std::scoped_lock lock(this->kernel_lock_);
         switch_to_thread(*this, this->vcpu(0), main_thread_id);
     }
 
@@ -900,12 +908,21 @@ namespace sogen
 
         while (!this->should_stop)
         {
-            if (vcpu.switch_thread || !vcpu.active_thread || !vcpu.thread().is_thread_ready(*this))
+            // A loop rather than a single check: the register transfer of a switch releases the kernel lock, so the
+            // chosen thread can be terminated or suspended before it runs.
+            bool switched = true;
+            while (vcpu.switch_thread || !vcpu.active_thread || !vcpu.thread().is_thread_ready(*this))
             {
-                if (!this->perform_thread_switch(vcpu, lock))
+                switched = this->perform_thread_switch(vcpu, lock);
+                if (!switched)
                 {
                     break;
                 }
+            }
+
+            if (!switched || this->should_stop)
+            {
+                break;
             }
 
             // Guest code executes with the kernel lock released; hook callbacks
@@ -924,6 +941,61 @@ namespace sogen
 
         // One vCPU winding down (process exit, fatal error) ends the whole run.
         this->stop();
+    }
+
+    void windows_emulator::transfer_thread_registers(vcpu_context& vcpu, emulator_thread* outgoing, emulator_thread& incoming)
+    {
+        this->kernel_lock_.assert_held();
+
+        if (this->vcpu_count_ == 1)
+        {
+            if (outgoing)
+            {
+                outgoing->save(vcpu.cpu);
+            }
+
+            incoming.restore(vcpu.cpu);
+            return;
+        }
+
+        if (outgoing)
+        {
+            outgoing->registers_in_transit = true;
+        }
+        incoming.registers_in_transit = true;
+
+        {
+            this->kernel_lock_.unlock();
+            const auto _ = utils::finally([&] {
+                this->kernel_lock_.lock();
+                if (outgoing)
+                {
+                    outgoing->registers_in_transit = false;
+                }
+                incoming.registers_in_transit = false;
+            });
+
+            if (outgoing)
+            {
+                outgoing->save(vcpu.cpu);
+            }
+
+            incoming.load_registers(vcpu.cpu);
+        }
+
+        incoming.refresh_execution_context(vcpu.cpu);
+    }
+
+    void windows_emulator::wait_for_register_transfer(const emulator_thread& thread)
+    {
+        this->kernel_lock_.assert_held();
+
+        while (thread.registers_in_transit)
+        {
+            this->kernel_lock_.unlock();
+            std::this_thread::yield();
+            this->kernel_lock_.lock();
+        }
     }
 
     bool windows_emulator::activate_thread(vcpu_context& vcpu, const uint32_t id)
@@ -1106,47 +1178,53 @@ namespace sogen
             return instruction_hook_continuation::skip_instruction;
         });
 
-        this->emu().hook_instruction(x86_hookable_instructions::rdtscp, [&](cpu_interface& cpu, uint64_t) {
-            const std::scoped_lock lock(this->kernel_lock_);
-            auto& vcpu = this->vcpu(cpu.index());
-            const scoped_dispatch dispatch(*this, vcpu);
-            auto& acting = vcpu.cpu;
-            this->callbacks.on_rdtscp();
+        // rdtsc/rdtscp are intercepted only when timing must stay exact (the analyzer). Otherwise the
+        // guest reads the host TSC natively - the WHP backend serves the exit with the real TSC and no
+        // kernel lock - removing a hot VM-exit path for games.
+        if (this->intercept_rdtsc_ || !this->use_native_timestamp_counter_)
+        {
+            this->emu().hook_instruction(x86_hookable_instructions::rdtscp, [&](cpu_interface& cpu, uint64_t) {
+                const std::scoped_lock lock(this->kernel_lock_);
+                auto& vcpu = this->vcpu(cpu.index());
+                const scoped_dispatch dispatch(*this, vcpu);
+                auto& acting = vcpu.cpu;
+                this->callbacks.on_rdtscp();
 
-            if (this->use_native_timestamp_counter_)
-            {
-                return instruction_hook_continuation::run_instruction;
-            }
+                if (this->use_native_timestamp_counter_)
+                {
+                    return instruction_hook_continuation::run_instruction;
+                }
 
-            const auto ticks = this->clock_->timestamp_counter();
-            acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
-            acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
+                const auto ticks = this->clock_->timestamp_counter();
+                acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
+                acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
 
-            // Return the IA32_TSC_AUX value in RCX (low 32 bits)
-            auto tsc_aux = 0; // Need to replace this with proper CPUID later
-            acting.reg(x86_register::rcx, tsc_aux);
+                // Return the IA32_TSC_AUX value in RCX (low 32 bits)
+                auto tsc_aux = 0; // Need to replace this with proper CPUID later
+                acting.reg(x86_register::rcx, tsc_aux);
 
-            return instruction_hook_continuation::skip_instruction;
-        });
+                return instruction_hook_continuation::skip_instruction;
+            });
 
-        this->emu().hook_instruction(x86_hookable_instructions::rdtsc, [&](cpu_interface& cpu, uint64_t) {
-            const std::scoped_lock lock(this->kernel_lock_);
-            auto& vcpu = this->vcpu(cpu.index());
-            const scoped_dispatch dispatch(*this, vcpu);
-            auto& acting = vcpu.cpu;
-            this->callbacks.on_rdtsc();
+            this->emu().hook_instruction(x86_hookable_instructions::rdtsc, [&](cpu_interface& cpu, uint64_t) {
+                const std::scoped_lock lock(this->kernel_lock_);
+                auto& vcpu = this->vcpu(cpu.index());
+                const scoped_dispatch dispatch(*this, vcpu);
+                auto& acting = vcpu.cpu;
+                this->callbacks.on_rdtsc();
 
-            if (this->use_native_timestamp_counter_)
-            {
-                return instruction_hook_continuation::run_instruction;
-            }
+                if (this->use_native_timestamp_counter_)
+                {
+                    return instruction_hook_continuation::run_instruction;
+                }
 
-            const auto ticks = this->clock_->timestamp_counter();
-            acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
-            acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
+                const auto ticks = this->clock_->timestamp_counter();
+                acting.reg(x86_register::rax, static_cast<uint32_t>(ticks));
+                acting.reg(x86_register::rdx, static_cast<uint32_t>(ticks >> 32));
 
-            return instruction_hook_continuation::skip_instruction;
-        });
+                return instruction_hook_continuation::skip_instruction;
+            });
+        }
 
         // TODO: Unicorn needs this - This should be handled in the backend
         this->emu().hook_instruction(x86_hookable_instructions::invalid, [&](cpu_interface& cpu, uint64_t) {
@@ -1358,9 +1436,11 @@ namespace sogen
             }
         });
 
-        if (!this->uses_instruction_precision() && this->emu().is_stop_thread_safe())
+        const bool preempt_vcpus = !this->uses_instruction_precision() && this->emu().is_stop_thread_safe();
+        const bool refresh_kusd = !this->intercept_kusd_;
+        if (preempt_vcpus || refresh_kusd)
         {
-            interrupt_thread = std::thread([&] {
+            interrupt_thread = std::thread([&, preempt_vcpus, refresh_kusd] {
                 while (!this->should_stop)
                 {
                     std::unique_lock lock{interrupt_mutex};
@@ -1368,7 +1448,18 @@ namespace sogen
                         return this->should_stop.load(); //
                     });
 
-                    if (!this->should_stop)
+                    if (this->should_stop)
+                    {
+                        break;
+                    }
+
+                    if (refresh_kusd)
+                    {
+                        const std::scoped_lock kernel_lock(this->kernel_lock_);
+                        this->process.kusd.refresh();
+                    }
+
+                    if (preempt_vcpus)
                     {
                         // Under the kernel lock so this switch_thread/stop() pair can't straddle a vCPU's
                         // own scheduling step: perform_thread_switch consumes switch_thread (exchange to
@@ -1546,11 +1637,11 @@ namespace sogen
 
         if (is_pointer_message(event.message))
         {
-            // Track the cursor in screen coordinates (top-level window origin + window-local position) so
-            // GetCursorPos reflects it, and treat the window the user is pointing at as the foreground one.
+            // Track the cursor in screen coordinates (client origin + client-local position) so GetCursorPos
+            // reflects it, and treat the window the user is pointing at as the foreground one.
             int32_t new_cursor_x = this->process.cursor_x;
             int32_t new_cursor_y = this->process.cursor_y;
-            if (const auto origin = get_window_origin_relative_to_ancestor(this->process, event.window, 0))
+            if (const auto origin = get_client_origin_relative_to_ancestor(this->process, event.window, 0))
             {
                 new_cursor_x = origin->x + point_x(event.lParam);
                 new_cursor_y = origin->y + point_y(event.lParam);

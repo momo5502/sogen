@@ -111,6 +111,14 @@ namespace sogen
         bool use_relative_time{false};
         bool use_instruction_precision{true};
 
+        // Timing fidelity vs. speed. With interception on (the default, used by the analyzer) rdtsc reads
+        // and KUSER_SHARED_DATA accesses trap so the emulated clock stays exact and deterministic. Turning
+        // them off (as the sandbox does) lets the guest read the host TSC natively and KUSD from a plain
+        // mapped page, removing those VM exits. The cost is exact/reproducible timing, and KUSD's time
+        // fields then only advance in steps of the interrupt thread's 20 ms period.
+        bool intercept_rdtsc{true};
+        bool intercept_kusd{true};
+
         std::filesystem::path emulation_root{};
         std::filesystem::path registry_directory{"./registry"};
 
@@ -495,9 +503,21 @@ namespace sogen
         bool perform_thread_switch(vcpu_context& vcpu);
         bool activate_thread(vcpu_context& vcpu, uint32_t id);
 
+        // Swaps the registers of the outgoing thread on a vCPU for the incoming one. With more than one vCPU the
+        // hypercalls run with the kernel lock released: they only touch this vCPU, but cost tens of microseconds and
+        // would otherwise serialize every other vCPU behind each thread switch. Both threads are marked as in transit
+        // meanwhile. Requires the kernel lock, and incoming must already be the vCPU's active thread.
+        void transfer_thread_registers(vcpu_context& vcpu, emulator_thread* outgoing, emulator_thread& incoming);
+
+        // Blocks until no vCPU is transferring the thread's registers. Requires the kernel lock, which it releases
+        // while waiting.
+        void wait_for_register_transfer(const emulator_thread& thread);
+
       private:
         bool use_relative_time_{false}; // TODO: Get rid of that
         bool instruction_precision_{true};
+        bool intercept_rdtsc_{true};
+        bool intercept_kusd_{true};
         uint32_t vcpu_count_{1};
         std::atomic_bool should_stop{false};
 

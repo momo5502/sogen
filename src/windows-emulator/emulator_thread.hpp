@@ -370,6 +370,9 @@ namespace sogen
         std::vector<handle> await_objects{};
         bool await_any{false};
         bool waiting_for_alert{false};
+        // Set while a vCPU moves this thread's registers in or out with the kernel lock released. The thread must not
+        // be scheduled, deleted or have its registers accessed until the transfer is done.
+        bool registers_in_transit{false};
         bool alerted{false};
         uint32_t create_flags{0};
         uint32_t suspended{0};
@@ -466,9 +469,16 @@ namespace sogen
 
         void restore(x86_64_cpu& emu) const
         {
-            emu.restore_registers(this->last_registers);
+            this->load_registers(emu);
             this->refresh_execution_context(emu);
         }
+
+        void load_registers(x86_64_cpu& emu) const
+        {
+            emu.restore_registers(this->last_registers);
+        }
+
+        void refresh_execution_context(x86_64_cpu& emu) const;
 
         void setup_if_necessary(x86_64_cpu& emu, const process_context& context)
         {
@@ -649,7 +659,6 @@ namespace sogen
                                                bool remove);
 
         void setup_registers(x86_64_cpu& emu, const process_context& context) const;
-        void refresh_execution_context(x86_64_cpu& emu) const;
 
         void release()
         {

@@ -134,6 +134,7 @@ namespace sogen
                     const bool needs_switch = thread != c.vcpu.active_thread;
                     if (needs_switch)
                     {
+                        c.win_emu.wait_for_register_transfer(*thread);
                         c.vcpu.active_thread->save(c.emu);
                         thread->restore(c.emu);
                     }
@@ -930,6 +931,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            c.win_emu.wait_for_register_transfer(*thread);
             c.vcpu.active_thread->save(c.emu);
             const auto _ = utils::finally([&] {
                 c.vcpu.active_thread->restore(c.emu); //
@@ -952,7 +954,7 @@ namespace sogen
         NTSTATUS handle_NtSetContextThread(const syscall_context& c, const handle thread_handle,
                                            const emulator_object<CONTEXT64> thread_context)
         {
-            const auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
+            auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
 
             if (!thread)
             {
@@ -963,6 +965,7 @@ namespace sogen
 
             if (needs_swich)
             {
+                c.win_emu.wait_for_register_transfer(*thread);
                 c.vcpu.active_thread->save(c.emu);
                 thread->restore(c.emu);
             }
@@ -970,7 +973,8 @@ namespace sogen
             const auto _ = utils::finally([&] {
                 if (needs_swich)
                 {
-                    c.vcpu.active_thread->restore(c.emu); //
+                    thread->save(c.emu);
+                    c.vcpu.active_thread->restore(c.emu);
                 }
             });
 

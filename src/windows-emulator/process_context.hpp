@@ -398,7 +398,8 @@ namespace sogen
         }
 
         void setup(windows_emulator& win_emu, const application_settings& app_settings, const mapped_module& executable,
-                   const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32 = nullptr);
+                   const mapped_module& ntdll, const apiset::container& apiset_container, const mapped_module* ntdll32 = nullptr,
+                   bool intercept_kusd = true);
 
         static emulator_pointer allocate_user_class(memory_manager& memory, std::u16string_view class_name);
 

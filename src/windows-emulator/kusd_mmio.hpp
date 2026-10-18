@@ -50,13 +50,16 @@ namespace sogen
 
         static uint64_t address();
 
-        void setup(const windows_version_manager& version, const fake_environment_config& fake_env);
+        void setup(const windows_version_manager& version, const fake_environment_config& fake_env, bool intercept = true);
+
+        void refresh();
 
       private:
         memory_manager* memory_{};
         utils::clock* clock_{};
 
         bool registered_{};
+        bool intercept_{true};
 
         // The MMIO read callback runs on the WHP worker thread during guest execution
         // (outside the kernel lock), so multiple vCPUs can read KUSD concurrently. This
@@ -67,6 +70,7 @@ namespace sogen
         KUSER_SHARED_DATA64 kusd_{};
 
         void read(uint64_t addr, void* data, size_t size);
+        void write_page();
 
         void update();
 
