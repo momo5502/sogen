@@ -134,6 +134,7 @@ namespace sogen
                     const bool needs_switch = thread != c.vcpu.active_thread;
                     if (needs_switch)
                     {
+                        c.win_emu.wait_for_register_transfer(*thread);
                         c.vcpu.active_thread->save(c.emu);
                         thread->restore(c.emu);
                     }
@@ -930,6 +931,7 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            c.win_emu.wait_for_register_transfer(*thread);
             c.vcpu.active_thread->save(c.emu);
             const auto _ = utils::finally([&] {
                 c.vcpu.active_thread->restore(c.emu); //
@@ -963,6 +965,7 @@ namespace sogen
 
             if (needs_swich)
             {
+                c.win_emu.wait_for_register_transfer(*thread);
                 c.vcpu.active_thread->save(c.emu);
                 thread->restore(c.emu);
             }

@@ -368,7 +368,7 @@ namespace sogen
 
             for (auto it = threads.begin(); it != threads.end();)
             {
-                if (!it->second.is_terminated() || it->second.ref_count > 0)
+                if (!it->second.is_terminated() || it->second.ref_count > 0 || it->second.registers_in_transit)
                 {
                     ++it;
                     continue;
@@ -508,6 +508,11 @@ namespace sogen
                 return false;
             }
 
+            if (thread.registers_in_transit)
+            {
+                return false;
+            }
+
             auto& emu = vcpu.cpu;
             auto& context = win_emu.process;
 
@@ -527,12 +532,11 @@ namespace sogen
                 if (active_thread)
                 {
                     win_emu.callbacks.on_thread_switch(*active_thread, thread);
-                    active_thread->save(emu);
                 }
 
                 vcpu.active_thread = &thread;
 
-                thread.restore(emu);
+                win_emu.transfer_thread_registers(vcpu, active_thread, thread);
             }
 
             thread.setup_if_necessary(emu, context);
@@ -822,6 +826,7 @@ namespace sogen
         const auto main_thread_id = context.create_thread(this->memory, this->mod_manager.executable->entry_point, 0,
                                                           this->mod_manager.executable->size_of_stack_reserve, 0, true);
 
+        const std::scoped_lock lock(this->kernel_lock_);
         switch_to_thread(*this, this->vcpu(0), main_thread_id);
     }
 
@@ -900,12 +905,21 @@ namespace sogen
 
         while (!this->should_stop)
         {
-            if (vcpu.switch_thread || !vcpu.active_thread || !vcpu.thread().is_thread_ready(*this))
+            // A loop rather than a single check: the register transfer of a switch releases the kernel lock, so the
+            // chosen thread can be terminated or suspended before it runs.
+            bool switched = true;
+            while (vcpu.switch_thread || !vcpu.active_thread || !vcpu.thread().is_thread_ready(*this))
             {
-                if (!this->perform_thread_switch(vcpu, lock))
+                switched = this->perform_thread_switch(vcpu, lock);
+                if (!switched)
                 {
                     break;
                 }
+            }
+
+            if (!switched)
+            {
+                break;
             }
 
             // Guest code executes with the kernel lock released; hook callbacks
@@ -924,6 +938,61 @@ namespace sogen
 
         // One vCPU winding down (process exit, fatal error) ends the whole run.
         this->stop();
+    }
+
+    void windows_emulator::transfer_thread_registers(vcpu_context& vcpu, emulator_thread* outgoing, emulator_thread& incoming)
+    {
+        this->kernel_lock_.assert_held();
+
+        if (this->vcpu_count_ == 1)
+        {
+            if (outgoing)
+            {
+                outgoing->save(vcpu.cpu);
+            }
+
+            incoming.restore(vcpu.cpu);
+            return;
+        }
+
+        if (outgoing)
+        {
+            outgoing->registers_in_transit = true;
+        }
+        incoming.registers_in_transit = true;
+
+        {
+            this->kernel_lock_.unlock();
+            const auto _ = utils::finally([&] {
+                this->kernel_lock_.lock();
+                if (outgoing)
+                {
+                    outgoing->registers_in_transit = false;
+                }
+                incoming.registers_in_transit = false;
+            });
+
+            if (outgoing)
+            {
+                outgoing->save(vcpu.cpu);
+            }
+
+            incoming.load_registers(vcpu.cpu);
+        }
+
+        incoming.refresh_execution_context(vcpu.cpu);
+    }
+
+    void windows_emulator::wait_for_register_transfer(const emulator_thread& thread)
+    {
+        this->kernel_lock_.assert_held();
+
+        while (thread.registers_in_transit)
+        {
+            this->kernel_lock_.unlock();
+            std::this_thread::yield();
+            this->kernel_lock_.lock();
+        }
     }
 
     bool windows_emulator::activate_thread(vcpu_context& vcpu, const uint32_t id)
