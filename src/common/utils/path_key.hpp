@@ -51,7 +51,14 @@ namespace sogen
                 auto key_string = key.u16string();
                 std::ranges::replace(key_string, u'\\', '/');
 
-                auto path = std::filesystem::path(key_string).lexically_normal().wstring();
+                // lexically_normal keeps a trailing separator, which would make "a\b\" and "a\b" different keys.
+                auto normal = std::filesystem::path(key_string).lexically_normal();
+                if (!normal.has_filename() && normal.has_relative_path())
+                {
+                    normal = normal.parent_path();
+                }
+
+                auto path = normal.wstring();
                 return utils::string::to_lower_consume(path);
             }
 
