@@ -939,6 +939,45 @@ jobs:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
 
+  smoke-test-fex-linux:
+    name: Smoke Test FEX (Linux arm64, ${{ matrix.sample }})
+    runs-on: ubuntu-24.04-arm
+    needs: [create-emulation-root, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        sample:
+          - x86_64
+          - x86
+    steps:
+      - name: Download Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Linux arm64 Clang Release Artifacts
+          path: build/release/artifacts
+
+      - name: Download Test Sample
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows ${{ matrix.sample }} Release Artifacts
+          path: windows-artifacts
+
+      - name: Download Emulation Root
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Windows 2025 Emulation Root
+          path: build/release/artifacts/root
+
+      - name: Copy Test Sample
+        run: cp windows-artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
+
+      - name: CMake Test
+        run: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer --network live -e root c:/test-sample.exe
+        env:
+          EMULATOR_FEX: "1"
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
+          EMULATOR_VERBOSE: ${{ inputs.verbose }}
+
   smoke-test-mingw:
     name: Smoke Test MinGW x86_64
     runs-on: windows-latest
@@ -1358,6 +1397,7 @@ jobs:
         smoke-test-icicle,
         smoke-test-kvm,
         smoke-test-fex,
+        smoke-test-fex-linux,
         smoke-test-node,
         smoke-test-mingw,
         smoke-test-win32,
