@@ -105,7 +105,7 @@ namespace sogen
             return result;
         }
 
-        std::optional<POINT> get_window_origin_relative_to_ancestor(const process_context& process, const hwnd window, const hwnd ancestor)
+        std::optional<POINT> get_client_origin_relative_to_ancestor(const process_context& process, const hwnd window, const hwnd ancestor)
         {
             POINT origin{};
             auto current_handle = window;
@@ -117,8 +117,8 @@ namespace sogen
                     return std::nullopt;
                 }
 
-                origin.x += current->x;
-                origin.y += current->y;
+                origin.x += current->client_x();
+                origin.y += current->client_y();
                 current_handle = current->parent_handle;
             }
 
@@ -319,8 +319,8 @@ namespace sogen
                     // Capture sends every pointer event to the capturing window, even one reported for
                     // another top-level. Translate via screen coordinates (origin relative to the root)
                     // so it works across top-levels; for a child of top_level this is the same offset.
-                    const auto captured_origin = get_window_origin_relative_to_ancestor(process, captured->handle, 0);
-                    const auto top_level_origin = get_window_origin_relative_to_ancestor(process, top_level, 0);
+                    const auto captured_origin = get_client_origin_relative_to_ancestor(process, captured->handle, 0);
+                    const auto top_level_origin = get_client_origin_relative_to_ancestor(process, top_level, 0);
                     if (captured_origin && top_level_origin)
                     {
                         const auto screen_x = top_level_origin->x + x;
@@ -1637,11 +1637,11 @@ namespace sogen
 
         if (is_pointer_message(event.message))
         {
-            // Track the cursor in screen coordinates (top-level window origin + window-local position) so
-            // GetCursorPos reflects it, and treat the window the user is pointing at as the foreground one.
+            // Track the cursor in screen coordinates (client origin + client-local position) so GetCursorPos
+            // reflects it, and treat the window the user is pointing at as the foreground one.
             int32_t new_cursor_x = this->process.cursor_x;
             int32_t new_cursor_y = this->process.cursor_y;
-            if (const auto origin = get_window_origin_relative_to_ancestor(this->process, event.window, 0))
+            if (const auto origin = get_client_origin_relative_to_ancestor(this->process, event.window, 0))
             {
                 new_cursor_x = origin->x + point_x(event.lParam);
                 new_cursor_y = origin->y + point_y(event.lParam);
