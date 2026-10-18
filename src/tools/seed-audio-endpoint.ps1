@@ -55,10 +55,13 @@ $previous = $false
 $status = [Sogen.Registry]::RtlAdjustPrivilege($SE_RESTORE_PRIVILEGE, $true, $false, [ref]$previous)
 if ($status -ne 0) { throw "Enabling SeRestorePrivilege failed: $status" }
 
-$endpoint = "$Hive\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{5e9d8c1a-7b3f-4c2e-9a61-0d4b8f2e6c37}"
+$endpointId = '{5e9d8c1a-7b3f-4c2e-9a61-0d4b8f2e6c37}'
+$endpoint = "$Hive\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\$endpointId"
 Set-Key $endpoint @{ 'DeviceState' = 1 }
-# PKEY_Device_FriendlyName and PKEY_DeviceInterface_FriendlyName.
+# PKEY_Device_FriendlyName, PKEY_DeviceInterface_FriendlyName and the endpoint's device interface path. Without the
+# path, mmdevapi keeps re-reading the endpoint, and some games (MW3) never get past audio initialization.
 Set-Key "$endpoint\Properties" @{
     '{a45c254e-df1c-4efd-8020-67d146a850e0},2' = 'Speakers'
     '{b3f8fa53-0004-438e-9003-51a46e139bfc},6' = 'Sogen Audio'
+    '{9c119480-ddc2-4954-a150-5bd240d454ad},1' = "\\?\SWD#MMDEVAPI#{0.0.0.00000000}.$endpointId#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
 }
