@@ -583,9 +583,9 @@ namespace sogen
 
         // The guest event a WASAPI EVENTCALLBACK client registered via SetEventHandle on its render endpoint.
         // The audio render thread signals it at the device rate so the client's render loop wakes and refills the
-        // shared buffer. Stored as a handle rather than a pointer: the render thread is host-owned, so it resolves
-        // this through windows_emulator::try_signal_guest_event under the kernel lock instead of racing a close on
-        // an emulator thread.
+        // shared buffer. Stored as a handle rather than a pointer: the render thread is host-owned, so it signals
+        // this through windows_emulator::request_guest_event_signal, which resolves it under the kernel lock instead
+        // of racing a close on an emulator thread.
         std::atomic<uint64_t> audio_render_event{};
 
         // Extended parameters from last NtMapViewOfSectionEx call

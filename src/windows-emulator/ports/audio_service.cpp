@@ -133,6 +133,7 @@ namespace sogen
         constexpr int64_t k_device_period_hns = 100000; // 10 ms
         constexpr int64_t k_device_minimum_period_hns = 30000;
         constexpr auto k_device_period = std::chrono::microseconds{k_device_period_hns / 10};
+        constexpr auto k_maximum_render_event_lag = k_device_period * 4;
 
         struct wave_format_extensible
         {
@@ -436,7 +437,7 @@ namespace sogen
                 bool has_device = false;
                 uint64_t play_base{};
                 std::chrono::steady_clock::time_point anchor{};
-                std::chrono::steady_clock::time_point last_signal{};
+                std::chrono::steady_clock::time_point next_signal{};
 
                 while (true)
                 {
@@ -525,13 +526,17 @@ namespace sogen
                     // like a real engine -- firing on every poll tick only wakes the client to find no new space,
                     // and each wake costs a guest thread dispatch. Drive it from the clock rather than from how far
                     // the play cursor moved: the cursor never passes the write cursor, so a client that wakes
-                    // without writing would stall it and never be woken again.
+                    // without writing would stall it and never be woken again. Keep the wakes on a fixed period
+                    // grid: poll ticks don't line up with periods, and clients such as XAudio2 render exactly one
+                    // period per wake, so signalling a period after the previous wake falls behind the device
+                    // rate and starves the sink. A bounded lag lets late wakes catch up without bursting after a
+                    // long stall.
                     const auto now = std::chrono::steady_clock::now();
                     const auto render_event = this->win_emu_.process.audio_render_event.load(std::memory_order_relaxed);
-                    if (render_event && now - last_signal >= k_device_period &&
-                        this->win_emu_.try_signal_guest_event(make_handle(render_event)))
+                    if (render_event && now >= next_signal)
                     {
-                        last_signal = now;
+                        this->win_emu_.request_guest_event_signal(make_handle(render_event));
+                        next_signal = std::max(next_signal + k_device_period, now - k_maximum_render_event_lag);
                     }
 
                     this->submitted_ = write;

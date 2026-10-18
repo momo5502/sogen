@@ -362,6 +362,8 @@ namespace sogen
 
         void perform_context_switch_work(windows_emulator& win_emu, vcpu_context& vcpu)
         {
+            win_emu.apply_pending_guest_event_signals();
+
             auto& threads = win_emu.process.threads;
 
             for (auto it = threads.begin(); it != threads.end();)
@@ -1714,23 +1716,29 @@ namespace sogen
         }
     }
 
-    bool windows_emulator::try_signal_guest_event(const handle event_handle)
+    void windows_emulator::request_guest_event_signal(const handle event_handle)
     {
-        if (!this->kernel_lock_.try_lock())
+        const std::lock_guard lock{this->pending_event_signals_mutex_};
+        this->pending_event_signals_.push_back(event_handle);
+    }
+
+    void windows_emulator::apply_pending_guest_event_signals()
+    {
+        this->kernel_lock_.assert_held();
+
+        std::vector<handle> signals{};
         {
-            return false;
+            const std::lock_guard lock{this->pending_event_signals_mutex_};
+            signals.swap(this->pending_event_signals_);
         }
 
-        const std::lock_guard<kernel_lock> lock{this->kernel_lock_, std::adopt_lock};
-
-        auto* entry = this->process.events.get(event_handle);
-        if (!entry)
+        for (const auto event_handle : signals)
         {
-            return false;
+            if (auto* entry = this->process.events.get(event_handle))
+            {
+                entry->signaled = true;
+            }
         }
-
-        entry->signaled = true;
-        return true;
     }
 
     void windows_emulator::dump_lock_profile()

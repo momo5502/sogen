@@ -391,11 +391,12 @@ namespace sogen
         // Prints BEL contention stats when SOGEN_LOCK_PROFILE is set (see kernel_lock).
         void dump_lock_profile();
 
-        // Signal a guest event from a host-owned thread (e.g. the audio render thread). The handle is resolved
-        // under the kernel lock, so it cannot race a concurrent close on an emulator thread; a handle the guest
-        // has already closed is simply ignored. Returns false without signaling if the lock is busy -- callers
-        // here drive periodic work and can retry, and blocking would stall them behind long kernel operations.
-        bool try_signal_guest_event(handle event_handle);
+        // Signal a guest event from a host-owned thread (e.g. the audio render thread). The request is queued and
+        // applied by the scheduler under the kernel lock, so it cannot race a concurrent close on an emulator
+        // thread; a handle the guest has already closed is simply ignored. Taking the kernel lock here instead
+        // would either stall the caller behind long kernel operations or drop the signal while it is busy.
+        void request_guest_event_signal(handle event_handle);
+        void apply_pending_guest_event_signals();
 
         uint64_t get_executed_instructions() const
         {
@@ -500,6 +501,8 @@ namespace sogen
         // The emulator kernel lock: held by all code touching shared kernel state,
         // released while guest code executes (docs/multi-vcpu-design.md, section 7).
         kernel_lock kernel_lock_{};
+        std::mutex pending_event_signals_mutex_{};
+        std::vector<handle> pending_event_signals_{};
 
         // The vCPU currently running a handler under the kernel lock; drives
         // current_thread(). See scoped_dispatch.
