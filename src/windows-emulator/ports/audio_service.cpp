@@ -133,7 +133,8 @@ namespace sogen
         constexpr int64_t k_device_period_hns = 100000; // 10 ms
         constexpr int64_t k_device_minimum_period_hns = 30000;
         constexpr auto k_device_period = std::chrono::microseconds{k_device_period_hns / 10};
-        constexpr auto k_maximum_render_event_lag = k_device_period * 4;
+        constexpr uint32_t k_maximum_pending_render_wakes = 4;
+        constexpr auto k_maximum_render_event_lag = k_device_period * k_maximum_pending_render_wakes;
 
         struct wave_format_extensible
         {
@@ -535,7 +536,7 @@ namespace sogen
                     const auto render_event = this->win_emu_.process.audio_render_event.load(std::memory_order_relaxed);
                     if (render_event && now >= next_signal)
                     {
-                        this->win_emu_.request_guest_event_signal(make_handle(render_event));
+                        this->win_emu_.request_guest_event_signal(make_handle(render_event), k_maximum_pending_render_wakes);
                         next_signal = std::max(next_signal + k_device_period, now - k_maximum_render_event_lag);
                     }
 

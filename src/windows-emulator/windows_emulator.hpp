@@ -395,7 +395,10 @@ namespace sogen
         // applied by the scheduler under the kernel lock, so it cannot race a concurrent close on an emulator
         // thread; a handle the guest has already closed is simply ignored. Taking the kernel lock here instead
         // would either stall the caller behind long kernel operations or drop the signal while it is busy.
-        void request_guest_event_signal(handle event_handle);
+        // Requests count as separate wakes: a new one is only delivered once the guest consumed the previous
+        // one, so signals queued while the lock was busy don't coalesce in the event. At most maximum_pending
+        // wakes are kept, for clients that stop waiting.
+        void request_guest_event_signal(handle event_handle, uint32_t maximum_pending);
         void apply_pending_guest_event_signals();
 
         uint64_t get_executed_instructions() const
@@ -502,7 +505,7 @@ namespace sogen
         // released while guest code executes (docs/multi-vcpu-design.md, section 7).
         kernel_lock kernel_lock_{};
         std::mutex pending_event_signals_mutex_{};
-        std::vector<handle> pending_event_signals_{};
+        std::map<uint64_t, uint32_t> pending_event_signals_{};
 
         // The vCPU currently running a handler under the kernel lock; drives
         // current_thread(). See scoped_dispatch.

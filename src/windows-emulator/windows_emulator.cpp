@@ -1716,28 +1716,39 @@ namespace sogen
         }
     }
 
-    void windows_emulator::request_guest_event_signal(const handle event_handle)
+    void windows_emulator::request_guest_event_signal(const handle event_handle, const uint32_t maximum_pending)
     {
         const std::lock_guard lock{this->pending_event_signals_mutex_};
-        this->pending_event_signals_.push_back(event_handle);
+        auto& pending = this->pending_event_signals_[event_handle.bits];
+        pending = std::min(pending + 1, maximum_pending);
     }
 
     void windows_emulator::apply_pending_guest_event_signals()
     {
         this->kernel_lock_.assert_held();
 
-        std::vector<handle> signals{};
-        {
-            const std::lock_guard lock{this->pending_event_signals_mutex_};
-            signals.swap(this->pending_event_signals_);
-        }
+        const std::lock_guard lock{this->pending_event_signals_mutex_};
 
-        for (const auto event_handle : signals)
+        for (auto it = this->pending_event_signals_.begin(); it != this->pending_event_signals_.end();)
         {
-            if (auto* entry = this->process.events.get(event_handle))
+            auto* entry = this->process.events.get(make_handle(it->first));
+            if (!entry)
+            {
+                it = this->pending_event_signals_.erase(it);
+                continue;
+            }
+
+            if (!entry->signaled)
             {
                 entry->signaled = true;
+                if (--it->second == 0)
+                {
+                    it = this->pending_event_signals_.erase(it);
+                    continue;
+                }
             }
+
+            ++it;
         }
     }
 
