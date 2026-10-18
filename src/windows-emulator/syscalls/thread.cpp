@@ -952,7 +952,7 @@ namespace sogen
         NTSTATUS handle_NtSetContextThread(const syscall_context& c, const handle thread_handle,
                                            const emulator_object<CONTEXT64> thread_context)
         {
-            const auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
+            auto* thread = thread_handle == CURRENT_THREAD ? c.vcpu.active_thread : c.proc.threads.get(thread_handle);
 
             if (!thread)
             {
@@ -970,7 +970,8 @@ namespace sogen
             const auto _ = utils::finally([&] {
                 if (needs_swich)
                 {
-                    c.vcpu.active_thread->restore(c.emu); //
+                    thread->save(c.emu);
+                    c.vcpu.active_thread->restore(c.emu);
                 }
             });
 
