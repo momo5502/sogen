@@ -498,13 +498,18 @@ namespace sogen
 
         // Runs f with the kernel lock released, for host calls that can block for a long time (e.g. a GPU present)
         // and would otherwise stall every other vCPU. f must not touch any emulator or guest state. Requires the
-        // kernel lock, which is held again when this returns.
+        // kernel lock, which is held again when this returns. Other vCPUs dispatch meanwhile, so the dispatch
+        // marker is set aside for that time.
         template <typename F>
         decltype(auto) run_without_kernel_lock(F&& f)
         {
             this->kernel_lock_.assert_held();
+            auto* dispatch_vcpu = std::exchange(this->dispatch_vcpu_, nullptr);
             this->kernel_lock_.unlock();
-            const auto _ = utils::finally([this] { this->kernel_lock_.lock(); });
+            const auto _ = utils::finally([this, dispatch_vcpu] {
+                this->kernel_lock_.lock();
+                this->dispatch_vcpu_ = dispatch_vcpu;
+            });
             return f();
         }
 

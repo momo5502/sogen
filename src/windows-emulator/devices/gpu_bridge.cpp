@@ -2003,16 +2003,11 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                std::function<int32_t()> present{};
-                int32_t result =
-                    this->vulkan_.prepare_queue_present(request.queue, request.swapchain, request.image_index, wait_semaphores, present);
-                if (result == 0)
-                {
-                    // The host driver may block in vkQueuePresentKHR for frame pacing; holding the kernel lock
-                    // meanwhile would stall every other vCPU. Nothing below may touch this device, which the guest
-                    // could close meanwhile.
-                    result = win_emu.run_without_kernel_lock(present);
-                }
+                // The host driver may block in vkQueuePresentKHR for frame pacing; holding the kernel lock meanwhile
+                // would stall every other vCPU.
+                const int32_t result = this->vulkan_.queue_present(
+                    request.queue, request.swapchain, request.image_index, wait_semaphores,
+                    [&](const std::function<int32_t()>& present) { return win_emu.run_without_kernel_lock(present); });
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
