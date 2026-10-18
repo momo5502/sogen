@@ -917,7 +917,7 @@ namespace sogen
                 }
             }
 
-            if (!switched)
+            if (!switched || this->should_stop)
             {
                 break;
             }
