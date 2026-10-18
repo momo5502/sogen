@@ -52,9 +52,6 @@ namespace sogen
 
         void setup(const windows_version_manager& version, const fake_environment_config& fake_env, bool intercept = true);
 
-        // In non-intercept (fast) mode KUSD is a plain mapped page rather than an MMIO trap; call this
-        // periodically (e.g. from the timer thread) to refresh the time fields into that page. No-op
-        // when intercepting.
         void refresh();
 
       private:
@@ -73,6 +70,7 @@ namespace sogen
         KUSER_SHARED_DATA64 kusd_{};
 
         void read(uint64_t addr, void* data, size_t size);
+        void write_page();
 
         void update();
 

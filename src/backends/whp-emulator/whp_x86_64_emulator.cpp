@@ -3397,7 +3397,6 @@ namespace sogen::whp
                     {
                         throw_hr(run_hr, "WHvRunVirtualProcessor");
                     }
-
                     switch (exit_context.ExitReason)
                     {
                     case WHvRunVpExitReasonCanceled: {

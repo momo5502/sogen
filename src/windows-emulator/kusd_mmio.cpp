@@ -152,6 +152,23 @@ namespace sogen
 
         const std::scoped_lock lock(this->mutex_);
         this->update();
+        this->write_page();
+    }
+
+    void kusd_mmio::write_page()
+    {
+        // Guests read KSYSTEM_TIME without locking: High1Time, then LowPart, retrying until High2Time matches. That
+        // only works if High2Time is written before LowPart and High1Time after it, but copying the page writes
+        // LowPart first. Writing the new High2Time values ahead of the copy restores the order.
+        const auto write_high2_time = [this](const size_t offset, const volatile KSYSTEM_TIME& time) {
+            const LONG high2_time = time.High2Time;
+            this->memory_->write_memory(KUSD_ADDRESS + offset + offsetof(KSYSTEM_TIME, High2Time), &high2_time, sizeof(high2_time));
+        };
+
+        write_high2_time(offsetof(KUSER_SHARED_DATA64, InterruptTime), this->kusd_.InterruptTime);
+        write_high2_time(offsetof(KUSER_SHARED_DATA64, SystemTime), this->kusd_.SystemTime);
+        write_high2_time(offsetof(KUSER_SHARED_DATA64, TickCount), this->kusd_.TickCount.TickCount);
+
         this->memory_->write_memory(KUSD_ADDRESS, &this->kusd_, KUSD_SIZE);
     }
 
@@ -232,12 +249,12 @@ namespace sogen
             return;
         }
 
-        // Fast mode: a plain read-only page the guest reads without a per-access MMIO trap. The time
-        // fields are seeded here and then refreshed periodically via refresh().
-        this->memory_->allocate_memory(KUSD_ADDRESS, KUSD_BUFFER_SIZE, memory_permission::read);
+        // Classified as MMIO like the trapping variant, so the guest can't release it and snapshots leave it to
+        // this object to recreate.
+        this->memory_->allocate_memory(KUSD_ADDRESS, KUSD_BUFFER_SIZE, memory_permission::read, false, memory_region_kind::mmio);
         const std::scoped_lock lock(this->mutex_);
         this->update();
-        this->memory_->write_memory(KUSD_ADDRESS, &this->kusd_, KUSD_SIZE);
+        this->write_page();
     }
 
     void kusd_mmio::deregister_mmio()

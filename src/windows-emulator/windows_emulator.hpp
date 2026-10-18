@@ -114,7 +114,8 @@ namespace sogen
         // Timing fidelity vs. speed. With interception on (the default, used by the analyzer) rdtsc reads
         // and KUSER_SHARED_DATA accesses trap so the emulated clock stays exact and deterministic. Turning
         // them off (as the sandbox does) lets the guest read the host TSC natively and KUSD from a plain
-        // mapped page, removing those VM exits at the cost of exact/reproducible timing.
+        // mapped page, removing those VM exits. The cost is exact/reproducible timing, and KUSD's time
+        // fields then only advance in steps of the interrupt thread's 20 ms period.
         bool intercept_rdtsc{true};
         bool intercept_kusd{true};
 

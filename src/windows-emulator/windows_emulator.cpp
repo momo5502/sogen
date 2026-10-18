@@ -1453,9 +1453,9 @@ namespace sogen
                         break;
                     }
 
-                    // Fast-mode KUSD is a plain page; refresh its time fields here instead of on each read.
                     if (refresh_kusd)
                     {
+                        const std::scoped_lock kernel_lock(this->kernel_lock_);
                         this->process.kusd.refresh();
                     }
 
