@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -380,7 +381,10 @@ namespace sogen
         void destroy_swapchain(uint64_t device, uint64_t swapchain);
         int32_t get_swapchain_images(uint64_t swapchain, std::span<uint64_t> out_images, uint32_t& out_count);
         int32_t acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore, uint64_t fence, uint32_t& out_index);
-        int32_t queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index, const std::vector<uint64_t>& wait_semaphores);
+        // The native present goes through run_unlocked, which may run it without the caller's locks: it touches no
+        // other vulkan_host state, and the device is kept alive until it returns.
+        int32_t queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index, const std::vector<uint64_t>& wait_semaphores,
+                              const std::function<int32_t(const std::function<int32_t()>&)>& run_unlocked);
 
         // --- graphics pipeline (enough for a render-pass triangle) ---
 

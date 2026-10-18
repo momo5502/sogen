@@ -9,7 +9,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <mutex>
 #include <optional>
+#include <shared_mutex>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -266,6 +268,8 @@ namespace sogen
         struct device_data
         {
             VkDevice handle{};
+            // Held shared by presents running without the caller's locks, so destroying the device waits for them.
+            std::shared_ptr<std::shared_mutex> presents = std::make_shared<std::shared_mutex>();
             uint64_t instance_id{};
             VkPhysicalDevice physical_device{}; // the device this was created from (for memory queries)
             uint32_t queue_family_index{};      // the single family this device was created with
@@ -515,6 +519,20 @@ namespace sogen
 
         std::unordered_map<uint64_t, device_data> devices;
         std::unordered_map<uint64_t, queue_data> queues;
+        // Vulkan requires host access to a queue to be externally synchronized. Several queue ids can name the same
+        // native queue, so the locks are keyed by it.
+        std::unordered_map<VkQueue, std::shared_ptr<std::mutex>> queue_locks;
+
+        std::shared_ptr<std::mutex> queue_lock(const VkQueue queue)
+        {
+            auto& lock = this->queue_locks[queue];
+            if (!lock)
+            {
+                lock = std::make_shared<std::mutex>();
+            }
+            return lock;
+        }
+
         std::unordered_map<uint64_t, command_pool_data> command_pools;
         std::unordered_map<uint64_t, command_buffer_data> command_buffers;
         std::unordered_map<uint64_t, fence_data> fences;
@@ -760,6 +778,9 @@ namespace sogen
                 return;
             }
 
+            const auto presents = it->second.presents;
+            const std::unique_lock presents_done(*presents);
+
             // Descriptor pools (which free their sets) before descriptor set layouts those sets used.
             for (auto& [id, pool] : this->descriptor_pools)
             {
@@ -936,6 +957,13 @@ namespace sogen
             this->erase_owned(this->images, [&](const image_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->samplers, [&](const sampler_data& d) { return d.device_id == device_id; });
             this->erase_owned(this->memories, [&](const memory_data& d) { return d.device_id == device_id; });
+            for (const auto& queue : this->queues | std::views::values)
+            {
+                if (queue.device_id == device_id)
+                {
+                    this->queue_locks.erase(queue.handle);
+                }
+            }
             this->erase_owned(this->queues, [&](const queue_data& d) { return d.device_id == device_id; });
 
             if (it->second.handle && it->second.destroy_device)
@@ -2607,6 +2635,8 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        const auto lock = this->impl_->queue_lock(queue_it->second.handle);
+        const std::scoped_lock guard(*lock);
         return dev->second.queue_wait_idle(queue_it->second.handle);
     }
 
@@ -2616,6 +2646,26 @@ namespace sogen
         if (dev == this->impl_->devices.end() || !dev->second.device_wait_idle)
         {
             return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        std::vector<std::shared_ptr<std::mutex>> locks{};
+        for (const auto& queue : this->impl_->queues | std::views::values)
+        {
+            if (queue.device_id == device)
+            {
+                auto lock = this->impl_->queue_lock(queue.handle);
+                if (std::ranges::find(locks, lock) == locks.end())
+                {
+                    locks.push_back(std::move(lock));
+                }
+            }
+        }
+
+        std::vector<std::unique_lock<std::mutex>> guards{};
+        guards.reserve(locks.size());
+        for (const auto& lock : locks)
+        {
+            guards.emplace_back(*lock);
         }
 
         return dev->second.device_wait_idle(dev->second.handle);
@@ -2939,6 +2989,8 @@ namespace sogen
         // Zero-command-buffer submission: still a valid fence signal operation (no work batched).
         if (command_buffer == 0)
         {
+            const auto lock = this->impl_->queue_lock(queue_it->second.handle);
+            const std::scoped_lock guard(*lock);
             return dev->second.queue_submit(queue_it->second.handle, 0, nullptr, fence_handle);
         }
 
@@ -2953,6 +3005,8 @@ namespace sogen
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &cb->second.handle;
 
+        const auto lock = this->impl_->queue_lock(queue_it->second.handle);
+        const std::scoped_lock guard(*lock);
         return dev->second.queue_submit(queue_it->second.handle, 1, &submit, fence_handle);
     }
 
@@ -3035,6 +3089,8 @@ namespace sogen
         submit.signalSemaphoreInfoCount = static_cast<uint32_t>(signals.size());
         submit.pSignalSemaphoreInfos = signals.data();
 
+        const auto lock = this->impl_->queue_lock(queue_it->second.handle);
+        const std::scoped_lock guard(*lock);
         return dev->second.queue_submit2(queue_it->second.handle, 1, &submit, fence_handle);
     }
 
@@ -4345,7 +4401,8 @@ namespace sogen
     }
 
     int32_t vulkan_host::queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index,
-                                       const std::vector<uint64_t>& wait_semaphores)
+                                       const std::vector<uint64_t>& wait_semaphores,
+                                       const std::function<int32_t(const std::function<int32_t()>&)>& run_unlocked)
     {
         const auto queue_it = this->impl_->queues.find(queue);
         const auto sc_it = this->impl_->swapchains.find(swapchain);
@@ -4381,7 +4438,24 @@ namespace sogen
         info.swapchainCount = 1;
         info.pSwapchains = &native_swapchain;
         info.pImageIndices = &image_index;
-        return dev_it->second.queue_present(queue_it->second.handle, &info);
+
+        const auto native_present = dev_it->second.queue_present;
+        auto* const native_queue = queue_it->second.handle;
+        const auto queue_lock = this->impl_->queue_lock(native_queue);
+        const auto presents = dev_it->second.presents;
+        std::shared_lock device_in_use(*presents);
+
+        // The device lock is released before run_unlocked returns, since its caller may then wait for a lock that a
+        // thread destroying the device holds.
+        return run_unlocked([&] {
+            int32_t result{};
+            {
+                const std::scoped_lock guard(*queue_lock);
+                result = native_present(native_queue, &info);
+            }
+            device_in_use.unlock();
+            return result;
+        });
     }
 
     int32_t vulkan_host::create_shader_module(uint64_t device, uint32_t flags, const void* code, size_t code_size, uint64_t& out_module)
