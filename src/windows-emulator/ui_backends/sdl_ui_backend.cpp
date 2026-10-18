@@ -1004,6 +1004,14 @@ namespace sogen
                     {
                         SDL_DestroyRenderer(state->renderer);
                         state->renderer = nullptr;
+
+                        // The renderer has already presented into the window. On Windows that binds the window to a
+                        // DXGI flip-model swapchain, and it keeps showing that swapchain's last frame instead of
+                        // anything presented through a Vulkan surface. Present into a fresh window instead.
+                        if (!this->recreate_host_window(*state))
+                        {
+                            return uint64_t{};
+                        }
                     }
 
                     VkSurfaceKHR surface{};
@@ -1037,6 +1045,51 @@ namespace sogen
                     return;
                 }
 
+                auto flags = host_window_flags(desc);
+                const auto width = std::max<int>(1, static_cast<int>(desc.rect.right - desc.rect.left) - desc.client_insets.left -
+                                                        desc.client_insets.right);
+                const auto height = std::max<int>(1, static_cast<int>(desc.rect.bottom - desc.rect.top) - desc.client_insets.top -
+                                                         desc.client_insets.bottom);
+                auto* window = create_host_window(desc, flags, width, height);
+                if (!window && (flags & SDL_WINDOW_VULKAN) != 0)
+                {
+                    flags &= ~SDL_WINDOW_VULKAN;
+                    window = create_host_window(desc, flags, width, height);
+                }
+                if (!window)
+                {
+                    return;
+                }
+
+                auto* renderer = SDL_CreateRenderer(window, nullptr);
+                if (!renderer && (flags & SDL_WINDOW_VULKAN) != 0)
+                {
+                    SDL_DestroyWindow(window);
+                    flags &= ~SDL_WINDOW_VULKAN;
+                    window = create_host_window(desc, flags, width, height);
+                    renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
+                }
+                if (!renderer)
+                {
+                    if (window)
+                    {
+                        SDL_DestroyWindow(window);
+                    }
+                    return;
+                }
+
+                finish_host_window(window, desc.rect.left, desc.rect.top, flags);
+
+                auto& state = this->windows_[desc.handle];
+                state.desc = desc;
+                state.window = window;
+                state.renderer = renderer;
+                this->guest_by_window_id_[SDL_GetWindowID(window)] = desc.handle;
+                render_window(state);
+            }
+
+            static Uint64 host_window_flags(const ui_window_desc& desc)
+            {
                 Uint64 flags = 0;
                 if (!desc.visible)
                 {
@@ -1057,59 +1110,58 @@ namespace sogen
                 {
                     flags |= SDL_WINDOW_RESIZABLE;
                 }
-                flags |= SDL_WINDOW_VULKAN;
+                return flags | SDL_WINDOW_VULKAN;
+            }
 
-                // Size the host window to the client area; we render no frame, so sizing to it keeps the present 1:1.
-                const auto width = std::max<int>(1, static_cast<int>(desc.rect.right - desc.rect.left) - desc.client_insets.left -
-                                                        desc.client_insets.right);
-                const auto height = std::max<int>(1, static_cast<int>(desc.rect.bottom - desc.rect.top) - desc.client_insets.top -
-                                                         desc.client_insets.bottom);
+            // The host window is sized to the guest client area; we render no frame, so that keeps the present 1:1.
+            static SDL_Window* create_host_window(const ui_window_desc& desc, const Uint64 flags, const int width, const int height)
+            {
                 const auto title = make_host_window_title(desc.title);
-                auto* window = SDL_CreateWindow(title.c_str(), static_cast<int>(width), static_cast<int>(height), flags);
-                if (!window && (flags & SDL_WINDOW_VULKAN) != 0)
-                {
-                    flags &= ~SDL_WINDOW_VULKAN;
-                    window = SDL_CreateWindow(title.c_str(), static_cast<int>(width), static_cast<int>(height), flags);
-                }
-                if (!window)
-                {
-                    return;
-                }
+                return SDL_CreateWindow(title.c_str(), width, height, flags);
+            }
 
-                auto* renderer = SDL_CreateRenderer(window, nullptr);
-                if (!renderer && (flags & SDL_WINDOW_VULKAN) != 0)
-                {
-                    SDL_DestroyWindow(window);
-                    flags &= ~SDL_WINDOW_VULKAN;
-                    window = SDL_CreateWindow(title.c_str(), static_cast<int>(width), static_cast<int>(height), flags);
-                    renderer = window ? SDL_CreateRenderer(window, nullptr) : nullptr;
-                }
-                if (!renderer)
-                {
-                    if (window)
-                    {
-                        SDL_DestroyWindow(window);
-                    }
-                    return;
-                }
-
+            static void finish_host_window(SDL_Window* window, const int x, const int y, const Uint64 flags)
+            {
 #ifdef _WIN32
                 apply_application_icon(window);
 #endif
 
-                SDL_SetWindowPosition(window, desc.rect.left, desc.rect.top);
+                SDL_SetWindowPosition(window, x, y);
                 SDL_StartTextInput(window);
                 if ((flags & SDL_WINDOW_HIDDEN) == 0)
                 {
                     apply_x11_focus_fallback(window);
                 }
+            }
 
-                auto& state = this->windows_[desc.handle];
-                state.desc = desc;
+            bool recreate_host_window(window_state& state)
+            {
+                auto* old_window = state.window;
+                auto flags = host_window_flags(state.desc) & ~SDL_WINDOW_HIDDEN;
+                flags |= SDL_GetWindowFlags(old_window) & SDL_WINDOW_HIDDEN;
+
+                int x{};
+                int y{};
+                int width{};
+                int height{};
+                SDL_GetWindowPosition(old_window, &x, &y);
+                SDL_GetWindowSize(old_window, &width, &height);
+
+                auto* window = create_host_window(state.desc, flags, width, height);
+                if (!window)
+                {
+                    return false;
+                }
+
+                finish_host_window(window, x, y, flags);
+
+                SDL_StopTextInput(old_window);
+                this->guest_by_window_id_.erase(SDL_GetWindowID(old_window));
+                SDL_DestroyWindow(old_window);
+
                 state.window = window;
-                state.renderer = renderer;
-                this->guest_by_window_id_[SDL_GetWindowID(window)] = desc.handle;
-                render_window(state);
+                this->guest_by_window_id_[SDL_GetWindowID(window)] = state.desc.handle;
+                return true;
             }
 
             void destroy_window(const hwnd window) override
