@@ -305,6 +305,19 @@ namespace sogen::test
         EXPECT_FALSE(registry().get_key(utils::path_key{sibling}).has_value());
     }
 
+    TEST_F(RegistryFileTest, EnumeratesOverlayKeysUnderParentOpenedWithTrailingSeparator)
+    {
+        const std::filesystem::path child{uR"(\Registry\Machine\Software\Vendor\Endpoints\{child})"};
+        ASSERT_TRUE(registry().create_key(child).has_value());
+
+        const auto parent = registry().get_key(utils::path_key{std::filesystem::path{uR"(\Registry\Machine\Software\Vendor\Endpoints\)"}});
+        ASSERT_TRUE(parent.has_value());
+
+        const auto name = registry().get_sub_key_name(*parent, 0);
+        ASSERT_TRUE(name.has_value());
+        EXPECT_EQ(*name, "{child}");
+    }
+
     TEST_F(RegistryFileTest, CreateKeyIsIdempotent)
     {
         const std::filesystem::path path{uR"(\Registry\Machine\Software\Vendor\Once)"};
