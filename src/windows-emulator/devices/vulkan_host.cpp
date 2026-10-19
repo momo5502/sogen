@@ -2158,8 +2158,14 @@ namespace sogen
 
         impl::device_data data{};
         data.handle = device;
-        data.maintenance5_enabled =
+        const bool maintenance5_extension_enabled =
             std::ranges::any_of(extensions, [](const char* name) { return std::strcmp(name, "VK_KHR_maintenance5") == 0; });
+        const bool maintenance5_feature_enabled = std::ranges::any_of(chained, [](const std::vector<std::byte>& buffer) {
+            const auto* base = reinterpret_cast<const VkBaseInStructure*>(buffer.data());
+            return base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR &&
+                   reinterpret_cast<const VkPhysicalDeviceMaintenance5FeaturesKHR*>(base)->maintenance5 == VK_TRUE;
+        });
+        data.maintenance5_enabled = maintenance5_extension_enabled && maintenance5_feature_enabled;
         data.instance_id = pd->second.instance_id;
         data.physical_device = pd->second.handle;
         data.queue_family_index = primary_family;
