@@ -30,6 +30,9 @@ namespace sogen
         mount_spec result{};
         auto rest = spec;
 
+        // MODE is split off at the last ':', so a GUEST that names an NTFS alternate data stream is ambiguous:
+        // "c:\file.txt:ro" reads as a read-only mount of c:\file.txt. Mounting a stream is not supported, and
+        // other stream names are rejected below.
         if (const auto separator = rest.rfind(':'); separator != std::string_view::npos)
         {
             if (const auto mode = parse_filesystem_mode(rest.substr(separator + 1)))
@@ -50,7 +53,7 @@ namespace sogen
 
         if (guest.find(':', 2) != std::string_view::npos)
         {
-            throw std::runtime_error("Mount mode must be ro or rw: " + std::string(spec));
+            throw std::runtime_error("Mount GUEST cannot contain ':' after the drive, and MODE must be ro or rw: " + std::string(spec));
         }
 
         result.host_path = std::filesystem::path(std::u8string(host.begin(), host.end()));

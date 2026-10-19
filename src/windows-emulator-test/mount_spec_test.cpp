@@ -37,6 +37,12 @@ namespace sogen::test
         EXPECT_THROW(parse_mount_spec(R"(/tmp/a:c:\x:cow)"), std::runtime_error);
     }
 
+    TEST(MountSpecTest, RejectsAlternateDataStreams)
+    {
+        EXPECT_THROW(parse_mount_spec(R"(/tmp/a:c:\x.txt:stream)"), std::runtime_error);
+        EXPECT_THROW(parse_mount_spec(R"(/tmp/a:c:\x.txt:stream:rw)"), std::runtime_error);
+    }
+
     TEST(MountSpecTest, RenderedSpecsParseBack)
     {
         const mount_spec spec{
