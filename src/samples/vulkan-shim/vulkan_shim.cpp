@@ -2659,8 +2659,6 @@ extern "C"
         }
     }
 
-    // Copies are remoted assuming tight packing of mip 0 / layer 0 at image offset 0 to buffer offset 0
-    // (bufferRowLength/bufferImageHeight/imageOffset are not yet honored).
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyImageToBuffer(VkCommandBuffer commandBuffer, VkImage srcImage,
                                                                             VkImageLayout srcImageLayout, VkBuffer dstBuffer,
                                                                             uint32_t regionCount, const VkBufferImageCopy* pRegions)
@@ -2672,9 +2670,19 @@ extern "C"
             request.command_buffer = to_object_id(commandBuffer);
             request.image = to_object_id(srcImage);
             request.buffer = to_object_id(dstBuffer);
+            request.buffer_offset = r.bufferOffset;
             request.image_layout = static_cast<uint32_t>(srcImageLayout);
+            request.buffer_row_length = r.bufferRowLength;
+            request.buffer_image_height = r.bufferImageHeight;
+            request.image_offset_x = r.imageOffset.x;
+            request.image_offset_y = r.imageOffset.y;
+            request.image_offset_z = r.imageOffset.z;
             request.width = r.imageExtent.width;
             request.height = r.imageExtent.height;
+            request.depth = r.imageExtent.depth;
+            request.mip_level = r.imageSubresource.mipLevel;
+            request.base_array_layer = r.imageSubresource.baseArrayLayer;
+            request.layer_count = r.imageSubresource.layerCount;
             request.aspect_mask = r.imageSubresource.aspectMask;
             record_command(request.command_buffer, gb::command::cmd_copy_image_to_buffer, &request, sizeof(request));
         }
@@ -2959,9 +2967,19 @@ extern "C"
             request.command_buffer = to_object_id(commandBuffer);
             request.image = to_object_id(pCopyImageToBufferInfo->srcImage);
             request.buffer = to_object_id(pCopyImageToBufferInfo->dstBuffer);
+            request.buffer_offset = r.bufferOffset;
             request.image_layout = static_cast<uint32_t>(pCopyImageToBufferInfo->srcImageLayout);
+            request.buffer_row_length = r.bufferRowLength;
+            request.buffer_image_height = r.bufferImageHeight;
+            request.image_offset_x = r.imageOffset.x;
+            request.image_offset_y = r.imageOffset.y;
+            request.image_offset_z = r.imageOffset.z;
             request.width = r.imageExtent.width;
             request.height = r.imageExtent.height;
+            request.depth = r.imageExtent.depth;
+            request.mip_level = r.imageSubresource.mipLevel;
+            request.base_array_layer = r.imageSubresource.baseArrayLayer;
+            request.layer_count = r.imageSubresource.layerCount;
             request.aspect_mask = r.imageSubresource.aspectMask;
             record_command(request.command_buffer, gb::command::cmd_copy_image_to_buffer, &request, sizeof(request));
         }

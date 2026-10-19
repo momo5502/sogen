@@ -268,12 +268,8 @@ namespace sogen
                                       size_t data_size);
         int32_t cmd_clear_depth_stencil_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float depth, uint32_t stencil,
                                               const subresource_range& range);
-        // Copies mip 0 / layer 0 of the image (tightly packed) into the buffer at offset 0.
-        int32_t cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer, uint32_t width,
-                                         uint32_t height, uint32_t aspect_mask);
 
-        // Copies tightly-packed pixel data from the buffer (offset 0) into mip 0 / layer 0 of the image.
-        // One VkBufferImageCopy region. DXVK sub-allocates uploads from a shared staging buffer, so
+        // One VkBufferImageCopy region. DXVK sub-allocates uploads and readbacks from shared buffers, so
         // buffer_offset (and mip/layer/image_offset) are routinely non-zero and must be honoured.
         struct buffer_image_copy_region
         {
@@ -292,6 +288,8 @@ namespace sogen
             uint32_t aspect_mask;
         };
 
+        int32_t cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer,
+                                         const buffer_image_copy_region& region);
         int32_t cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout,
                                          const buffer_image_copy_region& region);
 
