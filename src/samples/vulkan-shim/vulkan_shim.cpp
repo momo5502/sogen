@@ -5628,7 +5628,6 @@ extern "C"
         record_command(request.command_buffer, gb::command::cmd_bind_index_buffer, &request, sizeof(request));
     }
 
-    // VK_KHR_maintenance5 / core 1.4: like vkCmdBindIndexBuffer but with an explicit size.
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindIndexBuffer2KHR(VkCommandBuffer commandBuffer, VkBuffer buffer,
                                                                               VkDeviceSize offset, VkDeviceSize size, VkIndexType indexType)
     {

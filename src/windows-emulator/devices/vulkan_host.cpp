@@ -268,6 +268,7 @@ namespace sogen
         struct device_data
         {
             VkDevice handle{};
+            bool maintenance5_enabled{};
             // Held shared by presents running without the caller's locks, so destroying the device waits for them.
             std::shared_ptr<std::shared_mutex> presents = std::make_shared<std::shared_mutex>();
             uint64_t instance_id{};
@@ -396,7 +397,7 @@ namespace sogen
             PFN_vkCmdBindVertexBuffers cmd_bind_vertex_buffers{};
             PFN_vkCmdBindVertexBuffers2 cmd_bind_vertex_buffers2{};
             PFN_vkCmdBindIndexBuffer cmd_bind_index_buffer{};
-            PFN_vkCmdBindIndexBuffer2 cmd_bind_index_buffer2{};
+            PFN_vkCmdBindIndexBuffer2KHR cmd_bind_index_buffer2{};
             PFN_vkCmdDrawIndexed cmd_draw_indexed{};
             PFN_vkCmdDrawIndexedIndirect cmd_draw_indexed_indirect{};
             PFN_vkCmdDrawIndexedIndirectCount cmd_draw_indexed_indirect_count{};
@@ -2157,6 +2158,8 @@ namespace sogen
 
         impl::device_data data{};
         data.handle = device;
+        data.maintenance5_enabled =
+            std::ranges::any_of(extensions, [](const char* name) { return std::strcmp(name, "VK_KHR_maintenance5") == 0; });
         data.instance_id = pd->second.instance_id;
         data.physical_device = pd->second.handle;
         data.queue_family_index = primary_family;
@@ -2312,10 +2315,9 @@ namespace sogen
             data.cmd_bind_vertex_buffers = reinterpret_cast<PFN_vkCmdBindVertexBuffers>(resolve("vkCmdBindVertexBuffers"));
             data.cmd_bind_vertex_buffers2 = reinterpret_cast<PFN_vkCmdBindVertexBuffers2>(resolve("vkCmdBindVertexBuffers2"));
             data.cmd_bind_index_buffer = reinterpret_cast<PFN_vkCmdBindIndexBuffer>(resolve("vkCmdBindIndexBuffer"));
-            data.cmd_bind_index_buffer2 = reinterpret_cast<PFN_vkCmdBindIndexBuffer2>(resolve("vkCmdBindIndexBuffer2"));
-            if (!data.cmd_bind_index_buffer2)
+            if (data.maintenance5_enabled)
             {
-                data.cmd_bind_index_buffer2 = reinterpret_cast<PFN_vkCmdBindIndexBuffer2>(resolve("vkCmdBindIndexBuffer2KHR"));
+                data.cmd_bind_index_buffer2 = reinterpret_cast<PFN_vkCmdBindIndexBuffer2KHR>(resolve("vkCmdBindIndexBuffer2KHR"));
             }
             data.cmd_draw_indexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(resolve("vkCmdDrawIndexed"));
             data.cmd_draw_indexed_indirect = reinterpret_cast<PFN_vkCmdDrawIndexedIndirect>(resolve("vkCmdDrawIndexedIndirect"));
@@ -6480,7 +6482,7 @@ namespace sogen
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        if (dev->second.cmd_bind_index_buffer2)
+        if (dev->second.maintenance5_enabled && dev->second.cmd_bind_index_buffer2)
         {
             dev->second.cmd_bind_index_buffer2(cb->second.handle, buf->second.handle, offset, size, static_cast<VkIndexType>(index_type));
         }
