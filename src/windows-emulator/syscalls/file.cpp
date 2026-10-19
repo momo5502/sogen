@@ -135,6 +135,11 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
+        bool changes_file_state(const FILE_INFORMATION_CLASS info_class)
+        {
+            return info_class != FilePositionInformation;
+        }
+
         NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const handle file_handle,
                                              const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                              const uint64_t file_information, const ULONG length, const FILE_INFORMATION_CLASS info_class)
@@ -172,6 +177,11 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            if (changes_file_state(info_class) && !c.win_emu.file_sys.is_writable(f->handle.path()))
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
             if (info_class == FileBasicInformation)
             {
                 return STATUS_SUCCESS;
@@ -206,6 +216,11 @@ namespace sogen
                 if (new_path.is_relative())
                 {
                     new_path = f->handle.path().parent() / new_path;
+                }
+
+                if (!c.win_emu.file_sys.is_writable(new_path))
+                {
+                    return STATUS_ACCESS_DENIED;
                 }
 
                 if (!info.ReplaceIfExists && c.win_emu.file_sys.stat(new_path))
@@ -297,6 +312,11 @@ namespace sogen
                 if (length < sizeof(FILE_END_OF_FILE_INFORMATION))
                 {
                     return STATUS_BUFFER_OVERFLOW;
+                }
+
+                if (!f->handle.is_writable())
+                {
+                    return STATUS_ACCESS_DENIED;
                 }
 
                 const auto info = c.emu.read_memory<FILE_END_OF_FILE_INFORMATION>(file_information);
@@ -1523,6 +1543,11 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            if (!f->handle.is_writable())
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
             if (byte_offset)
             {
                 const auto offset = byte_offset.read();
@@ -1578,6 +1603,11 @@ namespace sogen
             if (!source || !destination || !source->handle || !destination->handle)
             {
                 return STATUS_INVALID_HANDLE;
+            }
+
+            if (!destination->handle.is_writable())
+            {
+                return STATUS_ACCESS_DENIED;
             }
 
             if (source_offset)
@@ -2016,6 +2046,11 @@ namespace sogen
             f.drive_number = path.get_drive().value() - 'a' + 1;
 
             auto& file_sys = c.win_emu.file_sys;
+
+            if ((create_options & FILE_DELETE_ON_CLOSE) && !file_sys.is_writable(path))
+            {
+                return STATUS_ACCESS_DENIED;
+            }
             const auto existing_stat = file_sys.stat(path);
             const bool file_exists = existing_stat.has_value();
 

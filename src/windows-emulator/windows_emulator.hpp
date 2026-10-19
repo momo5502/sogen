@@ -13,6 +13,7 @@
 #include "kernel_lock.hpp"
 #include "logger.hpp"
 #include "file_system.hpp"
+#include "filesystem/mount_spec.hpp"
 #include "memory_manager.hpp"
 #include "module/module_manager.hpp"
 #include "network/dns_lookup.hpp"
@@ -130,7 +131,8 @@ namespace sogen
         bool load_registry{true};
 
         std::unordered_map<uint16_t, uint16_t> port_mappings{};
-        std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
+        filesystem_mode root_mode{default_root_mode};
+        std::vector<mount_spec> mounts{};
 
         fake_environment_config fake_env{};
 

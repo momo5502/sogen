@@ -47,7 +47,7 @@ namespace sogen
         }
     }
 
-    file_system::file_system(const std::filesystem::path& root)
+    file_system::file_system(const std::filesystem::path& root, const filesystem_mode root_mode)
     {
         if (root.empty())
         {
@@ -60,7 +60,7 @@ namespace sogen
                 if (drive_bits & (1 << (drive - 'a')))
                 {
                     const std::array<char, 4> drive_root{drive, ':', '\\', '\0'};
-                    this->mount(windows_path{drive, {}}, std::make_unique<host_directory_provider>(drive_root.data()));
+                    this->mount(windows_path{drive, {}}, std::make_unique<host_directory_provider>(drive_root.data()), root_mode);
                 }
             }
 #endif
@@ -75,24 +75,27 @@ namespace sogen
             const auto filename = entry.path().filename().string();
             if (filename.size() == 1 && entry.is_directory(ec))
             {
-                this->mount(windows_path{filename.front(), {}}, std::make_unique<host_directory_provider>(entry.path()));
+                this->mount(windows_path{filename.front(), {}}, std::make_unique<host_directory_provider>(entry.path()), root_mode);
             }
         }
     }
 
-    void file_system::mount(const windows_path& guest_path, std::unique_ptr<mount_provider> provider)
+    void file_system::mount(const windows_path& guest_path, std::unique_ptr<mount_provider> provider, const filesystem_mode mode)
     {
         if (!guest_path.is_absolute())
         {
             throw std::runtime_error("Only absolute paths can be mounted: " + guest_path.string());
         }
 
-        this->mounts_[guest_path.lexically_normal()] = std::move(provider);
+        this->mounts_[guest_path.lexically_normal()] = mount_entry{
+            .provider = std::move(provider),
+            .mode = mode,
+        };
     }
 
-    void file_system::map(const windows_path& guest_path, std::filesystem::path host_path)
+    void file_system::map(const windows_path& guest_path, std::filesystem::path host_path, const filesystem_mode mode)
     {
-        this->mount(guest_path, std::make_unique<host_directory_provider>(std::move(host_path)));
+        this->mount(guest_path, std::make_unique<host_directory_provider>(std::move(host_path)), mode);
     }
 
     std::set<char> file_system::list_drives() const
@@ -134,13 +137,14 @@ namespace sogen
 
         std::optional<resolved_path> best{};
 
-        for (const auto& [mount_point, provider] : this->mounts_)
+        for (const auto& [mount_point, entry] : this->mounts_)
         {
             auto relative = normalized.relative_to(mount_point);
             if (relative && (!best || mount_point.depth() > best->mount_point.depth()))
             {
                 best = resolved_path{
-                    .provider = provider.get(),
+                    .provider = entry.provider.get(),
+                    .mode = entry.mode,
                     .mount_point = mount_point,
                     .relative = std::move(*relative),
                 };
@@ -172,14 +176,14 @@ namespace sogen
 
         const auto normalized = path.lexically_normal();
 
-        for (const auto& [mount_point, provider] : this->mounts_)
+        for (const auto& [mount_point, entry] : this->mounts_)
         {
             if (mount_point.depth() == 0 || mount_point.parent() != normalized)
             {
                 continue;
             }
 
-            const auto mount_stat = provider->stat({});
+            const auto mount_stat = entry.provider->stat({});
             if (!mount_stat)
             {
                 continue;
@@ -187,8 +191,8 @@ namespace sogen
 
             auto name = mount_point.leaf();
 
-            std::erase_if(entries, [&](const directory_entry& entry) {
-                return utils::string::to_lower(entry.name) == name; //
+            std::erase_if(entries, [&](const directory_entry& existing) {
+                return utils::string::to_lower(existing.name) == name; //
             });
 
             entries.emplace_back(directory_entry{
@@ -201,12 +205,23 @@ namespace sogen
         return entries;
     }
 
+    bool file_system::is_writable(const windows_path& path) const
+    {
+        const auto resolved = this->resolve(path);
+        return resolved && resolved->mode == filesystem_mode::read_write;
+    }
+
     open_result file_system::open(const windows_path& path, const std::u16string& mode)
     {
         const auto resolved = this->resolve(path);
         if (!resolved)
         {
             return {.status = STATUS_OBJECT_PATH_NOT_FOUND};
+        }
+
+        if (is_write_open_mode(mode) && resolved->mode != filesystem_mode::read_write)
+        {
+            return {.status = STATUS_ACCESS_DENIED};
         }
 
         return resolved->provider->open(resolved->relative, mode);
@@ -218,6 +233,11 @@ namespace sogen
         if (!resolved)
         {
             return STATUS_OBJECT_PATH_NOT_FOUND;
+        }
+
+        if (resolved->mode != filesystem_mode::read_write)
+        {
+            return STATUS_ACCESS_DENIED;
         }
 
         return resolved->provider->create_directory(resolved->relative);
@@ -233,7 +253,8 @@ namespace sogen
         }
 
         if (is_protected_mount_root(*source->provider, source->relative) ||
-            is_protected_mount_root(*destination->provider, destination->relative))
+            is_protected_mount_root(*destination->provider, destination->relative) || source->mode != filesystem_mode::read_write ||
+            destination->mode != filesystem_mode::read_write)
         {
             return STATUS_ACCESS_DENIED;
         }
@@ -290,7 +311,7 @@ namespace sogen
             return STATUS_OBJECT_PATH_NOT_FOUND;
         }
 
-        if (is_protected_mount_root(*resolved->provider, resolved->relative))
+        if (is_protected_mount_root(*resolved->provider, resolved->relative) || resolved->mode != filesystem_mode::read_write)
         {
             return STATUS_ACCESS_DENIED;
         }

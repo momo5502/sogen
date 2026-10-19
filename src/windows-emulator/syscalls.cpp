@@ -229,7 +229,8 @@ namespace sogen
                                                emulator_pointer object_information, ULONG object_information_length);
         NTSTATUS handle_NtQuerySecurityObject(const syscall_context& c, handle /*h*/, SECURITY_INFORMATION /*security_information*/,
                                               emulator_pointer security_descriptor, ULONG length, emulator_object<ULONG> length_needed);
-        NTSTATUS handle_NtSetSecurityObject();
+        NTSTATUS handle_NtSetSecurityObject(const syscall_context& c, handle h, SECURITY_INFORMATION /*security_information*/,
+                                            emulator_pointer /*security_descriptor*/);
 
         // syscalls/port.cpp:
         NTSTATUS handle_NtConnectPort(const syscall_context& c, emulator_object<handle> client_port_handle,

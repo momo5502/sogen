@@ -3,6 +3,8 @@
 #include "../emulator_utils.hpp"
 #include "../file_system.hpp"
 
+#include <utils/string.hpp>
+
 namespace sogen
 {
 
@@ -16,6 +18,14 @@ namespace sogen
             }
 
             return mode;
+        }
+
+        void validate_writable_after_restore(const file_system& file_sys, const windows_path& path, const std::string_view saved_state)
+        {
+            if (!file_sys.is_writable(path))
+            {
+                throw std::runtime_error(path.string() + " was saved " + std::string(saved_state) + ", but its mount is not writable now");
+            }
         }
     }
 
@@ -132,6 +142,17 @@ namespace sogen
         buffer.read_optional(this->rename_target_);
         buffer.read(this->delete_on_close_);
 
+        if (this->delete_on_close_)
+        {
+            validate_writable_after_restore(*this->file_sys_, this->path_, "with delete-on-close set");
+        }
+
+        if (this->rename_target_)
+        {
+            validate_writable_after_restore(*this->file_sys_, this->path_, "with a pending rename");
+            validate_writable_after_restore(*this->file_sys_, *this->rename_target_, "as a pending rename target");
+        }
+
         if (!buffer.read<bool>())
         {
             return;
@@ -139,10 +160,16 @@ namespace sogen
 
         const auto position = buffer.read<int64_t>();
 
+        if (is_write_open_mode(this->mode_))
+        {
+            validate_writable_after_restore(*this->file_sys_, this->path_, "with a writable handle");
+        }
+
         auto result = this->file_sys_->open(this->path_, get_reopen_mode(this->mode_));
         if (!result.file)
         {
-            throw std::runtime_error("Failed to reopen file: " + this->path_.string());
+            throw std::runtime_error("Failed to reopen file " + this->path_.string() + ": status 0x" +
+                                     utils::string::to_hex_number(static_cast<uint32_t>(result.status)));
         }
 
         if (!result.file->seek(position, SEEK_SET))
