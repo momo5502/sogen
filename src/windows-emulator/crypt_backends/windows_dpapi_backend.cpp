@@ -108,17 +108,6 @@ namespace sogen
             return true;
         }
 
-        bool save_master_key_file(const std::filesystem::path& path, const std::array<uint8_t, k_dpapi_master_key_size>& key)
-        {
-            utils::io::create_directory(path.parent_path());
-            std::vector<std::byte> bytes(k_master_key_magic.size() + sizeof(uint32_t) + key.size());
-            std::memcpy(bytes.data(), k_master_key_magic.data(), k_master_key_magic.size());
-            uint32_t version = k_file_version;
-            std::memcpy(bytes.data() + k_master_key_magic.size(), &version, sizeof(version));
-            std::memcpy(bytes.data() + k_master_key_magic.size() + sizeof(version), key.data(), key.size());
-            return utils::io::write_file(path, bytes);
-        }
-
         struct parsed_blob
         {
             dpapi_blob_view view{};
@@ -287,10 +276,6 @@ namespace sogen
                 if (master_key.size() == k_dpapi_master_key_size)
                 {
                     std::memcpy(master_key_.data(), master_key.data(), master_key.size());
-                    if (!this->emulation_root_.empty())
-                    {
-                        save_master_key_file(master_key_path(this->emulation_root_), this->master_key_);
-                    }
                     return;
                 }
 

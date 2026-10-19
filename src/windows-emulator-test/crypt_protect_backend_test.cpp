@@ -158,26 +158,13 @@ namespace sogen::test
         EXPECT_EQ(first.data, second.data);
     }
 
-    TEST(CryptProtectBackend, PersistsEmulatorMasterKey)
+    TEST(CryptProtectBackend, ExplicitMasterKeyDoesNotWriteToEmulationRoot)
     {
         const auto root = std::filesystem::temp_directory_path() / "sogen-dpapi-test" / std::to_string(std::random_device{}());
         std::filesystem::create_directories(root);
-        const auto key = test_master_key();
-        const std::vector<uint8_t> plain{0x01, 0x02, 0x03};
-        crypt_protect_request request{};
-        request.data = plain;
 
-        auto first = create_windows_dpapi_backend(root, {}, key);
-        const auto protected_blob = first->protect(request);
-        ASSERT_TRUE(protected_blob.ok);
-        first.reset();
-
-        auto second = create_windows_dpapi_backend(root);
-        crypt_protect_request unprotect_request{};
-        unprotect_request.data = protected_blob.data;
-        const auto unprotected = second->unprotect(unprotect_request, false);
-        ASSERT_TRUE(unprotected.ok);
-        EXPECT_EQ(unprotected.data, plain);
+        const auto backend = create_windows_dpapi_backend(root, {}, test_master_key());
+        EXPECT_TRUE(std::filesystem::is_empty(root));
         std::filesystem::remove_all(root);
     }
 
