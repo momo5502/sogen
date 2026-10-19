@@ -2673,9 +2673,8 @@ namespace sogen::fex
             set_host_pc(context, target);
         }
 
-        // The stop handlers pop the callee-saved registers the dispatcher pushed on entry, assuming SP still points at
-        // that frame. JIT code can be interrupted with SP elsewhere, e.g. mid-call into a helper, so SP is reset to the
-        // frame first, as FEX's own signal delegator does.
+        // The stop handlers pop the dispatcher's entry frame, but JIT code can be interrupted with SP elsewhere (e.g.
+        // mid-call into a helper), so SP is reset to that frame first, as FEX's own signal delegator does.
         void unwind_to_dispatcher_frame(ucontext_t* context) const
         {
             auto* frame = this->thread_->CurrentFrame;
