@@ -78,6 +78,9 @@ if(SOGEN_ENABLE_FEX)
       -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF
     # Build only the self-contained shared core library, not FEX's loader/server tools.
     BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target FEXCore_shared
+    # The source directory is a submodule, whose changes ExternalProject cannot see, so FEX's own (incremental)
+    # build runs every time.
+    BUILD_ALWAYS TRUE
     INSTALL_COMMAND ""
     BUILD_BYPRODUCTS <BINARY_DIR>/FEXCore/Source/${_FEXCORE_SHARED_LIB}
   )
