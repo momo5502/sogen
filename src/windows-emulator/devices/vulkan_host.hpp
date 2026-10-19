@@ -344,9 +344,9 @@ namespace sogen
                                const image_copy_region& region);
         int32_t cmd_blit_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
                                const image_blit_region& region);
-        // Resolves a multisampled source image into a single-sample destination (full image, mip 0 / layer 0).
+        // One VkImageResolve region.
         int32_t cmd_resolve_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
-                                  uint32_t width, uint32_t height, uint32_t aspect_mask);
+                                  const image_copy_region& region);
         // Updates a buffer region inline from caller-provided data (vkCmdUpdateBuffer).
         int32_t cmd_update_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, const void* data, uint32_t size);
 
