@@ -90,6 +90,7 @@
 #include <FEXCore/Utils/LongJump.h>
 #include <FEXCore/Utils/LogManager.h>
 #include <FEXCore/Utils/AllocatorHooks.h>
+#include <FEXCore/Utils/ArchHelpers/Arm64.h>
 
 namespace sogen::fex
 {
@@ -2881,6 +2882,29 @@ namespace sogen::fex
         bool handle_misaligned_atomic_fault(ucontext_t* uctx, uint64_t fault_addr)
         {
             const uint64_t pc = get_host_pc(uctx);
+
+            // FEXCore rewrites a faulting access in its own code into a half-barrier sequence, so it does not trap
+            // again. Emulating each access instead traps on every execution.
+            if (this->context_ && this->context_->IsAddressInCodeBuffer(this->thread_, pc))
+            {
+#ifdef __APPLE__
+                ::pthread_jit_write_protect_np(0);
+                auto* gprs = reinterpret_cast<uint64_t*>(&uctx->uc_mcontext->__ss);
+#else
+                auto* gprs = reinterpret_cast<uint64_t*>(uctx->uc_mcontext.regs);
+#endif
+                const auto skip = FEXCore::ArchHelpers::Arm64::HandleUnalignedAccess(
+                    this->thread_, FEXCore::ArchHelpers::Arm64::UnalignedHandlerType::HalfBarrier, pc, gprs);
+#ifdef __APPLE__
+                ::pthread_jit_write_protect_np(1);
+#endif
+                if (skip)
+                {
+                    set_host_pc(uctx, pc + *skip);
+                    return true;
+                }
+            }
+
             const auto insn = *reinterpret_cast<const uint32_t*>(pc);
 
             if (const auto load = decode_arm64_load(insn))
