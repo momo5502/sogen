@@ -2870,7 +2870,7 @@ namespace sogen::fex
             const uint64_t pc = get_host_pc(uctx);
 
             // FEXCore rewrites a faulting access in its own code into a half-barrier sequence, so it does not trap
-            // again. Emulating each access instead traps on every execution, millions of times per second in games.
+            // again. Emulating each access instead traps on every execution.
             if (this->context_ && this->context_->IsAddressInCodeBuffer(this->thread_, pc))
             {
 #ifdef __APPLE__
