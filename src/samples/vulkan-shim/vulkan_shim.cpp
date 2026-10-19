@@ -1240,9 +1240,22 @@ extern "C"
             const uint32_t wait_count = si.waitSemaphoreCount;
             const uint32_t command_buffer_count = si.commandBufferCount;
             const uint32_t signal_count = si.signalSemaphoreCount;
-            std::vector<uint8_t> message(sizeof(gb::queue_submit_request) +
-                                         static_cast<size_t>(wait_count + signal_count) * sizeof(gb::submit_semaphore_entry) +
-                                         static_cast<size_t>(command_buffer_count) * sizeof(uint64_t));
+            size_t message_size = sizeof(gb::queue_submit_request);
+            const auto add_array_size = [&](size_t count, size_t item_size) {
+                if (count > (MAXDWORD - message_size) / item_size)
+                {
+                    return false;
+                }
+                message_size += count * item_size;
+                return true;
+            };
+            if (!add_array_size(wait_count, sizeof(gb::submit_semaphore_entry)) ||
+                !add_array_size(command_buffer_count, sizeof(uint64_t)) ||
+                !add_array_size(signal_count, sizeof(gb::submit_semaphore_entry)))
+            {
+                return VK_ERROR_OUT_OF_HOST_MEMORY;
+            }
+            std::vector<uint8_t> message(message_size);
             auto* header = reinterpret_cast<gb::queue_submit_request*>(message.data());
             header->queue = to_object_id(queue);
             header->fence = (s + 1 == submitCount) ? to_object_id(fence) : gb::null_object;
@@ -1258,7 +1271,9 @@ extern "C"
                 waits[i] = {.semaphore = to_object_id(si.pWaitSemaphores[i]),
                             .stage_mask = si.pWaitDstStageMask[i],
                             .reserved = 0,
-                            .value = timeline_info ? timeline_info->pWaitSemaphoreValues[i] : 0};
+                            .value = timeline_info && timeline_info->pWaitSemaphoreValues && i < timeline_info->waitSemaphoreValueCount
+                                         ? timeline_info->pWaitSemaphoreValues[i]
+                                         : 0};
             }
             offset += static_cast<size_t>(wait_count) * sizeof(gb::submit_semaphore_entry);
 
@@ -1275,7 +1290,10 @@ extern "C"
                 signals[i] = {.semaphore = to_object_id(si.pSignalSemaphores[i]),
                               .stage_mask = 0,
                               .reserved = 0,
-                              .value = timeline_info ? timeline_info->pSignalSemaphoreValues[i] : 0};
+                              .value =
+                                  timeline_info && timeline_info->pSignalSemaphoreValues && i < timeline_info->signalSemaphoreValueCount
+                                      ? timeline_info->pSignalSemaphoreValues[i]
+                                      : 0};
             }
 
             gb::result_response response{};
