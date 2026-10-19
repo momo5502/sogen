@@ -277,6 +277,16 @@ namespace sogen
                 return STATUS_SUCCESS;
             }
 
+            if (info_class == ThreadPagePriority)
+            {
+                if (thread_information_length != sizeof(ULONG))
+                {
+                    return STATUS_BUFFER_OVERFLOW;
+                }
+
+                return STATUS_SUCCESS;
+            }
+
             c.win_emu.log.error("Unsupported thread set info class: %X\n", info_class);
             c.emu.stop();
             return STATUS_NOT_SUPPORTED;
@@ -565,6 +575,26 @@ namespace sogen
                         c.proc.kusd.access([](const KUSER_SHARED_DATA64& kusd) { return kusd.ActiveProcessorCount; });
                     ga.Mask = processor_count >= 64 ? ~0ull : ((1ull << processor_count) - 1);
                 });
+
+                return STATUS_SUCCESS;
+            }
+
+            if (info_class == ThreadPagePriority)
+            {
+                constexpr ULONG normal_page_priority = 5; // MEMORY_NORMAL_PRIORITY
+
+                if (return_length)
+                {
+                    return_length.write(sizeof(ULONG));
+                }
+
+                if (thread_information_length != sizeof(ULONG))
+                {
+                    return STATUS_BUFFER_OVERFLOW;
+                }
+
+                const emulator_object<ULONG> info{c.emu, thread_information};
+                info.write(normal_page_priority);
 
                 return STATUS_SUCCESS;
             }
