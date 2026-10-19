@@ -2669,7 +2669,21 @@ namespace sogen::fex
             this->pending_fault_dispatch_ = dispatch;
             const auto& config = this->signal_delegator_->GetConfig();
             const auto target = state_already_spilled ? config.ThreadStopHandlerAddress : config.ThreadStopHandlerAddressSpillSRA;
+            this->unwind_to_dispatcher_frame(context);
             set_host_pc(context, target);
+        }
+
+        // The stop handlers pop the dispatcher's entry frame, but JIT code can be interrupted with SP elsewhere (e.g.
+        // mid-call into a helper), so SP is reset to that frame first, as FEX's own signal delegator does.
+        void unwind_to_dispatcher_frame(ucontext_t* context) const
+        {
+            auto* frame = this->thread_->CurrentFrame;
+            frame->SignalHandlerRefCounter = 0;
+#ifdef __APPLE__
+            context->uc_mcontext->__ss.__sp = frame->ReturningStackLocation;
+#else
+            context->uc_mcontext.sp = frame->ReturningStackLocation;
+#endif
         }
 
         // The dispatcher is separate from FEXCore's CodeBuffer range, so IsAddressInCodeBuffer does
@@ -3008,6 +3022,7 @@ namespace sogen::fex
                         this->thread_->CurrentFrame->State.rip = this->context_->RestoreRIPFromHostPC(this->thread_, fault_pc);
                         this->interrupt_page_unwind_ = true;
                         const auto& stop_cfg = this->signal_delegator_->GetConfig();
+                        this->unwind_to_dispatcher_frame(uctx);
                         set_host_pc(uctx, stop_cfg.ThreadStopHandlerAddressSpillSRA);
                         return true;
                     }
