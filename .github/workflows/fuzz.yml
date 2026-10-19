@@ -27,7 +27,7 @@ jobs:
     name: Fuzz IO device handlers
     runs-on: ubuntu-24.04
     env:
-      CLANG_VERSION: 21
+      CLANG_VERSION: 22
       DURATION: ${{ github.event.inputs.duration_seconds || '3600' }}
     steps:
       - name: Checkout Source
