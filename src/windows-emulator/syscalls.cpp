@@ -770,7 +770,7 @@ namespace sogen
         uint64_t handle_NtUserConvertMemHandle();
         uint64_t handle_NtUserSetClipboardData();
         uint64_t handle_NtUserGetProcessDpiAwarenessContext();
-        NTSTATUS handle_NtUserSetProcessDpiAwarenessContext();
+        BOOL handle_NtUserSetProcessDpiAwarenessContext();
         uint32_t handle_NtUserMapVirtualKeyEx(const syscall_context& c, uint32_t code, uint32_t map_type, uint32_t keyboard_id,
                                               uint64_t keyboard_layout);
         NTSTATUS handle_NtUserToUnicodeEx();

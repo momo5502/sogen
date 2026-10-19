@@ -6946,9 +6946,9 @@ namespace sogen
             return USER_DEFAULT_DPI_CONTEXT;
         }
 
-        NTSTATUS handle_NtUserSetProcessDpiAwarenessContext()
+        BOOL handle_NtUserSetProcessDpiAwarenessContext()
         {
-            return 0;
+            return TRUE;
         }
 
         uint32_t handle_NtUserMapVirtualKeyEx(const syscall_context& /*c*/, const uint32_t code, const uint32_t map_type,
