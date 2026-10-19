@@ -764,6 +764,8 @@ namespace sogen
         BOOL handle_NtUserOpenClipboard();
         BOOL handle_NtUserCloseClipboard();
         BOOL handle_NtUserEmptyClipboard();
+        BOOL handle_NtUserAddClipboardFormatListener(const syscall_context& c, hwnd window);
+        BOOL handle_NtUserRemoveClipboardFormatListener(const syscall_context& c, hwnd window);
         uint64_t handle_NtUserGetClipboardData();
         uint64_t handle_NtUserConvertMemHandle();
         uint64_t handle_NtUserSetClipboardData();
@@ -1998,6 +2000,8 @@ namespace sogen
         add_handler(NtUserOpenClipboard);
         add_handler(NtUserCloseClipboard);
         add_handler(NtUserEmptyClipboard);
+        add_handler(NtUserAddClipboardFormatListener);
+        add_handler(NtUserRemoveClipboardFormatListener);
         add_handler(NtUserGetClipboardData);
         add_handler(NtUserConvertMemHandle);
         add_handler(NtUserSetClipboardData);

@@ -6914,6 +6914,16 @@ namespace sogen
             return TRUE;
         }
 
+        BOOL handle_NtUserAddClipboardFormatListener(const syscall_context& /*c*/, const hwnd /*window*/)
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserRemoveClipboardFormatListener(const syscall_context& /*c*/, const hwnd /*window*/)
+        {
+            return TRUE;
+        }
+
         uint64_t handle_NtUserGetClipboardData()
         {
             return 0;
