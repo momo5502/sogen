@@ -5657,7 +5657,8 @@ namespace sogen
         return result;
     }
 
-    int32_t vulkan_host::update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes)
+    int32_t vulkan_host::update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes,
+                                                std::span<const descriptor_copy> copies)
     {
         const auto dev = this->impl_->devices.find(device);
         if (dev == this->impl_->devices.end() || !dev->second.update_descriptor_sets)
@@ -5674,12 +5675,15 @@ namespace sogen
         static thread_local std::vector<VkDescriptorImageInfo> image_infos;
         static thread_local std::vector<VkBufferView> texel_buffer_views;
         static thread_local std::vector<VkWriteDescriptorSetInlineUniformBlock> inline_uniform_blocks;
+        static thread_local std::vector<VkCopyDescriptorSet> vk_copies;
         vk_writes.clear();
         buffer_infos.resize(writes.size());
         image_infos.resize(writes.size());
         texel_buffer_views.resize(writes.size());
         inline_uniform_blocks.resize(writes.size());
         vk_writes.reserve(writes.size());
+        vk_copies.clear();
+        vk_copies.reserve(copies.size());
 
         // Consecutive writes usually target the same descriptor set; cache the last lookup to avoid a hash
         // probe per write.
@@ -5793,9 +5797,32 @@ namespace sogen
             vk_writes.push_back(vw);
         }
 
-        if (!vk_writes.empty())
+        for (const descriptor_copy& c : copies)
         {
-            dev->second.update_descriptor_sets(dev->second.handle, static_cast<uint32_t>(vk_writes.size()), vk_writes.data(), 0, nullptr);
+            const auto src_set = this->impl_->descriptor_sets.find(c.src_set);
+            const auto dst_set = this->impl_->descriptor_sets.find(c.dst_set);
+            if (src_set == this->impl_->descriptor_sets.end() || dst_set == this->impl_->descriptor_sets.end() ||
+                src_set->second.device_id != device || dst_set->second.device_id != device)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+
+            VkCopyDescriptorSet copy{};
+            copy.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
+            copy.srcSet = src_set->second.handle;
+            copy.srcBinding = c.src_binding;
+            copy.srcArrayElement = c.src_array_element;
+            copy.dstSet = dst_set->second.handle;
+            copy.dstBinding = c.dst_binding;
+            copy.dstArrayElement = c.dst_array_element;
+            copy.descriptorCount = c.descriptor_count;
+            vk_copies.push_back(copy);
+        }
+
+        if (!vk_writes.empty() || !vk_copies.empty())
+        {
+            dev->second.update_descriptor_sets(dev->second.handle, static_cast<uint32_t>(vk_writes.size()), vk_writes.data(),
+                                               static_cast<uint32_t>(vk_copies.size()), vk_copies.data());
         }
         return VK_SUCCESS;
     }

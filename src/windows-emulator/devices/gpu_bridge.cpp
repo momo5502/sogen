@@ -2751,7 +2751,13 @@ namespace sogen
                     return vk_error_initialization_failed;
                 }
                 const size_t writes_bytes = static_cast<size_t>(request.write_count) * sizeof(gpu_bridge::descriptor_write);
-                const size_t inline_uniform_data_offset = offset + writes_bytes;
+                const size_t copies_offset = offset + writes_bytes;
+                if (request.copy_count > (size - copies_offset) / sizeof(gpu_bridge::descriptor_copy))
+                {
+                    return vk_error_initialization_failed;
+                }
+                const size_t copies_bytes = static_cast<size_t>(request.copy_count) * sizeof(gpu_bridge::descriptor_copy);
+                const size_t inline_uniform_data_offset = copies_offset + copies_bytes;
                 if (request.inline_uniform_data_size > size - inline_uniform_data_offset)
                 {
                     return vk_error_initialization_failed;
@@ -2782,8 +2788,23 @@ namespace sogen
                              .inline_uniform_data = std::span<const std::byte>{
                                  data + inline_uniform_data_offset + w.inline_uniform_data_offset, w.inline_uniform_data_size}};
                 }
+                std::vector<vulkan_host::descriptor_copy> copies(request.copy_count);
+                size_t copy_offset = copies_offset;
+                for (auto& copy : copies)
+                {
+                    gpu_bridge::descriptor_copy c{};
+                    std::memcpy(&c, data + copy_offset, sizeof(c));
+                    copy_offset += sizeof(c);
+                    copy = {.src_set = c.src_set,
+                            .src_binding = c.src_binding,
+                            .src_array_element = c.src_array_element,
+                            .dst_set = c.dst_set,
+                            .dst_binding = c.dst_binding,
+                            .dst_array_element = c.dst_array_element,
+                            .descriptor_count = c.descriptor_count};
+                }
                 offset = inline_uniform_data_offset + request.inline_uniform_data_size;
-                return this->vulkan_.update_descriptor_sets(request.device, writes);
+                return this->vulkan_.update_descriptor_sets(request.device, writes, copies);
             }
 
             NTSTATUS handle_update_descriptor_sets(windows_emulator& win_emu, const io_device_context& context)

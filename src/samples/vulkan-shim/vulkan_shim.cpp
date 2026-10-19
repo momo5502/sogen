@@ -4583,12 +4583,12 @@ extern "C"
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkUpdateDescriptorSets(VkDevice device, uint32_t descriptorWriteCount,
-                                                                            const VkWriteDescriptorSet* pDescriptorWrites, uint32_t,
-                                                                            const VkCopyDescriptorSet*)
+                                                                            const VkWriteDescriptorSet* pDescriptorWrites,
+                                                                            uint32_t descriptorCopyCount,
+                                                                            const VkCopyDescriptorSet* pDescriptorCopies)
     {
-        // Descriptor copies are not modeled; only writes are forwarded. Non-inline writes are flattened
-        // to `descriptorCount` single-descriptor wire writes.
         std::vector<gb::descriptor_write> writes;
+        std::vector<gb::descriptor_copy> copies;
         std::vector<uint8_t> inline_uniform_data;
         for (uint32_t w = 0; w < descriptorWriteCount; ++w)
         {
@@ -4654,9 +4654,24 @@ extern "C"
             }
         }
 
+        copies.reserve(descriptorCopyCount);
+        for (uint32_t i = 0; i < descriptorCopyCount; ++i)
+        {
+            const VkCopyDescriptorSet& src = pDescriptorCopies[i];
+            copies.push_back({.src_set = to_object_id(src.srcSet),
+                              .src_binding = src.srcBinding,
+                              .src_array_element = src.srcArrayElement,
+                              .dst_set = to_object_id(src.dstSet),
+                              .dst_binding = src.dstBinding,
+                              .dst_array_element = src.dstArrayElement,
+                              .descriptor_count = src.descriptorCount,
+                              .reserved = 0});
+        }
+
         gb::update_descriptor_sets_request header{};
         header.device = to_object_id(device);
         header.write_count = static_cast<uint32_t>(writes.size());
+        header.copy_count = static_cast<uint32_t>(copies.size());
         header.inline_uniform_data_size = static_cast<uint32_t>(inline_uniform_data.size());
 
         // Append to the pending batch instead of issuing an IOCTL now (drained before the next bridge call).
@@ -4668,6 +4683,12 @@ extern "C"
         {
             g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), write_bytes,
                                                 write_bytes + writes.size() * sizeof(gb::descriptor_write));
+        }
+        const auto* copy_bytes = reinterpret_cast<const uint8_t*>(copies.data());
+        if (!copies.empty())
+        {
+            g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), copy_bytes,
+                                                copy_bytes + copies.size() * sizeof(gb::descriptor_copy));
         }
         g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), inline_uniform_data.begin(), inline_uniform_data.end());
     }
