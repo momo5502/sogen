@@ -2749,7 +2749,6 @@ extern "C"
         }
     }
 
-    // Resolves one region of a multisampled source image into a single-sample destination.
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdResolveImage(VkCommandBuffer commandBuffer, VkImage srcImage,
                                                                        VkImageLayout srcImageLayout, VkImage dstImage,
                                                                        VkImageLayout dstImageLayout, uint32_t regionCount,
