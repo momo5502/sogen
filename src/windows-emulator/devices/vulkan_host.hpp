@@ -145,8 +145,10 @@ namespace sogen
         int32_t queue_wait_idle(uint64_t queue);
         int32_t device_wait_idle(uint64_t device);
 
-        // Submits a single command buffer to the queue, optionally signaling the fence (0 = none).
-        int32_t queue_submit(uint64_t queue, uint64_t command_buffer, uint64_t fence);
+        // Submits one VkSubmitInfo. wait_entries/signal_entries are submit_semaphore_entry arrays;
+        // command_buffer_ids is an object_id array. fence 0 = none.
+        int32_t queue_submit(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count, const void* command_buffer_ids,
+                             uint32_t command_buffer_count, const void* signal_entries, uint32_t signal_count, bool has_timeline_info);
 
         // synchronization2 submit. wait_entries/signal_entries are submit2_semaphore_entry arrays;
         // command_buffer_ids is an object_id array. fence 0 = none.

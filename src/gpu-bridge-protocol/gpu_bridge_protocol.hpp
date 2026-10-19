@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 33;
+    inline constexpr uint32_t protocol_version = 34;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -816,8 +816,19 @@ namespace sogen::gpu_bridge
     struct queue_submit_request
     {
         object_id queue;
-        object_id command_buffer;
         object_id fence; // null_object for no fence
+        uint32_t wait_count;
+        uint32_t command_buffer_count;
+        uint32_t signal_count;
+        uint32_t has_timeline_info;
+    };
+
+    struct submit_semaphore_entry
+    {
+        object_id semaphore;
+        uint32_t stage_mask; // VkPipelineStageFlags
+        uint32_t reserved;
+        uint64_t value; // timeline value; zero for binary semaphores
     };
 
     struct queue_wait_idle_request

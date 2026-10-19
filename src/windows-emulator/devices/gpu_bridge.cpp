@@ -1371,9 +1371,25 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                const size_t wait_offset = sizeof(request);
+                const size_t cmd_offset =
+                    wait_offset + static_cast<size_t>(request.wait_count) * sizeof(gpu_bridge::submit_semaphore_entry);
+                const size_t signal_offset = cmd_offset + static_cast<size_t>(request.command_buffer_count) * sizeof(uint64_t);
+                std::vector<gpu_bridge::submit_semaphore_entry> waits;
+                std::vector<uint64_t> command_buffers;
+                std::vector<gpu_bridge::submit_semaphore_entry> signals;
+                if (!read_trailing_array(win_emu, context, wait_offset, request.wait_count, waits) ||
+                    !read_trailing_array(win_emu, context, cmd_offset, request.command_buffer_count, command_buffers) ||
+                    !read_trailing_array(win_emu, context, signal_offset, request.signal_count, signals))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 this->flush_aliased_memory_for_device(win_emu);
 
-                const int32_t result = this->vulkan_.queue_submit(request.queue, request.command_buffer, request.fence);
+                const int32_t result = this->vulkan_.queue_submit(request.queue, request.fence, waits.data(), request.wait_count,
+                                                                  command_buffers.data(), request.command_buffer_count, signals.data(),
+                                                                  request.signal_count, request.has_timeline_info != 0);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 

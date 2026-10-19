@@ -2975,7 +2975,9 @@ namespace sogen
         return dev->second.reset_event(dev->second.handle, it->second.handle);
     }
 
-    int32_t vulkan_host::queue_submit(uint64_t queue, uint64_t command_buffer, uint64_t fence)
+    int32_t vulkan_host::queue_submit(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count,
+                                      const void* command_buffer_ids, uint32_t command_buffer_count, const void* signal_entries,
+                                      uint32_t signal_count, bool has_timeline_info)
     {
         const auto queue_it = this->impl_->queues.find(queue);
         if (queue_it == this->impl_->queues.end())
@@ -3000,24 +3002,73 @@ namespace sogen
             fence_handle = fence_it->second.handle;
         }
 
-        // Zero-command-buffer submission: still a valid fence signal operation (no work batched).
-        if (command_buffer == 0)
-        {
-            const auto lock = this->impl_->queue_lock(queue_it->second.handle);
-            const std::scoped_lock guard(*lock);
-            return dev->second.queue_submit(queue_it->second.handle, 0, nullptr, fence_handle);
-        }
+        const auto build_semaphores = [&](const void* entries, uint32_t count, std::vector<VkSemaphore>& semaphores,
+                                          std::vector<VkPipelineStageFlags>* stage_masks, std::vector<uint64_t>& values) {
+            const auto* records = static_cast<const gpu_bridge::submit_semaphore_entry*>(entries);
+            semaphores.reserve(count);
+            if (stage_masks)
+            {
+                stage_masks->reserve(count);
+            }
+            values.reserve(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const auto sem = this->impl_->semaphores.find(records[i].semaphore);
+                if (sem == this->impl_->semaphores.end() || sem->second.device_id != queue_it->second.device_id)
+                {
+                    return false;
+                }
+                semaphores.push_back(sem->second.handle);
+                if (stage_masks)
+                {
+                    stage_masks->push_back(static_cast<VkPipelineStageFlags>(records[i].stage_mask));
+                }
+                values.push_back(records[i].value);
+            }
+            return true;
+        };
 
-        const auto cb = this->impl_->command_buffers.find(command_buffer);
-        if (cb == this->impl_->command_buffers.end() || cb->second.device_id != queue_it->second.device_id)
+        std::vector<VkSemaphore> waits;
+        std::vector<VkPipelineStageFlags> wait_stage_masks;
+        std::vector<uint64_t> wait_values;
+        std::vector<VkSemaphore> signals;
+        std::vector<uint64_t> signal_values;
+        if (!build_semaphores(wait_entries, wait_count, waits, &wait_stage_masks, wait_values) ||
+            !build_semaphores(signal_entries, signal_count, signals, nullptr, signal_values))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        const auto* command_ids = static_cast<const uint64_t*>(command_buffer_ids);
+        std::vector<VkCommandBuffer> command_buffers;
+        command_buffers.reserve(command_buffer_count);
+        for (uint32_t i = 0; i < command_buffer_count; ++i)
+        {
+            const auto cb = this->impl_->command_buffers.find(command_ids[i]);
+            if (cb == this->impl_->command_buffers.end() || cb->second.device_id != queue_it->second.device_id)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            command_buffers.push_back(cb->second.handle);
+        }
+
+        VkTimelineSemaphoreSubmitInfo timeline_info{};
+        timeline_info.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+        timeline_info.waitSemaphoreValueCount = static_cast<uint32_t>(wait_values.size());
+        timeline_info.pWaitSemaphoreValues = wait_values.data();
+        timeline_info.signalSemaphoreValueCount = static_cast<uint32_t>(signal_values.size());
+        timeline_info.pSignalSemaphoreValues = signal_values.data();
+
         VkSubmitInfo submit{};
         submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &cb->second.handle;
+        submit.pNext = has_timeline_info ? &timeline_info : nullptr;
+        submit.waitSemaphoreCount = wait_count;
+        submit.pWaitSemaphores = waits.data();
+        submit.pWaitDstStageMask = wait_stage_masks.data();
+        submit.commandBufferCount = command_buffer_count;
+        submit.pCommandBuffers = command_buffers.data();
+        submit.signalSemaphoreCount = signal_count;
+        submit.pSignalSemaphores = signals.data();
 
         const auto lock = this->impl_->queue_lock(queue_it->second.handle);
         const std::scoped_lock guard(*lock);
