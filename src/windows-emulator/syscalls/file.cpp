@@ -135,6 +135,11 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
+        bool changes_file_state(const FILE_INFORMATION_CLASS info_class)
+        {
+            return info_class != FilePositionInformation;
+        }
+
         NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const handle file_handle,
                                              const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                              const uint64_t file_information, const ULONG length, const FILE_INFORMATION_CLASS info_class)
@@ -170,6 +175,11 @@ namespace sogen
                 }
 
                 return STATUS_INVALID_HANDLE;
+            }
+
+            if (changes_file_state(info_class) && !c.win_emu.file_sys.is_writable(f->handle.path()))
+            {
+                return STATUS_ACCESS_DENIED;
             }
 
             if (info_class == FileBasicInformation)
@@ -208,7 +218,7 @@ namespace sogen
                     new_path = f->handle.path().parent() / new_path;
                 }
 
-                if (!c.win_emu.file_sys.is_writable(f->handle.path()) || !c.win_emu.file_sys.is_writable(new_path))
+                if (!c.win_emu.file_sys.is_writable(new_path))
                 {
                     return STATUS_ACCESS_DENIED;
                 }
@@ -236,14 +246,8 @@ namespace sogen
                 }
 
                 const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION>(file_information);
-                const bool wants_delete = info.DeleteFile != FALSE;
 
-                if (wants_delete && !c.win_emu.file_sys.is_writable(f->handle.path()))
-                {
-                    return STATUS_ACCESS_DENIED;
-                }
-
-                f->handle.set_delete_on_close(wants_delete);
+                f->handle.set_delete_on_close(info.DeleteFile != FALSE);
 
                 return STATUS_SUCCESS;
             }
@@ -258,7 +262,7 @@ namespace sogen
                 const auto info = c.emu.read_memory<FILE_DISPOSITION_INFORMATION_EX>(file_information);
                 const bool wants_delete = (info.Flags & FILE_DISPOSITION_DELETE) != 0;
 
-                if (wants_delete && (!(f->access_mask & DELETE) || !c.win_emu.file_sys.is_writable(f->handle.path())))
+                if (wants_delete && !(f->access_mask & DELETE))
                 {
                     return STATUS_ACCESS_DENIED;
                 }
