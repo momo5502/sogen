@@ -271,4 +271,45 @@ namespace sogen::test
         EXPECT_EQ("shot", read_guest_file(restored, 16));
         EXPECT_EQ(contents, read_host_file(this->root / "c" / "new.bin"));
     }
+
+    TEST_F(FileSystemTest, SnapshotRestoreRequiresWritableMountForPendingWrites)
+    {
+        file_system saved_fs{this->root, filesystem_mode::read_write};
+        file_system read_only_fs{this->root, filesystem_mode::read_only};
+        const windows_path path{'c', {u"x.txt"}};
+
+        const auto get_restore_error = [](const guest_file& file, file_system& fs) -> std::string {
+            utils::buffer_serializer serializer{};
+            serializer.write(file);
+
+            utils::buffer_deserializer deserializer{serializer};
+            deserializer.register_factory<file_system_wrapper>([&] { return file_system_wrapper{fs}; });
+
+            try
+            {
+                guest_file restored{};
+                deserializer.read(restored);
+                return {};
+            }
+            catch (const std::runtime_error& e)
+            {
+                return e.what();
+            }
+        };
+
+        const guest_file reader{saved_fs, path, u"rb", saved_fs.open(path, u"rb").file};
+        EXPECT_EQ("", get_restore_error(reader, read_only_fs));
+
+        const guest_file writer{saved_fs, path, u"r+b", saved_fs.open(path, u"r+b").file};
+        EXPECT_NE(std::string::npos, get_restore_error(writer, read_only_fs).find("with a writable handle"));
+
+        guest_file deleter{saved_fs, path, u"rb", saved_fs.open(path, u"rb").file};
+        deleter.set_delete_on_close(true);
+        EXPECT_NE(std::string::npos, get_restore_error(deleter, read_only_fs).find("with delete-on-close set"));
+        deleter.set_delete_on_close(false);
+
+        guest_file renamer{saved_fs, path, u"rb", saved_fs.open(path, u"rb").file};
+        renamer.defer_rename(windows_path{'c', {u"renamed.txt"}});
+        EXPECT_NE(std::string::npos, get_restore_error(renamer, read_only_fs).find("with a pending rename"));
+    }
 } // namespace sogen::test
