@@ -1125,15 +1125,10 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtUserSystemParametersInfo()
-        {
-            return STATUS_NOT_SUPPORTED;
-        }
-
-        BOOL handle_NtUserSystemParametersInfoForDpi()
-        {
-            return TRUE;
-        }
+        BOOL handle_NtUserSystemParametersInfo(const syscall_context& c, uint32_t action, uint32_t param, emulator_pointer value,
+                                               uint32_t win_ini);
+        BOOL handle_NtUserSystemParametersInfoForDpi(const syscall_context& c, uint32_t action, uint32_t param, emulator_pointer value,
+                                                     uint32_t win_ini, uint32_t dpi);
 
         BOOL handle_NtUserIsWindowBroadcastingDpiToChildren()
         {

@@ -6817,6 +6817,83 @@ namespace sogen
             return TRUE;
         }
 
+        namespace
+        {
+            constexpr uint32_t k_spi_get_icontitle_logfont = 0x1F;
+            constexpr uint32_t k_spi_get_nonclientmetrics = 0x29;
+            constexpr uint32_t k_default_dpi = 96;
+
+            // The metrics and logfonts a Windows 11 desktop reports at 96 DPI.
+            void fill_ui_logfont(EMU_LOGFONTW& font, const uint32_t dpi)
+            {
+                font.lfHeight = -static_cast<LONG>(9ull * dpi / 72ull);
+                font.lfWeight = FW_NORMAL;
+                font.lfCharSet = DEFAULT_CHARSET;
+                std::ranges::copy(u"Segoe UI", font.lfFaceName);
+            }
+        }
+
+        BOOL handle_NtUserSystemParametersInfoForDpi(const syscall_context& c, const uint32_t action, const uint32_t param,
+                                                     const emulator_pointer value, const uint32_t /*win_ini*/, const uint32_t dpi)
+        {
+            const auto effective_dpi = dpi != 0 ? dpi : k_default_dpi;
+
+            if (action == k_spi_get_icontitle_logfont)
+            {
+                if (value == 0 || (param != 0 && param < sizeof(EMU_LOGFONTW)))
+                {
+                    return FALSE;
+                }
+
+                EMU_LOGFONTW font{};
+                fill_ui_logfont(font, effective_dpi);
+                emulator_object<EMU_LOGFONTW>{c.emu, value}.write(font);
+                return TRUE;
+            }
+
+            if (action == k_spi_get_nonclientmetrics)
+            {
+                if (value == 0)
+                {
+                    return FALSE;
+                }
+
+                const auto cb_size = emulator_object<uint32_t>{c.emu, value}.read();
+                const auto length = std::min(cb_size, param != 0 ? param : cb_size);
+                if (cb_size < offsetof(EMU_NONCLIENTMETRICS, lfMessageFont) + sizeof(EMU_LOGFONTW) ||
+                    length < offsetof(EMU_NONCLIENTMETRICS, lfMessageFont) + sizeof(EMU_LOGFONTW))
+                {
+                    return FALSE;
+                }
+
+                EMU_NONCLIENTMETRICS metrics{};
+                metrics.cbSize = cb_size;
+                metrics.iBorderWidth = 5;
+                metrics.iScrollWidth = 17;
+                metrics.iScrollHeight = 17;
+                metrics.iCaptionWidth = 22;
+                metrics.iCaptionHeight = 22;
+                metrics.iSmCaptionWidth = 22;
+                metrics.iSmCaptionHeight = 22;
+                fill_ui_logfont(metrics.lfCaptionFont, effective_dpi);
+                fill_ui_logfont(metrics.lfSmCaptionFont, effective_dpi);
+                fill_ui_logfont(metrics.lfMenuFont, effective_dpi);
+                fill_ui_logfont(metrics.lfStatusFont, effective_dpi);
+                fill_ui_logfont(metrics.lfMessageFont, effective_dpi);
+
+                c.emu.write_memory(value, &metrics, std::min(length, static_cast<uint32_t>(sizeof(metrics))));
+                return TRUE;
+            }
+
+            return FALSE;
+        }
+
+        BOOL handle_NtUserSystemParametersInfo(const syscall_context& c, const uint32_t action, const uint32_t param,
+                                               const emulator_pointer value, const uint32_t win_ini)
+        {
+            return handle_NtUserSystemParametersInfoForDpi(c, action, param, value, win_ini, k_default_dpi);
+        }
+
         uint32_t handle_NtUserGetClipboardSequenceNumber()
         {
             return 1;
