@@ -1145,7 +1145,6 @@ namespace sogen::gpu_bridge
         uint32_t reserved2;
     };
 
-    // the buffer at offset 0;
     struct cmd_copy_image_to_buffer_request
     {
         object_id command_buffer;
@@ -1167,7 +1166,8 @@ namespace sogen::gpu_bridge
         uint32_t aspect_mask; // VkImageAspectFlags
     };
 
-    // buffer (offset 0) into mip 0 / layer 0 of the image.
+    static_assert(sizeof(cmd_copy_image_to_buffer_request) == 88, "wire layout drift");
+
     struct cmd_copy_buffer_to_image_request
     {
         object_id command_buffer;
@@ -1188,6 +1188,8 @@ namespace sogen::gpu_bridge
         uint32_t layer_count;
         uint32_t aspect_mask; // VkImageAspectFlags
     };
+
+    static_assert(sizeof(cmd_copy_buffer_to_image_request) == 88, "wire layout drift");
 
     // Resolves a multisampled source image into a single-sample destination (full image, mip 0 / layer 0).
     // DXVK uses this to resolve an MSAA backbuffer before presentation.
