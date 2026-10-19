@@ -3290,7 +3290,7 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    return this->vulkan_.cmd_bind_index_buffer(req.command_buffer, req.buffer, req.offset, req.index_type);
+                    return this->vulkan_.cmd_bind_index_buffer(req.command_buffer, req.buffer, req.offset, req.size, req.index_type);
                 }
                 case gpu_bridge::command::cmd_draw_indexed: {
                     gpu_bridge::cmd_draw_indexed_request req{};

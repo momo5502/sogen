@@ -601,7 +601,7 @@ namespace sogen
                                         const uint64_t* offsets);
         int32_t cmd_bind_vertex_buffers2(uint64_t command_buffer, uint32_t first_binding, uint32_t count, const uint64_t* buffer_ids,
                                          const uint64_t* offsets, const uint64_t* sizes, const uint64_t* strides);
-        int32_t cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t index_type);
+        int32_t cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint64_t size, uint32_t index_type);
         int32_t cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count, uint32_t first_index,
                                  int32_t vertex_offset, uint32_t first_instance);
         int32_t cmd_draw_indexed_indirect(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t draw_count, uint32_t stride);

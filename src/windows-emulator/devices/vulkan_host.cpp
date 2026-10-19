@@ -396,6 +396,7 @@ namespace sogen
             PFN_vkCmdBindVertexBuffers cmd_bind_vertex_buffers{};
             PFN_vkCmdBindVertexBuffers2 cmd_bind_vertex_buffers2{};
             PFN_vkCmdBindIndexBuffer cmd_bind_index_buffer{};
+            PFN_vkCmdBindIndexBuffer2 cmd_bind_index_buffer2{};
             PFN_vkCmdDrawIndexed cmd_draw_indexed{};
             PFN_vkCmdDrawIndexedIndirect cmd_draw_indexed_indirect{};
             PFN_vkCmdDrawIndexedIndirectCount cmd_draw_indexed_indirect_count{};
@@ -2311,6 +2312,11 @@ namespace sogen
             data.cmd_bind_vertex_buffers = reinterpret_cast<PFN_vkCmdBindVertexBuffers>(resolve("vkCmdBindVertexBuffers"));
             data.cmd_bind_vertex_buffers2 = reinterpret_cast<PFN_vkCmdBindVertexBuffers2>(resolve("vkCmdBindVertexBuffers2"));
             data.cmd_bind_index_buffer = reinterpret_cast<PFN_vkCmdBindIndexBuffer>(resolve("vkCmdBindIndexBuffer"));
+            data.cmd_bind_index_buffer2 = reinterpret_cast<PFN_vkCmdBindIndexBuffer2>(resolve("vkCmdBindIndexBuffer2"));
+            if (!data.cmd_bind_index_buffer2)
+            {
+                data.cmd_bind_index_buffer2 = reinterpret_cast<PFN_vkCmdBindIndexBuffer2>(resolve("vkCmdBindIndexBuffer2KHR"));
+            }
             data.cmd_draw_indexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(resolve("vkCmdDrawIndexed"));
             data.cmd_draw_indexed_indirect = reinterpret_cast<PFN_vkCmdDrawIndexedIndirect>(resolve("vkCmdDrawIndexedIndirect"));
             data.cmd_draw_indexed_indirect_count =
@@ -6460,7 +6466,8 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t index_type)
+    int32_t vulkan_host::cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint64_t size,
+                                               uint32_t index_type)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto buf = this->impl_->buffers.find(buffer);
@@ -6469,11 +6476,22 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         const auto dev = this->impl_->devices.find(cb->second.device_id);
-        if (dev == this->impl_->devices.end() || !dev->second.cmd_bind_index_buffer)
+        if (dev == this->impl_->devices.end())
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        dev->second.cmd_bind_index_buffer(cb->second.handle, buf->second.handle, offset, static_cast<VkIndexType>(index_type));
+        if (dev->second.cmd_bind_index_buffer2)
+        {
+            dev->second.cmd_bind_index_buffer2(cb->second.handle, buf->second.handle, offset, size, static_cast<VkIndexType>(index_type));
+        }
+        else if (size == VK_WHOLE_SIZE && dev->second.cmd_bind_index_buffer)
+        {
+            dev->second.cmd_bind_index_buffer(cb->second.handle, buf->second.handle, offset, static_cast<VkIndexType>(index_type));
+        }
+        else
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
         return VK_SUCCESS;
     }
 

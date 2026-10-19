@@ -5623,20 +5623,20 @@ extern "C"
         request.command_buffer = to_object_id(commandBuffer);
         request.buffer = to_object_id(buffer);
         request.offset = offset;
+        request.size = VK_WHOLE_SIZE;
         request.index_type = static_cast<uint32_t>(indexType);
         record_command(request.command_buffer, gb::command::cmd_bind_index_buffer, &request, sizeof(request));
     }
 
-    // VK_KHR_maintenance5 / core 1.4: like vkCmdBindIndexBuffer but with an explicit size. The bridge does
-    // not model the size (the base bind covers the buffer from offset, which matches the usual VK_WHOLE_SIZE).
+    // VK_KHR_maintenance5 / core 1.4: like vkCmdBindIndexBuffer but with an explicit size.
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindIndexBuffer2KHR(VkCommandBuffer commandBuffer, VkBuffer buffer,
-                                                                              VkDeviceSize offset, VkDeviceSize /*size*/,
-                                                                              VkIndexType indexType)
+                                                                              VkDeviceSize offset, VkDeviceSize size, VkIndexType indexType)
     {
         gb::cmd_bind_index_buffer_request request{};
         request.command_buffer = to_object_id(commandBuffer);
         request.buffer = to_object_id(buffer);
         request.offset = offset;
+        request.size = size;
         request.index_type = static_cast<uint32_t>(indexType);
         record_command(request.command_buffer, gb::command::cmd_bind_index_buffer, &request, sizeof(request));
     }
