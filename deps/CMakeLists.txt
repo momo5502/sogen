@@ -107,6 +107,14 @@ endif()
 
 ##########################################
 
+# On Adreno GPUs the Android app swaps the stock Vulkan driver, which lacks features DXVK requires, for
+# Mesa's Turnip. libadrenotools loads it into the system Vulkan loader, which keeps Android's WSI working.
+if(ANDROID AND CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
+  add_subdirectory(libadrenotools)
+endif()
+
+##########################################
+
 if(SOGEN_ENABLE_PYTHON_BINDINGS)
   if (NOT TARGET Python::Module)
     if(CMAKE_VERSION VERSION_LESS 3.18)

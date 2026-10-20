@@ -19,6 +19,8 @@ namespace sogen
         {
             NTSTATUS io_control(windows_emulator& win_emu, const io_device_context& context) override
             {
+                this->vulkan_.load(win_emu.ui().vulkan_get_instance_proc_addr());
+
                 switch (context.io_control_code)
                 {
                 case gpu_bridge::ioctl_get_version:
