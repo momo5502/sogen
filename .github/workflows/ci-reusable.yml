@@ -1226,6 +1226,7 @@ jobs:
 
       # Secrets are unavailable to forks and to pull requests from forks, whose APKs keep the debug key.
       - name: Set up Release Signing
+        id: signing
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -1243,16 +1244,36 @@ jobs:
             echo "keyAlias=$KEY_ALIAS"
             echo "keyPassword=$KEY_PASSWORD"
           } > app/android/key.properties
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      # Android and Google Play only accept an update with a higher version code. The commit time in minutes grows
+      # with every commit and stays below Play's limit of 2100000000 for millennia.
+      - name: Compute Build Number
+        id: version
+        run: echo "build_number=$(( $(git log -1 --format=%ct) / 60 ))" >> "$GITHUB_OUTPUT"
 
       - name: Build APK
         working-directory: app
-        run: flutter build apk --release
+        run: flutter build apk --release --build-number=${{ steps.version.outputs.build_number }}
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
           name: Sogen Android App
           path: app/build/app/outputs/flutter-apk/app-release.apk
+
+      # Google Play only accepts bundles signed with the upload key.
+      - name: Build App Bundle
+        if: steps.signing.outputs.signed == 'true'
+        working-directory: app
+        run: flutter build appbundle --release --build-number=${{ steps.version.outputs.build_number }}
+
+      - name: Upload App Bundle
+        if: steps.signing.outputs.signed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: Sogen Android App Bundle
+          path: app/build/app/outputs/bundle/release/app-release.aab
 
   build-python-wheel:
     name: Build Python Wheel (${{ matrix.display }})
