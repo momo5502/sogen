@@ -90,6 +90,7 @@
 #include <FEXCore/Utils/LongJump.h>
 #include <FEXCore/Utils/LogManager.h>
 #include <FEXCore/Utils/AllocatorHooks.h>
+#include <FEXCore/Utils/ArchHelpers/Arm64.h>
 
 namespace sogen::fex
 {
@@ -2669,7 +2670,21 @@ namespace sogen::fex
             this->pending_fault_dispatch_ = dispatch;
             const auto& config = this->signal_delegator_->GetConfig();
             const auto target = state_already_spilled ? config.ThreadStopHandlerAddress : config.ThreadStopHandlerAddressSpillSRA;
+            this->unwind_to_dispatcher_frame(context);
             set_host_pc(context, target);
+        }
+
+        // The stop handlers pop the dispatcher's entry frame, but JIT code can be interrupted with SP elsewhere (e.g.
+        // mid-call into a helper), so SP is reset to that frame first, as FEX's own signal delegator does.
+        void unwind_to_dispatcher_frame(ucontext_t* context) const
+        {
+            auto* frame = this->thread_->CurrentFrame;
+            frame->SignalHandlerRefCounter = 0;
+#ifdef __APPLE__
+            context->uc_mcontext->__ss.__sp = frame->ReturningStackLocation;
+#else
+            context->uc_mcontext.sp = frame->ReturningStackLocation;
+#endif
         }
 
         // The dispatcher is separate from FEXCore's CodeBuffer range, so IsAddressInCodeBuffer does
@@ -2867,6 +2882,29 @@ namespace sogen::fex
         bool handle_misaligned_atomic_fault(ucontext_t* uctx, uint64_t fault_addr)
         {
             const uint64_t pc = get_host_pc(uctx);
+
+            // FEXCore rewrites a faulting access in its own code into a half-barrier sequence, so it does not trap
+            // again. Emulating each access instead traps on every execution.
+            if (this->context_ && this->context_->IsAddressInCodeBuffer(this->thread_, pc))
+            {
+#ifdef __APPLE__
+                ::pthread_jit_write_protect_np(0);
+                auto* gprs = reinterpret_cast<uint64_t*>(&uctx->uc_mcontext->__ss);
+#else
+                auto* gprs = reinterpret_cast<uint64_t*>(uctx->uc_mcontext.regs);
+#endif
+                const auto skip = FEXCore::ArchHelpers::Arm64::HandleUnalignedAccess(
+                    this->thread_, FEXCore::ArchHelpers::Arm64::UnalignedHandlerType::HalfBarrier, pc, gprs);
+#ifdef __APPLE__
+                ::pthread_jit_write_protect_np(1);
+#endif
+                if (skip)
+                {
+                    set_host_pc(uctx, pc + *skip);
+                    return true;
+                }
+            }
+
             const auto insn = *reinterpret_cast<const uint32_t*>(pc);
 
             if (const auto load = decode_arm64_load(insn))
@@ -3008,6 +3046,7 @@ namespace sogen::fex
                         this->thread_->CurrentFrame->State.rip = this->context_->RestoreRIPFromHostPC(this->thread_, fault_pc);
                         this->interrupt_page_unwind_ = true;
                         const auto& stop_cfg = this->signal_delegator_->GetConfig();
+                        this->unwind_to_dispatcher_frame(uctx);
                         set_host_pc(uctx, stop_cfg.ThreadStopHandlerAddressSpillSRA);
                         return true;
                     }

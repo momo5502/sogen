@@ -1374,9 +1374,25 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
+                const size_t wait_offset = sizeof(request);
+                const size_t cmd_offset =
+                    wait_offset + static_cast<size_t>(request.wait_count) * sizeof(gpu_bridge::submit_semaphore_entry);
+                const size_t signal_offset = cmd_offset + static_cast<size_t>(request.command_buffer_count) * sizeof(uint64_t);
+                std::vector<gpu_bridge::submit_semaphore_entry> waits;
+                std::vector<uint64_t> command_buffers;
+                std::vector<gpu_bridge::submit_semaphore_entry> signals;
+                if (!read_trailing_array(win_emu, context, wait_offset, request.wait_count, waits) ||
+                    !read_trailing_array(win_emu, context, cmd_offset, request.command_buffer_count, command_buffers) ||
+                    !read_trailing_array(win_emu, context, signal_offset, request.signal_count, signals))
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
                 this->flush_aliased_memory_for_device(win_emu);
 
-                const int32_t result = this->vulkan_.queue_submit(request.queue, request.command_buffer, request.fence);
+                const int32_t result = this->vulkan_.queue_submit(request.queue, request.fence, waits.data(), request.wait_count,
+                                                                  command_buffers.data(), request.command_buffer_count, signals.data(),
+                                                                  request.signal_count, request.has_timeline_info != 0);
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -2011,7 +2027,11 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                const int32_t result = this->vulkan_.queue_present(request.queue, request.swapchain, request.image_index, wait_semaphores);
+                // The host driver may block in vkQueuePresentKHR for frame pacing; holding the kernel lock meanwhile
+                // would stall every other vCPU.
+                const int32_t result = this->vulkan_.queue_present(
+                    request.queue, request.swapchain, request.image_index, wait_semaphores,
+                    [&](const std::function<int32_t()>& present) { return win_emu.run_without_kernel_lock(present); });
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -2739,7 +2759,13 @@ namespace sogen
                     return vk_error_initialization_failed;
                 }
                 const size_t writes_bytes = static_cast<size_t>(request.write_count) * sizeof(gpu_bridge::descriptor_write);
-                const size_t inline_uniform_data_offset = offset + writes_bytes;
+                const size_t copies_offset = offset + writes_bytes;
+                if (request.copy_count > (size - copies_offset) / sizeof(gpu_bridge::descriptor_copy))
+                {
+                    return vk_error_initialization_failed;
+                }
+                const size_t copies_bytes = static_cast<size_t>(request.copy_count) * sizeof(gpu_bridge::descriptor_copy);
+                const size_t inline_uniform_data_offset = copies_offset + copies_bytes;
                 if (request.inline_uniform_data_size > size - inline_uniform_data_offset)
                 {
                     return vk_error_initialization_failed;
@@ -2770,8 +2796,23 @@ namespace sogen
                              .inline_uniform_data = std::span<const std::byte>{
                                  data + inline_uniform_data_offset + w.inline_uniform_data_offset, w.inline_uniform_data_size}};
                 }
+                std::vector<vulkan_host::descriptor_copy> copies(request.copy_count);
+                size_t copy_offset = copies_offset;
+                for (auto& copy : copies)
+                {
+                    gpu_bridge::descriptor_copy c{};
+                    std::memcpy(&c, data + copy_offset, sizeof(c));
+                    copy_offset += sizeof(c);
+                    copy = {.src_set = c.src_set,
+                            .src_binding = c.src_binding,
+                            .src_array_element = c.src_array_element,
+                            .dst_set = c.dst_set,
+                            .dst_binding = c.dst_binding,
+                            .dst_array_element = c.dst_array_element,
+                            .descriptor_count = c.descriptor_count};
+                }
                 offset = inline_uniform_data_offset + request.inline_uniform_data_size;
-                return this->vulkan_.update_descriptor_sets(request.device, writes);
+                return this->vulkan_.update_descriptor_sets(request.device, writes, copies);
             }
 
             NTSTATUS handle_update_descriptor_sets(windows_emulator& win_emu, const io_device_context& context)
@@ -3294,7 +3335,7 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    return this->vulkan_.cmd_bind_index_buffer(req.command_buffer, req.buffer, req.offset, req.index_type);
+                    return this->vulkan_.cmd_bind_index_buffer(req.command_buffer, req.buffer, req.offset, req.size, req.index_type);
                 }
                 case gpu_bridge::command::cmd_draw_indexed: {
                     gpu_bridge::cmd_draw_indexed_request req{};
@@ -3494,8 +3535,22 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
-                    return this->vulkan_.cmd_copy_image_to_buffer(req.command_buffer, req.image, req.image_layout, req.buffer, req.width,
-                                                                  req.height, req.aspect_mask);
+                    const vulkan_host::buffer_image_copy_region region{
+                        .buffer_offset = req.buffer_offset,
+                        .buffer_row_length = req.buffer_row_length,
+                        .buffer_image_height = req.buffer_image_height,
+                        .image_offset_x = req.image_offset_x,
+                        .image_offset_y = req.image_offset_y,
+                        .image_offset_z = req.image_offset_z,
+                        .width = req.width,
+                        .height = req.height,
+                        .depth = req.depth,
+                        .mip_level = req.mip_level,
+                        .base_array_layer = req.base_array_layer,
+                        .layer_count = req.layer_count,
+                        .aspect_mask = req.aspect_mask,
+                    };
+                    return this->vulkan_.cmd_copy_image_to_buffer(req.command_buffer, req.image, req.image_layout, req.buffer, region);
                 }
                 case gpu_bridge::command::cmd_copy_buffer_to_image: {
                     gpu_bridge::cmd_copy_buffer_to_image_request req{};
@@ -3526,8 +3581,27 @@ namespace sogen
                     {
                         return vk_error_initialization_failed;
                     }
+                    const vulkan_host::image_copy_region region{
+                        .src_aspect_mask = req.src_aspect_mask,
+                        .src_mip_level = req.src_mip_level,
+                        .src_base_array_layer = req.src_base_array_layer,
+                        .src_layer_count = req.src_layer_count,
+                        .src_offset_x = req.src_offset_x,
+                        .src_offset_y = req.src_offset_y,
+                        .src_offset_z = req.src_offset_z,
+                        .dst_aspect_mask = req.dst_aspect_mask,
+                        .dst_mip_level = req.dst_mip_level,
+                        .dst_base_array_layer = req.dst_base_array_layer,
+                        .dst_layer_count = req.dst_layer_count,
+                        .dst_offset_x = req.dst_offset_x,
+                        .dst_offset_y = req.dst_offset_y,
+                        .dst_offset_z = req.dst_offset_z,
+                        .width = req.width,
+                        .height = req.height,
+                        .depth = req.depth,
+                    };
                     return this->vulkan_.cmd_resolve_image(req.command_buffer, req.src_image, req.src_layout, req.dst_image, req.dst_layout,
-                                                           req.width, req.height, req.aspect_mask);
+                                                           region);
                 }
                 case gpu_bridge::command::cmd_copy_image: {
                     gpu_bridge::cmd_copy_image_request req{};

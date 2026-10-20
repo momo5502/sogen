@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -151,8 +152,10 @@ namespace sogen
         int32_t queue_wait_idle(uint64_t queue);
         int32_t device_wait_idle(uint64_t device);
 
-        // Submits a single command buffer to the queue, optionally signaling the fence (0 = none).
-        int32_t queue_submit(uint64_t queue, uint64_t command_buffer, uint64_t fence);
+        // Submits one VkSubmitInfo. wait_entries/signal_entries are submit_semaphore_entry arrays;
+        // command_buffer_ids is an object_id array. fence 0 = none.
+        int32_t queue_submit(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count, const void* command_buffer_ids,
+                             uint32_t command_buffer_count, const void* signal_entries, uint32_t signal_count, bool has_timeline_info);
 
         // synchronization2 submit. wait_entries/signal_entries are submit2_semaphore_entry arrays;
         // command_buffer_ids is an object_id array. fence 0 = none.
@@ -274,12 +277,8 @@ namespace sogen
                                       size_t data_size);
         int32_t cmd_clear_depth_stencil_image(uint64_t command_buffer, uint64_t image, uint32_t image_layout, float depth, uint32_t stencil,
                                               const subresource_range& range);
-        // Copies mip 0 / layer 0 of the image (tightly packed) into the buffer at offset 0.
-        int32_t cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer, uint32_t width,
-                                         uint32_t height, uint32_t aspect_mask);
 
-        // Copies tightly-packed pixel data from the buffer (offset 0) into mip 0 / layer 0 of the image.
-        // One VkBufferImageCopy region. DXVK sub-allocates uploads from a shared staging buffer, so
+        // One VkBufferImageCopy region. DXVK sub-allocates uploads and readbacks from shared buffers, so
         // buffer_offset (and mip/layer/image_offset) are routinely non-zero and must be honoured.
         struct buffer_image_copy_region
         {
@@ -298,6 +297,8 @@ namespace sogen
             uint32_t aspect_mask;
         };
 
+        int32_t cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer,
+                                         const buffer_image_copy_region& region);
         int32_t cmd_copy_buffer_to_image(uint64_t command_buffer, uint64_t buffer, uint64_t image, uint32_t image_layout,
                                          const buffer_image_copy_region& region);
 
@@ -352,9 +353,8 @@ namespace sogen
                                const image_copy_region& region);
         int32_t cmd_blit_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
                                const image_blit_region& region);
-        // Resolves a multisampled source image into a single-sample destination (full image, mip 0 / layer 0).
         int32_t cmd_resolve_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image, uint32_t dst_layout,
-                                  uint32_t width, uint32_t height, uint32_t aspect_mask);
+                                  const image_copy_region& region);
         // Updates a buffer region inline from caller-provided data (vkCmdUpdateBuffer).
         int32_t cmd_update_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, const void* data, uint32_t size);
 
@@ -389,7 +389,10 @@ namespace sogen
         void destroy_swapchain(uint64_t device, uint64_t swapchain);
         int32_t get_swapchain_images(uint64_t swapchain, std::span<uint64_t> out_images, uint32_t& out_count);
         int32_t acquire_next_image(uint64_t swapchain, uint64_t timeout, uint64_t semaphore, uint64_t fence, uint32_t& out_index);
-        int32_t queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index, const std::vector<uint64_t>& wait_semaphores);
+        // The native present goes through run_unlocked, which may run it without the caller's locks: it touches no
+        // other vulkan_host state, and the device is kept alive until it returns.
+        int32_t queue_present(uint64_t queue, uint64_t swapchain, uint32_t image_index, const std::vector<uint64_t>& wait_semaphores,
+                              const std::function<int32_t(const std::function<int32_t()>&)>& run_unlocked);
 
         // --- graphics pipeline (enough for a render-pass triangle) ---
 
@@ -482,6 +485,17 @@ namespace sogen
             std::span<const std::byte> inline_uniform_data;
         };
 
+        struct descriptor_copy
+        {
+            uint64_t src_set;
+            uint32_t src_binding;
+            uint32_t src_array_element;
+            uint64_t dst_set;
+            uint32_t dst_binding;
+            uint32_t dst_array_element;
+            uint32_t descriptor_count;
+        };
+
         int32_t create_descriptor_set_layout(uint64_t device, uint32_t flags, std::span<const descriptor_binding> bindings,
                                              uint64_t& out_layout);
         int32_t get_descriptor_set_layout_support(uint64_t device, uint32_t flags, std::span<const descriptor_binding> bindings,
@@ -497,7 +511,7 @@ namespace sogen
                                          std::span<const uint32_t> variable_descriptor_counts, std::span<uint64_t> out_sets,
                                          uint32_t& out_count);
         int32_t free_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> sets);
-        int32_t update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes);
+        int32_t update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes, std::span<const descriptor_copy> copies);
 
         // Optionally one push-constant range from offset 0 (push_constant_size == 0 means none), plus a
         // list of descriptor-set layouts (empty for none).
@@ -609,7 +623,7 @@ namespace sogen
                                         const uint64_t* offsets);
         int32_t cmd_bind_vertex_buffers2(uint64_t command_buffer, uint32_t first_binding, uint32_t count, const uint64_t* buffer_ids,
                                          const uint64_t* offsets, const uint64_t* sizes, const uint64_t* strides);
-        int32_t cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t index_type);
+        int32_t cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint64_t size, uint32_t index_type);
         int32_t cmd_draw_indexed(uint64_t command_buffer, uint32_t index_count, uint32_t instance_count, uint32_t first_index,
                                  int32_t vertex_offset, uint32_t first_instance);
         int32_t cmd_draw_indexed_indirect(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t draw_count, uint32_t stride);

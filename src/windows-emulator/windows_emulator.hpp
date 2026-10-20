@@ -5,6 +5,7 @@
 #include "process_manager.hpp"
 
 #include <stop_reason.hpp>
+#include <utils/finally.hpp>
 #include <utils/function.hpp>
 
 #include "syscall_dispatcher.hpp"
@@ -12,6 +13,7 @@
 #include "kernel_lock.hpp"
 #include "logger.hpp"
 #include "file_system.hpp"
+#include "filesystem/mount_spec.hpp"
 #include "memory_manager.hpp"
 #include "module/module_manager.hpp"
 #include "network/dns_lookup.hpp"
@@ -129,7 +131,8 @@ namespace sogen
         bool load_registry{true};
 
         std::unordered_map<uint16_t, uint16_t> port_mappings{};
-        std::unordered_map<windows_path, std::filesystem::path> path_mappings{};
+        filesystem_mode root_mode{default_root_mode};
+        std::vector<mount_spec> mounts{};
 
         fake_environment_config fake_env{};
 
@@ -502,6 +505,23 @@ namespace sogen
         bool perform_thread_switch(vcpu_context& vcpu, std::unique_lock<kernel_lock>& lock);
         bool perform_thread_switch(vcpu_context& vcpu);
         bool activate_thread(vcpu_context& vcpu, uint32_t id);
+
+        // Runs f with the kernel lock released, for host calls that can block for a long time (e.g. a GPU present)
+        // and would otherwise stall every other vCPU. f must not touch any emulator or guest state. Requires the
+        // kernel lock, which is held again when this returns. Other vCPUs dispatch meanwhile, so the dispatch
+        // marker is set aside for that time.
+        template <typename F>
+        decltype(auto) run_without_kernel_lock(F&& f)
+        {
+            this->kernel_lock_.assert_held();
+            auto* dispatch_vcpu = std::exchange(this->dispatch_vcpu_, nullptr);
+            this->kernel_lock_.unlock();
+            const auto _ = utils::finally([this, dispatch_vcpu] {
+                this->kernel_lock_.lock();
+                this->dispatch_vcpu_ = dispatch_vcpu;
+            });
+            return f();
+        }
 
         // Swaps the registers of the outgoing thread on a vCPU for the incoming one. With more than one vCPU the
         // hypercalls run with the kernel lock released: they only touch this vCPU, but cost tens of microseconds and

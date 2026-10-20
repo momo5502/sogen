@@ -304,6 +304,7 @@ jobs:
             cmake-options: "-DCMAKE_TOOLCHAIN_FILE=$GITHUB_WORKSPACE/cmake/toolchain/mingw-w64.cmake"
           - platform: Linux x86_64 GCC Sanitizer
             runner: ubuntu-24.04
+            gcc-version: 16
             cmake-options: "-DSOGEN_ENABLE_SANITIZER=On -DSOGEN_ENABLE_STEAM=OFF -DSOGEN_ENABLE_RUST_CODE=OFF"
           #- platform: Linux x86_64 GCC
           #  runner: ubuntu-24.04
@@ -360,6 +361,13 @@ jobs:
       - name: Install Emscripten
         if: "${{ startsWith(matrix.platform, 'Emscripten') }}"
         uses: mymindstorm/setup-emsdk@v16
+
+      - name: Install GCC
+        uses: egor-tensin/setup-gcc@v2
+        if: "${{ matrix.gcc-version }}"
+        with:
+          version: ${{ matrix.gcc-version }}
+          platform: x64
 
       - name: Install Clang
         uses: nick-fields/retry@v4.0.0
@@ -561,6 +569,7 @@ jobs:
           #  runner: ubuntu-24.04
           - platform: Linux x86_64 GCC Sanitizer
             runner: ubuntu-24.04
+            gcc-version: 16
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
           - platform: macOS arm64
@@ -578,6 +587,14 @@ jobs:
         run: |
           echo "RUST_BACKTRACE=1" >> $GITHUB_ENV
           echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
+
+      # The sanitizer binaries need the runtime of the GCC that built them.
+      - name: Install GCC
+        uses: egor-tensin/setup-gcc@v2
+        if: "${{ matrix.gcc-version }}"
+        with:
+          version: ${{ matrix.gcc-version }}
+          platform: x64
 
       - name: Download Test Configuration
         uses: actions/download-artifact@v8
@@ -790,7 +807,7 @@ jobs:
           systeminfo | Select-String -Pattern 'Hyper-V Requirements|Virtualization Enabled In Firmware|VM Monitor Mode Extensions|Second Level Address Translation|Data Execution Prevention'
 
       - name: CMake Test
-        run: cd build/release/artifacts && ./analyzer.exe --network live -e root c:/test-sample.exe
+        run: cd build/release/artifacts && ./analyzer.exe --network live -e root --root-mode rw c:/test-sample.exe
         env:
           EMULATOR_WHP: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
@@ -817,7 +834,7 @@ jobs:
         run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
       - name: CMake Test
-        run: cd build/release/artifacts && ./analyzer.exe --network live -e root c:/test-sample.exe
+        run: cd build/release/artifacts && ./analyzer.exe --network live -e root --root-mode rw c:/test-sample.exe
         env:
           EMULATOR_ICICLE: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
@@ -863,7 +880,7 @@ jobs:
           grep -m1 -oE 'vmx|svm' /proc/cpuinfo || true
 
       - name: CMake Test
-        run: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer --network live -e root c:/test-sample.exe
+        run: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer --network live -e root --root-mode rw c:/test-sample.exe
         env:
           EMULATOR_KVM: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
@@ -890,7 +907,7 @@ jobs:
         run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
       - name: CMake Test
-        run: cd build/release/artifacts && ./analyzer.exe --network live -e root c:/test-sample.exe
+        run: cd build/release/artifacts && ./analyzer.exe --network live -e root --root-mode rw c:/test-sample.exe
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
@@ -933,7 +950,7 @@ jobs:
         with:
           max_attempts: 5
           timeout_minutes: 10
-          command: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer --network live -e root c:/test-sample.exe
+          command: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer --network live -e root --root-mode rw c:/test-sample.exe
         env:
           EMULATOR_FEX: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
@@ -972,7 +989,7 @@ jobs:
         run: cp windows-artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
       - name: CMake Test
-        run: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer --network live -e root c:/test-sample.exe
+        run: cd build/release/artifacts && chmod +x ./analyzer && ./analyzer --network live -e root --root-mode rw c:/test-sample.exe
         env:
           EMULATOR_FEX: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
@@ -999,7 +1016,7 @@ jobs:
         run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
       - name: CMake Test
-        run: cd build/release/artifacts && ./windows-emulator-test.exe && ./analyzer.exe --network live -e root c:/test-sample.exe
+        run: cd build/release/artifacts && ./windows-emulator-test.exe && ./analyzer.exe --network live -e root --root-mode rw c:/test-sample.exe
         env:
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
@@ -1081,7 +1098,7 @@ jobs:
           script: |
             tar -cf build/${{matrix.preset}}/artifacts.tar -C build/${{matrix.preset}}/artifacts .
             adb push build/${{matrix.preset}}/artifacts.tar /data/local/tmp/
-            adb shell "cd /data/local/tmp && tar xf artifacts.tar --no-same-owner && rm artifacts.tar && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }} ./analyzer --network live -e ./root c:/test-sample.exe"
+            adb shell "cd /data/local/tmp && tar xf artifacts.tar --no-same-owner && rm artifacts.tar && export LD_LIBRARY_PATH=. && chmod +x ./analyzer && EMULATOR_ICICLE=${{ matrix.emulator == 'Icicle' }} ./analyzer --network live -e ./root --root-mode rw c:/test-sample.exe"
 
   build-page:
     name: Build Page

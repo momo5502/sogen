@@ -135,6 +135,11 @@ namespace sogen
             return STATUS_NOT_SUPPORTED;
         }
 
+        bool changes_file_state(const FILE_INFORMATION_CLASS info_class)
+        {
+            return info_class != FilePositionInformation;
+        }
+
         NTSTATUS handle_NtSetInformationFile(const syscall_context& c, const handle file_handle,
                                              const emulator_object<IO_STATUS_BLOCK<EmulatorTraits<Emu64>>> io_status_block,
                                              const uint64_t file_information, const ULONG length, const FILE_INFORMATION_CLASS info_class)
@@ -172,6 +177,11 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            if (changes_file_state(info_class) && !c.win_emu.file_sys.is_writable(f->handle.path()))
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
             if (info_class == FileBasicInformation)
             {
                 return STATUS_SUCCESS;
@@ -206,6 +216,11 @@ namespace sogen
                 if (new_path.is_relative())
                 {
                     new_path = f->handle.path().parent() / new_path;
+                }
+
+                if (!c.win_emu.file_sys.is_writable(new_path))
+                {
+                    return STATUS_ACCESS_DENIED;
                 }
 
                 if (!info.ReplaceIfExists && c.win_emu.file_sys.stat(new_path))
@@ -297,6 +312,11 @@ namespace sogen
                 if (length < sizeof(FILE_END_OF_FILE_INFORMATION))
                 {
                     return STATUS_BUFFER_OVERFLOW;
+                }
+
+                if (!f->handle.is_writable())
+                {
+                    return STATUS_ACCESS_DENIED;
                 }
 
                 const auto info = c.emu.read_memory<FILE_END_OF_FILE_INFORMATION>(file_information);
@@ -437,12 +457,15 @@ namespace sogen
 
             for (const auto& entry : file_sys.list_directory(win_path))
             {
-                if (!file_mask.empty() && !utils::wildcard::match_filename(entry.name, file_mask))
+                if (!file_mask.empty() && !utils::wildcard::match_filename(entry.name, file_mask) &&
+                    !utils::wildcard::match_filename(entry.short_name, file_mask))
                 {
                     continue;
                 }
 
-                files.emplace_back(make_file_entry(entry.name, entry.is_directory, entry.stat));
+                auto file = make_file_entry(entry.name, entry.is_directory, entry.stat);
+                file.short_name = entry.short_name;
+                files.emplace_back(std::move(file));
             }
 
             return files;
@@ -522,6 +545,13 @@ namespace sogen
                 info.FileAttributes = current_file.is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
                 info.FileNameLength = static_cast<ULONG>(file_name.size() * 2);
                 info.EndOfFile.QuadPart = current_file.file_size;
+
+                if constexpr (std::is_same_v<T, FILE_BOTH_DIR_INFORMATION> || std::is_same_v<T, FILE_ID_BOTH_DIR_INFORMATION>)
+                {
+                    const auto short_name_length = std::min(current_file.short_name.size(), std::size(info.ShortName));
+                    info.ShortNameLength = static_cast<char>(short_name_length * sizeof(char16_t));
+                    std::ranges::copy_n(current_file.short_name.begin(), short_name_length, info.ShortName);
+                }
 
                 object.set_address(file_information + new_offset);
                 object.write(info);
@@ -1523,6 +1553,11 @@ namespace sogen
                 return STATUS_INVALID_HANDLE;
             }
 
+            if (!f->handle.is_writable())
+            {
+                return STATUS_ACCESS_DENIED;
+            }
+
             if (byte_offset)
             {
                 const auto offset = byte_offset.read();
@@ -1578,6 +1613,11 @@ namespace sogen
             if (!source || !destination || !source->handle || !destination->handle)
             {
                 return STATUS_INVALID_HANDLE;
+            }
+
+            if (!destination->handle.is_writable())
+            {
+                return STATUS_ACCESS_DENIED;
             }
 
             if (source_offset)
@@ -2016,6 +2056,11 @@ namespace sogen
             f.drive_number = path.get_drive().value() - 'a' + 1;
 
             auto& file_sys = c.win_emu.file_sys;
+
+            if ((create_options & FILE_DELETE_ON_CLOSE) && !file_sys.is_writable(path))
+            {
+                return STATUS_ACCESS_DENIED;
+            }
             const auto existing_stat = file_sys.stat(path);
             const bool file_exists = existing_stat.has_value();
 

@@ -132,3 +132,8 @@ By default, the guest has no access to the host network. Guest sockets use an in
 ```bash
 analyzer.exe --network live C:\example.exe
 ```
+
+The guest file system is read-only by default, and guest writes fail with `STATUS_ACCESS_DENIED`. Use
+`--root-mode rw` to let the guest change the emulation root, or the host drives when no root is set. Use
+`--mount HOST:GUEST[:MODE]` to add a host file or directory at a guest path, for example
+`--mount .\out:C:\out:rw`. See [docs/filesystem.md](docs/filesystem.md) for the details of mounts and modes.

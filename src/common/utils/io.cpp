@@ -66,8 +66,9 @@ namespace sogen
 
             if (regular && !ec)
             {
+                // Files in /proc and /sys report a size of 0 regardless of their content, so those are streamed below.
                 const auto size = std::filesystem::file_size(file, ec);
-                if (!ec)
+                if (!ec && size != 0)
                 {
                     if (size > static_cast<std::uintmax_t>(std::numeric_limits<std::streamsize>::max()))
                     {
@@ -81,11 +82,6 @@ namespace sogen
                     {
                         data->clear();
                         return false;
-                    }
-
-                    if (size == 0)
-                    {
-                        return true;
                     }
 
                     file_stream.read(reinterpret_cast<char*>(data->data()), static_cast<std::streamsize>(data->size()));

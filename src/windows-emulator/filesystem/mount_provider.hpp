@@ -9,6 +9,7 @@ namespace sogen
     struct directory_entry
     {
         std::u16string name{};
+        std::u16string short_name{};
         bool is_directory{};
         std::optional<struct compat_stat> stat{};
     };
@@ -18,6 +19,11 @@ namespace sogen
         std::unique_ptr<i_file> file{};
         NTSTATUS status{};
     };
+
+    inline bool is_write_open_mode(const std::u16string_view mode)
+    {
+        return mode.find_first_of(u"wa+") != std::u16string_view::npos;
+    }
 
     // Paths passed to a provider are relative to the mount point and contain no "." or ".." components.
     class mount_provider

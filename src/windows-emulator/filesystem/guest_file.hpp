@@ -1,6 +1,6 @@
 #pragma once
 
-#include "i_file.hpp"
+#include "mount_provider.hpp"
 #include "../windows_path.hpp"
 
 namespace sogen
@@ -29,6 +29,11 @@ namespace sogen
         const windows_path& path() const
         {
             return this->path_;
+        }
+
+        bool is_writable() const
+        {
+            return this->io_ != nullptr && is_write_open_mode(this->mode_);
         }
 
         size_t read(std::span<std::byte> buffer) const;

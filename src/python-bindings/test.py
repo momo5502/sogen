@@ -118,7 +118,7 @@ with tempfile.TemporaryDirectory(prefix="sogen-python-") as temp_dir:
     app = win.create_application(
         r"C:\test-sample.exe",
         emulation_root=emulator_root,
-        path_mappings={r"C:\a.txt": mapped_file},
+        mounts=[(mapped_file, r"C:\a.txt", "rw")],
         network="live",
         port_mappings={28970: 28980},
     )
@@ -249,6 +249,7 @@ dns_app = win.create_application(
     r"C:\test-sample.exe",
     emulation_root=emulator_root,
     network="live",
+    root_mode="rw",
     dns_resolver=on_resolve,
 )
 socket_activity = []

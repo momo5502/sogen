@@ -1391,23 +1391,16 @@ namespace sogen
 
             void write_device_caps(const syscall_context& c, const emulator_pointer caps_ptr, const size_t count)
             {
-                std::vector<uint32_t> caps(count, 0);
-                const auto set_cap = [&](const size_t idx, const uint32_t value) {
-                    if (idx < caps.size())
-                    {
-                        caps[idx] = value;
-                    }
-                };
+                static constexpr std::array<uint32_t, 9> k_cap_indices = {4, 6, 8, 0xA, 0x28, 0x2A, 0x2C, 0x58, 0x5A};
 
-                set_cap(4, get_device_caps_value(4));
-                set_cap(6, get_device_caps_value(6));
-                set_cap(8, get_device_caps_value(8));
-                set_cap(0xA, get_device_caps_value(0xA));
-                set_cap(0x28, get_device_caps_value(0x28));
-                set_cap(0x2A, get_device_caps_value(0x2A));
-                set_cap(0x2C, get_device_caps_value(0x2C));
-                set_cap(0x58, get_device_caps_value(0x58));
-                set_cap(0x5A, get_device_caps_value(0x5A));
+                std::vector<uint32_t> caps(count, 0);
+                for (const auto index : k_cap_indices)
+                {
+                    if (index < caps.size())
+                    {
+                        caps[index] = get_device_caps_value(index);
+                    }
+                }
 
                 if (caps_ptr != 0)
                 {

@@ -46,6 +46,21 @@ namespace sogen::test
                 writer.write<uint32_t>(0);
                 return request;
             }
+
+            std::vector<uint8_t> free_request(const connection_context& context, uint64_t oxid, const std::vector<uint64_t>& object_ids)
+            {
+                std::vector<uint8_t> request;
+                utils::aligned_binary_writer writer(request, this->pointer_size);
+                writer.write(context);
+                writer.write(oxid);
+                writer.write(static_cast<uint32_t>(object_ids.size()));
+                writer.write(static_cast<uint32_t>(object_ids.size()));
+                for (const auto id : object_ids)
+                {
+                    writer.write(id);
+                }
+                return request;
+            }
         };
     }
 
@@ -64,11 +79,19 @@ namespace sogen::test
             result = this->call(6, this->allocate_request(context));
             ASSERT_EQ(STATUS_SUCCESS, result.status);
             ASSERT_TRUE(result.payload.has_value());
-            const auto oxid = read<std::array<uint8_t, 16>>(*result.payload, 24);
-            EXPECT_NE((std::array<uint8_t, 16>{}), oxid);
+            const auto server_oxid = read<uint64_t>(*result.payload, 24);
+            const auto primary_oxid = read<uint64_t>(*result.payload, 32);
+            EXPECT_NE(0u, server_oxid);
+            EXPECT_NE(0u, primary_oxid);
+            EXPECT_NE(server_oxid, primary_oxid);
             const auto first_oid = width == 8 ? 64u : 56u;
             EXPECT_EQ(5u, read<uint64_t>(*result.payload, first_oid));
             EXPECT_EQ(6u, read<uint64_t>(*result.payload, first_oid + 8));
+            const auto second_result = this->call(6, this->allocate_request(context, 1));
+            ASSERT_EQ(STATUS_SUCCESS, second_result.status);
+            ASSERT_TRUE(second_result.payload.has_value());
+            EXPECT_NE(server_oxid, read<uint64_t>(*second_result.payload, 24));
+            EXPECT_EQ(primary_oxid, read<uint64_t>(*second_result.payload, 32));
             std::vector<uint8_t> disconnect;
             utils::aligned_binary_writer writer(disconnect, width);
             writer.write(context);
@@ -91,19 +114,15 @@ namespace sogen::test
         result = this->call(6, this->allocate_request(context));
         ASSERT_EQ(STATUS_SUCCESS, result.status);
         ASSERT_TRUE(result.payload.has_value());
-        const auto oxid = read<std::array<uint8_t, 16>>(*result.payload, 24);
+        const auto server_oxid = read<uint64_t>(*result.payload, 24);
+        const auto primary_oxid = read<uint64_t>(*result.payload, 32);
         utils::buffer_serializer state;
         this->endpoint->serialize(state);
         utils::buffer_deserializer reader{state};
         this->endpoint->deserialize(reader);
-        std::vector<uint8_t> release;
-        utils::aligned_binary_writer writer(release, this->pointer_size);
-        writer.write(context);
-        writer.write(oxid);
-        writer.write<uint32_t>(0);
-        writer.write_pointer_sized(0);
-        EXPECT_EQ(STATUS_SUCCESS, this->call(8, release).status);
-        EXPECT_EQ(STATUS_INVALID_HANDLE, this->call(8, release).status);
+        EXPECT_EQ(STATUS_SUCCESS, this->call(8, this->free_request(context, primary_oxid, {})).status);
+        EXPECT_EQ(STATUS_SUCCESS, this->call(8, this->free_request(context, server_oxid, {5, 6})).status);
+        EXPECT_EQ(STATUS_INVALID_HANDLE, this->call(8, this->free_request(context, primary_oxid, {})).status);
     }
 
     TEST_F(LocalObjectExporterTest, RejectsTruncatedRequestsAndExcessiveReservations)
