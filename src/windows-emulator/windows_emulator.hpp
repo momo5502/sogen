@@ -312,6 +312,12 @@ namespace sogen
 
         void handle_ui_event(const ui_event& event);
         void apply_cursor_capture();
+
+        // Input held for low-level hooks: the next hook the given thread has to run, marked as running.
+        std::optional<std::pair<process_context::low_level_input, user_low_level_hook>> begin_low_level_hook(uint32_t thread_id);
+        void finish_low_level_hook(bool swallow);
+        bool has_low_level_hook_work(uint32_t thread_id);
+        emulator_thread* drain_low_level_input();
         void deliver_raw_input(const process_context::raw_input_payload& payload, hwnd explicit_target);
         void deliver_raw_mouse_input(int32_t dx, int32_t dy, uint16_t button_flags, uint16_t button_data = 0);
         void deliver_raw_keyboard_input(uint16_t vkey, uint16_t scan_code, uint32_t message, bool extended);
@@ -542,6 +548,9 @@ namespace sogen
 
       private:
         void set_foreground_window(hwnd window);
+        void deliver_ui_event(const ui_event& event);
+        std::pair<emulator_thread*, const user_low_level_hook*> find_low_level_hook(uint64_t handle);
+        void wake_thread(emulator_thread& thread);
 
         bool use_relative_time_{false}; // TODO: Get rid of that
         bool instruction_precision_{true};

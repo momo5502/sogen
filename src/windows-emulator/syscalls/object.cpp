@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../io_completion_wait.hpp"
+#include "../low_level_hooks.hpp"
 #include "../syscall_utils.hpp"
 #include "../devices/named_pipe.hpp"
 
@@ -678,6 +679,11 @@ namespace sogen
                 return wait_failed;
             }
 
+            if (wake_mask != 0 && dispatch_low_level_hook(c, callback_id::NtUserMsgWaitForMultipleObjectsEx))
+            {
+                return {};
+            }
+
             const bool wait_all = (flags & mwmo_waitall) != 0;
             auto& t = c.thread();
             t.await_objects = {};
@@ -716,8 +722,21 @@ namespace sogen
                 t.await_time = c.win_emu.clock().steady_now() + std::chrono::milliseconds{timeout};
             }
 
+            if (wake_mask != 0)
+            {
+                t.remember_message_wait(c.emu);
+            }
+
             c.win_emu.yield_thread(c.vcpu, false);
             return {};
+        }
+
+        DWORD completion_NtUserMsgWaitForMultipleObjectsEx(const syscall_context& c, const ULONG count,
+                                                           const emulator_object<handle> handles, const DWORD timeout,
+                                                           const DWORD wake_mask, const DWORD flags)
+        {
+            complete_low_level_hook(c);
+            return handle_NtUserMsgWaitForMultipleObjectsEx(c, count, handles, timeout, wake_mask, flags);
         }
 
         NTSTATUS handle_NtWaitForMultipleObjects(const syscall_context& c, const ULONG count, const emulator_object<handle> handles,

@@ -512,6 +512,54 @@ namespace sogen
         bool raw_keyboard_registered{};
         hwnd raw_keyboard_target{};
 
+        // Keyboard and mouse input held back until every low-level hook it is due for has seen it, in arrival order.
+        struct low_level_input
+        {
+            hwnd window{};
+            UINT message{};
+            uint64_t w_param{};
+            uint64_t l_param{};
+            int32_t screen_x{};
+            int32_t screen_y{};
+            DWORD time{};
+            std::vector<uint64_t> hooks{};
+            utils::clock::steady_time_point queued{};
+            bool in_progress{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->window);
+                buffer.write(this->message);
+                buffer.write(this->w_param);
+                buffer.write(this->l_param);
+                buffer.write(this->screen_x);
+                buffer.write(this->screen_y);
+                buffer.write(this->time);
+                buffer.write_vector(this->hooks);
+                buffer.write(this->queued.time_since_epoch().count());
+                buffer.write(this->in_progress);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->window);
+                buffer.read(this->message);
+                buffer.read(this->w_param);
+                buffer.read(this->l_param);
+                buffer.read(this->screen_x);
+                buffer.read(this->screen_y);
+                buffer.read(this->time);
+                buffer.read_vector(this->hooks);
+                utils::clock::steady_duration::rep queued_ticks{};
+                buffer.read(queued_ticks);
+                this->queued = utils::clock::steady_time_point{utils::clock::steady_duration{queued_ticks}};
+                buffer.read(this->in_progress);
+            }
+        };
+
+        std::vector<low_level_input> pending_low_level_input{};
+        uint64_t next_hook_handle{1};
+
         // One pending raw-input payload (mouse motion + buttons, or a keyboard make/break) keyed by the
         // HRAWINPUT token posted in WM_INPUT's lParam; consumed by NtUserGetRawInputData.
         struct raw_input_payload

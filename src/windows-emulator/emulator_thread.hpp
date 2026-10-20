@@ -235,6 +235,10 @@ namespace sogen
         NtUserSetWindowPos,
         NtUserGetComboBoxInfo,
         NtUserEndDeferWindowPosEx,
+        NtUserGetMessage,
+        NtUserPeekMessage,
+        NtUserWaitMessage,
+        NtUserMsgWaitForMultipleObjectsEx,
     };
 
     struct callback_frame
@@ -438,7 +442,8 @@ namespace sogen
         std::optional<uint64_t> callback_return_rax{};
         std::optional<user_cbt_hook> cbt_hook{};
         std::vector<user_low_level_hook> low_level_hooks{};
-        uint64_t next_hook_handle{1};
+
+        std::optional<uint64_t> message_wait_syscall_id{};
 
         std::map<user_timer_key, user_timer> user_timers{};
         uint64_t next_user_timer_id{1};
@@ -450,6 +455,8 @@ namespace sogen
         uint32_t queue_status_changed_bits{};
 
         void mark_as_ready(NTSTATUS status);
+        void remember_message_wait(x86_64_cpu& emu);
+        void restart_message_wait(x86_64_cpu& emu);
 
         bool is_await_time_over(utils::clock& clock) const
         {
@@ -592,7 +599,7 @@ namespace sogen
             buffer.write_optional(this->callback_return_rax);
             buffer.write_optional(this->cbt_hook);
             buffer.write_vector(this->low_level_hooks);
-            buffer.write(this->next_hook_handle);
+            buffer.write_optional(this->message_wait_syscall_id);
 
             buffer.write_map(this->user_timers);
             buffer.write(this->next_user_timer_id);
@@ -670,7 +677,7 @@ namespace sogen
             buffer.read_optional(this->callback_return_rax);
             buffer.read_optional(this->cbt_hook);
             buffer.read_vector(this->low_level_hooks);
-            buffer.read(this->next_hook_handle);
+            buffer.read_optional(this->message_wait_syscall_id);
 
             buffer.read_map(this->user_timers);
             buffer.read(this->next_user_timer_id);
