@@ -678,6 +678,20 @@ workload proves otherwise, the profiler points the way and the candidates remain
 reads, hot device ioctls (GPU bridge), and `memory_manager` read paths (a `shared_mutex`
 split).
 
+**Phase 4b — WHP mapping cost on VM hosts.** *(done)*
+On a nested-virtualization host a first touch of a mapped guest page costs ~90 us inside the hypervisor,
+and re-pays it whenever a page is unmapped and mapped again. Allocation churn was therefore dominated by
+EPT population:
+
+- `WHvAdviseGpaRange(Populate)` is issued after each `WHvMapGpaRange` (resolved at run time, best
+  effort). Populating a 32 MB range takes ~5 ms instead of ~2.7 s.
+- Freed read/write pages stay mapped. `unmap_memory` parks them in `retired_pages_` (GPA, host page and
+  EPT mapping intact) and `map_memory` hands them out again after zeroing. A page becomes reusable only
+  once every vCPU that was running guest code at retirement has applied the TLB flush for the epoch that
+  retired it (`requested_tlb_epoch_` / `acked_tlb_epoch_`, a Dekker-style `pending_tlb_flush_` /
+  `run_active_` handshake instead of cancelling idle vCPUs). `remap_pages` skips pages whose EPT flags
+  already match.
+
 **Phase 5 — secondary targets.**
 KVM parity (§8); linux-emulator adopts the same scheduler/BEL shape (it mirrors the
 windows-emulator structure; consider extracting the vCPU worker/scheduler core into a
