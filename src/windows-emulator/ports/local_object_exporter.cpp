@@ -145,7 +145,7 @@ namespace sogen
                     connect_reader reader(request, writer.pointer_size());
                     if (interface_id == endpoint_mapper_interface)
                     {
-                        return this->map_endpoint(procedure, reader, writer);
+                        return map_endpoint(procedure, reader, writer);
                     }
                     if (procedure == 6)
                     {

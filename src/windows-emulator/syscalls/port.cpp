@@ -437,7 +437,7 @@ namespace sogen
         {
             emulator_object<ALPC_CONTEXT_ATTR<Traits>>{c.emu, address}.write({
                 .PortContext = 0,
-                .MessageContext = static_cast<typename Traits::PVOID>(message_context),
+                .MessageContext = static_cast<Traits::PVOID>(message_context),
                 .Sequence = 0,
                 .MessageId = message_id,
                 .CallbackId = 0,
