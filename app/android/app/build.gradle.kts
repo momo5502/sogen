@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -62,9 +64,25 @@ android {
         getByName("main").jniLibs.srcDir("src/main/jniLibs")
     }
 
+    // CI writes key.properties when the release key is available. Without it, e.g. in forks and local builds,
+    // release builds are signed with the debug key and cannot update an installed official build.
+    val keystoreProperties = Properties()
+    rootProject.file("key.properties").takeIf { it.exists() }?.inputStream()?.use { keystoreProperties.load(it) }
+
+    signingConfigs {
+        if (!keystoreProperties.isEmpty) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
