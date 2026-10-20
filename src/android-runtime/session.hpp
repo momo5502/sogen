@@ -54,6 +54,8 @@ namespace sogen::android
         void on_window_title_changed(hwnd window, std::u16string_view title) override;
 
       private:
+        int run_emulator(const run_config& config);
+
         struct listener_methods
         {
             jmethodID on_output{};

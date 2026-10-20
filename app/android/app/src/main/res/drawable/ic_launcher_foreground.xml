@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keeps the pinata inside the adaptive icon's safe zone, the inner 72dp of its 108dp canvas. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_launcher_pinata"
+    android:inset="22%" />

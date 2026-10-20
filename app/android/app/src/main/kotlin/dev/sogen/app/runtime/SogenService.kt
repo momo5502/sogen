@@ -30,8 +30,12 @@ class SogenService : Service() {
                     native = SogenNative(CallbackListener(callback))
                 } catch (e: UnsatisfiedLinkError) {
                     Log.e(TAG, "Could not load the emulator library", e)
-                    callback.onOutput("Could not load the emulator library: ${e.message}", LOGGER_COLOR_RED)
-                    callback.onExit(1)
+                    try {
+                        callback.onOutput("Could not load the emulator library: ${e.message}", LOGGER_COLOR_RED)
+                        callback.onExit(1)
+                    } catch (_: RemoteException) {
+                        // The launcher is gone and has nothing left to show the error in.
+                    }
                     return
                 }
             }

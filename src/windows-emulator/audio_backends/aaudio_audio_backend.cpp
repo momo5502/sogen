@@ -69,11 +69,14 @@ namespace sogen
 
             bool start(const audio_format& format) override
             {
-                const std::lock_guard lock{this->mutex_};
+                const std::lock_guard lifecycle{this->lifecycle_mutex_};
 
-                if (this->stream_ && this->format_ == format)
                 {
-                    return true;
+                    const std::lock_guard lock{this->mutex_};
+                    if (this->stream_ && this->format_ == format)
+                    {
+                        return true;
+                    }
                 }
 
                 this->close_stream();
@@ -110,6 +113,7 @@ namespace sogen
                     return false;
                 }
 
+                const std::lock_guard lock{this->mutex_};
                 this->stream_ = stream;
                 this->format_ = format;
                 return true;
@@ -117,21 +121,34 @@ namespace sogen
 
             void submit(const void* data, const size_t size) override
             {
-                const std::lock_guard lock{this->mutex_};
-
-                if (!this->stream_ || !data || !size)
+                if (!data || !size)
                 {
                     return;
                 }
 
-                const auto bytes_per_sample = static_cast<size_t>(this->format_.bits_per_sample / 8);
-                const auto sample_count = size / bytes_per_sample;
-                const auto* bytes = static_cast<const uint8_t*>(data);
-
-                this->samples_.reserve(this->samples_.size() + sample_count);
-                for (size_t i = 0; i < sample_count; ++i)
+                audio_format format{};
                 {
-                    this->samples_.push_back(to_float_sample(this->format_, bytes + (i * bytes_per_sample)));
+                    const std::lock_guard lock{this->mutex_};
+                    if (!this->stream_)
+                    {
+                        return;
+                    }
+                    format = this->format_;
+                }
+
+                // Converted outside the lock, which the real-time data callback contends for.
+                const auto bytes_per_sample = static_cast<size_t>(format.bits_per_sample / 8);
+                const auto* bytes = static_cast<const uint8_t*>(data);
+                std::vector<float> converted(size / bytes_per_sample);
+                for (size_t i = 0; i < converted.size(); ++i)
+                {
+                    converted[i] = to_float_sample(format, bytes + (i * bytes_per_sample));
+                }
+
+                const std::lock_guard lock{this->mutex_};
+                if (this->stream_ && this->format_ == format)
+                {
+                    this->samples_.insert(this->samples_.end(), converted.begin(), converted.end());
                 }
             }
 
@@ -150,7 +167,7 @@ namespace sogen
 
             void stop() override
             {
-                const std::lock_guard lock{this->mutex_};
+                const std::lock_guard lifecycle{this->lifecycle_mutex_};
                 this->close_stream();
             }
 
@@ -171,7 +188,10 @@ namespace sogen
                 const auto available = this->samples_.size() - this->read_offset_;
                 const auto count = std::min(requested, available);
 
-                std::memcpy(output, this->samples_.data() + this->read_offset_, count * sizeof(float));
+                if (count)
+                {
+                    std::memcpy(output, this->samples_.data() + this->read_offset_, count * sizeof(float));
+                }
                 std::fill(output + count, output + requested, 0.0f);
                 this->read_offset_ += count;
 
@@ -187,26 +207,28 @@ namespace sogen
                 }
             }
 
-            // Called with mutex_ held. AAudioStream_close waits for an in-flight data callback, which takes
-            // the same mutex, so the stream is detached first and closed after the lock is released.
+            // Called with lifecycle_mutex_ held. AAudioStream_close waits for an in-flight data callback, which takes
+            // mutex_, so the stream is closed without holding mutex_.
             void close_stream()
             {
-                auto* stream = std::exchange(this->stream_, nullptr);
-                if (!stream)
+                AAudioStream* stream{};
                 {
-                    return;
+                    const std::lock_guard lock{this->mutex_};
+                    stream = std::exchange(this->stream_, nullptr);
+                    this->format_ = {};
+                    this->samples_.clear();
+                    this->read_offset_ = 0;
                 }
 
-                this->format_ = {};
-                this->samples_.clear();
-                this->read_offset_ = 0;
-
-                this->mutex_.unlock();
-                AAudioStream_requestStop(stream);
-                AAudioStream_close(stream);
-                this->mutex_.lock();
+                if (stream)
+                {
+                    AAudioStream_requestStop(stream);
+                    AAudioStream_close(stream);
+                }
             }
 
+            // Serializes start and stop, so a stream is never opened while another one is being closed.
+            std::mutex lifecycle_mutex_{};
             mutable std::mutex mutex_{};
             AAudioStream* stream_{};
             audio_format format_{};

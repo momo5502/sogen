@@ -52,7 +52,7 @@ class _GamePageState extends State<GamePage> {
 
   @override
   void dispose() {
-    if (_session.state == SessionState.running) {
+    if (_session.state case SessionState.starting || SessionState.running) {
       _session.stop();
     }
     _session.setInputWindow(null);
@@ -314,6 +314,7 @@ class _StatusView extends StatelessWidget {
     final theme = Theme.of(context);
 
     final (IconData icon, String status, String headline) = switch (session.state) {
+      SessionState.exited when session.error != null => (LucideIcons.triangleAlert, 'Failed to start', game.name),
       SessionState.exited when session.exitCode == null => (LucideIcons.triangleAlert, 'Crashed', game.name),
       SessionState.exited => (LucideIcons.circleCheck, 'Exited with code ${session.exitCode}', game.name),
       _ => (LucideIcons.play, 'Starting', game.name),

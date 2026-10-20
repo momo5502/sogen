@@ -4,6 +4,18 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// The launcher icon is the web page's pinata, so the repository keeps a single copy of the image.
+val launcherIconDirectory = layout.buildDirectory.dir("generated/launcher-icon")
+val copyLauncherIcon = tasks.register<Copy>("copyLauncherIcon") {
+    from(rootProject.file("../../page/public/pinata.png"))
+    into(launcherIconDirectory.map { it.dir("drawable-nodpi") })
+    rename { "ic_launcher_pinata.png" }
+}
+
+tasks.named("preBuild") {
+    dependsOn(copyLauncherIcon)
+}
+
 android {
     namespace = "dev.sogen.app"
     compileSdk = flutter.compileSdkVersion
@@ -34,6 +46,7 @@ android {
     sourceSets {
         // libsogen.so and its dependencies come from the sogen CMake build; see app/README.md.
         getByName("main").jniLibs.srcDir("src/main/jniLibs")
+        getByName("main").res.srcDir(launcherIconDirectory)
     }
 
     buildTypes {

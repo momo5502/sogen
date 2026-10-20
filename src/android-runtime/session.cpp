@@ -65,14 +65,20 @@ namespace sogen::android
 
         emulator_settings create_emulator_settings(const run_config& config)
         {
+            // Games keep their saves and settings in the emulation root and in their own directory.
             emulator_settings settings{
                 .emulation_root = config.emulation_root,
+                .root_mode = filesystem_mode::read_write,
                 .network = config.live_network ? network::network_mode::live : network::network_mode::offline,
             };
 
             for (const auto& [guest, host] : config.path_mappings)
             {
-                settings.path_mappings[windows_path(u8_to_u16(guest))] = host;
+                settings.mounts.push_back(mount_spec{
+                    .host_path = host,
+                    .guest_path = windows_path(u8_to_u16(guest)),
+                    .mode = filesystem_mode::read_write,
+                });
             }
 
             return settings;
@@ -101,6 +107,15 @@ namespace sogen::android
     }
 
     int session::run(const run_config& config)
+    {
+        const auto exit_code = this->run_emulator(config);
+
+        // The caller reports the exit right after this returns, which must not overtake the last output.
+        this->dispatcher_.flush();
+        return exit_code;
+    }
+
+    int session::run_emulator(const run_config& config)
     {
         try
         {

@@ -1,6 +1,8 @@
 #include "std_include.hpp"
 #include "java_dispatcher.hpp"
 
+#include <future>
+
 namespace sogen::android
 {
     java_dispatcher::java_dispatcher(JavaVM& vm)
@@ -28,6 +30,14 @@ namespace sogen::android
         }
 
         this->condition_.notify_one();
+    }
+
+    void java_dispatcher::flush()
+    {
+        std::promise<void> done{};
+        auto finished = done.get_future();
+        this->post([&done](JNIEnv&) { done.set_value(); });
+        finished.wait();
     }
 
     void java_dispatcher::run()

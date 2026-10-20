@@ -28,6 +28,7 @@ class SessionController(
     private var session: ISogenSession? = null
     private var connection: ServiceConnection? = null
     private var exited = false
+    private var stopRequested = false
 
     /** Window that receives hardware key events, set by the game view. */
     var inputWindow: Long = 0
@@ -41,12 +42,20 @@ class SessionController(
         }
 
         exited = false
+        stopRequested = false
         val serviceConnection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName, binder: IBinder) {
                 val remote = ISogenSession.Stub.asInterface(binder)
                 session = remote
                 binder.linkToDeath({ mainHandler.post { onExit(null) } }, 0)
-                call { remote.start(config.toBundle(), callback) }
+                call {
+                    remote.start(config.toBundle(), callback)
+                    // The service creates the session synchronously in start, and a stopped session exits as soon
+                    // as it runs, reporting its exit code as usual.
+                    if (stopRequested) {
+                        remote.stop()
+                    }
+                }
             }
 
             override fun onServiceDisconnected(name: ComponentName) {
@@ -63,6 +72,7 @@ class SessionController(
     }
 
     fun stop() {
+        stopRequested = true
         call { session?.stop() }
     }
 

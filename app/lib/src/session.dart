@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -34,7 +35,7 @@ class OutputLine {
   final int color;
 }
 
-enum SessionState { idle, running, exited }
+enum SessionState { idle, starting, running, exited }
 
 /// One emulated game, running in the launcher's `:sogen` service process.
 class GameSession extends ChangeNotifier {
@@ -45,15 +46,21 @@ class GameSession extends ChangeNotifier {
   static const _methods = MethodChannel('dev.sogen.app/session');
   static const _events = EventChannel('dev.sogen.app/session/events');
   static const _maxOutputLines = 2000;
+  static const _loggerColorRed = 1;
 
   late final StreamSubscription<dynamic> _subscription;
   final Map<int, GuestWindow> _windows = {};
   final List<OutputLine> _output = [];
+  bool _stopRequested = false;
+  bool _disposed = false;
 
   SessionState state = SessionState.idle;
 
   /// Null when the emulator process died without reporting an exit code.
   int? exitCode;
+
+  /// Why the game could not be started, if it never ran.
+  String? error;
 
   List<GuestWindow> get windows => _windows.values.toList(growable: false);
 
@@ -62,16 +69,29 @@ class GameSession extends ChangeNotifier {
 
   List<OutputLine> get output => List.unmodifiable(_output);
 
+  /// Returns false if another game is still running. Any other failure ends the session with [error] set.
   Future<bool> start(Game game, {required String emulationRoot}) async {
     _windows.clear();
     _output.clear();
     exitCode = null;
+    error = null;
+    state = SessionState.starting;
 
-    // FEX, the default backend on arm64, cannot run WoW64 processes yet; Unicorn can.
-    final backend = switch (game.backend) {
-      CpuBackend.automatic when await game.isThirtyTwoBit() => CpuBackend.unicorn.id,
-      final selected => selected.id,
-    };
+    final String backend;
+    try {
+      // FEX, the default backend on arm64, cannot run WoW64 processes yet; Unicorn can.
+      backend = switch (game.backend) {
+        CpuBackend.automatic when await game.isThirtyTwoBit() => CpuBackend.unicorn.id,
+        final selected => selected.id,
+      };
+    } on FileSystemException catch (e) {
+      _fail('Could not read ${game.hostExecutable}: ${e.osError?.message ?? e.message}');
+      return true;
+    }
+
+    if (_stopRequested) {
+      return true;
+    }
 
     final started =
         await _methods.invokeMethod<bool>('start', {
@@ -86,12 +106,28 @@ class GameSession extends ChangeNotifier {
         }) ??
         false;
 
+    if (_disposed) {
+      return started;
+    }
+
     state = started ? SessionState.running : SessionState.idle;
     notifyListeners();
     return started;
   }
 
-  Future<void> stop() => _methods.invokeMethod('stop');
+  Future<void> stop() {
+    _stopRequested = true;
+    return _methods.invokeMethod('stop');
+  }
+
+  void _fail(String message) {
+    error = message;
+    state = SessionState.exited;
+    _output.add(OutputLine(message, _loggerColorRed));
+    if (!_disposed) {
+      notifyListeners();
+    }
+  }
 
   Future<void> setInputWindow(GuestWindow? window) =>
       _methods.invokeMethod('setInputWindow', {'window': window?.handle ?? 0});
@@ -158,6 +194,7 @@ class GameSession extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _subscription.cancel();
     super.dispose();
   }

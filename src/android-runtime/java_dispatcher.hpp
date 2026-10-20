@@ -27,6 +27,9 @@ namespace sogen::android
 
         void post(task t);
 
+        // Waits until every task posted so far has run.
+        void flush();
+
       private:
         JavaVM* vm_{};
         std::mutex mutex_{};
