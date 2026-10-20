@@ -130,9 +130,11 @@ namespace sogen
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
+                size_t request_size{};
                 try
                 {
                     std::vector<uint8_t> request(context.send_buffer_length);
+                    request_size = request.size();
                     if (!win_emu.memory.try_read_memory(context.send_buffer, request.data(), request.size()))
                     {
                         return STATUS_ACCESS_VIOLATION;
@@ -175,9 +177,10 @@ namespace sogen
                     }
                     return this->connect(win_emu, writer, desktop, executable, process_flags, architecture, reserve_count);
                 }
-                catch (const std::out_of_range&)
+                catch (const std::out_of_range& error)
                 {
-                    win_emu.log.warn("COM exporter malformed request\n");
+                    win_emu.log.warn("COM exporter malformed request (procedure %u, %zu bytes): %s\n", procedure, request_size,
+                                     error.what());
                     return STATUS_INVALID_PARAMETER;
                 }
                 catch (const std::bad_alloc&)
