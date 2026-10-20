@@ -384,32 +384,51 @@ namespace sogen
         }
 
         template <typename Traits>
-        uint64_t read_send_message_context(const syscall_context& c, const uint64_t address)
+        std::optional<uint64_t> read_send_message_context(const syscall_context& c, const uint64_t address)
         {
-            return static_cast<uint64_t>(emulator_object<ALPC_CONTEXT_ATTR<Traits>>{c.emu, address}.read().MessageContext);
+            const auto attribute = emulator_object<ALPC_CONTEXT_ATTR<Traits>>{c.emu, address}.try_read();
+            if (!attribute)
+            {
+                return std::nullopt;
+            }
+
+            return static_cast<uint64_t>(attribute->MessageContext);
         }
 
-        uint64_t read_send_context_attribute(const syscall_context& c, const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes)
+        NTSTATUS read_send_context_attribute(const syscall_context& c, const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes,
+                                             uint64_t& message_context)
         {
+            message_context = 0;
             if (!attributes)
             {
-                return 0;
+                return STATUS_SUCCESS;
             }
 
-            const auto header = attributes.read();
-            if (!(header.ValidAttributes & ALPC_MESSAGE_CONTEXT_ATTRIBUTE))
+            const auto header = attributes.try_read();
+            if (!header)
             {
-                return 0;
+                return STATUS_ACCESS_VIOLATION;
+            }
+            if (!(header->ValidAttributes & ALPC_MESSAGE_CONTEXT_ATTRIBUTE))
+            {
+                return STATUS_SUCCESS;
             }
 
-            const auto address = find_context_attribute(c, attributes, header.AllocatedAttributes);
+            const auto address = find_context_attribute(c, attributes, header->AllocatedAttributes);
             if (!address)
             {
-                return 0;
+                return STATUS_INVALID_PARAMETER;
             }
 
-            return c.proc.is_wow64_process ? read_send_message_context<EmulatorTraits<Emu32>>(c, *address)
-                                           : read_send_message_context<EmulatorTraits<Emu64>>(c, *address);
+            const auto context = c.proc.is_wow64_process ? read_send_message_context<EmulatorTraits<Emu32>>(c, *address)
+                                                         : read_send_message_context<EmulatorTraits<Emu64>>(c, *address);
+            if (!context)
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            message_context = *context;
+            return STATUS_SUCCESS;
         }
 
         template <typename Traits>
@@ -689,7 +708,11 @@ namespace sogen
                 }
             }
             context.send_handle = read_send_handle_attribute(c, send_message_attributes);
-            context.send_message_context = read_send_context_attribute(c, send_message_attributes);
+            const auto context_attribute_status = read_send_context_attribute(c, send_message_attributes, context.send_message_context);
+            if (!NT_SUCCESS(context_attribute_status))
+            {
+                return context_attribute_status;
+            }
 
             auto result = port->handle_message(c.win_emu, context);
 
