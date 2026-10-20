@@ -11,8 +11,8 @@ namespace sogen
         read_write,
     };
 
-    inline constexpr auto default_root_mode = filesystem_mode::read_write;
-    inline constexpr auto default_mount_mode = filesystem_mode::read_write;
+    inline constexpr auto default_root_mode = filesystem_mode::read_only;
+    inline constexpr auto default_mount_mode = filesystem_mode::read_only;
 
     inline std::optional<filesystem_mode> parse_filesystem_mode(const std::string_view name)
     {

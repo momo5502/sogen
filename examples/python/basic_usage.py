@@ -21,7 +21,7 @@ def main() -> None:
     app = sogen.windows.create_application(
         "c:/test-sample.exe",
         emulation_root=emulation_root,
-        path_mappings={"c:/a.txt": Path("./sogen-example.txt")},
+        mounts=[(Path("./sogen-example.txt"), "c:/a.txt", "rw")],
         network="live",
         port_mappings={28970: 28980},
     )

@@ -77,6 +77,8 @@ export function translateSettings(settings: Settings): TranslatedSettings {
       switches.push("--verbose");
     }
   } else {
+    switches.push("--root-mode", "rw");
+
     switch (settings.logging) {
       case "verbose":
         switches.push("--verbose");
