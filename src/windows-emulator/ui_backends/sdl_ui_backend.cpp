@@ -1319,7 +1319,7 @@ namespace sogen
                 this->queue_or_run([this, window, screen_x, screen_y] {
                     if (auto* state = this->resolve_window(this->get_top_level_ancestor(window)); state && state->window)
                     {
-                        const auto [window_x, window_y] = this->screen_to_window_point(*state, screen_x, screen_y);
+                        const auto [window_x, window_y] = screen_to_window_point(*state, screen_x, screen_y);
                         SDL_WarpMouseInWindow(state->window, window_x, window_y);
                     }
                 });
