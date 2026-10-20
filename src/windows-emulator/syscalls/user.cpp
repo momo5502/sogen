@@ -33,6 +33,8 @@ namespace sogen
         constexpr uint32_t k_fn_inout_nc_calc_size_callback_id = 0x15;
         constexpr uint32_t k_fn_hk_in_lp_cbt_create_struct_callback_id = 0x2A;
         constexpr int k_wh_cbt = 5;
+        constexpr int k_wh_keyboard_ll = 13;
+        constexpr int k_wh_mouse_ll = 14;
         constexpr int k_hcbt_createwnd = 3;
 
         constexpr size_t k_client_pfn_button_wndproc_index = 7;
@@ -3193,12 +3195,33 @@ namespace sogen
                                                const DWORD thread_id, const int hook_id, const pointer proc, const BOOL ansi)
         {
             auto& thread = c.thread();
-            if (instance != 0 || thread_id != thread.id || hook_id != k_wh_cbt || proc == 0 || thread.cbt_hook)
+            if (proc == 0)
             {
                 return 0;
             }
 
-            const auto handle = thread.next_cbt_hook_handle++;
+            // Low-level hooks are global and belong to the installing thread. They are registered so callers that
+            // probe for them work, e.g. dinput8, which only offers non-exclusive mouse access when one can be
+            // installed. They are not called with input yet.
+            if (hook_id == k_wh_keyboard_ll || hook_id == k_wh_mouse_ll)
+            {
+                if (thread_id != 0)
+                {
+                    set_guest_last_error(c, 1429); // ERROR_GLOBAL_ONLY_HOOK
+                    return 0;
+                }
+
+                const auto handle = thread.next_hook_handle++;
+                thread.low_level_hooks.push_back(user_low_level_hook{.handle = handle, .id = hook_id, .proc = proc});
+                return handle;
+            }
+
+            if (instance != 0 || thread_id != thread.id || hook_id != k_wh_cbt || thread.cbt_hook)
+            {
+                return 0;
+            }
+
+            const auto handle = thread.next_hook_handle++;
             thread.cbt_hook = user_cbt_hook{
                 .handle = handle,
                 .proc = proc,
@@ -3209,14 +3232,14 @@ namespace sogen
 
         BOOL handle_NtUserUnhookWindowsHookEx(const syscall_context& c, const uint64_t hook)
         {
-            auto& current = c.thread().cbt_hook;
-            if (!current || current->handle != hook)
+            auto& thread = c.thread();
+            if (thread.cbt_hook && thread.cbt_hook->handle == hook)
             {
-                return FALSE;
+                thread.cbt_hook.reset();
+                return TRUE;
             }
 
-            current.reset();
-            return TRUE;
+            return std::erase_if(thread.low_level_hooks, [&](const user_low_level_hook& entry) { return entry.handle == hook; }) != 0;
         }
 
         lresult handle_NtUserCallNextHookEx(const syscall_context&, const int, const wparam, const lparam, const BOOL)
