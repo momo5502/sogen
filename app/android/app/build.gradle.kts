@@ -57,6 +57,19 @@ android {
         }
     }
 
+    packaging {
+        jniLibs {
+            // libadrenotools loads its hook libraries as files from the native library directory, so they
+            // have to be extracted on install rather than mapped from the APK.
+            useLegacyPackaging = true
+        }
+    }
+
+    androidResources {
+        // The Turnip driver is copied out of the APK with AssetManager.openFd, which needs it uncompressed.
+        noCompress += "so"
+    }
+
     sourceSets {
         // libsogen.so and its dependencies come from the sogen CMake build; see app/README.md.
         getByName("main").jniLibs.srcDir("src/main/jniLibs")

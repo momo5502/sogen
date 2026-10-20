@@ -2,6 +2,13 @@ package dev.sogen.app.runtime
 
 import android.view.Surface
 
+/** Where the Vulkan driver comes from. An empty [driverName] keeps the system driver. */
+data class VulkanDriver(
+    val hookDirectory: String,
+    val driverDirectory: String = "",
+    val driverName: String = "",
+)
+
 interface NativeListener {
     /** [color] is the emulator's logger color index, or -1 for the guest's own stdout. */
     fun onOutput(text: String, color: Int)
@@ -16,7 +23,7 @@ interface NativeListener {
 class SogenNative(listener: NativeListener) : AutoCloseable {
     private val handle: Long = nativeCreate(listener)
 
-    fun run(config: RunConfig): Int = nativeRun(
+    fun run(config: RunConfig, vulkan: VulkanDriver): Int = nativeRun(
         handle,
         config.emulationRoot,
         config.application,
@@ -26,6 +33,9 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         config.workingDirectory,
         config.backend,
         config.liveNetwork,
+        vulkan.hookDirectory,
+        vulkan.driverDirectory,
+        vulkan.driverName,
     )
 
     fun stop() = nativeStop(handle)
@@ -54,6 +64,9 @@ class SogenNative(listener: NativeListener) : AutoCloseable {
         workingDirectory: String,
         backend: String,
         liveNetwork: Boolean,
+        vulkanHookDirectory: String,
+        vulkanDriverDirectory: String,
+        vulkanDriverName: String,
     ): Int
 
     private external fun nativeStop(handle: Long)

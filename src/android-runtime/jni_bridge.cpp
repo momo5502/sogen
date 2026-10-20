@@ -101,7 +101,8 @@ extern "C"
                                                                             jstring application, jobjectArray arguments,
                                                                             jobjectArray environment, jobjectArray path_mappings,
                                                                             jstring working_directory, jstring backend,
-                                                                            const jboolean live_network)
+                                                                            const jboolean live_network, jstring vulkan_hook_directory,
+                                                                            jstring vulkan_driver_directory, jstring vulkan_driver_name)
     {
         const sogen::android::run_config config{
             .emulation_root = to_string(*env, root),
@@ -112,6 +113,12 @@ extern "C"
             .working_directory = to_string(*env, working_directory),
             .backend = to_string(*env, backend),
             .live_network = live_network == JNI_TRUE,
+            .vulkan =
+                {
+                    .hook_directory = to_string(*env, vulkan_hook_directory),
+                    .custom_directory = to_string(*env, vulkan_driver_directory),
+                    .custom_name = to_string(*env, vulkan_driver_name),
+                },
         };
 
         return get_session(handle).run(config);

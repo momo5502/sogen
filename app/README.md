@@ -23,6 +23,13 @@ mkdir -p app/android/app/src/main/jniLibs/arm64-v8a
 cp build/release/artifacts/*.so app/android/app/src/main/jniLibs/arm64-v8a/
 ```
 
+## Turnip
+
+Adreno's stock Vulkan drivers often lack features DXVK requires. On Adreno GPUs the runtime therefore loads Mesa's
+Turnip driver through libadrenotools when the APK carries one at `android/app/src/main/assets/turnip/vulkan.ad07xx.so`.
+CI takes it from a pinned [AdrenoToolsDrivers](https://github.com/K11MCH1/AdrenoToolsDrivers) release; see the
+`build-android-app` job.
+
 ## Building the app
 
 ```sh
