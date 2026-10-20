@@ -218,7 +218,7 @@ namespace sogen
                     continue;
                 }
 
-                short_names.emplace(utils::string::to_lower(std::filesystem::path{find_data.cFileName}.u16string()),
+                short_names.emplace(std::filesystem::path{find_data.cFileName}.u16string(),
                                     std::filesystem::path{find_data.cAlternateFileName}.u16string());
             } while (FindNextFileW(find_handle_guard.get(), &find_data));
         }
@@ -233,7 +233,7 @@ namespace sogen
             };
 
 #ifdef OS_WINDOWS
-            const auto short_name = short_names.find(utils::string::to_lower(entry.name));
+            const auto short_name = short_names.find(entry.name);
             if (short_name != short_names.end())
             {
                 entry.short_name = short_name->second;
