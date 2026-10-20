@@ -1228,7 +1228,7 @@ extern "C"
         {
             const VkSubmitInfo& si = pSubmits[s];
             const VkTimelineSemaphoreSubmitInfo* timeline_info = nullptr;
-            for (auto* pnext = static_cast<const VkBaseInStructure*>(si.pNext); pnext; pnext = pnext->pNext)
+            for (const auto* pnext = static_cast<const VkBaseInStructure*>(si.pNext); pnext; pnext = pnext->pNext)
             {
                 if (pnext->sType == VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO)
                 {
