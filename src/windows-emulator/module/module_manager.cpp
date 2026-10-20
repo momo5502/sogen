@@ -297,6 +297,13 @@ namespace sogen
         this->memory_->set_dep_enabled(this->executable->machine != static_cast<uint16_t>(PEMachineType::I386) ||
                                        (this->executable->dll_characteristics & IMAGE_DLLCHARACTERISTICS_NX_COMPAT) != 0);
 
+        // Windows allocates bottom-up, so processes without high-entropy ASLR get their heaps below 4 GB. Older
+        // 64-bit programs such as Crysis truncate heap pointers to 32 bits and crash on higher addresses.
+        if ((this->executable->dll_characteristics & IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA) == 0)
+        {
+            this->memory_->set_default_allocation_address(MIN_ALLOCATION_ADDRESS);
+        }
+
         this->ntdll = this->map_module_or_throw(ntdll_path, logger, true);
         this->win32u = this->map_module_or_throw(win32u_path, logger, true);
     }
