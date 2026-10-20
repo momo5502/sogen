@@ -12,6 +12,7 @@ namespace sogen
         {
             constexpr ULONG alpc_create_port_section_secure = 0x40000;
             constexpr ULONG alpc_view_not_secure = 0x40000;
+            constexpr ULONG alpc_sync_connect = 0x20000;
         }
 
         NTSTATUS handle_NtAlpcCreatePortSection(const syscall_context& c, const handle port_handle, const ULONG flags,
@@ -261,7 +262,7 @@ namespace sogen
                                           const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> server_port_name,
                                           const emulator_object<OBJECT_ATTRIBUTES<EmulatorTraits<Emu64>>> object_attributes,
                                           const emulator_object<ALPC_PORT_ATTRIBUTES<EmulatorTraits<Emu64>>> port_attributes,
-                                          const ULONG /*flags*/, const emulator_pointer /*required_server_sid*/,
+                                          const ULONG flags, const emulator_pointer /*required_server_sid*/,
                                           const emulator_pointer /*connection_message*/,
                                           const emulator_object<EmulatorTraits<Emu64>::SIZE_T> /*buffer_length*/,
                                           const emulator_pointer /*out_message_attributes*/,
@@ -279,6 +280,10 @@ namespace sogen
             data.sequence_number = 1;
             port_container container{std::u16string(port_name), c.win_emu, data};
             container.inherit = object_attributes && (object_attributes.read().Attributes & OBJ_INHERIT) != 0;
+            if (!(flags & alpc_sync_connect))
+            {
+                container.queue_connection_reply(c.win_emu, c.proc.is_wow64_process);
+            }
 
             const auto handle = c.proc.ports.store(std::move(container));
             port_handle.write(handle);
@@ -342,7 +347,7 @@ namespace sogen
             uint64_t offset = sizeof(ALPC_MESSAGE_ATTRIBUTES);
             if (allocated_attributes & ALPC_MESSAGE_SECURITY_ATTRIBUTE)
             {
-                offset += wow64 ? 0x0C : 0x20;
+                offset += wow64 ? 0x0C : 0x18;
             }
             if (allocated_attributes & ALPC_MESSAGE_VIEW_ATTRIBUTE)
             {
@@ -354,6 +359,98 @@ namespace sogen
             }
 
             return attributes.value() + offset;
+        }
+
+        std::optional<uint64_t> find_context_attribute(const syscall_context& c, const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes,
+                                                       const ULONG allocated_attributes)
+        {
+            if (!attributes || !(allocated_attributes & ALPC_MESSAGE_CONTEXT_ATTRIBUTE))
+            {
+                return std::nullopt;
+            }
+
+            const bool wow64 = c.proc.is_wow64_process;
+            uint64_t offset = sizeof(ALPC_MESSAGE_ATTRIBUTES);
+            if (allocated_attributes & ALPC_MESSAGE_SECURITY_ATTRIBUTE)
+            {
+                offset += wow64 ? 0x0C : 0x18;
+            }
+            if (allocated_attributes & ALPC_MESSAGE_VIEW_ATTRIBUTE)
+            {
+                offset += wow64 ? 0x10 : 0x20;
+            }
+
+            return attributes.value() + offset;
+        }
+
+        template <typename Traits>
+        uint64_t read_send_message_context(const syscall_context& c, const uint64_t address)
+        {
+            return static_cast<uint64_t>(emulator_object<ALPC_CONTEXT_ATTR<Traits>>{c.emu, address}.read().MessageContext);
+        }
+
+        uint64_t read_send_context_attribute(const syscall_context& c, const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes)
+        {
+            if (!attributes)
+            {
+                return 0;
+            }
+
+            const auto header = attributes.read();
+            if (!(header.ValidAttributes & ALPC_MESSAGE_CONTEXT_ATTRIBUTE))
+            {
+                return 0;
+            }
+
+            const auto address = find_context_attribute(c, attributes, header.AllocatedAttributes);
+            if (!address)
+            {
+                return 0;
+            }
+
+            return c.proc.is_wow64_process ? read_send_message_context<EmulatorTraits<Emu32>>(c, *address)
+                                           : read_send_message_context<EmulatorTraits<Emu64>>(c, *address);
+        }
+
+        template <typename Traits>
+        void write_context_attribute_at(const syscall_context& c, const uint64_t address, const uint64_t message_context,
+                                        const ULONG message_id)
+        {
+            emulator_object<ALPC_CONTEXT_ATTR<Traits>>{c.emu, address}.write({
+                .PortContext = 0,
+                .MessageContext = static_cast<typename Traits::PVOID>(message_context),
+                .Sequence = 0,
+                .MessageId = message_id,
+                .CallbackId = 0,
+            });
+        }
+
+        void write_reply_context_attribute(const syscall_context& c, const emulator_object<ALPC_MESSAGE_ATTRIBUTES>& attributes,
+                                           const uint64_t message_context, const ULONG message_id)
+        {
+            if (!attributes || message_context == 0)
+            {
+                return;
+            }
+
+            auto header = attributes.read();
+            const auto address = find_context_attribute(c, attributes, header.AllocatedAttributes);
+            if (!address)
+            {
+                return;
+            }
+
+            if (c.proc.is_wow64_process)
+            {
+                write_context_attribute_at<EmulatorTraits<Emu32>>(c, *address, message_context, message_id);
+            }
+            else
+            {
+                write_context_attribute_at<EmulatorTraits<Emu64>>(c, *address, message_context, message_id);
+            }
+
+            header.ValidAttributes |= ALPC_MESSAGE_CONTEXT_ATTRIBUTE;
+            attributes.write(header);
         }
 
         template <typename Traits>
@@ -373,7 +470,7 @@ namespace sogen
             uint64_t offset = sizeof(ALPC_MESSAGE_ATTRIBUTES);
             if (allocated_attributes & ALPC_MESSAGE_SECURITY_ATTRIBUTE)
             {
-                offset += c.proc.is_wow64_process ? 0x0C : 0x20;
+                offset += c.proc.is_wow64_process ? 0x0C : 0x18;
             }
 
             return attributes.value() + offset;
@@ -566,6 +663,13 @@ namespace sogen
             if (send_message)
             {
                 const auto send_header = lpc_port_message::read(send_message);
+                if (send_header.native.MessageId == 0)
+                {
+                    auto stamped_header = send_header;
+                    stamped_header.native.MessageId = port->allocate_message_id();
+                    stamped_header.write(send_message);
+                }
+
                 if ((send_header.native.u2.s2.Type & lpc_continuation_required) != 0)
                 {
                     return STATUS_SUCCESS;
@@ -585,6 +689,7 @@ namespace sogen
                 }
             }
             context.send_handle = read_send_handle_attribute(c, send_message_attributes);
+            context.send_message_context = read_send_context_attribute(c, send_message_attributes);
 
             auto result = port->handle_message(c.win_emu, context);
 
@@ -634,6 +739,7 @@ namespace sogen
                 }
 
                 write_reply_handle_attribute(c, receive_message_attributes, result.handles);
+                write_reply_context_attribute(c, receive_message_attributes, result.message_context, result.message.native.MessageId);
 
                 // Stash the delivered handles so rpcrt4 can pull them back via
                 // NtAlpcQueryInformationMessage(AlpcMessageHandleInformation), which is how its system-handle
@@ -733,8 +839,51 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtAlpcSetInformation()
+        NTSTATUS handle_NtAlpcSetInformation(const syscall_context& c, const handle port_handle, const uint32_t port_information_class,
+                                             const emulator_pointer port_information, const uint32_t length)
         {
+            constexpr uint32_t alpc_associate_completion_port_information = 2;
+            if (port_information_class != alpc_associate_completion_port_information)
+            {
+                return STATUS_SUCCESS;
+            }
+
+            auto* port = c.proc.ports.get(port_handle);
+            if (!port)
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+
+            uint64_t completion_key{};
+            handle completion_port{};
+            if (c.proc.is_wow64_process)
+            {
+                const auto info = emulator_object<ALPC_PORT_ASSOCIATE_COMPLETION_PORT<EmulatorTraits<Emu32>>>{c.emu, port_information};
+                if (length < sizeof(ALPC_PORT_ASSOCIATE_COMPLETION_PORT<EmulatorTraits<Emu32>>))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                const auto association = info.read();
+                completion_key = association.CompletionKey;
+                completion_port.bits = association.CompletionPort;
+            }
+            else
+            {
+                const auto info = emulator_object<ALPC_PORT_ASSOCIATE_COMPLETION_PORT<EmulatorTraits<Emu64>>>{c.emu, port_information};
+                if (length < sizeof(ALPC_PORT_ASSOCIATE_COMPLETION_PORT<EmulatorTraits<Emu64>>))
+                {
+                    return STATUS_INFO_LENGTH_MISMATCH;
+                }
+                const auto association = info.read();
+                completion_key = association.CompletionKey;
+                completion_port.bits = association.CompletionPort;
+            }
+
+            if (!c.proc.io_completions.get(completion_port))
+            {
+                return STATUS_INVALID_HANDLE;
+            }
+            port->associate_completion_port(c.win_emu, completion_key, completion_port);
             return STATUS_SUCCESS;
         }
 

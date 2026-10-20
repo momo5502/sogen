@@ -6,6 +6,8 @@ namespace sogen::test
     {
         constexpr std::array<uint8_t, 16> exporter_interface{0xe6, 0x73, 0x0c, 0xe6, 0xf9, 0x88, 0xcf, 0x11,
                                                              0x9a, 0xf1, 0x00, 0x20, 0xaf, 0x6e, 0x72, 0xf4};
+        constexpr std::array<uint8_t, 16> endpoint_mapper_interface{0x08, 0x83, 0xaf, 0xe1, 0x1f, 0x5d, 0xc9, 0x11,
+                                                                    0x91, 0xa4, 0x08, 0x00, 0x2b, 0x14, 0xa0, 0xfa};
         using connection_context = std::array<uint8_t, 20>;
 
         class LocalObjectExporterTest : public RpcProtocolTest
@@ -78,6 +80,31 @@ namespace sogen::test
             ASSERT_TRUE(result.payload.has_value());
             EXPECT_EQ(connection_context{}, read<connection_context>(*result.payload, 24));
             EXPECT_EQ(STATUS_INVALID_PARAMETER, this->call(6, this->allocate_request(context)).status);
+        }
+    }
+
+    TEST_F(LocalObjectExporterTest, EndpointMapperReportsNoRegisteredEndpoints)
+    {
+        for (const size_t width : {size_t{4}, size_t{8}})
+        {
+            this->bind(u"\\RPC Control\\epmapper", endpoint_mapper_interface, width);
+            for (const uint32_t procedure : {3u, 7u, 8u})
+            {
+                std::vector<uint8_t> request;
+                utils::aligned_binary_writer writer(request, width);
+                writer.write_ndr_pointer(false);
+                writer.write_ndr_pointer(false);
+                writer.write(connection_context{});
+                writer.write<uint32_t>(4);
+                const auto result = this->call(procedure, request);
+                ASSERT_EQ(STATUS_SUCCESS, result.status);
+                ASSERT_TRUE(result.payload.has_value());
+                EXPECT_EQ(connection_context{}, read<connection_context>(*result.payload, 24));
+                EXPECT_EQ(0u, read<uint32_t>(*result.payload, 44));
+                EXPECT_EQ(4u, read<uint32_t>(*result.payload, 48));
+                EXPECT_EQ(0x16c9a0d6u, read<uint32_t>(*result.payload, result.payload->size() - 4));
+            }
+            EXPECT_EQ(STATUS_NOT_SUPPORTED, this->call(2, {}).status);
         }
     }
 
