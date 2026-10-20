@@ -52,6 +52,12 @@ namespace sogen
         const void* pixels{};
     };
 
+    struct ui_extent
+    {
+        uint32_t width{};
+        uint32_t height{};
+    };
+
     struct ui_event
     {
         hwnd window{};
@@ -114,6 +120,13 @@ namespace sogen
         virtual uint64_t create_vulkan_surface(const hwnd /*window*/, const uint64_t /*instance*/)
         {
             return 0;
+        }
+
+        // The extent a Vulkan swapchain on the window should have, for backends whose surface does not follow the
+        // guest window's size by itself. std::nullopt keeps the extent the driver reports.
+        virtual std::optional<ui_extent> vulkan_surface_extent(const hwnd /*window*/)
+        {
+            return std::nullopt;
         }
 
         // Warp the host cursor so it tracks a guest SetCursorPos. Without this, the next host mouse-motion

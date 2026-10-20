@@ -1169,6 +1169,71 @@ jobs:
           path: "*"
           retention-days: 1
 
+  build-android-app:
+    name: Build Android App
+    runs-on: ubuntu-24.04
+    needs: [build]
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v7
+
+      - name: Download Android arm64 Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Android arm64 Release Artifacts
+          path: build/android/arm64-v8a
+
+      - name: Download Android x86_64 Artifacts
+        uses: pyTooling/download-artifact@v8
+        with:
+          name: Android x86_64 Release Artifacts
+          path: build/android/x86_64
+
+      - name: Stage Native Libraries
+        run: |
+          for abi in arm64-v8a x86_64; do
+            mkdir -p app/android/app/src/main/jniLibs/$abi
+            cp build/android/$abi/*.so app/android/app/src/main/jniLibs/$abi/
+          done
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      # dart format reads the page width from analysis_options.yaml, which includes a package.
+      - name: Fetch App Dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Verify App Formatting
+        working-directory: app
+        run: dart format --output=none --set-exit-if-changed lib test
+
+      - name: Analyze App
+        working-directory: app
+        run: flutter analyze
+
+      - name: Test App
+        working-directory: app
+        run: flutter test
+
+      - name: Build APK
+        working-directory: app
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: Sogen Android App
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+
   build-python-wheel:
     name: Build Python Wheel (${{ matrix.display }})
     runs-on: ${{ matrix.runner }}
@@ -1404,6 +1469,7 @@ jobs:
     needs:
       [
         build-page,
+        build-android-app,
         build-python-wheel,
         test-python-wheel,
         build-python-sdist,

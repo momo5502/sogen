@@ -1,0 +1,52 @@
+package dev.sogen.app.runtime
+
+import android.os.Bundle
+
+data class RunConfig(
+    val emulationRoot: String,
+    val application: String,
+    val arguments: List<String> = emptyList(),
+    val environment: Map<String, String> = emptyMap(),
+    /** Guest Windows path to host path, e.g. `C:\game` to the folder the executable lives in. */
+    val pathMappings: Map<String, String> = emptyMap(),
+    val workingDirectory: String = "",
+    /** Empty selects the platform default: FEX on arm64, Unicorn elsewhere. */
+    val backend: String = "",
+    val liveNetwork: Boolean = false,
+) {
+    fun toBundle(): Bundle = Bundle().apply {
+        putString(KEY_ROOT, emulationRoot)
+        putString(KEY_APPLICATION, application)
+        putStringArrayList(KEY_ARGUMENTS, ArrayList(arguments))
+        putStringArrayList(KEY_ENVIRONMENT, ArrayList(environment.flatMap { listOf(it.key, it.value) }))
+        putStringArrayList(KEY_PATH_MAPPINGS, ArrayList(pathMappings.flatMap { listOf(it.key, it.value) }))
+        putString(KEY_WORKING_DIRECTORY, workingDirectory)
+        putString(KEY_BACKEND, backend)
+        putBoolean(KEY_LIVE_NETWORK, liveNetwork)
+    }
+
+    companion object {
+        private const val KEY_ROOT = "root"
+        private const val KEY_APPLICATION = "application"
+        private const val KEY_ARGUMENTS = "arguments"
+        private const val KEY_ENVIRONMENT = "environment"
+        private const val KEY_PATH_MAPPINGS = "pathMappings"
+        private const val KEY_WORKING_DIRECTORY = "workingDirectory"
+        private const val KEY_BACKEND = "backend"
+        private const val KEY_LIVE_NETWORK = "liveNetwork"
+
+        fun fromBundle(bundle: Bundle) = RunConfig(
+            emulationRoot = bundle.getString(KEY_ROOT).orEmpty(),
+            application = bundle.getString(KEY_APPLICATION).orEmpty(),
+            arguments = bundle.getStringArrayList(KEY_ARGUMENTS).orEmpty(),
+            environment = pairs(bundle.getStringArrayList(KEY_ENVIRONMENT)),
+            pathMappings = pairs(bundle.getStringArrayList(KEY_PATH_MAPPINGS)),
+            workingDirectory = bundle.getString(KEY_WORKING_DIRECTORY).orEmpty(),
+            backend = bundle.getString(KEY_BACKEND).orEmpty(),
+            liveNetwork = bundle.getBoolean(KEY_LIVE_NETWORK),
+        )
+
+        private fun pairs(flat: List<String>?): Map<String, String> =
+            flat.orEmpty().chunked(2).filter { it.size == 2 }.associate { it[0] to it[1] }
+    }
+}
