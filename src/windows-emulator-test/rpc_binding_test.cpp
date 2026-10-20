@@ -6,6 +6,8 @@ namespace sogen::test
 {
     namespace
     {
+        constexpr uint16_t ndr32_context_offset = 100;
+
         struct binding_probe_port final : rpc_port
         {
             std::vector<uint8_t> received_data{};
@@ -62,6 +64,10 @@ namespace sogen::test
                 this->emu->memory.write_memory(this->storage + 32, static_cast<uint32_t>(syntax));
                 const auto context_offset = syntax == 3 ? 38u : 36u;
                 this->emu->memory.write_memory(this->storage + context_offset, context);
+                if (syntax == 3)
+                {
+                    this->emu->memory.write_memory(this->storage + 36, static_cast<uint16_t>(context + ndr32_context_offset));
+                }
                 const auto reply = this->request(72);
                 ASSERT_EQ(STATUS_SUCCESS, reply.status);
                 ASSERT_TRUE(reply.payload.has_value());
@@ -107,6 +113,13 @@ namespace sogen::test
         this->expect_call(0, 0x11, 4);
         this->expect_call(7, 0x22, 8);
         this->expect_call(0, 0x11, 4);
+    }
+
+    TEST_F(RpcBindingTest, AcceptsNdr32ContextWhenBothSyntaxesAreProposed)
+    {
+        this->bind(7, 3, 0x22);
+        this->expect_call(7, 0x22, 8);
+        this->expect_call(7 + ndr32_context_offset, 0x22, 4);
     }
 
     TEST_F(RpcBindingTest, RejectsUnknownPresentationContext)

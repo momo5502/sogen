@@ -20,6 +20,7 @@ namespace sogen
 
     class windows_emulator;
     struct process_context;
+    class emulator_thread;
 
     namespace utils
     {
@@ -161,6 +162,7 @@ namespace sogen
         uint64_t send_handle{}; // handle delivered by a client->server ALPC HANDLE attribute (0 = none)
         uint64_t send_view_base{};
         uint64_t send_view_size{};
+        uint64_t send_message_context{};
 
         lpc_message_context(memory_interface& emu)
             : send_message(emu),
@@ -181,6 +183,7 @@ namespace sogen
             buffer.write(send_handle);
             buffer.write(send_view_base);
             buffer.write(send_view_size);
+            buffer.write(send_message_context);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -191,6 +194,7 @@ namespace sogen
             buffer.read(send_handle);
             buffer.read(send_view_base);
             buffer.read(send_view_size);
+            buffer.read(send_message_context);
         }
     };
 
@@ -291,6 +295,7 @@ namespace sogen
         std::vector<uint8_t> payload{};
         std::vector<alpc_reply_handle> handles{};
         std::vector<uint8_t> view_payload{};
+        uint64_t message_context{};
 
         [[nodiscard]] ULONG total_length() const
         {
@@ -309,6 +314,7 @@ namespace sogen
             buffer.write_vector(payload);
             buffer.write_vector(handles);
             buffer.write_vector(view_payload);
+            buffer.write(message_context);
         }
 
         void deserialize(utils::buffer_deserializer& buffer)
@@ -318,6 +324,7 @@ namespace sogen
             buffer.read_vector(payload);
             buffer.read_vector(handles);
             buffer.read_vector(view_payload);
+            buffer.read(message_context);
         }
     };
 
@@ -591,6 +598,9 @@ namespace sogen
 
             buffer.write_string(this->port_name_);
             buffer.write_vector(this->reply_queue_);
+            buffer.write(this->completion_key_);
+            buffer.write(this->completion_port_);
+            buffer.write(this->last_message_id_);
             this->port_->serialize(buffer);
         }
 
@@ -598,6 +608,9 @@ namespace sogen
         {
             buffer.read_string(this->port_name_);
             buffer.read_vector(this->reply_queue_);
+            buffer.read(this->completion_key_);
+            buffer.read(this->completion_port_);
+            buffer.read(this->last_message_id_);
             this->setup();
             this->port_->deserialize(buffer);
         }
@@ -622,10 +635,31 @@ namespace sogen
             return !reply_queue_.empty();
         }
 
+        NTSTATUS associate_completion_port(windows_emulator& win_emu, const emulator_thread* active_thread, uint64_t completion_key,
+                                           handle completion_port);
+        void release_completion_port(process_context& process);
+
+        [[nodiscard]] handle completion_port() const
+        {
+            return this->completion_port_;
+        }
+
+        void queue_connection_reply(windows_emulator& win_emu, bool is_wow64);
+
+        ULONG allocate_message_id()
+        {
+            return ++this->last_message_id_;
+        }
+
       private:
         std::u16string port_name_{};
         std::unique_ptr<port> port_{};
         std::vector<lpc_message_result> reply_queue_;
+        uint64_t completion_key_{};
+        handle completion_port_{};
+        ULONG last_message_id_{};
+
+        void post_completion(windows_emulator& win_emu) const;
 
         void setup()
         {
