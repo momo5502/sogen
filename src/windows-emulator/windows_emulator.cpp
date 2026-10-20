@@ -926,6 +926,8 @@ namespace sogen
                 break;
             }
 
+            vcpu.thread().sync_client_thread_info(this->process);
+
             // Guest code executes with the kernel lock released; hook callbacks
             // (syscalls, exceptions, exec hooks) re-acquire it on VM exit.
             lock.unlock();
@@ -1534,6 +1536,8 @@ namespace sogen
                     break;
                 }
             }
+
+            vcpu.thread().sync_client_thread_info(this->process);
 
             // Guest code executes with the kernel lock released; hook callbacks
             // (syscalls, exceptions, exec hooks) re-acquire it on VM exit.

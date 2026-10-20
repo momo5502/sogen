@@ -390,5 +390,21 @@ namespace sogen
         uint8_t unknown44[0xFF];
     };
 
+    // Referenced from CLIENTINFO (Win32ClientInfo[12]). user32 reads it directly instead of making a syscall,
+    // e.g. GetActiveWindow, GetFocus and GetInputState. 32-bit user32 shares the 64-bit layout.
+    struct USER_CLIENTTHREADINFO
+    {
+        uint32_t flags;
+        uint16_t change_bits;
+        uint16_t wake_bits;
+        uint8_t unknown8[0x18];
+        uint64_t focus_window;
+        uint64_t active_window;
+    };
+
+    static_assert(offsetof(USER_CLIENTTHREADINFO, change_bits) == 0x4);
+    static_assert(offsetof(USER_CLIENTTHREADINFO, focus_window) == 0x20);
+    static_assert(offsetof(USER_CLIENTTHREADINFO, active_window) == 0x28);
+
     // NOLINTEND(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 } // namespace sogen

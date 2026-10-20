@@ -485,6 +485,9 @@ namespace sogen
                 });
                 teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
                 teb_obj.Win32ClientInfo.arr[29] = USER_DEFAULT_DPI_CONTEXT;
+
+                this->client_thread_info = this->gs_segment->reserve<USER_CLIENTTHREADINFO>();
+                teb_obj.Win32ClientInfo.arr[12] = this->client_thread_info->value();
             });
 
             return;
@@ -572,6 +575,9 @@ namespace sogen
             });
             teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
             teb_obj.Win32ClientInfo.arr[29] = USER_DEFAULT_DPI_CONTEXT;
+
+            this->client_thread_info = this->gs_segment->reserve<USER_CLIENTTHREADINFO>();
+            teb_obj.Win32ClientInfo.arr[12] = this->client_thread_info->value();
         });
 
         // Allocate dynamic 32-bit stack for WOW64 thread
@@ -1040,6 +1046,27 @@ namespace sogen
         this->message_queue_status_bits |= bits;
         this->queue_status_changed_bits |= bits;
         message_queue.push_back(msg);
+    }
+
+    void emulator_thread::sync_client_thread_info(const process_context& process)
+    {
+        if (!this->client_thread_info)
+        {
+            return;
+        }
+
+        hwnd active_window{};
+        if (const auto* foreground = process.windows.get(process.foreground_window); foreground && foreground->thread_id == this->id)
+        {
+            active_window = process.foreground_window;
+        }
+
+        this->client_thread_info->access([&](USER_CLIENTTHREADINFO& info) {
+            info.change_bits = static_cast<uint16_t>(this->queue_status_changed_bits);
+            info.wake_bits = static_cast<uint16_t>(this->message_queue_status_bits);
+            info.focus_window = active_window;
+            info.active_window = active_window;
+        });
     }
 
     void emulator_thread::remove_window_messages(const hwnd window)
