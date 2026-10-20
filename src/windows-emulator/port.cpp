@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 #include "port.hpp"
 #include "logger.hpp"
+#include "io_completion_wait.hpp"
 #include "windows_emulator.hpp"
 #include "ports/api_port.hpp"
 #include "ports/audio_service.hpp"
@@ -362,15 +363,41 @@ namespace sogen
         completion->enqueue(message);
     }
 
-    void port_container::associate_completion_port(windows_emulator& win_emu, const uint64_t completion_key, const handle completion_port)
+    NTSTATUS port_container::associate_completion_port(windows_emulator& win_emu, const emulator_thread* active_thread,
+                                                       const uint64_t completion_key, const handle completion_port)
     {
+        if (this->completion_port_.bits != 0)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto resolved_port = win_emu.process.resolve_object_pseudo_handle(completion_port, active_thread);
+        if (resolved_port.value.type != handle_types::io_completion || !win_emu.process.io_completions.get(resolved_port))
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        handle retained_port{};
+        if (!io_completion_wait::retain_handle_reference(win_emu.process, active_thread, resolved_port, retained_port))
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
         this->completion_key_ = completion_key;
-        this->completion_port_ = completion_port;
+        this->completion_port_ = retained_port;
 
         if (!this->reply_queue_.empty())
         {
             this->post_completion(win_emu);
         }
+
+        return STATUS_SUCCESS;
+    }
+
+    void port_container::release_completion_port(process_context& process)
+    {
+        io_completion_wait::release_handle_reference(process, this->completion_port_);
+        this->completion_key_ = 0;
     }
 
     void port_container::queue_connection_reply(windows_emulator& win_emu, const bool is_wow64)

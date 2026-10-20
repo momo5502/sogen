@@ -20,6 +20,7 @@ namespace sogen
 
     class windows_emulator;
     struct process_context;
+    class emulator_thread;
 
     namespace utils
     {
@@ -634,7 +635,15 @@ namespace sogen
             return !reply_queue_.empty();
         }
 
-        void associate_completion_port(windows_emulator& win_emu, uint64_t completion_key, handle completion_port);
+        NTSTATUS associate_completion_port(windows_emulator& win_emu, const emulator_thread* active_thread, uint64_t completion_key,
+                                           handle completion_port);
+        void release_completion_port(process_context& process);
+
+        [[nodiscard]] handle completion_port() const
+        {
+            return this->completion_port_;
+        }
+
         void queue_connection_reply(windows_emulator& win_emu, bool is_wow64);
 
         ULONG allocate_message_id()

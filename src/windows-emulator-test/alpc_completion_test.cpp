@@ -26,9 +26,10 @@ namespace sogen::test
                 return *this->emu->process.ports.get(this->port_handle);
             }
 
-            void associate()
+            NTSTATUS associate()
             {
-                this->container().associate_completion_port(*this->emu, completion_key, this->completion);
+                return this->container().associate_completion_port(*this->emu, this->emu->vcpu(0).active_thread, completion_key,
+                                                                   this->completion);
             }
 
             lpc_message_result send_handshake()
@@ -77,7 +78,7 @@ namespace sogen::test
 
     TEST_F(AlpcCompletionTest, SendOnlyMessageWithAssociationQueuesReplyAndPostsCompletion)
     {
-        this->associate();
+        ASSERT_EQ(STATUS_SUCCESS, this->associate());
         ASSERT_EQ(STATUS_SUCCESS, this->send_handshake().status);
 
         io_completion_message message{};
@@ -100,7 +101,7 @@ namespace sogen::test
         io_completion_message message{};
         EXPECT_FALSE(this->dequeue(message));
 
-        this->associate();
+        ASSERT_EQ(STATUS_SUCCESS, this->associate());
         ASSERT_TRUE(this->dequeue(message));
         EXPECT_EQ(completion_key, message.key_context);
 
@@ -113,10 +114,28 @@ namespace sogen::test
 
     TEST_F(AlpcCompletionTest, AssociatedPortPostsCompletionForEachQueuedConnectionReply)
     {
-        this->associate();
+        ASSERT_EQ(STATUS_SUCCESS, this->associate());
         this->container().queue_connection_reply(*this->emu, false);
         io_completion_message message{};
         ASSERT_TRUE(this->dequeue(message));
         EXPECT_EQ(completion_key, message.key_context);
+    }
+
+    TEST_F(AlpcCompletionTest, AssociationKeepsCompletionPortAliveAfterTheOriginalHandleIsClosed)
+    {
+        ASSERT_EQ(STATUS_SUCCESS, this->associate());
+        EXPECT_EQ(STATUS_INVALID_PARAMETER, this->associate());
+
+        auto original = this->completion;
+        io_completion_wait::release_handle_reference(this->emu->process, original);
+        ASSERT_EQ(STATUS_SUCCESS, this->send_handshake().status);
+
+        const auto retained = this->container().completion_port();
+        ASSERT_NE(nullptr, this->emu->process.io_completions.get(retained));
+        EXPECT_EQ(1u, this->emu->process.io_completions.get(retained)->queue.size());
+
+        this->container().release_completion_port(this->emu->process);
+        EXPECT_EQ(nullptr, this->emu->process.io_completions.get(retained));
+        EXPECT_EQ(0u, this->container().completion_port().bits);
     }
 }

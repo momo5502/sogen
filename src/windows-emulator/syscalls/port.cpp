@@ -879,12 +879,7 @@ namespace sogen
                 completion_port.bits = association.CompletionPort;
             }
 
-            if (!c.proc.io_completions.get(completion_port))
-            {
-                return STATUS_INVALID_HANDLE;
-            }
-            port->associate_completion_port(c.win_emu, completion_key, completion_port);
-            return STATUS_SUCCESS;
+            return port->associate_completion_port(c.win_emu, c.vcpu.active_thread, completion_key, completion_port);
         }
 
         NTSTATUS handle_NtAlpcCreateSecurityContext(const syscall_context& c, const handle port_handle, const ULONG flags,
