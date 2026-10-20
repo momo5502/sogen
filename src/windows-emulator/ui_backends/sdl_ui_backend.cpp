@@ -708,6 +708,8 @@ namespace sogen
 
                 this->windows_.clear();
                 this->guest_by_window_id_.clear();
+                this->cursor_capture_ = {};
+                this->captured_window_id_ = 0;
                 this->active_window_ = 0;
                 this->mouse_button_state_ = 0;
                 this->key_down_.fill(false);
@@ -786,6 +788,7 @@ namespace sogen
                         {
                             render_window(*state);
                         }
+                        this->apply_cursor_capture();
                         break;
 
                     case SDL_EVENT_KEY_DOWN: {
@@ -1167,6 +1170,7 @@ namespace sogen
 
                 state.window = window;
                 this->guest_by_window_id_[SDL_GetWindowID(window)] = state.desc.handle;
+                this->apply_cursor_capture();
                 return true;
             }
 
@@ -1218,6 +1222,7 @@ namespace sogen
                                               std::max<int>(1, (rect.bottom - rect.top) - insets.top - insets.bottom));
                         }
                         this->redraw_related(window);
+                        this->apply_cursor_capture();
                     }
                 });
             }
@@ -1323,30 +1328,9 @@ namespace sogen
             void set_cursor_clip(const hwnd window, const std::optional<ui_rect>& screen_rect, const bool relative) override
             {
                 this->queue_or_run([this, window, screen_rect, relative] {
-                    auto* state = this->resolve_window(this->get_top_level_ancestor(window));
-                    if (!state || !state->window)
-                    {
-                        return;
-                    }
-
-                    if (screen_rect)
-                    {
-                        const auto [left, top] = this->screen_to_window_point(*state, screen_rect->left, screen_rect->top);
-                        const auto [right, bottom] = this->screen_to_window_point(*state, screen_rect->right, screen_rect->bottom);
-                        const SDL_Rect rect{
-                            .x = static_cast<int>(left),
-                            .y = static_cast<int>(top),
-                            .w = std::max(1, static_cast<int>(right - left)),
-                            .h = std::max(1, static_cast<int>(bottom - top)),
-                        };
-                        SDL_SetWindowMouseRect(state->window, &rect);
-                    }
-                    else
-                    {
-                        SDL_SetWindowMouseRect(state->window, nullptr);
-                    }
-
-                    SDL_SetWindowRelativeMouseMode(state->window, relative);
+                    this->cursor_capture_ = cursor_capture{.window = window, .screen_rect = screen_rect, .relative = relative};
+                    this->relative_remainder_ = {};
+                    this->apply_cursor_capture();
                 });
             }
 
@@ -1801,6 +1785,47 @@ namespace sogen
             hwnd active_window_{};
             uint16_t mouse_button_state_{};
             std::pair<float, float> relative_remainder_{};
+
+            struct cursor_capture
+            {
+                hwnd window{};
+                std::optional<ui_rect> screen_rect{};
+                bool relative{};
+            };
+
+            cursor_capture cursor_capture_{};
+            SDL_WindowID captured_window_id_{};
+
+            void apply_cursor_capture()
+            {
+                auto* state = this->resolve_window(this->get_top_level_ancestor(this->cursor_capture_.window));
+                auto* target = (state && state->window && this->cursor_capture_.screen_rect) ? state->window : nullptr;
+
+                if (auto* previous = SDL_GetWindowFromID(this->captured_window_id_); previous && previous != target)
+                {
+                    SDL_SetWindowMouseRect(previous, nullptr);
+                    SDL_SetWindowRelativeMouseMode(previous, false);
+                }
+
+                this->captured_window_id_ = target ? SDL_GetWindowID(target) : 0;
+                if (!target)
+                {
+                    return;
+                }
+
+                const auto& clip = *this->cursor_capture_.screen_rect;
+                const auto [left, top] = screen_to_window_point(*state, clip.left, clip.top);
+                const auto [right, bottom] = screen_to_window_point(*state, clip.right, clip.bottom);
+                const SDL_Rect rect{
+                    .x = static_cast<int>(left),
+                    .y = static_cast<int>(top),
+                    .w = std::max(1, static_cast<int>(right - left)),
+                    .h = std::max(1, static_cast<int>(bottom - top)),
+                };
+                SDL_SetWindowMouseRect(target, &rect);
+                SDL_SetWindowRelativeMouseMode(target, this->cursor_capture_.relative);
+            }
+
             std::array<bool, SDL_SCANCODE_COUNT> key_down_{};
             std::array<std::chrono::steady_clock::time_point, SDL_SCANCODE_COUNT> key_down_since_{};
             std::vector<pending_key_release> pending_key_releases_{};

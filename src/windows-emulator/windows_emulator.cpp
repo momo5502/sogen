@@ -1630,6 +1630,8 @@ namespace sogen
             return;
         }
 
+        const auto previous_foreground = this->process.foreground_window;
+
         msg m{};
         m.window = event.window;
         m.message = event.message;
@@ -1675,7 +1677,7 @@ namespace sogen
             }
 
             // A game using raw input for mouse-look reads relative deltas from WM_INPUT, not WM_MOUSEMOVE.
-            // Without relative host motion, synthesize that delta from the change in tracked cursor position. A
+            // Synthesize that delta from the change in tracked cursor position before updating it. A
             // SetCursorPos recenter pre-updates cursor_x/y, so the warp-echo motion event yields a zero
             // delta -- no spurious look -- while genuine motion between recenters produces the real delta.
             if (this->process.raw_mouse_registered)
@@ -1791,6 +1793,11 @@ namespace sogen
             auto& vcpu = running_on ? *running_on : this->vcpu(0);
             vcpu.switch_thread = true;
             vcpu.cpu.stop();
+        }
+
+        if (this->process.foreground_window != previous_foreground)
+        {
+            this->apply_cursor_capture();
         }
     }
 
@@ -1993,6 +2000,21 @@ namespace sogen
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
         this->process.restore_after_state_restore(*this);
+        this->apply_cursor_capture();
+    }
+
+    // The guest's ClipCursor is process-wide; the host confines whichever window is in the foreground, in relative mode while
+    // the guest cursor is hidden.
+    void windows_emulator::apply_cursor_capture()
+    {
+        std::optional<ui_rect> clip{};
+        if (const auto& rect = this->process.cursor_clip)
+        {
+            clip = ui_rect{.left = rect->left, .top = rect->top, .right = rect->right, .bottom = rect->bottom};
+        }
+
+        const bool hidden = this->process.cursor_show_count < 0 || !this->process.cursor_shape_visible;
+        this->ui().set_cursor_clip(this->process.foreground_window, clip, clip.has_value() && hidden);
     }
 
     void windows_emulator::save_snapshot()
@@ -2049,6 +2071,7 @@ namespace sogen
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
         this->process.restore_after_state_restore(*this);
+        this->apply_cursor_capture();
     }
 
 } // namespace sogen

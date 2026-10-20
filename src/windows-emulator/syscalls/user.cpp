@@ -2476,20 +2476,6 @@ namespace sogen
             return TRUE;
         }
 
-        // A captured cursor is one the guest hides and confines; only then does the host switch to relative motion.
-        void apply_cursor_capture(const syscall_context& c)
-        {
-            std::optional<ui_rect> clip{};
-            if (c.proc.cursor_clip)
-            {
-                const auto& rect = *c.proc.cursor_clip;
-                clip = ui_rect{.left = rect.left, .top = rect.top, .right = rect.right, .bottom = rect.bottom};
-            }
-
-            const bool hidden = c.proc.cursor_show_count < 0 || !c.proc.cursor_shape_visible;
-            c.win_emu.ui().set_cursor_clip(c.proc.foreground_window, clip, clip.has_value() && hidden);
-        }
-
         BOOL handle_NtUserGetClipCursor(const syscall_context& c, const emulator_pointer rect_ptr)
         {
             if (rect_ptr == 0)
@@ -2526,8 +2512,16 @@ namespace sogen
 
         // SetCursorPos moves the cursor; games use it to recenter the pointer. Track the new position so a
         // following GetCursorPos reflects it (and relative-motion deltas compute correctly).
-        BOOL handle_NtUserSetCursorPos(const syscall_context& c, const int32_t x, const int32_t y)
+        BOOL handle_NtUserSetCursorPos(const syscall_context& c, int32_t x, int32_t y)
         {
+            if (const auto& clip = c.proc.cursor_clip)
+            {
+                x = std::clamp(x, static_cast<int32_t>(clip->left),
+                               std::max(static_cast<int32_t>(clip->left), static_cast<int32_t>(clip->right) - 1));
+                y = std::clamp(y, static_cast<int32_t>(clip->top),
+                               std::max(static_cast<int32_t>(clip->top), static_cast<int32_t>(clip->bottom) - 1));
+            }
+
             c.proc.cursor_x = x;
             c.proc.cursor_y = y;
             // Warp the host cursor to match, so the next host mouse-motion event measures movement from the
@@ -2559,7 +2553,7 @@ namespace sogen
                 c.proc.cursor_clip = rect;
             }
 
-            apply_cursor_capture(c);
+            c.win_emu.apply_cursor_capture();
             return TRUE;
         }
 
@@ -2690,7 +2684,7 @@ namespace sogen
         void apply_cursor_visibility(const syscall_context& c)
         {
             c.win_emu.ui().set_cursor_visibility(c.proc.cursor_show_count >= 0 && c.proc.cursor_shape_visible);
-            apply_cursor_capture(c);
+            c.win_emu.apply_cursor_capture();
         }
 
         // ShowCursor(bShow) adjusts the cursor display counter (+1 to show, -1 to hide) and returns the new
