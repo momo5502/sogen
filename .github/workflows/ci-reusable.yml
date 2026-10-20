@@ -785,6 +785,9 @@ jobs:
       - name: Copy Test Sample
         run: cp build/release/artifacts/test-sample.exe build/release/artifacts/root/filesys/c/
 
+      - name: Copy Thread Benchmark
+        run: cp build/release/artifacts/thread-bench.exe build/release/artifacts/root/filesys/c/
+
       - name: Print WHP Diagnostics
         shell: powershell
         run: |
@@ -812,6 +815,13 @@ jobs:
           EMULATOR_WHP: "1"
           EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
           EMULATOR_VERBOSE: ${{ inputs.verbose }}
+
+      - name: Multi-vCPU memory integrity
+        timeout-minutes: 5
+        run: cd build/release/artifacts && ./analyzer.exe --vcpus 4 -e root --root-mode rw c:/thread-bench.exe -w memory_integrity -s 0.1 8
+        env:
+          EMULATOR_WHP: "1"
+          EMULATOR_ROOT: ${{github.workspace}}/build/release/artifacts/root
 
   smoke-test-icicle:
     name: Smoke Test Icicle x86_64
