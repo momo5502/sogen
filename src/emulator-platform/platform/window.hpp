@@ -1,6 +1,7 @@
 #pragma once
 
 #include "kernel_mapped.hpp"
+#include "gdi.hpp"
 
 // NOLINTBEGIN(modernize-use-using,cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays,cppcoreguidelines-use-enum-class)
 
@@ -163,6 +164,28 @@ namespace sogen
         BOOL fIncUpdate;
         uint8_t rgbReserved[32];
     };
+
+    struct EMU_NONCLIENTMETRICS
+    {
+        DWORD cbSize;
+        LONG iBorderWidth;
+        LONG iScrollWidth;
+        LONG iScrollHeight;
+        LONG iCaptionWidth;
+        LONG iCaptionHeight;
+        EMU_LOGFONTW lfCaptionFont;
+        LONG iSmCaptionWidth;
+        LONG iSmCaptionHeight;
+        EMU_LOGFONTW lfSmCaptionFont;
+        LONG iMenuWidth;
+        LONG iMenuHeight;
+        EMU_LOGFONTW lfMenuFont;
+        EMU_LOGFONTW lfStatusFont;
+        EMU_LOGFONTW lfMessageFont;
+        LONG iPaddedBorderWidth;
+    };
+
+    static_assert(sizeof(EMU_NONCLIENTMETRICS) == 0x1F8);
 
     struct EMU_MENUITEMINFO
     {

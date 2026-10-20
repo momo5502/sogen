@@ -280,6 +280,7 @@ namespace sogen
             }
 
             if (utils::string::equals_ignore_case(filename_sv, u"windows_shell_global_counters"sv) ||
+                utils::string::equals_ignore_case(filename_sv, u"\\Windows\\ThemeSection"sv) ||
                 utils::string::equals_ignore_case(filename_sv, u"Global\\__ComCatalogCache__"sv) ||
                 utils::string::equals_ignore_case(filename_sv, u"{00020000-0000-1005-8005-0000C06B5161}"sv) ||
                 utils::string::equals_ignore_case(filename_sv, u"Global\\{00020000-0000-1005-8005-0000C06B5161}"sv))

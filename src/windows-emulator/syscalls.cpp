@@ -764,11 +764,13 @@ namespace sogen
         BOOL handle_NtUserOpenClipboard();
         BOOL handle_NtUserCloseClipboard();
         BOOL handle_NtUserEmptyClipboard();
+        BOOL handle_NtUserAddClipboardFormatListener(const syscall_context& c, hwnd window);
+        BOOL handle_NtUserRemoveClipboardFormatListener(const syscall_context& c, hwnd window);
         uint64_t handle_NtUserGetClipboardData();
         uint64_t handle_NtUserConvertMemHandle();
         uint64_t handle_NtUserSetClipboardData();
         uint64_t handle_NtUserGetProcessDpiAwarenessContext();
-        NTSTATUS handle_NtUserSetProcessDpiAwarenessContext();
+        BOOL handle_NtUserSetProcessDpiAwarenessContext();
         uint32_t handle_NtUserMapVirtualKeyEx(const syscall_context& c, uint32_t code, uint32_t map_type, uint32_t keyboard_id,
                                               uint64_t keyboard_layout);
         NTSTATUS handle_NtUserToUnicodeEx();
@@ -1125,15 +1127,10 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtUserSystemParametersInfo()
-        {
-            return STATUS_NOT_SUPPORTED;
-        }
-
-        BOOL handle_NtUserSystemParametersInfoForDpi()
-        {
-            return TRUE;
-        }
+        BOOL handle_NtUserSystemParametersInfo(const syscall_context& c, uint32_t action, uint32_t param, emulator_pointer value,
+                                               uint32_t win_ini);
+        BOOL handle_NtUserSystemParametersInfoForDpi(const syscall_context& c, uint32_t action, uint32_t param, emulator_pointer value,
+                                                     uint32_t win_ini, uint32_t dpi);
 
         BOOL handle_NtUserIsWindowBroadcastingDpiToChildren()
         {
@@ -2003,6 +2000,8 @@ namespace sogen
         add_handler(NtUserOpenClipboard);
         add_handler(NtUserCloseClipboard);
         add_handler(NtUserEmptyClipboard);
+        add_handler(NtUserAddClipboardFormatListener);
+        add_handler(NtUserRemoveClipboardFormatListener);
         add_handler(NtUserGetClipboardData);
         add_handler(NtUserConvertMemHandle);
         add_handler(NtUserSetClipboardData);
