@@ -1319,13 +1319,13 @@ namespace sogen::gpu_bridge
         float max_anisotropy;
         float min_lod;
         float max_lod;
-        uint32_t flags;                    // VkSamplerCreateFlags
-        uint32_t unnormalized_coordinates; // VkBool32
-        uint32_t has_reduction_mode;       // VkSamplerReductionModeCreateInfo present
-        uint32_t reduction_mode;           // VkSamplerReductionMode
-        uint32_t has_custom_border_color;  // VkSamplerCustomBorderColorCreateInfoEXT present
-        uint32_t custom_border_format;     // VkFormat
-        uint32_t custom_border_color[4];   // VkClearColorValue bits
+        uint32_t flags;                              // VkSamplerCreateFlags
+        uint32_t unnormalized_coordinates;           // VkBool32
+        uint32_t has_reduction_mode;                 // VkSamplerReductionModeCreateInfo present
+        uint32_t reduction_mode;                     // VkSamplerReductionMode
+        uint32_t has_custom_border_color;            // VkSamplerCustomBorderColorCreateInfoEXT present
+        uint32_t custom_border_format;               // VkFormat
+        std::array<uint32_t, 4> custom_border_color; // VkClearColorValue bits
     };
 
     struct create_surface_request

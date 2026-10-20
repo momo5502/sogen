@@ -2884,19 +2884,11 @@ namespace sogen
                     .min_lod = request.min_lod,
                     .max_lod = request.max_lod,
                     .unnormalized_coordinates = request.unnormalized_coordinates,
+                    .reduction_mode = request.has_reduction_mode ? std::optional{request.reduction_mode} : std::nullopt,
+                    .custom_border_color = request.has_custom_border_color
+                                               ? std::optional{std::pair{request.custom_border_format, request.custom_border_color}}
+                                               : std::nullopt,
                 };
-                if (request.has_reduction_mode)
-                {
-                    desc.reduction_mode = request.reduction_mode;
-                }
-                if (request.has_custom_border_color)
-                {
-                    desc.custom_border_color = std::pair{
-                        request.custom_border_format,
-                        std::array{request.custom_border_color[0], request.custom_border_color[1], request.custom_border_color[2],
-                                   request.custom_border_color[3]},
-                    };
-                }
                 const int32_t result = this->vulkan_.create_sampler(request.device, desc, sampler);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = sampler});
             }

@@ -4843,7 +4843,7 @@ extern "C"
                 const auto* custom = reinterpret_cast<const VkSamplerCustomBorderColorCreateInfoEXT*>(next);
                 request.has_custom_border_color = VK_TRUE;
                 request.custom_border_format = static_cast<uint32_t>(custom->format);
-                std::memcpy(request.custom_border_color, &custom->customBorderColor, sizeof(request.custom_border_color));
+                std::memcpy(request.custom_border_color.data(), &custom->customBorderColor, sizeof(request.custom_border_color));
             }
         }
 
