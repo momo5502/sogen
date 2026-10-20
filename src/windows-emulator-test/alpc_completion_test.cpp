@@ -112,13 +112,16 @@ namespace sogen::test
         EXPECT_TRUE(reply.payload.empty());
     }
 
-    TEST_F(AlpcCompletionTest, AssociatedPortPostsCompletionForEachQueuedConnectionReply)
+    TEST_F(AlpcCompletionTest, AssociationPostsOneCompletionPerAlreadyQueuedMessage)
     {
-        ASSERT_EQ(STATUS_SUCCESS, this->associate());
         this->container().queue_connection_reply(*this->emu, false);
+        this->container().queue_connection_reply(*this->emu, false);
+        ASSERT_EQ(STATUS_SUCCESS, this->associate());
+
         io_completion_message message{};
-        ASSERT_TRUE(this->dequeue(message));
-        EXPECT_EQ(completion_key, message.key_context);
+        EXPECT_TRUE(this->dequeue(message));
+        EXPECT_TRUE(this->dequeue(message));
+        EXPECT_FALSE(this->dequeue(message));
     }
 
     TEST_F(AlpcCompletionTest, AssociationKeepsCompletionPortAliveAfterTheOriginalHandleIsClosed)

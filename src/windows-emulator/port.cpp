@@ -386,7 +386,7 @@ namespace sogen
         this->completion_key_ = completion_key;
         this->completion_port_ = retained_port;
 
-        if (!this->reply_queue_.empty())
+        for (size_t index = 0; index < this->reply_queue_.size(); ++index)
         {
             this->post_completion(win_emu);
         }

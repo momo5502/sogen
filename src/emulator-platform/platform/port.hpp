@@ -149,6 +149,7 @@ namespace sogen
     };
 
     static_assert(sizeof(ALPC_CONTEXT_ATTR<EmulatorTraits<Emu32>>) == 20);
+    static_assert(sizeof(ALPC_CONTEXT_ATTR<EmulatorTraits<Emu64>>) == 32);
 
     template <typename Traits>
     struct ALPC_PORT_ASSOCIATE_COMPLETION_PORT
