@@ -33,9 +33,6 @@ namespace sogen
 
     // --[Core]--------------------------------------------------------------------------
 
-    // Machine-level plumbing that is the same for every architecture: a machine exposes its
-    // vCPUs and, until backends grow real per-vCPU objects, acts as its own CPU 0. CpuType is
-    // the architecture's CPU interface, so the machine is substitutable wherever that CPU is.
     template <typename Traits, typename CpuType>
     struct EMULATOR_INTERFACE arch_emulator : typed_emulator<Traits>, CpuType
     {

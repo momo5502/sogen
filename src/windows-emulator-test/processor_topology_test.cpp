@@ -64,5 +64,33 @@ namespace sogen::test
         EXPECT_EQ(entries(), (std::array<uint32_t, 3>{0x00078664, 0x0012014C, 0}));
         EXPECT_EQ(STATUS_OBJECT_TYPE_MISMATCH, query(CURRENT_THREAD));
         EXPECT_EQ(STATUS_INVALID_PARAMETER, query(CURRENT_PROCESS, 0));
+
+        emu.process.is_wow64_process = true;
+        ASSERT_EQ(STATUS_SUCCESS, query(CURRENT_PROCESS));
+        EXPECT_EQ(entries(), (std::array<uint32_t, 3>{0x00078664, 0x001A014C, 0}));
+    }
+
+    TEST(ProcessorTopologyTest, SupportedArchitecturesRejectUnreadableProcessHandles)
+    {
+        windows_emulator emu{create_arm64_emulator(),
+                             emulator_settings{.disable_logging = true, .emulation_root = get_emulator_root(), .load_registry = false}};
+        const auto storage = emu.memory.allocate_memory(0x1000, memory_permission::read_write);
+        const syscall_context context{.win_emu = emu, .emu = emu.vcpu(0).cpu, .vcpu = emu.vcpu(0), .proc = emu.process};
+        constexpr std::array<uint32_t, 3> sentinel{0x11111111, 0x22222222, 0x33333333};
+        constexpr uint32_t length_sentinel = 0xDEADBEEF;
+        const auto output = storage + 0x100;
+        const auto return_length = storage + 0x10;
+        const std::array inputs{uint64_t{0}, uint64_t{0xDEAD0000}, storage + 0x1000 - sizeof(uint32_t)};
+
+        for (const auto input : inputs)
+        {
+            emu.memory.write_memory(output, sentinel);
+            emu.memory.write_memory(return_length, length_sentinel);
+            EXPECT_EQ(STATUS_ACCESS_VIOLATION,
+                      syscalls::handle_NtQuerySystemInformationEx(context, SystemSupportedProcessorArchitectures, input, sizeof(handle),
+                                                                  output, sizeof(sentinel), {emu.memory, return_length}));
+            EXPECT_EQ((emu.memory.read_memory<std::array<uint32_t, 3>>(output)), sentinel);
+            EXPECT_EQ(emu.memory.read_memory<uint32_t>(return_length), length_sentinel);
+        }
     }
 }

@@ -855,7 +855,11 @@ namespace sogen
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
-                const auto process = c.emu.read_memory<handle>(input_buffer);
+                handle process{};
+                if (!c.emu.try_read_memory(input_buffer, &process, sizeof(process)))
+                {
+                    return STATUS_ACCESS_VIOLATION;
+                }
                 const auto is_current_process = process.bits != 0 && c.proc.is_current_process_handle(process);
                 const auto is_other_process =
                     !is_current_process && process.value.type == handle_types::process && c.proc.processes.get(process) != nullptr;

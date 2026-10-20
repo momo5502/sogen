@@ -140,4 +140,4 @@ The guest file system is read-only by default, and guest writes fail with `STATU
 
 Windows ARM64 executables run the same way, from an emulation root created with [create-root.bat](https://github.com/momo5502/sogen/blob/main/src/tools/create-root.bat) on a Windows ARM64 machine. They run on WHP on Windows ARM64, on Hypervisor.framework on Apple Silicon and on Unicorn elsewhere.
 
-On Apple Silicon, `EMULATOR_UNICORN=1` takes precedence over `EMULATOR_HVF=1`. Requesting HVF still falls back to Unicorn if the hypervisor is unavailable.
+`--backend` overrides environment-based selection. On Apple Silicon, `EMULATOR_UNICORN=1` takes precedence over `EMULATOR_HVF=1`. An unavailable hypervisor requested through `EMULATOR_HVF` falls back to Unicorn.

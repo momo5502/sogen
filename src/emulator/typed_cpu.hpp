@@ -226,9 +226,6 @@ namespace sogen
         std::source_location origin_{};
     };
 
-    // A single 64-bit virtual CPU's register-independent view of the machine: memory access
-    // delegated to the shared machine plus stack and control-flow helpers. Windows runtime code
-    // that does not depend on a register set uses this type for every guest architecture.
     class EMULATOR_INTERFACE guest_cpu : public cpu_interface
     {
       public:
@@ -416,7 +413,6 @@ namespace sogen
         }
     };
 
-    // A single virtual CPU's view of the machine with typed access to its native registers.
     template <typename Traits>
     class EMULATOR_INTERFACE typed_cpu : public guest_cpu
     {
