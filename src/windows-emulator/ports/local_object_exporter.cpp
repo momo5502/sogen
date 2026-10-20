@@ -190,6 +190,7 @@ namespace sogen
             {
                 rpc_port::serialize_object(buffer);
                 buffer.write(this->next_id_);
+                buffer.write(this->next_server_oxid_);
                 buffer.write_vector(this->clients_);
                 buffer.write_map(this->apartments_);
             }
@@ -198,6 +199,7 @@ namespace sogen
             {
                 rpc_port::deserialize_object(buffer);
                 buffer.read(this->next_id_);
+                buffer.read(this->next_server_oxid_);
                 buffer.read_vector(this->clients_);
                 buffer.read_map(this->apartments_);
             }
@@ -261,8 +263,7 @@ namespace sogen
                 const auto count = reader.read<uint32_t>();
                 registration.thread_id = reader.read<uint32_t>();
                 const auto process_id = reader.read<uint32_t>();
-                if (count > maximum_object_ids || process_id != win_emu.process.process_id ||
-                    this->next_id_ > std::numeric_limits<uint64_t>::max() - count - 1)
+                if (count > maximum_object_ids || process_id != win_emu.process.process_id)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
@@ -286,20 +287,36 @@ namespace sogen
                 (void)reader.read<uint32_t>();
                 const auto metadata = reader.remaining();
                 registration.metadata.assign(metadata.begin(), metadata.end());
-                std::array<uint8_t, 16> oxid{};
-                // Build 26100 uses GUID local OXIDs, unlike the 64-bit OXIDs in the public DCOM protocol.
-                constexpr std::array<uint8_t, 8> prefix{'S', 'o', 'g', 'e', 'n', 'O', 'X', 'D'};
-                std::memcpy(oxid.data(), prefix.data(), prefix.size());
-                const auto first_id = this->next_id_;
-                std::memcpy(oxid.data() + 8, &first_id, sizeof(first_id));
-                registration.object_ids.reserve(count);
-                writer.write(oxid);
+
+                auto& client = this->clients_.at(static_cast<size_t>(registration.connection - 1));
+                const bool needs_primary_oxid = client.primary_oxid == 0;
+                const auto required_ids = static_cast<uint64_t>(count) + (needs_primary_oxid ? 1 : 0);
+                if (this->next_id_ > std::numeric_limits<uint64_t>::max() - required_ids ||
+                    this->next_server_oxid_ == std::numeric_limits<uint64_t>::max())
+                {
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (needs_primary_oxid)
+                {
+                    client.primary_oxid = this->next_id_++;
+                }
+                if (!this->apartments_.contains(client.primary_oxid))
+                {
+                    this->apartments_.emplace(client.primary_oxid, apartment_registration{.connection = registration.connection,
+                                                                                          .thread_id = registration.thread_id});
+                }
+
+                const auto server_oxid = this->next_server_oxid_++;
+                writer.write(server_oxid);
+                writer.write(client.primary_oxid);
                 writer.write_pointer_sized(count);
                 writer.write_pointer_sized(0);
                 writer.write_pointer_sized(count);
+                registration.object_ids.reserve(count);
                 for (uint32_t index = 0; index < count; ++index)
                 {
-                    const auto id = first_id + 1 + index;
+                    const auto id = this->next_id_++;
                     writer.write(id);
                     registration.object_ids.push_back(id);
                 }
@@ -307,28 +324,37 @@ namespace sogen
                 writer.write<uint64_t>(0);
                 write_empty_bindings(writer);
                 writer.write<uint32_t>(0);
-                this->apartments_.emplace(oxid, std::move(registration));
-                this->next_id_ += 1 + count;
+                this->apartments_.emplace(server_oxid, std::move(registration));
                 return STATUS_SUCCESS;
             }
 
             NTSTATUS free_apartment(connect_reader& reader, utils::aligned_binary_writer& writer)
             {
                 const auto connection = this->read_connection(reader);
-                const auto oxid = reader.read<std::array<uint8_t, 16>>();
+                const auto oxid = reader.read<uint64_t>();
                 const auto count = reader.read<uint32_t>();
-                if (count > maximum_object_ids)
+                const auto array_count = reader.read<uint32_t>();
+                if (count > maximum_object_ids || array_count != count)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
+                std::vector<uint64_t> object_ids{};
+                object_ids.reserve(count);
                 for (uint32_t index = 0; index < count; ++index)
                 {
-                    (void)reader.read<uint64_t>();
+                    object_ids.push_back(reader.read<uint64_t>());
                 }
                 const auto apartment = this->apartments_.find(oxid);
                 if (apartment == this->apartments_.end() || apartment->second.connection != connection)
                 {
                     return STATUS_INVALID_HANDLE;
+                }
+                const auto all_object_ids_registered = std::ranges::all_of(object_ids, [&](const uint64_t object_id) {
+                    return std::ranges::find(apartment->second.object_ids, object_id) != apartment->second.object_ids.end();
+                });
+                if (!all_object_ids_registered)
+                {
+                    return STATUS_INVALID_PARAMETER;
                 }
                 writer.write<uint32_t>(0);
                 this->apartments_.erase(apartment);
@@ -341,6 +367,7 @@ namespace sogen
                 std::u16string executable{};
                 uint32_t flags{};
                 uint16_t architecture{};
+                uint64_t primary_oxid{};
                 bool connected{true};
 
                 void serialize(utils::buffer_serializer& buffer) const
@@ -349,6 +376,7 @@ namespace sogen
                     buffer.write_string(this->executable);
                     buffer.write(this->flags);
                     buffer.write(this->architecture);
+                    buffer.write(this->primary_oxid);
                     buffer.write(this->connected);
                 }
 
@@ -358,6 +386,7 @@ namespace sogen
                     buffer.read_string(this->executable);
                     buffer.read(this->flags);
                     buffer.read(this->architecture);
+                    buffer.read(this->primary_oxid);
                     buffer.read(this->connected);
                 }
             };
@@ -438,8 +467,9 @@ namespace sogen
             }
 
             uint64_t next_id_{1};
+            uint64_t next_server_oxid_{0x100000000};
             std::vector<client_connection> clients_{};
-            std::map<std::array<uint8_t, 16>, apartment_registration> apartments_{};
+            std::map<uint64_t, apartment_registration> apartments_{};
         };
     }
 
