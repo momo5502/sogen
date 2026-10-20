@@ -1,7 +1,21 @@
 #include "host_directory_provider.hpp"
 
+#include <string_view>
+#include <unordered_map>
+
 #include <platform/compiler.hpp>
 #include <platform/unicode.hpp>
+#include <utils/string.hpp>
+
+#ifdef OS_WINDOWS
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #if defined(OS_WINDOWS) && !defined(__MINGW64__)
 #include <corecrt_io.h>
@@ -34,6 +48,16 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
         }
+
+#ifdef OS_WINDOWS
+        struct find_handle_deleter
+        {
+            void operator()(void* handle) const noexcept
+            {
+                (void)FindClose(handle);
+            }
+        };
+#endif
     }
 
     host_file::host_file(FILE* file)
@@ -169,6 +193,37 @@ namespace sogen
             return entries;
         }
 
+#ifdef OS_WINDOWS
+        std::unordered_map<std::u16string, std::u16string> short_names{};
+
+        std::wstring search_path = host_path->wstring();
+        if (!search_path.ends_with(L'\\') && !search_path.ends_with(L'/'))
+        {
+            search_path.push_back(L'\\');
+        }
+        search_path.push_back(L'*');
+
+        WIN32_FIND_DATAW find_data{};
+        HANDLE find_handle = FindFirstFileW(search_path.c_str(), &find_data);
+        if (find_handle != INVALID_HANDLE_VALUE)
+        {
+            const std::unique_ptr<void, find_handle_deleter> find_handle_guard{find_handle};
+
+            do
+            {
+                const std::wstring_view filename{find_data.cFileName};
+                const std::wstring_view short_name{find_data.cAlternateFileName};
+                if (filename == L"." || filename == L".." || short_name.empty())
+                {
+                    continue;
+                }
+
+                short_names.emplace(std::filesystem::path{find_data.cFileName}.u16string(),
+                                    std::filesystem::path{find_data.cAlternateFileName}.u16string());
+            } while (FindNextFileW(find_handle_guard.get(), &find_data));
+        }
+#endif
+
         std::error_code ec{};
         for (const auto& file : std::filesystem::directory_iterator(*host_path, ec))
         {
@@ -176,6 +231,14 @@ namespace sogen
                 .name = file.path().filename().u16string(),
                 .is_directory = file.is_directory(ec),
             };
+
+#ifdef OS_WINDOWS
+            const auto short_name = short_names.find(entry.name);
+            if (short_name != short_names.end())
+            {
+                entry.short_name = short_name->second;
+            }
+#endif
 
             struct compat_stat file_stat{};
             if (compat_stat(file.path(), &file_stat))

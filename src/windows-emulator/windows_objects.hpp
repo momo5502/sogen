@@ -714,6 +714,7 @@ namespace sogen
     struct file_entry
     {
         std::filesystem::path file_path{};
+        std::u16string short_name{};
         uint64_t file_size{};
         bool is_directory{};
         LARGE_INTEGER creation_time{};
@@ -723,6 +724,7 @@ namespace sogen
         void serialize(utils::buffer_serializer& buffer) const
         {
             buffer.write(this->file_path);
+            buffer.write(this->short_name);
             buffer.write(this->file_size);
             buffer.write(this->is_directory);
             buffer.write(this->creation_time);
@@ -733,6 +735,7 @@ namespace sogen
         void deserialize(utils::buffer_deserializer& buffer)
         {
             buffer.read(this->file_path);
+            buffer.read(this->short_name);
             buffer.read(this->file_size);
             buffer.read(this->is_directory);
             buffer.read(this->creation_time);
