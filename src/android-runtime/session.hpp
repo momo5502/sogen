@@ -32,6 +32,7 @@ namespace sogen::android
         std::string backend{};
         bool live_network{};
         std::filesystem::path sandbox_executable{};
+        vulkan_driver vulkan{};
     };
 
     class session final : public ui_host

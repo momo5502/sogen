@@ -97,11 +97,10 @@ extern "C"
         delete reinterpret_cast<session*>(handle);
     }
 
-    JNIEXPORT jint JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeRun(JNIEnv* env, jobject /*self*/, const jlong handle, jstring root,
-                                                                            jstring application, jobjectArray arguments,
-                                                                            jobjectArray environment, jobjectArray path_mappings,
-                                                                            jstring working_directory, jstring backend,
-                                                                            const jboolean live_network, jstring sandbox_executable)
+    JNIEXPORT jint JNICALL Java_dev_sogen_app_runtime_SogenNative_nativeRun(
+        JNIEnv* env, jobject /*self*/, const jlong handle, jstring root, jstring application, jobjectArray arguments,
+        jobjectArray environment, jobjectArray path_mappings, jstring working_directory, jstring backend, const jboolean live_network,
+        jstring sandbox_executable, jstring vulkan_hook_directory, jstring vulkan_driver_directory, jstring vulkan_driver_name)
     {
         const sogen::android::run_config config{
             .emulation_root = to_string(*env, root),
@@ -113,6 +112,12 @@ extern "C"
             .backend = to_string(*env, backend),
             .live_network = live_network == JNI_TRUE,
             .sandbox_executable = to_string(*env, sandbox_executable),
+            .vulkan =
+                {
+                    .hook_directory = to_string(*env, vulkan_hook_directory),
+                    .custom_directory = to_string(*env, vulkan_driver_directory),
+                    .custom_name = to_string(*env, vulkan_driver_name),
+                },
         };
 
         return get_session(handle).run(config);

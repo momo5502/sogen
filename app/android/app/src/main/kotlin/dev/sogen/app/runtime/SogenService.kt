@@ -102,13 +102,37 @@ class SogenService : Service() {
     private fun runSession(config: RunConfig, callback: ISogenCallback) {
         val session = native ?: return
         val sandbox = File(applicationInfo.nativeLibraryDir, SANDBOX_LIBRARY)
-        val exitCode = session.run(config, if (sandbox.exists()) sandbox.path else "")
+        val exitCode = session.run(config, if (sandbox.exists()) sandbox.path else "", prepareVulkanDriver())
 
         try {
             callback.onExit(exitCode)
         } catch (e: RemoteException) {
             Log.w(TAG, "Could not report exit code $exitCode", e)
         }
+    }
+
+    /**
+     * Copies the bundled Turnip driver into private storage, since libadrenotools only loads drivers from
+     * there. The native side uses it on Adreno GPUs only.
+     */
+    private fun prepareVulkanDriver(): VulkanDriver {
+        val hookDirectory = applicationInfo.nativeLibraryDir
+
+        val bundled = try {
+            assets.openFd(TURNIP_ASSET)
+        } catch (_: java.io.IOException) {
+            return VulkanDriver(hookDirectory)
+        }
+
+        val directory = java.io.File(filesDir, "turnip").apply { mkdirs() }
+        val driver = java.io.File(directory, TURNIP_LIBRARY)
+        bundled.use { descriptor ->
+            if (driver.length() != descriptor.length) {
+                descriptor.createInputStream().use { input -> driver.outputStream().use { input.copyTo(it) } }
+            }
+        }
+
+        return VulkanDriver(hookDirectory, directory.absolutePath, TURNIP_LIBRARY)
     }
 
     private class CallbackListener(private val callback: ISogenCallback) : NativeListener {
@@ -147,5 +171,8 @@ class SogenService : Service() {
 
         /** The sandbox executable, packaged as a library so that it is extracted to a directory apps may execute from. */
         const val SANDBOX_LIBRARY = "libsandbox.so"
+
+        const val TURNIP_LIBRARY = "vulkan.ad07xx.so"
+        const val TURNIP_ASSET = "turnip/$TURNIP_LIBRARY"
     }
 }
