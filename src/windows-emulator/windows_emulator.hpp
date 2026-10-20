@@ -11,6 +11,7 @@
 #include "syscall_dispatcher.hpp"
 #include "process_context.hpp"
 #include "kernel_lock.hpp"
+#include "scheduler_clock.hpp"
 #include "logger.hpp"
 #include "file_system.hpp"
 #include "filesystem/mount_spec.hpp"
@@ -178,7 +179,7 @@ namespace sogen
 
         std::unique_ptr<x86_64_emulator> emu_{};
         bool use_native_timestamp_counter_{};
-        std::unique_ptr<utils::clock> clock_{};
+        std::unique_ptr<scheduler_clock> clock_{};
         network::network_mode network_mode_{};
         std::unique_ptr<network::dns_lookup> dns_lookup_{};
         std::unique_ptr<network::socket_factory> socket_factory_{};
@@ -225,6 +226,11 @@ namespace sogen
         }
 
         utils::clock& clock()
+        {
+            return *this->clock_;
+        }
+
+        [[nodiscard]] scheduler_clock& scheduling_clock()
         {
             return *this->clock_;
         }

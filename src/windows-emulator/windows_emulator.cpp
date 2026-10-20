@@ -564,6 +564,7 @@ namespace sogen
 
         bool switch_to_next_thread(windows_emulator& win_emu, vcpu_context& vcpu)
         {
+            const scheduler_clock::scope time_scope{win_emu.scheduling_clock()};
             perform_context_switch_work(win_emu, vcpu);
 
             auto& threads = win_emu.process.threads;
@@ -711,7 +712,7 @@ namespace sogen
         : emu_(std::move(emu)),
           use_native_timestamp_counter_(!interfaces.clock && !settings.use_relative_time &&
                                         this->emu_->supports_native_timestamp_counter()),
-          clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
+          clock_(std::make_unique<scheduler_clock>(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time))),
           network_mode_(settings.network),
           dns_lookup_(get_dns_lookup(interfaces, settings.network)),
           socket_factory_(get_socket_factory(interfaces, settings.network)),

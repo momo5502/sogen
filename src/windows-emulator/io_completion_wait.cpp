@@ -64,7 +64,7 @@ namespace sogen
 
                 case handle_types::timer: {
                     auto* entry = process.timers.get(target_object_handle);
-                    return entry && entry->is_signaled(win_emu.clock().steady_now());
+                    return entry && entry->is_signaled(win_emu.clock());
                 }
 
                 default:
