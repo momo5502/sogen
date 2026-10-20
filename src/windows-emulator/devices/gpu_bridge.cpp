@@ -2867,10 +2867,37 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
                 uint64_t sampler = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_sampler(
-                    request.device, request.mag_filter, request.min_filter, request.address_mode_u, request.address_mode_v,
-                    request.address_mode_w, request.mipmap_mode, request.compare_enable, request.compare_op, request.anisotropy_enable,
-                    request.border_color, request.mip_lod_bias, request.max_anisotropy, request.min_lod, request.max_lod, sampler);
+                vulkan_host::sampler_desc desc{
+                    .flags = request.flags,
+                    .mag_filter = request.mag_filter,
+                    .min_filter = request.min_filter,
+                    .address_mode_u = request.address_mode_u,
+                    .address_mode_v = request.address_mode_v,
+                    .address_mode_w = request.address_mode_w,
+                    .mipmap_mode = request.mipmap_mode,
+                    .compare_enable = request.compare_enable,
+                    .compare_op = request.compare_op,
+                    .anisotropy_enable = request.anisotropy_enable,
+                    .border_color = request.border_color,
+                    .mip_lod_bias = request.mip_lod_bias,
+                    .max_anisotropy = request.max_anisotropy,
+                    .min_lod = request.min_lod,
+                    .max_lod = request.max_lod,
+                    .unnormalized_coordinates = request.unnormalized_coordinates,
+                };
+                if (request.has_reduction_mode)
+                {
+                    desc.reduction_mode = request.reduction_mode;
+                }
+                if (request.has_custom_border_color)
+                {
+                    desc.custom_border_color = std::pair{
+                        request.custom_border_format,
+                        std::array{request.custom_border_color[0], request.custom_border_color[1], request.custom_border_color[2],
+                                   request.custom_border_color[3]},
+                    };
+                }
+                const int32_t result = this->vulkan_.create_sampler(request.device, desc, sampler);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = sampler});
             }
 

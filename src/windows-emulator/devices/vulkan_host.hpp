@@ -355,10 +355,29 @@ namespace sogen
 
         // Creates a sampler honoring the guest's full state: filters, per-axis address modes, mip mode/lod,
         // anisotropy, border color, and depth-compare (the comparison/PCF mode shadow-map sampling needs).
-        int32_t create_sampler(uint64_t device, uint32_t mag_filter, uint32_t min_filter, uint32_t address_mode_u, uint32_t address_mode_v,
-                               uint32_t address_mode_w, uint32_t mipmap_mode, uint32_t compare_enable, uint32_t compare_op,
-                               uint32_t anisotropy_enable, uint32_t border_color, float mip_lod_bias, float max_anisotropy, float min_lod,
-                               float max_lod, uint64_t& out_sampler);
+        struct sampler_desc
+        {
+            uint32_t flags;
+            uint32_t mag_filter;
+            uint32_t min_filter;
+            uint32_t address_mode_u;
+            uint32_t address_mode_v;
+            uint32_t address_mode_w;
+            uint32_t mipmap_mode;
+            uint32_t compare_enable;
+            uint32_t compare_op;
+            uint32_t anisotropy_enable;
+            uint32_t border_color;
+            float mip_lod_bias;
+            float max_anisotropy;
+            float min_lod;
+            float max_lod;
+            uint32_t unnormalized_coordinates;
+            std::optional<uint32_t> reduction_mode;
+            std::optional<std::pair<uint32_t, std::array<uint32_t, 4>>> custom_border_color; // format, color bits
+        };
+
+        int32_t create_sampler(uint64_t device, const sampler_desc& desc, uint64_t& out_sampler);
         void destroy_sampler(uint64_t device, uint64_t sampler);
 
         struct surface_format

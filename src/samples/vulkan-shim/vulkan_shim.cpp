@@ -4828,6 +4828,24 @@ extern "C"
         request.max_anisotropy = pCreateInfo->maxAnisotropy;
         request.min_lod = pCreateInfo->minLod;
         request.max_lod = pCreateInfo->maxLod;
+        request.flags = pCreateInfo->flags;
+        request.unnormalized_coordinates = pCreateInfo->unnormalizedCoordinates;
+
+        for (const auto* next = static_cast<const VkBaseInStructure*>(pCreateInfo->pNext); next; next = next->pNext)
+        {
+            if (next->sType == VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO)
+            {
+                request.has_reduction_mode = VK_TRUE;
+                request.reduction_mode = reinterpret_cast<const VkSamplerReductionModeCreateInfo*>(next)->reductionMode;
+            }
+            else if (next->sType == VK_STRUCTURE_TYPE_SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT)
+            {
+                const auto* custom = reinterpret_cast<const VkSamplerCustomBorderColorCreateInfoEXT*>(next);
+                request.has_custom_border_color = VK_TRUE;
+                request.custom_border_format = static_cast<uint32_t>(custom->format);
+                std::memcpy(request.custom_border_color, &custom->customBorderColor, sizeof(request.custom_border_color));
+            }
+        }
 
         gb::object_response response{};
         if (!bridge_call(gb::ioctl_create_sampler, &request, sizeof(request), &response, sizeof(response)))

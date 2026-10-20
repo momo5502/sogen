@@ -4053,10 +4053,7 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::create_sampler(uint64_t device, uint32_t mag_filter, uint32_t min_filter, uint32_t address_mode_u,
-                                        uint32_t address_mode_v, uint32_t address_mode_w, uint32_t mipmap_mode, uint32_t compare_enable,
-                                        uint32_t compare_op, uint32_t anisotropy_enable, uint32_t border_color, float mip_lod_bias,
-                                        float max_anisotropy, float min_lod, float max_lod, uint64_t& out_sampler)
+    int32_t vulkan_host::create_sampler(const uint64_t device, const sampler_desc& desc, uint64_t& out_sampler)
     {
         out_sampler = 0;
         const auto dev = this->impl_->devices.find(device);
@@ -4065,32 +4062,45 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        // Custom border colors carry their RGBA in a VkSamplerCustomBorderColorCreateInfoEXT pNext that the
-        // bridge does not forward; without it the enum is invalid, so fall back to opaque black.
-        auto border = static_cast<VkBorderColor>(border_color);
-        if (border == VK_BORDER_COLOR_FLOAT_CUSTOM_EXT || border == VK_BORDER_COLOR_INT_CUSTOM_EXT)
-        {
-            border = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-        }
-
         VkSamplerCreateInfo info{};
         info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        info.magFilter = static_cast<VkFilter>(mag_filter);
-        info.minFilter = static_cast<VkFilter>(min_filter);
-        info.mipmapMode = static_cast<VkSamplerMipmapMode>(mipmap_mode);
-        info.addressModeU = static_cast<VkSamplerAddressMode>(address_mode_u);
-        info.addressModeV = static_cast<VkSamplerAddressMode>(address_mode_v);
-        info.addressModeW = static_cast<VkSamplerAddressMode>(address_mode_w);
-        info.mipLodBias = mip_lod_bias;
-        info.anisotropyEnable = anisotropy_enable ? VK_TRUE : VK_FALSE;
-        info.maxAnisotropy = max_anisotropy < 1.0f ? 1.0f : max_anisotropy;
+        info.flags = desc.flags;
+        info.magFilter = static_cast<VkFilter>(desc.mag_filter);
+        info.minFilter = static_cast<VkFilter>(desc.min_filter);
+        info.mipmapMode = static_cast<VkSamplerMipmapMode>(desc.mipmap_mode);
+        info.addressModeU = static_cast<VkSamplerAddressMode>(desc.address_mode_u);
+        info.addressModeV = static_cast<VkSamplerAddressMode>(desc.address_mode_v);
+        info.addressModeW = static_cast<VkSamplerAddressMode>(desc.address_mode_w);
+        info.mipLodBias = desc.mip_lod_bias;
+        info.anisotropyEnable = desc.anisotropy_enable ? VK_TRUE : VK_FALSE;
+        info.maxAnisotropy = desc.max_anisotropy < 1.0f ? 1.0f : desc.max_anisotropy;
         // Depth-compare / PCF sampling (sampler2DShadow): a non-comparison sampler yields undefined results
         // here, which is what made shadow-mapped sun lighting render as fully shadowed.
-        info.compareEnable = compare_enable ? VK_TRUE : VK_FALSE;
-        info.compareOp = static_cast<VkCompareOp>(compare_op);
-        info.minLod = min_lod;
-        info.maxLod = max_lod;
-        info.borderColor = border;
+        info.compareEnable = desc.compare_enable ? VK_TRUE : VK_FALSE;
+        info.compareOp = static_cast<VkCompareOp>(desc.compare_op);
+        info.minLod = desc.min_lod;
+        info.maxLod = desc.max_lod;
+        info.borderColor = static_cast<VkBorderColor>(desc.border_color);
+        info.unnormalizedCoordinates = desc.unnormalized_coordinates ? VK_TRUE : VK_FALSE;
+
+        VkSamplerReductionModeCreateInfo reduction{};
+        if (desc.reduction_mode)
+        {
+            reduction.sType = VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO;
+            reduction.reductionMode = static_cast<VkSamplerReductionMode>(*desc.reduction_mode);
+            reduction.pNext = info.pNext;
+            info.pNext = &reduction;
+        }
+
+        VkSamplerCustomBorderColorCreateInfoEXT custom_border{};
+        if (desc.custom_border_color)
+        {
+            custom_border.sType = VK_STRUCTURE_TYPE_SAMPLER_CUSTOM_BORDER_COLOR_CREATE_INFO_EXT;
+            custom_border.format = static_cast<VkFormat>(desc.custom_border_color->first);
+            std::memcpy(&custom_border.customBorderColor, desc.custom_border_color->second.data(), sizeof(custom_border.customBorderColor));
+            custom_border.pNext = info.pNext;
+            info.pNext = &custom_border;
+        }
 
         VkSampler sampler{};
         const VkResult result = dev->second.create_sampler(dev->second.handle, &info, nullptr, &sampler);
