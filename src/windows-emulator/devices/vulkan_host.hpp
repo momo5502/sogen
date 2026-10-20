@@ -353,8 +353,6 @@ namespace sogen
         // Updates a buffer region inline from caller-provided data (vkCmdUpdateBuffer).
         int32_t cmd_update_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, const void* data, uint32_t size);
 
-        // Creates a sampler honoring the guest's full state: filters, per-axis address modes, mip mode/lod,
-        // anisotropy, border color, and depth-compare (the comparison/PCF mode shadow-map sampling needs).
         struct sampler_desc
         {
             uint32_t flags;
