@@ -184,6 +184,7 @@ namespace sogen
 
     struct vulkan_host::impl
     {
+        bool loaded{};
         library_handle loader{};
         PFN_vkGetInstanceProcAddr get_instance_proc_addr{};
         PFN_vkCreateInstance create_instance{};
@@ -976,28 +977,44 @@ namespace sogen
             this->devices.erase(it);
         }
 
-        impl()
+        void load(void* external_get_instance_proc_addr)
         {
             if constexpr (sizeof(size_t) != 8)
             {
                 return;
             }
 
-            for (const auto* name : vulkan_loader_names)
-            {
-                this->loader = load_library(name);
-                if (this->loader)
-                {
-                    break;
-                }
-            }
-
-            if (!this->loader)
+            if (this->loaded)
             {
                 return;
             }
 
-            this->get_instance_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(get_symbol(this->loader, "vkGetInstanceProcAddr"));
+            this->loaded = true;
+
+            if (external_get_instance_proc_addr)
+            {
+                this->get_instance_proc_addr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(external_get_instance_proc_addr);
+            }
+            else
+            {
+                for (const auto* name : vulkan_loader_names)
+                {
+                    this->loader = load_library(name);
+                    if (this->loader)
+                    {
+                        break;
+                    }
+                }
+
+                if (!this->loader)
+                {
+                    return;
+                }
+
+                this->get_instance_proc_addr =
+                    reinterpret_cast<PFN_vkGetInstanceProcAddr>(get_symbol(this->loader, "vkGetInstanceProcAddr"));
+            }
+
             if (!this->get_instance_proc_addr)
             {
                 return;
@@ -1052,6 +1069,11 @@ namespace sogen
     }
 
     vulkan_host::~vulkan_host() = default;
+
+    void vulkan_host::load(void* get_instance_proc_addr)
+    {
+        this->impl_->load(get_instance_proc_addr);
+    }
 
     bool vulkan_host::available() const
     {

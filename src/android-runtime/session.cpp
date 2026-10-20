@@ -119,7 +119,7 @@ namespace sogen::android
     {
         try
         {
-            auto ui = std::make_unique<android_ui_backend>(*this);
+            auto ui = std::make_unique<android_ui_backend>(*this, config.vulkan);
             auto* ui_backend = ui.get();
 
             emulator_callbacks callbacks{};

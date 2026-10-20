@@ -27,6 +27,16 @@ namespace sogen::android
         virtual void on_window_title_changed(hwnd window, std::u16string_view title) = 0;
     };
 
+    struct vulkan_driver
+    {
+        // Where libadrenotools' hook libraries live, i.e. the app's native library directory.
+        std::string hook_directory{};
+
+        // A replacement driver for Adreno GPUs (Mesa Turnip). Empty keeps the system driver.
+        std::string custom_directory{};
+        std::string custom_name{};
+    };
+
     enum class mouse_button : uint8_t
     {
         left,
@@ -37,7 +47,7 @@ namespace sogen::android
     class android_ui_backend final : public ui_backend
     {
       public:
-        explicit android_ui_backend(ui_host& host);
+        android_ui_backend(ui_host& host, const vulkan_driver& driver);
         ~android_ui_backend() override;
 
         android_ui_backend(const android_ui_backend&) = delete;
@@ -68,6 +78,7 @@ namespace sogen::android
 
         std::vector<std::string> vulkan_instance_extensions() override;
         uint64_t create_vulkan_surface(hwnd window, uint64_t instance) override;
+        void* vulkan_get_instance_proc_addr() override;
         std::optional<ui_extent> vulkan_surface_extent(hwnd window) override;
 
       private:
