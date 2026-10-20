@@ -1,5 +1,6 @@
 #include "vulkan_host.hpp"
 #include "../vulkan_handle_utils.hpp"
+#include "spirv_clip_distance.hpp"
 
 #include <address_utils.hpp>
 
@@ -274,6 +275,9 @@ namespace sogen
             uint64_t instance_id{};
             VkPhysicalDevice physical_device{}; // the device this was created from (for memory queries)
             uint32_t queue_family_index{};      // the single family this device was created with
+            // The driver lacks these features although the guest was told otherwise; shaders are rewritten.
+            bool strip_clip_distance{};
+            bool strip_cull_distance{};
             PFN_vkDestroyDevice destroy_device{};
             PFN_vkGetDeviceQueue get_device_queue{};
             PFN_vkQueueWaitIdle queue_wait_idle{};
@@ -1784,6 +1788,40 @@ namespace sogen
             }
         }
 
+        // DXVK refuses adapters without these, but Mali GPUs lack them and older Adreno 6xx GPUs lack the 16- and
+        // 8-bit storage access even with Turnip. Most games never touch them, and BC formats still report as
+        // unsupported, so games fall back instead of failing. create_device masks them back out.
+        features2.features.fillModeNonSolid = VK_TRUE;
+        features2.features.multiViewport = VK_TRUE;
+        features2.features.shaderClipDistance = VK_TRUE;
+        features2.features.shaderCullDistance = VK_TRUE;
+        features2.features.textureCompressionBC = VK_TRUE;
+
+        for (auto& buffer : chained)
+        {
+            switch (reinterpret_cast<const VkBaseOutStructure*>(buffer.data())->sType)
+            {
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES:
+                reinterpret_cast<VkPhysicalDeviceVulkan11Features*>(buffer.data())->storageBuffer16BitAccess = VK_TRUE;
+                break;
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES:
+                reinterpret_cast<VkPhysicalDevice16BitStorageFeatures*>(buffer.data())->storageBuffer16BitAccess = VK_TRUE;
+                break;
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES:
+                reinterpret_cast<VkPhysicalDeviceVulkan12Features*>(buffer.data())->storageBuffer8BitAccess = VK_TRUE;
+                break;
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES:
+                reinterpret_cast<VkPhysicalDevice8BitStorageFeatures*>(buffer.data())->storageBuffer8BitAccess = VK_TRUE;
+                break;
+            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT:
+                // Mali has the extension but not the stricter bounds checking; core robustBufferAccess still applies.
+                reinterpret_cast<VkPhysicalDeviceRobustness2FeaturesEXT*>(buffer.data())->robustBufferAccess2 = VK_TRUE;
+                break;
+            default:
+                break;
+            }
+        }
+
         // DXVK's shared D3D8-11 adapter filter requires these five features, which MoltenVK lacks and
         // D3D9 never uses; create_device masks them back out before they reach the driver.
         if (impl::is_portability_device(instance->second, pd->second))
@@ -2098,8 +2136,8 @@ namespace sogen
 
         const bool has_feature_chain = has_features || !chained.empty();
 
-        // Undo the query-time feature spoof: vkCreateDevice fails on a feature the device lacks.
-        if (portability && has_feature_chain && instance->second.get_physical_device_features2)
+        // Undo the query-time feature spoofs: vkCreateDevice fails on a feature the device lacks.
+        if (has_feature_chain && instance->second.get_physical_device_features2)
         {
             VkPhysicalDeviceFeatures2 supported{};
             supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -2169,6 +2207,15 @@ namespace sogen
         data.instance_id = pd->second.instance_id;
         data.physical_device = pd->second.handle;
         data.queue_family_index = primary_family;
+
+        if (instance->second.get_physical_device_features2)
+        {
+            VkPhysicalDeviceFeatures2 supported{};
+            supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            instance->second.get_physical_device_features2(pd->second.handle, &supported);
+            data.strip_clip_distance = supported.features.shaderClipDistance == VK_FALSE;
+            data.strip_cull_distance = supported.features.shaderCullDistance == VK_FALSE;
+        }
 
         if (const auto gdpa = instance->second.get_device_proc_addr)
         {
@@ -4559,6 +4606,16 @@ namespace sogen
         info.flags = static_cast<VkShaderModuleCreateFlags>(flags);
         info.codeSize = code_size;
         info.pCode = static_cast<const uint32_t*>(code);
+
+        // Mali's compiler crashes on clip and cull distance writes, which the guest emits because it was told the
+        // features exist.
+        const auto stripped = strip_clip_and_cull_distance(std::span{info.pCode, code_size / sizeof(uint32_t)},
+                                                           dev->second.strip_clip_distance, dev->second.strip_cull_distance);
+        if (stripped)
+        {
+            info.codeSize = stripped->size() * sizeof(uint32_t);
+            info.pCode = stripped->data();
+        }
 
         VkShaderModule module{};
         const VkResult result = dev->second.create_shader_module(dev->second.handle, &info, nullptr, &module);
