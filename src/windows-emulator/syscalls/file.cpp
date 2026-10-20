@@ -463,7 +463,9 @@ namespace sogen
                     continue;
                 }
 
-                files.emplace_back(make_file_entry(entry.name, entry.is_directory, entry.stat));
+                auto file = make_file_entry(entry.name, entry.is_directory, entry.stat);
+                file.short_name = entry.short_name;
+                files.emplace_back(std::move(file));
             }
 
             return files;
