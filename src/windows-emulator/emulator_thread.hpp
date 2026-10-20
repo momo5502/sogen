@@ -406,6 +406,8 @@ namespace sogen
         std::optional<emulator_object<WOW64_CPURESERVED>>
             wow64_cpu_reserved; // Persistent WOW64 thread context for ThreadWow64Context queries
         std::optional<emulator_object<USER_CLIENTTHREADINFO>> client_thread_info;
+        hwnd active_window{};
+        hwnd focus_window{};
 
         std::vector<std::byte> last_registers{};
 
@@ -552,6 +554,8 @@ namespace sogen
             buffer.write_optional(this->wow64_context_segment);
             buffer.write_optional(this->wow64_cpu_reserved);
             buffer.write_optional(this->client_thread_info);
+            buffer.write(this->active_window);
+            buffer.write(this->focus_window);
 
             buffer.write_vector(this->last_registers);
 
@@ -627,6 +631,8 @@ namespace sogen
             buffer.read_optional(this->wow64_context_segment, [this] { return emulator_allocator(*this->memory_ptr); });
             buffer.read_optional(this->wow64_cpu_reserved, [this] { return emulator_object<WOW64_CPURESERVED>(*this->memory_ptr); });
             buffer.read_optional(this->client_thread_info, [this] { return emulator_object<USER_CLIENTTHREADINFO>(*this->memory_ptr); });
+            buffer.read(this->active_window);
+            buffer.read(this->focus_window);
 
             buffer.read_vector(this->last_registers);
 

@@ -5156,11 +5156,19 @@ namespace sogen
 
         hwnd handle_NtUserSetFocus(const syscall_context& c, const hwnd hwnd)
         {
+            if (hwnd != 0 && !c.proc.windows.get(hwnd))
+            {
+                return 0;
+            }
+
+            auto& thread = c.thread();
+            const auto previous = thread.focus_window;
+            thread.focus_window = hwnd;
             if (hwnd != 0)
             {
                 set_thread_window_context(c, hwnd);
             }
-            return hwnd;
+            return previous;
         }
 
         emulator_pointer handle_NtUserSetClassLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,

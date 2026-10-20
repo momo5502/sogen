@@ -1055,17 +1055,29 @@ namespace sogen
             return;
         }
 
-        hwnd active_window{};
+        hwnd foreground_window{};
         if (const auto* foreground = process.windows.get(process.foreground_window); foreground && foreground->thread_id == this->id)
         {
-            active_window = process.foreground_window;
+            foreground_window = process.foreground_window;
+        }
+
+        // Activating a window moves the keyboard focus to it; losing activation takes the focus away.
+        if (foreground_window != this->active_window)
+        {
+            this->active_window = foreground_window;
+            this->focus_window = foreground_window;
+        }
+
+        if (this->focus_window != 0 && !process.windows.get(this->focus_window))
+        {
+            this->focus_window = 0;
         }
 
         this->client_thread_info->access([&](USER_CLIENTTHREADINFO& info) {
             info.change_bits = static_cast<uint16_t>(this->queue_status_changed_bits);
             info.wake_bits = static_cast<uint16_t>(this->message_queue_status_bits);
-            info.focus_window = active_window;
-            info.active_window = active_window;
+            info.focus_window = this->focus_window;
+            info.active_window = this->active_window;
         });
     }
 
