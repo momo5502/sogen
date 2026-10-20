@@ -826,7 +826,8 @@ namespace sogen
 
         this->dispatcher.setup(ntdll->exports, ntdll_data, win32u->exports, win32u_data);
 
-        const auto main_thread_id = context.create_thread(this->memory, this->mod_manager.executable->entry_point, 0,
+        const auto initial_argument = this->process.is_wow64_process ? this->process.peb32->value() : this->process.peb64.value();
+        const auto main_thread_id = context.create_thread(this->memory, this->mod_manager.executable->entry_point, initial_argument,
                                                           this->mod_manager.executable->size_of_stack_reserve, 0, true);
 
         const std::scoped_lock lock(this->kernel_lock_);
