@@ -896,7 +896,8 @@ namespace sogen
                                 this->set_window_active(guest, true);
                                 this->mouse_button_state_ |= sdl_mouse_button_to_mk(event.button.button);
                                 this->post_event(guest, message, mouse_button_wparam(this->mouse_button_state_, event.button.button),
-                                                 this->map_window_point(guest, event.button.x, event.button.y));
+                                                 this->map_window_point(guest, event.button.x, event.button.y),
+                                                 this->relative_motion(event.button.windowID, 0.0f, 0.0f));
                             }
                         }
                         break;
@@ -908,7 +909,8 @@ namespace sogen
                             {
                                 this->mouse_button_state_ &= static_cast<uint16_t>(~sdl_mouse_button_to_mk(event.button.button));
                                 this->post_event(guest, message, mouse_button_wparam(this->mouse_button_state_, event.button.button),
-                                                 this->map_window_point(guest, event.button.x, event.button.y));
+                                                 this->map_window_point(guest, event.button.x, event.button.y),
+                                                 this->relative_motion(event.button.windowID, 0.0f, 0.0f));
                             }
                         }
                         break;
@@ -919,16 +921,19 @@ namespace sogen
                             this->set_window_active(guest, true);
 
                             const auto point = this->map_window_point(guest, event.wheel.mouse_x, event.wheel.mouse_y);
+                            const auto relative = this->relative_motion(event.wheel.windowID, 0.0f, 0.0f);
 
                             if (const auto delta_y = sdl_wheel_delta(event.wheel.y); delta_y != 0)
                             {
                                 this->post_event(guest, WM_MOUSEWHEEL,
-                                                 make_high_word_wparam(this->mouse_button_state_, static_cast<uint16_t>(delta_y)), point);
+                                                 make_high_word_wparam(this->mouse_button_state_, static_cast<uint16_t>(delta_y)), point,
+                                                 relative);
                             }
                             if (const auto delta_x = sdl_wheel_delta(event.wheel.x); delta_x != 0)
                             {
                                 this->post_event(guest, WM_MOUSEHWHEEL,
-                                                 make_high_word_wparam(this->mouse_button_state_, static_cast<uint16_t>(delta_x)), point);
+                                                 make_high_word_wparam(this->mouse_button_state_, static_cast<uint16_t>(delta_x)), point,
+                                                 relative);
                             }
                         }
                         break;
@@ -939,7 +944,8 @@ namespace sogen
                             this->set_window_active(guest, true);
                             this->mouse_button_state_ = sdl_mouse_mask_to_mk(event.motion.state);
                             this->post_event(guest, WM_MOUSEMOVE, low_word(this->mouse_button_state_),
-                                             this->map_window_point(guest, event.motion.x, event.motion.y));
+                                             this->map_window_point(guest, event.motion.x, event.motion.y),
+                                             this->relative_motion(event.motion.windowID, event.motion.xrel, event.motion.yrel));
                         }
                         break;
 
@@ -1306,24 +1312,41 @@ namespace sogen
             void set_cursor_position(const hwnd window, const int32_t screen_x, const int32_t screen_y) override
             {
                 this->queue_or_run([this, window, screen_x, screen_y] {
-                    // SDL exposes only the drawable client area, while emulated screen coordinates include the guest frame.
-                    const auto top = this->get_top_level_ancestor(window);
-                    if (auto* state = this->resolve_window(top); state && state->window)
+                    if (auto* state = this->resolve_window(this->get_top_level_ancestor(window)); state && state->window)
                     {
-                        const auto outer_width = std::max<int32_t>(0, state->desc.rect.right - state->desc.rect.left);
-                        const auto outer_height = std::max<int32_t>(0, state->desc.rect.bottom - state->desc.rect.top);
-                        const auto client_x_offset = std::min<int32_t>(outer_width, state->desc.client_insets.left);
-                        const auto client_y_offset = std::min<int32_t>(outer_height, state->desc.client_insets.top);
-                        auto window_x = static_cast<float>(screen_x - state->desc.rect.left - client_x_offset);
-                        auto window_y = static_cast<float>(screen_y - state->desc.rect.top - client_y_offset);
-                        // The frame is letterboxed into the window, so guest pixels are not at the same position in
-                        // the host window; map through the same transform map_window_point inverts.
-                        if (state->renderer)
-                        {
-                            SDL_RenderCoordinatesToWindow(state->renderer, window_x, window_y, &window_x, &window_y);
-                        }
+                        const auto [window_x, window_y] = this->screen_to_window_point(*state, screen_x, screen_y);
                         SDL_WarpMouseInWindow(state->window, window_x, window_y);
                     }
+                });
+            }
+
+            void set_cursor_clip(const hwnd window, const std::optional<ui_rect>& screen_rect, const bool relative) override
+            {
+                this->queue_or_run([this, window, screen_rect, relative] {
+                    auto* state = this->resolve_window(this->get_top_level_ancestor(window));
+                    if (!state || !state->window)
+                    {
+                        return;
+                    }
+
+                    if (screen_rect)
+                    {
+                        const auto [left, top] = this->screen_to_window_point(*state, screen_rect->left, screen_rect->top);
+                        const auto [right, bottom] = this->screen_to_window_point(*state, screen_rect->right, screen_rect->bottom);
+                        const SDL_Rect rect{
+                            .x = static_cast<int>(left),
+                            .y = static_cast<int>(top),
+                            .w = std::max(1, static_cast<int>(right - left)),
+                            .h = std::max(1, static_cast<int>(bottom - top)),
+                        };
+                        SDL_SetWindowMouseRect(state->window, &rect);
+                    }
+                    else
+                    {
+                        SDL_SetWindowMouseRect(state->window, nullptr);
+                    }
+
+                    SDL_SetWindowRelativeMouseMode(state->window, relative);
                 });
             }
 
@@ -1724,12 +1747,52 @@ namespace sogen
                 }
             }
 
-            void post_event(const hwnd window, const uint32_t message, const uint64_t w_param, const uint64_t l_param) const
+            void post_event(const hwnd window, const uint32_t message, const uint64_t w_param, const uint64_t l_param,
+                            const std::optional<std::pair<int32_t, int32_t>>& relative = std::nullopt) const
             {
                 if (this->sink_)
                 {
-                    this->sink_(ui_event{.window = window, .message = message, .wParam = w_param, .lParam = l_param});
+                    this->sink_(
+                        ui_event{.window = window, .message = message, .wParam = w_param, .lParam = l_param, .relative_motion = relative});
                 }
+            }
+
+            // SDL exposes only the drawable client area, while emulated screen coordinates include the guest frame.
+            static std::pair<float, float> screen_to_window_point(const window_state& state, const int32_t screen_x, const int32_t screen_y)
+            {
+                const auto outer_width = std::max<int32_t>(0, state.desc.rect.right - state.desc.rect.left);
+                const auto outer_height = std::max<int32_t>(0, state.desc.rect.bottom - state.desc.rect.top);
+                const auto client_x_offset = std::min<int32_t>(outer_width, state.desc.client_insets.left);
+                const auto client_y_offset = std::min<int32_t>(outer_height, state.desc.client_insets.top);
+                auto window_x = static_cast<float>(screen_x - state.desc.rect.left - client_x_offset);
+                auto window_y = static_cast<float>(screen_y - state.desc.rect.top - client_y_offset);
+                // The frame is letterboxed into the window, so guest pixels are not at the same position in
+                // the host window; map through the same transform map_window_point inverts.
+                if (state.renderer)
+                {
+                    SDL_RenderCoordinatesToWindow(state.renderer, window_x, window_y, &window_x, &window_y);
+                }
+                return {window_x, window_y};
+            }
+
+            // In relative mode the host cursor stays put and SDL reports sub-pixel motion; carry the fractions over so
+            // slow movement is not lost.
+            std::optional<std::pair<int32_t, int32_t>> relative_motion(const SDL_WindowID window_id, const float dx, const float dy)
+            {
+                auto* window = SDL_GetWindowFromID(window_id);
+                if (!window || !SDL_GetWindowRelativeMouseMode(window))
+                {
+                    this->relative_remainder_ = {};
+                    return std::nullopt;
+                }
+
+                this->relative_remainder_.first += dx;
+                this->relative_remainder_.second += dy;
+                const auto x = static_cast<int32_t>(this->relative_remainder_.first);
+                const auto y = static_cast<int32_t>(this->relative_remainder_.second);
+                this->relative_remainder_.first -= static_cast<float>(x);
+                this->relative_remainder_.second -= static_cast<float>(y);
+                return std::pair{x, y};
             }
 
             event_sink sink_{};
@@ -1737,6 +1800,7 @@ namespace sogen
             bool vulkan_library_loaded_{};
             hwnd active_window_{};
             uint16_t mouse_button_state_{};
+            std::pair<float, float> relative_remainder_{};
             std::array<bool, SDL_SCANCODE_COUNT> key_down_{};
             std::array<std::chrono::steady_clock::time_point, SDL_SCANCODE_COUNT> key_down_since_{};
             std::vector<pending_key_release> pending_key_releases_{};
