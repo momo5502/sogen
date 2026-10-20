@@ -1212,54 +1212,95 @@ extern "C"
     __declspec(dllexport) VKAPI_ATTR VkResult VKAPI_CALL vkQueueSubmit(VkQueue queue, uint32_t submitCount, const VkSubmitInfo* pSubmits,
                                                                        VkFence fence)
     {
-        // Count the command buffers so the fence can be attached to the final submission only.
-        uint32_t total = 0;
-        for (uint32_t s = 0; s < submitCount; ++s)
-        {
-            total += pSubmits[s].commandBufferCount;
-        }
-
-        // A zero-batch submission (no command buffers) is still a valid fence signal in Vulkan. Forward
-        // a fence-only submit so a later vkWaitForFences doesn't spin forever on an unsignaled fence.
-        if (total == 0)
+        VkSubmitInfo empty_submit{};
+        if (submitCount == 0)
         {
             if (!fence)
             {
                 return VK_SUCCESS;
             }
+            empty_submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            pSubmits = &empty_submit;
+            submitCount = 1;
+        }
 
-            gb::queue_submit_request request{};
-            request.queue = to_object_id(queue);
-            request.command_buffer = gb::null_object;
-            request.fence = to_object_id(fence);
+        for (uint32_t s = 0; s < submitCount; ++s)
+        {
+            const VkSubmitInfo& si = pSubmits[s];
+            const VkTimelineSemaphoreSubmitInfo* timeline_info = nullptr;
+            for (const auto* pnext = static_cast<const VkBaseInStructure*>(si.pNext); pnext; pnext = pnext->pNext)
+            {
+                if (pnext->sType == VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO)
+                {
+                    timeline_info = reinterpret_cast<const VkTimelineSemaphoreSubmitInfo*>(pnext);
+                    break;
+                }
+            }
+
+            const uint32_t wait_count = si.waitSemaphoreCount;
+            const uint32_t command_buffer_count = si.commandBufferCount;
+            const uint32_t signal_count = si.signalSemaphoreCount;
+            size_t message_size = sizeof(gb::queue_submit_request);
+            const auto add_array_size = [&](size_t count, size_t item_size) {
+                if (count > (MAXDWORD - message_size) / item_size)
+                {
+                    return false;
+                }
+                message_size += count * item_size;
+                return true;
+            };
+            if (!add_array_size(wait_count, sizeof(gb::submit_semaphore_entry)) ||
+                !add_array_size(command_buffer_count, sizeof(uint64_t)) ||
+                !add_array_size(signal_count, sizeof(gb::submit_semaphore_entry)))
+            {
+                return VK_ERROR_OUT_OF_HOST_MEMORY;
+            }
+            std::vector<uint8_t> message(message_size);
+            auto* header = reinterpret_cast<gb::queue_submit_request*>(message.data());
+            header->queue = to_object_id(queue);
+            header->fence = (s + 1 == submitCount) ? to_object_id(fence) : gb::null_object;
+            header->wait_count = wait_count;
+            header->command_buffer_count = command_buffer_count;
+            header->signal_count = signal_count;
+            header->has_timeline_info = timeline_info != nullptr;
+
+            size_t offset = sizeof(*header);
+            auto* waits = reinterpret_cast<gb::submit_semaphore_entry*>(message.data() + offset);
+            for (uint32_t i = 0; i < wait_count; ++i)
+            {
+                waits[i] = {.semaphore = to_object_id(si.pWaitSemaphores[i]),
+                            .stage_mask = si.pWaitDstStageMask[i],
+                            .reserved = 0,
+                            .value = timeline_info && timeline_info->pWaitSemaphoreValues && i < timeline_info->waitSemaphoreValueCount
+                                         ? timeline_info->pWaitSemaphoreValues[i]
+                                         : 0};
+            }
+            offset += static_cast<size_t>(wait_count) * sizeof(gb::submit_semaphore_entry);
+
+            auto* command_buffers = reinterpret_cast<uint64_t*>(message.data() + offset);
+            for (uint32_t i = 0; i < command_buffer_count; ++i)
+            {
+                command_buffers[i] = to_object_id(si.pCommandBuffers[i]);
+            }
+            offset += static_cast<size_t>(command_buffer_count) * sizeof(uint64_t);
+
+            auto* signals = reinterpret_cast<gb::submit_semaphore_entry*>(message.data() + offset);
+            for (uint32_t i = 0; i < signal_count; ++i)
+            {
+                signals[i] = {.semaphore = to_object_id(si.pSignalSemaphores[i]),
+                              .stage_mask = 0,
+                              .reserved = 0,
+                              .value =
+                                  timeline_info && timeline_info->pSignalSemaphoreValues && i < timeline_info->signalSemaphoreValueCount
+                                      ? timeline_info->pSignalSemaphoreValues[i]
+                                      : 0};
+            }
 
             gb::result_response response{};
-            if (!bridge_call(gb::ioctl_queue_submit, &request, sizeof(request), &response, sizeof(response)) ||
+            if (!bridge_call(gb::ioctl_queue_submit, message.data(), static_cast<DWORD>(message.size()), &response, sizeof(response)) ||
                 response.vk_result != VK_SUCCESS)
             {
                 return VK_ERROR_INITIALIZATION_FAILED;
-            }
-            return VK_SUCCESS;
-        }
-
-        uint32_t emitted = 0;
-        for (uint32_t s = 0; s < submitCount; ++s)
-        {
-            for (uint32_t i = 0; i < pSubmits[s].commandBufferCount; ++i)
-            {
-                ++emitted;
-
-                gb::queue_submit_request request{};
-                request.queue = to_object_id(queue);
-                request.command_buffer = to_object_id(pSubmits[s].pCommandBuffers[i]);
-                request.fence = (emitted == total) ? to_object_id(fence) : gb::null_object;
-
-                gb::result_response response{};
-                if (!bridge_call(gb::ioctl_queue_submit, &request, sizeof(request), &response, sizeof(response)) ||
-                    response.vk_result != VK_SUCCESS)
-                {
-                    return VK_ERROR_INITIALIZATION_FAILED;
-                }
             }
         }
         return VK_SUCCESS;
@@ -4542,12 +4583,12 @@ extern "C"
     }
 
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkUpdateDescriptorSets(VkDevice device, uint32_t descriptorWriteCount,
-                                                                            const VkWriteDescriptorSet* pDescriptorWrites, uint32_t,
-                                                                            const VkCopyDescriptorSet*)
+                                                                            const VkWriteDescriptorSet* pDescriptorWrites,
+                                                                            uint32_t descriptorCopyCount,
+                                                                            const VkCopyDescriptorSet* pDescriptorCopies)
     {
-        // Descriptor copies are not modeled; only writes are forwarded. Non-inline writes are flattened
-        // to `descriptorCount` single-descriptor wire writes.
         std::vector<gb::descriptor_write> writes;
+        std::vector<gb::descriptor_copy> copies;
         std::vector<uint8_t> inline_uniform_data;
         for (uint32_t w = 0; w < descriptorWriteCount; ++w)
         {
@@ -4613,9 +4654,24 @@ extern "C"
             }
         }
 
+        copies.reserve(descriptorCopyCount);
+        for (uint32_t i = 0; i < descriptorCopyCount; ++i)
+        {
+            const VkCopyDescriptorSet& src = pDescriptorCopies[i];
+            copies.push_back({.src_set = to_object_id(src.srcSet),
+                              .src_binding = src.srcBinding,
+                              .src_array_element = src.srcArrayElement,
+                              .dst_set = to_object_id(src.dstSet),
+                              .dst_binding = src.dstBinding,
+                              .dst_array_element = src.dstArrayElement,
+                              .descriptor_count = src.descriptorCount,
+                              .reserved = 0});
+        }
+
         gb::update_descriptor_sets_request header{};
         header.device = to_object_id(device);
         header.write_count = static_cast<uint32_t>(writes.size());
+        header.copy_count = static_cast<uint32_t>(copies.size());
         header.inline_uniform_data_size = static_cast<uint32_t>(inline_uniform_data.size());
 
         // Append to the pending batch instead of issuing an IOCTL now (drained before the next bridge call).
@@ -4627,6 +4683,12 @@ extern "C"
         {
             g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), write_bytes,
                                                 write_bytes + writes.size() * sizeof(gb::descriptor_write));
+        }
+        const auto* copy_bytes = reinterpret_cast<const uint8_t*>(copies.data());
+        if (!copies.empty())
+        {
+            g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), copy_bytes,
+                                                copy_bytes + copies.size() * sizeof(gb::descriptor_copy));
         }
         g_pending_descriptor_updates.insert(g_pending_descriptor_updates.end(), inline_uniform_data.begin(), inline_uniform_data.end());
     }

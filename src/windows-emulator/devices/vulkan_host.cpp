@@ -2975,7 +2975,9 @@ namespace sogen
         return dev->second.reset_event(dev->second.handle, it->second.handle);
     }
 
-    int32_t vulkan_host::queue_submit(uint64_t queue, uint64_t command_buffer, uint64_t fence)
+    int32_t vulkan_host::queue_submit(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count,
+                                      const void* command_buffer_ids, uint32_t command_buffer_count, const void* signal_entries,
+                                      uint32_t signal_count, bool has_timeline_info)
     {
         const auto queue_it = this->impl_->queues.find(queue);
         if (queue_it == this->impl_->queues.end())
@@ -3000,24 +3002,73 @@ namespace sogen
             fence_handle = fence_it->second.handle;
         }
 
-        // Zero-command-buffer submission: still a valid fence signal operation (no work batched).
-        if (command_buffer == 0)
-        {
-            const auto lock = this->impl_->queue_lock(queue_it->second.handle);
-            const std::scoped_lock guard(*lock);
-            return dev->second.queue_submit(queue_it->second.handle, 0, nullptr, fence_handle);
-        }
+        const auto build_semaphores = [&](const void* entries, uint32_t count, std::vector<VkSemaphore>& semaphores,
+                                          std::vector<VkPipelineStageFlags>* stage_masks, std::vector<uint64_t>& values) {
+            const auto* records = static_cast<const gpu_bridge::submit_semaphore_entry*>(entries);
+            semaphores.reserve(count);
+            if (stage_masks)
+            {
+                stage_masks->reserve(count);
+            }
+            values.reserve(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const auto sem = this->impl_->semaphores.find(records[i].semaphore);
+                if (sem == this->impl_->semaphores.end() || sem->second.device_id != queue_it->second.device_id)
+                {
+                    return false;
+                }
+                semaphores.push_back(sem->second.handle);
+                if (stage_masks)
+                {
+                    stage_masks->push_back(static_cast<VkPipelineStageFlags>(records[i].stage_mask));
+                }
+                values.push_back(records[i].value);
+            }
+            return true;
+        };
 
-        const auto cb = this->impl_->command_buffers.find(command_buffer);
-        if (cb == this->impl_->command_buffers.end() || cb->second.device_id != queue_it->second.device_id)
+        std::vector<VkSemaphore> waits;
+        std::vector<VkPipelineStageFlags> wait_stage_masks;
+        std::vector<uint64_t> wait_values;
+        std::vector<VkSemaphore> signals;
+        std::vector<uint64_t> signal_values;
+        if (!build_semaphores(wait_entries, wait_count, waits, &wait_stage_masks, wait_values) ||
+            !build_semaphores(signal_entries, signal_count, signals, nullptr, signal_values))
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
+        const auto* command_ids = static_cast<const uint64_t*>(command_buffer_ids);
+        std::vector<VkCommandBuffer> command_buffers;
+        command_buffers.reserve(command_buffer_count);
+        for (uint32_t i = 0; i < command_buffer_count; ++i)
+        {
+            const auto cb = this->impl_->command_buffers.find(command_ids[i]);
+            if (cb == this->impl_->command_buffers.end() || cb->second.device_id != queue_it->second.device_id)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            command_buffers.push_back(cb->second.handle);
+        }
+
+        VkTimelineSemaphoreSubmitInfo timeline_info{};
+        timeline_info.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO;
+        timeline_info.waitSemaphoreValueCount = static_cast<uint32_t>(wait_values.size());
+        timeline_info.pWaitSemaphoreValues = wait_values.data();
+        timeline_info.signalSemaphoreValueCount = static_cast<uint32_t>(signal_values.size());
+        timeline_info.pSignalSemaphoreValues = signal_values.data();
+
         VkSubmitInfo submit{};
         submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        submit.commandBufferCount = 1;
-        submit.pCommandBuffers = &cb->second.handle;
+        submit.pNext = has_timeline_info ? &timeline_info : nullptr;
+        submit.waitSemaphoreCount = wait_count;
+        submit.pWaitSemaphores = waits.data();
+        submit.pWaitDstStageMask = wait_stage_masks.data();
+        submit.commandBufferCount = command_buffer_count;
+        submit.pCommandBuffers = command_buffers.data();
+        submit.signalSemaphoreCount = signal_count;
+        submit.pSignalSemaphores = signals.data();
 
         const auto lock = this->impl_->queue_lock(queue_it->second.handle);
         const std::scoped_lock guard(*lock);
@@ -5606,7 +5657,8 @@ namespace sogen
         return result;
     }
 
-    int32_t vulkan_host::update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes)
+    int32_t vulkan_host::update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes,
+                                                std::span<const descriptor_copy> copies)
     {
         const auto dev = this->impl_->devices.find(device);
         if (dev == this->impl_->devices.end() || !dev->second.update_descriptor_sets)
@@ -5623,12 +5675,15 @@ namespace sogen
         static thread_local std::vector<VkDescriptorImageInfo> image_infos;
         static thread_local std::vector<VkBufferView> texel_buffer_views;
         static thread_local std::vector<VkWriteDescriptorSetInlineUniformBlock> inline_uniform_blocks;
+        static thread_local std::vector<VkCopyDescriptorSet> vk_copies;
         vk_writes.clear();
         buffer_infos.resize(writes.size());
         image_infos.resize(writes.size());
         texel_buffer_views.resize(writes.size());
         inline_uniform_blocks.resize(writes.size());
         vk_writes.reserve(writes.size());
+        vk_copies.clear();
+        vk_copies.reserve(copies.size());
 
         // Consecutive writes usually target the same descriptor set; cache the last lookup to avoid a hash
         // probe per write.
@@ -5742,9 +5797,32 @@ namespace sogen
             vk_writes.push_back(vw);
         }
 
-        if (!vk_writes.empty())
+        for (const descriptor_copy& c : copies)
         {
-            dev->second.update_descriptor_sets(dev->second.handle, static_cast<uint32_t>(vk_writes.size()), vk_writes.data(), 0, nullptr);
+            const auto src_set = this->impl_->descriptor_sets.find(c.src_set);
+            const auto dst_set = this->impl_->descriptor_sets.find(c.dst_set);
+            if (src_set == this->impl_->descriptor_sets.end() || dst_set == this->impl_->descriptor_sets.end() ||
+                src_set->second.device_id != device || dst_set->second.device_id != device)
+            {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+
+            VkCopyDescriptorSet copy{};
+            copy.sType = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
+            copy.srcSet = src_set->second.handle;
+            copy.srcBinding = c.src_binding;
+            copy.srcArrayElement = c.src_array_element;
+            copy.dstSet = dst_set->second.handle;
+            copy.dstBinding = c.dst_binding;
+            copy.dstArrayElement = c.dst_array_element;
+            copy.descriptorCount = c.descriptor_count;
+            vk_copies.push_back(copy);
+        }
+
+        if (!vk_writes.empty() || !vk_copies.empty())
+        {
+            dev->second.update_descriptor_sets(dev->second.handle, static_cast<uint32_t>(vk_writes.size()), vk_writes.data(),
+                                               static_cast<uint32_t>(vk_copies.size()), vk_copies.data());
         }
         return VK_SUCCESS;
     }

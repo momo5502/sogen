@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 33;
+    inline constexpr uint32_t protocol_version = 35;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -816,8 +816,19 @@ namespace sogen::gpu_bridge
     struct queue_submit_request
     {
         object_id queue;
-        object_id command_buffer;
         object_id fence; // null_object for no fence
+        uint32_t wait_count;
+        uint32_t command_buffer_count;
+        uint32_t signal_count;
+        uint32_t has_timeline_info;
+    };
+
+    struct submit_semaphore_entry
+    {
+        object_id semaphore;
+        uint32_t stage_mask; // VkPipelineStageFlags
+        uint32_t reserved;
+        uint64_t value; // timeline value; zero for binary semaphores
     };
 
     struct queue_wait_idle_request
@@ -2282,15 +2293,25 @@ namespace sogen::gpu_bridge
         uint32_t inline_uniform_data_size;
     };
 
-    // ioctl_update_descriptor_sets: in header immediately followed by `write_count` descriptor_write
-    // entries and `inline_uniform_data_size` bytes; out = result_response
+    // ioctl_update_descriptor_sets: header, descriptor_write[write_count], descriptor_copy[copy_count], then inline data.
     struct update_descriptor_sets_request
     {
         object_id device;
         uint32_t write_count;
+        uint32_t copy_count;
         uint32_t inline_uniform_data_size;
-        // descriptor_write writes[write_count];
-        // uint8_t inline_uniform_data[inline_uniform_data_size];
+    };
+
+    struct descriptor_copy
+    {
+        object_id src_set;
+        uint32_t src_binding;
+        uint32_t src_array_element;
+        object_id dst_set;
+        uint32_t dst_binding;
+        uint32_t dst_array_element;
+        uint32_t descriptor_count;
+        uint32_t reserved;
     };
 
     // immediately followed by `set_count` object_id descriptor-set ids. Bind point is graphics.

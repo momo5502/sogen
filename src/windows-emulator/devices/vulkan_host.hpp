@@ -145,8 +145,10 @@ namespace sogen
         int32_t queue_wait_idle(uint64_t queue);
         int32_t device_wait_idle(uint64_t device);
 
-        // Submits a single command buffer to the queue, optionally signaling the fence (0 = none).
-        int32_t queue_submit(uint64_t queue, uint64_t command_buffer, uint64_t fence);
+        // Submits one VkSubmitInfo. wait_entries/signal_entries are submit_semaphore_entry arrays;
+        // command_buffer_ids is an object_id array. fence 0 = none.
+        int32_t queue_submit(uint64_t queue, uint64_t fence, const void* wait_entries, uint32_t wait_count, const void* command_buffer_ids,
+                             uint32_t command_buffer_count, const void* signal_entries, uint32_t signal_count, bool has_timeline_info);
 
         // synchronization2 submit. wait_entries/signal_entries are submit2_semaphore_entry arrays;
         // command_buffer_ids is an object_id array. fence 0 = none.
@@ -474,6 +476,17 @@ namespace sogen
             std::span<const std::byte> inline_uniform_data;
         };
 
+        struct descriptor_copy
+        {
+            uint64_t src_set;
+            uint32_t src_binding;
+            uint32_t src_array_element;
+            uint64_t dst_set;
+            uint32_t dst_binding;
+            uint32_t dst_array_element;
+            uint32_t descriptor_count;
+        };
+
         int32_t create_descriptor_set_layout(uint64_t device, uint32_t flags, std::span<const descriptor_binding> bindings,
                                              uint64_t& out_layout);
         int32_t get_descriptor_set_layout_support(uint64_t device, uint32_t flags, std::span<const descriptor_binding> bindings,
@@ -489,7 +502,7 @@ namespace sogen
                                          std::span<const uint32_t> variable_descriptor_counts, std::span<uint64_t> out_sets,
                                          uint32_t& out_count);
         int32_t free_descriptor_sets(uint64_t device, uint64_t pool, std::span<const uint64_t> sets);
-        int32_t update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes);
+        int32_t update_descriptor_sets(uint64_t device, std::span<const descriptor_write> writes, std::span<const descriptor_copy> copies);
 
         // Optionally one push-constant range from offset 0 (push_constant_size == 0 means none), plus a
         // list of descriptor-set layouts (empty for none).
