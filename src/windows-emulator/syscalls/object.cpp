@@ -646,10 +646,12 @@ namespace sogen
         NTSTATUS wait_or_yield(const syscall_context& c, const BOOLEAN alertable)
         {
             auto& t = c.thread();
+            t.apc_alertable = alertable;
             if (t.is_thread_ready(c.win_emu) && t.pending_status)
             {
                 const auto status = *t.pending_status;
                 t.pending_status = {};
+                t.apc_alertable = false;
                 return status;
             }
 
