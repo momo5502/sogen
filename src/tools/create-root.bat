@@ -45,6 +45,7 @@ CALL "%~dp0grab-registry.bat" "%EMU_REGDIR%"
 CALL :collect advapi32.dll
 CALL :collect audioeng.dll
 CALL :collect audiokse.dll
+CALL :collect avifil32.dll
 CALL :collect bcrypt.dll
 CALL :collect bcryptprimitives.dll
 CALL :collect cabinet.dll
@@ -122,6 +123,7 @@ CALL :collect msvcp60.dll
 CALL :collect msvcp_win.dll
 CALL :collect msvcr120_clr0400.dll
 CALL :collect msvcrt.dll
+CALL :collect msvfw32.dll
 CALL :collect mswsock.dll
 CALL :collect napinsp.dll
 CALL :collect ncrypt.dll
@@ -212,6 +214,13 @@ CALL :collect xaudio2_9.dll
 CALL :collect xinput1_3.dll
 CALL :collect xinput1_4.dll
 CALL :collect xinput9_1_0.dll
+
+REM DirectX end-user runtime (June 2010), present only when the host has it installed. Games load specific versions,
+REM and d3dx loads its HLSL compiler (D3DCompiler_xx) at runtime, so no import table names it.
+CALL :collect_matching d3dx9_*.dll
+CALL :collect_matching d3dx10_*.dll
+CALL :collect_matching d3dx11_*.dll
+CALL :collect_matching d3dcompiler_*.dll
 CALL :collect_file "%WINDIR%\System32\en-US", user32.dll.mui, %EMU_SYSDIR%\en-us
 CALL :collect_file "%WINDIR%\SysWOW64\en-US", user32.dll.mui, %EMU_SYSDIR_WOW64%\en-us
 
@@ -243,6 +252,20 @@ CALL :collect_winsxs_manifests x86_policy.*.microsoft.windows.common-controls_*
 CALL :collect_winsxs_manifests amd64_policy.*.microsoft.windows.c..-controls.resources_*
 CALL :collect_winsxs_manifests x86_policy.*.microsoft.windows.c..-controls.resources_*
 
+REM Visual C++ 2005/2008 runtimes (CRT, MFC, ATL), present only when the host has them installed.
+CALL :collect_winsxs_directories amd64_microsoft.vc80.*
+CALL :collect_winsxs_directories x86_microsoft.vc80.*
+CALL :collect_winsxs_directories amd64_microsoft.vc90.*
+CALL :collect_winsxs_directories x86_microsoft.vc90.*
+CALL :collect_winsxs_manifests amd64_microsoft.vc80.*
+CALL :collect_winsxs_manifests x86_microsoft.vc80.*
+CALL :collect_winsxs_manifests amd64_microsoft.vc90.*
+CALL :collect_winsxs_manifests x86_microsoft.vc90.*
+CALL :collect_winsxs_manifests amd64_policy.*.microsoft.vc80.*
+CALL :collect_winsxs_manifests x86_policy.*.microsoft.vc80.*
+CALL :collect_winsxs_manifests amd64_policy.*.microsoft.vc90.*
+CALL :collect_winsxs_manifests x86_policy.*.microsoft.vc90.*
+
 EXIT /B 0
 
 :normpath
@@ -262,6 +285,11 @@ EXIT /B
 :collect
 CALL :collect_file %SYSDIR%, %~1, %EMU_SYSDIR%
 CALL :collect_file %SYSDIR_WOW64%, %~1, %EMU_SYSDIR_WOW64%
+EXIT /B
+
+:collect_matching
+FOR %%F IN ("%WINDIR%\System32\%~1") DO CALL :collect_file %SYSDIR%, %%~nxF, %EMU_SYSDIR%
+FOR %%F IN ("%WINDIR%\SysWOW64\%~1") DO CALL :collect_file %SYSDIR_WOW64%, %%~nxF, %EMU_SYSDIR_WOW64%
 EXIT /B
 
 :collect_winsxs_directories
