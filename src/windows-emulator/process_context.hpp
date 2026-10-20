@@ -484,6 +484,7 @@ namespace sogen
         // cursor position in screen coordinates. Games poll these via GetForegroundWindow/GetActiveWindow
         // and GetCursorPos to drive menu cursors and gate their input loop on the window being active.
         hwnd foreground_window{};
+        std::optional<ULONG> timer_resolution_request{};
         int32_t cursor_x{};
         int32_t cursor_y{};
         hcursor current_cursor{};
