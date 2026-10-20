@@ -3,6 +3,8 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+#include <algorithm>
+
 namespace sogen
 {
 
@@ -58,14 +60,15 @@ namespace sogen
             }
         }
 
-        // In 100 ns units: the coarsest and finest timer resolutions, and the default when nothing requested one.
+        // In 100 ns units: the coarsest and finest timer resolutions, and the resolution without this process' request.
         constexpr ULONG coarsest_timer_resolution = 0x0002625a;
         constexpr ULONG finest_timer_resolution = 0x00001388;
         constexpr ULONG default_timer_resolution = 0x00002710;
 
+        // A request can only make the timer finer, never coarser than it already is.
         ULONG current_timer_resolution(const process_context& process)
         {
-            return process.timer_resolution_request.value_or(default_timer_resolution);
+            return std::min(process.timer_resolution_request.value_or(default_timer_resolution), default_timer_resolution);
         }
 
         NTSTATUS handle_NtQueryTimerResolution(const syscall_context& c, const emulator_object<ULONG> maximum_time,
