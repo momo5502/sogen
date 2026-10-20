@@ -317,7 +317,7 @@ namespace sogen
                 const auto connection = this->read_connection(reader);
                 const auto oxid = reader.read<std::array<uint8_t, 16>>();
                 const auto count = reader.read<uint32_t>();
-                if (count > maximum_object_ids || reader.pointer() != count)
+                if (count > maximum_object_ids)
                 {
                     return STATUS_INVALID_PARAMETER;
                 }
