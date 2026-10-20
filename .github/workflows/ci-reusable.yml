@@ -1174,8 +1174,11 @@ jobs:
     runs-on: ubuntu-24.04
     needs: [build]
     steps:
+      # The full history provides the commit count for the version code.
       - name: Checkout Source
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Download Android arm64 Artifacts
         uses: pyTooling/download-artifact@v8
@@ -1246,11 +1249,10 @@ jobs:
           } > app/android/key.properties
           echo "signed=true" >> "$GITHUB_OUTPUT"
 
-      # Android and Google Play only accept an update with a higher version code. The commit time in minutes grows
-      # with every commit and stays below Play's limit of 2100000000 for millennia.
+      # Android and Google Play only accept an update with a higher version code.
       - name: Compute Build Number
         id: version
-        run: echo "build_number=$(( $(git log -1 --format=%ct) / 60 ))" >> "$GITHUB_OUTPUT"
+        run: echo "build_number=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Build APK
         working-directory: app
