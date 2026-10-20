@@ -5,15 +5,29 @@ plugins {
 }
 
 // The launcher icon is the web page's pinata, so the repository keeps a single copy of the image.
-val launcherIconDirectory = layout.buildDirectory.dir("generated/launcher-icon")
-val copyLauncherIcon = tasks.register<Copy>("copyLauncherIcon") {
-    from(rootProject.file("../../page/public/pinata.png"))
-    into(launcherIconDirectory.map { it.dir("drawable-nodpi") })
-    rename { "ic_launcher_pinata.png" }
+abstract class CopyLauncherIcon : DefaultTask() {
+    @get:InputFile
+    abstract val image: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun copy() {
+        val target = outputDirectory.get().dir("drawable-nodpi").file("ic_launcher_pinata.png").asFile
+        target.parentFile.mkdirs()
+        image.get().asFile.copyTo(target, overwrite = true)
+    }
 }
 
-tasks.named("preBuild") {
-    dependsOn(copyLauncherIcon)
+val copyLauncherIcon = tasks.register<CopyLauncherIcon>("copyLauncherIcon") {
+    image.set(rootProject.layout.projectDirectory.file("../../page/public/pinata.png"))
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.res?.addGeneratedSourceDirectory(copyLauncherIcon, CopyLauncherIcon::outputDirectory)
+    }
 }
 
 android {
@@ -46,7 +60,6 @@ android {
     sourceSets {
         // libsogen.so and its dependencies come from the sogen CMake build; see app/README.md.
         getByName("main").jniLibs.srcDir("src/main/jniLibs")
-        getByName("main").res.srcDir(launcherIconDirectory)
     }
 
     buildTypes {
