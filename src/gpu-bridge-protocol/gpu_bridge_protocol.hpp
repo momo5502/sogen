@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 30;
+    inline constexpr uint32_t protocol_version = 33;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -1145,19 +1145,29 @@ namespace sogen::gpu_bridge
         uint32_t reserved2;
     };
 
-    // the buffer at offset 0;
     struct cmd_copy_image_to_buffer_request
     {
         object_id command_buffer;
         object_id image;
         object_id buffer;
-        uint32_t image_layout; // VkImageLayout (current layout of the image)
+        uint64_t buffer_offset;       // byte offset of this region's destination within the (sub-allocated) buffer
+        uint32_t image_layout;        // VkImageLayout (current layout of the image)
+        uint32_t buffer_row_length;   // 0 = tightly packed
+        uint32_t buffer_image_height; // 0 = tightly packed
+        int32_t image_offset_x;
+        int32_t image_offset_y;
+        int32_t image_offset_z;
         uint32_t width;
         uint32_t height;
+        uint32_t depth;
+        uint32_t mip_level;
+        uint32_t base_array_layer;
+        uint32_t layer_count;
         uint32_t aspect_mask; // VkImageAspectFlags
     };
 
-    // buffer (offset 0) into mip 0 / layer 0 of the image.
+    static_assert(sizeof(cmd_copy_image_to_buffer_request) == 88, "wire layout drift");
+
     struct cmd_copy_buffer_to_image_request
     {
         object_id command_buffer;
@@ -1179,8 +1189,8 @@ namespace sogen::gpu_bridge
         uint32_t aspect_mask; // VkImageAspectFlags
     };
 
-    // Resolves a multisampled source image into a single-sample destination (full image, mip 0 / layer 0).
-    // DXVK uses this to resolve an MSAA backbuffer before presentation.
+    static_assert(sizeof(cmd_copy_buffer_to_image_request) == 88, "wire layout drift");
+
     struct cmd_resolve_image_request
     {
         object_id command_buffer;
@@ -1188,9 +1198,23 @@ namespace sogen::gpu_bridge
         object_id dst_image;
         uint32_t src_layout; // VkImageLayout
         uint32_t dst_layout; // VkImageLayout
+        uint32_t src_aspect_mask;
+        uint32_t src_mip_level;
+        uint32_t src_base_array_layer;
+        uint32_t src_layer_count;
+        int32_t src_offset_x;
+        int32_t src_offset_y;
+        int32_t src_offset_z;
+        uint32_t dst_aspect_mask;
+        uint32_t dst_mip_level;
+        uint32_t dst_base_array_layer;
+        uint32_t dst_layer_count;
+        int32_t dst_offset_x;
+        int32_t dst_offset_y;
+        int32_t dst_offset_z;
         uint32_t width;
         uint32_t height;
-        uint32_t aspect_mask; // VkImageAspectFlags
+        uint32_t depth;
     };
 
     // Copies one VkImageCopy region from a source image to a destination image (vkCmdCopyImage[2]). DXVK
@@ -2117,8 +2141,8 @@ namespace sogen::gpu_bridge
         object_id command_buffer;
         object_id buffer;
         uint64_t offset;     // VkDeviceSize
+        uint64_t size;       // VkDeviceSize
         uint32_t index_type; // VkIndexType
-        uint32_t reserved;
     };
 
     struct cmd_draw_indexed_request

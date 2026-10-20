@@ -2659,8 +2659,6 @@ extern "C"
         }
     }
 
-    // Copies are remoted assuming tight packing of mip 0 / layer 0 at image offset 0 to buffer offset 0
-    // (bufferRowLength/bufferImageHeight/imageOffset are not yet honored).
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdCopyImageToBuffer(VkCommandBuffer commandBuffer, VkImage srcImage,
                                                                             VkImageLayout srcImageLayout, VkBuffer dstBuffer,
                                                                             uint32_t regionCount, const VkBufferImageCopy* pRegions)
@@ -2672,9 +2670,19 @@ extern "C"
             request.command_buffer = to_object_id(commandBuffer);
             request.image = to_object_id(srcImage);
             request.buffer = to_object_id(dstBuffer);
+            request.buffer_offset = r.bufferOffset;
             request.image_layout = static_cast<uint32_t>(srcImageLayout);
+            request.buffer_row_length = r.bufferRowLength;
+            request.buffer_image_height = r.bufferImageHeight;
+            request.image_offset_x = r.imageOffset.x;
+            request.image_offset_y = r.imageOffset.y;
+            request.image_offset_z = r.imageOffset.z;
             request.width = r.imageExtent.width;
             request.height = r.imageExtent.height;
+            request.depth = r.imageExtent.depth;
+            request.mip_level = r.imageSubresource.mipLevel;
+            request.base_array_layer = r.imageSubresource.baseArrayLayer;
+            request.layer_count = r.imageSubresource.layerCount;
             request.aspect_mask = r.imageSubresource.aspectMask;
             record_command(request.command_buffer, gb::command::cmd_copy_image_to_buffer, &request, sizeof(request));
         }
@@ -2741,8 +2749,6 @@ extern "C"
         }
     }
 
-    // Resolves a multisampled source image into a single-sample destination. DXVK uses this to resolve an
-    // MSAA backbuffer before presenting it. Remoted assuming full image, mip 0 / layer 0, offset 0.
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdResolveImage(VkCommandBuffer commandBuffer, VkImage srcImage,
                                                                        VkImageLayout srcImageLayout, VkImage dstImage,
                                                                        VkImageLayout dstImageLayout, uint32_t regionCount,
@@ -2757,9 +2763,23 @@ extern "C"
             request.dst_image = to_object_id(dstImage);
             request.src_layout = static_cast<uint32_t>(srcImageLayout);
             request.dst_layout = static_cast<uint32_t>(dstImageLayout);
+            request.src_aspect_mask = r.srcSubresource.aspectMask;
+            request.src_mip_level = r.srcSubresource.mipLevel;
+            request.src_base_array_layer = r.srcSubresource.baseArrayLayer;
+            request.src_layer_count = r.srcSubresource.layerCount;
+            request.src_offset_x = r.srcOffset.x;
+            request.src_offset_y = r.srcOffset.y;
+            request.src_offset_z = r.srcOffset.z;
+            request.dst_aspect_mask = r.dstSubresource.aspectMask;
+            request.dst_mip_level = r.dstSubresource.mipLevel;
+            request.dst_base_array_layer = r.dstSubresource.baseArrayLayer;
+            request.dst_layer_count = r.dstSubresource.layerCount;
+            request.dst_offset_x = r.dstOffset.x;
+            request.dst_offset_y = r.dstOffset.y;
+            request.dst_offset_z = r.dstOffset.z;
             request.width = r.extent.width;
             request.height = r.extent.height;
-            request.aspect_mask = r.srcSubresource.aspectMask;
+            request.depth = r.extent.depth;
             record_command(request.command_buffer, gb::command::cmd_resolve_image, &request, sizeof(request));
         }
     }
@@ -2796,9 +2816,23 @@ extern "C"
             request.dst_image = to_object_id(pResolveImageInfo->dstImage);
             request.src_layout = static_cast<uint32_t>(pResolveImageInfo->srcImageLayout);
             request.dst_layout = static_cast<uint32_t>(pResolveImageInfo->dstImageLayout);
+            request.src_aspect_mask = r.srcSubresource.aspectMask;
+            request.src_mip_level = r.srcSubresource.mipLevel;
+            request.src_base_array_layer = r.srcSubresource.baseArrayLayer;
+            request.src_layer_count = r.srcSubresource.layerCount;
+            request.src_offset_x = r.srcOffset.x;
+            request.src_offset_y = r.srcOffset.y;
+            request.src_offset_z = r.srcOffset.z;
+            request.dst_aspect_mask = r.dstSubresource.aspectMask;
+            request.dst_mip_level = r.dstSubresource.mipLevel;
+            request.dst_base_array_layer = r.dstSubresource.baseArrayLayer;
+            request.dst_layer_count = r.dstSubresource.layerCount;
+            request.dst_offset_x = r.dstOffset.x;
+            request.dst_offset_y = r.dstOffset.y;
+            request.dst_offset_z = r.dstOffset.z;
             request.width = r.extent.width;
             request.height = r.extent.height;
-            request.aspect_mask = r.srcSubresource.aspectMask;
+            request.depth = r.extent.depth;
             record_command(request.command_buffer, gb::command::cmd_resolve_image, &request, sizeof(request));
         }
     }
@@ -2959,9 +2993,19 @@ extern "C"
             request.command_buffer = to_object_id(commandBuffer);
             request.image = to_object_id(pCopyImageToBufferInfo->srcImage);
             request.buffer = to_object_id(pCopyImageToBufferInfo->dstBuffer);
+            request.buffer_offset = r.bufferOffset;
             request.image_layout = static_cast<uint32_t>(pCopyImageToBufferInfo->srcImageLayout);
+            request.buffer_row_length = r.bufferRowLength;
+            request.buffer_image_height = r.bufferImageHeight;
+            request.image_offset_x = r.imageOffset.x;
+            request.image_offset_y = r.imageOffset.y;
+            request.image_offset_z = r.imageOffset.z;
             request.width = r.imageExtent.width;
             request.height = r.imageExtent.height;
+            request.depth = r.imageExtent.depth;
+            request.mip_level = r.imageSubresource.mipLevel;
+            request.base_array_layer = r.imageSubresource.baseArrayLayer;
+            request.layer_count = r.imageSubresource.layerCount;
             request.aspect_mask = r.imageSubresource.aspectMask;
             record_command(request.command_buffer, gb::command::cmd_copy_image_to_buffer, &request, sizeof(request));
         }
@@ -5579,20 +5623,19 @@ extern "C"
         request.command_buffer = to_object_id(commandBuffer);
         request.buffer = to_object_id(buffer);
         request.offset = offset;
+        request.size = VK_WHOLE_SIZE;
         request.index_type = static_cast<uint32_t>(indexType);
         record_command(request.command_buffer, gb::command::cmd_bind_index_buffer, &request, sizeof(request));
     }
 
-    // VK_KHR_maintenance5 / core 1.4: like vkCmdBindIndexBuffer but with an explicit size. The bridge does
-    // not model the size (the base bind covers the buffer from offset, which matches the usual VK_WHOLE_SIZE).
     __declspec(dllexport) VKAPI_ATTR void VKAPI_CALL vkCmdBindIndexBuffer2KHR(VkCommandBuffer commandBuffer, VkBuffer buffer,
-                                                                              VkDeviceSize offset, VkDeviceSize /*size*/,
-                                                                              VkIndexType indexType)
+                                                                              VkDeviceSize offset, VkDeviceSize size, VkIndexType indexType)
     {
         gb::cmd_bind_index_buffer_request request{};
         request.command_buffer = to_object_id(commandBuffer);
         request.buffer = to_object_id(buffer);
         request.offset = offset;
+        request.size = size;
         request.index_type = static_cast<uint32_t>(indexType);
         record_command(request.command_buffer, gb::command::cmd_bind_index_buffer, &request, sizeof(request));
     }

@@ -268,6 +268,7 @@ namespace sogen
         struct device_data
         {
             VkDevice handle{};
+            bool maintenance5_enabled{};
             // Held shared by presents running without the caller's locks, so destroying the device waits for them.
             std::shared_ptr<std::shared_mutex> presents = std::make_shared<std::shared_mutex>();
             uint64_t instance_id{};
@@ -396,6 +397,7 @@ namespace sogen
             PFN_vkCmdBindVertexBuffers cmd_bind_vertex_buffers{};
             PFN_vkCmdBindVertexBuffers2 cmd_bind_vertex_buffers2{};
             PFN_vkCmdBindIndexBuffer cmd_bind_index_buffer{};
+            PFN_vkCmdBindIndexBuffer2KHR cmd_bind_index_buffer2{};
             PFN_vkCmdDrawIndexed cmd_draw_indexed{};
             PFN_vkCmdDrawIndexedIndirect cmd_draw_indexed_indirect{};
             PFN_vkCmdDrawIndexedIndirectCount cmd_draw_indexed_indirect_count{};
@@ -2156,6 +2158,14 @@ namespace sogen
 
         impl::device_data data{};
         data.handle = device;
+        const bool maintenance5_extension_enabled =
+            std::ranges::any_of(extensions, [](const char* name) { return std::strcmp(name, "VK_KHR_maintenance5") == 0; });
+        const bool maintenance5_feature_enabled = std::ranges::any_of(chained, [](const std::vector<std::byte>& buffer) {
+            const auto* base = reinterpret_cast<const VkBaseInStructure*>(buffer.data());
+            return base->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR &&
+                   reinterpret_cast<const VkPhysicalDeviceMaintenance5FeaturesKHR*>(base)->maintenance5 == VK_TRUE;
+        });
+        data.maintenance5_enabled = maintenance5_extension_enabled && maintenance5_feature_enabled;
         data.instance_id = pd->second.instance_id;
         data.physical_device = pd->second.handle;
         data.queue_family_index = primary_family;
@@ -2311,6 +2321,10 @@ namespace sogen
             data.cmd_bind_vertex_buffers = reinterpret_cast<PFN_vkCmdBindVertexBuffers>(resolve("vkCmdBindVertexBuffers"));
             data.cmd_bind_vertex_buffers2 = reinterpret_cast<PFN_vkCmdBindVertexBuffers2>(resolve("vkCmdBindVertexBuffers2"));
             data.cmd_bind_index_buffer = reinterpret_cast<PFN_vkCmdBindIndexBuffer>(resolve("vkCmdBindIndexBuffer"));
+            if (data.maintenance5_enabled)
+            {
+                data.cmd_bind_index_buffer2 = reinterpret_cast<PFN_vkCmdBindIndexBuffer2KHR>(resolve("vkCmdBindIndexBuffer2KHR"));
+            }
             data.cmd_draw_indexed = reinterpret_cast<PFN_vkCmdDrawIndexed>(resolve("vkCmdDrawIndexed"));
             data.cmd_draw_indexed_indirect = reinterpret_cast<PFN_vkCmdDrawIndexedIndirect>(resolve("vkCmdDrawIndexedIndirect"));
             data.cmd_draw_indexed_indirect_count =
@@ -3793,7 +3807,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::cmd_copy_image_to_buffer(uint64_t command_buffer, uint64_t image, uint32_t image_layout, uint64_t buffer,
-                                                  uint32_t width, uint32_t height, uint32_t aspect_mask)
+                                                  const buffer_image_copy_region& r)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto img = this->impl_->images.find(image);
@@ -3811,15 +3825,15 @@ namespace sogen
         }
 
         VkBufferImageCopy region{};
-        region.bufferOffset = 0;
-        region.bufferRowLength = 0;   // tightly packed
-        region.bufferImageHeight = 0; // tightly packed
-        region.imageSubresource.aspectMask = aspect_mask;
-        region.imageSubresource.mipLevel = 0;
-        region.imageSubresource.baseArrayLayer = 0;
-        region.imageSubresource.layerCount = 1;
-        region.imageOffset = {.x = 0, .y = 0, .z = 0};
-        region.imageExtent = {.width = width, .height = height, .depth = 1};
+        region.bufferOffset = r.buffer_offset;
+        region.bufferRowLength = r.buffer_row_length;
+        region.bufferImageHeight = r.buffer_image_height;
+        region.imageSubresource.aspectMask = r.aspect_mask;
+        region.imageSubresource.mipLevel = r.mip_level;
+        region.imageSubresource.baseArrayLayer = r.base_array_layer;
+        region.imageSubresource.layerCount = r.layer_count ? r.layer_count : 1;
+        region.imageOffset = {.x = r.image_offset_x, .y = r.image_offset_y, .z = r.image_offset_z};
+        region.imageExtent = {.width = r.width, .height = r.height, .depth = r.depth ? r.depth : 1};
 
         dev->second.cmd_copy_image_to_buffer(cb->second.handle, img->second.handle, translate_layout(image_layout), buf->second.handle, 1,
                                              &region);
@@ -3827,7 +3841,7 @@ namespace sogen
     }
 
     int32_t vulkan_host::cmd_resolve_image(uint64_t command_buffer, uint64_t src_image, uint32_t src_layout, uint64_t dst_image,
-                                           uint32_t dst_layout, uint32_t width, uint32_t height, uint32_t aspect_mask)
+                                           uint32_t dst_layout, const image_copy_region& r)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto src = this->impl_->images.find(src_image);
@@ -3845,11 +3859,17 @@ namespace sogen
         }
 
         VkImageResolve region{};
-        region.srcSubresource = {.aspectMask = aspect_mask, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1};
-        region.srcOffset = {.x = 0, .y = 0, .z = 0};
-        region.dstSubresource = {.aspectMask = aspect_mask, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1};
-        region.dstOffset = {.x = 0, .y = 0, .z = 0};
-        region.extent = {.width = width, .height = height, .depth = 1};
+        region.srcSubresource = {.aspectMask = r.src_aspect_mask,
+                                 .mipLevel = r.src_mip_level,
+                                 .baseArrayLayer = r.src_base_array_layer,
+                                 .layerCount = r.src_layer_count};
+        region.srcOffset = {.x = r.src_offset_x, .y = r.src_offset_y, .z = r.src_offset_z};
+        region.dstSubresource = {.aspectMask = r.dst_aspect_mask,
+                                 .mipLevel = r.dst_mip_level,
+                                 .baseArrayLayer = r.dst_base_array_layer,
+                                 .layerCount = r.dst_layer_count};
+        region.dstOffset = {.x = r.dst_offset_x, .y = r.dst_offset_y, .z = r.dst_offset_z};
+        region.extent = {.width = r.width, .height = r.height, .depth = r.depth};
 
         dev->second.cmd_resolve_image(cb->second.handle, src->second.handle, translate_layout(src_layout), dst->second.handle,
                                       translate_layout(dst_layout), 1, &region);
@@ -6454,7 +6474,8 @@ namespace sogen
         return VK_SUCCESS;
     }
 
-    int32_t vulkan_host::cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint32_t index_type)
+    int32_t vulkan_host::cmd_bind_index_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, uint64_t size,
+                                               uint32_t index_type)
     {
         const auto cb = this->impl_->command_buffers.find(command_buffer);
         const auto buf = this->impl_->buffers.find(buffer);
@@ -6463,11 +6484,22 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         const auto dev = this->impl_->devices.find(cb->second.device_id);
-        if (dev == this->impl_->devices.end() || !dev->second.cmd_bind_index_buffer)
+        if (dev == this->impl_->devices.end())
         {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        dev->second.cmd_bind_index_buffer(cb->second.handle, buf->second.handle, offset, static_cast<VkIndexType>(index_type));
+        if (dev->second.maintenance5_enabled && dev->second.cmd_bind_index_buffer2)
+        {
+            dev->second.cmd_bind_index_buffer2(cb->second.handle, buf->second.handle, offset, size, static_cast<VkIndexType>(index_type));
+        }
+        else if (size == VK_WHOLE_SIZE && dev->second.cmd_bind_index_buffer)
+        {
+            dev->second.cmd_bind_index_buffer(cb->second.handle, buf->second.handle, offset, static_cast<VkIndexType>(index_type));
+        }
+        else
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
         return VK_SUCCESS;
     }
 
