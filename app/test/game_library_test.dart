@@ -1,0 +1,33 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:sogen_app/src/game_library.dart';
+
+void main() {
+  Game game(String executable) =>
+      Game(id: '1', name: 'Test', directory: '/storage/emulated/0/Games/Test', executable: executable);
+
+  test('executable in the game folder maps to C:\\game', () {
+    final entry = game('test.exe');
+    expect(entry.guestExecutable, r'C:\game\test.exe');
+    expect(entry.guestWorkingDirectory, r'C:\game');
+  });
+
+  test('nested executable keeps its subfolder as working directory', () {
+    final entry = game('bin/x64/test.exe');
+    expect(entry.guestExecutable, r'C:\game\bin\x64\test.exe');
+    expect(entry.guestWorkingDirectory, r'C:\game\bin\x64');
+  });
+
+  test('json round trip', () {
+    const entry = Game(
+      id: '42',
+      name: 'Test',
+      directory: '/sdcard/Test',
+      executable: 'test.exe',
+      arguments: ['-windowed'],
+      liveNetwork: true,
+    );
+
+    final decoded = Game.fromJson(entry.toJson());
+    expect(decoded.toJson(), entry.toJson());
+  });
+}
