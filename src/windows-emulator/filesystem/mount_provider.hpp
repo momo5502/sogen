@@ -9,6 +9,7 @@ namespace sogen
     struct directory_entry
     {
         std::u16string name{};
+        std::u16string short_name{};
         bool is_directory{};
         std::optional<struct compat_stat> stat{};
     };

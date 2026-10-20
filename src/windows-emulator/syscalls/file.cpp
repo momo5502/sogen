@@ -457,7 +457,8 @@ namespace sogen
 
             for (const auto& entry : file_sys.list_directory(win_path))
             {
-                if (!file_mask.empty() && !utils::wildcard::match_filename(entry.name, file_mask))
+                if (!file_mask.empty() && !utils::wildcard::match_filename(entry.name, file_mask) &&
+                    !utils::wildcard::match_filename(entry.short_name, file_mask))
                 {
                     continue;
                 }
@@ -542,6 +543,13 @@ namespace sogen
                 info.FileAttributes = current_file.is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
                 info.FileNameLength = static_cast<ULONG>(file_name.size() * 2);
                 info.EndOfFile.QuadPart = current_file.file_size;
+
+                if constexpr (std::is_same_v<T, FILE_BOTH_DIR_INFORMATION> || std::is_same_v<T, FILE_ID_BOTH_DIR_INFORMATION>)
+                {
+                    const auto short_name_length = std::min(current_file.short_name.size(), std::size(info.ShortName));
+                    info.ShortNameLength = static_cast<char>(short_name_length * sizeof(char16_t));
+                    std::ranges::copy_n(current_file.short_name.begin(), short_name_length, info.ShortName);
+                }
 
                 object.set_address(file_information + new_offset);
                 object.write(info);
