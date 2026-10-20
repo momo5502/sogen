@@ -50,8 +50,7 @@ namespace sogen
             }
         };
 
-        // The CoreMessaging conduit to a thread's CoreUI dispatcher (DirectInput reaches it through InputHost). Its
-        // first messages are one-way; rejecting them makes CoreMessaging fail fast and terminate the process.
+        // CoreMessaging sends one-way messages here and fail-fasts the process if they are rejected.
         struct core_ui_port : noop_port
         {
             bool accepts_send_only_messages() const override
