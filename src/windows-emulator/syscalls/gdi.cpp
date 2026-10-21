@@ -4254,9 +4254,24 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        std::optional<uint32_t> get_dc_attr_object_offset(const int32_t object_type)
+        {
+            switch (object_type)
+            {
+            case k_gdi_dc_object_font:
+                return k_gdi_dc_attr_font_offset;
+            case k_gdi_dc_object_brush:
+                return k_gdi_dc_attr_hbrush_offset;
+            case k_gdi_dc_object_pen:
+                return k_gdi_dc_attr_hpen_offset;
+            default:
+                return std::nullopt;
+            }
+        }
+
         uint64_t handle_NtGdiGetDCObject(const syscall_context& c, const hdc dc, const int32_t object_type)
         {
-            if (object_type == k_gdi_dc_object_font || object_type == k_gdi_dc_object_brush || object_type == k_gdi_dc_object_pen)
+            if (const auto offset = get_dc_attr_object_offset(object_type))
             {
                 uint64_t dc_attr = 0;
                 if (!get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
@@ -4264,11 +4279,8 @@ namespace sogen
                     return 0;
                 }
 
-                const auto offset = object_type == k_gdi_dc_object_font    ? k_gdi_dc_attr_font_offset
-                                    : object_type == k_gdi_dc_object_brush ? k_gdi_dc_attr_hbrush_offset
-                                                                           : k_gdi_dc_attr_hpen_offset;
                 uint32_t object = 0;
-                c.win_emu.memory.try_read_memory(dc_attr + offset, &object, sizeof(object));
+                c.win_emu.memory.try_read_memory(dc_attr + *offset, &object, sizeof(object));
                 return object;
             }
 
