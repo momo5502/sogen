@@ -782,6 +782,7 @@ namespace sogen
           instruction_precision_(settings.use_instruction_precision && this->emu_->supports_instruction_counting()),
           intercept_rdtsc_(settings.intercept_rdtsc),
           intercept_kusd_(settings.intercept_kusd),
+          spoof_gpu_features_(settings.spoof_gpu_features),
           vcpu_count_(static_cast<uint32_t>(this->emu_->vcpu_count()))
     {
         if (this->vcpu_count_ == 0)

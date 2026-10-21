@@ -70,6 +70,7 @@ namespace sogen::android
                 .emulation_root = config.emulation_root,
                 .root_mode = filesystem_mode::read_write,
                 .network = config.live_network ? network::network_mode::live : network::network_mode::offline,
+                .spoof_gpu_features = true,
             };
 
             for (const auto& [guest, host] : config.path_mappings)

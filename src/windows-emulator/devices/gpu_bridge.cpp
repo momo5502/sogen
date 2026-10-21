@@ -780,8 +780,8 @@ namespace sogen
                 }
 
                 std::vector<std::byte> blob;
-                const int32_t result = this->vulkan_.get_physical_device_features2(request.physical_device, records.data(), records.size(),
-                                                                                   request.struct_count, blob);
+                const int32_t result = this->vulkan_.get_physical_device_features2(
+                    request.physical_device, records.data(), records.size(), request.struct_count, win_emu.spoofs_gpu_features(), blob);
 
                 const response_t response{.vk_result = result, .struct_count = request.struct_count};
                 emulator_object<response_t>{win_emu.emu(), context.output_buffer}.write(response);
@@ -889,9 +889,9 @@ namespace sogen
                 }
 
                 uint64_t device = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_device(request.physical_device, queue_entries.data(), queue_entries.size(),
-                                                                   extension_blob, extension_blob_size, extension_count, feature_blob,
-                                                                   feature_blob_size, feature_struct_count, device);
+                const int32_t result = this->vulkan_.create_device(
+                    request.physical_device, queue_entries.data(), queue_entries.size(), extension_blob, extension_blob_size,
+                    extension_count, feature_blob, feature_blob_size, feature_struct_count, win_emu.spoofs_gpu_features(), device);
 
                 const response_t response{
                     .vk_result = result,
