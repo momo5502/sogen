@@ -713,6 +713,23 @@ namespace sogen
                 window.rcClient = screen;
             });
         }
+
+        this->cursor_x = std::clamp(this->cursor_x, 0, static_cast<int32_t>(width) - 1);
+        this->cursor_y = std::clamp(this->cursor_y, 0, static_cast<int32_t>(height) - 1);
+        if (this->cursor_clip)
+        {
+            auto& clip = *this->cursor_clip;
+            clip.left = std::clamp(clip.left, screen.left, screen.right);
+            clip.right = std::clamp(clip.right, screen.left, screen.right);
+            clip.top = std::clamp(clip.top, screen.top, screen.bottom);
+            clip.bottom = std::clamp(clip.bottom, screen.top, screen.bottom);
+            if (clip.left >= clip.right || clip.top >= clip.bottom)
+            {
+                this->cursor_clip.reset();
+            }
+        }
+
+        win_emu.apply_cursor_capture();
     }
 
     emulator_pointer process_context::allocate_user_class(memory_manager& memory, const std::u16string_view class_name)

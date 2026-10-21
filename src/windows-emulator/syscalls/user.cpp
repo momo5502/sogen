@@ -4752,15 +4752,22 @@ namespace sogen
         // Fullscreen games switch the display to their resolution and take the screen size from then on, e.g. to convert
         // screen coordinates of the cursor. A null mode returns to the registry mode.
         LONG handle_NtUserChangeDisplaySettings(const syscall_context& c,
-                                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*device_name*/,
+                                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
                                                 const emulator_object<EMU_DEVMODEW> dev_mode, const hwnd /*window*/, const DWORD flags,
                                                 const uint64_t /*param*/)
         {
             constexpr LONG disp_change_successful = 0;
             constexpr LONG disp_change_badmode = -2;
+            constexpr LONG disp_change_badparam = -5;
             constexpr DWORD cds_test = 0x2;
+            constexpr DWORD cds_noreset = 0x10000000;
             constexpr DWORD dm_pelswidth = 0x80000;
             constexpr DWORD dm_pelsheight = 0x100000;
+
+            if (const auto name = device_name ? read_unicode_string(c.emu, device_name) : u""; !name.empty() && name != u"\\\\.\\DISPLAY1")
+            {
+                return disp_change_badparam;
+            }
 
             auto width = process_context::default_display_width;
             auto height = process_context::default_display_height;
@@ -4777,7 +4784,7 @@ namespace sogen
                 return disp_change_badmode;
             }
 
-            if ((flags & cds_test) == 0)
+            if ((flags & (cds_test | cds_noreset)) == 0)
             {
                 c.proc.set_display_mode(c.win_emu, width, height);
             }
