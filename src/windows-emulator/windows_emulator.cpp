@@ -1886,7 +1886,7 @@ namespace sogen
             pending = std::min(pending + 1, maximum_pending);
         }
 
-        this->wake_idle_vcpu();
+        this->credit_idle_wakeup();
     }
 
     void windows_emulator::apply_pending_guest_event_signals()
@@ -1958,11 +1958,14 @@ namespace sogen
 
     void windows_emulator::wake_idle_vcpu()
     {
-        if (this->idle_vcpus_.load() == 0)
+        if (this->idle_vcpus_.load() != 0)
         {
-            return;
+            this->credit_idle_wakeup();
         }
+    }
 
+    void windows_emulator::credit_idle_wakeup()
+    {
         {
             const std::lock_guard lock{this->idle_wakeup_mutex_};
             this->pending_idle_wakeups_ = std::min(this->pending_idle_wakeups_ + 1, this->vcpu_count_);

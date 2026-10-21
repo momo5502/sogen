@@ -560,6 +560,7 @@ namespace sogen
         uint32_t pending_idle_wakeups_{};
         std::atomic<uint32_t> idle_vcpus_{0};
 
+        void credit_idle_wakeup();
         bool wait_for_idle_wakeup(std::chrono::milliseconds timeout);
 
         std::mutex pending_event_signals_mutex_{};
