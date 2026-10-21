@@ -8,6 +8,7 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <deque>
 #include <iomanip>
 #include <limits>
 #include <memory>
@@ -42,6 +43,9 @@ namespace sogen::whp
         constexpr uint64_t internal_page_table_base = 0x0000007000000000ull;
         constexpr uint64_t syscall_hook_virtual_address = 0xFFFF800000001000ull;
         constexpr uint64_t unmapped_guest_page = std::numeric_limits<uint64_t>::max();
+        constexpr size_t max_retired_pages = 32768;
+        constexpr size_t max_retired_bytes = max_retired_pages * page_size;
+        constexpr size_t max_pooled_backing_size = 256 * page_size;
 
         uint64_t align_down_to_page(const uint64_t value)
         {
@@ -128,6 +132,8 @@ namespace sogen::whp
         {
             struct virtual_free_deleter
             {
+                size_t size{};
+
                 void operator()(uint8_t* page) const
                 {
                     if (page != nullptr)
@@ -147,6 +153,45 @@ namespace sogen::whp
             std::shared_ptr<uint8_t> owned_page{};
         };
 
+        struct retired_page
+        {
+            uint64_t guest_physical_address{};
+            void* host_page{};
+            std::shared_ptr<uint8_t> backing{};
+            uint64_t epoch{};
+        };
+
+        using advise_gpa_range_function = HRESULT(WINAPI*)(WHV_PARTITION_HANDLE, const WHV_MEMORY_RANGE_ENTRY*, UINT32,
+                                                           WHV_ADVISE_GPA_RANGE_CODE, const VOID*, UINT32);
+
+        advise_gpa_range_function load_advise_gpa_range()
+        {
+            auto* const module = ::GetModuleHandleW(L"WinHvPlatform.dll");
+            if (module == nullptr)
+            {
+                return nullptr;
+            }
+
+            return reinterpret_cast<advise_gpa_range_function>(::GetProcAddress(module, "WHvAdviseGpaRange"));
+        }
+
+        WHV_MEMORY_ACCESS_TYPE populate_access_type(const uint32_t map_flags)
+        {
+            if ((map_flags & WHvMapGpaRangeFlagWrite) != 0)
+            {
+                return WHvMemoryAccessWrite;
+            }
+
+            if ((map_flags & WHvMapGpaRangeFlagExecute) != 0)
+            {
+                return WHvMemoryAccessExecute;
+            }
+
+            return WHvMemoryAccessRead;
+        }
+
+        constexpr uint32_t recycled_map_flags = static_cast<uint32_t>(WHvMapGpaRangeFlagRead | WHvMapGpaRangeFlagWrite);
+
         std::shared_ptr<uint8_t> allocate_backing_memory(const size_t size)
         {
             auto* raw_memory = static_cast<uint8_t*>(::VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
@@ -156,7 +201,7 @@ namespace sogen::whp
             }
 
             std::memset(raw_memory, 0, size);
-            return std::shared_ptr<uint8_t>(raw_memory, mapped_page::virtual_free_deleter{});
+            return std::shared_ptr<uint8_t>(raw_memory, mapped_page::virtual_free_deleter{.size = size});
         }
 
         enum class register_kind
@@ -1282,6 +1327,8 @@ namespace sogen::whp
             std::atomic_bool stop_requested_{false};
             std::atomic_bool run_active_{false};
             std::atomic_bool pending_tlb_flush_{false};
+            std::atomic<uint64_t> requested_tlb_epoch_{0};
+            std::atomic<uint64_t> acked_tlb_epoch_{0};
 
             // Tracks the last (page, rip) we re-mapped and retried, plus how many times in a row.
             // A backed page whose permissions allow the access can only fault spuriously (a stale
@@ -1305,6 +1352,7 @@ namespace sogen::whp
             explicit whp_x86_64_emulator(const size_t vcpu_count)
             {
                 this->ensure_platform_support();
+                this->advise_gpa_range_ = load_advise_gpa_range();
                 this->configure_partition(static_cast<UINT32>(vcpu_count));
                 this->initialize_long_mode_page_tables();
                 this->initialize_syscall_intercept_page();
@@ -1505,10 +1553,29 @@ namespace sogen::whp
 
                 if (can_batch_map)
                 {
-                    auto backing = allocate_backing_memory(size);
-                    auto* backing_base = backing.get();
-
                     const bool range_has_hooks = this->range_intersects_execution_hook(address, size);
+                    const auto page_count = size / page_size;
+
+                    std::vector<retired_page> recycled{};
+                    if (!range_has_hooks && to_whp_map_flags(permissions) == recycled_map_flags)
+                    {
+                        while (recycled.size() < page_count)
+                        {
+                            auto retired = this->take_retired_page();
+                            if (!retired)
+                            {
+                                break;
+                            }
+
+                            recycled.push_back(std::move(*retired));
+                        }
+                    }
+
+                    const auto fresh_count = page_count - recycled.size();
+                    std::shared_ptr<uint8_t> backing{};
+                    size_t backing_pages = 0;
+                    size_t backing_pages_used = 0;
+                    size_t fresh_remaining = fresh_count;
 
                     for (size_t offset = 0; offset < size; offset += page_size)
                     {
@@ -1519,9 +1586,31 @@ namespace sogen::whp
                             page = std::make_unique<mapped_page>();
                         }
 
-                        page->owned_page = backing;
-                        page->host_page = backing_base + offset;
-                        this->assign_guest_physical_page(guest_address, *page, range_has_hooks);
+                        const auto recycled_index = offset / page_size;
+                        if (recycled_index < recycled.size())
+                        {
+                            auto& reused = recycled[recycled_index];
+                            std::memset(reused.host_page, 0, page_size);
+                            page->owned_page = std::move(reused.backing);
+                            page->host_page = reused.host_page;
+                            this->adopt_guest_physical_page(guest_address, *page, reused.guest_physical_address);
+                            page->map_flags = recycled_map_flags;
+                        }
+                        else
+                        {
+                            if (backing_pages_used == backing_pages)
+                            {
+                                backing_pages = std::min(fresh_remaining, max_pooled_backing_size / page_size);
+                                backing = allocate_backing_memory(backing_pages * page_size);
+                                backing_pages_used = 0;
+                                fresh_remaining -= backing_pages;
+                            }
+
+                            page->owned_page = backing;
+                            page->host_page = backing.get() + (backing_pages_used++ * page_size);
+                            this->assign_guest_physical_page(guest_address, *page, range_has_hooks);
+                        }
+
                         page->permissions = permissions;
                         this->apply_patched_execution_breakpoints(guest_address);
                         this->ensure_virtual_mapping(guest_address);
@@ -1611,6 +1700,7 @@ namespace sogen::whp
                 // its (shared) owned_page, which can free memory the WHP partition still maps by GPA.
                 std::vector<std::shared_ptr<uint8_t>> retired_backings;
                 bool flushed_virtual_mappings = false;
+                size_t recycled_pages = 0;
                 for (size_t offset = size; offset > 0; offset -= page_size)
                 {
                     const auto guest_address = address + offset - page_size;
@@ -1622,16 +1712,41 @@ namespace sogen::whp
                         continue;
                     }
 
-                    if (entry->second->map_flags != 0)
+                    const auto recycle = can_recycle_page(*entry->second);
+                    if (!recycle && entry->second->map_flags != 0)
                     {
                         unmap_gpas.push_back(entry->second->guest_physical_address);
                     }
 
                     flushed_virtual_mappings = this->clear_virtual_mapping(guest_address) || flushed_virtual_mappings;
                     this->mark_patched_execution_breakpoints_unmapped(guest_address);
-                    this->release_guest_physical_page(entry->second->guest_physical_address);
-                    retired_backings.push_back(std::move(entry->second->owned_page));
+                    if (recycle)
+                    {
+                        this->retire_guest_physical_page(*entry->second);
+                        ++recycled_pages;
+                    }
+                    else
+                    {
+                        this->release_guest_physical_page(entry->second->guest_physical_address);
+                        retired_backings.push_back(std::move(entry->second->owned_page));
+                    }
+
                     this->mapped_pages_.erase(entry);
+                }
+
+                const auto epoch = flushed_virtual_mappings ? this->flush_virtual_address_mappings() : this->tlb_epoch_;
+                for (auto it = this->retired_pages_.end() - static_cast<std::ptrdiff_t>(recycled_pages); it != this->retired_pages_.end();
+                     ++it)
+                {
+                    it->epoch = epoch;
+                }
+
+                while (this->retired_pages_.size() > max_retired_pages || this->retired_bytes_ > max_retired_bytes)
+                {
+                    auto oldest = this->pop_retired_page();
+                    unmap_gpas.push_back(oldest.guest_physical_address);
+                    this->free_guest_gpa_indices_.insert(this->guest_physical_page_index(oldest.guest_physical_address));
+                    retired_backings.push_back(std::move(oldest.backing));
                 }
 
                 std::ranges::sort(unmap_gpas);
@@ -1645,11 +1760,6 @@ namespace sogen::whp
 
                     WHP_CHECK_HR(WHvUnmapGpaRange(this->partition_, unmap_gpas[i], (j - i + 1) * page_size));
                     i = j + 1;
-                }
-
-                if (flushed_virtual_mappings)
-                {
-                    this->flush_virtual_address_mappings();
                 }
 
                 const auto mmio = this->mmio_regions_.find(address);
@@ -1987,6 +2097,11 @@ namespace sogen::whp
             std::unordered_map<uint64_t, std::unique_ptr<mapped_page>> mapped_pages_{};
             std::unordered_map<uint64_t, std::shared_ptr<uint8_t>> internal_pages_{};
             std::vector<uint64_t> guest_pages_by_gpa_{};
+            std::deque<retired_page> retired_pages_{};
+            std::unordered_map<const uint8_t*, size_t> retired_backing_pages_{};
+            size_t retired_bytes_ = 0;
+            advise_gpa_range_function advise_gpa_range_{};
+            uint64_t tlb_epoch_ = 0;
             // Ordered free list of guest-physical page indices. Allocating the *lowest* free index (rather
             // than LIFO) hands a freed contiguous GPA block back in ascending order to the next mapping's
             // ascending guest pages, so a contiguous guest region keeps monotonic contiguous GPAs. That lets
@@ -2302,6 +2417,87 @@ namespace sogen::whp
             }
 
             // Assumes partition_mutex_ is held exclusively.
+            void adopt_guest_physical_page(const uint64_t guest_address, mapped_page& page, const uint64_t guest_physical_address)
+            {
+                if (page.guest_physical_address != unmapped_guest_page)
+                {
+                    throw std::runtime_error("WHP guest physical page already assigned");
+                }
+
+                page.guest_page_base = align_down_to_page(guest_address);
+                page.guest_physical_address = guest_physical_address;
+                page.page_execution_hook_count = 0;
+                this->guest_pages_by_gpa_[this->guest_physical_page_index(guest_physical_address)] = page.guest_page_base;
+            }
+
+            // Only plain read/write pages that this backend backs itself keep their EPT mapping and host memory
+            // alive for reuse: re-populating a mapping costs a hypervisor fault per page on first touch.
+            static bool can_recycle_page(const mapped_page& page)
+            {
+                return page.map_flags == recycled_map_flags && page.owned_page && page.host_page != nullptr &&
+                       page.page_execution_hook_count == 0 && page.guest_physical_address >= guest_physical_memory_base &&
+                       page.guest_physical_address < internal_page_table_base && backing_size(page.owned_page) <= max_pooled_backing_size;
+            }
+
+            static size_t backing_size(const std::shared_ptr<uint8_t>& backing)
+            {
+                const auto* const deleter = std::get_deleter<mapped_page::virtual_free_deleter>(backing);
+                return deleter ? deleter->size : 0;
+            }
+
+            // Retired pages keep their whole backing allocation alive, so the pool is bounded by the distinct
+            // backing bytes it holds and only admits pages of small backings.
+            // Assumes partition_mutex_ is held exclusively. The caller stamps the retired page's TLB epoch.
+            void retire_guest_physical_page(mapped_page& page)
+            {
+                const auto page_index = this->guest_physical_page_index(page.guest_physical_address);
+                if (this->guest_pages_by_gpa_[page_index] == unmapped_guest_page)
+                {
+                    throw std::runtime_error("WHP guest physical page double release");
+                }
+
+                this->guest_pages_by_gpa_[page_index] = unmapped_guest_page;
+                if (this->retired_backing_pages_[page.owned_page.get()]++ == 0)
+                {
+                    this->retired_bytes_ += backing_size(page.owned_page);
+                }
+
+                this->retired_pages_.push_back(retired_page{
+                    .guest_physical_address = page.guest_physical_address,
+                    .host_page = page.host_page,
+                    .backing = std::move(page.owned_page),
+                });
+            }
+
+            // Assumes partition_mutex_ is held exclusively. A retired page may only be handed out again once every
+            // vCPU has dropped its cached translations of the old guest address.
+            std::optional<retired_page> take_retired_page()
+            {
+                if (this->retired_pages_.empty() || !this->is_tlb_epoch_acknowledged(this->retired_pages_.front().epoch))
+                {
+                    return std::nullopt;
+                }
+
+                return this->pop_retired_page();
+            }
+
+            // Assumes partition_mutex_ is held exclusively and the pool is not empty.
+            retired_page pop_retired_page()
+            {
+                auto page = std::move(this->retired_pages_.front());
+                this->retired_pages_.pop_front();
+
+                const auto entry = this->retired_backing_pages_.find(page.backing.get());
+                if (--entry->second == 0)
+                {
+                    this->retired_bytes_ -= backing_size(page.backing);
+                    this->retired_backing_pages_.erase(entry);
+                }
+
+                return page;
+            }
+
+            // Assumes partition_mutex_ is held exclusively.
             void release_guest_physical_page(const uint64_t guest_physical_address)
             {
                 if (guest_physical_address == unmapped_guest_page)
@@ -2413,6 +2609,22 @@ namespace sogen::whp
 
                 WHP_CHECK_HR(WHvMapGpaRange(this->partition_, page.host_page, page.guest_physical_address, page_size,
                                             static_cast<WHV_MAP_GPA_RANGE_FLAGS>(page.map_flags)));
+                this->populate_guest_range(page.guest_physical_address, page_size, page.map_flags);
+            }
+
+            // Best effort: the hypervisor otherwise populates a mapping lazily, one hardware fault per page, which is
+            // far slower than letting it do the whole range in one call.
+            void populate_guest_range(const uint64_t guest_physical_address, const size_t size, const uint32_t map_flags) const
+            {
+                if (this->advise_gpa_range_ == nullptr || map_flags == 0)
+                {
+                    return;
+                }
+
+                const WHV_MEMORY_RANGE_ENTRY range{.GuestAddress = guest_physical_address, .SizeInBytes = size};
+                WHV_ADVISE_GPA_RANGE advice{};
+                advice.Populate.AccessType = populate_access_type(map_flags);
+                (void)this->advise_gpa_range_(this->partition_, &range, 1, WHvAdviseGpaRangeCodePopulate, &advice, sizeof(advice));
             }
 
             // Assumes partition_mutex_ is held exclusively.
@@ -2438,6 +2650,11 @@ namespace sogen::whp
                     const auto run_gpa = entry->second->guest_physical_address;
                     const auto run_flags = to_whp_map_flags(this->effective_page_permissions(*entry->second));
                     const auto run_had_mapping = entry->second->map_flags != 0;
+                    if (run_flags == entry->second->map_flags)
+                    {
+                        offset += page_size;
+                        continue;
+                    }
 
                     size_t run_size = page_size;
                     while (offset + run_size < size)
@@ -2451,6 +2668,11 @@ namespace sogen::whp
 
                         const auto next_flags = to_whp_map_flags(this->effective_page_permissions(*next_entry->second));
                         const auto next_had_mapping = next_entry->second->map_flags != 0;
+                        if (next_flags == next_entry->second->map_flags)
+                        {
+                            break;
+                        }
+
                         auto* const expected_host = run_host_base + run_size;
                         const auto expected_gpa = run_gpa + run_size;
                         if (next_entry->second->host_page != expected_host || next_flags != run_flags ||
@@ -2484,6 +2706,7 @@ namespace sogen::whp
                 {
                     WHP_CHECK_HR(WHvMapGpaRange(this->partition_, host_base, guest_physical_address, size,
                                                 static_cast<WHV_MAP_GPA_RANGE_FLAGS>(map_flags)));
+                    this->populate_guest_range(guest_physical_address, size, map_flags);
                 }
             }
 
@@ -3167,13 +3390,28 @@ namespace sogen::whp
             // from here, so the flush is requested via a flag plus a cancel: a running vCPU
             // exits and re-enters through the loop top, an idle one applies the flag before
             // its next run.
-            void flush_virtual_address_mappings()
+            uint64_t flush_virtual_address_mappings()
             {
+                const auto epoch = ++this->tlb_epoch_;
                 for (const auto& vcpu : this->vcpus_)
                 {
+                    vcpu->requested_tlb_epoch_ = epoch;
                     vcpu->pending_tlb_flush_ = true;
-                    (void)WHvCancelRunVirtualProcessor(this->partition_, vcpu->vp_index_, 0);
+                    if (vcpu->run_active_)
+                    {
+                        (void)WHvCancelRunVirtualProcessor(this->partition_, vcpu->vp_index_, 0);
+                    }
                 }
+
+                return epoch;
+            }
+
+            // Assumes partition_mutex_ is held. A vCPU that is not executing guest code applies the pending
+            // flush before it can enter the guest again, so only running vCPUs have to acknowledge.
+            bool is_tlb_epoch_acknowledged(const uint64_t epoch) const
+            {
+                return std::ranges::all_of(this->vcpus_,
+                                           [&](const auto& vcpu) { return !vcpu->run_active_ || vcpu->acked_tlb_epoch_ >= epoch; });
             }
 
             // Assumes partition_mutex_ is held (shared is sufficient for reads, exclusive for writes
@@ -3384,13 +3622,20 @@ namespace sogen::whp
                     {
                         // Reload CR3 to flush this vCPU's cached translations. Safe here:
                         // this vCPU is not inside WHvRunVirtualProcessor.
+                        const auto epoch = vcpu.requested_tlb_epoch_.load();
                         vcpu.set_register(WHvX64RegisterCr3, vcpu.get_register(WHvX64RegisterCr3));
+                        vcpu.acked_tlb_epoch_ = epoch;
                     }
 
                     this->expire_mmio_read_grace_pages(vcpu);
                     WHV_RUN_VP_EXIT_CONTEXT exit_context{};
-                    const auto start_rip = vcpu.read_instruction_pointer();
                     vcpu.run_active_ = true;
+                    if (vcpu.pending_tlb_flush_.load())
+                    {
+                        vcpu.run_active_ = false;
+                        continue;
+                    }
+
                     const auto run_hr = WHvRunVirtualProcessor(this->partition_, vcpu.vp_index_, &exit_context, sizeof(exit_context));
                     vcpu.run_active_ = false;
                     if (FAILED(run_hr))
@@ -3409,7 +3654,6 @@ namespace sogen::whp
                         // (another vCPU changed the shared page tables) - never from a real stop, which
                         // always sets stop_requested_ first. Re-enter so the pending TLB flush is applied
                         // at the loop top; do not treat it as a stop regardless of whether rip advanced.
-                        (void)start_rip;
                         continue;
                     }
                     case WHvRunVpExitReasonX64Halt:
