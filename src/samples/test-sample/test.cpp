@@ -11,6 +11,7 @@
 #include <string_view>
 #include <array>
 #include <algorithm>
+#include <bit>
 
 #include "../../common/utils/finally.hpp"
 
@@ -1243,7 +1244,7 @@ namespace
 
         using nt_wait_for_single_object = LONG(NTAPI*)(HANDLE, BOOLEAN, PLARGE_INTEGER);
         const auto nt_wait =
-            reinterpret_cast<nt_wait_for_single_object>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtWaitForSingleObject"));
+            std::bit_cast<nt_wait_for_single_object>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtWaitForSingleObject"));
         FILETIME now{};
         GetSystemTimeAsFileTime(&now);
         LARGE_INTEGER expired{};
