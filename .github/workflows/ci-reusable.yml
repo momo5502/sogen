@@ -783,7 +783,8 @@ jobs:
           - macOS arm64
         include:
           - platform: Linux x86_64 GCC Sanitizer
-            runner: ubuntu-24.04
+            runner: ubuntu-26.04
+            gcc-version: 16
           - platform: Linux x86_64 Clang
             runner: ubuntu-24.04
           - platform: macOS arm64
@@ -792,6 +793,18 @@ jobs:
       - name: Setup Environment Variables
         shell: bash
         run: echo "ASAN_OPTIONS=detect_odr_violation=0" >> $GITHUB_ENV
+
+      # The sanitizer binaries need the runtime of the GCC that built them.
+      - name: Install GCC
+        uses: nick-fields/retry@v4.0.0
+        if: "${{ matrix.gcc-version }}"
+        with:
+          max_attempts: 5
+          timeout_minutes: 15
+          retry_wait_seconds: 60
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends gcc-${{ matrix.gcc-version }} g++-${{ matrix.gcc-version }}
 
       - name: Download Artifacts
         uses: pyTooling/download-artifact@v8
