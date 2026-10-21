@@ -4,8 +4,7 @@
 #include <utility>
 
 #ifdef _WIN32
-#define NOMINMAX
-#include <Windows.h>
+#include "win.hpp"
 #elif defined(__EMSCRIPTEN__)
 #include <cstdlib>
 #include <cstring>
