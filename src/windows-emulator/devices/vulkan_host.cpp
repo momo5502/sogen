@@ -1726,7 +1726,8 @@ namespace sogen
     }
 
     int32_t vulkan_host::get_physical_device_features2(uint64_t physical_device, const void* in_records, size_t in_records_size,
-                                                       uint32_t struct_count, std::vector<std::byte>& out_blob)
+                                                       uint32_t struct_count, const bool spoof_missing_features,
+                                                       std::vector<std::byte>& out_blob)
     {
         out_blob.clear();
 
@@ -1791,34 +1792,37 @@ namespace sogen
         // DXVK refuses adapters without these, but Mali GPUs lack them and older Adreno 6xx GPUs lack the 16- and
         // 8-bit storage access even with Turnip. Most games never touch them, and BC formats still report as
         // unsupported, so games fall back instead of failing. create_device masks them back out.
-        features2.features.fillModeNonSolid = VK_TRUE;
-        features2.features.multiViewport = VK_TRUE;
-        features2.features.shaderClipDistance = VK_TRUE;
-        features2.features.shaderCullDistance = VK_TRUE;
-        features2.features.textureCompressionBC = VK_TRUE;
-
-        for (auto& buffer : chained)
+        if (spoof_missing_features)
         {
-            switch (reinterpret_cast<const VkBaseOutStructure*>(buffer.data())->sType)
+            features2.features.fillModeNonSolid = VK_TRUE;
+            features2.features.multiViewport = VK_TRUE;
+            features2.features.shaderClipDistance = VK_TRUE;
+            features2.features.shaderCullDistance = VK_TRUE;
+            features2.features.textureCompressionBC = VK_TRUE;
+
+            for (auto& buffer : chained)
             {
-            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES:
-                reinterpret_cast<VkPhysicalDeviceVulkan11Features*>(buffer.data())->storageBuffer16BitAccess = VK_TRUE;
-                break;
-            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES:
-                reinterpret_cast<VkPhysicalDevice16BitStorageFeatures*>(buffer.data())->storageBuffer16BitAccess = VK_TRUE;
-                break;
-            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES:
-                reinterpret_cast<VkPhysicalDeviceVulkan12Features*>(buffer.data())->storageBuffer8BitAccess = VK_TRUE;
-                break;
-            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES:
-                reinterpret_cast<VkPhysicalDevice8BitStorageFeatures*>(buffer.data())->storageBuffer8BitAccess = VK_TRUE;
-                break;
-            case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT:
-                // Mali has the extension but not the stricter bounds checking; core robustBufferAccess still applies.
-                reinterpret_cast<VkPhysicalDeviceRobustness2FeaturesEXT*>(buffer.data())->robustBufferAccess2 = VK_TRUE;
-                break;
-            default:
-                break;
+                switch (reinterpret_cast<const VkBaseOutStructure*>(buffer.data())->sType)
+                {
+                case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES:
+                    reinterpret_cast<VkPhysicalDeviceVulkan11Features*>(buffer.data())->storageBuffer16BitAccess = VK_TRUE;
+                    break;
+                case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES:
+                    reinterpret_cast<VkPhysicalDevice16BitStorageFeatures*>(buffer.data())->storageBuffer16BitAccess = VK_TRUE;
+                    break;
+                case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES:
+                    reinterpret_cast<VkPhysicalDeviceVulkan12Features*>(buffer.data())->storageBuffer8BitAccess = VK_TRUE;
+                    break;
+                case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_8BIT_STORAGE_FEATURES:
+                    reinterpret_cast<VkPhysicalDevice8BitStorageFeatures*>(buffer.data())->storageBuffer8BitAccess = VK_TRUE;
+                    break;
+                case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT:
+                    // Mali has the extension but not the stricter bounds checking; core robustBufferAccess still applies.
+                    reinterpret_cast<VkPhysicalDeviceRobustness2FeaturesEXT*>(buffer.data())->robustBufferAccess2 = VK_TRUE;
+                    break;
+                default:
+                    break;
+                }
             }
         }
 
@@ -1988,7 +1992,7 @@ namespace sogen
     int32_t vulkan_host::create_device(uint64_t physical_device, const void* queue_entries, size_t queue_entry_count,
                                        const void* extension_blob, size_t extension_blob_size, uint32_t extension_count,
                                        const void* feature_blob, size_t feature_blob_size, uint32_t feature_struct_count,
-                                       uint64_t& out_device)
+                                       const bool spoof_missing_features, uint64_t& out_device)
     {
         out_device = 0;
 
@@ -2137,7 +2141,7 @@ namespace sogen
         const bool has_feature_chain = has_features || !chained.empty();
 
         // Undo the query-time feature spoofs: vkCreateDevice fails on a feature the device lacks.
-        if (has_feature_chain && instance->second.get_physical_device_features2)
+        if ((portability || spoof_missing_features) && has_feature_chain && instance->second.get_physical_device_features2)
         {
             VkPhysicalDeviceFeatures2 supported{};
             supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
@@ -2208,7 +2212,7 @@ namespace sogen
         data.physical_device = pd->second.handle;
         data.queue_family_index = primary_family;
 
-        if (instance->second.get_physical_device_features2)
+        if (spoof_missing_features && instance->second.get_physical_device_features2)
         {
             VkPhysicalDeviceFeatures2 supported{};
             supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;

@@ -138,6 +138,10 @@ namespace sogen
         fake_environment_config fake_env{};
 
         network::network_mode network{network::network_mode::offline};
+
+        // Report Vulkan features DXVK requires to games even where the host GPU lacks them (Mali, older Adreno), so
+        // DXVK accepts the adapter. A game that really uses one of them renders incorrectly there.
+        bool spoof_gpu_features{false};
     };
 
     struct emulator_interfaces
@@ -442,6 +446,11 @@ namespace sogen
             return this->use_relative_time_;
         }
 
+        bool spoofs_gpu_features() const
+        {
+            return this->spoof_gpu_features_;
+        }
+
         uint32_t vcpu_count() const
         {
             return this->vcpu_count_;
@@ -559,6 +568,7 @@ namespace sogen
         bool instruction_precision_{true};
         bool intercept_rdtsc_{true};
         bool intercept_kusd_{true};
+        bool spoof_gpu_features_{false};
         uint32_t vcpu_count_{1};
         std::atomic_bool should_stop{false};
 

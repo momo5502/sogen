@@ -88,8 +88,9 @@ namespace sogen
         // packed array of `struct_count` feature_chain_record {sType, body_size} (guest-supplied,
         // pad-free body sizes). out_blob receives, in the same order, one record + body bytes per entry
         // with the device's real feature values (body_size 0 for structs the host does not know).
+        // spoof_missing_features additionally reports the features DXVK requires as supported.
         int32_t get_physical_device_features2(uint64_t physical_device, const void* in_records, size_t in_records_size,
-                                              uint32_t struct_count, std::vector<std::byte>& out_blob);
+                                              uint32_t struct_count, bool spoof_missing_features, std::vector<std::byte>& out_blob);
 
         // Same chain convention as get_physical_device_features2, but for the property structs chained on
         // VkPhysicalDeviceProperties2 (e.g. VkPhysicalDeviceRobustness2PropertiesEXT). The base
@@ -101,9 +102,10 @@ namespace sogen
         // enabling the given device extensions (extension_blob = `extension_count` NUL-terminated names)
         // and features (feature_blob = `feature_struct_count` feature_chain_record + body entries, same
         // format as get_physical_device_features2). out_device receives a fresh object id, or 0 on failure.
+        // spoof_missing_features must match the feature query the guest's request is based on.
         int32_t create_device(uint64_t physical_device, const void* queue_entries, size_t queue_entry_count, const void* extension_blob,
                               size_t extension_blob_size, uint32_t extension_count, const void* feature_blob, size_t feature_blob_size,
-                              uint32_t feature_struct_count, uint64_t& out_device);
+                              uint32_t feature_struct_count, bool spoof_missing_features, uint64_t& out_device);
         void destroy_device(uint64_t device);
 
         // Resolves a queue created with the device; out_queue receives a stable object id.
