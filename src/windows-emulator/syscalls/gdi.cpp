@@ -1363,20 +1363,20 @@ namespace sogen
                 return handle_value;
             }
 
-            uint32_t get_device_caps_value(const uint32_t index)
+            uint32_t get_device_caps_value(const process_context& proc, const uint32_t index)
             {
                 switch (index)
                 {
                 case 4: // HORZSIZE
-                    return (k_default_width * 254) / (k_default_dpi * 10);
+                    return (proc.display_width * 254) / (k_default_dpi * 10);
                 case 6: // VERTSIZE
-                    return (k_default_height * 254) / (k_default_dpi * 10);
+                    return (proc.display_height * 254) / (k_default_dpi * 10);
                 case 8:    // HORZRES
                 case 0x76: // DESKTOPHORZRES
-                    return k_default_width;
+                    return proc.display_width;
                 case 0xA:  // VERTRES
                 case 0x75: // DESKTOPVERTRES
-                    return k_default_height;
+                    return proc.display_height;
                 case 14:
                 case 0x28: // PLANES
                 case 0x2A: // NUMBRUSHES
@@ -1401,7 +1401,7 @@ namespace sogen
                 {
                     if (index < caps.size())
                     {
-                        caps[index] = get_device_caps_value(index);
+                        caps[index] = get_device_caps_value(c.proc, index);
                     }
                 }
 
@@ -1684,9 +1684,9 @@ namespace sogen
             return handle_NtGdiInit(c);
         }
 
-        uint32_t handle_NtGdiGetDeviceCaps(const syscall_context&, const hdc /*dc*/, const uint32_t index)
+        uint32_t handle_NtGdiGetDeviceCaps(const syscall_context& c, const hdc /*dc*/, const uint32_t index)
         {
-            return get_device_caps_value(index);
+            return get_device_caps_value(c.proc, index);
         }
 
         uint32_t handle_NtGdiGetDeviceCapsAll(const syscall_context& c, const hdc /*dc*/, const emulator_pointer caps)
@@ -5138,9 +5138,9 @@ namespace sogen
                 }
 
                 const emulator_object<EMU_D3DKMT_DISPLAYMODE> mode{c.emu, params.pModeList};
-                mode.access([](EMU_D3DKMT_DISPLAYMODE& current_mode) {
-                    current_mode.Width = k_default_width;
-                    current_mode.Height = k_default_height;
+                mode.access([&](EMU_D3DKMT_DISPLAYMODE& current_mode) {
+                    current_mode.Width = c.proc.display_width;
+                    current_mode.Height = c.proc.display_height;
                     current_mode.Format = 22;
                     current_mode.IntegerRefreshRate = 60;
                     current_mode.RefreshRate = {.Numerator = 60, .Denominator = 1};
