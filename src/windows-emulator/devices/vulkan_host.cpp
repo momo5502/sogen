@@ -3671,8 +3671,7 @@ namespace sogen
             return VK_ERROR_INITIALIZATION_FAILED;
         }
 
-        const auto alignment = dev->second.placed_map_alignment;
-        if (reinterpret_cast<uintptr_t>(address) % alignment != 0 || mem->second.allocation_size % alignment != 0)
+        if (reinterpret_cast<uintptr_t>(address) % dev->second.placed_map_alignment != 0)
         {
             return VK_ERROR_MEMORY_MAP_FAILED;
         }
@@ -3718,7 +3717,12 @@ namespace sogen
             unmap_info.sType = VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO_KHR;
             unmap_info.flags = VK_MEMORY_UNMAP_RESERVE_BIT_EXT;
             unmap_info.memory = mem->second.handle;
-            dev->second.unmap_memory2(dev->second.handle, &unmap_info);
+            // The driver may fail to keep the range reserved and leave it mapped. The memory must not stay mapped, since
+            // the caller releases the range.
+            if (dev->second.unmap_memory2(dev->second.handle, &unmap_info) != VK_SUCCESS)
+            {
+                dev->second.unmap_memory(dev->second.handle, mem->second.handle);
+            }
             mem->second.placed = false;
         }
         else

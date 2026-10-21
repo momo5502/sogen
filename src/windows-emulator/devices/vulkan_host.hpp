@@ -193,11 +193,11 @@ namespace sogen
         // allocation size. Mapping the whole object lets a single coherent alias back every guest sub-range
         // mapping of it. Reuses the existing mapping if already mapped (a memory object must not map twice).
         int32_t map_memory(uint64_t device, uint64_t memory, void*& out_host_pointer, uint64_t& out_size);
-        // The alignment map_memory_placed needs for its address and the allocation size, or 0 if the device cannot place
-        // mappings.
+        // The alignment map_memory_placed needs for its address, or 0 if the device cannot place mappings.
         uint64_t placed_map_alignment(uint64_t device) const;
         uint64_t allocation_size(uint64_t memory) const;
-        // Maps the whole memory object at address, a range the caller has reserved. Unmapping leaves the range reserved.
+        // Maps the whole memory object at address, a range the caller has reserved. Unmapping leaves the range reserved
+        // unless the driver fails to, in which case it is unmapped.
         int32_t map_memory_placed(uint64_t device, uint64_t memory, void* address);
         // Unmaps a mapping previously returned by map_memory.
         void unmap_memory(uint64_t device, uint64_t memory);

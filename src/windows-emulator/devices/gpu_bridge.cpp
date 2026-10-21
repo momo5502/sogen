@@ -1730,12 +1730,18 @@ namespace sogen
             std::optional<direct_mapping> map_memory_placed(windows_emulator& win_emu, const uint64_t device, const uint64_t memory)
             {
                 constexpr uint64_t page = 0x1000;
-                const uint64_t alignment = this->vulkan_.placed_map_alignment(device);
-                const uint64_t size = this->vulkan_.allocation_size(memory);
-                if (!win_emu.process.is_wow64_process || alignment == 0 || page % alignment != 0 || size == 0 || size % page != 0)
+                const uint64_t placed_alignment = this->vulkan_.placed_map_alignment(device);
+                const uint64_t allocation_size = this->vulkan_.allocation_size(memory);
+                if (!win_emu.process.is_wow64_process || placed_alignment == 0 || ALLOCATION_GRANULARITY % placed_alignment != 0 ||
+                    allocation_size == 0)
                 {
                     return std::nullopt;
                 }
+
+                // The driver maps whole pages of its alignment, which can be larger than a guest page (16KB on many
+                // Android devices), so the guest range covers all of them.
+                const uint64_t alignment = std::max(page, placed_alignment);
+                const uint64_t size = (allocation_size + alignment - 1) & ~(alignment - 1);
 
                 // 32-bit code can only reach the low 2GB, unless it is large-address aware.
                 constexpr uint64_t wow64_highest_address = 0x7FFEFFFF;
