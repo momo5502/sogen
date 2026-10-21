@@ -53,6 +53,7 @@ namespace sogen::test
             output_per_vertex_pointer,
             per_vertex_variable,
             copied_element,
+            whole_block,
             bound,
         };
 
@@ -138,7 +139,7 @@ namespace sogen::test
         }
 
         // The same written through gl_PerVertex, as shaders compiled from GLSL declare it.
-        std::vector<uint32_t> make_block_module()
+        std::vector<uint32_t> make_block_module(const bool load_whole_block)
         {
             module_builder module{version_1_0};
             module.op(op_capability, {capability_shader});
@@ -165,6 +166,10 @@ namespace sogen::test
             module.op(248, {entry_label});
             module.op(op_access_chain, {output_float_pointer, clip_element, per_vertex_variable, uint_0, uint_0});
             module.op(62, {clip_element, float_1});
+            if (load_whole_block)
+            {
+                module.op(61, {per_vertex_type, whole_block, per_vertex_variable}); // OpLoad
+            }
             module.op(253, {});
             module.op(56, {});
             return module.finish();
@@ -274,8 +279,28 @@ namespace sogen::test
         EXPECT_FALSE(strip_clip_and_cull_distance(make_standalone_module(version_1_0, false, true), true, false).has_value());
     }
 
-    TEST(SpirvClipDistanceTest, LeavesBuiltInBlockMembersAlone)
+    TEST(SpirvClipDistanceTest, DropsBuiltInBlockMembersAndRedirectsTheirWrites)
     {
-        EXPECT_FALSE(strip_clip_and_cull_distance(make_block_module(), true, true).has_value());
+        const auto stripped = strip_clip_and_cull_distance(make_block_module(false), true, true);
+        ASSERT_TRUE(stripped.has_value());
+
+        const auto instructions = parse(*stripped);
+        EXPECT_FALSE(has_capability(instructions, capability_clip_distance));
+        EXPECT_FALSE(std::ranges::any_of(instructions, [](const instruction& inst) {
+            return inst.opcode == op_member_decorate && inst.operands.at(0) == per_vertex_type && inst.operands.at(1) == 1;
+        }));
+        EXPECT_EQ(find_result(instructions, 30, per_vertex_type, 0).operands.size(), 2u); // OpTypeStruct keeps Position only
+
+        const auto& element = find_result(instructions, op_access_chain, clip_element, 1);
+        ASSERT_EQ(element.operands.size(), 4u);
+        EXPECT_NE(element.operands.at(2), per_vertex_variable);
+        EXPECT_EQ(pointer_storage_class(instructions, element.operands.at(0)), storage_class_private);
+        EXPECT_EQ(find_result(instructions, op_variable, element.operands.at(2), 1).operands.at(2), storage_class_private);
+        EXPECT_EQ(interface_of(instructions), std::vector<uint32_t>{per_vertex_variable});
+    }
+
+    TEST(SpirvClipDistanceTest, LeavesBlocksAloneThatAreUsedWhole)
+    {
+        EXPECT_FALSE(strip_clip_and_cull_distance(make_block_module(true), true, true).has_value());
     }
 }
