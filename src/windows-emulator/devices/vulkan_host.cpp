@@ -3512,6 +3512,14 @@ namespace sogen
 
         const size_t copy_bytes = std::min(static_cast<size_t>(size), out_size);
 
+        // A VkDeviceMemory must not be mapped twice, so memory the guest keeps mapped is accessed through that mapping.
+        if (mem->second.persistent_host_pointer)
+        {
+            auto* mapped = static_cast<std::byte*>(mem->second.persistent_host_pointer) + offset;
+            std::memcpy(out, mapped, copy_bytes);
+            return VK_SUCCESS;
+        }
+
         void* mapped = nullptr;
         const VkResult result = dev->second.map_memory(dev->second.handle, mem->second.handle, offset, size, 0, &mapped);
         if (result != VK_SUCCESS || !mapped)
@@ -3540,6 +3548,14 @@ namespace sogen
         }
 
         const size_t copy_bytes = std::min(static_cast<size_t>(size), data_size);
+
+        // A VkDeviceMemory must not be mapped twice, so memory the guest keeps mapped is accessed through that mapping.
+        if (mem->second.persistent_host_pointer)
+        {
+            auto* mapped = static_cast<std::byte*>(mem->second.persistent_host_pointer) + offset;
+            std::memcpy(mapped, data, copy_bytes);
+            return VK_SUCCESS;
+        }
 
         void* mapped = nullptr;
         const VkResult result = dev->second.map_memory(dev->second.handle, mem->second.handle, offset, size, 0, &mapped);
@@ -3645,9 +3661,8 @@ namespace sogen
         return mem == this->impl_->memories.end() ? 0 : mem->second.allocation_size;
     }
 
-    int32_t vulkan_host::map_memory_placed(uint64_t device, uint64_t memory, void* address, uint64_t& out_size)
+    int32_t vulkan_host::map_memory_placed(uint64_t device, uint64_t memory, void* address)
     {
-        out_size = 0;
         const auto dev = this->impl_->devices.find(device);
         const auto mem = this->impl_->memories.find(memory);
         if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || mem->second.device_id != device ||
@@ -3681,7 +3696,6 @@ namespace sogen
             return result;
         }
 
-        out_size = mem->second.allocation_size;
         mem->second.persistent_host_pointer = mapped;
         mem->second.mapped_size = mem->second.allocation_size;
         mem->second.placed = true;

@@ -2,6 +2,7 @@
 #include <memory_manager.hpp>
 
 #include <algorithm>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -35,6 +36,7 @@ namespace sogen::test
             bool requires_host_identity{};
             std::optional<uint64_t> mapped_host_address{};
             void* mapped_host_pointer{};
+            std::optional<uint64_t> placement_offset{};
 
             void reserve_guest_address_range(const uint64_t address, const size_t size) override
             {
@@ -110,6 +112,11 @@ namespace sogen::test
             bool host_memory_mapping_requires_identity() const override
             {
                 return this->requires_host_identity;
+            }
+
+            uint64_t host_placement_address(const uint64_t address) const override
+            {
+                return this->placement_offset ? address + *this->placement_offset : 0;
             }
 
             void unmap_memory(uint64_t, size_t) override
@@ -259,6 +266,61 @@ namespace sogen::test
         ASSERT_EQ(host.claimed_ranges.size(), 1u);
         ASSERT_EQ(host.claimed_ranges.front().address, address);
         ASSERT_EQ(host.claimed_ranges.front().size, size);
+    }
+
+    TEST(HostAllocationTest, PlacedHostMemoryNeedsBackendPlacement)
+    {
+        fake_host_memory host{};
+        memory_manager mm{host};
+
+        bool placed = false;
+        ASSERT_EQ(mm.allocate_placed_host_memory(0x2000, memory_permission::read_write, 0x7FFEFFFF,
+                                                 [&](void*) {
+                                                     placed = true;
+                                                     return true;
+                                                 }),
+                  0u);
+        ASSERT_FALSE(placed);
+    }
+
+    TEST(HostAllocationTest, PlacedHostMemoryIsPlacedAtTheHostAddressOfAFreeRangeBelowTheLimit)
+    {
+        fake_host_memory host{};
+        host.placement_offset = 0x100000000000;
+        memory_manager mm{host};
+
+        constexpr size_t size = 0x2000;
+        constexpr uint64_t highest_address = 0x7FFEFFFF;
+        void* placed_at = nullptr;
+        const uint64_t address =
+            mm.allocate_placed_host_memory(size, memory_permission::read_write, highest_address, [&](void* host_address) {
+                placed_at = host_address;
+                return true;
+            });
+
+        ASSERT_NE(address, 0u);
+        ASSERT_LE(address + size - 1, highest_address);
+        ASSERT_EQ(placed_at, reinterpret_cast<void*>(address + *host.placement_offset));
+        ASSERT_EQ(host.mapped_host_address, address);
+        ASSERT_EQ(host.mapped_host_pointer, placed_at);
+        ASSERT_EQ(host.claimed_ranges.size(), 1u);
+        ASSERT_EQ(host.claimed_ranges.front().address, address);
+    }
+
+    TEST(HostAllocationTest, FailedPlacementReleasesTheClaim)
+    {
+        fake_host_memory host{};
+        host.placement_offset = 0;
+        memory_manager mm{host};
+
+        constexpr size_t size = 0x2000;
+        ASSERT_EQ(mm.allocate_placed_host_memory(size, memory_permission::read_write, 0x7FFEFFFF, [](void*) { return false; }), 0u);
+
+        ASSERT_EQ(host.claimed_ranges.size(), 1u);
+        ASSERT_EQ(host.released_ranges.size(), 1u);
+        ASSERT_LE(host.released_ranges.front().address, host.claimed_ranges.front().address);
+        ASSERT_GE(host.released_ranges.front().address + host.released_ranges.front().size, host.claimed_ranges.front().address + size);
+        ASSERT_FALSE(host.mapped_host_address.has_value());
     }
 
     // Pins the windowed half of find_free_host_allocation_base's rescan: for a range the full scan

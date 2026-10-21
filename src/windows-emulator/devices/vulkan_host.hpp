@@ -198,7 +198,7 @@ namespace sogen
         uint64_t placed_map_alignment(uint64_t device) const;
         uint64_t allocation_size(uint64_t memory) const;
         // Maps the whole memory object at address, a range the caller has reserved. Unmapping leaves the range reserved.
-        int32_t map_memory_placed(uint64_t device, uint64_t memory, void* address, uint64_t& out_size);
+        int32_t map_memory_placed(uint64_t device, uint64_t memory, void* address);
         // Unmaps a mapping previously returned by map_memory.
         void unmap_memory(uint64_t device, uint64_t memory);
 

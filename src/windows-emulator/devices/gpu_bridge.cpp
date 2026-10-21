@@ -1685,8 +1685,6 @@ namespace sogen
                     return write_output(win_emu, context, response);
                 }
 
-                constexpr uint64_t page = 0x1000;
-
                 if (const auto placed = this->map_memory_placed(win_emu, request.device, request.memory))
                 {
                     response.vk_result = 0; // VK_SUCCESS
@@ -1699,6 +1697,7 @@ namespace sogen
                 uint64_t host_size = 0;
                 response.vk_result = this->vulkan_.map_memory(request.device, request.memory, host_ptr, host_size);
 
+                constexpr uint64_t page = 0x1000;
                 if (response.vk_result != 0 || !host_ptr || host_size == 0 || (reinterpret_cast<uintptr_t>(host_ptr) % page) != 0 ||
                     (host_size % page) != 0)
                 {
@@ -1744,8 +1743,7 @@ namespace sogen
                 void* host_ptr = nullptr;
                 const uint64_t guest_address = win_emu.memory.allocate_placed_host_memory(
                     static_cast<size_t>(size), memory_permission::read_write, wow64_highest_address, [&](void* host_address) {
-                        uint64_t mapped_size = 0;
-                        if (this->vulkan_.map_memory_placed(device, memory, host_address, mapped_size) != 0)
+                        if (this->vulkan_.map_memory_placed(device, memory, host_address) != 0)
                         {
                             return false;
                         }
