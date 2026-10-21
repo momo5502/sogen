@@ -444,6 +444,8 @@ namespace sogen
         std::vector<user_low_level_hook> low_level_hooks{};
 
         std::optional<uint64_t> message_wait_syscall_id{};
+        std::optional<std::chrono::steady_clock::time_point> message_wait_deadline{};
+        std::vector<uint64_t> running_low_level_inputs{};
 
         std::map<user_timer_key, user_timer> user_timers{};
         uint64_t next_user_timer_id{1};
@@ -600,6 +602,8 @@ namespace sogen
             buffer.write_optional(this->cbt_hook);
             buffer.write_vector(this->low_level_hooks);
             buffer.write_optional(this->message_wait_syscall_id);
+            buffer.write_optional(this->message_wait_deadline);
+            buffer.write_vector(this->running_low_level_inputs);
 
             buffer.write_map(this->user_timers);
             buffer.write(this->next_user_timer_id);
@@ -678,6 +682,8 @@ namespace sogen
             buffer.read_optional(this->cbt_hook);
             buffer.read_vector(this->low_level_hooks);
             buffer.read_optional(this->message_wait_syscall_id);
+            buffer.read_optional(this->message_wait_deadline);
+            buffer.read_vector(this->running_low_level_inputs);
 
             buffer.read_map(this->user_timers);
             buffer.read(this->next_user_timer_id);

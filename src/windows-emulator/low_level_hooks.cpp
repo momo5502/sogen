@@ -104,7 +104,7 @@ namespace sogen
 
     bool dispatch_low_level_hook(const syscall_context& c, const callback_id completion_id)
     {
-        const auto hook = c.win_emu.begin_low_level_hook(c.thread().id);
+        const auto hook = c.win_emu.begin_low_level_hook(c.thread());
         if (!hook)
         {
             return false;
@@ -142,6 +142,6 @@ namespace sogen
 
     void complete_low_level_hook(const syscall_context& c)
     {
-        c.win_emu.finish_low_level_hook(c.previous_callback_result.value != 0);
+        c.win_emu.finish_low_level_hook(c.thread(), c.previous_callback_result.value != 0);
     }
 }

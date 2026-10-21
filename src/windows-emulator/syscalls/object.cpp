@@ -686,6 +686,7 @@ namespace sogen
 
             const bool wait_all = (flags & mwmo_waitall) != 0;
             auto& t = c.thread();
+            const auto restarted_deadline = std::exchange(t.message_wait_deadline, std::nullopt);
             t.await_objects = {};
             t.await_any = false;
             t.await_msg_mask = {};
@@ -717,7 +718,11 @@ namespace sogen
                 t.await_msg_mask = wake_mask;
             }
 
-            if (timeout != infinite_timeout)
+            if (restarted_deadline)
+            {
+                t.await_time = restarted_deadline;
+            }
+            else if (timeout != infinite_timeout)
             {
                 t.await_time = c.win_emu.clock().steady_now() + std::chrono::milliseconds{timeout};
             }

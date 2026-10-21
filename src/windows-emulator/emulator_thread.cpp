@@ -727,6 +727,7 @@ namespace sogen
         constexpr uint64_t syscall_instruction_size = 2;
 
         const auto syscall_id = *this->message_wait_syscall_id;
+        this->message_wait_deadline = this->await_time;
         this->mark_as_ready(STATUS_SUCCESS);
         this->pending_status.reset();
 

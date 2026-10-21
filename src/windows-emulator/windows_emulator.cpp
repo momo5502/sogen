@@ -181,18 +181,23 @@ namespace sogen
             return message == WM_KEYUP || message == WM_SYSKEYUP;
         }
 
+        constexpr int k_wh_keyboard_ll = 13;
+        constexpr int k_wh_mouse_ll = 14;
+
+        bool is_character_message(const uint32_t message)
+        {
+            return message == WM_CHAR || message == WM_SYSCHAR || message == WM_DEADCHAR || message == WM_SYSDEADCHAR;
+        }
+
         int low_level_hook_id(const uint32_t message)
         {
-            constexpr int wh_keyboard_ll = 13;
-            constexpr int wh_mouse_ll = 14;
-
             switch (message)
             {
             case WM_KEYDOWN:
             case WM_KEYUP:
             case WM_SYSKEYDOWN:
             case WM_SYSKEYUP:
-                return wh_keyboard_ll;
+                return k_wh_keyboard_ll;
             case WM_MOUSEMOVE:
             case WM_LBUTTONDOWN:
             case WM_LBUTTONUP:
@@ -204,7 +209,7 @@ namespace sogen
             case WM_XBUTTONUP:
             case WM_MOUSEWHEEL:
             case WM_MOUSEHWHEEL:
-                return wh_mouse_ll;
+                return k_wh_mouse_ll;
             default:
                 return 0;
             }
@@ -212,7 +217,7 @@ namespace sogen
 
         bool is_input_message(const uint32_t message)
         {
-            return low_level_hook_id(message) != 0 || message == WM_CHAR || message == WM_SYSCHAR || is_pointer_message(message);
+            return low_level_hook_id(message) != 0 || is_character_message(message) || is_pointer_message(message);
         }
 
         bool is_keyboard_message(const uint32_t message)
@@ -1692,6 +1697,16 @@ namespace sogen
         const auto hook_id = low_level_hook_id(event.message);
         auto& pending = this->process.pending_low_level_input;
 
+        if (is_character_message(event.message) && this->process.drop_low_level_characters)
+        {
+            return;
+        }
+
+        if (hook_id == k_wh_keyboard_ll)
+        {
+            this->process.drop_low_level_characters = false;
+        }
+
         std::vector<uint64_t> hooks{};
         if (hook_id != 0)
         {
@@ -1735,6 +1750,7 @@ namespace sogen
 
         const auto now = this->clock().steady_now();
         pending.push_back(process_context::low_level_input{
+            .id = this->process.next_low_level_input_id++,
             .window = event.window,
             .message = event.message,
             .w_param = event.wParam,
@@ -1743,7 +1759,7 @@ namespace sogen
             .screen_y = screen_y,
             .time = static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count()),
             .hooks = std::move(hooks),
-            .queued = now,
+            .waiting_since = now,
         });
 
         if (auto* owner = this->drain_low_level_input())
@@ -1773,29 +1789,37 @@ namespace sogen
         return {};
     }
 
-    // Windows passes input on when a low-level hook does not return within LowLevelHooksTimeout.
+    // Windows passes input on when a low-level hook does not return within LowLevelHooksTimeout, and ignores the
+    // result of a hook that returns later.
     emulator_thread* windows_emulator::drain_low_level_input()
     {
         constexpr auto low_level_hooks_timeout = std::chrono::seconds(1);
 
         auto& pending = this->process.pending_low_level_input;
+        const auto now = this->clock().steady_now();
         while (!pending.empty())
         {
             auto& front = pending.front();
-            if (front.in_progress)
+            const auto timed_out = now - front.waiting_since > low_level_hooks_timeout;
+            if (front.in_progress && !timed_out)
             {
                 return nullptr;
             }
 
-            while (!front.hooks.empty() && !this->find_low_level_hook(front.hooks.front()).second)
+            while (!front.in_progress && !front.hooks.empty() && !this->find_low_level_hook(front.hooks.front()).second)
             {
                 front.hooks.erase(front.hooks.begin());
             }
 
-            if (front.hooks.empty() || this->clock().steady_now() - front.queued > low_level_hooks_timeout)
+            if (front.hooks.empty() || timed_out)
             {
                 const ui_event event{.window = front.window, .message = front.message, .wParam = front.w_param, .lParam = front.l_param};
                 pending.erase(pending.begin());
+                if (!pending.empty())
+                {
+                    pending.front().waiting_since = now;
+                }
+
                 this->deliver_ui_event(event);
                 continue;
             }
@@ -1807,31 +1831,54 @@ namespace sogen
     }
 
     std::optional<std::pair<process_context::low_level_input, user_low_level_hook>> windows_emulator::begin_low_level_hook(
-        const uint32_t thread_id)
+        emulator_thread& thread)
     {
-        if (!this->has_low_level_hook_work(thread_id))
+        if (!this->has_low_level_hook_work(thread.id))
         {
             return std::nullopt;
         }
 
         auto& front = this->process.pending_low_level_input.front();
         front.in_progress = true;
+        front.waiting_since = this->clock().steady_now();
+        thread.running_low_level_inputs.push_back(front.id);
         return std::pair{front, *this->find_low_level_hook(front.hooks.front()).second};
     }
 
-    void windows_emulator::finish_low_level_hook(const bool swallow)
+    void windows_emulator::finish_low_level_hook(emulator_thread& thread, const bool swallow)
     {
-        auto& pending = this->process.pending_low_level_input;
-        if (pending.empty() || !pending.front().in_progress)
+        if (thread.running_low_level_inputs.empty())
         {
             return;
         }
 
+        const auto id = thread.running_low_level_inputs.back();
+        thread.running_low_level_inputs.pop_back();
+
+        auto& pending = this->process.pending_low_level_input;
+        if (pending.empty() || !pending.front().in_progress || pending.front().id != id)
+        {
+            return;
+        }
+
+        const auto now = this->clock().steady_now();
         auto& front = pending.front();
         front.in_progress = false;
+        front.waiting_since = now;
         if (swallow)
         {
+            this->process.drop_low_level_characters = is_key_down_message(front.message);
             pending.erase(pending.begin());
+
+            while (this->process.drop_low_level_characters && !pending.empty() && is_character_message(pending.front().message))
+            {
+                pending.erase(pending.begin());
+            }
+
+            if (!pending.empty())
+            {
+                pending.front().waiting_since = now;
+            }
         }
         else if (!front.hooks.empty())
         {

@@ -515,6 +515,7 @@ namespace sogen
         // Keyboard and mouse input held back until every low-level hook it is due for has seen it, in arrival order.
         struct low_level_input
         {
+            uint64_t id{};
             hwnd window{};
             UINT message{};
             uint64_t w_param{};
@@ -523,11 +524,12 @@ namespace sogen
             int32_t screen_y{};
             DWORD time{};
             std::vector<uint64_t> hooks{};
-            utils::clock::steady_time_point queued{};
+            utils::clock::steady_time_point waiting_since{};
             bool in_progress{};
 
             void serialize(utils::buffer_serializer& buffer) const
             {
+                buffer.write(this->id);
                 buffer.write(this->window);
                 buffer.write(this->message);
                 buffer.write(this->w_param);
@@ -536,12 +538,13 @@ namespace sogen
                 buffer.write(this->screen_y);
                 buffer.write(this->time);
                 buffer.write_vector(this->hooks);
-                buffer.write(this->queued.time_since_epoch().count());
+                buffer.write(this->waiting_since.time_since_epoch().count());
                 buffer.write(this->in_progress);
             }
 
             void deserialize(utils::buffer_deserializer& buffer)
             {
+                buffer.read(this->id);
                 buffer.read(this->window);
                 buffer.read(this->message);
                 buffer.read(this->w_param);
@@ -550,15 +553,18 @@ namespace sogen
                 buffer.read(this->screen_y);
                 buffer.read(this->time);
                 buffer.read_vector(this->hooks);
-                utils::clock::steady_duration::rep queued_ticks{};
-                buffer.read(queued_ticks);
-                this->queued = utils::clock::steady_time_point{utils::clock::steady_duration{queued_ticks}};
+                utils::clock::steady_duration::rep waiting_since_ticks{};
+                buffer.read(waiting_since_ticks);
+                this->waiting_since = utils::clock::steady_time_point{utils::clock::steady_duration{waiting_since_ticks}};
                 buffer.read(this->in_progress);
             }
         };
 
         std::vector<low_level_input> pending_low_level_input{};
+        uint64_t next_low_level_input_id{1};
         uint64_t next_hook_handle{1};
+        // The host sends the character of a key as its own event, so it has to be dropped with a swallowed key press.
+        bool drop_low_level_characters{};
 
         // One pending raw-input payload (mouse motion + buttons, or a keyboard make/break) keyed by the
         // HRAWINPUT token posted in WM_INPUT's lParam; consumed by NtUserGetRawInputData.

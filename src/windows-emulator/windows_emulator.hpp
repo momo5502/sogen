@@ -314,8 +314,8 @@ namespace sogen
         void apply_cursor_capture();
 
         // Input held for low-level hooks: the next hook the given thread has to run, marked as running.
-        std::optional<std::pair<process_context::low_level_input, user_low_level_hook>> begin_low_level_hook(uint32_t thread_id);
-        void finish_low_level_hook(bool swallow);
+        std::optional<std::pair<process_context::low_level_input, user_low_level_hook>> begin_low_level_hook(emulator_thread& thread);
+        void finish_low_level_hook(emulator_thread& thread, bool swallow);
         bool has_low_level_hook_work(uint32_t thread_id);
         emulator_thread* drain_low_level_input();
         void deliver_raw_input(const process_context::raw_input_payload& payload, hwnd explicit_target);
