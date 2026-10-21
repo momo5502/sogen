@@ -114,11 +114,6 @@ namespace sogen
 
             entry->second.handler(c);
 
-            if (vcpu.active_thread)
-            {
-                vcpu.active_thread->sync_client_thread_info(win_emu.process);
-            }
-
             dispatch_callback(win_emu, entry->second.name);
         }
         catch (std::exception& e)

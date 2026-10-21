@@ -488,6 +488,7 @@ namespace sogen
 
                 this->client_thread_info = this->gs_segment->reserve<USER_CLIENTTHREADINFO>();
                 teb_obj.Win32ClientInfo.arr[12] = this->client_thread_info->value();
+                this->publish_client_thread_info();
             });
 
             return;
@@ -578,6 +579,7 @@ namespace sogen
 
             this->client_thread_info = this->gs_segment->reserve<USER_CLIENTTHREADINFO>();
             teb_obj.Win32ClientInfo.arr[12] = this->client_thread_info->value();
+            this->publish_client_thread_info();
         });
 
         // Allocate dynamic 32-bit stack for WOW64 thread
@@ -943,6 +945,7 @@ namespace sogen
                 });
 
                 message_queue.erase(it);
+                this->publish_client_thread_info();
             }
             return msg;
         }
@@ -1034,8 +1037,8 @@ namespace sogen
 
         if (try_coalesce && this->can_coalesce_message(msg))
         {
-            this->queue_status_changed_bits |= bits;
             message_queue.back() = msg;
+            this->mark_queue_status_changed(bits);
             return;
         }
 
@@ -1044,33 +1047,56 @@ namespace sogen
         });
 
         this->message_queue_status_bits |= bits;
-        this->queue_status_changed_bits |= bits;
         message_queue.push_back(msg);
+        this->mark_queue_status_changed(bits);
     }
 
-    void emulator_thread::sync_client_thread_info(const process_context& process)
+    // Activating a window moves the keyboard focus to it; losing activation takes the focus away.
+    void emulator_thread::set_active_window(const hwnd window)
+    {
+        this->active_window = window;
+        this->focus_window = window;
+        this->publish_client_thread_info();
+    }
+
+    void emulator_thread::set_focus_window(const hwnd window)
+    {
+        this->focus_window = window;
+        this->publish_client_thread_info();
+    }
+
+    void emulator_thread::forget_window(const hwnd window)
+    {
+        if (this->active_window == window)
+        {
+            this->active_window = 0;
+        }
+
+        if (this->focus_window == window)
+        {
+            this->focus_window = 0;
+        }
+
+        this->publish_client_thread_info();
+    }
+
+    void emulator_thread::mark_queue_status_changed(const uint32_t bits)
+    {
+        this->queue_status_changed_bits |= bits;
+        this->publish_client_thread_info();
+    }
+
+    void emulator_thread::clear_queue_status_changed(const uint32_t bits)
+    {
+        this->queue_status_changed_bits &= ~bits;
+        this->publish_client_thread_info();
+    }
+
+    void emulator_thread::publish_client_thread_info() const
     {
         if (!this->client_thread_info)
         {
             return;
-        }
-
-        hwnd foreground_window{};
-        if (const auto* foreground = process.windows.get(process.foreground_window); foreground && foreground->thread_id == this->id)
-        {
-            foreground_window = process.foreground_window;
-        }
-
-        // Activating a window moves the keyboard focus to it; losing activation takes the focus away.
-        if (foreground_window != this->active_window)
-        {
-            this->active_window = foreground_window;
-            this->focus_window = foreground_window;
-        }
-
-        if (this->focus_window != 0 && !process.windows.get(this->focus_window))
-        {
-            this->focus_window = 0;
         }
 
         this->client_thread_info->access([&](USER_CLIENTTHREADINFO& info) {
@@ -1105,6 +1131,7 @@ namespace sogen
             });
 
             it = this->message_queue.erase(it);
+            this->publish_client_thread_info();
         }
     }
 
@@ -1175,7 +1202,7 @@ namespace sogen
 
                         if (this->await_msg_mask.has_value())
                         {
-                            this->queue_status_changed_bits |= QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
+                            this->mark_queue_status_changed(QS_POSTMESSAGE | QS_ALLPOSTMESSAGE);
                         }
 
                         this->mark_as_ready(*consumed_state == wait_state::abandoned ? (STATUS_ABANDONED_WAIT_0 + i) : (STATUS_WAIT_0 + i));

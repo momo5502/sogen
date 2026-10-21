@@ -534,6 +534,8 @@ namespace sogen
         void wait_for_register_transfer(const emulator_thread& thread);
 
       private:
+        void set_foreground_window(hwnd window);
+
         bool use_relative_time_{false}; // TODO: Get rid of that
         bool instruction_precision_{true};
         bool intercept_rdtsc_{true};

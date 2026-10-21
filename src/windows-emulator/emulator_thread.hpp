@@ -460,7 +460,12 @@ namespace sogen
                                                 bool remove = false);
         void post_message(windows_emulator& win_emu, msg msg, bool try_coalesce = false);
         void remove_window_messages(hwnd window);
-        void sync_client_thread_info(const process_context& process);
+        void set_active_window(hwnd window);
+        void set_focus_window(hwnd window);
+        void forget_window(hwnd window);
+        void mark_queue_status_changed(uint32_t bits);
+        void clear_queue_status_changed(uint32_t bits);
+        void publish_client_thread_info() const;
 
         bool is_terminated() const;
 

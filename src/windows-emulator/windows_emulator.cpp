@@ -926,8 +926,6 @@ namespace sogen
                 break;
             }
 
-            vcpu.thread().sync_client_thread_info(this->process);
-
             // Guest code executes with the kernel lock released; hook callbacks
             // (syscalls, exceptions, exec hooks) re-acquire it on VM exit.
             lock.unlock();
@@ -1537,8 +1535,6 @@ namespace sogen
                 }
             }
 
-            vcpu.thread().sync_client_thread_info(this->process);
-
             // Guest code executes with the kernel lock released; hook callbacks
             // (syscalls, exceptions, exec hooks) re-acquire it on VM exit.
             lock.unlock();
@@ -1618,6 +1614,33 @@ namespace sogen
                                 this->process.raw_keyboard_target);
     }
 
+    void windows_emulator::set_foreground_window(const hwnd window)
+    {
+        const auto previous = this->process.foreground_window;
+        if (previous == window)
+        {
+            return;
+        }
+
+        this->process.foreground_window = window;
+
+        if (const auto* previous_window = this->process.windows.get(previous))
+        {
+            if (auto* owner = get_thread_by_id(this->process, previous_window->thread_id); owner && owner->active_window == previous)
+            {
+                owner->set_active_window(0);
+            }
+        }
+
+        if (const auto* new_window = this->process.windows.get(window))
+        {
+            if (auto* owner = get_thread_by_id(this->process, new_window->thread_id))
+            {
+                owner->set_active_window(window);
+            }
+        }
+    }
+
     void windows_emulator::handle_ui_event(const ui_event& event)
     {
         const std::scoped_lock lock(this->kernel_lock_);
@@ -1677,7 +1700,7 @@ namespace sogen
 
             this->process.cursor_x = new_cursor_x;
             this->process.cursor_y = new_cursor_y;
-            this->process.foreground_window = event.window;
+            this->set_foreground_window(event.window);
 
             const auto target = route_pointer(this->process, event.window, point_x(event.lParam), point_y(event.lParam));
             m.window = target.window;
@@ -1689,11 +1712,11 @@ namespace sogen
         {
             // The window just became active/focused: make it the foreground window so polling APIs
             // (GetForegroundWindow/GetActiveWindow) agree with the activation the game just received.
-            this->process.foreground_window = event.window;
+            this->set_foreground_window(event.window);
         }
         else if ((event.message == WM_ACTIVATE && event.wParam == 0) && this->process.foreground_window == event.window)
         {
-            this->process.foreground_window = 0;
+            this->set_foreground_window(0);
         }
 
         // Mirror the foreground window into the shared SERVERINFO so the guest's client-side
