@@ -1737,24 +1737,16 @@ namespace sogen
             return;
         }
 
-        int32_t screen_x = this->process.cursor_x;
-        int32_t screen_y = this->process.cursor_y;
+        auto [screen_x, screen_y] = std::pair{this->process.cursor_x, this->process.cursor_y};
         if (is_pointer_message(event.message) && !is_mouse_wheel_message(event.message))
         {
-            if (const auto origin = get_client_origin_relative_to_ancestor(this->process, event.window, 0))
-            {
-                screen_x = origin->x + point_x(event.lParam);
-                screen_y = origin->y + point_y(event.lParam);
-            }
+            std::tie(screen_x, screen_y) = this->cursor_after_pointer_event(event);
         }
 
         const auto now = this->clock().steady_now();
         pending.push_back(process_context::low_level_input{
             .id = this->process.next_low_level_input_id++,
-            .window = event.window,
-            .message = event.message,
-            .w_param = event.wParam,
-            .l_param = event.lParam,
+            .event = event,
             .screen_x = screen_x,
             .screen_y = screen_y,
             .time = static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count()),
@@ -1813,7 +1805,7 @@ namespace sogen
 
             if (front.hooks.empty() || timed_out)
             {
-                const ui_event event{.window = front.window, .message = front.message, .wParam = front.w_param, .lParam = front.l_param};
+                const auto event = front.event;
                 pending.erase(pending.begin());
                 if (!pending.empty())
                 {
@@ -1867,10 +1859,10 @@ namespace sogen
         front.waiting_since = now;
         if (swallow)
         {
-            this->process.drop_low_level_characters = is_key_down_message(front.message);
+            this->process.drop_low_level_characters = is_key_down_message(front.event.message);
             pending.erase(pending.begin());
 
-            while (this->process.drop_low_level_characters && !pending.empty() && is_character_message(pending.front().message))
+            while (this->process.drop_low_level_characters && !pending.empty() && is_character_message(pending.front().event.message))
             {
                 pending.erase(pending.begin());
             }
@@ -1915,6 +1907,31 @@ namespace sogen
         vcpu.cpu.stop();
     }
 
+    std::pair<int32_t, int32_t> windows_emulator::cursor_after_pointer_event(const ui_event& event) const
+    {
+        int32_t cursor_x = this->process.cursor_x;
+        int32_t cursor_y = this->process.cursor_y;
+        if (event.relative_motion)
+        {
+            cursor_x += event.relative_motion->first;
+            cursor_y += event.relative_motion->second;
+            if (const auto& clip = this->process.cursor_clip)
+            {
+                const auto left = static_cast<int32_t>(clip->left);
+                const auto top = static_cast<int32_t>(clip->top);
+                cursor_x = std::clamp(cursor_x, left, std::max(left, static_cast<int32_t>(clip->right) - 1));
+                cursor_y = std::clamp(cursor_y, top, std::max(top, static_cast<int32_t>(clip->bottom) - 1));
+            }
+        }
+        else if (const auto origin = get_client_origin_relative_to_ancestor(this->process, event.window, 0))
+        {
+            cursor_x = origin->x + point_x(event.lParam);
+            cursor_y = origin->y + point_y(event.lParam);
+        }
+
+        return {cursor_x, cursor_y};
+    }
+
     void windows_emulator::deliver_ui_event(const ui_event& event)
     {
         const auto* win = this->process.windows.get(event.window);
@@ -1943,36 +1960,19 @@ namespace sogen
             // reflects it, and treat the window the user is pointing at as the foreground one.
             const auto origin = get_client_origin_relative_to_ancestor(this->process, event.window, 0);
             auto l_param = event.lParam;
-            int32_t new_cursor_x = this->process.cursor_x;
-            int32_t new_cursor_y = this->process.cursor_y;
-            int32_t raw_dx{};
-            int32_t raw_dy{};
+            const auto [new_cursor_x, new_cursor_y] = this->cursor_after_pointer_event(event);
+            int32_t raw_dx = new_cursor_x - this->process.cursor_x;
+            int32_t raw_dy = new_cursor_y - this->process.cursor_y;
             if (event.relative_motion)
             {
                 // Like a ClipCursor-confined cursor on Windows: the position stops at the clip rectangle while the
                 // raw motion keeps flowing.
                 raw_dx = event.relative_motion->first;
                 raw_dy = event.relative_motion->second;
-                new_cursor_x += raw_dx;
-                new_cursor_y += raw_dy;
-                if (const auto& clip = this->process.cursor_clip)
-                {
-                    const auto left = static_cast<int32_t>(clip->left);
-                    const auto top = static_cast<int32_t>(clip->top);
-                    new_cursor_x = std::clamp(new_cursor_x, left, std::max(left, static_cast<int32_t>(clip->right) - 1));
-                    new_cursor_y = std::clamp(new_cursor_y, top, std::max(top, static_cast<int32_t>(clip->bottom) - 1));
-                }
                 if (origin)
                 {
                     l_param = pack_point(new_cursor_x - origin->x, new_cursor_y - origin->y);
                 }
-            }
-            else if (origin)
-            {
-                new_cursor_x = origin->x + point_x(event.lParam);
-                new_cursor_y = origin->y + point_y(event.lParam);
-                raw_dx = new_cursor_x - this->process.cursor_x;
-                raw_dy = new_cursor_y - this->process.cursor_y;
             }
 
             // A game using raw input for mouse-look reads relative deltas from WM_INPUT, not WM_MOUSEMOVE.

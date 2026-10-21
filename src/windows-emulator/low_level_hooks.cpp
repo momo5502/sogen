@@ -62,7 +62,7 @@ namespace sogen
 
         kbdll_hook_struct make_keyboard_hook_data(const process_context::low_level_input& input)
         {
-            const auto l_param = input.l_param;
+            const auto l_param = input.event.lParam;
             DWORD flags = 0;
             if ((l_param & (1ull << 24)) != 0)
             {
@@ -72,13 +72,13 @@ namespace sogen
             {
                 flags |= k_llkhf_altdown;
             }
-            if (input.message == WM_KEYUP || input.message == WM_SYSKEYUP)
+            if (input.event.message == WM_KEYUP || input.event.message == WM_SYSKEYUP)
             {
                 flags |= k_llkhf_up;
             }
 
             return kbdll_hook_struct{
-                .vkCode = static_cast<DWORD>(input.w_param & 0xFF),
+                .vkCode = static_cast<DWORD>(input.event.wParam & 0xFF),
                 .scanCode = static_cast<DWORD>((l_param >> 16) & 0xFF),
                 .flags = flags,
                 .time = input.time,
@@ -88,10 +88,11 @@ namespace sogen
         msll_hook_struct make_mouse_hook_data(const process_context::low_level_input& input)
         {
             DWORD mouse_data = 0;
-            if (input.message == WM_MOUSEWHEEL || input.message == WM_MOUSEHWHEEL || input.message == WM_XBUTTONDOWN ||
-                input.message == WM_XBUTTONUP || input.message == WM_XBUTTONDBLCLK)
+            const auto message = input.event.message;
+            if (message == WM_MOUSEWHEEL || message == WM_MOUSEHWHEEL || message == WM_XBUTTONDOWN || message == WM_XBUTTONUP ||
+                message == WM_XBUTTONDBLCLK)
             {
-                mouse_data = static_cast<DWORD>(input.w_param & 0xFFFF0000);
+                mouse_data = static_cast<DWORD>(input.event.wParam & 0xFFFF0000);
             }
 
             return msll_hook_struct{
@@ -118,7 +119,7 @@ namespace sogen
         {
             const fn_hk_in_ll_hook_message<kbdll_hook_struct> args{
                 .code = code,
-                .wParam = input.message,
+                .wParam = input.event.message,
                 .proc = entry.proc,
                 .dispatch = dispatch,
                 .hook_data = make_keyboard_hook_data(input),
@@ -129,7 +130,7 @@ namespace sogen
         {
             const fn_hk_in_ll_hook_message<msll_hook_struct> args{
                 .code = code,
-                .wParam = input.message,
+                .wParam = input.event.message,
                 .proc = entry.proc,
                 .dispatch = dispatch,
                 .hook_data = make_mouse_hook_data(input),

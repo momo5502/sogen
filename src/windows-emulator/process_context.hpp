@@ -8,6 +8,7 @@
 #include <utils/nt_handle.hpp>
 
 #include <arch_emulator.hpp>
+#include <platform/ui_backend.hpp>
 
 #include "io_device.hpp"
 #include "kusd_mmio.hpp"
@@ -516,10 +517,7 @@ namespace sogen
         struct low_level_input
         {
             uint64_t id{};
-            hwnd window{};
-            UINT message{};
-            uint64_t w_param{};
-            uint64_t l_param{};
+            ui_event event{};
             int32_t screen_x{};
             int32_t screen_y{};
             DWORD time{};
@@ -530,10 +528,16 @@ namespace sogen
             void serialize(utils::buffer_serializer& buffer) const
             {
                 buffer.write(this->id);
-                buffer.write(this->window);
-                buffer.write(this->message);
-                buffer.write(this->w_param);
-                buffer.write(this->l_param);
+                buffer.write(this->event.window);
+                buffer.write(this->event.message);
+                buffer.write(this->event.wParam);
+                buffer.write(this->event.lParam);
+                buffer.write(this->event.relative_motion.has_value());
+                if (this->event.relative_motion)
+                {
+                    buffer.write(this->event.relative_motion->first);
+                    buffer.write(this->event.relative_motion->second);
+                }
                 buffer.write(this->screen_x);
                 buffer.write(this->screen_y);
                 buffer.write(this->time);
@@ -545,10 +549,23 @@ namespace sogen
             void deserialize(utils::buffer_deserializer& buffer)
             {
                 buffer.read(this->id);
-                buffer.read(this->window);
-                buffer.read(this->message);
-                buffer.read(this->w_param);
-                buffer.read(this->l_param);
+                buffer.read(this->event.window);
+                buffer.read(this->event.message);
+                buffer.read(this->event.wParam);
+                buffer.read(this->event.lParam);
+                bool has_relative_motion{};
+                buffer.read(has_relative_motion);
+                if (has_relative_motion)
+                {
+                    std::pair<int32_t, int32_t> relative_motion{};
+                    buffer.read(relative_motion.first);
+                    buffer.read(relative_motion.second);
+                    this->event.relative_motion = relative_motion;
+                }
+                else
+                {
+                    this->event.relative_motion.reset();
+                }
                 buffer.read(this->screen_x);
                 buffer.read(this->screen_y);
                 buffer.read(this->time);
