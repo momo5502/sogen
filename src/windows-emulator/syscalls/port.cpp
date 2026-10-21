@@ -862,6 +862,26 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        template <typename Traits>
+        NTSTATUS read_completion_association(const syscall_context& c, const emulator_pointer port_information, const uint32_t length,
+                                             uint64_t& completion_key, handle& completion_port)
+        {
+            ALPC_PORT_ASSOCIATE_COMPLETION_PORT<Traits> association{};
+            if (length < sizeof(association))
+            {
+                return STATUS_INFO_LENGTH_MISMATCH;
+            }
+
+            if (!c.emu.try_read_memory(port_information, &association, sizeof(association)))
+            {
+                return STATUS_ACCESS_VIOLATION;
+            }
+
+            completion_key = association.CompletionKey;
+            completion_port.bits = association.CompletionPort;
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtAlpcSetInformation(const syscall_context& c, const handle port_handle, const uint32_t port_information_class,
                                              const emulator_pointer port_information, const uint32_t length)
         {
@@ -879,27 +899,13 @@ namespace sogen
 
             uint64_t completion_key{};
             handle completion_port{};
-            if (c.proc.is_wow64_process)
+            const auto status =
+                c.proc.is_wow64_process
+                    ? read_completion_association<EmulatorTraits<Emu32>>(c, port_information, length, completion_key, completion_port)
+                    : read_completion_association<EmulatorTraits<Emu64>>(c, port_information, length, completion_key, completion_port);
+            if (status != STATUS_SUCCESS)
             {
-                const auto info = emulator_object<ALPC_PORT_ASSOCIATE_COMPLETION_PORT<EmulatorTraits<Emu32>>>{c.emu, port_information};
-                if (length < sizeof(ALPC_PORT_ASSOCIATE_COMPLETION_PORT<EmulatorTraits<Emu32>>))
-                {
-                    return STATUS_INFO_LENGTH_MISMATCH;
-                }
-                const auto association = info.read();
-                completion_key = association.CompletionKey;
-                completion_port.bits = association.CompletionPort;
-            }
-            else
-            {
-                const auto info = emulator_object<ALPC_PORT_ASSOCIATE_COMPLETION_PORT<EmulatorTraits<Emu64>>>{c.emu, port_information};
-                if (length < sizeof(ALPC_PORT_ASSOCIATE_COMPLETION_PORT<EmulatorTraits<Emu64>>))
-                {
-                    return STATUS_INFO_LENGTH_MISMATCH;
-                }
-                const auto association = info.read();
-                completion_key = association.CompletionKey;
-                completion_port.bits = association.CompletionPort;
+                return status;
             }
 
             return port->associate_completion_port(c.win_emu, c.vcpu.active_thread, completion_key, completion_port);
