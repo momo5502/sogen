@@ -80,7 +80,7 @@ namespace sogen::test
                 uint64_t offset = sizeof(ALPC_MESSAGE_ATTRIBUTES);
                 if ((allocated & ALPC_MESSAGE_SECURITY_ATTRIBUTE) != 0)
                 {
-                    offset += sizeof(typename Traits::PVOID) == 4 ? 12 : 32;
+                    offset += sizeof(ALPC_SECURITY_ATTR<Traits>);
                 }
                 emulator_object<ALPC_DATA_VIEW_ATTR<Traits>>{this->emu->memory, this->storage + 0x200 + offset}.write(view);
                 PORT_MESSAGE64 message{};

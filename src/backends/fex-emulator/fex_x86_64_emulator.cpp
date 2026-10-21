@@ -1975,6 +1975,11 @@ namespace sogen::fex
             this->mark_executable_range(address, size, permissions);
         }
 
+        uint64_t host_placement_address(const uint64_t address) const override
+        {
+            return address;
+        }
+
         bool host_memory_aliasing_is_coherent() const override
         {
 #ifdef __ANDROID__

@@ -193,6 +193,21 @@ namespace sogen
         // allocation size. Mapping the whole object lets a single coherent alias back every guest sub-range
         // mapping of it. Reuses the existing mapping if already mapped (a memory object must not map twice).
         int32_t map_memory(uint64_t device, uint64_t memory, void*& out_host_pointer, uint64_t& out_size);
+        // The alignment map_memory_placed needs for its address, or 0 if the device cannot place mappings.
+        uint64_t placed_map_alignment(uint64_t device) const;
+        bool has_device(uint64_t device) const;
+        uint64_t host_import_alignment(uint64_t device) const;
+        bool is_host_visible_memory_type(uint64_t device, uint32_t memory_type_index) const;
+        int32_t import_host_memory(uint64_t device, uint64_t size, uint32_t memory_type_index, uint32_t flags, uint32_t device_mask,
+                                   void* host_pointer, uint64_t& out_memory);
+        // Imported memory may only be importable as a non-coherent type, while the guest asked for coherent memory and never
+        // flushes. These make guest writes visible to the device and device writes visible to the guest.
+        void flush_imported_memory();
+        void invalidate_imported_memory();
+        uint64_t allocation_size(uint64_t memory) const;
+        // Maps the whole memory object at address, a range the caller has reserved. Unmapping leaves the range reserved
+        // unless the driver fails to, in which case it is unmapped.
+        int32_t map_memory_placed(uint64_t device, uint64_t memory, void* address);
         // Unmaps a mapping previously returned by map_memory.
         void unmap_memory(uint64_t device, uint64_t memory);
 
@@ -353,12 +368,29 @@ namespace sogen
         // Updates a buffer region inline from caller-provided data (vkCmdUpdateBuffer).
         int32_t cmd_update_buffer(uint64_t command_buffer, uint64_t buffer, uint64_t offset, const void* data, uint32_t size);
 
-        // Creates a sampler honoring the guest's full state: filters, per-axis address modes, mip mode/lod,
-        // anisotropy, border color, and depth-compare (the comparison/PCF mode shadow-map sampling needs).
-        int32_t create_sampler(uint64_t device, uint32_t mag_filter, uint32_t min_filter, uint32_t address_mode_u, uint32_t address_mode_v,
-                               uint32_t address_mode_w, uint32_t mipmap_mode, uint32_t compare_enable, uint32_t compare_op,
-                               uint32_t anisotropy_enable, uint32_t border_color, float mip_lod_bias, float max_anisotropy, float min_lod,
-                               float max_lod, uint64_t& out_sampler);
+        struct sampler_desc
+        {
+            uint32_t flags;
+            uint32_t mag_filter;
+            uint32_t min_filter;
+            uint32_t address_mode_u;
+            uint32_t address_mode_v;
+            uint32_t address_mode_w;
+            uint32_t mipmap_mode;
+            uint32_t compare_enable;
+            uint32_t compare_op;
+            uint32_t anisotropy_enable;
+            uint32_t border_color;
+            float mip_lod_bias;
+            float max_anisotropy;
+            float min_lod;
+            float max_lod;
+            uint32_t unnormalized_coordinates;
+            std::optional<uint32_t> reduction_mode;
+            std::optional<std::pair<uint32_t, std::array<uint32_t, 4>>> custom_border_color; // format, color bits
+        };
+
+        int32_t create_sampler(uint64_t device, const sampler_desc& desc, uint64_t& out_sampler);
         void destroy_sampler(uint64_t device, uint64_t sampler);
 
         struct surface_format

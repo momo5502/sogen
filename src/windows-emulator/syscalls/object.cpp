@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "../emulator_utils.hpp"
 #include "../io_completion_wait.hpp"
+#include "../low_level_hooks.hpp"
 #include "../syscall_utils.hpp"
 #include "../devices/named_pipe.hpp"
 
@@ -73,10 +74,11 @@ namespace sogen
 
             if (value.type == handle_types::port)
             {
-                const auto* port = c.proc.ports.get(h);
+                auto* port = c.proc.ports.get(h);
                 if (port && port->ref_count == 1)
                 {
                     port->get_internal_port()->release_sections(c.win_emu);
+                    port->release_completion_port(c.proc);
                     const auto port_key = static_cast<uint32_t>(h.bits & 0xFFFFFFFF);
                     if (const auto views = c.proc.pending_alpc_reply_views.find(port_key); views != c.proc.pending_alpc_reply_views.end())
                     {
@@ -642,6 +644,22 @@ namespace sogen
             }
         }
 
+        NTSTATUS wait_or_yield(const syscall_context& c, const BOOLEAN alertable)
+        {
+            auto& t = c.thread();
+            t.apc_alertable = alertable;
+            if (t.is_thread_ready(c.win_emu) && t.pending_status)
+            {
+                const auto status = *t.pending_status;
+                t.pending_status = {};
+                t.apc_alertable = false;
+                return status;
+            }
+
+            c.win_emu.yield_thread(c.vcpu, alertable);
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtCompareObjects(const syscall_context& c, const handle first, const handle second)
         {
             const auto first_resolved = c.proc.resolve_object_pseudo_handle(first, c.vcpu.active_thread);
@@ -661,8 +679,14 @@ namespace sogen
                 return wait_failed;
             }
 
+            if (wake_mask != 0 && dispatch_low_level_hook(c, callback_id::NtUserMsgWaitForMultipleObjectsEx))
+            {
+                return {};
+            }
+
             const bool wait_all = (flags & mwmo_waitall) != 0;
             auto& t = c.thread();
+            const auto restarted_deadline = std::exchange(t.message_wait_deadline, std::nullopt);
             t.await_objects = {};
             t.await_any = false;
             t.await_msg_mask = {};
@@ -694,13 +718,30 @@ namespace sogen
                 t.await_msg_mask = wake_mask;
             }
 
-            if (timeout != infinite_timeout)
+            if (restarted_deadline)
+            {
+                t.await_time = restarted_deadline;
+            }
+            else if (timeout != infinite_timeout)
             {
                 t.await_time = c.win_emu.clock().steady_now() + std::chrono::milliseconds{timeout};
             }
 
+            if (wake_mask != 0)
+            {
+                t.remember_message_wait(c.emu, c.win_emu.abi());
+            }
+
             c.win_emu.yield_thread(c.vcpu, false);
             return {};
+        }
+
+        DWORD completion_NtUserMsgWaitForMultipleObjectsEx(const syscall_context& c, const ULONG count,
+                                                           const emulator_object<handle> handles, const DWORD timeout,
+                                                           const DWORD wake_mask, const DWORD flags)
+        {
+            complete_low_level_hook(c);
+            return handle_NtUserMsgWaitForMultipleObjectsEx(c, count, handles, timeout, wake_mask, flags);
         }
 
         NTSTATUS handle_NtWaitForMultipleObjects(const syscall_context& c, const ULONG count, const emulator_object<handle> handles,
@@ -758,8 +799,7 @@ namespace sogen
                 t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
             }
 
-            c.win_emu.yield_thread(c.vcpu, alertable);
-            return STATUS_SUCCESS;
+            return wait_or_yield(c, alertable);
         }
 
         NTSTATUS handle_NtWaitForMultipleObjects32(const syscall_context& c, const ULONG count, const emulator_object<uint32_t> handles,
@@ -819,8 +859,7 @@ namespace sogen
                 t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
             }
 
-            c.win_emu.yield_thread(c.vcpu, alertable);
-            return STATUS_SUCCESS;
+            return wait_or_yield(c, alertable);
         }
 
         NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, const handle h, const BOOLEAN alertable,
@@ -842,8 +881,7 @@ namespace sogen
                 t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
             }
 
-            c.win_emu.yield_thread(c.vcpu, alertable);
-            return STATUS_SUCCESS;
+            return wait_or_yield(c, alertable);
         }
 
         NTSTATUS handle_NtSignalAndWaitForSingleObject(const syscall_context& c, const handle signal_handle, const handle wait_handle,

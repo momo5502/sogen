@@ -69,6 +69,7 @@ namespace sogen
 
     void syscall_dispatcher::dispatch(windows_emulator& win_emu, vcpu_context& vcpu)
     {
+        const scheduler_clock::scope time_scope{win_emu.scheduling_clock()};
         auto& emu = vcpu.cpu;
         auto& context = win_emu.process;
 

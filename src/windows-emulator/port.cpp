@@ -1,6 +1,7 @@
 #include "std_include.hpp"
 #include "port.hpp"
 #include "logger.hpp"
+#include "io_completion_wait.hpp"
 #include "windows_emulator.hpp"
 #include "ports/api_port.hpp"
 #include "ports/audio_service.hpp"
@@ -46,6 +47,15 @@ namespace sogen
             lpc_request_result handle_request(windows_emulator& /*win_emu*/, const lpc_request_context&) override
             {
                 return STATUS_SUCCESS;
+            }
+        };
+
+        // CoreMessaging sends one-way messages here and fail-fasts the process if they are rejected.
+        struct core_ui_port : noop_port
+        {
+            bool accepts_send_only_messages() const override
+            {
+                return true;
             }
         };
 
@@ -321,6 +331,11 @@ namespace sogen
             return create_core_messaging_registrar_port();
         }
 
+        if (port.starts_with(u"\\BaseNamedObjects\\[CoreUI]-"))
+        {
+            return std::make_unique<core_ui_port>();
+        }
+
         if (port == u"\\RPC Control\\ntsvcs")
         {
             // Hosts the svcctl (Service Control Manager) and PnP RPC interfaces. mmdevapi opens the AudioSrv
@@ -348,6 +363,68 @@ namespace sogen
         }
 
         return std::make_unique<dummy_port>(std::u16string(port));
+    }
+
+    void port_container::post_completion(windows_emulator& win_emu) const
+    {
+        auto* completion = win_emu.process.io_completions.get(this->completion_port_);
+        if (!completion)
+        {
+            return;
+        }
+        io_completion_message message{};
+        message.key_context = this->completion_key_;
+        completion->enqueue(message);
+        win_emu.wake_idle_vcpu();
+    }
+
+    NTSTATUS port_container::associate_completion_port(windows_emulator& win_emu, const emulator_thread* active_thread,
+                                                       const uint64_t completion_key, const handle completion_port)
+    {
+        if (this->completion_port_.bits != 0)
+        {
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        const auto resolved_port = win_emu.process.resolve_object_pseudo_handle(completion_port, active_thread);
+        if (resolved_port.value.type != handle_types::io_completion || !win_emu.process.io_completions.get(resolved_port))
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        handle retained_port{};
+        if (!io_completion_wait::retain_handle_reference(win_emu.process, active_thread, resolved_port, retained_port))
+        {
+            return STATUS_INVALID_HANDLE;
+        }
+
+        this->completion_key_ = completion_key;
+        this->completion_port_ = retained_port;
+
+        for (size_t index = 0; index < this->reply_queue_.size(); ++index)
+        {
+            this->post_completion(win_emu);
+        }
+
+        return STATUS_SUCCESS;
+    }
+
+    void port_container::release_completion_port(process_context& process)
+    {
+        io_completion_wait::release_handle_reference(process, this->completion_port_);
+        this->completion_key_ = 0;
+    }
+
+    void port_container::queue_connection_reply(windows_emulator& win_emu, const bool is_wow64)
+    {
+        lpc_message_result reply{};
+        reply.message.is_wow64 = is_wow64;
+        reply.message.native.u1.s1.TotalLength = static_cast<CSHORT>(lpc_port_message::wire_size(is_wow64));
+        reply.message.native.u2.s2.Type = LPC_CONNECTION_REPLY;
+        reply.message.native.MessageId = this->allocate_message_id();
+
+        this->reply_queue_.push_back(std::move(reply));
+        this->post_completion(win_emu);
     }
 
     lpc_message_result port_container::handle_message(windows_emulator& win_emu, const lpc_message_context& c)
@@ -388,7 +465,16 @@ namespace sogen
 
         if (!c.receive_message)
         {
-            return {.status = result.status};
+            if (this->completion_port_.bits == 0 || !NT_SUCCESS(result.status))
+            {
+                return {.status = result.status};
+            }
+
+            const auto status = result.status;
+            result.message_context = c.send_message_context;
+            reply_queue_.push_back(std::move(result));
+            this->post_completion(win_emu);
+            return {.status = status};
         }
 
         if (NT_SUCCESS(result.status) && c.receive_buffer_length < result.total_length())
@@ -525,11 +611,18 @@ namespace sogen
             return STATUS_INVALID_PARAMETER;
         }
         const auto ndr64 = (syntax & 2) != 0;
-        const auto context_offset = rpc_handshake_context_offset + (ndr64 ? sizeof(uint16_t) : 0);
-        uint16_t context_id{};
-        std::memcpy(&context_id, payload.data() + context_offset, sizeof(context_id));
         std::memcpy(this->bound_interface_.data(), payload.data() + rpc_handshake_interface_offset, this->bound_interface_.size());
-        this->bindings_.insert_or_assign(context_id, rpc_binding{.interface_id = this->bound_interface_, .ndr64 = ndr64});
+        for (const auto proposed_ndr64 : {false, true})
+        {
+            if ((syntax & (proposed_ndr64 ? 2 : 1)) == 0)
+            {
+                continue;
+            }
+            const auto context_offset = rpc_handshake_context_offset + (proposed_ndr64 ? sizeof(uint16_t) : 0);
+            uint16_t context_id{};
+            std::memcpy(&context_id, payload.data() + context_offset, sizeof(context_id));
+            this->bindings_.insert_or_assign(context_id, rpc_binding{.interface_id = this->bound_interface_, .ndr64 = proposed_ndr64});
+        }
         if (ndr64)
         {
             writer.write_at<uint32_t>(rpc_handshake_state_offset, 2);

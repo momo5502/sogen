@@ -153,7 +153,7 @@ namespace sogen
 
             case handle_types::timer: {
                 auto* entry = c.timers.get(h);
-                return entry && entry->is_signaled(win_emu.clock().steady_now()) ? wait_state::signaled : wait_state::not_signaled;
+                return entry && entry->is_signaled(win_emu.clock()) ? wait_state::signaled : wait_state::not_signaled;
             }
 
             case handle_types::semaphore: {
@@ -287,7 +287,7 @@ namespace sogen
 
             case handle_types::timer: {
                 auto* entry = c.timers.get(h);
-                if (!entry || !entry->is_signaled(win_emu.clock().steady_now()))
+                if (!entry || !entry->is_signaled(win_emu.clock()))
                 {
                     return std::nullopt;
                 }
@@ -489,6 +489,10 @@ namespace sogen
                 });
                 teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
                 teb_obj.Win32ClientInfo.arr[29] = USER_DEFAULT_DPI_CONTEXT;
+
+                this->client_thread_info = this->gs_segment->reserve<USER_CLIENTTHREADINFO>();
+                teb_obj.Win32ClientInfo.arr[12] = this->client_thread_info->value();
+                this->publish_client_thread_info();
             });
 
             return;
@@ -576,6 +580,10 @@ namespace sogen
             });
             teb_obj.Win32ClientInfo.arr[4] = desktop_info_obj.value();
             teb_obj.Win32ClientInfo.arr[29] = USER_DEFAULT_DPI_CONTEXT;
+
+            this->client_thread_info = this->gs_segment->reserve<USER_CLIENTTHREADINFO>();
+            teb_obj.Win32ClientInfo.arr[12] = this->client_thread_info->value();
+            this->publish_client_thread_info();
         });
 
         // Allocate dynamic 32-bit stack for WOW64 thread
@@ -712,9 +720,28 @@ namespace sogen
         });
     }
 
+    void emulator_thread::remember_message_wait(cpu_interface& emu, const windows_arch_abi& abi)
+    {
+        // Syscall returns overwrite RAX's service ID on x64, but X0's first argument on ARM64.
+        this->message_wait_return_register = abi.return_value(emu);
+    }
+
+    // A parked thread resumes right after its syscall instruction.
+    void emulator_thread::restart_message_wait(cpu_interface& emu, const windows_arch_abi& abi)
+    {
+        const auto return_register = *this->message_wait_return_register;
+        this->message_wait_deadline = this->await_time;
+        this->mark_as_ready(STATUS_SUCCESS);
+        this->pending_status.reset();
+
+        abi.rewind_syscall(emu, abi.instruction_pointer(emu));
+        abi.return_value(emu, return_register);
+    }
+
     void emulator_thread::mark_as_ready(const NTSTATUS status)
     {
         this->pending_status = status;
+        this->message_wait_return_register.reset();
         this->await_time = {};
         this->await_objects = {};
         this->await_msg = {};
@@ -941,6 +968,7 @@ namespace sogen
                 });
 
                 message_queue.erase(it);
+                this->publish_client_thread_info();
             }
             return msg;
         }
@@ -1032,8 +1060,8 @@ namespace sogen
 
         if (try_coalesce && this->can_coalesce_message(msg))
         {
-            this->queue_status_changed_bits |= bits;
             message_queue.back() = msg;
+            this->mark_queue_status_changed(bits);
             return;
         }
 
@@ -1042,8 +1070,65 @@ namespace sogen
         });
 
         this->message_queue_status_bits |= bits;
-        this->queue_status_changed_bits |= bits;
         message_queue.push_back(msg);
+        this->mark_queue_status_changed(bits);
+        win_emu.wake_idle_vcpu();
+    }
+
+    // Activating a window moves the keyboard focus to it; losing activation takes the focus away.
+    void emulator_thread::set_active_window(const hwnd window)
+    {
+        this->active_window = window;
+        this->focus_window = window;
+        this->publish_client_thread_info();
+    }
+
+    void emulator_thread::set_focus_window(const hwnd window)
+    {
+        this->focus_window = window;
+        this->publish_client_thread_info();
+    }
+
+    void emulator_thread::forget_window(const hwnd window)
+    {
+        if (this->active_window == window)
+        {
+            this->active_window = 0;
+        }
+
+        if (this->focus_window == window)
+        {
+            this->focus_window = 0;
+        }
+
+        this->publish_client_thread_info();
+    }
+
+    void emulator_thread::mark_queue_status_changed(const uint32_t bits)
+    {
+        this->queue_status_changed_bits |= bits;
+        this->publish_client_thread_info();
+    }
+
+    void emulator_thread::clear_queue_status_changed(const uint32_t bits)
+    {
+        this->queue_status_changed_bits &= ~bits;
+        this->publish_client_thread_info();
+    }
+
+    void emulator_thread::publish_client_thread_info() const
+    {
+        if (!this->client_thread_info)
+        {
+            return;
+        }
+
+        this->client_thread_info->access([&](USER_CLIENTTHREADINFO& info) {
+            info.change_bits = static_cast<uint16_t>(this->queue_status_changed_bits);
+            info.wake_bits = static_cast<uint16_t>(this->message_queue_status_bits);
+            info.focus_window = this->focus_window;
+            info.active_window = this->active_window;
+        });
     }
 
     void emulator_thread::remove_window_messages(const hwnd window)
@@ -1070,6 +1155,7 @@ namespace sogen
             });
 
             it = this->message_queue.erase(it);
+            this->publish_client_thread_info();
         }
     }
 
@@ -1140,7 +1226,7 @@ namespace sogen
 
                         if (this->await_msg_mask.has_value())
                         {
-                            this->queue_status_changed_bits |= QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
+                            this->mark_queue_status_changed(QS_POSTMESSAGE | QS_ALLPOSTMESSAGE);
                         }
 
                         this->mark_as_ready(*consumed_state == wait_state::abandoned ? (STATUS_ABANDONED_WAIT_0 + i) : (STATUS_WAIT_0 + i));

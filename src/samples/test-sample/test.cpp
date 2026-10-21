@@ -11,6 +11,7 @@
 #include <string_view>
 #include <array>
 #include <algorithm>
+#include <bit>
 
 #include "../../common/utils/finally.hpp"
 
@@ -1412,6 +1413,54 @@ namespace
         return executions == 2;
     }
 
+    bool test_apc_wait()
+    {
+        int executions = 0;
+
+        PAPCFUNC apc_func = [](const ULONG_PTR param) {
+            *reinterpret_cast<int*>(param) += 1; //
+        };
+
+        const auto event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (!event)
+        {
+            return false;
+        }
+
+        QueueUserAPC(apc_func, GetCurrentThread(), reinterpret_cast<ULONG_PTR>(&executions));
+
+        if (WaitForSingleObjectEx(event, 0, FALSE) != WAIT_TIMEOUT || executions != 0)
+        {
+            CloseHandle(event);
+            return false;
+        }
+
+        using nt_wait_for_single_object = LONG(NTAPI*)(HANDLE, BOOLEAN, PLARGE_INTEGER);
+        const auto nt_wait =
+            std::bit_cast<nt_wait_for_single_object>(GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtWaitForSingleObject"));
+        FILETIME now{};
+        GetSystemTimeAsFileTime(&now);
+        LARGE_INTEGER expired{};
+        expired.LowPart = now.dwLowDateTime;
+        expired.HighPart = static_cast<LONG>(now.dwHighDateTime);
+        expired.QuadPart -= 10'000'000;
+
+        if (!nt_wait || nt_wait(event, TRUE, &expired) != static_cast<LONG>(STATUS_USER_APC) || executions != 1)
+        {
+            CloseHandle(event);
+            return false;
+        }
+
+        QueueUserAPC(apc_func, GetCurrentThread(), reinterpret_cast<ULONG_PTR>(&executions));
+        SetEvent(event);
+
+        const auto signaled = WaitForSingleObjectEx(event, 0, FALSE) == WAIT_OBJECT_0;
+        SleepEx(1, TRUE);
+        CloseHandle(event);
+
+        return signaled && executions == 2;
+    }
+
     bool test_window_geometry()
     {
         WNDCLASSEXA wc{};
@@ -2591,6 +2640,7 @@ int main(const int argc, const char* argv[])
     RUN_TEST(test_tls, "TLS")
     RUN_TEST(test_socket, "Socket")
     RUN_TEST(test_apc, "APC")
+    RUN_TEST(test_apc_wait, "APC Wait")
     RUN_TEST(test_desktop_window_text, "Desktop Window Text")
     RUN_TEST(test_window_geometry, "Window Geometry")
     RUN_TEST(test_user_callback, "User Callback")

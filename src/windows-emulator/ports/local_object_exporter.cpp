@@ -9,6 +9,10 @@ namespace sogen
     {
         constexpr std::array<uint8_t, 16> exporter_interface{0xe6, 0x73, 0x0c, 0xe6, 0xf9, 0x88, 0xcf, 0x11,
                                                              0x9a, 0xf1, 0x00, 0x20, 0xaf, 0x6e, 0x72, 0xf4};
+        constexpr std::array<uint8_t, 16> endpoint_mapper_interface{0x08, 0x83, 0xaf, 0xe1, 0x1f, 0x5d, 0xc9, 0x11,
+                                                                    0x91, 0xa4, 0x08, 0x00, 0x2b, 0x14, 0xa0, 0xfa};
+        constexpr std::array<uint32_t, 3> endpoint_mapper_map_procedures{3, 7, 8};
+        constexpr uint32_t endpoint_not_registered = 0x16c9a0d6;
         constexpr uint32_t maximum_reserved_ids = 0x20000;
         constexpr uint32_t maximum_object_ids = 0x100000;
 
@@ -126,7 +130,8 @@ namespace sogen
             NTSTATUS handle_rpc(windows_emulator& win_emu, uint32_t procedure, const lpc_request_context& context,
                                 utils::aligned_binary_writer& writer, std::vector<alpc_reply_handle>&) override
             {
-                if (this->bound_interface() != exporter_interface)
+                const auto interface_id = this->bound_interface();
+                if (interface_id != exporter_interface && interface_id != endpoint_mapper_interface)
                 {
                     return STATUS_NOT_SUPPORTED;
                 }
@@ -138,6 +143,10 @@ namespace sogen
                         return STATUS_ACCESS_VIOLATION;
                     }
                     connect_reader reader(request, writer.pointer_size());
+                    if (interface_id == endpoint_mapper_interface)
+                    {
+                        return map_endpoint(procedure, reader, writer);
+                    }
                     if (procedure == 6)
                     {
                         return this->allocate_apartment(win_emu, reader, writer);
@@ -228,6 +237,27 @@ namespace sogen
                     buffer.read_vector(this->metadata);
                 }
             };
+
+            static NTSTATUS map_endpoint(const uint32_t procedure, connect_reader& reader, utils::aligned_binary_writer& writer)
+            {
+                if (std::ranges::find(endpoint_mapper_map_procedures, procedure) == endpoint_mapper_map_procedures.end())
+                {
+                    return STATUS_NOT_SUPPORTED;
+                }
+
+                (void)reader.pointer();
+                (void)reader.pointer();
+                (void)reader.read<std::array<uint8_t, 20>>();
+                const auto maximum_towers = reader.read<uint32_t>();
+
+                writer.write(std::array<uint8_t, 20>{});
+                writer.write<uint32_t>(0);
+                writer.write_pointer_sized(maximum_towers);
+                writer.write_pointer_sized(0);
+                writer.write_pointer_sized(0);
+                writer.write<uint32_t>(endpoint_not_registered);
+                return STATUS_SUCCESS;
+            }
 
             uint64_t read_connection(connect_reader& reader) const
             {

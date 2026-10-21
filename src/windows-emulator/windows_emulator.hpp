@@ -11,6 +11,7 @@
 #include "syscall_dispatcher.hpp"
 #include "process_context.hpp"
 #include "kernel_lock.hpp"
+#include "scheduler_clock.hpp"
 #include "logger.hpp"
 #include "file_system.hpp"
 #include "filesystem/mount_spec.hpp"
@@ -193,7 +194,7 @@ namespace sogen
 
         std::unique_ptr<guest_machine> emu_{};
         bool use_native_timestamp_counter_{};
-        std::unique_ptr<utils::clock> clock_{};
+        std::unique_ptr<scheduler_clock> clock_{};
         network::network_mode network_mode_{};
         std::unique_ptr<network::dns_lookup> dns_lookup_{};
         std::unique_ptr<network::socket_factory> socket_factory_{};
@@ -256,6 +257,11 @@ namespace sogen
         }
 
         utils::clock& clock()
+        {
+            return *this->clock_;
+        }
+
+        [[nodiscard]] scheduler_clock& scheduling_clock()
         {
             return *this->clock_;
         }
@@ -336,6 +342,13 @@ namespace sogen
         }
 
         void handle_ui_event(const ui_event& event);
+        void apply_cursor_capture();
+
+        // Input held for low-level hooks: the next hook the given thread has to run, marked as running.
+        std::optional<std::pair<process_context::low_level_input, user_low_level_hook>> begin_low_level_hook(emulator_thread& thread);
+        void finish_low_level_hook(emulator_thread& thread, bool swallow);
+        bool has_low_level_hook_work(uint32_t thread_id);
+        emulator_thread* drain_low_level_input();
         void deliver_raw_input(const process_context::raw_input_payload& payload, hwnd explicit_target);
         void deliver_raw_mouse_input(int32_t dx, int32_t dy, uint16_t button_flags, uint16_t button_data = 0);
         void deliver_raw_keyboard_input(uint16_t vkey, uint16_t scan_code, uint32_t message, bool extended);
@@ -453,6 +466,8 @@ namespace sogen
         {
             this->setup_completed_ = true;
         }
+
+        void wake_idle_vcpu();
 
         uint64_t get_executed_instructions() const
         {
@@ -576,6 +591,12 @@ namespace sogen
         void wait_for_register_transfer(const emulator_thread& thread);
 
       private:
+        void set_foreground_window(hwnd window);
+        void deliver_ui_event(const ui_event& event);
+        std::pair<int32_t, int32_t> cursor_after_pointer_event(const ui_event& event) const;
+        std::pair<emulator_thread*, const user_low_level_hook*> find_low_level_hook(uint64_t handle);
+        void wake_thread(emulator_thread& thread);
+
         bool use_relative_time_{false}; // TODO: Get rid of that
         bool instruction_precision_{true};
         bool intercept_rdtsc_{true};
@@ -586,6 +607,14 @@ namespace sogen
         // The emulator kernel lock: held by all code touching shared kernel state,
         // released while guest code executes (docs/multi-vcpu-design.md, section 7).
         kernel_lock kernel_lock_{};
+        std::mutex idle_wakeup_mutex_{};
+        std::condition_variable idle_wakeup_cv_{};
+        uint32_t pending_idle_wakeups_{};
+        std::atomic<uint32_t> idle_vcpus_{0};
+
+        void credit_idle_wakeup();
+        bool wait_for_idle_wakeup(std::chrono::milliseconds timeout);
+
         std::mutex pending_event_signals_mutex_{};
         std::map<uint64_t, uint32_t> pending_event_signals_{};
 

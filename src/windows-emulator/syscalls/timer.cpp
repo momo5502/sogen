@@ -3,6 +3,8 @@
 #include "../emulator_utils.hpp"
 #include "../syscall_utils.hpp"
 
+#include <algorithm>
+
 namespace sogen
 {
 
@@ -58,29 +60,45 @@ namespace sogen
             }
         }
 
-        NTSTATUS handle_NtQueryTimerResolution(const syscall_context&, const emulator_object<ULONG> maximum_time,
+        // In 100 ns units: the coarsest and finest timer resolutions, and the resolution without this process' request.
+        constexpr ULONG coarsest_timer_resolution = 0x0002625a;
+        constexpr ULONG finest_timer_resolution = 0x00001388;
+        constexpr ULONG default_timer_resolution = 0x00002710;
+
+        // A request can only make the timer finer, never coarser than it already is.
+        ULONG current_timer_resolution(const process_context& process)
+        {
+            return std::min(process.timer_resolution_request.value_or(default_timer_resolution), default_timer_resolution);
+        }
+
+        NTSTATUS handle_NtQueryTimerResolution(const syscall_context& c, const emulator_object<ULONG> maximum_time,
                                                const emulator_object<ULONG> minimum_time, const emulator_object<ULONG> current_time)
         {
-            maximum_time.write_if_valid(0x0002625a);
-            minimum_time.write_if_valid(0x00001388);
-            current_time.write_if_valid(0x00002710);
+            maximum_time.write_if_valid(coarsest_timer_resolution);
+            minimum_time.write_if_valid(finest_timer_resolution);
+            current_time.write_if_valid(current_timer_resolution(c.proc));
             return STATUS_SUCCESS;
         }
 
-        NTSTATUS handle_NtSetTimerResolution(const syscall_context&, const ULONG /*desired_resolution*/, const BOOLEAN set_resolution,
+        NTSTATUS handle_NtSetTimerResolution(const syscall_context& c, const ULONG desired_resolution, const BOOLEAN set_resolution,
                                              const emulator_object<ULONG> current_resolution)
         {
-            if (current_resolution)
-            {
-                current_resolution.write(0x0002625a);
-            }
-
+            auto status = STATUS_SUCCESS;
             if (set_resolution)
             {
-                return STATUS_TIMER_RESOLUTION_NOT_SET;
+                c.proc.timer_resolution_request = std::clamp(desired_resolution, finest_timer_resolution, coarsest_timer_resolution);
+            }
+            else if (c.proc.timer_resolution_request)
+            {
+                c.proc.timer_resolution_request.reset();
+            }
+            else
+            {
+                status = STATUS_TIMER_RESOLUTION_NOT_SET;
             }
 
-            return STATUS_SUCCESS;
+            current_resolution.write_if_valid(current_timer_resolution(c.proc));
+            return status;
         }
 
         NTSTATUS handle_NtCreateTimer(const syscall_context& c, const emulator_object<handle> timer_handle, ACCESS_MASK /*desired_access*/,
@@ -208,7 +226,7 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
             const auto due = due_time.read();
-            previous_state.write_if_valid(static_cast<BOOLEAN>(entry->is_signaled(c.win_emu.clock().steady_now())));
+            previous_state.write_if_valid(static_cast<BOOLEAN>(entry->is_signaled(c.win_emu.clock())));
             entry->due_time = timer_deadline(c.win_emu.clock(), due);
             entry->period_nanoseconds = static_cast<int64_t>(period) * 1000000;
             entry->signaled = false;
@@ -289,7 +307,7 @@ namespace sogen
             {
                 return status;
             }
-            current_state.write_if_valid(static_cast<BOOLEAN>(entry->is_signaled(c.win_emu.clock().steady_now())));
+            current_state.write_if_valid(static_cast<BOOLEAN>(entry->is_signaled(c.win_emu.clock())));
             entry->cancel();
             return STATUS_SUCCESS;
         }

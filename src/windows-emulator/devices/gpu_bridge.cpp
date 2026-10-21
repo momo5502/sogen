@@ -9,6 +9,8 @@ namespace sogen
 {
     namespace
     {
+        constexpr int32_t vk_success = 0;
+
         // Host endpoint of the GPU paravirtualization bridge. The guest reaches it by opening
         // \\.\SogenGpu and issuing IOCTLs; each control code maps to one bridge command, with the
         // payload carried in the input/output buffers. Real Vulkan objects live on the host (behind
@@ -273,9 +275,45 @@ namespace sogen
                 uint64_t size{};
                 uint64_t device{};
                 void* host_ptr{};
+                bool placed{};
             };
 
             std::unordered_map<uint64_t, direct_mapping> direct_mappings_{};
+
+            struct imported_memory
+            {
+                uint64_t guest_address{};
+                uint64_t size{};
+                uint64_t device{};
+            };
+
+            std::unordered_map<uint64_t, imported_memory> imported_memory_{};
+
+            struct observed_semaphore
+            {
+                uint64_t device{};
+                uint64_t value{};
+            };
+
+            // The last counter value the guest read of each timeline semaphore, so that polling one only invalidates
+            // imported memory when it shows new work completed.
+            std::unordered_map<uint64_t, observed_semaphore> observed_semaphores_{};
+
+            template <typename Predicate>
+            void release_imported_memory(windows_emulator& win_emu, const Predicate& released)
+            {
+                for (auto it = this->imported_memory_.begin(); it != this->imported_memory_.end();)
+                {
+                    if (!released(it->second))
+                    {
+                        ++it;
+                        continue;
+                    }
+
+                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
+                    it = this->imported_memory_.erase(it);
+                }
+            }
 
             // Before the host GPU reads guest-produced data, make the guest's writes to every directly-aliased
             // buffer visible. On backends that alias host memory non-coherently (KVM: guest writes are
@@ -411,12 +449,15 @@ namespace sogen
                 // aliases first to prevent stale mappings to freed host pages.
                 for (auto it = this->direct_mappings_.begin(); it != this->direct_mappings_.end();)
                 {
-                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
-                    this->vulkan_.unmap_memory(it->second.device, it->first);
+                    this->release_direct_mapping(win_emu, it->first, it->second);
                     it = this->direct_mappings_.erase(it);
                 }
 
                 this->vulkan_.destroy_instance(request.instance);
+                this->release_imported_memory(win_emu,
+                                              [&](const imported_memory& memory) { return !this->vulkan_.has_device(memory.device); });
+                std::erase_if(this->observed_semaphores_,
+                              [&](const auto& entry) { return !this->vulkan_.has_device(entry.second.device); });
                 return STATUS_SUCCESS;
             }
 
@@ -905,12 +946,13 @@ namespace sogen
                         continue;
                     }
 
-                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
-                    this->vulkan_.unmap_memory(it->second.device, it->first);
+                    this->release_direct_mapping(win_emu, it->first, it->second);
                     it = this->direct_mappings_.erase(it);
                 }
 
                 this->vulkan_.destroy_device(request.device);
+                this->release_imported_memory(win_emu, [&](const imported_memory& memory) { return memory.device == request.device; });
+                std::erase_if(this->observed_semaphores_, [&](const auto& entry) { return entry.second.device == request.device; });
                 return STATUS_SUCCESS;
             }
 
@@ -1080,6 +1122,7 @@ namespace sogen
                 }
 
                 this->vulkan_.destroy_semaphore(request.device, request.semaphore);
+                this->observed_semaphores_.erase(request.semaphore);
                 return STATUS_SUCCESS;
             }
 
@@ -1093,6 +1136,15 @@ namespace sogen
 
                 uint64_t value = 0;
                 const int32_t result = this->vulkan_.get_semaphore_counter_value(request.device, request.semaphore, value);
+                if (result == vk_success)
+                {
+                    auto& observed = this->observed_semaphores_[request.semaphore];
+                    if (value > observed.value)
+                    {
+                        observed = {.device = request.device, .value = value};
+                        this->vulkan_.invalidate_imported_memory();
+                    }
+                }
                 return write_output(win_emu, context,
                                     gpu_bridge::get_semaphore_counter_value_response{.vk_result = result, .reserved = 0, .value = value});
             }
@@ -1123,7 +1175,6 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                constexpr int32_t vk_success = 0;
                 constexpr int32_t vk_timeout = 2;
 
                 const auto device = request.device;
@@ -1138,6 +1189,10 @@ namespace sogen
                 {
                     const int32_t result =
                         (poll == vk_timeout) ? this->vulkan_.wait_semaphores(device, flags, entries.data(), count, request.timeout) : poll;
+                    if (result == vk_success)
+                    {
+                        this->vulkan_.invalidate_imported_memory();
+                    }
                     return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
                 }
 
@@ -1156,6 +1211,10 @@ namespace sogen
                     if (result == vk_timeout)
                     {
                         return false;
+                    }
+                    if (result == vk_success)
+                    {
+                        vulkan->invalidate_imported_memory();
                     }
                     // Propagate the real result so an error (e.g. device loss) reaches the guest instead of hanging.
                     write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
@@ -1219,6 +1278,7 @@ namespace sogen
                 }
 
                 this->flush_aliased_memory_for_device(win_emu);
+                this->vulkan_.flush_imported_memory();
 
                 const int32_t result =
                     this->vulkan_.queue_submit2(request.queue, request.fence, waits.data(), request.wait_count, command_buffers.data(),
@@ -1361,6 +1421,10 @@ namespace sogen
                 }
 
                 const int32_t result = this->vulkan_.get_fence_status(request.fence);
+                if (result == vk_success)
+                {
+                    this->vulkan_.invalidate_imported_memory();
+                }
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -1387,6 +1451,7 @@ namespace sogen
                 }
 
                 this->flush_aliased_memory_for_device(win_emu);
+                this->vulkan_.flush_imported_memory();
 
                 const int32_t result = this->vulkan_.queue_submit(request.queue, request.fence, waits.data(), request.wait_count,
                                                                   command_buffers.data(), request.command_buffer_count, signals.data(),
@@ -1403,6 +1468,7 @@ namespace sogen
                 }
 
                 const int32_t result = this->vulkan_.queue_wait_idle(request.queue);
+                this->vulkan_.invalidate_imported_memory();
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -1415,6 +1481,7 @@ namespace sogen
                 }
 
                 const int32_t result = this->vulkan_.device_wait_idle(request.device);
+                this->vulkan_.invalidate_imported_memory();
                 return write_output(win_emu, context, gpu_bridge::result_response{.vk_result = result, .reserved = 0});
             }
 
@@ -1509,10 +1576,55 @@ namespace sogen
                 }
 
                 uint64_t memory = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.allocate_memory(request.device, request.size, request.memory_type_index, request.flags,
-                                                                     request.device_mask, memory);
+                int32_t result = vk_success;
+                if (!this->allocate_imported_memory(win_emu, request, memory))
+                {
+                    result = this->vulkan_.allocate_memory(request.device, request.size, request.memory_type_index, request.flags,
+                                                           request.device_mask, memory);
+                }
+
                 return write_output(win_emu, context,
                                     gpu_bridge::allocate_memory_response{.vk_result = result, .reserved = 0, .memory = memory});
+            }
+
+            // A WoW64 guest can only reach memory below its address limit, and drivers without placed mappings map
+            // device memory wherever they like, which an alias into that range cannot always reach. Host-visible
+            // memory is therefore allocated as guest memory there and imported into the device, so it is already
+            // mapped where the guest needs it.
+            bool allocate_imported_memory(windows_emulator& win_emu, const gpu_bridge::allocate_memory_request& request, uint64_t& memory)
+            {
+                constexpr uint64_t page = 0x1000;
+                constexpr uint64_t wow64_highest_address = 0x7FFEFFFF;
+
+                const uint64_t import_alignment = this->vulkan_.host_import_alignment(request.device);
+                const uint64_t alignment = std::max(page, import_alignment);
+                if (!win_emu.process.is_wow64_process || import_alignment == 0 || request.size == 0 ||
+                    request.size > UINT64_MAX - alignment ||
+                    !this->vulkan_.is_host_visible_memory_type(request.device, request.memory_type_index))
+                {
+                    return false;
+                }
+
+                const uint64_t size = (request.size + alignment - 1) / alignment * alignment;
+                const uint64_t guest_address =
+                    win_emu.memory.find_free_host_allocation_base(static_cast<size_t>(size), 0, wow64_highest_address);
+                if (guest_address == 0 || guest_address % alignment != 0 ||
+                    !win_emu.memory.allocate_memory(guest_address, static_cast<size_t>(size), memory_permission::read_write))
+                {
+                    return false;
+                }
+
+                auto* host_pointer = reinterpret_cast<void*>(win_emu.memory.host_placement_address(guest_address));
+                if (host_pointer == nullptr ||
+                    this->vulkan_.import_host_memory(request.device, size, request.memory_type_index, request.flags, request.device_mask,
+                                                     host_pointer, memory) != vk_success)
+                {
+                    win_emu.memory.release_memory(guest_address, static_cast<size_t>(size));
+                    return false;
+                }
+
+                this->imported_memory_[memory] = imported_memory{.guest_address = guest_address, .size = size, .device = request.device};
+                return true;
             }
 
             NTSTATUS handle_free_memory(windows_emulator& win_emu, const io_device_context& context)
@@ -1529,12 +1641,17 @@ namespace sogen
                 // dereference (e.g. while DXVK frees buffers during shutdown).
                 if (const auto it = this->direct_mappings_.find(request.memory); it != this->direct_mappings_.end())
                 {
-                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
-                    this->vulkan_.unmap_memory(it->second.device, request.memory);
+                    this->release_direct_mapping(win_emu, request.memory, it->second);
                     this->direct_mappings_.erase(it);
                 }
 
                 this->vulkan_.free_memory(request.device, request.memory);
+                if (const auto imported = this->imported_memory_.find(request.memory);
+                    imported != this->imported_memory_.end() && imported->second.device == request.device)
+                {
+                    win_emu.memory.release_memory(imported->second.guest_address, static_cast<size_t>(imported->second.size));
+                    this->imported_memory_.erase(imported);
+                }
                 return STATUS_SUCCESS;
             }
 
@@ -1677,6 +1794,15 @@ namespace sogen
 
                 // The whole VkDeviceMemory object is aliased once into the guest; any sub-range map is just
                 // an offset into that single coherent alias. If it's already aliased, return base + offset.
+                if (const auto imported = this->imported_memory_.find(request.memory);
+                    imported != this->imported_memory_.end() && imported->second.device == request.device)
+                {
+                    response.vk_result = vk_success;
+                    response.guest_address =
+                        (request.offset < imported->second.size) ? (imported->second.guest_address + request.offset) : 0;
+                    return write_output(win_emu, context, response);
+                }
+
                 if (const auto existing = this->direct_mappings_.find(request.memory); existing != this->direct_mappings_.end())
                 {
                     response.vk_result = 0; // VK_SUCCESS
@@ -1684,6 +1810,14 @@ namespace sogen
                     // offset returns guest_address = 0 so the shim falls back to the bounded staging path.
                     response.guest_address =
                         (request.offset < existing->second.size) ? (existing->second.guest_address + request.offset) : 0;
+                    return write_output(win_emu, context, response);
+                }
+
+                if (const auto placed = this->map_memory_placed(win_emu, request.device, request.memory))
+                {
+                    response.vk_result = 0; // VK_SUCCESS
+                    response.guest_address = (request.offset < placed->size) ? (placed->guest_address + request.offset) : 0;
+                    this->direct_mappings_[request.memory] = *placed;
                     return write_output(win_emu, context, response);
                 }
 
@@ -1717,6 +1851,63 @@ namespace sogen
                 return write_output(win_emu, context, response);
             }
 
+            // A WoW64 guest can only reach memory below its address limit, where the driver's own mapping generally is
+            // not. On backends whose guest memory lives at fixed host addresses, the driver then maps the memory right
+            // where a free guest range is backed, instead of the bridge aliasing a mapping the driver placed elsewhere
+            // (which device memory generally does not allow).
+            std::optional<direct_mapping> map_memory_placed(windows_emulator& win_emu, const uint64_t device, const uint64_t memory)
+            {
+                constexpr uint64_t page = 0x1000;
+                const uint64_t placed_alignment = this->vulkan_.placed_map_alignment(device);
+                const uint64_t allocation_size = this->vulkan_.allocation_size(memory);
+                if (!win_emu.process.is_wow64_process || placed_alignment == 0 || ALLOCATION_GRANULARITY % placed_alignment != 0 ||
+                    allocation_size == 0)
+                {
+                    return std::nullopt;
+                }
+
+                // The driver maps whole pages of its alignment, which can be larger than a guest page (16KB on many
+                // Android devices), so the guest range covers all of them.
+                const uint64_t alignment = std::max(page, placed_alignment);
+                const uint64_t size = (allocation_size + alignment - 1) & ~(alignment - 1);
+
+                // 32-bit code can only reach the low 2GB, unless it is large-address aware.
+                constexpr uint64_t wow64_highest_address = 0x7FFEFFFF;
+
+                void* host_ptr = nullptr;
+                const uint64_t guest_address = win_emu.memory.allocate_placed_host_memory(
+                    static_cast<size_t>(size), memory_permission::read_write, wow64_highest_address, [&](void* host_address) {
+                        if (this->vulkan_.map_memory_placed(device, memory, host_address) != 0)
+                        {
+                            return false;
+                        }
+                        host_ptr = host_address;
+                        return true;
+                    });
+                if (guest_address == 0)
+                {
+                    return std::nullopt;
+                }
+
+                return direct_mapping{.guest_address = guest_address, .size = size, .device = device, .host_ptr = host_ptr, .placed = true};
+            }
+
+            // A placed mapping is unmapped first, which leaves its range reserved, so the driver never touches the range
+            // once it is released and reusable. An aliased mapping is the other way round: its guest view goes first.
+            void release_direct_mapping(windows_emulator& win_emu, const uint64_t memory, const direct_mapping& mapping)
+            {
+                if (mapping.placed)
+                {
+                    this->vulkan_.unmap_memory(mapping.device, memory);
+                    win_emu.memory.release_memory(mapping.guest_address, static_cast<size_t>(mapping.size));
+                }
+                else
+                {
+                    win_emu.memory.release_memory(mapping.guest_address, static_cast<size_t>(mapping.size));
+                    this->vulkan_.unmap_memory(mapping.device, memory);
+                }
+            }
+
             NTSTATUS handle_unmap_memory_direct(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::unmap_memory_direct_request request{};
@@ -1728,8 +1919,7 @@ namespace sogen
                 const auto it = this->direct_mappings_.find(request.memory);
                 if (it != this->direct_mappings_.end())
                 {
-                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
-                    this->vulkan_.unmap_memory(it->second.device, request.memory);
+                    this->release_direct_mapping(win_emu, request.memory, it->second);
                     this->direct_mappings_.erase(it);
                 }
                 return STATUS_SUCCESS;
@@ -2867,10 +3057,29 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
                 uint64_t sampler = gpu_bridge::null_object;
-                const int32_t result = this->vulkan_.create_sampler(
-                    request.device, request.mag_filter, request.min_filter, request.address_mode_u, request.address_mode_v,
-                    request.address_mode_w, request.mipmap_mode, request.compare_enable, request.compare_op, request.anisotropy_enable,
-                    request.border_color, request.mip_lod_bias, request.max_anisotropy, request.min_lod, request.max_lod, sampler);
+                vulkan_host::sampler_desc desc{
+                    .flags = request.flags,
+                    .mag_filter = request.mag_filter,
+                    .min_filter = request.min_filter,
+                    .address_mode_u = request.address_mode_u,
+                    .address_mode_v = request.address_mode_v,
+                    .address_mode_w = request.address_mode_w,
+                    .mipmap_mode = request.mipmap_mode,
+                    .compare_enable = request.compare_enable,
+                    .compare_op = request.compare_op,
+                    .anisotropy_enable = request.anisotropy_enable,
+                    .border_color = request.border_color,
+                    .mip_lod_bias = request.mip_lod_bias,
+                    .max_anisotropy = request.max_anisotropy,
+                    .min_lod = request.min_lod,
+                    .max_lod = request.max_lod,
+                    .unnormalized_coordinates = request.unnormalized_coordinates,
+                    .reduction_mode = request.has_reduction_mode ? std::optional{request.reduction_mode} : std::nullopt,
+                    .custom_border_color = request.has_custom_border_color
+                                               ? std::optional{std::pair{request.custom_border_format, request.custom_border_color}}
+                                               : std::nullopt,
+                };
+                const int32_t result = this->vulkan_.create_sampler(request.device, desc, sampler);
                 return write_output(win_emu, context, gpu_bridge::object_response{.vk_result = result, .reserved = 0, .object = sampler});
             }
 

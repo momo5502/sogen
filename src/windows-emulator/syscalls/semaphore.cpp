@@ -64,7 +64,13 @@ namespace sogen
                 previous_count.write(static_cast<LONG>(old_count));
             }
 
-            return succeeded ? STATUS_SUCCESS : STATUS_SEMAPHORE_LIMIT_EXCEEDED;
+            if (!succeeded)
+            {
+                return STATUS_SEMAPHORE_LIMIT_EXCEEDED;
+            }
+
+            c.win_emu.wake_idle_vcpu();
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtCreateSemaphore(const syscall_context& c, const emulator_object<handle> semaphore_handle,

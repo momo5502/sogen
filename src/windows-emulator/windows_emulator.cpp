@@ -181,6 +181,45 @@ namespace sogen
             return message == WM_KEYUP || message == WM_SYSKEYUP;
         }
 
+        constexpr int k_wh_keyboard_ll = 13;
+        constexpr int k_wh_mouse_ll = 14;
+
+        bool is_character_message(const uint32_t message)
+        {
+            return message == WM_CHAR || message == WM_SYSCHAR || message == WM_DEADCHAR || message == WM_SYSDEADCHAR;
+        }
+
+        int low_level_hook_id(const uint32_t message)
+        {
+            switch (message)
+            {
+            case WM_KEYDOWN:
+            case WM_KEYUP:
+            case WM_SYSKEYDOWN:
+            case WM_SYSKEYUP:
+                return k_wh_keyboard_ll;
+            case WM_MOUSEMOVE:
+            case WM_LBUTTONDOWN:
+            case WM_LBUTTONUP:
+            case WM_RBUTTONDOWN:
+            case WM_RBUTTONUP:
+            case WM_MBUTTONDOWN:
+            case WM_MBUTTONUP:
+            case WM_XBUTTONDOWN:
+            case WM_XBUTTONUP:
+            case WM_MOUSEWHEEL:
+            case WM_MOUSEHWHEEL:
+                return k_wh_mouse_ll;
+            default:
+                return 0;
+            }
+        }
+
+        bool is_input_message(const uint32_t message)
+        {
+            return low_level_hook_id(message) != 0 || is_character_message(message) || is_pointer_message(message);
+        }
+
         bool is_keyboard_message(const uint32_t message)
         {
             return is_key_down_message(message) || is_key_up_message(message);
@@ -549,8 +588,10 @@ namespace sogen
             const auto is_ready = thread.is_thread_ready(win_emu);
             const auto has_pending_status = thread.pending_status.has_value();
             const auto can_dispatch_apcs = thread.apc_alertable && !thread.pending_apcs.empty();
+            const auto can_run_low_level_hook =
+                !is_ready && thread.message_wait_return_register.has_value() && win_emu.has_low_level_hook_work(thread.id);
 
-            if (!is_ready && !force && !can_dispatch_apcs)
+            if (!is_ready && !force && !can_dispatch_apcs && !can_run_low_level_hook)
             {
                 return false;
             }
@@ -576,6 +617,11 @@ namespace sogen
                 thread.mark_as_ready(STATUS_USER_APC);
                 dispatch_next_apc(win_emu, vcpu, thread);
             }
+            else if (can_run_low_level_hook)
+            {
+                // The message syscall runs the hook first when it executes again.
+                thread.restart_message_wait(emu, win_emu.abi());
+            }
 
             thread.apc_alertable = false;
             return true;
@@ -594,6 +640,7 @@ namespace sogen
 
         bool switch_to_next_thread(windows_emulator& win_emu, vcpu_context& vcpu)
         {
+            const scheduler_clock::scope time_scope{win_emu.scheduling_clock()};
             perform_context_switch_work(win_emu, vcpu);
 
             auto& threads = win_emu.process.threads;
@@ -762,7 +809,7 @@ namespace sogen
         : emu_(std::move(emu)),
           use_native_timestamp_counter_(!interfaces.clock && !settings.use_relative_time &&
                                         this->emu_->supports_native_timestamp_counter()),
-          clock_(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time)),
+          clock_(std::make_unique<scheduler_clock>(get_clock(interfaces, this->executed_instructions_, settings.use_relative_time))),
           network_mode_(settings.network),
           dns_lookup_(get_dns_lookup(interfaces, settings.network)),
           socket_factory_(get_socket_factory(interfaces, settings.network)),
@@ -908,9 +955,12 @@ namespace sogen
         this->kernel_lock_.assert_held();
 
         const auto needed_switch = vcpu.switch_thread.exchange(false);
+        bool woken_by_signal = false;
 
         while (!switch_to_next_thread(*this, vcpu))
         {
+            woken_by_signal = false;
+
             if (this->vcpu_count_ > 1 && vcpu.active_thread)
             {
                 // Nothing runnable for this vCPU: detach the stale thread so another
@@ -920,6 +970,8 @@ namespace sogen
             }
 
             const auto host_wait_pending = has_pending_host_wait(this->process);
+
+            ++this->idle_vcpus_;
 
             // Idle: nothing is ready. Release the kernel lock while pumping UI events
             // and sleeping so other threads (UI delivery, vCPU workers) can run.
@@ -942,16 +994,24 @@ namespace sogen
             }
             else
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                woken_by_signal = this->wait_for_idle_wakeup(std::chrono::milliseconds(1));
             }
 
+            --this->idle_vcpus_;
             lock.lock();
+
+            this->drain_low_level_input();
 
             if (this->should_stop)
             {
                 vcpu.switch_thread = needed_switch;
                 return false;
             }
+        }
+
+        if (woken_by_signal)
+        {
+            this->wake_idle_vcpu();
         }
 
         return true;
@@ -1777,10 +1837,277 @@ namespace sogen
                                 this->process.raw_keyboard_target);
     }
 
+    void windows_emulator::set_foreground_window(const hwnd window)
+    {
+        const auto previous = this->process.foreground_window;
+        if (previous == window)
+        {
+            return;
+        }
+
+        this->process.foreground_window = window;
+
+        if (const auto* previous_window = this->process.windows.get(previous))
+        {
+            if (auto* owner = get_thread_by_id(this->process, previous_window->thread_id); owner && owner->active_window == previous)
+            {
+                owner->set_active_window(0);
+            }
+        }
+
+        if (const auto* new_window = this->process.windows.get(window))
+        {
+            if (auto* owner = get_thread_by_id(this->process, new_window->thread_id))
+            {
+                owner->set_active_window(window);
+            }
+        }
+    }
+
     void windows_emulator::handle_ui_event(const ui_event& event)
     {
         const std::scoped_lock lock(this->kernel_lock_);
 
+        const auto hook_id = low_level_hook_id(event.message);
+        auto& pending = this->process.pending_low_level_input;
+
+        if (is_character_message(event.message) && this->process.drop_low_level_characters)
+        {
+            return;
+        }
+
+        if (hook_id == k_wh_keyboard_ll)
+        {
+            this->process.drop_low_level_characters = false;
+        }
+
+        std::vector<uint64_t> hooks{};
+        if (hook_id != 0)
+        {
+            for (auto& thread : this->process.threads | std::views::values)
+            {
+                if (thread.is_terminated())
+                {
+                    continue;
+                }
+
+                for (const auto& hook : thread.low_level_hooks)
+                {
+                    if (hook.id == hook_id)
+                    {
+                        hooks.push_back(hook.handle);
+                    }
+                }
+            }
+
+            // The most recently installed hook runs first.
+            std::ranges::sort(hooks, std::greater{});
+        }
+
+        // Input already waiting for hooks keeps everything after it waiting too, so the guest sees it in order.
+        if (hooks.empty() && (pending.empty() || !is_input_message(event.message)))
+        {
+            this->deliver_ui_event(event);
+            return;
+        }
+
+        auto [screen_x, screen_y] = std::pair{this->process.cursor_x, this->process.cursor_y};
+        if (is_pointer_message(event.message) && !is_mouse_wheel_message(event.message))
+        {
+            std::tie(screen_x, screen_y) = this->cursor_after_pointer_event(event);
+        }
+
+        const auto now = this->clock().steady_now();
+        pending.push_back(process_context::low_level_input{
+            .id = this->process.next_low_level_input_id++,
+            .event = event,
+            .screen_x = screen_x,
+            .screen_y = screen_y,
+            .time = static_cast<DWORD>(std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count()),
+            .hooks = std::move(hooks),
+            .waiting_since = now,
+        });
+
+        if (auto* owner = this->drain_low_level_input())
+        {
+            this->wake_thread(*owner);
+        }
+    }
+
+    std::pair<emulator_thread*, const user_low_level_hook*> windows_emulator::find_low_level_hook(const uint64_t handle)
+    {
+        for (auto& thread : this->process.threads | std::views::values)
+        {
+            if (thread.is_terminated())
+            {
+                continue;
+            }
+
+            for (const auto& hook : thread.low_level_hooks)
+            {
+                if (hook.handle == handle)
+                {
+                    return {&thread, &hook};
+                }
+            }
+        }
+
+        return {};
+    }
+
+    // Windows passes input on when a low-level hook does not return within LowLevelHooksTimeout, and ignores the
+    // result of a hook that returns later.
+    emulator_thread* windows_emulator::drain_low_level_input()
+    {
+        constexpr auto low_level_hooks_timeout = std::chrono::seconds(1);
+
+        auto& pending = this->process.pending_low_level_input;
+        const auto now = this->clock().steady_now();
+        while (!pending.empty())
+        {
+            auto& front = pending.front();
+            const auto timed_out = now - front.waiting_since > low_level_hooks_timeout;
+            if (front.in_progress && !timed_out)
+            {
+                return nullptr;
+            }
+
+            while (!front.in_progress && !front.hooks.empty() && !this->find_low_level_hook(front.hooks.front()).second)
+            {
+                front.hooks.erase(front.hooks.begin());
+            }
+
+            if (front.hooks.empty() || timed_out)
+            {
+                const auto event = front.event;
+                pending.erase(pending.begin());
+                if (!pending.empty())
+                {
+                    pending.front().waiting_since = now;
+                }
+
+                this->deliver_ui_event(event);
+                continue;
+            }
+
+            return this->find_low_level_hook(front.hooks.front()).first;
+        }
+
+        return nullptr;
+    }
+
+    std::optional<std::pair<process_context::low_level_input, user_low_level_hook>> windows_emulator::begin_low_level_hook(
+        emulator_thread& thread)
+    {
+        if (!this->has_low_level_hook_work(thread.id))
+        {
+            return std::nullopt;
+        }
+
+        auto& front = this->process.pending_low_level_input.front();
+        front.in_progress = true;
+        front.waiting_since = this->clock().steady_now();
+        thread.running_low_level_inputs.push_back(front.id);
+        return std::pair{front, *this->find_low_level_hook(front.hooks.front()).second};
+    }
+
+    void windows_emulator::finish_low_level_hook(emulator_thread& thread, const bool swallow)
+    {
+        if (thread.running_low_level_inputs.empty())
+        {
+            return;
+        }
+
+        const auto id = thread.running_low_level_inputs.back();
+        thread.running_low_level_inputs.pop_back();
+
+        auto& pending = this->process.pending_low_level_input;
+        if (pending.empty() || !pending.front().in_progress || pending.front().id != id)
+        {
+            return;
+        }
+
+        const auto now = this->clock().steady_now();
+        auto& front = pending.front();
+        front.in_progress = false;
+        front.waiting_since = now;
+        if (swallow)
+        {
+            this->process.drop_low_level_characters = is_key_down_message(front.event.message);
+            pending.erase(pending.begin());
+
+            while (this->process.drop_low_level_characters && !pending.empty() && is_character_message(pending.front().event.message))
+            {
+                pending.erase(pending.begin());
+            }
+
+            if (!pending.empty())
+            {
+                pending.front().waiting_since = now;
+            }
+        }
+        else if (!front.hooks.empty())
+        {
+            front.hooks.erase(front.hooks.begin());
+        }
+
+        if (auto* owner = this->drain_low_level_input())
+        {
+            this->wake_thread(*owner);
+        }
+    }
+
+    bool windows_emulator::has_low_level_hook_work(const uint32_t thread_id)
+    {
+        this->drain_low_level_input();
+
+        const auto& pending = this->process.pending_low_level_input;
+        if (pending.empty() || pending.front().in_progress || pending.front().hooks.empty())
+        {
+            return false;
+        }
+
+        const auto* owner = this->find_low_level_hook(pending.front().hooks.front()).first;
+        return owner && owner->id == thread_id;
+    }
+
+    // Kick the vCPU running the thread so it promptly re-checks its message queue; if the thread is not running on
+    // any vCPU right now, fall back to vCPU 0 to force a reschedule that can pick up the now-ready thread.
+    void windows_emulator::wake_thread(emulator_thread& thread)
+    {
+        auto* running_on = find_vcpu_running_thread(*this, thread);
+        auto& vcpu = running_on ? *running_on : this->vcpu(0);
+        vcpu.switch_thread = true;
+        vcpu.cpu.stop();
+    }
+
+    std::pair<int32_t, int32_t> windows_emulator::cursor_after_pointer_event(const ui_event& event) const
+    {
+        int32_t cursor_x = this->process.cursor_x;
+        int32_t cursor_y = this->process.cursor_y;
+        if (event.relative_motion)
+        {
+            cursor_x += event.relative_motion->first;
+            cursor_y += event.relative_motion->second;
+            if (const auto& clip = this->process.cursor_clip)
+            {
+                const auto left = static_cast<int32_t>(clip->left);
+                const auto top = static_cast<int32_t>(clip->top);
+                cursor_x = std::clamp(cursor_x, left, std::max(left, static_cast<int32_t>(clip->right) - 1));
+                cursor_y = std::clamp(cursor_y, top, std::max(top, static_cast<int32_t>(clip->bottom) - 1));
+            }
+        }
+        else if (const auto origin = get_client_origin_relative_to_ancestor(this->process, event.window, 0))
+        {
+            cursor_x = origin->x + point_x(event.lParam);
+            cursor_y = origin->y + point_y(event.lParam);
+        }
+
+        return {cursor_x, cursor_y};
+    }
+
+    void windows_emulator::deliver_ui_event(const ui_event& event)
+    {
         const auto* win = this->process.windows.get(event.window);
         if (!win)
         {
@@ -1793,6 +2120,8 @@ namespace sogen
             return;
         }
 
+        const auto previous_foreground = this->process.foreground_window;
+
         msg m{};
         m.window = event.window;
         m.message = event.message;
@@ -1803,12 +2132,21 @@ namespace sogen
         {
             // Track the cursor in screen coordinates (client origin + client-local position) so GetCursorPos
             // reflects it, and treat the window the user is pointing at as the foreground one.
-            int32_t new_cursor_x = this->process.cursor_x;
-            int32_t new_cursor_y = this->process.cursor_y;
-            if (const auto origin = get_client_origin_relative_to_ancestor(this->process, event.window, 0))
+            const auto origin = get_client_origin_relative_to_ancestor(this->process, event.window, 0);
+            auto l_param = event.lParam;
+            const auto [new_cursor_x, new_cursor_y] = this->cursor_after_pointer_event(event);
+            int32_t raw_dx = new_cursor_x - this->process.cursor_x;
+            int32_t raw_dy = new_cursor_y - this->process.cursor_y;
+            if (event.relative_motion)
             {
-                new_cursor_x = origin->x + point_x(event.lParam);
-                new_cursor_y = origin->y + point_y(event.lParam);
+                // Like a ClipCursor-confined cursor on Windows: the position stops at the clip rectangle while the
+                // raw motion keeps flowing.
+                raw_dx = event.relative_motion->first;
+                raw_dy = event.relative_motion->second;
+                if (origin)
+                {
+                    l_param = pack_point(new_cursor_x - origin->x, new_cursor_y - origin->y);
+                }
             }
 
             // A game using raw input for mouse-look reads relative deltas from WM_INPUT, not WM_MOUSEMOVE.
@@ -1819,11 +2157,9 @@ namespace sogen
             {
                 if (event.message == WM_MOUSEMOVE)
                 {
-                    const int32_t dx = new_cursor_x - this->process.cursor_x;
-                    const int32_t dy = new_cursor_y - this->process.cursor_y;
-                    if (dx != 0 || dy != 0)
+                    if (raw_dx != 0 || raw_dy != 0)
                     {
-                        this->deliver_raw_mouse_input(dx, dy, 0);
+                        this->deliver_raw_mouse_input(raw_dx, raw_dy, 0);
                     }
                 }
                 else if (const uint16_t buttons = raw_mouse_button_flags(event.message, event.wParam); buttons != 0)
@@ -1836,9 +2172,9 @@ namespace sogen
 
             this->process.cursor_x = new_cursor_x;
             this->process.cursor_y = new_cursor_y;
-            this->process.foreground_window = event.window;
+            this->set_foreground_window(event.window);
 
-            const auto target = route_pointer(this->process, event.window, point_x(event.lParam), point_y(event.lParam));
+            const auto target = route_pointer(this->process, event.window, point_x(l_param), point_y(l_param));
             m.window = target.window;
             // WM_MOUSEWHEEL/WM_MOUSEHWHEEL carry screen coordinates in lParam, unlike button/move
             // messages which carry client coordinates. Keep the routed target but preserve screen coords.
@@ -1848,11 +2184,11 @@ namespace sogen
         {
             // The window just became active/focused: make it the foreground window so polling APIs
             // (GetForegroundWindow/GetActiveWindow) agree with the activation the game just received.
-            this->process.foreground_window = event.window;
+            this->set_foreground_window(event.window);
         }
         else if ((event.message == WM_ACTIVATE && event.wParam == 0) && this->process.foreground_window == event.window)
         {
-            this->process.foreground_window = 0;
+            this->set_foreground_window(0);
         }
 
         // Mirror the foreground window into the shared SERVERINFO so the guest's client-side
@@ -1923,13 +2259,12 @@ namespace sogen
         if (event.message == WM_CLOSE || event.message == WM_COMMAND || is_key_down_message(event.message) ||
             is_mouse_button_message(event.message) || is_mouse_wheel_message(event.message))
         {
-            // Kick the vCPU currently running the target thread so it promptly re-checks its message
-            // queue; if the thread is not running on any vCPU right now, fall back to vCPU 0 to force a
-            // reschedule that can pick up the now-ready thread.
-            auto* running_on = find_vcpu_running_thread(*this, *thread);
-            auto& vcpu = running_on ? *running_on : this->vcpu(0);
-            vcpu.switch_thread = true;
-            vcpu.cpu.stop();
+            this->wake_thread(*thread);
+        }
+
+        if (this->process.foreground_window != previous_foreground)
+        {
+            this->apply_cursor_capture();
         }
     }
 
@@ -1973,9 +2308,13 @@ namespace sogen
 
     void windows_emulator::request_guest_event_signal(const handle event_handle, const uint32_t maximum_pending)
     {
-        const std::lock_guard lock{this->pending_event_signals_mutex_};
-        auto& pending = this->pending_event_signals_[event_handle.bits];
-        pending = std::min(pending + 1, maximum_pending);
+        {
+            const std::lock_guard lock{this->pending_event_signals_mutex_};
+            auto& pending = this->pending_event_signals_[event_handle.bits];
+            pending = std::min(pending + 1, maximum_pending);
+        }
+
+        this->credit_idle_wakeup();
     }
 
     void windows_emulator::apply_pending_guest_event_signals()
@@ -2032,12 +2371,49 @@ namespace sogen
 
     void windows_emulator::stop()
     {
-        this->should_stop = true;
+        {
+            const std::lock_guard lock{this->idle_wakeup_mutex_};
+            this->should_stop = true;
+        }
+
+        this->idle_wakeup_cv_.notify_all();
 
         for (uint32_t i = 0; i < this->vcpu_count_; ++i)
         {
             this->vcpu(i).cpu.stop();
         }
+    }
+
+    void windows_emulator::wake_idle_vcpu()
+    {
+        if (this->idle_vcpus_.load() != 0)
+        {
+            this->credit_idle_wakeup();
+        }
+    }
+
+    void windows_emulator::credit_idle_wakeup()
+    {
+        {
+            const std::lock_guard lock{this->idle_wakeup_mutex_};
+            this->pending_idle_wakeups_ = std::min(this->pending_idle_wakeups_ + 1, this->vcpu_count_);
+        }
+
+        this->idle_wakeup_cv_.notify_one();
+    }
+
+    bool windows_emulator::wait_for_idle_wakeup(const std::chrono::milliseconds timeout)
+    {
+        std::unique_lock lock{this->idle_wakeup_mutex_};
+        this->idle_wakeup_cv_.wait_for(lock, timeout, [this] { return this->pending_idle_wakeups_ > 0 || this->should_stop; });
+
+        if (this->pending_idle_wakeups_ == 0)
+        {
+            return false;
+        }
+
+        --this->pending_idle_wakeups_;
+        return true;
     }
 
     void windows_emulator::register_factories(utils::buffer_deserializer& buffer)
@@ -2132,6 +2508,21 @@ namespace sogen
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
         this->process.restore_after_state_restore(*this);
+        this->apply_cursor_capture();
+    }
+
+    // The guest's ClipCursor is process-wide; the host confines whichever window is in the foreground, in relative mode while
+    // the guest cursor is hidden.
+    void windows_emulator::apply_cursor_capture()
+    {
+        std::optional<ui_rect> clip{};
+        if (const auto& rect = this->process.cursor_clip)
+        {
+            clip = ui_rect{.left = rect->left, .top = rect->top, .right = rect->right, .bottom = rect->bottom};
+        }
+
+        const bool hidden = this->process.cursor_show_count < 0 || !this->process.cursor_shape_visible;
+        this->ui().set_cursor_clip(this->process.foreground_window, clip, clip.has_value() && hidden);
     }
 
     void windows_emulator::save_snapshot()
@@ -2188,6 +2579,7 @@ namespace sogen
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
         this->process.restore_after_state_restore(*this);
+        this->apply_cursor_capture();
     }
 
 } // namespace sogen

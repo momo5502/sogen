@@ -460,6 +460,7 @@ namespace sogen
                 if (auto* event = win_emu.process.events.get(context.event))
                 {
                     event->signaled = true;
+                    win_emu.wake_idle_vcpu();
                 }
                 io_device::queue_io_completion(win_emu, context);
             }
@@ -633,6 +634,7 @@ namespace sogen
                         if (auto* event = win_emu.process.events.get(*this->event_select_event_))
                         {
                             event->signaled = true;
+                            win_emu.wake_idle_vcpu();
                         }
                     }
                 }

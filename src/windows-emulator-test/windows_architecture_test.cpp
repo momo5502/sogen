@@ -539,6 +539,41 @@ namespace sogen::test
         EXPECT_THROW(this->abi_.rewind_syscall(*this->machine_, 0), std::out_of_range);
     }
 
+    TYPED_TEST(WindowsArchitectureTest, MessageWaitRestartPreservesNativeRegistersAndDeadline)
+    {
+        emulator_thread thread{this->memory_, this->process_, code_base + 0x300, 11, 0x10000, 0, 8, true};
+        constexpr uint32_t service = 0x1234;
+        this->abi_.instruction_pointer(*this->machine_, code_base);
+        this->set_register_argument(0, 0x1122334455667788ull);
+        if constexpr (is_arm64<TypeParam>)
+        {
+            this->machine_->write_memory(code_base, uint32_t{0xD4000001u | (service << 5)});
+        }
+        else
+        {
+            this->machine_->reg(x86_register::eax, service);
+        }
+        const auto argument = this->abi_.syscall_argument(*this->machine_, 0);
+        const auto saved_register = this->abi_.return_value(*this->machine_);
+        const auto deadline = this->clock_.steady_now() + std::chrono::milliseconds{100};
+        thread.await_time = deadline;
+        thread.await_msg_mask = QS_ALLINPUT;
+        thread.remember_message_wait(*this->machine_, this->abi_);
+        this->abi_.instruction_pointer(*this->machine_, code_base + this->abi_.syscall_abi().syscall_instruction_size());
+        this->abi_.return_value(*this->machine_, STATUS_PENDING);
+
+        thread.restart_message_wait(*this->machine_, this->abi_);
+
+        EXPECT_EQ(this->abi_.instruction_pointer(*this->machine_), code_base);
+        EXPECT_EQ(this->abi_.raw_syscall_id(*this->machine_), service);
+        EXPECT_EQ(this->abi_.return_value(*this->machine_), saved_register);
+        EXPECT_EQ(this->abi_.syscall_argument(*this->machine_, 0), argument);
+        EXPECT_EQ(thread.message_wait_deadline, deadline);
+        EXPECT_FALSE(thread.message_wait_return_register.has_value());
+        EXPECT_FALSE(thread.await_time.has_value());
+        EXPECT_FALSE(thread.pending_status.has_value());
+    }
+
     TYPED_TEST(WindowsArchitectureTest, WrongCpuArchitectureAndInvalidBootstrapAreRejected)
     {
         EXPECT_EQ(guest_architecture_of(*this->machine_), this->architecture);

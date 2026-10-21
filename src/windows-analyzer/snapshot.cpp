@@ -17,7 +17,7 @@ namespace sogen
             {
                 // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
                 char magic[4] = {'S', 'N', 'A', 'P'};
-                uint32_t version{3};
+                uint32_t version{4};
                 uint32_t machine{static_cast<uint32_t>(PEMachineType::AMD64)};
             };
 

@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "../emulated_display_adapter.hpp"
 #include "../emulator_utils.hpp"
+#include "../low_level_hooks.hpp"
 #include "../syscall_utils.hpp"
 #include "../win32k_userconnect.hpp"
 #include "../window_destroy_orchestrator.hpp"
@@ -33,6 +34,9 @@ namespace sogen
         constexpr uint32_t k_fn_inout_nc_calc_size_callback_id = 0x15;
         constexpr uint32_t k_fn_hk_in_lp_cbt_create_struct_callback_id = 0x2A;
         constexpr int k_wh_cbt = 5;
+        constexpr int k_wh_keyboard_ll = 13;
+        constexpr int k_wh_mouse_ll = 14;
+        constexpr DWORD k_error_global_only_hook = 1429;
         constexpr int k_hcbt_createwnd = 3;
 
         constexpr size_t k_client_pfn_button_wndproc_index = 7;
@@ -693,7 +697,7 @@ namespace sogen
             {
                 if (auto* thread = c.proc.find_thread_by_id(win.thread_id))
                 {
-                    thread->queue_status_changed_bits |= QS_PAINT;
+                    thread->mark_queue_status_changed(QS_PAINT);
                 }
             }
         }
@@ -705,7 +709,7 @@ namespace sogen
             {
                 if (auto* thread = c.proc.find_thread_by_id(win.thread_id))
                 {
-                    thread->queue_status_changed_bits |= QS_PAINT;
+                    thread->mark_queue_status_changed(QS_PAINT);
                 }
             }
         }
@@ -2483,12 +2487,19 @@ namespace sogen
                 return FALSE;
             }
 
-            // TODO: This should return the clip cursor. For simplicity, we return a best effort derived from the screen size.
-            RECT rect{.left = 0, .top = 0, .right = 1920, .bottom = 1080};
-            const auto display_info = c.proc.user_handles.get_display_info().read();
-            if (const emulator_object<USER_MONITOR> monitor_obj(c.emu, display_info.pPrimaryMonitor); monitor_obj)
+            RECT rect{
+                .left = 0, .top = 0, .right = static_cast<LONG>(c.proc.display_width), .bottom = static_cast<LONG>(c.proc.display_height)};
+            if (c.proc.cursor_clip)
             {
-                rect = monitor_obj.read().rcMonitor;
+                rect = *c.proc.cursor_clip;
+            }
+            else
+            {
+                const auto display_info = c.proc.user_handles.get_display_info().read();
+                if (const emulator_object<USER_MONITOR> monitor_obj(c.emu, display_info.pPrimaryMonitor); monitor_obj)
+                {
+                    rect = monitor_obj.read().rcMonitor;
+                }
             }
 
             c.emu.write_memory(rect_ptr, &rect, sizeof(rect));
@@ -2506,8 +2517,16 @@ namespace sogen
 
         // SetCursorPos moves the cursor; games use it to recenter the pointer. Track the new position so a
         // following GetCursorPos reflects it (and relative-motion deltas compute correctly).
-        BOOL handle_NtUserSetCursorPos(const syscall_context& c, const int32_t x, const int32_t y)
+        BOOL handle_NtUserSetCursorPos(const syscall_context& c, int32_t x, int32_t y)
         {
+            if (const auto& clip = c.proc.cursor_clip)
+            {
+                x = std::clamp(x, static_cast<int32_t>(clip->left),
+                               std::max(static_cast<int32_t>(clip->left), static_cast<int32_t>(clip->right) - 1));
+                y = std::clamp(y, static_cast<int32_t>(clip->top),
+                               std::max(static_cast<int32_t>(clip->top), static_cast<int32_t>(clip->bottom) - 1));
+            }
+
             c.proc.cursor_x = x;
             c.proc.cursor_y = y;
             // Warp the host cursor to match, so the next host mouse-motion event measures movement from the
@@ -2519,10 +2538,27 @@ namespace sogen
             return TRUE;
         }
 
-        // ClipCursor confines the cursor to a rectangle. The emulated cursor is driven by the host window
-        // and never escapes it, so confinement is a no-op; just report success.
-        BOOL handle_NtUserClipCursor(const syscall_context& /*c*/, const emulator_pointer /*rect*/)
+        BOOL handle_NtUserClipCursor(const syscall_context& c, const emulator_pointer rect_ptr)
         {
+            if (rect_ptr == 0)
+            {
+                c.proc.cursor_clip.reset();
+            }
+            else
+            {
+                auto rect = c.emu.read_memory<RECT>(rect_ptr);
+                if (rect.left > rect.right)
+                {
+                    std::swap(rect.left, rect.right);
+                }
+                if (rect.top > rect.bottom)
+                {
+                    std::swap(rect.top, rect.bottom);
+                }
+                c.proc.cursor_clip = rect;
+            }
+
+            c.win_emu.apply_cursor_capture();
             return TRUE;
         }
 
@@ -2653,6 +2689,7 @@ namespace sogen
         void apply_cursor_visibility(const syscall_context& c)
         {
             c.win_emu.ui().set_cursor_visibility(c.proc.cursor_show_count >= 0 && c.proc.cursor_shape_visible);
+            c.win_emu.apply_cursor_capture();
         }
 
         // ShowCursor(bShow) adjusts the cursor display counter (+1 to show, -1 to hide) and returns the new
@@ -3161,12 +3198,31 @@ namespace sogen
                                                const DWORD thread_id, const int hook_id, const pointer proc, const BOOL ansi)
         {
             auto& thread = c.thread();
-            if (instance != 0 || thread_id != thread.id || hook_id != k_wh_cbt || proc == 0 || thread.cbt_hook)
+            if (proc == 0)
             {
                 return 0;
             }
 
-            const auto handle = thread.next_cbt_hook_handle++;
+            // Low-level hooks are global; they run on the installing thread while it retrieves messages.
+            if (hook_id == k_wh_keyboard_ll || hook_id == k_wh_mouse_ll)
+            {
+                if (thread_id != 0)
+                {
+                    set_guest_last_error(c, k_error_global_only_hook);
+                    return 0;
+                }
+
+                const auto handle = c.proc.next_hook_handle++;
+                thread.low_level_hooks.push_back(user_low_level_hook{.handle = handle, .id = hook_id, .proc = proc});
+                return handle;
+            }
+
+            if (instance != 0 || thread_id != thread.id || hook_id != k_wh_cbt || thread.cbt_hook)
+            {
+                return 0;
+            }
+
+            const auto handle = c.proc.next_hook_handle++;
             thread.cbt_hook = user_cbt_hook{
                 .handle = handle,
                 .proc = proc,
@@ -3177,14 +3233,21 @@ namespace sogen
 
         BOOL handle_NtUserUnhookWindowsHookEx(const syscall_context& c, const uint64_t hook)
         {
-            auto& current = c.thread().cbt_hook;
-            if (!current || current->handle != hook)
+            for (auto& thread : c.proc.threads | std::views::values)
             {
-                return FALSE;
+                if (thread.cbt_hook && thread.cbt_hook->handle == hook)
+                {
+                    thread.cbt_hook.reset();
+                    return TRUE;
+                }
+
+                if (std::erase_if(thread.low_level_hooks, [&](const user_low_level_hook& entry) { return entry.handle == hook; }) != 0)
+                {
+                    return TRUE;
+                }
             }
 
-            current.reset();
-            return TRUE;
+            return FALSE;
         }
 
         lresult handle_NtUserCallNextHookEx(const syscall_context&, const int, const wparam, const lparam, const BOOL)
@@ -4284,6 +4347,11 @@ namespace sogen
         BOOL handle_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                      const UINT msg_filter_min, const UINT msg_filter_max)
         {
+            if (dispatch_low_level_hook(c, callback_id::NtUserGetMessage))
+            {
+                return {};
+            }
+
             auto& t = c.thread();
 
             if (auto pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, true))
@@ -4295,14 +4363,27 @@ namespace sogen
             }
 
             t.await_msg = {message, hwnd, msg_filter_min, msg_filter_max};
+            t.remember_message_wait(c.emu, c.win_emu.abi());
 
             c.win_emu.yield_thread(c.vcpu, false);
             return {};
         }
 
+        BOOL completion_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
+                                         const UINT msg_filter_min, const UINT msg_filter_max)
+        {
+            complete_low_level_hook(c);
+            return handle_NtUserGetMessage(c, message, hwnd, msg_filter_min, msg_filter_max);
+        }
+
         BOOL handle_NtUserPeekMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                       const UINT msg_filter_min, const UINT msg_filter_max, const UINT remove_message)
         {
+            if (dispatch_low_level_hook(c, callback_id::NtUserPeekMessage))
+            {
+                return {};
+            }
+
             auto& t = c.thread();
 
             const bool should_remove = (remove_message & PM_REMOVE) != 0;
@@ -4319,17 +4400,36 @@ namespace sogen
             return FALSE;
         }
 
+        BOOL completion_NtUserPeekMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
+                                          const UINT msg_filter_min, const UINT msg_filter_max, const UINT remove_message)
+        {
+            complete_low_level_hook(c);
+            return handle_NtUserPeekMessage(c, message, hwnd, msg_filter_min, msg_filter_max, remove_message);
+        }
+
         BOOL handle_NtUserWaitMessage(const syscall_context& c)
         {
+            if (dispatch_low_level_hook(c, callback_id::NtUserWaitMessage))
+            {
+                return {};
+            }
+
             auto& t = c.thread();
             if (t.peek_pending_message(c.win_emu))
             {
                 return TRUE;
             }
 
-            c.vcpu.active_thread->await_msg_mask = QS_ALLINPUT;
+            t.await_msg_mask = QS_ALLINPUT;
+            t.remember_message_wait(c.emu, c.win_emu.abi());
             c.win_emu.yield_thread(c.vcpu, false);
             return {};
+        }
+
+        BOOL completion_NtUserWaitMessage(const syscall_context& c)
+        {
+            complete_low_level_hook(c);
+            return handle_NtUserWaitMessage(c);
         }
 
         BOOL handle_NtUserInvalidateRect(const syscall_context& c, const hwnd hwnd, const emulator_object<RECT> rect, const BOOL erase)
@@ -4577,6 +4677,28 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        struct display_mode
+        {
+            uint32_t width;
+            uint32_t height;
+        };
+
+        // The single virtual display advertises a list of common modes so callers (e.g. DXVK's mode enumeration, which
+        // the game uses to validate available resolutions) see real entries.
+        constexpr std::array<display_mode, 8> k_display_modes = {{
+            {.width = 640, .height = 480},
+            {.width = 800, .height = 600},
+            {.width = 1024, .height = 768},
+            {.width = 1280, .height = 720},
+            {.width = 1280, .height = 1024},
+            {.width = 1600, .height = 900},
+            {.width = 1680, .height = 1050},
+            {.width = 1920, .height = 1080},
+        }};
+
+        constexpr uint32_t k_display_bits_per_pixel = 32;
+        constexpr uint32_t k_display_frequency = 60;
+
         NTSTATUS handle_NtUserEnumDisplaySettings(const syscall_context& c,
                                                   const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
                                                   const DWORD mode_num, const emulator_object<EMU_DEVMODEW> dev_mode, const DWORD /*flags*/)
@@ -4593,25 +4715,6 @@ namespace sogen
                 return STATUS_UNSUCCESSFUL;
             }
 
-            // The single virtual display advertises a list of common modes so callers (e.g. DXVK's
-            // mode enumeration, which the game uses to validate available resolutions) see real entries.
-            struct display_mode
-            {
-                uint32_t width;
-                uint32_t height;
-            };
-
-            static constexpr std::array<display_mode, 8> modes = {{
-                {.width = 640, .height = 480},
-                {.width = 800, .height = 600},
-                {.width = 1024, .height = 768},
-                {.width = 1280, .height = 720},
-                {.width = 1280, .height = 1024},
-                {.width = 1600, .height = 900},
-                {.width = 1680, .height = 1050},
-                {.width = 1920, .height = 1080},
-            }};
-
             const auto fill_mode = [&](const uint32_t width, const uint32_t height) {
                 dev_mode.access([&](EMU_DEVMODEW& dm) {
                     // Real EnumDisplaySettings fills the whole structure. Clear it first so fields the
@@ -4623,34 +4726,96 @@ namespace sogen
                     dm.dmFields = 0x5C0000; // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
                     dm.dmPelsWidth = width;
                     dm.dmPelsHeight = height;
-                    dm.dmBitsPerPel = 32;
-                    dm.dmDisplayFrequency = 60;
+                    dm.dmBitsPerPel = k_display_bits_per_pixel;
+                    dm.dmDisplayFrequency = k_display_frequency;
                 });
             };
 
-            if (mode_num == ENUM_CURRENT_SETTINGS || mode_num == ENUM_REGISTRY_SETTINGS)
+            if (mode_num == ENUM_CURRENT_SETTINGS)
             {
-                fill_mode(1920, 1080);
+                fill_mode(c.proc.display_width, c.proc.display_height);
                 return STATUS_SUCCESS;
             }
 
-            if (mode_num < modes.size())
+            if (mode_num == ENUM_REGISTRY_SETTINGS)
             {
-                fill_mode(modes[mode_num].width, modes[mode_num].height);
+                fill_mode(c.proc.registry_display_width, c.proc.registry_display_height);
+                return STATUS_SUCCESS;
+            }
+
+            if (mode_num < k_display_modes.size())
+            {
+                fill_mode(k_display_modes[mode_num].width, k_display_modes[mode_num].height);
                 return STATUS_SUCCESS;
             }
 
             return STATUS_UNSUCCESSFUL;
         }
 
-        // The emulator owns a single virtual display whose mode never actually changes; accept any requested mode
-        // (including CDS_TEST probes) by reporting DISP_CHANGE_SUCCESSFUL so the renderer proceeds to window setup.
-        LONG handle_NtUserChangeDisplaySettings(const syscall_context& /*c*/,
-                                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*device_name*/,
-                                                const emulator_object<EMU_DEVMODEW> /*dev_mode*/, const hwnd /*window*/,
-                                                const DWORD /*flags*/, const uint64_t /*param*/)
+        // Fullscreen games switch the display to their resolution and take the screen size from then on, e.g. to convert
+        // screen coordinates of the cursor. A null mode returns to the registry mode.
+        LONG handle_NtUserChangeDisplaySettings(const syscall_context& c,
+                                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
+                                                const emulator_object<EMU_DEVMODEW> dev_mode, const hwnd /*window*/, const DWORD flags,
+                                                const uint64_t /*param*/)
         {
-            return 0; // DISP_CHANGE_SUCCESSFUL
+            constexpr LONG disp_change_successful = 0;
+            constexpr LONG disp_change_badmode = -2;
+            constexpr LONG disp_change_badparam = -5;
+            constexpr DWORD cds_updateregistry = 0x1;
+            constexpr DWORD cds_test = 0x2;
+            constexpr DWORD cds_noreset = 0x10000000;
+            constexpr DWORD dm_bitsperpel = 0x40000;
+            constexpr DWORD dm_pelswidth = 0x80000;
+            constexpr DWORD dm_pelsheight = 0x100000;
+            constexpr DWORD dm_displayfrequency = 0x400000;
+
+            if (const auto name = device_name ? read_unicode_string(c.emu, device_name) : u""; !name.empty() && name != u"\\\\.\\DISPLAY1")
+            {
+                return disp_change_badparam;
+            }
+
+            auto width = c.proc.registry_display_width;
+            auto height = c.proc.registry_display_height;
+            if (dev_mode)
+            {
+                const auto mode = dev_mode.read();
+                width = (mode.dmFields & dm_pelswidth) != 0 ? mode.dmPelsWidth : c.proc.display_width;
+                height = (mode.dmFields & dm_pelsheight) != 0 ? mode.dmPelsHeight : c.proc.display_height;
+
+                // A frequency of 0 or 1 asks for the display's default.
+                if (((mode.dmFields & dm_bitsperpel) != 0 && mode.dmBitsPerPel != k_display_bits_per_pixel) ||
+                    ((mode.dmFields & dm_displayfrequency) != 0 && mode.dmDisplayFrequency > 1 &&
+                     mode.dmDisplayFrequency != k_display_frequency))
+                {
+                    return disp_change_badmode;
+                }
+            }
+
+            if (std::ranges::none_of(k_display_modes,
+                                     [&](const display_mode& mode) { return mode.width == width && mode.height == height; }))
+            {
+                return disp_change_badmode;
+            }
+
+            if ((flags & cds_test) != 0)
+            {
+                return disp_change_successful;
+            }
+
+            if ((flags & cds_updateregistry) != 0)
+            {
+                c.proc.registry_display_width = width;
+                c.proc.registry_display_height = height;
+            }
+
+            if ((flags & cds_noreset) == 0)
+            {
+                c.proc.set_display_mode(c.win_emu, width, height);
+                c.win_emu.apply_cursor_capture();
+            }
+
+            return disp_change_successful;
         }
 
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, const hdc hdc_in, const uint64_t clip_rect_ptr,
@@ -5156,11 +5321,19 @@ namespace sogen
 
         hwnd handle_NtUserSetFocus(const syscall_context& c, const hwnd hwnd)
         {
+            if (hwnd != 0 && !c.proc.windows.get(hwnd))
+            {
+                return 0;
+            }
+
+            auto& thread = c.thread();
+            const auto previous = thread.focus_window;
+            thread.set_focus_window(hwnd);
             if (hwnd != 0)
             {
                 set_thread_window_context(c, hwnd);
             }
-            return hwnd;
+            return previous;
         }
 
         emulator_pointer handle_NtUserSetClassLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
@@ -5736,14 +5909,14 @@ namespace sogen
                 internal_path.targetSignalInfo.pixelRate = 148500000;
                 internal_path.targetSignalInfo.hSyncFreq = {.Numerator = 67500, .Denominator = 1};
                 internal_path.targetSignalInfo.vSyncFreq = {.Numerator = 60, .Denominator = 1};
-                internal_path.targetSignalInfo.activeSize = {.cx = 1920, .cy = 1080};
+                internal_path.targetSignalInfo.activeSize = {.cx = c.proc.display_width, .cy = c.proc.display_height};
                 internal_path.targetSignalInfo.totalSize = {.cx = 2200, .cy = 1125};
                 internal_path.targetSignalInfo.scanLineOrdering = 1; // PROGRESSIVE
                 internal_path.targetSignalInfo.u.videoStandard = 0;
                 internal_path.outputTechnology = 5; // HDMI
                 internal_path.padding2[17] = 1;
-                internal_path.sourceWidth = 1920;
-                internal_path.sourceHeight = 1080;
+                internal_path.sourceWidth = c.proc.display_width;
+                internal_path.sourceHeight = c.proc.display_height;
 
                 c.emu.write_memory(path_array, &internal_path, sizeof(internal_path));
             }
@@ -5871,7 +6044,7 @@ namespace sogen
 
                 const emulator_object<EMU_GET_DISPLAY_INFO_EX> display_info{c.emu, packet};
 
-                display_info.access([](EMU_GET_DISPLAY_INFO_EX& info) {
+                display_info.access([&](EMU_GET_DISPLAY_INFO_EX& info) {
                     const bool known_adapter =
                         info.adapterId.LowPart == 0x1000 && info.adapterId.HighPart == 0; // Must match k_dxgk_adapter_luid!
                     const bool known_source = info.sourceId == 0;
@@ -5894,8 +6067,8 @@ namespace sogen
 
                     info.DisplayLeft = 0;
                     info.DisplayTop = 0;
-                    info.DisplayWidth = 1920;
-                    info.DisplayHeight = 1080;
+                    info.DisplayWidth = static_cast<INT32>(c.proc.display_width);
+                    info.DisplayHeight = static_cast<INT32>(c.proc.display_height);
 
                     utils::string::copy(info.DeviceName, u"\\\\.\\DISPLAY1");
 
@@ -6047,7 +6220,7 @@ namespace sogen
         uint32_t handle_NtUserGetQueueStatus(const syscall_context& c, const UINT flags)
         {
             const auto result = handle_NtUserGetQueueStatusReadonly(c, flags);
-            c.vcpu.active_thread->queue_status_changed_bits &= ~flags;
+            c.vcpu.active_thread->clear_queue_status_changed(flags);
             return result;
         }
 
@@ -6817,6 +6990,83 @@ namespace sogen
             return TRUE;
         }
 
+        namespace
+        {
+            constexpr uint32_t k_spi_get_icontitle_logfont = 0x1F;
+            constexpr uint32_t k_spi_get_nonclientmetrics = 0x29;
+            constexpr uint32_t k_default_dpi = 96;
+
+            // The metrics and logfonts a Windows 11 desktop reports at 96 DPI.
+            void fill_ui_logfont(EMU_LOGFONTW& font, const uint32_t dpi)
+            {
+                font.lfHeight = -static_cast<LONG>(9ull * dpi / 72ull);
+                font.lfWeight = FW_NORMAL;
+                font.lfCharSet = DEFAULT_CHARSET;
+                std::ranges::copy(u"Segoe UI", font.lfFaceName);
+            }
+        }
+
+        BOOL handle_NtUserSystemParametersInfoForDpi(const syscall_context& c, const uint32_t action, const uint32_t param,
+                                                     const emulator_pointer value, const uint32_t /*win_ini*/, const uint32_t dpi)
+        {
+            const auto effective_dpi = dpi != 0 ? dpi : k_default_dpi;
+
+            if (action == k_spi_get_icontitle_logfont)
+            {
+                if (value == 0 || (param != 0 && param < sizeof(EMU_LOGFONTW)))
+                {
+                    return FALSE;
+                }
+
+                EMU_LOGFONTW font{};
+                fill_ui_logfont(font, effective_dpi);
+                emulator_object<EMU_LOGFONTW>{c.emu, value}.write(font);
+                return TRUE;
+            }
+
+            if (action == k_spi_get_nonclientmetrics)
+            {
+                if (value == 0)
+                {
+                    return FALSE;
+                }
+
+                const auto cb_size = emulator_object<uint32_t>{c.emu, value}.read();
+                const auto length = std::min(cb_size, param != 0 ? param : cb_size);
+                if (cb_size < offsetof(EMU_NONCLIENTMETRICS, lfMessageFont) + sizeof(EMU_LOGFONTW) ||
+                    length < offsetof(EMU_NONCLIENTMETRICS, lfMessageFont) + sizeof(EMU_LOGFONTW))
+                {
+                    return FALSE;
+                }
+
+                EMU_NONCLIENTMETRICS metrics{};
+                metrics.cbSize = cb_size;
+                metrics.iBorderWidth = 5;
+                metrics.iScrollWidth = 17;
+                metrics.iScrollHeight = 17;
+                metrics.iCaptionWidth = 22;
+                metrics.iCaptionHeight = 22;
+                metrics.iSmCaptionWidth = 22;
+                metrics.iSmCaptionHeight = 22;
+                fill_ui_logfont(metrics.lfCaptionFont, effective_dpi);
+                fill_ui_logfont(metrics.lfSmCaptionFont, effective_dpi);
+                fill_ui_logfont(metrics.lfMenuFont, effective_dpi);
+                fill_ui_logfont(metrics.lfStatusFont, effective_dpi);
+                fill_ui_logfont(metrics.lfMessageFont, effective_dpi);
+
+                c.emu.write_memory(value, &metrics, std::min(length, static_cast<uint32_t>(sizeof(metrics))));
+                return TRUE;
+            }
+
+            return FALSE;
+        }
+
+        BOOL handle_NtUserSystemParametersInfo(const syscall_context& c, const uint32_t action, const uint32_t param,
+                                               const emulator_pointer value, const uint32_t win_ini)
+        {
+            return handle_NtUserSystemParametersInfoForDpi(c, action, param, value, win_ini, k_default_dpi);
+        }
+
         uint32_t handle_NtUserGetClipboardSequenceNumber()
         {
             return 1;
@@ -6833,6 +7083,16 @@ namespace sogen
         }
 
         BOOL handle_NtUserEmptyClipboard()
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserAddClipboardFormatListener(const syscall_context& /*c*/, const hwnd /*window*/)
+        {
+            return TRUE;
+        }
+
+        BOOL handle_NtUserRemoveClipboardFormatListener(const syscall_context& /*c*/, const hwnd /*window*/)
         {
             return TRUE;
         }
@@ -6859,9 +7119,9 @@ namespace sogen
             return USER_DEFAULT_DPI_CONTEXT;
         }
 
-        NTSTATUS handle_NtUserSetProcessDpiAwarenessContext()
+        BOOL handle_NtUserSetProcessDpiAwarenessContext()
         {
-            return 0;
+            return TRUE;
         }
 
         uint32_t handle_NtUserMapVirtualKeyEx(const syscall_context& /*c*/, const uint32_t code, const uint32_t map_type,

@@ -15,6 +15,7 @@ namespace sogen
 
     struct completion_state;
     struct process_context;
+    struct windows_arch_abi;
 
     struct user_timer_key
     {
@@ -75,6 +76,27 @@ namespace sogen
             buffer.read(this->handle);
             buffer.read(this->proc);
             buffer.read(this->ansi);
+        }
+    };
+
+    struct user_low_level_hook
+    {
+        uint64_t handle{};
+        int id{};
+        uint64_t proc{};
+
+        void serialize(utils::buffer_serializer& buffer) const
+        {
+            buffer.write(this->handle);
+            buffer.write(this->id);
+            buffer.write(this->proc);
+        }
+
+        void deserialize(utils::buffer_deserializer& buffer)
+        {
+            buffer.read(this->handle);
+            buffer.read(this->id);
+            buffer.read(this->proc);
         }
     };
 
@@ -215,6 +237,10 @@ namespace sogen
         NtUserSetWindowPos,
         NtUserGetComboBoxInfo,
         NtUserEndDeferWindowPosEx,
+        NtUserGetMessage,
+        NtUserPeekMessage,
+        NtUserWaitMessage,
+        NtUserMsgWaitForMultipleObjectsEx,
     };
 
     struct callback_frame
@@ -407,6 +433,9 @@ namespace sogen
         std::optional<emulator_allocator> wow64_context_segment; // For WOW64 context (CONTEXT64) allocation
         std::optional<emulator_object<WOW64_CPURESERVED>>
             wow64_cpu_reserved; // Persistent WOW64 thread context for ThreadWow64Context queries
+        std::optional<emulator_object<USER_CLIENTTHREADINFO>> client_thread_info;
+        hwnd active_window{};
+        hwnd focus_window{};
 
         std::vector<std::byte> last_registers{};
 
@@ -415,7 +444,11 @@ namespace sogen
         std::vector<callback_frame> callback_stack;
         std::optional<uint64_t> callback_return_rax{};
         std::optional<user_cbt_hook> cbt_hook{};
-        uint64_t next_cbt_hook_handle{1};
+        std::vector<user_low_level_hook> low_level_hooks{};
+
+        std::optional<uint64_t> message_wait_return_register{};
+        std::optional<std::chrono::steady_clock::time_point> message_wait_deadline{};
+        std::vector<uint64_t> running_low_level_inputs{};
 
         std::map<user_timer_key, user_timer> user_timers{};
         uint64_t next_user_timer_id{1};
@@ -427,6 +460,8 @@ namespace sogen
         uint32_t queue_status_changed_bits{};
 
         void mark_as_ready(NTSTATUS status);
+        void remember_message_wait(cpu_interface& emu, const windows_arch_abi& abi);
+        void restart_message_wait(cpu_interface& emu, const windows_arch_abi& abi);
 
         bool is_await_time_over(utils::clock& clock) const
         {
@@ -459,6 +494,12 @@ namespace sogen
                                                 bool remove = false);
         void post_message(windows_emulator& win_emu, msg msg, bool try_coalesce = false);
         void remove_window_messages(hwnd window);
+        void set_active_window(hwnd window);
+        void set_focus_window(hwnd window);
+        void forget_window(hwnd window);
+        void mark_queue_status_changed(uint32_t bits);
+        void clear_queue_status_changed(uint32_t bits);
+        void publish_client_thread_info() const;
 
         bool is_terminated() const;
 
@@ -536,6 +577,9 @@ namespace sogen
             buffer.write_optional(this->teb32);
             buffer.write_optional(this->wow64_context_segment);
             buffer.write_optional(this->wow64_cpu_reserved);
+            buffer.write_optional(this->client_thread_info);
+            buffer.write(this->active_window);
+            buffer.write(this->focus_window);
 
             buffer.write_vector(this->last_registers);
 
@@ -544,7 +588,10 @@ namespace sogen
             buffer.write_vector(this->callback_stack);
             buffer.write_optional(this->callback_return_rax);
             buffer.write_optional(this->cbt_hook);
-            buffer.write(this->next_cbt_hook_handle);
+            buffer.write_vector(this->low_level_hooks);
+            buffer.write_optional(this->message_wait_return_register);
+            buffer.write_optional(this->message_wait_deadline);
+            buffer.write_vector(this->running_low_level_inputs);
 
             buffer.write_map(this->user_timers);
             buffer.write(this->next_user_timer_id);
@@ -610,6 +657,9 @@ namespace sogen
             buffer.read_optional(this->teb32, [this] { return emulator_object<TEB32>(*this->memory_ptr); });
             buffer.read_optional(this->wow64_context_segment, [this] { return emulator_allocator(*this->memory_ptr); });
             buffer.read_optional(this->wow64_cpu_reserved, [this] { return emulator_object<WOW64_CPURESERVED>(*this->memory_ptr); });
+            buffer.read_optional(this->client_thread_info, [this] { return emulator_object<USER_CLIENTTHREADINFO>(*this->memory_ptr); });
+            buffer.read(this->active_window);
+            buffer.read(this->focus_window);
 
             buffer.read_vector(this->last_registers);
 
@@ -618,7 +668,10 @@ namespace sogen
             buffer.read_vector(this->callback_stack);
             buffer.read_optional(this->callback_return_rax);
             buffer.read_optional(this->cbt_hook);
-            buffer.read(this->next_cbt_hook_handle);
+            buffer.read_vector(this->low_level_hooks);
+            buffer.read_optional(this->message_wait_return_register);
+            buffer.read_optional(this->message_wait_deadline);
+            buffer.read_vector(this->running_low_level_inputs);
 
             buffer.read_map(this->user_timers);
             buffer.read(this->next_user_timer_id);

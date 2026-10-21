@@ -333,6 +333,10 @@ namespace sogen
     {
         this->pop_frame_allocation(frame);
         this->thread_.remove_window_messages(frame.handle);
+        if (auto* owner = this->proc_.find_thread_by_id(win.thread_id))
+        {
+            owner->forget_window(frame.handle);
+        }
 
         clear_cached_window(this->thread_, win.handle, win.guest.value());
         win.guest.access([&](USER_WINDOW& guest_win) {
