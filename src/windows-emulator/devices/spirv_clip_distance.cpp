@@ -32,6 +32,9 @@ namespace sogen
         constexpr uint32_t op_type_vector = 23;
         constexpr uint32_t op_type_matrix = 24;
         constexpr uint32_t op_type_image = 25;
+        constexpr uint32_t op_type_array = 28;
+        constexpr uint32_t op_type_runtime_array = 29;
+        constexpr uint32_t op_type_struct = 30;
         constexpr uint32_t op_type_pointer = 32;
         constexpr uint32_t op_type_forward_pointer = 39;
         constexpr uint32_t op_constant = 43;
@@ -71,6 +74,7 @@ namespace sogen
         constexpr uint32_t decoration_built_in = 11;
         constexpr uint32_t built_in_clip_distance = 3;
         constexpr uint32_t built_in_cull_distance = 4;
+        constexpr uint32_t storage_class_output = 3;
         constexpr uint32_t storage_class_private = 6;
 
         struct instruction
@@ -231,6 +235,13 @@ namespace sogen
             }
             return false;
         }
+
+        // A built-in block such as gl_PerVertex whose trailing members are stripped clip or cull distances.
+        struct stripped_block
+        {
+            uint32_t kept_members{};
+            std::vector<uint32_t> member_types{};
+        };
     }
 
     std::optional<std::vector<uint32_t>> strip_clip_and_cull_distance(const std::span<const uint32_t> code, const bool strip_clip,
@@ -252,6 +263,7 @@ namespace sogen
         };
 
         std::unordered_set<uint32_t> demoted{};
+        std::unordered_map<uint32_t, std::unordered_set<uint32_t>> stripped_members{};
         for (const auto& inst : instructions)
         {
             if (inst.opcode == op_decorate && inst.word_count >= 4 && code[inst.offset + 2] == decoration_built_in &&
@@ -262,11 +274,59 @@ namespace sogen
             else if (inst.opcode == op_member_decorate && inst.word_count >= 5 && code[inst.offset + 3] == decoration_built_in &&
                      is_stripped_built_in(code[inst.offset + 4]))
             {
+                stripped_members[code[inst.offset + 1]].insert(code[inst.offset + 2]);
+            }
+        }
+
+        if (demoted.empty() && stripped_members.empty())
+        {
+            return std::nullopt;
+        }
+
+        // The stripped members are dropped from the end of their block, so the other members keep their indices. A
+        // block used in any way other than through an output variable is left alone.
+        std::unordered_map<uint32_t, stripped_block> blocks{};
+        for (const auto& inst : instructions)
+        {
+            const auto* words = &code[inst.offset];
+            if (inst.opcode == op_type_struct && inst.word_count >= 2)
+            {
+                if (const auto stripped = stripped_members.find(words[1]); stripped != stripped_members.end())
+                {
+                    const auto member_count = static_cast<uint32_t>(inst.word_count - 2);
+                    const auto kept_members = member_count - static_cast<uint32_t>(stripped->second.size());
+                    for (const auto member : stripped->second)
+                    {
+                        if (member < kept_members || member >= member_count)
+                        {
+                            return std::nullopt;
+                        }
+                    }
+
+                    blocks[words[1]] = stripped_block{.kept_members = kept_members, .member_types = {words + 2, words + inst.word_count}};
+                }
+
+                for (size_t i = 2; i < inst.word_count; ++i)
+                {
+                    if (stripped_members.contains(words[i]))
+                    {
+                        return std::nullopt;
+                    }
+                }
+            }
+            else if ((inst.opcode == op_type_array || inst.opcode == op_type_runtime_array) && inst.word_count >= 3 &&
+                     stripped_members.contains(words[2]))
+            {
+                return std::nullopt;
+            }
+            else if (inst.opcode == op_type_pointer && inst.word_count == 4 && stripped_members.contains(words[3]) &&
+                     words[2] != storage_class_output)
+            {
                 return std::nullopt;
             }
         }
 
-        if (demoted.empty())
+        if (blocks.size() != stripped_members.size())
         {
             return std::nullopt;
         }
@@ -279,16 +339,29 @@ namespace sogen
 
         std::unordered_map<uint32_t, pointer_type> pointer_types{};
         std::unordered_map<uint32_t, uint32_t> private_pointer_by_pointee{};
+        std::unordered_map<uint32_t, uint32_t> constants{};
+        std::unordered_map<uint32_t, uint32_t> block_variables{};
         for (const auto& inst : instructions)
         {
+            const auto* words = &code[inst.offset];
             if (inst.opcode == op_type_pointer && inst.word_count == 4)
             {
-                const auto id = code[inst.offset + 1];
-                const pointer_type type{.storage_class = code[inst.offset + 2], .pointee = code[inst.offset + 3]};
-                pointer_types[id] = type;
+                const pointer_type type{.storage_class = words[2], .pointee = words[3]};
+                pointer_types[words[1]] = type;
                 if (type.storage_class == storage_class_private)
                 {
-                    private_pointer_by_pointee.try_emplace(type.pointee, id);
+                    private_pointer_by_pointee.try_emplace(type.pointee, words[1]);
+                }
+            }
+            else if (inst.opcode == op_constant && inst.word_count == 4)
+            {
+                constants[words[2]] = words[3];
+            }
+            else if (inst.opcode == op_variable && inst.word_count >= 4)
+            {
+                if (const auto type = pointer_types.find(words[1]); type != pointer_types.end() && blocks.contains(type->second.pointee))
+                {
+                    block_variables[words[2]] = type->second.pointee;
                 }
             }
         }
@@ -322,6 +395,37 @@ namespace sogen
             return true;
         };
 
+        // A stripped block member is replaced by a private variable, declared before the first function together with
+        // its pointer type when no private one exists yet.
+        std::vector<uint32_t> private_declarations{};
+        std::vector<uint32_t> private_variables{};
+        std::unordered_map<uint64_t, uint32_t> member_variables{};
+        std::unordered_map<uint32_t, uint32_t> redirected_chains{};
+        const auto member_variable = [&](const uint32_t block_variable, const uint32_t member) {
+            const auto key = (static_cast<uint64_t>(block_variable) << 32) | member;
+            if (const auto existing = member_variables.find(key); existing != member_variables.end())
+            {
+                return existing->second;
+            }
+
+            const auto member_type = blocks.at(block_variables.at(block_variable)).member_types.at(member);
+            auto pointer = private_pointer_by_pointee.find(member_type);
+            if (pointer == private_pointer_by_pointee.end())
+            {
+                const auto pointer_id = bound++;
+                private_declarations.insert(private_declarations.end(),
+                                            {(4u << 16) | op_type_pointer, pointer_id, storage_class_private, member_type});
+                pointer = private_pointer_by_pointee.emplace(member_type, pointer_id).first;
+            }
+
+            const auto variable = bound++;
+            private_declarations.insert(private_declarations.end(),
+                                        {(4u << 16) | op_variable, pointer->second, variable, storage_class_private});
+            private_variables.push_back(variable);
+            member_variables[key] = variable;
+            return variable;
+        };
+
         std::unordered_set<uint32_t> demoted_pointers = demoted;
         for (const auto& inst : instructions)
         {
@@ -331,6 +435,29 @@ namespace sogen
                 if (!require_private(words[1]))
                 {
                     return std::nullopt;
+                }
+            }
+            else if (is_access_chain(inst.opcode) && inst.word_count >= 4 && block_variables.contains(words[3]))
+            {
+                if (inst.opcode != op_access_chain && inst.opcode != op_in_bounds_access_chain)
+                {
+                    return std::nullopt;
+                }
+
+                const auto member = constants.find(words[4]);
+                if (inst.word_count < 5 || member == constants.end())
+                {
+                    return std::nullopt;
+                }
+
+                if (member->second >= blocks.at(block_variables.at(words[3])).kept_members)
+                {
+                    if (!require_private(words[1]))
+                    {
+                        return std::nullopt;
+                    }
+                    redirected_chains[words[2]] = member_variable(words[3], member->second);
+                    demoted_pointers.insert(words[2]);
                 }
             }
             else if (is_access_chain(inst.opcode) && inst.word_count >= 4 && demoted_pointers.contains(words[3]))
@@ -366,9 +493,9 @@ namespace sogen
         const bool keep_in_interface = code[1] >= version_1_4;
 
         std::vector<uint32_t> result(code.begin(), code.begin() + header_words);
-        result[bound_word] = bound;
-        result.reserve(code.size() + (declared_after.size() * 4));
+        result.reserve(code.size() + (declared_after.size() * 4) + private_declarations.size() + private_variables.size());
 
+        bool declared_private_variables = false;
         for (const auto& inst : instructions)
         {
             const auto* words = &code[inst.offset];
@@ -384,13 +511,49 @@ namespace sogen
                 continue;
             }
 
+            if ((inst.opcode == op_member_decorate || inst.opcode == op_member_name) && inst.word_count >= 3)
+            {
+                if (const auto block = blocks.find(words[1]); block != blocks.end() && words[2] >= block->second.kept_members)
+                {
+                    continue;
+                }
+            }
+
+            if (inst.opcode == op_function && !declared_private_variables)
+            {
+                result.insert(result.end(), private_declarations.begin(), private_declarations.end());
+                declared_private_variables = true;
+            }
+
             const auto start = result.size();
+
+            if (inst.opcode == op_type_struct)
+            {
+                if (const auto block = blocks.find(words[1]); block != blocks.end())
+                {
+                    const auto word_count = 2 + block->second.kept_members;
+                    result.insert(result.end(), words, words + word_count);
+                    result[start] = (word_count << 16) | op_type_struct;
+                    continue;
+                }
+            }
+
+            if (const auto redirected = redirected_chains.find(is_access_chain(inst.opcode) ? words[2] : 0);
+                redirected != redirected_chains.end())
+            {
+                const auto word_count = static_cast<uint32_t>(inst.word_count - 1);
+                result.insert(result.end(),
+                              {(word_count << 16) | inst.opcode, replacement_type.at(words[1]), words[2], redirected->second});
+                result.insert(result.end(), words + 5, words + inst.word_count);
+                continue;
+            }
+
             result.insert(result.end(), words, words + inst.word_count);
             auto* emitted = &result[start];
 
-            if (inst.opcode == op_entry_point && !keep_in_interface)
+            if (inst.opcode == op_entry_point)
             {
-                // Before SPIR-V 1.4 the interface lists only Input and Output variables.
+                // Before SPIR-V 1.4 the interface lists only Input and Output variables, since 1.4 every global one.
                 size_t name_end = 3;
                 while (name_end < inst.word_count && !has_zero_byte(words[name_end]))
                 {
@@ -401,10 +564,14 @@ namespace sogen
                 std::vector<uint32_t> rebuilt(words, words + std::min(name_end, inst.word_count));
                 for (size_t i = name_end; i < inst.word_count; ++i)
                 {
-                    if (!demoted.contains(words[i]))
+                    if (keep_in_interface || !demoted.contains(words[i]))
                     {
                         rebuilt.push_back(words[i]);
                     }
+                }
+                if (keep_in_interface)
+                {
+                    rebuilt.insert(rebuilt.end(), private_variables.begin(), private_variables.end());
                 }
                 rebuilt[0] = (static_cast<uint32_t>(rebuilt.size()) << 16) | op_entry_point;
                 result.resize(start);
@@ -428,6 +595,7 @@ namespace sogen
             }
         }
 
+        result[bound_word] = bound;
         return result;
     }
 }
