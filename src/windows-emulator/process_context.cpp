@@ -728,8 +728,6 @@ namespace sogen
                 this->cursor_clip.reset();
             }
         }
-
-        win_emu.apply_cursor_capture();
     }
 
     emulator_pointer process_context::allocate_user_class(memory_manager& memory, const std::u16string_view class_name)
@@ -811,6 +809,8 @@ namespace sogen
         buffer.write(this->default_desktop_window_handle);
         buffer.write(this->display_width);
         buffer.write(this->display_height);
+        buffer.write(this->registry_display_width);
+        buffer.write(this->registry_display_height);
         buffer.write(this->events);
         buffer.write(this->files);
         buffer.write_map(this->file_locks);
@@ -924,6 +924,8 @@ namespace sogen
         buffer.read(this->default_desktop_window_handle);
         buffer.read(this->display_width);
         buffer.read(this->display_height);
+        buffer.read(this->registry_display_width);
+        buffer.read(this->registry_display_height);
         buffer.read(this->events);
         buffer.read(this->files);
         buffer.read_map(this->file_locks);

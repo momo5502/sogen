@@ -4696,6 +4696,9 @@ namespace sogen
             {.width = 1920, .height = 1080},
         }};
 
+        constexpr uint32_t k_display_bits_per_pixel = 32;
+        constexpr uint32_t k_display_frequency = 60;
+
         NTSTATUS handle_NtUserEnumDisplaySettings(const syscall_context& c,
                                                   const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
                                                   const DWORD mode_num, const emulator_object<EMU_DEVMODEW> dev_mode, const DWORD /*flags*/)
@@ -4723,8 +4726,8 @@ namespace sogen
                     dm.dmFields = 0x5C0000; // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
                     dm.dmPelsWidth = width;
                     dm.dmPelsHeight = height;
-                    dm.dmBitsPerPel = 32;
-                    dm.dmDisplayFrequency = 60;
+                    dm.dmBitsPerPel = k_display_bits_per_pixel;
+                    dm.dmDisplayFrequency = k_display_frequency;
                 });
             };
 
@@ -4736,7 +4739,7 @@ namespace sogen
 
             if (mode_num == ENUM_REGISTRY_SETTINGS)
             {
-                fill_mode(process_context::default_display_width, process_context::default_display_height);
+                fill_mode(c.proc.registry_display_width, c.proc.registry_display_height);
                 return STATUS_SUCCESS;
             }
 
@@ -4759,23 +4762,34 @@ namespace sogen
             constexpr LONG disp_change_successful = 0;
             constexpr LONG disp_change_badmode = -2;
             constexpr LONG disp_change_badparam = -5;
+            constexpr DWORD cds_updateregistry = 0x1;
             constexpr DWORD cds_test = 0x2;
             constexpr DWORD cds_noreset = 0x10000000;
+            constexpr DWORD dm_bitsperpel = 0x40000;
             constexpr DWORD dm_pelswidth = 0x80000;
             constexpr DWORD dm_pelsheight = 0x100000;
+            constexpr DWORD dm_displayfrequency = 0x400000;
 
             if (const auto name = device_name ? read_unicode_string(c.emu, device_name) : u""; !name.empty() && name != u"\\\\.\\DISPLAY1")
             {
                 return disp_change_badparam;
             }
 
-            auto width = process_context::default_display_width;
-            auto height = process_context::default_display_height;
+            auto width = c.proc.registry_display_width;
+            auto height = c.proc.registry_display_height;
             if (dev_mode)
             {
                 const auto mode = dev_mode.read();
                 width = (mode.dmFields & dm_pelswidth) != 0 ? mode.dmPelsWidth : c.proc.display_width;
                 height = (mode.dmFields & dm_pelsheight) != 0 ? mode.dmPelsHeight : c.proc.display_height;
+
+                // A frequency of 0 or 1 asks for the display's default.
+                if (((mode.dmFields & dm_bitsperpel) != 0 && mode.dmBitsPerPel != k_display_bits_per_pixel) ||
+                    ((mode.dmFields & dm_displayfrequency) != 0 && mode.dmDisplayFrequency > 1 &&
+                     mode.dmDisplayFrequency != k_display_frequency))
+                {
+                    return disp_change_badmode;
+                }
             }
 
             if (std::ranges::none_of(k_display_modes,
@@ -4784,9 +4798,21 @@ namespace sogen
                 return disp_change_badmode;
             }
 
-            if ((flags & (cds_test | cds_noreset)) == 0)
+            if ((flags & cds_test) != 0)
+            {
+                return disp_change_successful;
+            }
+
+            if ((flags & cds_updateregistry) != 0)
+            {
+                c.proc.registry_display_width = width;
+                c.proc.registry_display_height = height;
+            }
+
+            if ((flags & cds_noreset) == 0)
             {
                 c.proc.set_display_mode(c.win_emu, width, height);
+                c.win_emu.apply_cursor_capture();
             }
 
             return disp_change_successful;

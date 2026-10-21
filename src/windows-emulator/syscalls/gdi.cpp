@@ -94,8 +94,6 @@ namespace sogen
             static_assert(sizeof(font_enum_record) == 0x1E4);
 
             constexpr uint32_t k_default_dpi = 96;
-            constexpr uint32_t k_default_width = 1920;
-            constexpr uint32_t k_default_height = 1080;
             constexpr uint32_t k_default_bitmap_fill = 0xFFF5F5F5u;
 
             constexpr uint32_t k_gdi_first_dynamic_handle = 0x2000;
@@ -4940,8 +4938,8 @@ namespace sogen
 
             const size_t descriptor_offset = k_dxgk_open_resource_allocation_private_size;
             write_private(descriptor_offset + 0x00, 2u);
-            write_private(descriptor_offset + 0x04, k_default_width);
-            write_private(descriptor_offset + 0x08, k_default_height);
+            write_private(descriptor_offset + 0x04, c.proc.display_width);
+            write_private(descriptor_offset + 0x08, c.proc.display_height);
             write_private(descriptor_offset + 0x0C, 1u);
             write_private(descriptor_offset + 0x10, 0x57u);
             write_private(descriptor_offset + 0x1C, 1u);
@@ -5024,7 +5022,7 @@ namespace sogen
 
                 params.hResource = c.proc.dxgk.create_resource();
 
-                const auto backing_size = static_cast<uint64_t>(k_default_width) * static_cast<uint64_t>(k_default_height) * 4ull;
+                const auto backing_size = static_cast<uint64_t>(c.proc.display_width) * static_cast<uint64_t>(c.proc.display_height) * 4ull;
                 const auto allocation_private_data = params.pTotalPrivateDriverDataBuffer;
 
                 if (allocation_private_data != 0 &&

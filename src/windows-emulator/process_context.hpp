@@ -614,9 +614,9 @@ namespace sogen
         static constexpr uint32_t default_display_height = 1080;
         uint32_t display_width{default_display_width};
         uint32_t display_height{default_display_height};
+        uint32_t registry_display_width{default_display_width};
+        uint32_t registry_display_height{default_display_height};
 
-        // Changes the resolution of the virtual display, as ChangeDisplaySettings does, including everything user32
-        // reads directly: the screen metrics, the monitor and the desktop window.
         void set_display_mode(windows_emulator& win_emu, uint32_t width, uint32_t height);
         handle_store<handle_types::event, event> events{};
         handle_store<handle_types::file, file> files{};
