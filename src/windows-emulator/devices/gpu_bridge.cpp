@@ -9,6 +9,8 @@ namespace sogen
 {
     namespace
     {
+        constexpr int32_t vk_success = 0;
+
         // Host endpoint of the GPU paravirtualization bridge. The guest reaches it by opening
         // \\.\SogenGpu and issuing IOCTLs; each control code maps to one bridge command, with the
         // payload carried in the input/output buffers. Real Vulkan objects live on the host (behind
@@ -278,8 +280,6 @@ namespace sogen
 
             std::unordered_map<uint64_t, direct_mapping> direct_mappings_{};
 
-            // Host-visible memory of a WoW64 guest that lives in guest memory below its address limit and is imported
-            // into the device (see allocate_imported_memory), keyed by memory object id.
             struct imported_memory
             {
                 uint64_t guest_address{};
@@ -289,7 +289,6 @@ namespace sogen
 
             std::unordered_map<uint64_t, imported_memory> imported_memory_{};
 
-            // The device has to let go of imported memory before the guest range can be reused.
             template <typename Predicate>
             void release_imported_memory(windows_emulator& win_emu, const Predicate& released)
             {
@@ -1152,7 +1151,6 @@ namespace sogen
                     return STATUS_INVALID_PARAMETER;
                 }
 
-                constexpr int32_t vk_success = 0;
                 constexpr int32_t vk_timeout = 2;
 
                 const auto device = request.device;
@@ -1399,7 +1397,7 @@ namespace sogen
                 }
 
                 const int32_t result = this->vulkan_.get_fence_status(request.fence);
-                if (result == 0) // VK_SUCCESS
+                if (result == vk_success)
                 {
                     this->vulkan_.invalidate_imported_memory();
                 }
@@ -1554,7 +1552,7 @@ namespace sogen
                 }
 
                 uint64_t memory = gpu_bridge::null_object;
-                int32_t result = 0; // VK_SUCCESS
+                int32_t result = vk_success;
                 if (!this->allocate_imported_memory(win_emu, request, memory))
                 {
                     result = this->vulkan_.allocate_memory(request.device, request.size, request.memory_type_index, request.flags,
@@ -1775,7 +1773,7 @@ namespace sogen
                 if (const auto imported = this->imported_memory_.find(request.memory);
                     imported != this->imported_memory_.end() && imported->second.device == request.device)
                 {
-                    response.vk_result = 0; // VK_SUCCESS
+                    response.vk_result = vk_success;
                     response.guest_address =
                         (request.offset < imported->second.size) ? (imported->second.guest_address + request.offset) : 0;
                     return write_output(win_emu, context, response);

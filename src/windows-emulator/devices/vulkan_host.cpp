@@ -197,6 +197,8 @@ namespace sogen
             PFN_vkGetPhysicalDeviceProperties get_physical_device_properties{};
             PFN_vkGetPhysicalDeviceFormatProperties get_physical_device_format_properties{};
             PFN_vkGetPhysicalDeviceImageFormatProperties get_physical_device_image_format_properties{};
+            PFN_vkGetPhysicalDeviceImageFormatProperties2 get_physical_device_image_format_properties2{};
+            PFN_vkGetPhysicalDeviceExternalBufferProperties get_physical_device_external_buffer_properties{};
             PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queue_family_properties{};
             PFN_vkGetPhysicalDeviceQueueFamilyProperties2 get_queue_family_properties2{};
             PFN_vkGetPhysicalDeviceMemoryProperties get_physical_device_memory_properties{};
@@ -319,6 +321,7 @@ namespace sogen
             uint64_t placed_map_alignment{};
             PFN_vkGetMemoryHostPointerPropertiesEXT get_memory_host_pointer_properties{};
             uint64_t host_import_alignment{};
+            std::vector<VkMappedMemoryRange> non_coherent_imports{};
             PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges{};
             PFN_vkInvalidateMappedMemoryRanges invalidate_mapped_memory_ranges{};
             PFN_vkCreateBuffer create_buffer{};
@@ -501,7 +504,6 @@ namespace sogen
             uint64_t allocation_size{};
             bool placed{};
             bool imported{};
-            bool non_coherent{};
         };
 
         struct buffer_data
@@ -748,6 +750,55 @@ namespace sogen
             }
             instance->second.get_physical_device_memory_properties(dev.physical_device, &props);
             return true;
+        }
+
+        bool buffer_supports_host_import(const device_data& dev, const VkBufferCreateFlags flags, const VkBufferUsageFlags usage)
+        {
+            const auto instance = this->instances.find(dev.instance_id);
+            if (dev.host_import_alignment == 0 || instance == this->instances.end() ||
+                !instance->second.get_physical_device_external_buffer_properties)
+            {
+                return false;
+            }
+
+            const VkPhysicalDeviceExternalBufferInfo info{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO,
+                                                          .pNext = nullptr,
+                                                          .flags = flags,
+                                                          .usage = usage,
+                                                          .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
+            VkExternalBufferProperties properties{};
+            properties.sType = VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES;
+            instance->second.get_physical_device_external_buffer_properties(dev.physical_device, &info, &properties);
+            return (properties.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) != 0;
+        }
+
+        bool image_supports_host_import(const device_data& dev, const VkImageCreateInfo& image)
+        {
+            const auto instance = this->instances.find(dev.instance_id);
+            if (dev.host_import_alignment == 0 || instance == this->instances.end() ||
+                !instance->second.get_physical_device_image_format_properties2)
+            {
+                return false;
+            }
+
+            const VkPhysicalDeviceExternalImageFormatInfo external_info{
+                .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
+                .pNext = nullptr,
+                .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
+            const VkPhysicalDeviceImageFormatInfo2 info{.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+                                                        .pNext = &external_info,
+                                                        .format = image.format,
+                                                        .type = image.imageType,
+                                                        .tiling = image.tiling,
+                                                        .usage = image.usage,
+                                                        .flags = image.flags};
+            VkExternalImageFormatProperties external_properties{};
+            external_properties.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES;
+            VkImageFormatProperties2 properties{};
+            properties.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
+            properties.pNext = &external_properties;
+            return instance->second.get_physical_device_image_format_properties2(dev.physical_device, &info, &properties) == VK_SUCCESS &&
+                   (external_properties.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) != 0;
         }
 
         template <typename Map, typename Pred>
@@ -1175,6 +1226,11 @@ namespace sogen
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceFeatures2>(instance, "vkGetPhysicalDeviceFeatures2");
         data.get_physical_device_properties2 =
             this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceProperties2>(instance, "vkGetPhysicalDeviceProperties2");
+        data.get_physical_device_image_format_properties2 = this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceImageFormatProperties2>(
+            instance, "vkGetPhysicalDeviceImageFormatProperties2");
+        data.get_physical_device_external_buffer_properties =
+            this->impl_->load_instance_proc<PFN_vkGetPhysicalDeviceExternalBufferProperties>(instance,
+                                                                                             "vkGetPhysicalDeviceExternalBufferProperties");
         data.enumerate_device_extension_properties =
             this->impl_->load_instance_proc<PFN_vkEnumerateDeviceExtensionProperties>(instance, "vkEnumerateDeviceExtensionProperties");
         data.destroy_surface = this->impl_->load_instance_proc<PFN_vkDestroySurfaceKHR>(instance, "vkDestroySurfaceKHR");
@@ -3394,9 +3450,14 @@ namespace sogen
             return;
         }
 
-        if (dev != this->impl_->devices.end() && it->second.handle && dev->second.free_memory)
+        if (dev != this->impl_->devices.end())
         {
-            dev->second.free_memory(dev->second.handle, it->second.handle, nullptr);
+            std::erase_if(dev->second.non_coherent_imports,
+                          [&](const VkMappedMemoryRange& range) { return range.memory == it->second.handle; });
+            if (it->second.handle && dev->second.free_memory)
+            {
+                dev->second.free_memory(dev->second.handle, it->second.handle, nullptr);
+            }
         }
 
         this->impl_->memories.erase(it);
@@ -3437,6 +3498,15 @@ namespace sogen
         info.size = size;
         info.usage = usage;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+        // Memory the bridge imports may only back resources created for its handle type.
+        VkExternalMemoryBufferCreateInfo external_info{};
+        if (this->impl_->buffer_supports_host_import(dev->second, info.flags, usage))
+        {
+            external_info.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+            external_info.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+            info.pNext = &external_info;
+        }
 
         VkBuffer buffer{};
         const VkResult result = dev->second.create_buffer(dev->second.handle, &info, nullptr, &buffer);
@@ -3749,10 +3819,10 @@ namespace sogen
             return VK_ERROR_INVALID_EXTERNAL_HANDLE;
         }
 
-        VkImportMemoryHostPointerInfoEXT import_info{};
-        import_info.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT;
-        import_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
-        import_info.pHostPointer = host_pointer;
+        VkImportMemoryHostPointerInfoEXT import_info{.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
+                                                     .pNext = nullptr,
+                                                     .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
+                                                     .pHostPointer = host_pointer};
 
         VkMemoryAllocateFlagsInfo flags_info{};
         if (flags != 0 || device_mask != 0)
@@ -3780,13 +3850,20 @@ namespace sogen
         // physically tagged, so maintaining them through either mapping covers both.
         VkPhysicalDeviceMemoryProperties import_properties{};
         this->impl_->query_memory_properties(dev->second, import_properties);
-        bool non_coherent = (import_properties.memoryTypes[import_type_index].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0;
+        const bool non_coherent =
+            (import_properties.memoryTypes[import_type_index].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0;
         if (non_coherent)
         {
             void* mapped = nullptr;
-            non_coherent = dev->second.map_memory && dev->second.flush_mapped_memory_ranges &&
-                           dev->second.invalidate_mapped_memory_ranges &&
-                           dev->second.map_memory(dev->second.handle, memory, 0, VK_WHOLE_SIZE, 0, &mapped) == VK_SUCCESS;
+            if (!dev->second.map_memory || !dev->second.flush_mapped_memory_ranges || !dev->second.invalidate_mapped_memory_ranges ||
+                dev->second.map_memory(dev->second.handle, memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS)
+            {
+                dev->second.free_memory(dev->second.handle, memory, nullptr);
+                return VK_ERROR_MEMORY_MAP_FAILED;
+            }
+
+            dev->second.non_coherent_imports.push_back(VkMappedMemoryRange{
+                .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE, .pNext = nullptr, .memory = memory, .offset = 0, .size = VK_WHOLE_SIZE});
         }
 
         const uint64_t id = this->impl_->next_id++;
@@ -3795,52 +3872,36 @@ namespace sogen
                                                             .persistent_host_pointer = host_pointer,
                                                             .mapped_size = size,
                                                             .allocation_size = size,
-                                                            .imported = true,
-                                                            .non_coherent = non_coherent});
+                                                            .imported = true});
         out_memory = id;
         return VK_SUCCESS;
     }
 
-    namespace
+    void vulkan_host::flush_imported_memory()
     {
-        template <typename Sync>
-        void sync_non_coherent_imported_memory(auto& devices, auto& memories, const Sync& sync)
+        for (const auto& [id, dev] : this->impl_->devices)
         {
-            std::unordered_map<uint64_t, std::vector<VkMappedMemoryRange>> ranges{};
-            for (const auto& [id, memory] : memories)
+            if (!dev.non_coherent_imports.empty())
             {
-                if (memory.non_coherent)
-                {
-                    ranges[memory.device_id].push_back(VkMappedMemoryRange{.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-                                                                           .pNext = nullptr,
-                                                                           .memory = memory.handle,
-                                                                           .offset = 0,
-                                                                           .size = VK_WHOLE_SIZE});
-                }
-            }
-
-            for (const auto& [device_id, device_ranges] : ranges)
-            {
-                if (const auto dev = devices.find(device_id); dev != devices.end())
-                {
-                    sync(dev->second, device_ranges);
-                }
+                dev.flush_mapped_memory_ranges(dev.handle, static_cast<uint32_t>(dev.non_coherent_imports.size()),
+                                               dev.non_coherent_imports.data());
             }
         }
     }
 
-    void vulkan_host::flush_imported_memory()
-    {
-        sync_non_coherent_imported_memory(this->impl_->devices, this->impl_->memories, [](const auto& dev, const auto& ranges) {
-            dev.flush_mapped_memory_ranges(dev.handle, static_cast<uint32_t>(ranges.size()), ranges.data());
-        });
-    }
-
     void vulkan_host::invalidate_imported_memory()
     {
-        sync_non_coherent_imported_memory(this->impl_->devices, this->impl_->memories, [](const auto& dev, const auto& ranges) {
-            dev.invalidate_mapped_memory_ranges(dev.handle, static_cast<uint32_t>(ranges.size()), ranges.data());
-        });
+        // Invalidating a range the host wrote without flushing it first leaves its contents undefined, and the guest
+        // may have written since the last submission.
+        this->flush_imported_memory();
+        for (const auto& [id, dev] : this->impl_->devices)
+        {
+            if (!dev.non_coherent_imports.empty())
+            {
+                dev.invalidate_mapped_memory_ranges(dev.handle, static_cast<uint32_t>(dev.non_coherent_imports.size()),
+                                                    dev.non_coherent_imports.data());
+            }
+        }
     }
 
     uint64_t vulkan_host::allocation_size(uint64_t memory) const
@@ -3953,6 +4014,14 @@ namespace sogen
         info.usage = usage;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
         info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+        VkExternalMemoryImageCreateInfo external_info{};
+        if (this->impl_->image_supports_host_import(dev->second, info))
+        {
+            external_info.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO;
+            external_info.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+            info.pNext = &external_info;
+        }
 
         VkImage image{};
         const VkResult result = dev->second.create_image(dev->second.handle, &info, nullptr, &image);
