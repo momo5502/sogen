@@ -906,7 +906,10 @@ namespace sogen
         BOOL handle_NtGdiPolyPatBlt(const syscall_context& c, hdc dc, DWORD rop, emulator_pointer poly, DWORD count, DWORD mode);
         BOOL handle_NtGdiExtTextOutW(const syscall_context& c, hdc dc, LONG x, LONG y, UINT options, emulator_pointer rect,
                                      emulator_pointer text, UINT count, emulator_pointer dx, DWORD code_page);
-        BOOL handle_NtGdiGetRealizationInfo(const syscall_context& c, hdc dc, emulator_pointer realization_info, uint64_t font);
+        BOOL handle_NtGdiGetRealizationInfo(const syscall_context& c, hdc dc, emulator_pointer realization_info);
+        BOOL handle_NtGdiFontIsLinked(const syscall_context& c, hdc dc);
+        uint32_t handle_NtGdiGetFontData(const syscall_context& c, hdc dc, uint32_t table, uint32_t offset, emulator_pointer buffer,
+                                         uint32_t size);
         NTSTATUS handle_NtGdiGetEntry(const syscall_context& c, uint32_t handle_value, emulator_pointer entry_ptr);
         int32_t handle_NtGdiSetIcmMode();
         NTSTATUS handle_NtGdiSetLayout();
@@ -1624,6 +1627,8 @@ namespace sogen
         add_handler(NtGdiPolyPatBlt);
         add_handler(NtGdiExtTextOutW);
         add_handler(NtGdiGetRealizationInfo);
+        add_handler(NtGdiFontIsLinked);
+        add_handler(NtGdiGetFontData);
         add_handler(NtGdiGetEntry);
         add_handler(NtGdiInit2);
         add_handler(NtGdiMoveToEx);

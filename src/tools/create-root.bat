@@ -167,6 +167,7 @@ CALL :collect slwga.dll
 CALL :collect sppc.dll
 CALL :collect srvcli.dll
 CALL :collect sspicli.dll
+CALL :collect textshaping.dll
 CALL :collect twinapi.appcore.dll
 CALL :collect ucrtbase.dll
 CALL :collect ucrtbased.dll
