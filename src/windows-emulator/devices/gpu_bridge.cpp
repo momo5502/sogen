@@ -273,6 +273,7 @@ namespace sogen
                 uint64_t size{};
                 uint64_t device{};
                 void* host_ptr{};
+                bool placed{};
             };
 
             std::unordered_map<uint64_t, direct_mapping> direct_mappings_{};
@@ -411,8 +412,7 @@ namespace sogen
                 // aliases first to prevent stale mappings to freed host pages.
                 for (auto it = this->direct_mappings_.begin(); it != this->direct_mappings_.end();)
                 {
-                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
-                    this->vulkan_.unmap_memory(it->second.device, it->first);
+                    this->release_direct_mapping(win_emu, it->first, it->second);
                     it = this->direct_mappings_.erase(it);
                 }
 
@@ -905,8 +905,7 @@ namespace sogen
                         continue;
                     }
 
-                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
-                    this->vulkan_.unmap_memory(it->second.device, it->first);
+                    this->release_direct_mapping(win_emu, it->first, it->second);
                     it = this->direct_mappings_.erase(it);
                 }
 
@@ -1529,8 +1528,7 @@ namespace sogen
                 // dereference (e.g. while DXVK frees buffers during shutdown).
                 if (const auto it = this->direct_mappings_.find(request.memory); it != this->direct_mappings_.end())
                 {
-                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
-                    this->vulkan_.unmap_memory(it->second.device, request.memory);
+                    this->release_direct_mapping(win_emu, request.memory, it->second);
                     this->direct_mappings_.erase(it);
                 }
 
@@ -1687,11 +1685,20 @@ namespace sogen
                     return write_output(win_emu, context, response);
                 }
 
+                constexpr uint64_t page = 0x1000;
+
+                if (const auto placed = this->map_memory_placed(win_emu, request.device, request.memory))
+                {
+                    response.vk_result = 0; // VK_SUCCESS
+                    response.guest_address = (request.offset < placed->size) ? (placed->guest_address + request.offset) : 0;
+                    this->direct_mappings_[request.memory] = *placed;
+                    return write_output(win_emu, context, response);
+                }
+
                 void* host_ptr = nullptr;
                 uint64_t host_size = 0;
                 response.vk_result = this->vulkan_.map_memory(request.device, request.memory, host_ptr, host_size);
 
-                constexpr uint64_t page = 0x1000;
                 if (response.vk_result != 0 || !host_ptr || host_size == 0 || (reinterpret_cast<uintptr_t>(host_ptr) % page) != 0 ||
                     (host_size % page) != 0)
                 {
@@ -1717,6 +1724,58 @@ namespace sogen
                 return write_output(win_emu, context, response);
             }
 
+            // A WoW64 guest can only reach memory below its address limit, where the driver's own mapping generally is
+            // not. On backends whose guest memory lives at fixed host addresses, the driver then maps the memory right
+            // where a free guest range is backed, instead of the bridge aliasing a mapping the driver placed elsewhere
+            // (which device memory generally does not allow).
+            std::optional<direct_mapping> map_memory_placed(windows_emulator& win_emu, const uint64_t device, const uint64_t memory)
+            {
+                constexpr uint64_t page = 0x1000;
+                const uint64_t alignment = this->vulkan_.placed_map_alignment(device);
+                const uint64_t size = this->vulkan_.allocation_size(memory);
+                if (!win_emu.process.is_wow64_process || alignment == 0 || page % alignment != 0 || size == 0 || size % page != 0)
+                {
+                    return std::nullopt;
+                }
+
+                // 32-bit code can only reach the low 2GB, unless it is large-address aware.
+                constexpr uint64_t wow64_highest_address = 0x7FFEFFFF;
+
+                void* host_ptr = nullptr;
+                const uint64_t guest_address = win_emu.memory.allocate_placed_host_memory(
+                    static_cast<size_t>(size), memory_permission::read_write, wow64_highest_address, [&](void* host_address) {
+                        uint64_t mapped_size = 0;
+                        if (this->vulkan_.map_memory_placed(device, memory, host_address, mapped_size) != 0)
+                        {
+                            return false;
+                        }
+                        host_ptr = host_address;
+                        return true;
+                    });
+                if (guest_address == 0)
+                {
+                    return std::nullopt;
+                }
+
+                return direct_mapping{.guest_address = guest_address, .size = size, .device = device, .host_ptr = host_ptr, .placed = true};
+            }
+
+            // A placed mapping is unmapped first, which leaves its range reserved, so the driver never touches the range
+            // once it is released and reusable. An aliased mapping is the other way round: its guest view goes first.
+            void release_direct_mapping(windows_emulator& win_emu, const uint64_t memory, const direct_mapping& mapping)
+            {
+                if (mapping.placed)
+                {
+                    this->vulkan_.unmap_memory(mapping.device, memory);
+                    win_emu.memory.release_memory(mapping.guest_address, static_cast<size_t>(mapping.size));
+                }
+                else
+                {
+                    win_emu.memory.release_memory(mapping.guest_address, static_cast<size_t>(mapping.size));
+                    this->vulkan_.unmap_memory(mapping.device, memory);
+                }
+            }
+
             NTSTATUS handle_unmap_memory_direct(windows_emulator& win_emu, const io_device_context& context)
             {
                 gpu_bridge::unmap_memory_direct_request request{};
@@ -1728,8 +1787,7 @@ namespace sogen
                 const auto it = this->direct_mappings_.find(request.memory);
                 if (it != this->direct_mappings_.end())
                 {
-                    win_emu.memory.release_memory(it->second.guest_address, static_cast<size_t>(it->second.size));
-                    this->vulkan_.unmap_memory(it->second.device, request.memory);
+                    this->release_direct_mapping(win_emu, request.memory, it->second);
                     this->direct_mappings_.erase(it);
                 }
                 return STATUS_SUCCESS;

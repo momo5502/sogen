@@ -314,6 +314,9 @@ namespace sogen
             PFN_vkGetCalibratedTimestampsKHR get_calibrated_timestamps{};
             PFN_vkMapMemory map_memory{};
             PFN_vkUnmapMemory unmap_memory{};
+            PFN_vkMapMemory2KHR map_memory2{};
+            PFN_vkUnmapMemory2KHR unmap_memory2{};
+            uint64_t placed_map_alignment{};
             PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges{};
             PFN_vkInvalidateMappedMemoryRanges invalidate_mapped_memory_ranges{};
             PFN_vkCreateBuffer create_buffer{};
@@ -494,6 +497,7 @@ namespace sogen
             void* persistent_host_pointer{};
             uint64_t mapped_size{};
             uint64_t allocation_size{};
+            bool placed{};
         };
 
         struct buffer_data
@@ -2136,6 +2140,50 @@ namespace sogen
             }
         }
 
+        // Placed mappings let the bridge map memory exactly where a backend with fixed guest addresses needs it (see
+        // map_memory_placed). They are enabled on the host device only; the guest does not depend on them.
+        VkPhysicalDeviceMapMemoryPlacedFeaturesEXT placed_features{};
+        placed_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT;
+        uint64_t placed_map_alignment = 0;
+        const bool guest_chains_placed_features = std::ranges::any_of(chained, [](const std::vector<std::byte>& buffer) {
+            return reinterpret_cast<const VkBaseOutStructure*>(buffer.data())->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_FEATURES_EXT;
+        });
+        if (!guest_chains_placed_features && instance->second.get_physical_device_features2 &&
+            instance->second.get_physical_device_properties2 &&
+            impl::has_device_extension(instance->second, pd->second.handle, VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME) &&
+            impl::has_device_extension(instance->second, pd->second.handle, VK_KHR_MAP_MEMORY_2_EXTENSION_NAME))
+        {
+            VkPhysicalDeviceFeatures2 supported{};
+            supported.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            supported.pNext = &placed_features;
+            instance->second.get_physical_device_features2(pd->second.handle, &supported);
+
+            if (placed_features.memoryMapPlaced && placed_features.memoryUnmapReserve)
+            {
+                VkPhysicalDeviceMapMemoryPlacedPropertiesEXT placed_properties{};
+                placed_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAP_MEMORY_PLACED_PROPERTIES_EXT;
+                VkPhysicalDeviceProperties2 properties{};
+                properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+                properties.pNext = &placed_properties;
+                instance->second.get_physical_device_properties2(pd->second.handle, &properties);
+                placed_map_alignment = placed_properties.minPlacedMemoryMapAlignment;
+
+                placed_features.pNext = nullptr;
+                placed_features.memoryMapRangePlaced = VK_FALSE;
+                feature_tail->pNext = reinterpret_cast<VkBaseOutStructure*>(&placed_features);
+                feature_tail = reinterpret_cast<VkBaseOutStructure*>(&placed_features);
+
+                for (const char* name : {VK_KHR_MAP_MEMORY_2_EXTENSION_NAME, VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME})
+                {
+                    if (std::ranges::none_of(extensions, [&](const char* enabled) { return std::strcmp(enabled, name) == 0; }))
+                    {
+                        extensions.push_back(name);
+                    }
+                }
+            }
+        }
+
         VkDeviceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_infos.size());
@@ -2144,7 +2192,7 @@ namespace sogen
         create_info.ppEnabledExtensionNames = extensions.empty() ? nullptr : extensions.data();
         // Enabled features ride the pNext chain (VkPhysicalDeviceFeatures2 + the chained structs); a
         // chain present means pEnabledFeatures must stay null.
-        if (has_feature_chain)
+        if (has_feature_chain || placed_map_alignment != 0)
         {
             create_info.pNext = &features2;
         }
@@ -2219,6 +2267,12 @@ namespace sogen
             }
             data.map_memory = reinterpret_cast<PFN_vkMapMemory>(resolve("vkMapMemory"));
             data.unmap_memory = reinterpret_cast<PFN_vkUnmapMemory>(resolve("vkUnmapMemory"));
+            if (placed_map_alignment != 0)
+            {
+                data.map_memory2 = reinterpret_cast<PFN_vkMapMemory2KHR>(resolve("vkMapMemory2KHR"));
+                data.unmap_memory2 = reinterpret_cast<PFN_vkUnmapMemory2KHR>(resolve("vkUnmapMemory2KHR"));
+                data.placed_map_alignment = data.map_memory2 && data.unmap_memory2 ? placed_map_alignment : 0;
+            }
             data.flush_mapped_memory_ranges = reinterpret_cast<PFN_vkFlushMappedMemoryRanges>(resolve("vkFlushMappedMemoryRanges"));
             data.invalidate_mapped_memory_ranges =
                 reinterpret_cast<PFN_vkInvalidateMappedMemoryRanges>(resolve("vkInvalidateMappedMemoryRanges"));
@@ -3579,6 +3633,61 @@ namespace sogen
         return VK_SUCCESS;
     }
 
+    uint64_t vulkan_host::placed_map_alignment(uint64_t device) const
+    {
+        const auto dev = this->impl_->devices.find(device);
+        return dev == this->impl_->devices.end() ? 0 : dev->second.placed_map_alignment;
+    }
+
+    uint64_t vulkan_host::allocation_size(uint64_t memory) const
+    {
+        const auto mem = this->impl_->memories.find(memory);
+        return mem == this->impl_->memories.end() ? 0 : mem->second.allocation_size;
+    }
+
+    int32_t vulkan_host::map_memory_placed(uint64_t device, uint64_t memory, void* address, uint64_t& out_size)
+    {
+        out_size = 0;
+        const auto dev = this->impl_->devices.find(device);
+        const auto mem = this->impl_->memories.find(memory);
+        if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || mem->second.device_id != device ||
+            dev->second.placed_map_alignment == 0 || mem->second.persistent_host_pointer)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto alignment = dev->second.placed_map_alignment;
+        if (reinterpret_cast<uintptr_t>(address) % alignment != 0 || mem->second.allocation_size % alignment != 0)
+        {
+            return VK_ERROR_MEMORY_MAP_FAILED;
+        }
+
+        VkMemoryMapPlacedInfoEXT placed_info{};
+        placed_info.sType = VK_STRUCTURE_TYPE_MEMORY_MAP_PLACED_INFO_EXT;
+        placed_info.pPlacedAddress = address;
+
+        VkMemoryMapInfoKHR map_info{};
+        map_info.sType = VK_STRUCTURE_TYPE_MEMORY_MAP_INFO_KHR;
+        map_info.pNext = &placed_info;
+        map_info.flags = VK_MEMORY_MAP_PLACED_BIT_EXT;
+        map_info.memory = mem->second.handle;
+        map_info.offset = 0;
+        map_info.size = VK_WHOLE_SIZE;
+
+        void* mapped = nullptr;
+        const VkResult result = dev->second.map_memory2(dev->second.handle, &map_info, &mapped);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        out_size = mem->second.allocation_size;
+        mem->second.persistent_host_pointer = mapped;
+        mem->second.mapped_size = mem->second.allocation_size;
+        mem->second.placed = true;
+        return VK_SUCCESS;
+    }
+
     void vulkan_host::unmap_memory(uint64_t device, uint64_t memory)
     {
         const auto dev = this->impl_->devices.find(device);
@@ -3588,7 +3697,20 @@ namespace sogen
         {
             return;
         }
-        dev->second.unmap_memory(dev->second.handle, mem->second.handle);
+
+        if (mem->second.placed)
+        {
+            VkMemoryUnmapInfoKHR unmap_info{};
+            unmap_info.sType = VK_STRUCTURE_TYPE_MEMORY_UNMAP_INFO_KHR;
+            unmap_info.flags = VK_MEMORY_UNMAP_RESERVE_BIT_EXT;
+            unmap_info.memory = mem->second.handle;
+            dev->second.unmap_memory2(dev->second.handle, &unmap_info);
+            mem->second.placed = false;
+        }
+        else
+        {
+            dev->second.unmap_memory(dev->second.handle, mem->second.handle);
+        }
         mem->second.persistent_host_pointer = nullptr;
         mem->second.mapped_size = 0;
     }

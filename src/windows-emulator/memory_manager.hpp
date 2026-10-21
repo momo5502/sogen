@@ -1,5 +1,6 @@
 #pragma once
 #include "std_include.hpp"
+#include <functional>
 #include <map>
 #include <atomic>
 #include <cstdint>
@@ -117,6 +118,13 @@ namespace sogen
         // Chooses a compatible guest address and aliases it onto caller-owned host memory (e.g. a host Vulkan
         // mapping). The region is treated like MMIO: not serialized, host_pointer not owned. Returns 0 on failure.
         uint64_t allocate_host_memory(size_t size, void* host_pointer, nt_memory_permission permissions);
+        // Maps host memory into the guest on backends that need it at a fixed host address (see
+        // memory_interface::host_placement_address): picks a free guest range below highest_address, and place maps the
+        // memory at the host address backing it. Returns the guest address, or 0 if the backend has no such addresses or
+        // place fails.
+        uint64_t allocate_placed_host_memory(size_t size, nt_memory_permission permissions, uint64_t highest_address,
+                                             const std::function<bool(void* host_address)>& place);
+        uint64_t host_placement_address(uint64_t address) const override;
 
         // Backend coherency hooks for host-aliased memory (see memory_interface). Device emulation such as
         // the GPU bridge uses these to make guest writes visible to the host GPU on backends (e.g. KVM) that
