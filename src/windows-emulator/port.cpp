@@ -50,6 +50,15 @@ namespace sogen
             }
         };
 
+        // CoreMessaging sends one-way messages here and fail-fasts the process if they are rejected.
+        struct core_ui_port : noop_port
+        {
+            bool accepts_send_only_messages() const override
+            {
+                return true;
+            }
+        };
+
         // The per-stream WASAPI CrossProcessEndpoint control channel. Event-driven (AUDCLNT_STREAMFLAGS_
         // EVENTCALLBACK) DirectSound clients connect a dedicated ALPC port and send small fixed command
         // messages here (SetEventHandle, opcode in the first data dword, the event handle as a client->server
@@ -320,6 +329,11 @@ namespace sogen
         if (port == u"\\BaseNamedObjects\\CoreMessagingRegistrar")
         {
             return create_core_messaging_registrar_port();
+        }
+
+        if (port.starts_with(u"\\BaseNamedObjects\\[CoreUI]-"))
+        {
+            return std::make_unique<core_ui_port>();
         }
 
         if (port == u"\\RPC Control\\ntsvcs")
