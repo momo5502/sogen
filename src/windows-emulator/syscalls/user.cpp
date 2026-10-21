@@ -6041,8 +6041,8 @@ namespace sogen
 
                     info.DisplayLeft = 0;
                     info.DisplayTop = 0;
-                    info.DisplayWidth = c.proc.display_width;
-                    info.DisplayHeight = c.proc.display_height;
+                    info.DisplayWidth = static_cast<INT32>(c.proc.display_width);
+                    info.DisplayHeight = static_cast<INT32>(c.proc.display_height);
 
                     utils::string::copy(info.DeviceName, u"\\\\.\\DISPLAY1");
 
