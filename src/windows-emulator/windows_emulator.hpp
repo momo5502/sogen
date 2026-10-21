@@ -419,6 +419,8 @@ namespace sogen
         void request_guest_event_signal(handle event_handle, uint32_t maximum_pending);
         void apply_pending_guest_event_signals();
 
+        void wake_idle_vcpu();
+
         uint64_t get_executed_instructions() const
         {
             return this->executed_instructions_;
@@ -553,6 +555,13 @@ namespace sogen
         // The emulator kernel lock: held by all code touching shared kernel state,
         // released while guest code executes (docs/multi-vcpu-design.md, section 7).
         kernel_lock kernel_lock_{};
+        std::mutex idle_wakeup_mutex_{};
+        std::condition_variable idle_wakeup_cv_{};
+        uint32_t pending_idle_wakeups_{};
+        std::atomic<uint32_t> idle_vcpus_{0};
+
+        bool wait_for_idle_wakeup(std::chrono::milliseconds timeout);
+
         std::mutex pending_event_signals_mutex_{};
         std::map<uint64_t, uint32_t> pending_event_signals_{};
 

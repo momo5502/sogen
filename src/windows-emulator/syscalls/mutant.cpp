@@ -31,7 +31,17 @@ namespace sogen
                 previous_count.write(static_cast<LONG>(old_count));
             }
 
-            return succeeded ? STATUS_SUCCESS : STATUS_MUTANT_NOT_OWNED;
+            if (!succeeded)
+            {
+                return STATUS_MUTANT_NOT_OWNED;
+            }
+
+            if (old_count == 1)
+            {
+                c.win_emu.wake_idle_vcpu();
+            }
+
+            return STATUS_SUCCESS;
         }
 
         NTSTATUS handle_NtOpenMutant(const syscall_context& c, const emulator_object<handle> mutant_handle,

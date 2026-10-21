@@ -1313,6 +1313,7 @@ namespace sogen
                 if (auto* e = c.proc.events.get(event))
                 {
                     e->signaled = true;
+                    c.win_emu.wake_idle_vcpu();
                 }
             }
 
@@ -1340,6 +1341,7 @@ namespace sogen
                     .io_status = static_cast<int32_t>(static_cast<ULONG>(status)),
                     .io_information = static_cast<uint32_t>(information),
                 });
+                c.win_emu.wake_idle_vcpu();
             }
         }
 

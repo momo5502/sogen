@@ -375,6 +375,7 @@ namespace sogen
         io_completion_message message{};
         message.key_context = this->completion_key_;
         completion->enqueue(message);
+        win_emu.wake_idle_vcpu();
     }
 
     NTSTATUS port_container::associate_completion_port(windows_emulator& win_emu, const emulator_thread* active_thread,
