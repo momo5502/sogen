@@ -366,6 +366,31 @@ namespace sogen
             }
         }
 
+        // Only access chains into a block can be redirected. Any other use of a block variable or of the block type, such
+        // as loading or copying the whole block or passing its pointer on, would still refer to the dropped members.
+        for (const auto& inst : instructions)
+        {
+            const auto* words = &code[inst.offset];
+            const bool declares_or_names = inst.opcode == op_name || inst.opcode == op_member_name || inst.opcode == op_decorate ||
+                                           inst.opcode == op_member_decorate || inst.opcode == op_entry_point ||
+                                           inst.opcode == op_type_struct || inst.opcode == op_type_pointer;
+            const bool accesses_block = (inst.opcode == op_access_chain || inst.opcode == op_in_bounds_access_chain) &&
+                                        inst.word_count >= 4 && block_variables.contains(words[3]);
+            const bool declares_block_variable = inst.opcode == op_variable && inst.word_count >= 3 && block_variables.contains(words[2]);
+            if (declares_or_names || accesses_block || declares_block_variable)
+            {
+                continue;
+            }
+
+            for (size_t i = 1; i < inst.word_count; ++i)
+            {
+                if (block_variables.contains(words[i]) || blocks.contains(words[i]))
+                {
+                    return std::nullopt;
+                }
+            }
+        }
+
         // Pointer types reached from the demoted variables, in declaration order, and the private type replacing each.
         auto bound = code[bound_word];
         std::unordered_map<uint32_t, uint32_t> replacement_type{};
@@ -395,8 +420,6 @@ namespace sogen
             return true;
         };
 
-        // A stripped block member is replaced by a private variable, declared before the first function together with
-        // its pointer type when no private one exists yet.
         std::vector<uint32_t> private_declarations{};
         std::vector<uint32_t> private_variables{};
         std::unordered_map<uint64_t, uint32_t> member_variables{};
