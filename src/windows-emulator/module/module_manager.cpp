@@ -297,6 +297,13 @@ namespace sogen
         this->memory_->set_dep_enabled(this->executable->machine != static_cast<uint16_t>(PEMachineType::I386) ||
                                        (this->executable->dll_characteristics & IMAGE_DLLCHARACTERISTICS_NX_COMPAT) != 0);
 
+        // Without high-entropy ASLR, Windows allocates bottom-up below 4 GB, and older programs truncate pointers to 32 bits.
+        constexpr auto high_entropy_aslr = IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA | IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
+        if ((this->executable->dll_characteristics & high_entropy_aslr) != high_entropy_aslr)
+        {
+            this->memory_->set_default_allocation_address(MIN_ALLOCATION_ADDRESS);
+        }
+
         this->ntdll = this->map_module_or_throw(ntdll_path, logger, true);
         this->win32u = this->map_module_or_throw(win32u_path, logger, true);
     }
