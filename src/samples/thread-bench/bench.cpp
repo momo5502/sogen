@@ -16,7 +16,7 @@
 #define NOMINMAX
 #endif
 #define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
+#include <windows.h>
 
 namespace
 {
@@ -166,6 +166,7 @@ namespace
                 LeaveCriticalSection(&section);
             }
         });
+        sink = counter;
         DeleteCriticalSection(&section);
     }
 
@@ -182,6 +183,7 @@ namespace
                 ReleaseSRWLockExclusive(&lock);
             }
         });
+        sink = counter;
     }
 
     void heap(const unsigned threads)
