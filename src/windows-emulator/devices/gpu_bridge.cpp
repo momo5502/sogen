@@ -289,6 +289,16 @@ namespace sogen
 
             std::unordered_map<uint64_t, imported_memory> imported_memory_{};
 
+            struct observed_semaphore
+            {
+                uint64_t device{};
+                uint64_t value{};
+            };
+
+            // The last counter value the guest read of each timeline semaphore, so that polling one only invalidates
+            // imported memory when it shows new work completed.
+            std::unordered_map<uint64_t, observed_semaphore> observed_semaphores_{};
+
             template <typename Predicate>
             void release_imported_memory(windows_emulator& win_emu, const Predicate& released)
             {
@@ -444,7 +454,10 @@ namespace sogen
                 }
 
                 this->vulkan_.destroy_instance(request.instance);
-                this->release_imported_memory(win_emu, [](const imported_memory&) { return true; });
+                this->release_imported_memory(win_emu,
+                                              [&](const imported_memory& memory) { return !this->vulkan_.has_device(memory.device); });
+                std::erase_if(this->observed_semaphores_,
+                              [&](const auto& entry) { return !this->vulkan_.has_device(entry.second.device); });
                 return STATUS_SUCCESS;
             }
 
@@ -939,6 +952,7 @@ namespace sogen
 
                 this->vulkan_.destroy_device(request.device);
                 this->release_imported_memory(win_emu, [&](const imported_memory& memory) { return memory.device == request.device; });
+                std::erase_if(this->observed_semaphores_, [&](const auto& entry) { return entry.second.device == request.device; });
                 return STATUS_SUCCESS;
             }
 
@@ -1108,6 +1122,7 @@ namespace sogen
                 }
 
                 this->vulkan_.destroy_semaphore(request.device, request.semaphore);
+                this->observed_semaphores_.erase(request.semaphore);
                 return STATUS_SUCCESS;
             }
 
@@ -1121,6 +1136,15 @@ namespace sogen
 
                 uint64_t value = 0;
                 const int32_t result = this->vulkan_.get_semaphore_counter_value(request.device, request.semaphore, value);
+                if (result == vk_success)
+                {
+                    auto& observed = this->observed_semaphores_[request.semaphore];
+                    if (value > observed.value)
+                    {
+                        observed = {.device = request.device, .value = value};
+                        this->vulkan_.invalidate_imported_memory();
+                    }
+                }
                 return write_output(win_emu, context,
                                     gpu_bridge::get_semaphore_counter_value_response{.vk_result = result, .reserved = 0, .value = value});
             }
@@ -1593,7 +1617,7 @@ namespace sogen
                 auto* host_pointer = reinterpret_cast<void*>(win_emu.memory.host_placement_address(guest_address));
                 if (host_pointer == nullptr ||
                     this->vulkan_.import_host_memory(request.device, size, request.memory_type_index, request.flags, request.device_mask,
-                                                     host_pointer, memory) != 0)
+                                                     host_pointer, memory) != vk_success)
                 {
                     win_emu.memory.release_memory(guest_address, static_cast<size_t>(size));
                     return false;

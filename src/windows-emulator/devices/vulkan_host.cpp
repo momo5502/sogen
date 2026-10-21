@@ -797,8 +797,17 @@ namespace sogen
             VkImageFormatProperties2 properties{};
             properties.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2;
             properties.pNext = &external_properties;
-            return instance->second.get_physical_device_image_format_properties2(dev.physical_device, &info, &properties) == VK_SUCCESS &&
-                   (external_properties.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) != 0;
+            if (instance->second.get_physical_device_image_format_properties2(dev.physical_device, &info, &properties) != VK_SUCCESS ||
+                (external_properties.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) == 0)
+            {
+                return false;
+            }
+
+            // The limits can be tighter for external memory than for the image without it.
+            const auto& limits = properties.imageFormatProperties;
+            return image.extent.width <= limits.maxExtent.width && image.extent.height <= limits.maxExtent.height &&
+                   image.extent.depth <= limits.maxExtent.depth && image.mipLevels <= limits.maxMipLevels &&
+                   image.arrayLayers <= limits.maxArrayLayers && (limits.sampleCounts & image.samples) != 0;
         }
 
         template <typename Map, typename Pred>
@@ -3749,6 +3758,11 @@ namespace sogen
         mem->second.persistent_host_pointer = mapped;
         mem->second.mapped_size = mem->second.allocation_size;
         return VK_SUCCESS;
+    }
+
+    bool vulkan_host::has_device(const uint64_t device) const
+    {
+        return this->impl_->devices.contains(device);
     }
 
     uint64_t vulkan_host::placed_map_alignment(uint64_t device) const
