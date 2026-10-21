@@ -405,6 +405,9 @@ namespace sogen
         std::optional<emulator_allocator> wow64_context_segment; // For WOW64 context (CONTEXT64) allocation
         std::optional<emulator_object<WOW64_CPURESERVED>>
             wow64_cpu_reserved; // Persistent WOW64 thread context for ThreadWow64Context queries
+        std::optional<emulator_object<USER_CLIENTTHREADINFO>> client_thread_info;
+        hwnd active_window{};
+        hwnd focus_window{};
 
         std::vector<std::byte> last_registers{};
 
@@ -457,6 +460,12 @@ namespace sogen
                                                 bool remove = false);
         void post_message(windows_emulator& win_emu, msg msg, bool try_coalesce = false);
         void remove_window_messages(hwnd window);
+        void set_active_window(hwnd window);
+        void set_focus_window(hwnd window);
+        void forget_window(hwnd window);
+        void mark_queue_status_changed(uint32_t bits);
+        void clear_queue_status_changed(uint32_t bits);
+        void publish_client_thread_info() const;
 
         bool is_terminated() const;
 
@@ -549,6 +558,9 @@ namespace sogen
             buffer.write_optional(this->teb32);
             buffer.write_optional(this->wow64_context_segment);
             buffer.write_optional(this->wow64_cpu_reserved);
+            buffer.write_optional(this->client_thread_info);
+            buffer.write(this->active_window);
+            buffer.write(this->focus_window);
 
             buffer.write_vector(this->last_registers);
 
@@ -623,6 +635,9 @@ namespace sogen
             buffer.read_optional(this->teb32, [this] { return emulator_object<TEB32>(*this->memory_ptr); });
             buffer.read_optional(this->wow64_context_segment, [this] { return emulator_allocator(*this->memory_ptr); });
             buffer.read_optional(this->wow64_cpu_reserved, [this] { return emulator_object<WOW64_CPURESERVED>(*this->memory_ptr); });
+            buffer.read_optional(this->client_thread_info, [this] { return emulator_object<USER_CLIENTTHREADINFO>(*this->memory_ptr); });
+            buffer.read(this->active_window);
+            buffer.read(this->focus_window);
 
             buffer.read_vector(this->last_registers);
 

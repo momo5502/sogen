@@ -693,7 +693,7 @@ namespace sogen
             {
                 if (auto* thread = c.proc.find_thread_by_id(win.thread_id))
                 {
-                    thread->queue_status_changed_bits |= QS_PAINT;
+                    thread->mark_queue_status_changed(QS_PAINT);
                 }
             }
         }
@@ -705,7 +705,7 @@ namespace sogen
             {
                 if (auto* thread = c.proc.find_thread_by_id(win.thread_id))
                 {
-                    thread->queue_status_changed_bits |= QS_PAINT;
+                    thread->mark_queue_status_changed(QS_PAINT);
                 }
             }
         }
@@ -5188,11 +5188,19 @@ namespace sogen
 
         hwnd handle_NtUserSetFocus(const syscall_context& c, const hwnd hwnd)
         {
+            if (hwnd != 0 && !c.proc.windows.get(hwnd))
+            {
+                return 0;
+            }
+
+            auto& thread = c.thread();
+            const auto previous = thread.focus_window;
+            thread.set_focus_window(hwnd);
             if (hwnd != 0)
             {
                 set_thread_window_context(c, hwnd);
             }
-            return hwnd;
+            return previous;
         }
 
         emulator_pointer handle_NtUserSetClassLongPtr(const syscall_context& c, handle hWnd, int nIndex, emulator_pointer dwNewLong,
@@ -6079,7 +6087,7 @@ namespace sogen
         uint32_t handle_NtUserGetQueueStatus(const syscall_context& c, const UINT flags)
         {
             const auto result = handle_NtUserGetQueueStatusReadonly(c, flags);
-            c.vcpu.active_thread->queue_status_changed_bits &= ~flags;
+            c.vcpu.active_thread->clear_queue_status_changed(flags);
             return result;
         }
 
