@@ -1,5 +1,6 @@
 #include "shared_host_buffer.hpp"
 
+#include <limits>
 #include <new>
 #include <utility>
 
@@ -17,6 +18,16 @@ namespace sogen::utils
     namespace
     {
         constexpr size_t page_size = 0x1000;
+
+        size_t round_up_to_page(const size_t size)
+        {
+            if (size == 0 || size > std::numeric_limits<size_t>::max() - (page_size - 1))
+            {
+                throw std::bad_alloc();
+            }
+
+            return (size + page_size - 1) & ~(page_size - 1);
+        }
 
         uint8_t* allocate(const size_t size)
         {
@@ -50,8 +61,8 @@ namespace sogen::utils
     }
 
     shared_host_buffer::shared_host_buffer(const size_t size)
-        : data_(allocate((size + page_size - 1) & ~(page_size - 1))),
-          size_((size + page_size - 1) & ~(page_size - 1))
+        : size_(round_up_to_page(size)),
+          data_(allocate(this->size_))
     {
         if (!this->data_)
         {
@@ -65,8 +76,8 @@ namespace sogen::utils
     }
 
     shared_host_buffer::shared_host_buffer(shared_host_buffer&& other) noexcept
-        : data_(std::exchange(other.data_, nullptr)),
-          size_(std::exchange(other.size_, 0))
+        : size_(std::exchange(other.size_, 0)),
+          data_(std::exchange(other.data_, nullptr))
     {
     }
 

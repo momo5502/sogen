@@ -32,8 +32,8 @@ namespace sogen::utils
         }
 
       private:
-        uint8_t* data_{};
         size_t size_{};
+        uint8_t* data_{};
 
         void release();
     };
