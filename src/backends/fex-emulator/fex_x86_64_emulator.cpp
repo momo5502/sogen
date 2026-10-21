@@ -217,6 +217,8 @@ namespace sogen::fex
             return std::nullopt;
         }
 
+        // Nothing names the descriptor a mapping was made through, and a driver can scope mmap offsets to the open file
+        // that created them (a Mali context, for one), so a file that is open more than once is not mapped again.
         int find_open_file(const host_mapping_info& mapping)
         {
             DIR* directory = ::opendir("/proc/self/fd");
@@ -238,8 +240,12 @@ namespace sogen::fex
                 if (status.st_ino == mapping.inode && major(status.st_dev) == mapping.device_major &&
                     minor(status.st_dev) == mapping.device_minor)
                 {
+                    if (result >= 0)
+                    {
+                        result = -1;
+                        break;
+                    }
                     result = fd;
-                    break;
                 }
             }
 
@@ -2108,13 +2114,23 @@ namespace sogen::fex
             }
 #else
             const uint64_t source_address = get_untagged_pointer_address(host_pointer);
+            std::vector<std::pair<uint64_t, size_t>> aliased_spans{};
             bool mapped = true;
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, const size_t offset) {
                 const uint64_t span_source = source_address + offset;
-                mapped = mapped && (host_address == span_source || alias_shared_mapping(span_source, span_size, host_address));
+                if (mapped && host_address != span_source)
+                {
+                    aliased_spans.emplace_back(host_address, span_size);
+                    mapped = alias_shared_mapping(span_source, span_size, host_address);
+                }
             });
             if (!mapped)
             {
+                // A failed MAP_FIXED or MREMAP_FIXED can already have unmapped the reservation at its target.
+                for (const auto& [host_address, span_size] : aliased_spans)
+                {
+                    replace_host_span(host_address, span_size, PROT_NONE);
+                }
                 return false;
             }
 #endif
@@ -2334,13 +2350,18 @@ namespace sogen::fex
             }
 
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, size_t) {
-                void* result = ::mmap(reinterpret_cast<void*>(host_address), span_size, protection,
-                                      MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-                if (result == MAP_FAILED || reinterpret_cast<uint64_t>(result) != host_address)
-                {
-                    throw std::runtime_error("FEX backend failed to replace a claimed host range");
-                }
+                replace_host_span(host_address, span_size, protection);
             });
+        }
+
+        static void replace_host_span(const uint64_t host_address, const size_t size, const int protection)
+        {
+            void* result = ::mmap(reinterpret_cast<void*>(host_address), size, protection,
+                                  MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+            if (result == MAP_FAILED || reinterpret_cast<uint64_t>(result) != host_address)
+            {
+                throw std::runtime_error("FEX backend failed to replace a claimed host range");
+            }
         }
 
         // Inside the low window a released range goes back to being reserved, so no other host allocation can
@@ -2350,8 +2371,7 @@ namespace sogen::fex
             this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, size_t) {
                 if (this->is_in_low_guest_window(host_address))
                 {
-                    ::mmap(reinterpret_cast<void*>(host_address), span_size, PROT_NONE,
-                           MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+                    replace_host_span(host_address, span_size, PROT_NONE);
                 }
                 else
                 {

@@ -327,13 +327,27 @@ namespace sogen
     bool memory_manager::allocate_host_memory_at(const uint64_t address, const size_t size, void* host_pointer,
                                                  const nt_memory_permission permissions)
     {
-        if (this->overlaps_reserved_region(address, size))
+        const bool uses_existing_host_mapping = this->memory_->host_memory_mapping_requires_identity();
+        if (this->overlaps_reserved_region(address, size, uses_existing_host_mapping))
         {
             return false;
         }
 
+        if (uses_existing_host_mapping)
+        {
+            this->carve_host_reserved_hole(address, size);
+        }
+        else
+        {
+            this->memory_->reserve_guest_address_range(address, size);
+        }
+
         if (!this->map_host_memory(address, size, host_pointer, this->get_effective_permissions(permissions)))
         {
+            if (!uses_existing_host_mapping)
+            {
+                this->release_host_claims(address + size);
+            }
             return false;
         }
 
@@ -371,26 +385,8 @@ namespace sogen
             return 0;
         }
 
-        if (this->overlaps_reserved_region(address, size, uses_existing_host_mapping))
-        {
-            return 0;
-        }
-
-        if (uses_existing_host_mapping)
-        {
-            this->carve_host_reserved_hole(address, size);
-        }
-        else
-        {
-            this->memory_->reserve_guest_address_range(address, size);
-        }
-
         if (!this->allocate_host_memory_at(address, size, host_pointer, permissions))
         {
-            if (!uses_existing_host_mapping)
-            {
-                this->release_host_claims(address + size);
-            }
             return 0;
         }
 
