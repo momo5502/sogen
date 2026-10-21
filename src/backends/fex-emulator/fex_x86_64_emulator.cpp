@@ -2084,9 +2084,9 @@ namespace sogen::fex
                 throw std::runtime_error("FEX host memory mappings must be page aligned");
             }
 
+#ifdef __APPLE__
             const uint64_t host_address = this->to_host_address(address);
 
-#ifdef __APPLE__
             // VM_FLAGS_OVERWRITE replaces the reservation the memory manager put at the target;
             // copy=FALSE creates a second mapping of the caller-owned pages rather than copying them.
             const uint64_t claim_start = host_page_align_down_apple(host_address);
@@ -2108,13 +2108,20 @@ namespace sogen::fex
             }
 #else
             const uint64_t source_address = get_untagged_pointer_address(host_pointer);
-            if (host_address != source_address && !alias_shared_mapping(source_address, size, host_address))
+            bool mapped = true;
+            this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, const size_t offset) {
+                const uint64_t span_source = source_address + offset;
+                mapped = mapped && (host_address == span_source || alias_shared_mapping(span_source, span_size, host_address));
+            });
+            if (!mapped)
             {
                 return false;
             }
 #endif
 
-            ::mprotect(reinterpret_cast<void*>(host_address), size, to_prot(permissions));
+            this->for_each_host_span(address, size, [&](const uint64_t host_address, const size_t span_size, size_t) {
+                ::mprotect(reinterpret_cast<void*>(host_address), span_size, to_prot(permissions));
+            });
             // owned=false: the memory belongs to the caller; we must not munmap it on teardown.
             this->erase_region_range(address, size);
             this->regions_[address] = mapped_region{.size = size, .permissions = permissions, .owned = false};
