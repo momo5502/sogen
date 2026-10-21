@@ -29,6 +29,9 @@ namespace sogen
             constexpr uint8_t k_gdi_brush_type = 0x10;
             constexpr uint8_t k_gdi_pen_type = 0x30;
             constexpr int32_t k_gdi_dc_object_bitmap = 0x50000;
+            constexpr int32_t k_gdi_dc_object_font = 0xA0000;
+            constexpr int32_t k_gdi_dc_object_brush = 0x100000;
+            constexpr int32_t k_gdi_dc_object_pen = 0x300000;
 
             constexpr uint32_t k_gdi_dc_attr_size = 0x130;
             constexpr uint32_t k_gdi_brush_attr_size = 0x20;
@@ -4107,21 +4110,62 @@ namespace sogen
             return TRUE;
         }
 
-        BOOL handle_NtGdiGetRealizationInfo(const syscall_context& c, const hdc dc, const emulator_pointer realization_info,
-                                            const uint64_t /*font*/)
+        // The caller sets the size: 16 bytes for GetFontRealizationInfo, 24 when it also wants the face, and 812 for the
+        // variant that lists the font files. The emulated fonts are raster fonts without font files, so everything after
+        // the common header stays zero.
+        BOOL handle_NtGdiGetRealizationInfo(const syscall_context& c, const hdc dc, const emulator_pointer realization_info)
         {
-            if (dc == 0)
+            struct font_realization_info_header
+            {
+                uint32_t size;
+                uint32_t flags;
+                uint32_t cache_num;
+                uint32_t instance_id;
+            };
+
+            constexpr std::array<uint32_t, 3> supported_sizes{sizeof(font_realization_info_header), 24, 812};
+            constexpr uint32_t realized = 1;
+
+            uint64_t dc_attr = 0;
+            if (dc == 0 || realization_info == 0 || !get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
             {
                 return FALSE;
             }
 
-            if (realization_info != 0)
+            uint32_t size = 0;
+            c.emu.read_memory(realization_info, &size, sizeof(size));
+            if (std::ranges::find(supported_sizes, size) == supported_sizes.end())
             {
-                std::array<uint8_t, 0x20> zeroed{};
-                c.emu.write_memory(realization_info, zeroed.data(), zeroed.size());
+                return FALSE;
             }
 
+            uint32_t font_handle = 0;
+            c.emu.read_memory(dc_attr + k_gdi_dc_attr_font_offset, &font_handle, sizeof(font_handle));
+
+            std::vector<uint8_t> info(size);
+            const font_realization_info_header header{
+                .size = size,
+                .flags = realized,
+                .cache_num = font_handle,
+                .instance_id = font_handle,
+            };
+            std::memcpy(info.data(), &header, sizeof(header));
+
+            c.emu.write_memory(realization_info, info.data(), info.size());
             return TRUE;
+        }
+
+        BOOL handle_NtGdiFontIsLinked(const syscall_context&, const hdc /*dc*/)
+        {
+            return FALSE;
+        }
+
+        // The emulated fonts are raster fonts without TrueType tables, which GetFontData reports with GDI_ERROR.
+        uint32_t handle_NtGdiGetFontData(const syscall_context&, const hdc /*dc*/, const uint32_t /*table*/, const uint32_t /*offset*/,
+                                         const emulator_pointer /*buffer*/, const uint32_t /*size*/)
+        {
+            constexpr uint32_t gdi_error = 0xFFFFFFFF;
+            return gdi_error;
         }
 
         BOOL handle_NtGdiMoveToEx(const syscall_context& c, const hdc dc, const LONG x, const LONG y, const emulator_pointer old_point_ptr)
@@ -4212,6 +4256,22 @@ namespace sogen
 
         uint64_t handle_NtGdiGetDCObject(const syscall_context& c, const hdc dc, const int32_t object_type)
         {
+            if (object_type == k_gdi_dc_object_font || object_type == k_gdi_dc_object_brush || object_type == k_gdi_dc_object_pen)
+            {
+                uint64_t dc_attr = 0;
+                if (!get_gdi_object_address(c, static_cast<uint32_t>(dc), k_gdi_dc_type, dc_attr))
+                {
+                    return 0;
+                }
+
+                const auto offset = object_type == k_gdi_dc_object_font    ? k_gdi_dc_attr_font_offset
+                                    : object_type == k_gdi_dc_object_brush ? k_gdi_dc_attr_hbrush_offset
+                                                                           : k_gdi_dc_attr_hpen_offset;
+                uint32_t object = 0;
+                c.win_emu.memory.try_read_memory(dc_attr + offset, &object, sizeof(object));
+                return object;
+            }
+
             if (object_type != k_gdi_dc_object_bitmap)
             {
                 return 0;
