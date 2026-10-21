@@ -7,6 +7,7 @@
 
 #include <platform/unicode.hpp>
 #include <utils/finally.hpp>
+#include <utils/shared_host_buffer.hpp>
 
 namespace sogen
 {
@@ -280,7 +281,7 @@ namespace sogen
                   stream_format_(format),
                   buffer_bytes_(buffer_bytes),
                   section_size_(section_size),
-                  host_storage_(static_cast<size_t>(section_size) + k_audio_page_size)
+                  host_storage_(static_cast<size_t>(section_size))
             {
                 this->initialize_host_storage();
                 std::memcpy(this->host_ptr_, control_header, control_header_size);
@@ -411,13 +412,12 @@ namespace sogen
                     throw std::runtime_error("[audio-service] Cannot restore invalid render stream storage");
                 }
 
-                return static_cast<size_t>(restored.section_size) + k_audio_page_size;
+                return static_cast<size_t>(restored.section_size);
             }
 
             void initialize_host_storage()
             {
-                this->host_ptr_ = reinterpret_cast<uint8_t*>(
-                    (reinterpret_cast<uintptr_t>(this->host_storage_.data()) + (k_audio_page_size - 1)) & ~(k_audio_page_size - 1));
+                this->host_ptr_ = this->host_storage_.data();
             }
 
             uint64_t read_cursor(const uint32_t offset) const
@@ -552,7 +552,7 @@ namespace sogen
             uint64_t section_size_{};
             uint64_t guest_address_{0};
             uint64_t submitted_{};
-            std::vector<uint8_t> host_storage_;
+            utils::shared_host_buffer host_storage_;
             uint8_t* host_ptr_{nullptr};
             bool mapped_{};
             mutable std::atomic<worker_status> worker_status_{worker_status::running};
