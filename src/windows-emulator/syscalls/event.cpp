@@ -33,6 +33,7 @@ namespace sogen
             }
 
             entry->signaled = true;
+            c.win_emu.wake_idle_vcpu();
             return STATUS_SUCCESS;
         }
 
@@ -65,6 +66,7 @@ namespace sogen
             }
 
             entry->signaled = false;
+            c.win_emu.wake_idle_vcpu();
             return STATUS_SUCCESS;
         }
 

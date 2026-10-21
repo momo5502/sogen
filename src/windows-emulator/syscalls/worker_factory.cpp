@@ -146,6 +146,7 @@ namespace sogen
                     const auto thread_handle =
                         c.proc.create_thread(c.win_emu.memory, factory.start_routine, factory.start_parameter, stack_size, create_flags);
                     factory.worker_threads.push_back(thread_handle);
+                    c.win_emu.wake_idle_vcpu();
                 }
             }
 
@@ -443,6 +444,8 @@ namespace sogen
                     --factory->pending_release_count;
                     return STATUS_INVALID_HANDLE;
                 }
+
+                c.win_emu.wake_idle_vcpu();
             }
 
             ensure_worker_factory_threads(c, *factory);

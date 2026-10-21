@@ -855,9 +855,12 @@ namespace sogen
         this->kernel_lock_.assert_held();
 
         const auto needed_switch = vcpu.switch_thread.exchange(false);
+        bool woken_by_signal = false;
 
         while (!switch_to_next_thread(*this, vcpu))
         {
+            woken_by_signal = false;
+
             if (this->vcpu_count_ > 1 && vcpu.active_thread)
             {
                 // Nothing runnable for this vCPU: detach the stale thread so another
@@ -867,6 +870,8 @@ namespace sogen
             }
 
             const auto host_wait_pending = has_pending_host_wait(this->process);
+
+            ++this->idle_vcpus_;
 
             // Idle: nothing is ready. Release the kernel lock while pumping UI events
             // and sleeping so other threads (UI delivery, vCPU workers) can run.
@@ -889,9 +894,10 @@ namespace sogen
             }
             else
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                woken_by_signal = this->wait_for_idle_wakeup(std::chrono::milliseconds(1));
             }
 
+            --this->idle_vcpus_;
             lock.lock();
 
             if (this->should_stop)
@@ -899,6 +905,11 @@ namespace sogen
                 vcpu.switch_thread = needed_switch;
                 return false;
             }
+        }
+
+        if (woken_by_signal)
+        {
+            this->wake_idle_vcpu();
         }
 
         return true;
@@ -1869,9 +1880,13 @@ namespace sogen
 
     void windows_emulator::request_guest_event_signal(const handle event_handle, const uint32_t maximum_pending)
     {
-        const std::lock_guard lock{this->pending_event_signals_mutex_};
-        auto& pending = this->pending_event_signals_[event_handle.bits];
-        pending = std::min(pending + 1, maximum_pending);
+        {
+            const std::lock_guard lock{this->pending_event_signals_mutex_};
+            auto& pending = this->pending_event_signals_[event_handle.bits];
+            pending = std::min(pending + 1, maximum_pending);
+        }
+
+        this->credit_idle_wakeup();
     }
 
     void windows_emulator::apply_pending_guest_event_signals()
@@ -1928,12 +1943,49 @@ namespace sogen
 
     void windows_emulator::stop()
     {
-        this->should_stop = true;
+        {
+            const std::lock_guard lock{this->idle_wakeup_mutex_};
+            this->should_stop = true;
+        }
+
+        this->idle_wakeup_cv_.notify_all();
 
         for (uint32_t i = 0; i < this->vcpu_count_; ++i)
         {
             this->vcpu(i).cpu.stop();
         }
+    }
+
+    void windows_emulator::wake_idle_vcpu()
+    {
+        if (this->idle_vcpus_.load() != 0)
+        {
+            this->credit_idle_wakeup();
+        }
+    }
+
+    void windows_emulator::credit_idle_wakeup()
+    {
+        {
+            const std::lock_guard lock{this->idle_wakeup_mutex_};
+            this->pending_idle_wakeups_ = std::min(this->pending_idle_wakeups_ + 1, this->vcpu_count_);
+        }
+
+        this->idle_wakeup_cv_.notify_one();
+    }
+
+    bool windows_emulator::wait_for_idle_wakeup(const std::chrono::milliseconds timeout)
+    {
+        std::unique_lock lock{this->idle_wakeup_mutex_};
+        this->idle_wakeup_cv_.wait_for(lock, timeout, [this] { return this->pending_idle_wakeups_ > 0 || this->should_stop; });
+
+        if (this->pending_idle_wakeups_ == 0)
+        {
+            return false;
+        }
+
+        --this->pending_idle_wakeups_;
+        return true;
     }
 
     void windows_emulator::register_factories(utils::buffer_deserializer& buffer)

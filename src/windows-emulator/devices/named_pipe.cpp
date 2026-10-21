@@ -71,6 +71,8 @@ namespace sogen
         {
             io_device::queue_io_completion(win_emu, context);
         }
+
+        win_emu.wake_idle_vcpu();
     }
 
     NTSTATUS named_pipe::start_io(windows_emulator& win_emu, io_device_context context, const bool reading)

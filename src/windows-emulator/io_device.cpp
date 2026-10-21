@@ -171,6 +171,7 @@ namespace sogen
             if (auto* e = win_emu.process.events.get(request.event); e)
             {
                 e->signaled = true;
+                win_emu.wake_idle_vcpu();
             }
         }
 
@@ -202,6 +203,7 @@ namespace sogen
         message.apc_context = context.apc_context;
         message.io_status_block = context.io_status_block.read();
         completion->enqueue(message);
+        win_emu.wake_idle_vcpu();
     }
 
     NTSTATUS io_device_container::io_control(windows_emulator& win_emu, const io_device_context& context)

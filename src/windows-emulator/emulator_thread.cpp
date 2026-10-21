@@ -1049,6 +1049,7 @@ namespace sogen
         this->message_queue_status_bits |= bits;
         message_queue.push_back(msg);
         this->mark_queue_status_changed(bits);
+        win_emu.wake_idle_vcpu();
     }
 
     // Activating a window moves the keyboard focus to it; losing activation takes the focus away.
