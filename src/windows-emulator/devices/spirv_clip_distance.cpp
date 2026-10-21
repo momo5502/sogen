@@ -55,7 +55,6 @@ namespace sogen
             return instructions;
         }
 
-        // A literal string ends with the word holding its null terminator.
         bool has_zero_byte(const uint32_t word)
         {
             return (word & 0xFFu) == 0 || (word & 0xFF00u) == 0 || (word & 0xFF0000u) == 0 || (word & 0xFF000000u) == 0;

@@ -4681,6 +4681,15 @@ namespace sogen
         create_info.codeSize = code_size;
         create_info.pCode = static_cast<const uint32_t*>(code);
 
+        // The identifier has to match the module create_shader_module builds from the same code.
+        const auto stripped = strip_clip_and_cull_distance(std::span{create_info.pCode, code_size / sizeof(uint32_t)},
+                                                           dev->second.strip_clip_distance, dev->second.strip_cull_distance);
+        if (stripped)
+        {
+            create_info.codeSize = stripped->size() * sizeof(uint32_t);
+            create_info.pCode = stripped->data();
+        }
+
         VkShaderModuleIdentifierEXT result{};
         result.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_IDENTIFIER_EXT;
         dev->second.get_shader_module_create_info_identifier(dev->second.handle, &create_info, &result);
