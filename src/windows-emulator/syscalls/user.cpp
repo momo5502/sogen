@@ -2487,7 +2487,8 @@ namespace sogen
                 return FALSE;
             }
 
-            RECT rect{.left = 0, .top = 0, .right = 1920, .bottom = 1080};
+            RECT rect{
+                .left = 0, .top = 0, .right = static_cast<LONG>(c.proc.display_width), .bottom = static_cast<LONG>(c.proc.display_height)};
             if (c.proc.cursor_clip)
             {
                 rect = *c.proc.cursor_clip;
@@ -4676,6 +4677,28 @@ namespace sogen
             return STATUS_SUCCESS;
         }
 
+        struct display_mode
+        {
+            uint32_t width;
+            uint32_t height;
+        };
+
+        // The single virtual display advertises a list of common modes so callers (e.g. DXVK's mode enumeration, which
+        // the game uses to validate available resolutions) see real entries.
+        constexpr std::array<display_mode, 8> k_display_modes = {{
+            {.width = 640, .height = 480},
+            {.width = 800, .height = 600},
+            {.width = 1024, .height = 768},
+            {.width = 1280, .height = 720},
+            {.width = 1280, .height = 1024},
+            {.width = 1600, .height = 900},
+            {.width = 1680, .height = 1050},
+            {.width = 1920, .height = 1080},
+        }};
+
+        constexpr uint32_t k_display_bits_per_pixel = 32;
+        constexpr uint32_t k_display_frequency = 60;
+
         NTSTATUS handle_NtUserEnumDisplaySettings(const syscall_context& c,
                                                   const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
                                                   const DWORD mode_num, const emulator_object<EMU_DEVMODEW> dev_mode, const DWORD /*flags*/)
@@ -4692,25 +4715,6 @@ namespace sogen
                 return STATUS_UNSUCCESSFUL;
             }
 
-            // The single virtual display advertises a list of common modes so callers (e.g. DXVK's
-            // mode enumeration, which the game uses to validate available resolutions) see real entries.
-            struct display_mode
-            {
-                uint32_t width;
-                uint32_t height;
-            };
-
-            static constexpr std::array<display_mode, 8> modes = {{
-                {.width = 640, .height = 480},
-                {.width = 800, .height = 600},
-                {.width = 1024, .height = 768},
-                {.width = 1280, .height = 720},
-                {.width = 1280, .height = 1024},
-                {.width = 1600, .height = 900},
-                {.width = 1680, .height = 1050},
-                {.width = 1920, .height = 1080},
-            }};
-
             const auto fill_mode = [&](const uint32_t width, const uint32_t height) {
                 dev_mode.access([&](EMU_DEVMODEW& dm) {
                     // Real EnumDisplaySettings fills the whole structure. Clear it first so fields the
@@ -4722,34 +4726,96 @@ namespace sogen
                     dm.dmFields = 0x5C0000; // DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY
                     dm.dmPelsWidth = width;
                     dm.dmPelsHeight = height;
-                    dm.dmBitsPerPel = 32;
-                    dm.dmDisplayFrequency = 60;
+                    dm.dmBitsPerPel = k_display_bits_per_pixel;
+                    dm.dmDisplayFrequency = k_display_frequency;
                 });
             };
 
-            if (mode_num == ENUM_CURRENT_SETTINGS || mode_num == ENUM_REGISTRY_SETTINGS)
+            if (mode_num == ENUM_CURRENT_SETTINGS)
             {
-                fill_mode(1920, 1080);
+                fill_mode(c.proc.display_width, c.proc.display_height);
                 return STATUS_SUCCESS;
             }
 
-            if (mode_num < modes.size())
+            if (mode_num == ENUM_REGISTRY_SETTINGS)
             {
-                fill_mode(modes[mode_num].width, modes[mode_num].height);
+                fill_mode(c.proc.registry_display_width, c.proc.registry_display_height);
+                return STATUS_SUCCESS;
+            }
+
+            if (mode_num < k_display_modes.size())
+            {
+                fill_mode(k_display_modes[mode_num].width, k_display_modes[mode_num].height);
                 return STATUS_SUCCESS;
             }
 
             return STATUS_UNSUCCESSFUL;
         }
 
-        // The emulator owns a single virtual display whose mode never actually changes; accept any requested mode
-        // (including CDS_TEST probes) by reporting DISP_CHANGE_SUCCESSFUL so the renderer proceeds to window setup.
-        LONG handle_NtUserChangeDisplaySettings(const syscall_context& /*c*/,
-                                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> /*device_name*/,
-                                                const emulator_object<EMU_DEVMODEW> /*dev_mode*/, const hwnd /*window*/,
-                                                const DWORD /*flags*/, const uint64_t /*param*/)
+        // Fullscreen games switch the display to their resolution and take the screen size from then on, e.g. to convert
+        // screen coordinates of the cursor. A null mode returns to the registry mode.
+        LONG handle_NtUserChangeDisplaySettings(const syscall_context& c,
+                                                const emulator_object<UNICODE_STRING<EmulatorTraits<Emu64>>> device_name,
+                                                const emulator_object<EMU_DEVMODEW> dev_mode, const hwnd /*window*/, const DWORD flags,
+                                                const uint64_t /*param*/)
         {
-            return 0; // DISP_CHANGE_SUCCESSFUL
+            constexpr LONG disp_change_successful = 0;
+            constexpr LONG disp_change_badmode = -2;
+            constexpr LONG disp_change_badparam = -5;
+            constexpr DWORD cds_updateregistry = 0x1;
+            constexpr DWORD cds_test = 0x2;
+            constexpr DWORD cds_noreset = 0x10000000;
+            constexpr DWORD dm_bitsperpel = 0x40000;
+            constexpr DWORD dm_pelswidth = 0x80000;
+            constexpr DWORD dm_pelsheight = 0x100000;
+            constexpr DWORD dm_displayfrequency = 0x400000;
+
+            if (const auto name = device_name ? read_unicode_string(c.emu, device_name) : u""; !name.empty() && name != u"\\\\.\\DISPLAY1")
+            {
+                return disp_change_badparam;
+            }
+
+            auto width = c.proc.registry_display_width;
+            auto height = c.proc.registry_display_height;
+            if (dev_mode)
+            {
+                const auto mode = dev_mode.read();
+                width = (mode.dmFields & dm_pelswidth) != 0 ? mode.dmPelsWidth : c.proc.display_width;
+                height = (mode.dmFields & dm_pelsheight) != 0 ? mode.dmPelsHeight : c.proc.display_height;
+
+                // A frequency of 0 or 1 asks for the display's default.
+                if (((mode.dmFields & dm_bitsperpel) != 0 && mode.dmBitsPerPel != k_display_bits_per_pixel) ||
+                    ((mode.dmFields & dm_displayfrequency) != 0 && mode.dmDisplayFrequency > 1 &&
+                     mode.dmDisplayFrequency != k_display_frequency))
+                {
+                    return disp_change_badmode;
+                }
+            }
+
+            if (std::ranges::none_of(k_display_modes,
+                                     [&](const display_mode& mode) { return mode.width == width && mode.height == height; }))
+            {
+                return disp_change_badmode;
+            }
+
+            if ((flags & cds_test) != 0)
+            {
+                return disp_change_successful;
+            }
+
+            if ((flags & cds_updateregistry) != 0)
+            {
+                c.proc.registry_display_width = width;
+                c.proc.registry_display_height = height;
+            }
+
+            if ((flags & cds_noreset) == 0)
+            {
+                c.proc.set_display_mode(c.win_emu, width, height);
+                c.win_emu.apply_cursor_capture();
+            }
+
+            return disp_change_successful;
         }
 
         BOOL handle_NtUserEnumDisplayMonitors(const syscall_context& c, const hdc hdc_in, const uint64_t clip_rect_ptr,
@@ -5843,14 +5909,14 @@ namespace sogen
                 internal_path.targetSignalInfo.pixelRate = 148500000;
                 internal_path.targetSignalInfo.hSyncFreq = {.Numerator = 67500, .Denominator = 1};
                 internal_path.targetSignalInfo.vSyncFreq = {.Numerator = 60, .Denominator = 1};
-                internal_path.targetSignalInfo.activeSize = {.cx = 1920, .cy = 1080};
+                internal_path.targetSignalInfo.activeSize = {.cx = c.proc.display_width, .cy = c.proc.display_height};
                 internal_path.targetSignalInfo.totalSize = {.cx = 2200, .cy = 1125};
                 internal_path.targetSignalInfo.scanLineOrdering = 1; // PROGRESSIVE
                 internal_path.targetSignalInfo.u.videoStandard = 0;
                 internal_path.outputTechnology = 5; // HDMI
                 internal_path.padding2[17] = 1;
-                internal_path.sourceWidth = 1920;
-                internal_path.sourceHeight = 1080;
+                internal_path.sourceWidth = c.proc.display_width;
+                internal_path.sourceHeight = c.proc.display_height;
 
                 c.emu.write_memory(path_array, &internal_path, sizeof(internal_path));
             }
@@ -5978,7 +6044,7 @@ namespace sogen
 
                 const emulator_object<EMU_GET_DISPLAY_INFO_EX> display_info{c.emu, packet};
 
-                display_info.access([](EMU_GET_DISPLAY_INFO_EX& info) {
+                display_info.access([&](EMU_GET_DISPLAY_INFO_EX& info) {
                     const bool known_adapter =
                         info.adapterId.LowPart == 0x1000 && info.adapterId.HighPart == 0; // Must match k_dxgk_adapter_luid!
                     const bool known_source = info.sourceId == 0;
@@ -6001,8 +6067,8 @@ namespace sogen
 
                     info.DisplayLeft = 0;
                     info.DisplayTop = 0;
-                    info.DisplayWidth = 1920;
-                    info.DisplayHeight = 1080;
+                    info.DisplayWidth = static_cast<INT32>(c.proc.display_width);
+                    info.DisplayHeight = static_cast<INT32>(c.proc.display_height);
 
                     utils::string::copy(info.DeviceName, u"\\\\.\\DISPLAY1");
 
