@@ -312,6 +312,34 @@ namespace
         });
     }
 
+    void wake_latency(const unsigned /*threads*/)
+    {
+        const auto event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        std::atomic<uint64_t> acknowledged{0};
+        const auto rounds = std::max<uint64_t>(1, static_cast<uint64_t>(500 * scale));
+
+        run_threads(2, [&](const unsigned index) {
+            for (uint64_t round = 1; round <= rounds; ++round)
+            {
+                if (index == 0)
+                {
+                    SetEvent(event);
+                    while (acknowledged.load() != round)
+                    {
+                        YieldProcessor();
+                    }
+                }
+                else
+                {
+                    WaitForSingleObject(event, INFINITE);
+                    acknowledged.store(round);
+                }
+            }
+        });
+
+        CloseHandle(event);
+    }
+
     void event_pingpong(const unsigned threads)
     {
         const auto pairs = std::max(1u, threads / 2);
@@ -377,6 +405,7 @@ namespace
         {"syscall_event", syscall_event},
         {"syscall_yield", syscall_yield},
         {"file_attributes", file_attributes},
+        {"wake_latency", wake_latency},
         {"event_pingpong", event_pingpong},
         {"thread_create", thread_create},
     };
