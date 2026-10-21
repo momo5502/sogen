@@ -716,9 +716,29 @@ namespace sogen
         });
     }
 
+    void emulator_thread::remember_message_wait(x86_64_cpu& emu)
+    {
+        this->message_wait_syscall_id = emu.reg<uint64_t>(x86_register::rax);
+    }
+
+    // A parked thread resumes right after its syscall instruction.
+    void emulator_thread::restart_message_wait(x86_64_cpu& emu)
+    {
+        constexpr uint64_t syscall_instruction_size = 2;
+
+        const auto syscall_id = *this->message_wait_syscall_id;
+        this->message_wait_deadline = this->await_time;
+        this->mark_as_ready(STATUS_SUCCESS);
+        this->pending_status.reset();
+
+        emu.reg(x86_register::rip, emu.read_instruction_pointer() - syscall_instruction_size);
+        emu.reg(x86_register::rax, syscall_id);
+    }
+
     void emulator_thread::mark_as_ready(const NTSTATUS status)
     {
         this->pending_status = status;
+        this->message_wait_syscall_id.reset();
         this->await_time = {};
         this->await_objects = {};
         this->await_msg = {};

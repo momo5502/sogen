@@ -1,6 +1,7 @@
 #include "../std_include.hpp"
 #include "../emulated_display_adapter.hpp"
 #include "../emulator_utils.hpp"
+#include "../low_level_hooks.hpp"
 #include "../syscall_utils.hpp"
 #include "../win32k_userconnect.hpp"
 #include "../window_destroy_orchestrator.hpp"
@@ -33,6 +34,9 @@ namespace sogen
         constexpr uint32_t k_fn_inout_nc_calc_size_callback_id = 0x15;
         constexpr uint32_t k_fn_hk_in_lp_cbt_create_struct_callback_id = 0x2A;
         constexpr int k_wh_cbt = 5;
+        constexpr int k_wh_keyboard_ll = 13;
+        constexpr int k_wh_mouse_ll = 14;
+        constexpr DWORD k_error_global_only_hook = 1429;
         constexpr int k_hcbt_createwnd = 3;
 
         constexpr size_t k_client_pfn_button_wndproc_index = 7;
@@ -3193,12 +3197,31 @@ namespace sogen
                                                const DWORD thread_id, const int hook_id, const pointer proc, const BOOL ansi)
         {
             auto& thread = c.thread();
-            if (instance != 0 || thread_id != thread.id || hook_id != k_wh_cbt || proc == 0 || thread.cbt_hook)
+            if (proc == 0)
             {
                 return 0;
             }
 
-            const auto handle = thread.next_cbt_hook_handle++;
+            // Low-level hooks are global; they run on the installing thread while it retrieves messages.
+            if (hook_id == k_wh_keyboard_ll || hook_id == k_wh_mouse_ll)
+            {
+                if (thread_id != 0)
+                {
+                    set_guest_last_error(c, k_error_global_only_hook);
+                    return 0;
+                }
+
+                const auto handle = c.proc.next_hook_handle++;
+                thread.low_level_hooks.push_back(user_low_level_hook{.handle = handle, .id = hook_id, .proc = proc});
+                return handle;
+            }
+
+            if (instance != 0 || thread_id != thread.id || hook_id != k_wh_cbt || thread.cbt_hook)
+            {
+                return 0;
+            }
+
+            const auto handle = c.proc.next_hook_handle++;
             thread.cbt_hook = user_cbt_hook{
                 .handle = handle,
                 .proc = proc,
@@ -3209,14 +3232,21 @@ namespace sogen
 
         BOOL handle_NtUserUnhookWindowsHookEx(const syscall_context& c, const uint64_t hook)
         {
-            auto& current = c.thread().cbt_hook;
-            if (!current || current->handle != hook)
+            for (auto& thread : c.proc.threads | std::views::values)
             {
-                return FALSE;
+                if (thread.cbt_hook && thread.cbt_hook->handle == hook)
+                {
+                    thread.cbt_hook.reset();
+                    return TRUE;
+                }
+
+                if (std::erase_if(thread.low_level_hooks, [&](const user_low_level_hook& entry) { return entry.handle == hook; }) != 0)
+                {
+                    return TRUE;
+                }
             }
 
-            current.reset();
-            return TRUE;
+            return FALSE;
         }
 
         lresult handle_NtUserCallNextHookEx(const syscall_context&, const int, const wparam, const lparam, const BOOL)
@@ -4316,6 +4346,11 @@ namespace sogen
         BOOL handle_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                      const UINT msg_filter_min, const UINT msg_filter_max)
         {
+            if (dispatch_low_level_hook(c, callback_id::NtUserGetMessage))
+            {
+                return {};
+            }
+
             auto& t = c.thread();
 
             if (auto pending_msg = t.peek_pending_message(c.win_emu, hwnd, msg_filter_min, msg_filter_max, true))
@@ -4327,14 +4362,27 @@ namespace sogen
             }
 
             t.await_msg = {message, hwnd, msg_filter_min, msg_filter_max};
+            t.remember_message_wait(c.emu);
 
             c.win_emu.yield_thread(c.vcpu, false);
             return {};
         }
 
+        BOOL completion_NtUserGetMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
+                                         const UINT msg_filter_min, const UINT msg_filter_max)
+        {
+            complete_low_level_hook(c);
+            return handle_NtUserGetMessage(c, message, hwnd, msg_filter_min, msg_filter_max);
+        }
+
         BOOL handle_NtUserPeekMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
                                       const UINT msg_filter_min, const UINT msg_filter_max, const UINT remove_message)
         {
+            if (dispatch_low_level_hook(c, callback_id::NtUserPeekMessage))
+            {
+                return {};
+            }
+
             auto& t = c.thread();
 
             const bool should_remove = (remove_message & PM_REMOVE) != 0;
@@ -4351,17 +4399,36 @@ namespace sogen
             return FALSE;
         }
 
+        BOOL completion_NtUserPeekMessage(const syscall_context& c, const emulator_object<msg> message, const hwnd hwnd,
+                                          const UINT msg_filter_min, const UINT msg_filter_max, const UINT remove_message)
+        {
+            complete_low_level_hook(c);
+            return handle_NtUserPeekMessage(c, message, hwnd, msg_filter_min, msg_filter_max, remove_message);
+        }
+
         BOOL handle_NtUserWaitMessage(const syscall_context& c)
         {
+            if (dispatch_low_level_hook(c, callback_id::NtUserWaitMessage))
+            {
+                return {};
+            }
+
             auto& t = c.thread();
             if (t.peek_pending_message(c.win_emu))
             {
                 return TRUE;
             }
 
-            c.vcpu.active_thread->await_msg_mask = QS_ALLINPUT;
+            t.await_msg_mask = QS_ALLINPUT;
+            t.remember_message_wait(c.emu);
             c.win_emu.yield_thread(c.vcpu, false);
             return {};
+        }
+
+        BOOL completion_NtUserWaitMessage(const syscall_context& c)
+        {
+            complete_low_level_hook(c);
+            return handle_NtUserWaitMessage(c);
         }
 
         BOOL handle_NtUserInvalidateRect(const syscall_context& c, const hwnd hwnd, const emulator_object<RECT> rect, const BOOL erase)

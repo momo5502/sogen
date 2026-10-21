@@ -741,6 +741,10 @@ namespace sogen
         buffer.write(this->raw_mouse_target);
         buffer.write(this->raw_keyboard_registered);
         buffer.write(this->raw_keyboard_target);
+        buffer.write_vector(this->pending_low_level_input);
+        buffer.write(this->next_low_level_input_id);
+        buffer.write(this->next_hook_handle);
+        buffer.write(this->drop_low_level_characters);
         buffer.write_map(this->raw_inputs);
         buffer.write(this->next_raw_input_token);
         buffer.write_atomic(this->audio_render_event);
@@ -848,6 +852,10 @@ namespace sogen
         buffer.read(this->raw_mouse_target);
         buffer.read(this->raw_keyboard_registered);
         buffer.read(this->raw_keyboard_target);
+        buffer.read_vector(this->pending_low_level_input);
+        buffer.read(this->next_low_level_input_id);
+        buffer.read(this->next_hook_handle);
+        buffer.read(this->drop_low_level_characters);
         buffer.read_map(this->raw_inputs);
         buffer.read(this->next_raw_input_token);
         buffer.read_atomic(this->audio_render_event);

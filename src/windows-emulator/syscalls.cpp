@@ -217,6 +217,8 @@ namespace sogen
         NTSTATUS handle_NtCompareObjects(const syscall_context& c, handle first, handle second);
         DWORD handle_NtUserMsgWaitForMultipleObjectsEx(const syscall_context& c, ULONG count, emulator_object<handle> handles,
                                                        DWORD timeout, DWORD wake_mask, DWORD flags);
+        DWORD completion_NtUserMsgWaitForMultipleObjectsEx(const syscall_context& c, ULONG count, emulator_object<handle> handles,
+                                                           DWORD timeout, DWORD wake_mask, DWORD flags);
         NTSTATUS handle_NtWaitForMultipleObjects(const syscall_context& c, ULONG count, emulator_object<handle> handles,
                                                  WAIT_TYPE wait_type, BOOLEAN alertable, emulator_object<LARGE_INTEGER> timeout);
         NTSTATUS handle_NtWaitForMultipleObjects32(const syscall_context& c, ULONG count, emulator_object<uint32_t> handles,
@@ -638,6 +640,11 @@ namespace sogen
         BOOL handle_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
                                       UINT msg_filter_max, UINT remove_message);
         BOOL handle_NtUserWaitMessage(const syscall_context& c);
+        BOOL completion_NtUserGetMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
+                                         UINT msg_filter_max);
+        BOOL completion_NtUserPeekMessage(const syscall_context& c, emulator_object<msg> message, hwnd hwnd, UINT msg_filter_min,
+                                          UINT msg_filter_max, UINT remove_message);
+        BOOL completion_NtUserWaitMessage(const syscall_context& c);
         BOOL handle_NtUserInvalidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
         BOOL handle_NtUserValidateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect);
         BOOL handle_NtUserGetUpdateRect(const syscall_context& c, hwnd hwnd, emulator_object<RECT> rect, BOOL erase);
@@ -2052,6 +2059,10 @@ namespace sogen
         add_callback(NtUserGetComboBoxInfo, message_call_state);
         add_callback(NtUserUpdateWindow, window_update_state);
         add_stateless_callback(NtUserEnumDisplayMonitors);
+        add_stateless_callback(NtUserGetMessage);
+        add_stateless_callback(NtUserPeekMessage);
+        add_stateless_callback(NtUserWaitMessage);
+        add_stateless_callback(NtUserMsgWaitForMultipleObjectsEx);
 
 #undef add_callback
 #undef add_stateless_callback

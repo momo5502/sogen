@@ -8,6 +8,7 @@
 #include <utils/nt_handle.hpp>
 
 #include <arch_emulator.hpp>
+#include <platform/ui_backend.hpp>
 
 #include "io_device.hpp"
 #include "kusd_mmio.hpp"
@@ -511,6 +512,76 @@ namespace sogen
         // Keyboard raw input registration (HID usage page 0x01, usage 0x06), mirroring the mouse fields above.
         bool raw_keyboard_registered{};
         hwnd raw_keyboard_target{};
+
+        // Keyboard and mouse input held back until every low-level hook it is due for has seen it, in arrival order.
+        struct low_level_input
+        {
+            uint64_t id{};
+            ui_event event{};
+            int32_t screen_x{};
+            int32_t screen_y{};
+            DWORD time{};
+            std::vector<uint64_t> hooks{};
+            utils::clock::steady_time_point waiting_since{};
+            bool in_progress{};
+
+            void serialize(utils::buffer_serializer& buffer) const
+            {
+                buffer.write(this->id);
+                buffer.write(this->event.window);
+                buffer.write(this->event.message);
+                buffer.write(this->event.wParam);
+                buffer.write(this->event.lParam);
+                buffer.write(this->event.relative_motion.has_value());
+                if (this->event.relative_motion)
+                {
+                    buffer.write(this->event.relative_motion->first);
+                    buffer.write(this->event.relative_motion->second);
+                }
+                buffer.write(this->screen_x);
+                buffer.write(this->screen_y);
+                buffer.write(this->time);
+                buffer.write_vector(this->hooks);
+                buffer.write(this->waiting_since.time_since_epoch().count());
+                buffer.write(this->in_progress);
+            }
+
+            void deserialize(utils::buffer_deserializer& buffer)
+            {
+                buffer.read(this->id);
+                buffer.read(this->event.window);
+                buffer.read(this->event.message);
+                buffer.read(this->event.wParam);
+                buffer.read(this->event.lParam);
+                bool has_relative_motion{};
+                buffer.read(has_relative_motion);
+                if (has_relative_motion)
+                {
+                    std::pair<int32_t, int32_t> relative_motion{};
+                    buffer.read(relative_motion.first);
+                    buffer.read(relative_motion.second);
+                    this->event.relative_motion = relative_motion;
+                }
+                else
+                {
+                    this->event.relative_motion.reset();
+                }
+                buffer.read(this->screen_x);
+                buffer.read(this->screen_y);
+                buffer.read(this->time);
+                buffer.read_vector(this->hooks);
+                utils::clock::steady_duration::rep waiting_since_ticks{};
+                buffer.read(waiting_since_ticks);
+                this->waiting_since = utils::clock::steady_time_point{utils::clock::steady_duration{waiting_since_ticks}};
+                buffer.read(this->in_progress);
+            }
+        };
+
+        std::vector<low_level_input> pending_low_level_input{};
+        uint64_t next_low_level_input_id{1};
+        uint64_t next_hook_handle{1};
+        // The host sends the character of a key as its own event, so it has to be dropped with a swallowed key press.
+        bool drop_low_level_characters{};
 
         // One pending raw-input payload (mouse motion + buttons, or a keyboard make/break) keyed by the
         // HRAWINPUT token posted in WM_INPUT's lParam; consumed by NtUserGetRawInputData.
