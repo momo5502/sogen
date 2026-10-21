@@ -195,6 +195,16 @@ namespace sogen
         int32_t map_memory(uint64_t device, uint64_t memory, void*& out_host_pointer, uint64_t& out_size);
         // The alignment map_memory_placed needs for its address, or 0 if the device cannot place mappings.
         uint64_t placed_map_alignment(uint64_t device) const;
+        // Alignment of host memory imported through VK_EXT_external_memory_host; 0 if the device cannot import.
+        uint64_t host_import_alignment(uint64_t device) const;
+        bool is_host_visible_memory_type(uint64_t device, uint32_t memory_type_index) const;
+        // Allocates device memory backed by the given host memory, which then stays mapped at that address.
+        int32_t import_host_memory(uint64_t device, uint64_t size, uint32_t memory_type_index, uint32_t flags, uint32_t device_mask,
+                                   void* host_pointer, uint64_t& out_memory);
+        // Imported memory may only be importable as a non-coherent type, while the guest asked for coherent memory and never
+        // flushes. These make guest writes visible to the device and device writes visible to the guest.
+        void flush_imported_memory();
+        void invalidate_imported_memory();
         uint64_t allocation_size(uint64_t memory) const;
         // Maps the whole memory object at address, a range the caller has reserved. Unmapping leaves the range reserved
         // unless the driver fails to, in which case it is unmapped.

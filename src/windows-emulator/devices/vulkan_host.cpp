@@ -317,6 +317,8 @@ namespace sogen
             PFN_vkMapMemory2KHR map_memory2{};
             PFN_vkUnmapMemory2KHR unmap_memory2{};
             uint64_t placed_map_alignment{};
+            PFN_vkGetMemoryHostPointerPropertiesEXT get_memory_host_pointer_properties{};
+            uint64_t host_import_alignment{};
             PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges{};
             PFN_vkInvalidateMappedMemoryRanges invalidate_mapped_memory_ranges{};
             PFN_vkCreateBuffer create_buffer{};
@@ -498,6 +500,8 @@ namespace sogen
             uint64_t mapped_size{};
             uint64_t allocation_size{};
             bool placed{};
+            bool imported{};
+            bool non_coherent{};
         };
 
         struct buffer_data
@@ -2184,6 +2188,28 @@ namespace sogen
             }
         }
 
+        // Without placed mappings, memory the guest maps can still be put at a fixed address by importing host memory
+        // that already sits there.
+        uint64_t host_import_alignment = 0;
+        if (placed_map_alignment == 0 && instance->second.get_physical_device_properties2 &&
+            impl::has_device_extension(instance->second, pd->second.handle, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME))
+        {
+            VkPhysicalDeviceExternalMemoryHostPropertiesEXT host_properties{};
+            host_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT;
+            VkPhysicalDeviceProperties2 properties{};
+            properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
+            properties.pNext = &host_properties;
+            instance->second.get_physical_device_properties2(pd->second.handle, &properties);
+            host_import_alignment = host_properties.minImportedHostPointerAlignment;
+
+            if (host_import_alignment != 0 && std::ranges::none_of(extensions, [](const char* enabled) {
+                    return std::strcmp(enabled, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME) == 0;
+                }))
+            {
+                extensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+            }
+        }
+
         VkDeviceCreateInfo create_info{};
         create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_infos.size());
@@ -2272,6 +2298,12 @@ namespace sogen
                 data.map_memory2 = reinterpret_cast<PFN_vkMapMemory2KHR>(resolve("vkMapMemory2KHR"));
                 data.unmap_memory2 = reinterpret_cast<PFN_vkUnmapMemory2KHR>(resolve("vkUnmapMemory2KHR"));
                 data.placed_map_alignment = data.map_memory2 && data.unmap_memory2 ? placed_map_alignment : 0;
+            }
+            if (host_import_alignment != 0)
+            {
+                data.get_memory_host_pointer_properties =
+                    reinterpret_cast<PFN_vkGetMemoryHostPointerPropertiesEXT>(resolve("vkGetMemoryHostPointerPropertiesEXT"));
+                data.host_import_alignment = data.get_memory_host_pointer_properties ? host_import_alignment : 0;
             }
             data.flush_mapped_memory_ranges = reinterpret_cast<PFN_vkFlushMappedMemoryRanges>(resolve("vkFlushMappedMemoryRanges"));
             data.invalidate_mapped_memory_ranges =
@@ -3655,6 +3687,162 @@ namespace sogen
         return dev == this->impl_->devices.end() ? 0 : dev->second.placed_map_alignment;
     }
 
+    uint64_t vulkan_host::host_import_alignment(uint64_t device) const
+    {
+        const auto dev = this->impl_->devices.find(device);
+        return dev == this->impl_->devices.end() ? 0 : dev->second.host_import_alignment;
+    }
+
+    bool vulkan_host::is_host_visible_memory_type(uint64_t device, uint32_t memory_type_index) const
+    {
+        const auto dev = this->impl_->devices.find(device);
+        VkPhysicalDeviceMemoryProperties mem_props{};
+        if (dev == this->impl_->devices.end() || !this->impl_->query_memory_properties(dev->second, mem_props) ||
+            memory_type_index >= mem_props.memoryTypeCount)
+        {
+            return false;
+        }
+
+        const auto type_index = this->impl_->substitute_cached_memory_type(dev->second, memory_type_index);
+        return (mem_props.memoryTypes[type_index].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0;
+    }
+
+    int32_t vulkan_host::import_host_memory(uint64_t device, uint64_t size, uint32_t memory_type_index, uint32_t flags,
+                                            uint32_t device_mask, void* host_pointer, uint64_t& out_memory)
+    {
+        out_memory = 0;
+        const auto dev = this->impl_->devices.find(device);
+        if (dev == this->impl_->devices.end() || dev->second.host_import_alignment == 0 || !dev->second.allocate_memory ||
+            size % dev->second.host_import_alignment != 0 ||
+            reinterpret_cast<uintptr_t>(host_pointer) % dev->second.host_import_alignment != 0)
+        {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+
+        const auto type_index = this->impl_->substitute_cached_memory_type(dev->second, memory_type_index);
+
+        VkMemoryHostPointerPropertiesEXT pointer_properties{};
+        pointer_properties.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT;
+        const VkResult properties_result = dev->second.get_memory_host_pointer_properties(
+            dev->second.handle, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, host_pointer, &pointer_properties);
+        // Drivers may accept host pointers only for some memory types, e.g. Mali only for its cached, non-coherent one,
+        // not for the coherent one the guest picked. Another host-visible type of the same heap stands in for it.
+        auto import_type_index = type_index;
+        if (properties_result == VK_SUCCESS && (pointer_properties.memoryTypeBits & (1u << type_index)) == 0)
+        {
+            VkPhysicalDeviceMemoryProperties mem_props{};
+            this->impl_->query_memory_properties(dev->second, mem_props);
+            for (uint32_t i = 0; i < mem_props.memoryTypeCount; ++i)
+            {
+                if ((pointer_properties.memoryTypeBits & (1u << i)) != 0 &&
+                    (mem_props.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0 &&
+                    mem_props.memoryTypes[i].heapIndex == mem_props.memoryTypes[type_index].heapIndex)
+                {
+                    import_type_index = i;
+                    break;
+                }
+            }
+        }
+
+        if (properties_result != VK_SUCCESS || (pointer_properties.memoryTypeBits & (1u << import_type_index)) == 0)
+        {
+            return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+        }
+
+        VkImportMemoryHostPointerInfoEXT import_info{};
+        import_info.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT;
+        import_info.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
+        import_info.pHostPointer = host_pointer;
+
+        VkMemoryAllocateFlagsInfo flags_info{};
+        if (flags != 0 || device_mask != 0)
+        {
+            flags_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO;
+            flags_info.flags = flags;
+            flags_info.deviceMask = device_mask;
+            import_info.pNext = &flags_info;
+        }
+
+        VkMemoryAllocateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        info.pNext = &import_info;
+        info.allocationSize = size;
+        info.memoryTypeIndex = import_type_index;
+
+        VkDeviceMemory memory{};
+        const VkResult result = dev->second.allocate_memory(dev->second.handle, &info, nullptr, &memory);
+        if (result != VK_SUCCESS)
+        {
+            return result;
+        }
+
+        // Flushing and invalidating require a vkMapMemory mapping. The guest keeps using host_pointer; the CPU caches are
+        // physically tagged, so maintaining them through either mapping covers both.
+        VkPhysicalDeviceMemoryProperties import_properties{};
+        this->impl_->query_memory_properties(dev->second, import_properties);
+        bool non_coherent = (import_properties.memoryTypes[import_type_index].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0;
+        if (non_coherent)
+        {
+            void* mapped = nullptr;
+            non_coherent = dev->second.map_memory && dev->second.flush_mapped_memory_ranges &&
+                           dev->second.invalidate_mapped_memory_ranges &&
+                           dev->second.map_memory(dev->second.handle, memory, 0, VK_WHOLE_SIZE, 0, &mapped) == VK_SUCCESS;
+        }
+
+        const uint64_t id = this->impl_->next_id++;
+        this->impl_->memories.emplace(id, impl::memory_data{.handle = memory,
+                                                            .device_id = device,
+                                                            .persistent_host_pointer = host_pointer,
+                                                            .mapped_size = size,
+                                                            .allocation_size = size,
+                                                            .imported = true,
+                                                            .non_coherent = non_coherent});
+        out_memory = id;
+        return VK_SUCCESS;
+    }
+
+    namespace
+    {
+        template <typename Sync>
+        void sync_non_coherent_imported_memory(auto& devices, auto& memories, const Sync& sync)
+        {
+            std::unordered_map<uint64_t, std::vector<VkMappedMemoryRange>> ranges{};
+            for (const auto& [id, memory] : memories)
+            {
+                if (memory.non_coherent)
+                {
+                    ranges[memory.device_id].push_back(VkMappedMemoryRange{.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                                                                           .pNext = nullptr,
+                                                                           .memory = memory.handle,
+                                                                           .offset = 0,
+                                                                           .size = VK_WHOLE_SIZE});
+                }
+            }
+
+            for (const auto& [device_id, device_ranges] : ranges)
+            {
+                if (const auto dev = devices.find(device_id); dev != devices.end())
+                {
+                    sync(dev->second, device_ranges);
+                }
+            }
+        }
+    }
+
+    void vulkan_host::flush_imported_memory()
+    {
+        sync_non_coherent_imported_memory(this->impl_->devices, this->impl_->memories, [](const auto& dev, const auto& ranges) {
+            dev.flush_mapped_memory_ranges(dev.handle, static_cast<uint32_t>(ranges.size()), ranges.data());
+        });
+    }
+
+    void vulkan_host::invalidate_imported_memory()
+    {
+        sync_non_coherent_imported_memory(this->impl_->devices, this->impl_->memories, [](const auto& dev, const auto& ranges) {
+            dev.invalidate_mapped_memory_ranges(dev.handle, static_cast<uint32_t>(ranges.size()), ranges.data());
+        });
+    }
+
     uint64_t vulkan_host::allocation_size(uint64_t memory) const
     {
         const auto mem = this->impl_->memories.find(memory);
@@ -3707,6 +3895,11 @@ namespace sogen
         const auto mem = this->impl_->memories.find(memory);
         if (dev == this->impl_->devices.end() || mem == this->impl_->memories.end() || mem->second.device_id != device ||
             !dev->second.unmap_memory)
+        {
+            return;
+        }
+
+        if (mem->second.imported)
         {
             return;
         }
