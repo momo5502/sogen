@@ -2483,12 +2483,18 @@ namespace sogen
                 return FALSE;
             }
 
-            // TODO: This should return the clip cursor. For simplicity, we return a best effort derived from the screen size.
             RECT rect{.left = 0, .top = 0, .right = 1920, .bottom = 1080};
-            const auto display_info = c.proc.user_handles.get_display_info().read();
-            if (const emulator_object<USER_MONITOR> monitor_obj(c.emu, display_info.pPrimaryMonitor); monitor_obj)
+            if (c.proc.cursor_clip)
             {
-                rect = monitor_obj.read().rcMonitor;
+                rect = *c.proc.cursor_clip;
+            }
+            else
+            {
+                const auto display_info = c.proc.user_handles.get_display_info().read();
+                if (const emulator_object<USER_MONITOR> monitor_obj(c.emu, display_info.pPrimaryMonitor); monitor_obj)
+                {
+                    rect = monitor_obj.read().rcMonitor;
+                }
             }
 
             c.emu.write_memory(rect_ptr, &rect, sizeof(rect));
@@ -2506,8 +2512,16 @@ namespace sogen
 
         // SetCursorPos moves the cursor; games use it to recenter the pointer. Track the new position so a
         // following GetCursorPos reflects it (and relative-motion deltas compute correctly).
-        BOOL handle_NtUserSetCursorPos(const syscall_context& c, const int32_t x, const int32_t y)
+        BOOL handle_NtUserSetCursorPos(const syscall_context& c, int32_t x, int32_t y)
         {
+            if (const auto& clip = c.proc.cursor_clip)
+            {
+                x = std::clamp(x, static_cast<int32_t>(clip->left),
+                               std::max(static_cast<int32_t>(clip->left), static_cast<int32_t>(clip->right) - 1));
+                y = std::clamp(y, static_cast<int32_t>(clip->top),
+                               std::max(static_cast<int32_t>(clip->top), static_cast<int32_t>(clip->bottom) - 1));
+            }
+
             c.proc.cursor_x = x;
             c.proc.cursor_y = y;
             // Warp the host cursor to match, so the next host mouse-motion event measures movement from the
@@ -2519,10 +2533,27 @@ namespace sogen
             return TRUE;
         }
 
-        // ClipCursor confines the cursor to a rectangle. The emulated cursor is driven by the host window
-        // and never escapes it, so confinement is a no-op; just report success.
-        BOOL handle_NtUserClipCursor(const syscall_context& /*c*/, const emulator_pointer /*rect*/)
+        BOOL handle_NtUserClipCursor(const syscall_context& c, const emulator_pointer rect_ptr)
         {
+            if (rect_ptr == 0)
+            {
+                c.proc.cursor_clip.reset();
+            }
+            else
+            {
+                auto rect = c.emu.read_memory<RECT>(rect_ptr);
+                if (rect.left > rect.right)
+                {
+                    std::swap(rect.left, rect.right);
+                }
+                if (rect.top > rect.bottom)
+                {
+                    std::swap(rect.top, rect.bottom);
+                }
+                c.proc.cursor_clip = rect;
+            }
+
+            c.win_emu.apply_cursor_capture();
             return TRUE;
         }
 
@@ -2653,6 +2684,7 @@ namespace sogen
         void apply_cursor_visibility(const syscall_context& c)
         {
             c.win_emu.ui().set_cursor_visibility(c.proc.cursor_show_count >= 0 && c.proc.cursor_shape_visible);
+            c.win_emu.apply_cursor_capture();
         }
 
         // ShowCursor(bShow) adjusts the cursor display counter (+1 to show, -1 to hide) and returns the new

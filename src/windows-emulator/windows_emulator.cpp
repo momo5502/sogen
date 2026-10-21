@@ -1631,6 +1631,8 @@ namespace sogen
             return;
         }
 
+        const auto previous_foreground = this->process.foreground_window;
+
         msg m{};
         m.window = event.window;
         m.message = event.message;
@@ -1641,12 +1643,38 @@ namespace sogen
         {
             // Track the cursor in screen coordinates (client origin + client-local position) so GetCursorPos
             // reflects it, and treat the window the user is pointing at as the foreground one.
+            const auto origin = get_client_origin_relative_to_ancestor(this->process, event.window, 0);
+            auto l_param = event.lParam;
             int32_t new_cursor_x = this->process.cursor_x;
             int32_t new_cursor_y = this->process.cursor_y;
-            if (const auto origin = get_client_origin_relative_to_ancestor(this->process, event.window, 0))
+            int32_t raw_dx{};
+            int32_t raw_dy{};
+            if (event.relative_motion)
+            {
+                // Like a ClipCursor-confined cursor on Windows: the position stops at the clip rectangle while the
+                // raw motion keeps flowing.
+                raw_dx = event.relative_motion->first;
+                raw_dy = event.relative_motion->second;
+                new_cursor_x += raw_dx;
+                new_cursor_y += raw_dy;
+                if (const auto& clip = this->process.cursor_clip)
+                {
+                    const auto left = static_cast<int32_t>(clip->left);
+                    const auto top = static_cast<int32_t>(clip->top);
+                    new_cursor_x = std::clamp(new_cursor_x, left, std::max(left, static_cast<int32_t>(clip->right) - 1));
+                    new_cursor_y = std::clamp(new_cursor_y, top, std::max(top, static_cast<int32_t>(clip->bottom) - 1));
+                }
+                if (origin)
+                {
+                    l_param = pack_point(new_cursor_x - origin->x, new_cursor_y - origin->y);
+                }
+            }
+            else if (origin)
             {
                 new_cursor_x = origin->x + point_x(event.lParam);
                 new_cursor_y = origin->y + point_y(event.lParam);
+                raw_dx = new_cursor_x - this->process.cursor_x;
+                raw_dy = new_cursor_y - this->process.cursor_y;
             }
 
             // A game using raw input for mouse-look reads relative deltas from WM_INPUT, not WM_MOUSEMOVE.
@@ -1657,11 +1685,9 @@ namespace sogen
             {
                 if (event.message == WM_MOUSEMOVE)
                 {
-                    const int32_t dx = new_cursor_x - this->process.cursor_x;
-                    const int32_t dy = new_cursor_y - this->process.cursor_y;
-                    if (dx != 0 || dy != 0)
+                    if (raw_dx != 0 || raw_dy != 0)
                     {
-                        this->deliver_raw_mouse_input(dx, dy, 0);
+                        this->deliver_raw_mouse_input(raw_dx, raw_dy, 0);
                     }
                 }
                 else if (const uint16_t buttons = raw_mouse_button_flags(event.message, event.wParam); buttons != 0)
@@ -1676,7 +1702,7 @@ namespace sogen
             this->process.cursor_y = new_cursor_y;
             this->process.foreground_window = event.window;
 
-            const auto target = route_pointer(this->process, event.window, point_x(event.lParam), point_y(event.lParam));
+            const auto target = route_pointer(this->process, event.window, point_x(l_param), point_y(l_param));
             m.window = target.window;
             // WM_MOUSEWHEEL/WM_MOUSEHWHEEL carry screen coordinates in lParam, unlike button/move
             // messages which carry client coordinates. Keep the routed target but preserve screen coords.
@@ -1768,6 +1794,11 @@ namespace sogen
             auto& vcpu = running_on ? *running_on : this->vcpu(0);
             vcpu.switch_thread = true;
             vcpu.cpu.stop();
+        }
+
+        if (this->process.foreground_window != previous_foreground)
+        {
+            this->apply_cursor_capture();
         }
     }
 
@@ -1970,6 +2001,21 @@ namespace sogen
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
         this->process.restore_after_state_restore(*this);
+        this->apply_cursor_capture();
+    }
+
+    // The guest's ClipCursor is process-wide; the host confines whichever window is in the foreground, in relative mode while
+    // the guest cursor is hidden.
+    void windows_emulator::apply_cursor_capture()
+    {
+        std::optional<ui_rect> clip{};
+        if (const auto& rect = this->process.cursor_clip)
+        {
+            clip = ui_rect{.left = rect->left, .top = rect->top, .right = rect->right, .bottom = rect->bottom};
+        }
+
+        const bool hidden = this->process.cursor_show_count < 0 || !this->process.cursor_shape_visible;
+        this->ui().set_cursor_clip(this->process.foreground_window, clip, clip.has_value() && hidden);
     }
 
     void windows_emulator::save_snapshot()
@@ -2026,6 +2072,7 @@ namespace sogen
         this->dispatcher.deserialize(buffer);
         this->process.deserialize(buffer, this->vcpus_[0]->active_thread);
         this->process.restore_after_state_restore(*this);
+        this->apply_cursor_capture();
     }
 
 } // namespace sogen

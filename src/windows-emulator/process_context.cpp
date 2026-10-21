@@ -729,6 +729,7 @@ namespace sogen
         buffer.write(this->mouse_capture_window);
         buffer.write(this->foreground_window);
         buffer.write_optional(this->timer_resolution_request);
+        buffer.write_optional(this->cursor_clip);
         buffer.write(this->cursor_x);
         buffer.write(this->cursor_y);
         buffer.write(this->current_cursor);
@@ -835,6 +836,7 @@ namespace sogen
         buffer.read(this->mouse_capture_window);
         buffer.read(this->foreground_window);
         buffer.read_optional(this->timer_resolution_request);
+        buffer.read_optional(this->cursor_clip);
         buffer.read(this->cursor_x);
         buffer.read(this->cursor_y);
         buffer.read(this->current_cursor);
