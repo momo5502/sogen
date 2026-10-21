@@ -54,6 +54,8 @@ namespace sogen::test
             per_vertex_variable,
             copied_element,
             whole_block,
+            null_block,
+            uint_per_vertex_type,
             bound,
         };
 
@@ -139,7 +141,14 @@ namespace sogen::test
         }
 
         // The same written through gl_PerVertex, as shaders compiled from GLSL declare it.
-        std::vector<uint32_t> make_block_module(const bool load_whole_block)
+        enum class block_use
+        {
+            access_chain,
+            load,
+            initializer,
+        };
+
+        std::vector<uint32_t> make_block_module(const block_use use)
         {
             module_builder module{version_1_0};
             module.op(op_capability, {capability_shader});
@@ -157,16 +166,25 @@ namespace sogen::test
             module.op(43, {uint_type, uint_0, 1});
             module.op(43, {uint_type, uint_2, 2});
             module.op(43, {float_type, float_1, 0x3F800000});
+            module.op(43, {uint_type, uint_per_vertex_type, per_vertex_type}); // A literal equal to an ID is not a use
             module.op(28, {float_array_type, float_type, uint_2});
             module.op(30, {per_vertex_type, vec4_type, float_array_type});
             module.op(op_type_pointer, {output_per_vertex_pointer, storage_class_output, per_vertex_type});
             module.op(op_type_pointer, {output_float_pointer, storage_class_output, float_type});
-            module.op(op_variable, {output_per_vertex_pointer, per_vertex_variable, storage_class_output});
+            if (use == block_use::initializer)
+            {
+                module.op(46, {per_vertex_type, null_block}); // OpConstantNull
+                module.op(op_variable, {output_per_vertex_pointer, per_vertex_variable, storage_class_output, null_block});
+            }
+            else
+            {
+                module.op(op_variable, {output_per_vertex_pointer, per_vertex_variable, storage_class_output});
+            }
             module.op(54, {void_type, main_function, 0, function_type});
             module.op(248, {entry_label});
             module.op(op_access_chain, {output_float_pointer, clip_element, per_vertex_variable, uint_0, uint_0});
             module.op(62, {clip_element, float_1});
-            if (load_whole_block)
+            if (use == block_use::load)
             {
                 module.op(61, {per_vertex_type, whole_block, per_vertex_variable}); // OpLoad
             }
@@ -281,7 +299,7 @@ namespace sogen::test
 
     TEST(SpirvClipDistanceTest, DropsBuiltInBlockMembersAndRedirectsTheirWrites)
     {
-        const auto stripped = strip_clip_and_cull_distance(make_block_module(false), true, true);
+        const auto stripped = strip_clip_and_cull_distance(make_block_module(block_use::access_chain), true, true);
         ASSERT_TRUE(stripped.has_value());
 
         const auto instructions = parse(*stripped);
@@ -301,6 +319,7 @@ namespace sogen::test
 
     TEST(SpirvClipDistanceTest, LeavesBlocksAloneThatAreUsedWhole)
     {
-        EXPECT_FALSE(strip_clip_and_cull_distance(make_block_module(true), true, true).has_value());
+        EXPECT_FALSE(strip_clip_and_cull_distance(make_block_module(block_use::load), true, true).has_value());
+        EXPECT_FALSE(strip_clip_and_cull_distance(make_block_module(block_use::initializer), true, true).has_value());
     }
 }

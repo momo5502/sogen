@@ -367,27 +367,26 @@ namespace sogen
         }
 
         // Only access chains into a block can be redirected. Any other use of a block variable or of the block type, such
-        // as loading or copying the whole block or passing its pointer on, would still refer to the dropped members.
+        // as loading, copying or initializing the whole block or passing its pointer on, would still refer to the dropped
+        // members.
         for (const auto& inst : instructions)
         {
             const auto* words = &code[inst.offset];
             const bool declares_or_names = inst.opcode == op_name || inst.opcode == op_member_name || inst.opcode == op_decorate ||
-                                           inst.opcode == op_member_decorate || inst.opcode == op_entry_point ||
+                                           inst.opcode == op_member_decorate || inst.opcode == op_decorate_string ||
+                                           inst.opcode == op_member_decorate_string || inst.opcode == op_entry_point ||
                                            inst.opcode == op_type_struct || inst.opcode == op_type_pointer;
             const bool accesses_block = (inst.opcode == op_access_chain || inst.opcode == op_in_bounds_access_chain) &&
                                         inst.word_count >= 4 && block_variables.contains(words[3]);
-            const bool declares_block_variable = inst.opcode == op_variable && inst.word_count >= 3 && block_variables.contains(words[2]);
+            const bool declares_block_variable = inst.opcode == op_variable && inst.word_count == 4 && block_variables.contains(words[2]);
             if (declares_or_names || accesses_block || declares_block_variable)
             {
                 continue;
             }
 
-            for (size_t i = 1; i < inst.word_count; ++i)
+            if (any_id_operand(code, inst, [&](size_t, const uint32_t id) { return block_variables.contains(id) || blocks.contains(id); }))
             {
-                if (block_variables.contains(words[i]) || blocks.contains(words[i]))
-                {
-                    return std::nullopt;
-                }
+                return std::nullopt;
             }
         }
 
@@ -467,8 +466,13 @@ namespace sogen
                     return std::nullopt;
                 }
 
+                if (inst.word_count < 5)
+                {
+                    return std::nullopt;
+                }
+
                 const auto member = constants.find(words[4]);
-                if (inst.word_count < 5 || member == constants.end())
+                if (member == constants.end())
                 {
                     return std::nullopt;
                 }
@@ -534,7 +538,8 @@ namespace sogen
                 continue;
             }
 
-            if ((inst.opcode == op_member_decorate || inst.opcode == op_member_name) && inst.word_count >= 3)
+            if ((inst.opcode == op_member_decorate || inst.opcode == op_member_decorate_string || inst.opcode == op_member_name) &&
+                inst.word_count >= 3)
             {
                 if (const auto block = blocks.find(words[1]); block != blocks.end() && words[2] >= block->second.kept_members)
                 {
@@ -561,14 +566,16 @@ namespace sogen
                 }
             }
 
-            if (const auto redirected = redirected_chains.find(is_access_chain(inst.opcode) ? words[2] : 0);
-                redirected != redirected_chains.end())
+            if (is_access_chain(inst.opcode) && inst.word_count >= 5)
             {
-                const auto word_count = static_cast<uint32_t>(inst.word_count - 1);
-                result.insert(result.end(),
-                              {(word_count << 16) | inst.opcode, replacement_type.at(words[1]), words[2], redirected->second});
-                result.insert(result.end(), words + 5, words + inst.word_count);
-                continue;
+                if (const auto redirected = redirected_chains.find(words[2]); redirected != redirected_chains.end())
+                {
+                    const auto word_count = static_cast<uint32_t>(inst.word_count - 1);
+                    result.insert(result.end(),
+                                  {(word_count << 16) | inst.opcode, replacement_type.at(words[1]), words[2], redirected->second});
+                    result.insert(result.end(), words + 5, words + inst.word_count);
+                    continue;
+                }
             }
 
             result.insert(result.end(), words, words + inst.word_count);
