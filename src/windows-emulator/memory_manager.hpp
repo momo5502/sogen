@@ -210,7 +210,7 @@ namespace sogen
 
         void map_mmio(uint64_t address, size_t size, mmio_read_callback read_cb, mmio_write_callback write_cb) final;
         void map_memory(uint64_t address, size_t size, memory_permission permissions) final;
-        void map_host_memory(uint64_t address, size_t size, void* host_pointer, memory_permission permissions) final;
+        bool map_host_memory(uint64_t address, size_t size, void* host_pointer, memory_permission permissions) final;
         void unmap_memory(uint64_t address, size_t size) final;
         void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) final;
 

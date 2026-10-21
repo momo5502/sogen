@@ -332,7 +332,10 @@ namespace sogen
             return false;
         }
 
-        this->map_host_memory(address, size, host_pointer, this->get_effective_permissions(permissions));
+        if (!this->map_host_memory(address, size, host_pointer, this->get_effective_permissions(permissions)))
+        {
+            return false;
+        }
 
         const auto entry = this->reserved_regions_
                                .try_emplace(address,
@@ -1411,9 +1414,9 @@ namespace sogen
         this->memory_->map_memory(address, size, permissions);
     }
 
-    void memory_manager::map_host_memory(const uint64_t address, const size_t size, void* host_pointer, const memory_permission permissions)
+    bool memory_manager::map_host_memory(const uint64_t address, const size_t size, void* host_pointer, const memory_permission permissions)
     {
-        this->memory_->map_host_memory(address, size, host_pointer, permissions);
+        return this->memory_->map_host_memory(address, size, host_pointer, permissions);
     }
 
     bool memory_manager::host_memory_aliasing_is_coherent() const
