@@ -16,7 +16,7 @@ namespace sogen::gpu_bridge
     // Identifies a valid bridge and lets the guest detect a host that speaks a different
     // protocol revision before issuing any further commands.
     inline constexpr uint32_t protocol_magic = 0x55504753; // 'SGPU'
-    inline constexpr uint32_t protocol_version = 35;
+    inline constexpr uint32_t protocol_version = 36;
 
     // Windows IOCTL encoding: CTL_CODE(DeviceType, Function, Method, Access).
     //   value = (DeviceType << 16) | (Access << 14) | (Function << 2) | Method
@@ -1319,6 +1319,13 @@ namespace sogen::gpu_bridge
         float max_anisotropy;
         float min_lod;
         float max_lod;
+        uint32_t flags;                              // VkSamplerCreateFlags
+        uint32_t unnormalized_coordinates;           // VkBool32
+        uint32_t has_reduction_mode;                 // VkSamplerReductionModeCreateInfo present
+        uint32_t reduction_mode;                     // VkSamplerReductionMode
+        uint32_t has_custom_border_color;            // VkSamplerCustomBorderColorCreateInfoEXT present
+        uint32_t custom_border_format;               // VkFormat
+        std::array<uint32_t, 4> custom_border_color; // VkClearColorValue bits
     };
 
     struct create_surface_request
@@ -2492,7 +2499,7 @@ namespace sogen::gpu_bridge
     static_assert(sizeof(get_descriptor_set_layout_support_request) == 16, "wire layout drift");
     static_assert(sizeof(descriptor_set_layout_support_response) == 12, "wire layout drift");
     static_assert(sizeof(cmd_bind_descriptor_sets_request) == 32, "wire layout drift");
-    static_assert(sizeof(create_sampler_request) == 64, "wire layout drift");
+    static_assert(sizeof(create_sampler_request) == 104, "wire layout drift");
     static_assert(sizeof(enumerate_device_extension_properties_request) == 16, "wire layout drift");
     static_assert(sizeof(queue_family_properties) == 28, "wire layout drift");
     static_assert(sizeof(enumerate_device_extension_properties_response) == 8, "wire layout drift");
