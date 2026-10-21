@@ -480,6 +480,7 @@ namespace sogen
         dxgk_state dxgk{};
         std::optional<handle> etw_notification_event{};
         hwnd mouse_capture_window{};
+        std::optional<ULONG> timer_resolution_request{};
         // The window that currently holds keyboard focus / is the foreground window, and the last known
         // cursor position in screen coordinates. Games poll these via GetForegroundWindow/GetActiveWindow
         // and GetCursorPos to drive menu cursors and gate their input loop on the window being active.

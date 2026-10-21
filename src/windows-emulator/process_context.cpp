@@ -728,6 +728,7 @@ namespace sogen
         buffer.write_optional(this->etw_notification_event);
         buffer.write(this->mouse_capture_window);
         buffer.write(this->foreground_window);
+        buffer.write_optional(this->timer_resolution_request);
         buffer.write(this->cursor_x);
         buffer.write(this->cursor_y);
         buffer.write(this->current_cursor);
@@ -833,6 +834,7 @@ namespace sogen
         buffer.read_optional(this->etw_notification_event);
         buffer.read(this->mouse_capture_window);
         buffer.read(this->foreground_window);
+        buffer.read_optional(this->timer_resolution_request);
         buffer.read(this->cursor_x);
         buffer.read(this->cursor_y);
         buffer.read(this->current_cursor);
