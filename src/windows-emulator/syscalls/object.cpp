@@ -643,6 +643,22 @@ namespace sogen
             }
         }
 
+        NTSTATUS wait_or_yield(const syscall_context& c, const BOOLEAN alertable)
+        {
+            auto& t = c.thread();
+            t.apc_alertable = alertable;
+            if (t.is_thread_ready(c.win_emu) && t.pending_status)
+            {
+                const auto status = *t.pending_status;
+                t.pending_status = {};
+                t.apc_alertable = false;
+                return status;
+            }
+
+            c.win_emu.yield_thread(c.vcpu, alertable);
+            return STATUS_SUCCESS;
+        }
+
         NTSTATUS handle_NtCompareObjects(const syscall_context& c, const handle first, const handle second)
         {
             const auto first_resolved = c.proc.resolve_object_pseudo_handle(first, c.vcpu.active_thread);
@@ -759,8 +775,7 @@ namespace sogen
                 t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
             }
 
-            c.win_emu.yield_thread(c.vcpu, alertable);
-            return STATUS_SUCCESS;
+            return wait_or_yield(c, alertable);
         }
 
         NTSTATUS handle_NtWaitForMultipleObjects32(const syscall_context& c, const ULONG count, const emulator_object<uint32_t> handles,
@@ -820,8 +835,7 @@ namespace sogen
                 t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
             }
 
-            c.win_emu.yield_thread(c.vcpu, alertable);
-            return STATUS_SUCCESS;
+            return wait_or_yield(c, alertable);
         }
 
         NTSTATUS handle_NtWaitForSingleObject(const syscall_context& c, const handle h, const BOOLEAN alertable,
@@ -843,8 +857,7 @@ namespace sogen
                 t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), timeout.read());
             }
 
-            c.win_emu.yield_thread(c.vcpu, alertable);
-            return STATUS_SUCCESS;
+            return wait_or_yield(c, alertable);
         }
 
         NTSTATUS handle_NtSignalAndWaitForSingleObject(const syscall_context& c, const handle signal_handle, const handle wait_handle,

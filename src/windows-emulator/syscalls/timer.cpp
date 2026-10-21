@@ -226,7 +226,7 @@ namespace sogen
                 return STATUS_NOT_SUPPORTED;
             }
             const auto due = due_time.read();
-            previous_state.write_if_valid(static_cast<BOOLEAN>(entry->is_signaled(c.win_emu.clock().steady_now())));
+            previous_state.write_if_valid(static_cast<BOOLEAN>(entry->is_signaled(c.win_emu.clock())));
             entry->due_time = timer_deadline(c.win_emu.clock(), due);
             entry->period_nanoseconds = static_cast<int64_t>(period) * 1000000;
             entry->signaled = false;
@@ -307,7 +307,7 @@ namespace sogen
             {
                 return status;
             }
-            current_state.write_if_valid(static_cast<BOOLEAN>(entry->is_signaled(c.win_emu.clock().steady_now())));
+            current_state.write_if_valid(static_cast<BOOLEAN>(entry->is_signaled(c.win_emu.clock())));
             entry->cancel();
             return STATUS_SUCCESS;
         }

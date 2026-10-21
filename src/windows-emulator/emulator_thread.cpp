@@ -153,7 +153,7 @@ namespace sogen
 
             case handle_types::timer: {
                 auto* entry = c.timers.get(h);
-                return entry && entry->is_signaled(win_emu.clock().steady_now()) ? wait_state::signaled : wait_state::not_signaled;
+                return entry && entry->is_signaled(win_emu.clock()) ? wait_state::signaled : wait_state::not_signaled;
             }
 
             case handle_types::semaphore: {
@@ -287,7 +287,7 @@ namespace sogen
 
             case handle_types::timer: {
                 auto* entry = c.timers.get(h);
-                if (!entry || !entry->is_signaled(win_emu.clock().steady_now()))
+                if (!entry || !entry->is_signaled(win_emu.clock()))
                 {
                     return std::nullopt;
                 }

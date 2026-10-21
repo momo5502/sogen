@@ -42,6 +42,11 @@ namespace sogen
         std::optional<std::chrono::steady_clock::time_point> due_time{};
         int64_t period_nanoseconds{};
 
+        bool is_signaled(utils::clock& clock)
+        {
+            return this->due_time ? this->is_signaled(clock.steady_now()) : this->signaled;
+        }
+
         bool is_signaled(const std::chrono::steady_clock::time_point now)
         {
             if (this->due_time && *this->due_time <= now)

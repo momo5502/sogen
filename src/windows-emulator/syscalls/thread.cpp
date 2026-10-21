@@ -727,7 +727,9 @@ namespace sogen
             auto& t = c.thread();
             if (delay_interval.value())
             {
-                t.await_time = utils::convert_delay_interval_to_time_point(c.win_emu.clock(), delay_interval.read());
+                const auto interval = delay_interval.read();
+                t.await_time = interval.QuadPart == 0 ? std::chrono::steady_clock::time_point{}
+                                                      : utils::convert_delay_interval_to_time_point(c.win_emu.clock(), interval);
             }
             c.win_emu.yield_thread(c.vcpu, alertable);
 
