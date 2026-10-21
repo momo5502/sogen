@@ -55,6 +55,14 @@ namespace sogen
         virtual void apply_memory_protection(uint64_t address, size_t size, memory_permission permissions) = 0;
 
       public:
+        // For backends whose guest memory is host memory at fixed host addresses: the host address backing address,
+        // which is where host memory has to be placed to appear there in the guest. 0 for backends that can map host
+        // memory to any guest address.
+        virtual uint64_t host_placement_address(uint64_t /*address*/) const
+        {
+            return 0;
+        }
+
         virtual bool host_memory_aliasing_is_coherent() const
         {
             return true;
