@@ -13,16 +13,58 @@ namespace sogen
         constexpr size_t bound_word = 3;
         constexpr uint32_t version_1_4 = 0x00010400;
 
+        constexpr uint32_t op_source_continued = 2;
+        constexpr uint32_t op_source = 3;
+        constexpr uint32_t op_source_extension = 4;
+        constexpr uint32_t op_name = 5;
+        constexpr uint32_t op_member_name = 6;
+        constexpr uint32_t op_string = 7;
+        constexpr uint32_t op_line = 8;
+        constexpr uint32_t op_extension = 10;
+        constexpr uint32_t op_ext_inst_import = 11;
+        constexpr uint32_t op_ext_inst = 12;
+        constexpr uint32_t op_memory_model = 14;
         constexpr uint32_t op_entry_point = 15;
+        constexpr uint32_t op_execution_mode = 16;
         constexpr uint32_t op_capability = 17;
+        constexpr uint32_t op_type_int = 21;
+        constexpr uint32_t op_type_float = 22;
+        constexpr uint32_t op_type_vector = 23;
+        constexpr uint32_t op_type_matrix = 24;
+        constexpr uint32_t op_type_image = 25;
         constexpr uint32_t op_type_pointer = 32;
+        constexpr uint32_t op_type_forward_pointer = 39;
+        constexpr uint32_t op_constant = 43;
+        constexpr uint32_t op_spec_constant = 50;
+        constexpr uint32_t op_spec_constant_op = 52;
+        constexpr uint32_t op_function = 54;
         constexpr uint32_t op_variable = 59;
+        constexpr uint32_t op_load = 61;
+        constexpr uint32_t op_store = 62;
+        constexpr uint32_t op_copy_memory = 63;
+        constexpr uint32_t op_copy_memory_sized = 64;
         constexpr uint32_t op_access_chain = 65;
         constexpr uint32_t op_in_bounds_access_chain = 66;
         constexpr uint32_t op_ptr_access_chain = 67;
         constexpr uint32_t op_in_bounds_ptr_access_chain = 70;
         constexpr uint32_t op_decorate = 71;
         constexpr uint32_t op_member_decorate = 72;
+        constexpr uint32_t op_vector_shuffle = 79;
+        constexpr uint32_t op_composite_extract = 81;
+        constexpr uint32_t op_composite_insert = 82;
+        constexpr uint32_t op_image_sample_implicit_lod = 87;
+        constexpr uint32_t op_image_write = 99;
+        constexpr uint32_t op_loop_merge = 246;
+        constexpr uint32_t op_selection_merge = 247;
+        constexpr uint32_t op_branch_conditional = 250;
+        constexpr uint32_t op_switch = 251;
+        constexpr uint32_t op_image_sparse_sample_implicit_lod = 305;
+        constexpr uint32_t op_image_sparse_dref_gather = 315;
+        constexpr uint32_t op_no_line = 317;
+        constexpr uint32_t op_image_sparse_read = 320;
+        constexpr uint32_t op_module_processed = 330;
+        constexpr uint32_t op_decorate_string = 5632;
+        constexpr uint32_t op_member_decorate_string = 5633;
 
         constexpr uint32_t capability_clip_distance = 32;
         constexpr uint32_t capability_cull_distance = 33;
@@ -64,6 +106,130 @@ namespace sogen
         {
             return opcode == op_access_chain || opcode == op_in_bounds_access_chain || opcode == op_ptr_access_chain ||
                    opcode == op_in_bounds_ptr_access_chain;
+        }
+
+        // The words of an instruction that can hold an ID are those in [begin, end) other than `literal`.
+        struct id_operands
+        {
+            size_t begin{1};
+            size_t end{};
+            size_t literal{};
+        };
+
+        // The image operands mask that follows the coordinate (and the depth reference or gather component).
+        size_t image_operands_index(const uint32_t opcode)
+        {
+            if (opcode == op_image_write)
+            {
+                return 4;
+            }
+
+            if (opcode == op_image_sparse_read)
+            {
+                return 5;
+            }
+
+            // The sampling, fetch and gather instructions come in the same order in the sparse range.
+            const auto variant = opcode >= op_image_sparse_sample_implicit_lod ? opcode - op_image_sparse_sample_implicit_lod
+                                                                               : opcode - op_image_sample_implicit_lod;
+            switch (variant)
+            {
+            case 2:  // Dref ImplicitLod
+            case 3:  // Dref ExplicitLod
+            case 6:  // Proj Dref ImplicitLod
+            case 7:  // Proj Dref ExplicitLod
+            case 9:  // Gather
+            case 10: // Dref Gather
+                return 6;
+            default:
+                return 5;
+            }
+        }
+
+        // The operands the spec defines as literals are known for the instructions that carry them in shaders. Every
+        // operand of any other instruction is taken to be an ID, which can only make the pass leave a module alone.
+        id_operands find_id_operands(const instruction& inst)
+        {
+            const auto count = inst.word_count;
+            switch (inst.opcode)
+            {
+            case op_source_continued:
+            case op_source_extension:
+            case op_extension:
+            case op_memory_model:
+            case op_capability:
+            case op_no_line:
+            case op_module_processed:
+                return {.end = 1};
+            case op_source:
+                return {.begin = 3, .end = std::min<size_t>(count, 4)};
+            case op_name:
+            case op_member_name:
+            case op_string:
+            case op_line:
+            case op_ext_inst_import:
+            case op_execution_mode:
+            case op_type_int:
+            case op_type_float:
+            case op_selection_merge:
+            case op_decorate:
+            case op_member_decorate:
+            case op_decorate_string:
+            case op_member_decorate_string:
+                return {.end = std::min<size_t>(count, 2)};
+            case op_type_vector:
+            case op_type_matrix:
+            case op_type_image:
+            case op_constant:
+            case op_spec_constant:
+            case op_store:
+            case op_copy_memory:
+            case op_loop_merge:
+            case op_switch:
+                return {.end = std::min<size_t>(count, 3)};
+            case op_load:
+            case op_copy_memory_sized:
+            case op_composite_extract:
+            case op_branch_conditional:
+                return {.end = std::min<size_t>(count, 4)};
+            case op_vector_shuffle:
+            case op_composite_insert:
+                return {.end = std::min<size_t>(count, 5)};
+            case op_type_pointer:
+            case op_type_forward_pointer:
+                return {.end = count, .literal = 2};
+            case op_spec_constant_op:
+            case op_function:
+            case op_variable:
+                return {.end = count, .literal = 3};
+            case op_ext_inst:
+                return {.end = count, .literal = 4};
+            default:
+                break;
+            }
+
+            if ((inst.opcode >= op_image_sample_implicit_lod && inst.opcode <= op_image_write) ||
+                (inst.opcode >= op_image_sparse_sample_implicit_lod && inst.opcode <= op_image_sparse_dref_gather) ||
+                inst.opcode == op_image_sparse_read)
+            {
+                return {.end = count, .literal = image_operands_index(inst.opcode)};
+            }
+
+            return {.end = count};
+        }
+
+        template <typename F>
+        bool any_id_operand(const std::span<const uint32_t> code, const instruction& inst, F&& predicate)
+        {
+            const auto operands = find_id_operands(inst);
+            for (size_t i = operands.begin; i < operands.end; ++i)
+            {
+                if (i != operands.literal && predicate(i, code[inst.offset + i]))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
@@ -174,6 +340,26 @@ namespace sogen
                     return std::nullopt;
                 }
                 demoted_pointers.insert(words[2]);
+            }
+        }
+
+        // Only the variables and their access chains are retyped, so a pointer passed on in any other way, such as to a
+        // function, OpCopyObject, OpPhi or OpSelect, would keep its Output type.
+        for (const auto& inst : instructions)
+        {
+            if (inst.opcode == op_name || inst.opcode == op_decorate || inst.opcode == op_entry_point)
+            {
+                continue;
+            }
+
+            const auto allowed_use = [&](const size_t index) {
+                return (inst.opcode == op_variable && index == 2) || (is_access_chain(inst.opcode) && (index == 2 || index == 3)) ||
+                       (inst.opcode == op_load && index == 3) || (inst.opcode == op_store && index == 1);
+            };
+            if (any_id_operand(code, inst,
+                               [&](const size_t index, const uint32_t id) { return demoted_pointers.contains(id) && !allowed_use(index); }))
+            {
+                return std::nullopt;
             }
         }
 

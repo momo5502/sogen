@@ -52,6 +52,7 @@ namespace sogen::test
             per_vertex_type,
             output_per_vertex_pointer,
             per_vertex_variable,
+            copied_element,
             bound,
         };
 
@@ -81,7 +82,7 @@ namespace sogen::test
         constexpr uint32_t main_name = 0x6E69616D; // "main"
 
         // A vertex shader writing a standalone ClipDistance (and CullDistance) output, as DXVK's shader compiler emits.
-        std::vector<uint32_t> make_standalone_module(const uint32_t version, const bool cull)
+        std::vector<uint32_t> make_standalone_module(const uint32_t version, const bool cull, const bool copy_pointer = false)
         {
             module_builder module{version};
             module.op(op_capability, {capability_shader});
@@ -122,7 +123,15 @@ namespace sogen::test
             module.op(54, {void_type, main_function, 0, function_type});
             module.op(248, {entry_label});
             module.op(op_access_chain, {output_float_pointer, clip_element, clip_variable, uint_0});
-            module.op(62, {clip_element, float_1});
+            if (copy_pointer)
+            {
+                module.op(83, {output_float_pointer, copied_element, clip_element}); // OpCopyObject
+                module.op(62, {copied_element, float_1});
+            }
+            else
+            {
+                module.op(62, {clip_element, float_1});
+            }
             module.op(253, {});
             module.op(56, {});
             return module.finish();
@@ -258,6 +267,11 @@ namespace sogen::test
         EXPECT_FALSE(has_capability(cull_only, capability_cull_distance));
         EXPECT_EQ(find_result(cull_only, op_variable, clip_variable, 1).operands.at(2), storage_class_output);
         EXPECT_EQ(find_result(cull_only, op_variable, cull_variable, 1).operands.at(2), storage_class_private);
+    }
+
+    TEST(SpirvClipDistanceTest, LeavesModulesAloneThatPassTheDemotedPointerOn)
+    {
+        EXPECT_FALSE(strip_clip_and_cull_distance(make_standalone_module(version_1_0, false, true), true, false).has_value());
     }
 
     TEST(SpirvClipDistanceTest, LeavesBuiltInBlockMembersAlone)
