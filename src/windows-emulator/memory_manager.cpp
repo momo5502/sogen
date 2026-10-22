@@ -342,12 +342,23 @@ namespace sogen
             this->memory_->reserve_guest_address_range(address, size);
         }
 
-        if (!this->map_host_memory(address, size, host_pointer, this->get_effective_permissions(permissions)))
+        if (!this->register_host_memory(address, size, host_pointer, permissions))
         {
             if (!uses_existing_host_mapping)
             {
                 this->release_host_claims(address + size);
             }
+            return false;
+        }
+
+        return true;
+    }
+
+    bool memory_manager::register_host_memory(const uint64_t address, const size_t size, void* host_pointer,
+                                              const nt_memory_permission permissions)
+    {
+        if (!this->map_host_memory(address, size, host_pointer, this->get_effective_permissions(permissions)))
+        {
             return false;
         }
 
@@ -416,7 +427,7 @@ namespace sogen
             return 0;
         }
 
-        if (!this->allocate_host_memory_at(address, size, host_address, permissions))
+        if (!this->register_host_memory(address, size, host_address, permissions))
         {
             throw std::runtime_error("Failed to register placed host memory in a free guest range");
         }
