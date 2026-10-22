@@ -1,8 +1,8 @@
 #include "backend_selection.hpp"
 
 #include <cstdlib>
+#include <stdexcept>
 #include <string_view>
-#include <utils/string.hpp>
 #if !defined(_M_ARM64)
 #include <unicorn_x86_64_emulator.hpp>
 #include <unicorn_arm64_emulator.hpp>
@@ -168,21 +168,18 @@ namespace sogen
         return create_arm64_emulator(get_arm64_emulator_backend_from_environment(), vcpu_count);
     }
 
-    std::unique_ptr<guest_machine> create_emulator_for_machine(const PEMachineType machine, const std::optional<backend_type> backend,
+    std::unique_ptr<guest_machine> create_emulator_for_machine(const machine_type machine, const std::optional<backend_type> backend,
                                                                const size_t vcpu_count)
     {
         switch (machine)
         {
-        case PEMachineType::AMD64:
-        case PEMachineType::ARM64EC:
-        case PEMachineType::I386:
+        case machine_type::x86_64:
             return backend ? create_x86_64_emulator(*backend, vcpu_count) : create_x86_64_emulator_from_environment(vcpu_count);
-        case PEMachineType::ARM64:
+        case machine_type::arm64:
             return backend ? create_arm64_emulator(*backend, vcpu_count) : create_arm64_emulator_from_environment(vcpu_count);
-        default:
-            throw std::runtime_error("Unsupported executable machine type: 0x" +
-                                     utils::string::to_hex_number(static_cast<uint16_t>(machine)));
         }
+
+        throw std::invalid_argument("Unsupported machine type");
     }
 
     backend_type get_x86_64_emulator_backend_from_environment()

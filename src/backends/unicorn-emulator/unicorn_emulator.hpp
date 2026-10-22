@@ -452,10 +452,11 @@ namespace sogen::unicorn
             this->track_executable(address, size, permissions);
         }
 
-        void map_host_memory(const uint64_t address, const size_t size, void* host_pointer, memory_permission permissions) override
+        bool map_host_memory(const uint64_t address, const size_t size, void* host_pointer, memory_permission permissions) override
         {
             uce(uc_mem_map_ptr(*this, address, size, static_cast<uint32_t>(permissions), host_pointer));
             this->track_executable(address, size, permissions);
+            return true;
         }
 
         void unmap_memory(const uint64_t address, const size_t size) override

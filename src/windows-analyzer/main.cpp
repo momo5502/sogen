@@ -99,6 +99,10 @@ namespace sogen
             std::vector<std::string> arguments{"--managed-process-port", std::to_string(port), "--managed-process-token", token};
             arguments.emplace_back("--network");
             arguments.emplace_back(network::to_string(options.network));
+            if (options.spoof_gpu_features)
+            {
+                arguments.emplace_back("--spoof-gpu-features");
+            }
 
             const auto add_path = [&](const std::string_view option, const std::filesystem::path& path) {
                 if (!path.empty())
@@ -546,6 +550,7 @@ namespace sogen
                 .root_mode = options.root_mode,
                 .mounts = options.mounts,
                 .network = options.network,
+                .spoof_gpu_features = options.spoof_gpu_features,
             };
         }
 
@@ -567,7 +572,7 @@ namespace sogen
         std::unique_ptr<guest_machine> create_configured_backend(const analysis_options& options,
                                                                  const PEMachineType machine = PEMachineType::AMD64)
         {
-            auto emu = create_emulator_for_machine(machine, options.backend, options.vcpu_count);
+            auto emu = create_emulator_for_machine(get_machine_type(machine), options.backend, options.vcpu_count);
             emu->set_memory_execution_hook_mode(parse_memory_execution_hook_mode(options.whp_execution_hook_mode));
             return emu;
         }
@@ -1038,6 +1043,8 @@ namespace sogen
             app.add_flag("--inst-summary", options.instruction_summary, "Print a summary of executed instructions of the analyzed modules");
             app.add_flag("--skip-syscalls", options.skip_syscalls, "Skip the logging of regular syscalls");
             app.add_flag("--reproducible", options.reproducible, "Stub clocks and other mechanisms to make executions reproducible");
+            app.add_flag("--spoof-gpu-features", options.spoof_gpu_features,
+                         "Report Vulkan features DXVK requires even if the GPU lacks them (e.g. Mali)");
             app.add_flag("--no-inst-precision", options.disable_instruction_precision,
                          "Disable per-instruction precision (faster, less precise)");
             app.add_flag("--call-count", options.prepend_call_count, "Prefix function and syscall lines with a traced-call count");

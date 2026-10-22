@@ -4,7 +4,7 @@
 #include <memory>
 #include <optional>
 #include <arch_emulator.hpp>
-#include <platform/platform.hpp>
+#include <machine_type.hpp>
 
 namespace sogen
 {
@@ -34,10 +34,8 @@ namespace sogen
         return create_arm64_emulator_from_environment();
     }
 
-    // Creates the CPU for an executable's COFF machine: AMD64 and I386 (WoW64) images run on an x86-64
-    // CPU, ARM64 images on an ARM64 CPU. Without an explicit backend, x86-64 follows the environment
-    // selection and ARM64 the host default.
-    std::unique_ptr<guest_machine> create_emulator_for_machine(PEMachineType machine, std::optional<backend_type> backend = std::nullopt,
+    // Without an explicit backend, x86-64 follows the environment selection and ARM64 the host default.
+    std::unique_ptr<guest_machine> create_emulator_for_machine(machine_type machine, std::optional<backend_type> backend = std::nullopt,
                                                                size_t vcpu_count = 1);
     std::unique_ptr<x86_64_emulator> create_x86_64_emulator_from_environment(size_t vcpu_count = 1);
 } // namespace sogen

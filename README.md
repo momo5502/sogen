@@ -1,11 +1,10 @@
 <h1 align="center">
-	<a href="https://github.com/momo5502/sogen"><img src="https://momo5502.com/sogen/banner.png" height="300" /></a>
+	<a href="https://github.com/momo5502/sogen"><img src="https://momo5502.com/sogen/sogen.svg" height="200" /></a>
 	<br>
 	<a href="https://github.com/momo5502/sogen?tab=GPL-2.0-1-ov-file"><img src="https://img.shields.io/github/license/momo5502/sogen?color=00B0F8"/></a>
 	<a href="https://github.com/momo5502/sogen/actions"><img src="https://img.shields.io/github/actions/workflow/status/momo5502/sogen/build.yml?branch=main&label=build"/></a>
 	<a href="https://github.com/momo5502/sogen/issues"><img src="https://img.shields.io/github/issues/momo5502/sogen?color=F8B000"/></a>
 	<img src="https://img.shields.io/github/commit-activity/m/momo5502/sogen?color=FF3131"/>
-	<a href="https://inspect.software/software/momo5502/sogen"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Finspect.software%2Fbadge%2Fv1%2Fmomo5502%2Fsogen.json" alt="inspect.software score badge for momo5502/sogen" /></a>
 </h1>
 
 Sogen runs Windows and Linux programs without a real operating system: It lets you see and control everything they do.

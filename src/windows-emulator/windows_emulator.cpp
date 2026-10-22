@@ -7,6 +7,7 @@
 #include <utils/timer.hpp>
 #include <utils/finally.hpp>
 #include <utils/lazy_object.hpp>
+#include <utils/string.hpp>
 
 #include "exception_dispatch.hpp"
 #include "apiset/apiset.hpp"
@@ -796,6 +797,22 @@ namespace sogen
         return detection.machine;
     }
 
+    machine_type get_machine_type(const PEMachineType machine)
+    {
+        switch (machine)
+        {
+        case PEMachineType::AMD64:
+        case PEMachineType::ARM64EC:
+        case PEMachineType::I386:
+            return machine_type::x86_64;
+        case PEMachineType::ARM64:
+            return machine_type::arm64;
+        default:
+            throw std::runtime_error("Unsupported executable machine type: 0x" +
+                                     utils::string::to_hex_number(static_cast<uint16_t>(machine)));
+        }
+    }
+
     windows_emulator::windows_emulator(std::unique_ptr<guest_machine> emu, application_settings app_settings,
                                        const emulator_settings& settings, emulator_callbacks callbacks, emulator_interfaces interfaces)
         : windows_emulator(std::move(emu), settings, std::move(callbacks), std::move(interfaces))
@@ -836,6 +853,7 @@ namespace sogen
                                  this->emu_->supports_global_memory_execution_hooks()),
           intercept_rdtsc_(settings.intercept_rdtsc),
           intercept_kusd_(settings.intercept_kusd),
+          spoof_gpu_features_(settings.spoof_gpu_features),
           vcpu_count_(static_cast<uint32_t>(this->emu_->vcpu_count()))
     {
         if (this->vcpu_count_ == 0)

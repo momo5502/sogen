@@ -65,11 +65,15 @@ namespace sogen::android
 
         emulator_settings create_emulator_settings(const run_config& config)
         {
-            // Games keep their saves and settings in the emulation root and in their own directory.
+            // Games keep their saves and settings in the emulation root and in their own directory. Like the
+            // sandbox, they read the TSC and KUSER_SHARED_DATA natively instead of trapping every access.
             emulator_settings settings{
+                .intercept_rdtsc = false,
+                .intercept_kusd = false,
                 .emulation_root = config.emulation_root,
                 .root_mode = filesystem_mode::read_write,
                 .network = config.live_network ? network::network_mode::live : network::network_mode::offline,
+                .spoof_gpu_features = true,
             };
 
             for (const auto& [guest, host] : config.path_mappings)

@@ -2,6 +2,7 @@
 #include "std_include.hpp"
 
 #include <arch_emulator.hpp>
+#include <machine_type.hpp>
 #include "process_manager.hpp"
 
 #include <stop_reason.hpp>
@@ -138,6 +139,10 @@ namespace sogen
         fake_environment_config fake_env{};
 
         network::network_mode network{network::network_mode::offline};
+
+        // Report Vulkan features DXVK requires to games even where the host GPU lacks them (Mali, older Adreno), so
+        // DXVK accepts the adapter. A game that really uses one of them renders incorrectly there.
+        bool spoof_gpu_features{false};
     };
 
     struct emulator_interfaces
@@ -186,6 +191,9 @@ namespace sogen
     // The COFF machine of an application, resolved through its working directory and the settings' emulation
     // root and path mappings as the emulator will resolve it. Selects which guest CPU to create for the application.
     PEMachineType get_application_machine(const emulator_settings& settings, application_settings app_settings);
+
+    // AMD64, ARM64EC and I386 (WoW64) images run on an x86-64 CPU, ARM64 images on an ARM64 CPU.
+    machine_type get_machine_type(PEMachineType machine);
 
     class windows_emulator
     {
@@ -484,6 +492,11 @@ namespace sogen
             return this->use_relative_time_;
         }
 
+        bool spoofs_gpu_features() const
+        {
+            return this->spoof_gpu_features_;
+        }
+
         uint32_t vcpu_count() const
         {
             return this->vcpu_count_;
@@ -601,6 +614,7 @@ namespace sogen
         bool instruction_precision_{true};
         bool intercept_rdtsc_{true};
         bool intercept_kusd_{true};
+        bool spoof_gpu_features_{false};
         uint32_t vcpu_count_{1};
         std::atomic_bool should_stop{false};
 

@@ -291,10 +291,10 @@ namespace sogen::py
         {
             if (machine == PEMachineType::ARM64 && !kwargs.contains("backend"))
             {
-                return create_emulator_for_machine(machine);
+                return create_emulator_for_machine(get_machine_type(machine));
             }
 
-            return create_emulator_for_machine(machine, get_backend_type(kwargs));
+            return create_emulator_for_machine(get_machine_type(machine), get_backend_type(kwargs));
         }
 
         PEMachineType get_empty_machine(const nb::kwargs& kwargs)

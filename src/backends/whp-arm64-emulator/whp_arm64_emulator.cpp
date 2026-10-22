@@ -1496,13 +1496,14 @@ namespace sogen::whp
                 map_pages(address, size, nullptr, permissions);
             }
 
-            void map_host_memory(const uint64_t address, const size_t size, void* host, const memory_permission permissions) override
+            bool map_host_memory(const uint64_t address, const size_t size, void* host, const memory_permission permissions) override
             {
                 if (!host || reinterpret_cast<uintptr_t>(host) % page_size != 0)
                 {
                     throw std::invalid_argument("WHP ARM64 host backing must be nonnull and page-aligned");
                 }
                 map_pages(address, size, static_cast<std::byte*>(host), permissions);
+                return true;
             }
 
             void map_pages(const uint64_t address, const size_t size, std::byte* host, const memory_permission permissions)

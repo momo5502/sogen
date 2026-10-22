@@ -24,7 +24,8 @@ namespace sogen::test
         interfaces.ui = std::make_unique<null_ui_backend>();
 
         const auto machine = get_application_machine(settings, app_settings);
-        windows_emulator emu{create_emulator_for_machine(machine), std::move(app_settings), settings, {}, std::move(interfaces)};
+        windows_emulator emu{
+            create_emulator_for_machine(get_machine_type(machine)), std::move(app_settings), settings, {}, std::move(interfaces)};
         emu.log.disable_output(true);
         if (!emu.emu().supports_global_memory_execution_hooks())
         {

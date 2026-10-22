@@ -103,10 +103,11 @@ namespace sogen::test
             {
             }
 
-            void map_host_memory(const uint64_t address, size_t, void* host_pointer, memory_permission) override
+            bool map_host_memory(const uint64_t address, size_t, void* host_pointer, memory_permission) override
             {
                 this->mapped_host_address = address;
                 this->mapped_host_pointer = host_pointer;
+                return true;
             }
 
             bool host_memory_mapping_requires_identity() const override
