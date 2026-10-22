@@ -17,9 +17,11 @@ Get-ChildItem $profileListPath -ErrorAction SilentlyContinue | ForEach-Object {
         $target = Join-Path $FilesysRoot $rel
         New-Item -ItemType Directory -Path $target -Force | Out-Null
         Write-Host 'Created:' $target
-        $appData = Join-Path $target 'appdata'
-        @('local', 'roaming', 'locallow') | ForEach-Object {
-            $sub = Join-Path $appData $_
+        # The folders every profile gets from the default profile. The shell only resolves a known folder that
+        # exists, so a missing one makes SHGetFolderPath fail and games fall back to saving somewhere else.
+        @('appdata\local', 'appdata\roaming', 'appdata\locallow', 'desktop', 'documents', 'downloads', 'favorites',
+          'links', 'music', 'pictures', 'saved games', 'videos') | ForEach-Object {
+            $sub = Join-Path $target $_
             New-Item -ItemType Directory -Path $sub -Force | Out-Null
             Write-Host 'Created:' $sub
         }
