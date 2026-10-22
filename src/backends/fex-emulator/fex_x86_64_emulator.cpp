@@ -3954,9 +3954,38 @@ namespace sogen::fex
             errno = saved_errno;
         }
 
+        void forward_sent_signal(const struct sigaction& previous, const int sig, siginfo_t* info, void* raw_ucontext)
+        {
+            if ((previous.sa_flags & SA_SIGINFO) != 0)
+            {
+                previous.sa_sigaction(sig, info, raw_ucontext);
+            }
+            else if (previous.sa_handler == SIG_DFL)
+            {
+                struct sigaction default_action{};
+                default_action.sa_handler = SIG_DFL;
+                ::sigaction(sig, &default_action, nullptr);
+                ::raise(sig);
+            }
+            else if (previous.sa_handler != SIG_IGN)
+            {
+                previous.sa_handler(sig);
+            }
+        }
+
         void fault_signal_handler(int sig, siginfo_t* info, void* raw_ucontext)
         {
             auto* uctx = static_cast<ucontext_t*>(raw_ucontext);
+            const auto& previous =
+                g_previous_fault_actions[static_cast<size_t>(std::ranges::find(fault_signals, sig) - fault_signals.begin())];
+
+            // A signal that was sent rather than caused by an instruction is no fault. It goes to the previous handler without
+            // uninstalling this one, since that handler may return and later faults still need handling here.
+            if (info->si_code <= 0)
+            {
+                forward_sent_signal(previous, sig, info, raw_ucontext);
+                return;
+            }
 
             const bool handled = g_active_emulator != nullptr && g_active_emulator->handle_fault_signal(sig, info, raw_ucontext);
             if (handled)
@@ -3966,15 +3995,8 @@ namespace sogen::fex
 
             log_unhandled_signal(sig, info, uctx);
 
-            const auto signal = std::ranges::find(fault_signals, sig);
-            ::sigaction(sig, &g_previous_fault_actions[static_cast<size_t>(signal - fault_signals.begin())], nullptr);
-
-            // Returning re-executes the faulting instruction, which raises the signal again for the previous handler. A
-            // signal that was sent rather than caused by an instruction has to be raised explicitly.
-            if (info->si_code <= 0)
-            {
-                ::raise(sig);
-            }
+            // Returning re-executes the faulting instruction, which raises the signal again for the previous handler.
+            ::sigaction(sig, &previous, nullptr);
         }
     } // namespace
 
